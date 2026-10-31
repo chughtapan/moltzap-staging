@@ -9,6 +9,5 @@ export {
   readFirewallDecisions,
   readFirewallPolicy,
   saveCheckDecision,
-  withoutTraces,
   writeFirewallPolicy,
 } from "./firewall.js";

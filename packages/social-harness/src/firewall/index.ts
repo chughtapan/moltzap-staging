@@ -66,7 +66,6 @@ import {
   type FirewallCompletion,
   readDecisions,
   readFirewallPolicy,
-  withoutTraces,
   writeFirewallPolicy,
 } from "./store/index.js";
 
@@ -658,7 +657,7 @@ function assess(
         canonicalInput: yield* retainedInput(active, input),
         admit,
         canonicalResult: yield* encodeRuntimeValue({
-          result: withoutTraces(projection.result),
+          result: Struct.omit(projection.result, "trace"),
           summaries: yield* decisionSummaries(active, input, projection.result),
         }),
       },

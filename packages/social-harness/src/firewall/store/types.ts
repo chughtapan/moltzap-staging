@@ -1,10 +1,5 @@
 /** @file Policy installations and completed assessments remain owned by Firewall. */
 
-/** Completed decisions retain the original input and policy judgment. */
-export interface FirewallAuditEntry extends Omit<FirewallCompletion, "admit"> {
-  readonly sequence: number;
-  readonly disposition: "admitted" | "withheld";
-}
 /** Successful owner edits retain metadata even when no check uses the installation. */
 export interface FirewallActivation {
   readonly time: number;

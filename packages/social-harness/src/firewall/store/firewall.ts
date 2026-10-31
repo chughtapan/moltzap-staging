@@ -2,12 +2,10 @@
 
 import * as SqlClient from "@effect/sql/SqlClient";
 import * as SqlSchema from "@effect/sql/SqlSchema";
-import { Effect, Schema, Struct } from "effect";
+import { Effect, Schema } from "effect";
 
-import type { FirewallCheck } from "../check.js";
 import type {
   FirewallActivation,
-  FirewallAuditEntry,
   FirewallCommit,
   FirewallCompletion,
 } from "./types.js";
@@ -29,7 +27,6 @@ import {
 } from "../config.js";
 const ruleIds = Schema.parseJson(Schema.Array(Schema.NonEmptyString));
 const activationRow = Schema.Struct({
-  sequence: Schema.Int,
   time: Schema.Int,
   activeRevision: Schema.String,
   addedRuleIds: ruleIds,
@@ -99,19 +96,15 @@ export function readFirewallActivations(request: { readonly since?: number }) {
       Result: activationRow,
       execute: (after) =>
         sql.unsafe(
-          "SELECT sequence,activated_at AS time,active_revision AS activeRevision,added_rule_ids AS addedRuleIds,removed_rule_ids AS removedRuleIds FROM firewall_activations WHERE activated_at>=? ORDER BY activated_at DESC,sequence DESC LIMIT 100",
+          "SELECT activated_at AS time,active_revision AS activeRevision,added_rule_ids AS addedRuleIds,removed_rule_ids AS removedRuleIds FROM firewall_activations WHERE activated_at>=? ORDER BY activated_at DESC,sequence DESC LIMIT 100",
           [after],
         ),
     });
-    const rows = yield* query(since).pipe(
+    return yield* query(since).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
       ),
     );
-    return rows.map(({ sequence, ...activation }) => ({
-      sequence,
-      activation,
-    }));
   }).pipe(storeOperation, Effect.withSpan("readFirewallActivations"));
 }
 /** Completion time includes checks that started before a caller's previous poll. */
@@ -122,13 +115,19 @@ export function readFirewallDecisions(since = 0) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
     return (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT rowid AS sequence, check_id, direction,
+      `SELECT check_id,
     canonical_candidate, canonical_input, canonical_result, disposition, decided_at
     FROM firewall_checks WHERE decided_at >= ?
     ORDER BY decided_at DESC, rowid DESC LIMIT 100`,
       [since],
     )).map((row) => ({
-      ...auditEntry(row),
+      checkId: readText(row, "check_id"),
+      canonicalCandidate: readBytes(row, "canonical_candidate"),
+      canonicalInput: readBytes(row, "canonical_input"),
+      canonicalResult: readBytes(row, "canonical_result"),
+      disposition: Schema.decodeUnknownSync(auditDisposition)(
+        readText(row, "disposition"),
+      ),
       time: readInteger(row, "decided_at"),
     }));
   }).pipe(storeOperation, Effect.withSpan("readFirewallDecisions"));
@@ -209,34 +208,7 @@ export function readDecisions(request: { readonly since?: number }) {
     }
     return {
       decisions,
-      activations: (yield* readFirewallActivations(request)).map(
-        (entry) => entry.activation,
-      ),
+      activations: yield* readFirewallActivations(request),
     } satisfies typeof firewallDecisionsSchema.Type;
   }).pipe(Effect.withSpan("readDecisions"));
 }
-function auditEntry(
-  row: Readonly<Record<string, unknown>>,
-): FirewallAuditEntry {
-  const canonicalResult = readBytes(row, "canonical_result");
-  return {
-    sequence: readInteger(row, "sequence"),
-    checkId: readText(row, "check_id"),
-    direction: Schema.decodeUnknownSync(Schema.Literal("incoming", "outgoing"))(
-      readText(row, "direction"),
-    ),
-    canonicalCandidate: readBytes(row, "canonical_candidate"),
-    canonicalInput: readBytes(row, "canonical_input"),
-    disposition: Schema.decodeUnknownSync(auditDisposition)(
-      readText(row, "disposition"),
-    ),
-    canonicalResult,
-  };
-}
-/**
- * A check as the store retains it: every field except the decision-provider
- * traces, which stay in memory with the code that produced the check.
- */
-export const withoutTraces = (check: FirewallCheck) => ({
-  ...Struct.omit(check, "trace"),
-});
