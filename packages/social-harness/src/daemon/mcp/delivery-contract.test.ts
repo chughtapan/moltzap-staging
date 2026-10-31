@@ -28,7 +28,6 @@ import { CollectiveId } from "../../communication/collectives/contracts.js";
 import { encodeCollectiveContent } from "../../communication/collectives/wire.js";
 import { Communication } from "../../communication/index.js";
 import { AgentAddress } from "../../communication/records/index.js";
-import { DeliveryToken } from "../../communication/store/index.js";
 import { acquireHarnessEndpoint } from "../../host-client/index.js";
 import { decodeHarnessReadInboxResult } from "../../host-protocol/operations.js";
 import { McpInbox } from "../messaging/index.js";
