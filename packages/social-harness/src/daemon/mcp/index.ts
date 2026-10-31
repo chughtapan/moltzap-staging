@@ -91,7 +91,6 @@ import {
 import { SendResultSchema } from "../../host-protocol/send-result.js";
 import { Identity } from "../../identity/local.js";
 import { type ConsumerOwner, makeConsumerOwner } from "./consumer.js";
-
 import {
   type HarnessEvents,
   makeHarnessEvents,

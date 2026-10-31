@@ -1,6 +1,5 @@
 /** @file Pins Events discovery and failure isolation through loopback HTTP. */
 
-import type { Implementation } from "@modelcontextprotocol/server";
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
@@ -12,6 +11,12 @@ import {
   ProtocolErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  type Implementation,
+  PROTOCOL_VERSION_META_KEY,
+} from "@modelcontextprotocol/server";
 import {
   Deferred,
   Duration,
@@ -42,6 +47,7 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import {
   CollectiveError,
   CollectiveId,
@@ -73,13 +79,6 @@ import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,
 } from "./index.js";
-
-import {
-  CLIENT_CAPABILITIES_META_KEY,
-  CLIENT_INFO_META_KEY,
-  PROTOCOL_VERSION_META_KEY,
-} from "@modelcontextprotocol/server";
-import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 
 const MODERN_PROTOCOL_VERSION = "2026-07-28";
 const IMPLEMENTATION = {
@@ -311,38 +310,45 @@ function emitsIdleHeartbeat() {
       implementation: IMPLEMENTATION,
       operations,
     }).pipe(Effect.provideService(Identity, mcpIdentity(true)));
-    yield* Effect.addFinalizer(() => Effect.promise(() => handler.close()));
-    const active = yield* Deferred.make<void>();
-    const heartbeat = yield* Deferred.make<string>();
-    const response = yield* Effect.promise(() =>
-      handler.fetch(
-        new Request("http://127.0.0.1/mcp", {
-          method: "POST",
-          headers: {
-            ...mcpTestHeaders,
-            "content-type": "application/json",
-            accept: "text/event-stream",
-            "mcp-method": "events/stream",
-            "mcp-name": INBOX_PENDING_EVENT,
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: "heartbeat",
-            method: "events/stream",
-            params: {
-              name: INBOX_PENDING_EVENT,
-              arguments: {},
-              cursor: null,
-              _meta: {
-                [PROTOCOL_VERSION_META_KEY]: MODERN_PROTOCOL_VERSION,
-                [CLIENT_INFO_META_KEY]: IMPLEMENTATION,
-                [CLIENT_CAPABILITIES_META_KEY]: {},
-              },
-            },
-          }),
-        }),
-      ),
+    yield* Effect.addFinalizer(() =>
+      Effect.tryPromise({
+        try: () => handler.close(),
+        catch: (cause) => new Error("MCP handler closure failed", { cause }),
+      }).pipe(Effect.orDie),
     );
+    const active = yield* Deferred.make<undefined>();
+    const heartbeat = yield* Deferred.make<string>();
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        handler.fetch(
+          new Request("http://127.0.0.1/mcp", {
+            method: "POST",
+            headers: {
+              ...mcpTestHeaders,
+              "content-type": "application/json",
+              accept: "text/event-stream",
+              "mcp-method": "events/stream",
+              "mcp-name": INBOX_PENDING_EVENT,
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "heartbeat",
+              method: "events/stream",
+              params: {
+                name: INBOX_PENDING_EVENT,
+                arguments: {},
+                cursor: null,
+                _meta: {
+                  [PROTOCOL_VERSION_META_KEY]: MODERN_PROTOCOL_VERSION,
+                  [CLIENT_INFO_META_KEY]: IMPLEMENTATION,
+                  [CLIENT_CAPABILITIES_META_KEY]: {},
+                },
+              },
+            }),
+          }),
+        ),
+      catch: (cause) => new Error("MCP event request failed", { cause }),
+    });
     const body = yield* Effect.fromNullable(response.body);
     yield* Stream.fromReadableStream(
       () => body,
@@ -350,19 +356,27 @@ function emitsIdleHeartbeat() {
     ).pipe(
       Stream.decodeText(),
       Stream.splitLines,
-      Stream.tap((line) =>
-        line.includes("notifications/events/active")
-          ? Deferred.succeed(active, undefined)
-          : line.includes("notifications/events/heartbeat")
-            ? Deferred.succeed(heartbeat, line)
-            : Effect.void,
-      ),
+      Stream.tap((line) => {
+        if (line.includes("notifications/events/active")) {
+          return Deferred.succeed(active, undefined);
+        }
+        if (line.includes("notifications/events/heartbeat")) {
+          return Deferred.succeed(heartbeat, line);
+        }
+        return Effect.void;
+      }),
       Stream.runDrain,
       Effect.forkScoped,
     );
     yield* Deferred.await(active);
     yield* TestClock.adjust("1 minute");
-    expect(yield* Deferred.await(heartbeat)).toContain('"cursor":null');
+    const frame = yield* Schema.decodeUnknown(Schema.parseJson())(
+      (yield* Deferred.await(heartbeat)).replace(/^data:\s*/u, ""),
+    );
+    expect(frame).toMatchObject({
+      method: "notifications/events/heartbeat",
+      params: { cursor: null },
+    });
   }).pipe(Effect.provide(TestContext.TestContext));
 }
 

@@ -8,15 +8,15 @@ import {
 } from "@modelcontextprotocol/server";
 import { Effect, Schema } from "effect";
 import { describe, expect } from "vitest";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   connectInProcessClient,
   mcpIdentity,
   mcpTestCredential,
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
-import { Identity } from "../../identity/local.js";
-import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
+import { Identity } from "../../identity/local.js";
 import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,

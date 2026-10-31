@@ -28,11 +28,11 @@ import {
   captureRegistration,
   checkCapturedMessage,
   type CheckedGuidance,
-  type DecisionProvider,
   type DecidingRule,
+  decidingRules,
+  type DecisionProvider,
   DecisionProviderError,
   decodeFrozen,
-  decidingRules,
   ENDPOINT_SENDER,
   type FirewallCheck,
   type Message,
@@ -815,12 +815,7 @@ function assess(
         admit,
         canonicalResult: yield* encodeRuntimeValue({
           result: withoutTraces(projection.result),
-          summaries: yield* decisionSummaries(
-            active,
-            input,
-            projection.result,
-            admit,
-          ),
+          summaries: yield* decisionSummaries(active, input, projection.result),
         }),
       },
       ...(admit && projection.guidance !== undefined
@@ -874,7 +869,6 @@ function decisionSummaries(
   active: ActiveRules,
   input: CapturedCheck,
   result: FirewallCheck,
-  admit: boolean,
 ): Effect.Effect<readonly DecisionSummary[], EndpointStoreError> {
   const registrations = [
     ...active.metadata[input.direction].map((entry) => ({
@@ -892,16 +886,19 @@ function decisionSummaries(
   const deciding = decidingRules(result.reason, registrations, result.checks);
   const cause = summaryCause(result, deciding);
   const decidedBy = deciding.map(
-    (rule): DecisionSummary["decidedBy"][number] => ({
-      ruleId: rule.ruleId,
-      from:
-        rule.source === "code"
-          ? "code"
-          : active.fixedRuleIds.includes(rule.ruleId)
-            ? "fixed"
-            : "editable",
-      ...(rule.advice === undefined ? {} : { advice: rule.advice }),
-    }),
+    (rule): DecisionSummary["decidedBy"][number] => {
+      let from: DecisionSummary["decidedBy"][number]["from"] = "editable";
+      if (rule.source === "code") {
+        from = "code";
+      } else if (active.fixedRuleIds.includes(rule.ruleId)) {
+        from = "fixed";
+      }
+      return {
+        ruleId: rule.ruleId,
+        from,
+        ...(rule.advice === undefined ? {} : { advice: rule.advice }),
+      };
+    },
   );
   const checkedRuleIds = [
     ...new Set(
@@ -912,30 +909,33 @@ function decisionSummaries(
   ];
   const message = input.evidence.event?.message;
   const kind = message?.operation?.kind;
-  const peers =
-    message === undefined || kind === "result" || kind === "failure"
-      ? [null]
-      : input.direction === "outgoing"
-        ? message.recipients
-        : [message.sender];
-  return Effect.forEach(peers, (identity) => {
-    const peer =
-      identity === null
-        ? null
-        : input.agents.find((agent) => agent.agentId === identity);
-    return peer === undefined
-      ? Effect.fail(new EndpointStoreError({ reason: "corrupt" }))
-      : Effect.succeed({
-          direction: input.direction,
-          peer,
-          outcome: result.judgment,
-          disposition: admit ? ("admitted" as const) : ("withheld" as const),
-          cause,
-          decidedBy,
-          checkedRuleIds,
-          activeRevision: active.configurationDigest,
-        });
-  });
+  let peers: ReadonlyArray<string | null> = [null];
+  if (message !== undefined && kind !== "result" && kind !== "failure") {
+    peers =
+      input.direction === "outgoing" ? message.recipients : [message.sender];
+  }
+  return Effect.forEach(
+    peers,
+    (identity) => {
+      const peer =
+        identity === null
+          ? null
+          : input.agents.find((agent) => agent.agentId === identity);
+      if (peer === undefined) {
+        return Effect.fail(new EndpointStoreError({ reason: "corrupt" }));
+      }
+      return Effect.succeed({
+        direction: input.direction,
+        peer,
+        outcome: result.judgment,
+        cause,
+        decidedBy,
+        checkedRuleIds,
+        activeRevision: active.configurationDigest,
+      });
+    },
+    { concurrency: 1 },
+  );
 }
 
 function summaryCause(

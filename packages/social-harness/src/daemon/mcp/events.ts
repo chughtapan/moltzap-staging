@@ -39,6 +39,11 @@ import {
   INBOX_PENDING_EVENT,
 } from "../../host-protocol/names.js";
 import { Identity } from "../../identity/local.js";
+import {
+  type ConsumerOwner,
+  currentConsumer,
+  type PushSubscription,
+} from "./consumer.js";
 import { consumerConflict, type HarnessPollEvents } from "./poll.js";
 /** Durable callback delivery shares this consumer boundary. */
 export { makeWebhookEvents } from "./webhook.js";
@@ -46,12 +51,6 @@ export { makeWebhookEvents } from "./webhook.js";
 export { makeHarnessPollEvents } from "./poll.js";
 /** Effect HTTP connection policy for callback delivery. */
 export { webhookHttpClientLayer } from "./event-signing.js";
-
-import {
-  type ConsumerOwner,
-  currentConsumer,
-  type PushSubscription,
-} from "./consumer.js";
 
 interface EventsOptions {
   readonly summary: () => Effect.Effect<
@@ -252,7 +251,7 @@ const releasePush = (runtime: EventsRuntime, push: PushSubscription) =>
       runtime.options.owner.current = { mode: "none" };
     }
   }).pipe(Effect.zipRight(Deferred.succeed(push.closed, undefined)));
-const keepAlive = (runtime: EventsRuntime, push: PushSubscription) =>
+const keepAlive = (push: PushSubscription) =>
   Effect.sleep(20_000).pipe(
     Effect.zipRight(
       notify(push, "notifications/events/heartbeat", { cursor: null }),
@@ -300,7 +299,7 @@ const stream = (
         push.ready = true;
         runtime.wakeups.unsafeOffer(true);
       });
-      yield* keepAlive(runtime, push);
+      yield* keepAlive(push);
       yield* Deferred.await(stop);
       return {};
     }),

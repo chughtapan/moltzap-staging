@@ -193,7 +193,6 @@ export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
   peer: Schema.NullOr(AgentView),
   outcome: Schema.Literal("allow", "reject", "hold"),
-  disposition: Schema.Literal("admitted", "withheld"),
   cause: decisionCause,
   decidedBy: Schema.Array(
     exactStruct({
@@ -206,12 +205,13 @@ export const firewallDecisionSummarySchema = exactStruct({
   activeRevision: Schema.NonEmptyString,
 });
 
-/** Completion metadata accompanies the summary captured by its assessment. */
+/** The saved publication outcome accompanies the assessment's captured summary. */
 export const firewallDecisionsSchema = exactStruct({
   activations: Schema.Array(firewallActivationSchema),
   decisions: Schema.Array(
     exactStruct({
       ...firewallDecisionSummarySchema.fields,
+      disposition: Schema.Literal("admitted", "withheld"),
       checkId: Schema.NonEmptyString,
       time: Schema.NonNegativeInt,
     }),

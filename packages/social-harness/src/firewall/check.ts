@@ -306,8 +306,7 @@ export function checkCapturedMessage(
           { ...entry, source: "code" },
           invokeMiddleware(entry, captured),
           captured,
-          input.settings,
-          deadline,
+          { settings: input.settings, deadline },
         ),
       );
     }
@@ -332,8 +331,7 @@ export function checkCapturedMessage(
             input.provider,
           ),
           captured,
-          input.settings,
-          deadline,
+          { settings: input.settings, deadline },
         ),
       );
     }
@@ -697,7 +695,11 @@ export function decodeFrozen<A, I>(
         onExcessProperty: "error",
       }),
     ),
-    Effect.tap((value) => Effect.sync(() => freezeData(value))),
+    Effect.tap((value) =>
+      Effect.sync(() => {
+        freezeData(value);
+      }),
+    ),
   );
 }
 
@@ -952,9 +954,12 @@ function runCheck(
   middleware: Registration & { readonly revision: string },
   assessment: Effect.Effect<MiddlewareResult, MiddlewareError>,
   input: MiddlewareInput,
-  settings: FirewallSettings,
-  deadline: number,
+  budget: {
+    readonly settings: FirewallSettings;
+    readonly deadline: number;
+  },
 ) {
+  const { settings, deadline } = budget;
   return Effect.gen(function* (): Effect.fn.Return<MiddlewareCheck> {
     const started = yield* Clock.currentTimeMillis;
     const remaining = deadline - started;

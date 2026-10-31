@@ -69,13 +69,6 @@ const review: TextRule = {
   },
 };
 
-const announce = {
-  id: "announce-once",
-  applies: "both",
-  text: "Announce the final meeting time once.",
-  guidance: "Announce the final time once.",
-} as const satisfies TextRule;
-
 const contacts = {
   id: "contacts",
   feedback: { nextAction: "stop", text: "Only known contacts may write." },
@@ -475,11 +468,30 @@ it("keeps the deciding rules recorded before a later edit removes them", () =>
     }),
   ));
 
+it("reports publication withholding separately from an allowing assessment", () =>
+  withDaemonStore(stateDirectory(), () =>
+    Effect.gen(function* () {
+      const firewall = yield* makeFirewall(options([contactsPolicy("pass")]));
+      const checked = yield* firewall.check([
+        yield* preparedMessage("incoming"),
+      ]);
+      const assessment = yield* Effect.fromNullable(checked[0]);
+      expect(assessment).toMatchObject({
+        result: { judgment: "allow" },
+        completion: { admit: true },
+      });
+      yield* saveCheckDecision({ ...assessment.completion, admit: false });
+      expect((yield* firewall.readDecisions({})).decisions).toMatchObject([
+        { outcome: "allow", disposition: "withheld" },
+      ]);
+    }),
+  ));
+
 it("keeps one batch's captured policy when an edit activates between its checks", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<undefined>();
+      const release = yield* Deferred.make<undefined>();
       const judgments = decisionProvider([privacy], "violation");
       const provider: DecisionProvider = {
         decide: (request) =>
@@ -505,8 +517,10 @@ it("keeps one batch's captured policy when an edit activates between its checks"
       });
       yield* Deferred.succeed(release, undefined);
       const checked = yield* Fiber.join(running);
-      yield* Effect.forEach(checked, (entry) =>
-        saveCheckDecision(entry.completion),
+      yield* Effect.forEach(
+        checked,
+        (entry) => saveCheckDecision(entry.completion),
+        { concurrency: 1 },
       );
       const feed = yield* firewall.readDecisions({});
       expect(feed.decisions.map((entry) => entry.activeRevision)).toEqual([
@@ -521,9 +535,9 @@ it("keeps one batch's captured policy when an edit activates between its checks"
         { ruleId: privacy.id, from: "editable", advice: privacy.feedback.text },
       ]);
       expect(replacement.activeRevision).not.toBe(captured.activeRevision);
-      expect((yield* firewall.check([request]))[0]?.result.judgment).toBe(
-        "allow",
-      );
+      expect(yield* firewall.check([request])).toMatchObject([
+        { result: { judgment: "allow" } },
+      ]);
     }),
   ));
 

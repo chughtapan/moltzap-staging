@@ -24,14 +24,13 @@ import {
   INBOX_PENDING_EVENT,
 } from "../../host-protocol/names.js";
 import { Identity } from "../../identity/local.js";
+import { makeConsumerOwner } from "./consumer.js";
 import {
   type HarnessEvents,
   makeHarnessEvents,
   makeHarnessPollEvents,
   makeWebhookEvents,
 } from "./events.js";
-
-import { makeConsumerOwner } from "./consumer.js";
 
 const info = { name: "consumer-shutdown", version: "1" };
 const summary = () => Effect.succeed({ pendingCount: 0, newestSequence: 0 });
@@ -221,7 +220,7 @@ it("rejects a bound renewal queued before consumer revocation without renewing i
       error: { data: { reason: "consumer-revoked" } },
     });
     yield* Fiber.join(revoke);
-    expect((yield* fixture.events.status).mode).toBe("none");
+    expect(yield* fixture.events.status).toMatchObject({ mode: "none" });
   }));
 
 it("closes a poll when a later owner stream waits for its gate", () =>

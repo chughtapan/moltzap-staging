@@ -23,6 +23,7 @@ import {
 import { describe, expect } from "vitest";
 import type { HarnessMessageReadyEvent } from "../../host-protocol/operations.js";
 import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   loopbackMcpEndpoint,
   mcpIdentity,
@@ -30,11 +31,16 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
-import { DeliveryToken } from "../../communication/store/index.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
+import {
+  DeliveryToken,
+  encodeRuntimeValue,
+} from "../../communication/store/index.js";
 import { acquireHarnessEndpoint } from "../../host-client/index.js";
 import { InboundItem } from "../../host-protocol/items.js";
 import { INBOX_PENDING_EVENT } from "../../host-protocol/names.js";
 import { Identity } from "../../identity/local.js";
+import { makeConsumerOwner } from "./consumer.js";
 import {
   type HarnessEvents,
   makeHarnessEvents,
@@ -47,11 +53,6 @@ import {
 } from "./index.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- External MCP error codes and consumer ownership reasons are conformance expectations. */
-
-import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
-import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
-import { encodeRuntimeValue } from "../../communication/store/index.js";
-import { makeConsumerOwner } from "./consumer.js";
 
 const implementation = { name: "events-conformance", version: "1" };
 const delivery = (byte: number): HarnessMessageReadyEvent => ({
@@ -122,7 +123,9 @@ const yieldAfterReservation = (
       : events.status.pipe(
           Effect.orDie,
           Effect.flatMap((status) => {
-            if (triggered || status.mode !== "push") return Effect.void;
+            if (triggered || status.mode !== "push") {
+              return Effect.void;
+            }
             triggered = true;
             events.notifyPending();
             return Effect.yieldNow();
@@ -195,7 +198,7 @@ const acquireRacingEventsServer = Effect.gen(function* () {
   const webhook = yield* makeWebhookEvents(store, gate, owner).pipe(
     Effect.provide(NodeHttpClient.layer),
   );
-  let currentEvents: HarnessEvents | undefined;
+  let currentEvents: HarnessEvents | undefined = undefined;
   const events = yield* makeHarnessEvents({
     owner,
     poll,
@@ -345,7 +348,7 @@ const catchesUpAndDrainsNewArrivals = () =>
 const preservesExclusiveOwnership = () =>
   Effect.gen(function* () {
     const harness = yield* acquireEventsServer;
-    const attached = yield* Deferred.make<void>();
+    const attached = yield* Deferred.make<undefined>();
     const first = yield* acquireHarnessEndpoint(harness.endpoint, {
       credential: mcpTestCredential,
       receiveMode: "push",

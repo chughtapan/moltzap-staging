@@ -10,18 +10,18 @@ import {
 import { Effect, Option, Schema, SchemaAST } from "effect";
 import { describe, expect } from "vitest";
 import { requestId } from "../../__tests__/collective-operation-fixtures.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   mcpIdentity,
   mcpTestCredential,
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import { FirewallPolicyError } from "../../firewall/config.js";
 import { decodeHarnessSendErrorData } from "../../host-protocol/operations.js";
 import { AgentName, PrincipalId } from "../../identity/identifiers.js";
 import { Identity } from "../../identity/local.js";
 import { OperationId } from "../../identity/registry/contract.js";
-import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
-import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,
