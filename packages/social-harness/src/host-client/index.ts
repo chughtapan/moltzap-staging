@@ -436,22 +436,15 @@ function pendingInbox(
 function acquireListenerSlot(
   active: Ref.Ref<boolean>,
 ): Effect.Effect<void, ListenError, Scope.Scope> {
-  return Effect.uninterruptible(
-    Effect.gen(function* () {
-      const acquired = yield* Ref.modify(active, (isActive) =>
-        isActive
-          ? ([false, true] satisfies [boolean, boolean])
-          : ([true, true] satisfies [boolean, boolean]),
-      ).pipe(
-        Effect.filterOrFail(
-          (slotAcquired) => slotAcquired,
-          () => new ListenError({ reason: "already-listening" }),
-        ),
-      );
-      yield* Effect.addFinalizer(() => Ref.set(active, false));
-      return acquired;
-    }).pipe(Effect.asVoid),
-  );
+  return Effect.acquireRelease(
+    Ref.getAndSet(active, true).pipe(
+      Effect.filterOrFail(
+        (isActive) => !isActive,
+        () => new ListenError({ reason: "already-listening" }),
+      ),
+    ),
+    () => Ref.set(active, false),
+  ).pipe(Effect.asVoid);
 }
 
 function messages(
@@ -485,19 +478,15 @@ function messages(
   );
 }
 
-function makeMcpClient(): Client {
-  return new Client(CLIENT_IMPLEMENTATION, {
-    capabilities: {},
-    versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } },
-  });
-}
-
 function acquireEndpoint(
   endpoint: URL,
   options: HarnessEndpointOptions,
 ): Effect.Effect<HarnessEndpoint, ConnectError, Scope.Scope> {
   return Effect.gen(function* () {
-    const client = makeMcpClient();
+    const client = new Client(CLIENT_IMPLEMENTATION, {
+      capabilities: {},
+      versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } },
+    });
     yield* acquireConnection(client, endpoint, options);
     const listenerActive = yield* Ref.make(false);
     return {

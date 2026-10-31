@@ -7,10 +7,7 @@ import {
   HARNESS_CONSUMER_META_KEY,
   INBOX_ITEM_EVENT,
 } from "../host-protocol/names.js";
-import {
-  decodePollResult,
-  type PollResult,
-} from "../host-protocol/operations.js";
+import { decodePollResult } from "../host-protocol/operations.js";
 import { listenFailure } from "./failures.js";
 
 const resultSchema = fromJsonSchema({ type: "object" });
@@ -38,29 +35,30 @@ const metadata = (generation: string) => ({
 interface Reception {
   readonly client: Client;
   readonly queue: Queue.Queue<Take.Take<undefined, ListenError>>;
-  position?: PollResult;
+  cursor?: string;
+  generation?: string;
 }
-
-const setPosition = (state: Reception, position: PollResult) =>
-  Effect.sync(() => {
-    state.position = position;
-  });
 
 /** Install the acquired generation before cancellation can enter finalization. */
 const open = (state: Reception) =>
   Effect.uninterruptibleMask((restore) =>
-    restore(
-      request(state.client, {
-        name: INBOX_ITEM_EVENT,
-        arguments: {},
-        cursor: null,
-      }),
-    ).pipe(Effect.tap((position) => setPosition(state, position))),
+    Effect.gen(function* () {
+      const result = yield* restore(
+        request(state.client, {
+          name: INBOX_ITEM_EVENT,
+          arguments: {},
+          cursor: null,
+        }),
+      );
+      state.cursor = result.cursor;
+      state.generation = result._meta[HARNESS_CONSUMER_META_KEY].generation;
+      return state.generation;
+    }),
   );
 
 const release = (state: Reception) =>
   Effect.suspend(() =>
-    state.position === undefined
+    state.generation === undefined
       ? Effect.void
       : request(state.client, {
           name: INBOX_ITEM_EVENT,
@@ -68,8 +66,7 @@ const release = (state: Reception) =>
           cursor: null,
           _meta: {
             [HARNESS_CONSUMER_META_KEY]: {
-              generation:
-                state.position._meta[HARNESS_CONSUMER_META_KEY].generation,
+              generation: state.generation,
               release: true,
             },
           },
@@ -87,13 +84,13 @@ const receive = Effect.fn("poll.receive")(function* (
   const result = yield* request(state.client, {
     name: INBOX_ITEM_EVENT,
     arguments: {},
-    cursor: state.position?.cursor,
+    cursor: state.cursor,
     _meta: metadata(generation),
   });
   if (result._meta[HARNESS_CONSUMER_META_KEY].generation !== generation) {
     return yield* Effect.fail(new ListenError({ reason: "decode-failed" }));
   }
-  yield* setPosition(state, result);
+  state.cursor = result.cursor;
   if (result.events.length !== 0 || result.truncated) {
     yield* Queue.offer(state.queue, Take.of(undefined));
   }
@@ -141,8 +138,7 @@ export const pollWakeups = (
           Effect.ensuring(Queue.shutdown(queue)),
         ),
       );
-      const first = yield* open(state);
-      const generation = first._meta[HARNESS_CONSUMER_META_KEY].generation;
+      const generation = yield* open(state);
       yield* Queue.offer(queue, Take.of(undefined));
       yield* receive(state, generation).pipe(
         Effect.forever,

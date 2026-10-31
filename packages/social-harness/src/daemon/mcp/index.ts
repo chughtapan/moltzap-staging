@@ -776,15 +776,7 @@ const toolHandlers = {
     },
   ),
   [STATUS_TOOL]: makeToolHandler(emptyInput, emptyRequestSchema, statusOutput, {
-    execute: (operations, request) => {
-      if (Object.keys(request).length !== 0) {
-        throw new ProtocolError(
-          ProtocolErrorCode.InvalidParams,
-          "Status accepts no arguments",
-        );
-      }
-      return operations.readStatus();
-    },
+    execute: (operations) => operations.readStatus(),
     label: "Status",
     allowedReasons: STATUS_REASONS,
     fallbackReason: "incompatible-daemon",
