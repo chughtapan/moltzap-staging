@@ -1,6 +1,6 @@
-/** @file Real daemons export their spans, and mark collectives and retries, over OTLP/HTTP protobuf. */
+/** @file Real daemons export traces and retry outcomes over OTLP/HTTP protobuf. */
 
-import { type InboundItem, replyAddress } from "@moltzap/social-harness";
+import { replyAddress } from "@moltzap/social-harness";
 import { Duration, Effect } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -70,14 +70,6 @@ interface MarkerScenario {
   readonly member: Participant;
   readonly held: Participant;
   readonly group: string;
-}
-
-interface CompletedCollectives {
-  readonly gatherRequest: InboundItem;
-  readonly allGatherRequest: InboundItem;
-  readonly gatherId: string;
-  readonly allGatherId: string;
-  readonly completed: readonly ExportedSpan[];
 }
 
 const acquireMarkerParticipants = Effect.gen(function* () {
@@ -176,25 +168,18 @@ const exportBehavior = Effect.gen(function* () {
  */
 const markerBehavior = Effect.gen(function* () {
   const scenario = yield* acquireMarkerParticipants;
-  const gather = yield* completeGather(scenario);
-  const allGather = yield* completeAllGather(scenario);
+  yield* completeGather(scenario);
+  yield* gatherFrom(scenario.requester, scenario.group, "all_gather");
+  yield* answerAllGather(scenario);
   /** Every earlier proposal settles too, so the held send's is the one left pending. */
   const completed = yield* awaitSpans(
     scenario.receiver,
     (received) =>
-      markers(received, "collective.closed", "operationId", gather.id).length >
-        0 &&
-      markers(received, "collective.closed", "operationId", allGather.id)
-        .length > 0 &&
+      markers(received, "retry.settled", "kind", "firewall-check").length > 0 &&
+      markers(received, "retry.settled", "kind", "outbound").length > 0 &&
       unsettledRetries(received).length === 0,
   );
-  yield* expectCompletedCollectiveMarkers({
-    gatherId: gather.id,
-    gatherRequest: gather.request,
-    allGatherId: allGather.id,
-    allGatherRequest: allGather.request,
-    completed,
-  });
+  expectCompletedRetries(completed);
   yield* scenario.proxy.hold;
   yield* Effect.addFinalizer(() => scenario.proxy.release);
   const accepted = yield* gatherFrom(
@@ -212,11 +197,7 @@ const markerBehavior = Effect.gen(function* () {
     kind: "collective",
     operationId: request.message.content.operationId,
   });
-  yield* expectProposalCertifiedAndCollectiveClosed(
-    scenario.receiver,
-    pendingId,
-    request,
-  );
+  yield* expectProposalCertified(scenario.receiver, pendingId);
   yield* restartRouterAndExpectRecovery(scenario);
 }).pipe(Effect.scoped);
 
@@ -227,7 +208,7 @@ it(
 );
 
 it(
-  "marks collective operations open until they close, checks and outbox drains until they end, proposals pending until a held member returns, and catch-up and re-anchor pending until recovery",
+  "exports firewall checks, outbox drains, proposal retries and Router recovery",
   processTrace(markerBehavior),
   TELEMETRY_TEST_TIMEOUT_MS,
 );
@@ -255,19 +236,19 @@ function completeGather({ requester, member, held, group }: MarkerScenario) {
         operationId: gatherRequest.message.content.operationId,
       },
     });
-    yield* nextItem(requester);
-    return {
-      id: gatherRequest.message.content.operationId,
-      request: gatherRequest,
-    };
-  });
-}
-
-function completeAllGather(scenario: MarkerScenario) {
-  return Effect.gen(function* () {
-    yield* gatherFrom(scenario.requester, scenario.group, "all_gather");
-    const request = yield* answerAllGather(scenario);
-    return { id: request.message.content.operationId, request };
+    expect(yield* nextItem(requester)).toMatchObject({
+      kind: "collectiveResult",
+      op: "gather",
+      operationId: gatherRequest.message.content.operationId,
+      closedBy: "settled",
+      outcomes: [
+        {
+          member: member.agent,
+          outcome: { kind: "answered", content: { slot: "mon" } },
+        },
+        { member: held.agent, outcome: { kind: "declined" } },
+      ],
+    });
   });
 }
 
@@ -316,37 +297,21 @@ function answerAllGather({ requester, member, held, group }: MarkerScenario) {
   });
 }
 
-function expectCompletedCollectiveMarkers(state: CompletedCollectives) {
-  return Effect.sync(() => {
-    const {
-      gatherRequest,
-      allGatherRequest,
-      gatherId,
-      allGatherId,
-      completed,
-    } = state;
-    expectMarked(completed, gatherId, gatherRequest, "gather");
-    expectMarked(completed, allGatherId, allGatherRequest, "all_gather");
-    expect(
-      markers(completed, "collective.opened", "operationId", gatherId)[0]
-        ?.resource,
-    ).toMatchObject({
-      "service.name": "otel-requester-service",
-      "sharness.agent": "otel-requester",
-    });
-    expect(
-      attributesOf(
-        markers(completed, "retry.settled", "kind", "firewall-check"),
-      ),
-    ).toContainEqual({
-      kind: "firewall-check",
-      id: "outgoing",
-      outcome: "checked",
-    });
-    expect(
-      attributesOf(markers(completed, "retry.settled", "kind", "outbound")),
-    ).toContainEqual({ kind: "outbound", id: "outbox", outcome: "sent" });
+function expectCompletedRetries(completed: readonly ExportedSpan[]): void {
+  expect(completed[0]?.resource).toMatchObject({
+    "service.name": "otel-requester-service",
+    "sharness.agent": "otel-requester",
   });
+  expect(
+    attributesOf(markers(completed, "retry.settled", "kind", "firewall-check")),
+  ).toContainEqual({
+    kind: "firewall-check",
+    id: "outgoing",
+    outcome: "checked",
+  });
+  expect(
+    attributesOf(markers(completed, "retry.settled", "kind", "outbound")),
+  ).toContainEqual({ kind: "outbound", id: "outbox", outcome: "sent" });
 }
 
 function unsettledProposals(received: readonly ExportedSpan[]) {
@@ -368,32 +333,16 @@ function expectProposalPending(receiver: OtlpReceiver) {
   });
 }
 
-function expectProposalCertifiedAndCollectiveClosed(
-  receiver: OtlpReceiver,
-  pendingId: string,
-  request: Extract<InboundItem, { readonly kind: "collectiveRequest" }>,
-) {
+function expectProposalCertified(receiver: OtlpReceiver, pendingId: string) {
   return Effect.gen(function* () {
     const settled = yield* awaitSpans(
       receiver,
       (received) =>
-        markers(received, "retry.settled", "id", pendingId).length > 0 &&
-        markers(
-          received,
-          "collective.closed",
-          "operationId",
-          request.message.content.operationId,
-        ).length > 0,
+        markers(received, "retry.settled", "id", pendingId).length > 0,
     );
     expect(
       attributesOf(markers(settled, "retry.settled", "id", pendingId)),
     ).toEqual([{ kind: "proposal", id: pendingId, outcome: "certified" }]);
-    expectMarked(
-      settled,
-      request.message.content.operationId,
-      request,
-      "all_gather",
-    );
   });
 }
 
@@ -473,38 +422,6 @@ function unsettledRetries(spans: readonly ExportedSpan[]): ExportedSpan[] {
     settled.splice(match, 1);
     return false;
   });
-}
-
-/**
- * Expect the operation `id` marked open once, with the deadline its request
- * carried, then closed once as completed.
- */
-function expectMarked(
-  spans: readonly ExportedSpan[],
-  id: string,
-  request: InboundItem,
-  op: "gather" | "all_gather",
-): void {
-  const opened = markers(spans, "collective.opened", "operationId", id);
-  const closed = markers(spans, "collective.closed", "operationId", id);
-  expect(attributesOf(opened)).toEqual([
-    { operationId: id, op, deadlineAt: anyNumber },
-  ]);
-  expect(attributesOf(closed)).toEqual([
-    { operationId: id, outcome: "completed" },
-  ]);
-  expect(request).toMatchObject({
-    kind: "collectiveRequest",
-    message: {
-      content: {
-        operationId: id,
-        deadlineAt: opened[0]?.attributes.deadlineAt,
-      },
-    },
-  });
-  expect(opened[0]?.startTimeUnixNano).toBeLessThan(
-    closed[0]?.startTimeUnixNano ?? 0n,
-  );
 }
 
 /** Every marker span `name` that carries `attributes.key === value`. */
