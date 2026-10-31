@@ -32,7 +32,7 @@ function runFixture(
   registry?: Context.Tag.Service<typeof Registry>,
   router?: Context.Tag.Service<typeof Router>,
 ) {
-  return runDaemonRuntime({ bootstrap: fixture.bootstrap }).pipe(
+  return runDaemonRuntime(fixture.bootstrap).pipe(
     Effect.provide(identityLayerFor(fixture.bootstrap)),
     Effect.provide(Firewall.layer()),
     Effect.provideService(

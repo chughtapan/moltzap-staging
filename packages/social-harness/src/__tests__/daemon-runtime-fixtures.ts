@@ -125,9 +125,7 @@ export const makeFixture = Effect.gen(function* () {
 export const runRegisteredFixture = (fixture: Fixture) =>
   saveLocalIdentity(fixture.localCard).pipe(
     Effect.zipRight(
-      runDaemonRuntime({
-        bootstrap: fixture.bootstrap,
-      }).pipe(
+      runDaemonRuntime(fixture.bootstrap).pipe(
         Effect.provide(identityLayerFor(fixture.bootstrap)),
         Effect.provide(Firewall.layer()),
         Effect.provideService(Registry, {

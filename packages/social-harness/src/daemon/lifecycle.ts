@@ -9,14 +9,12 @@ import {
   FiberSet,
   Layer,
   Option,
-  Schema,
   Stream,
 } from "effect";
 import type { DaemonBootstrap } from "./bootstrap.js";
 import { Collectives } from "../communication/collectives/index.js";
 import { CommunicationError } from "../communication/index.js";
 import { communicationLive } from "../communication/service/index.js";
-import { DeliveryToken } from "../communication/store/index.js";
 import { Firewall } from "../firewall/index.js";
 import { Identity, LocalIdentity } from "../identity/local.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
@@ -56,16 +54,11 @@ export class DaemonRuntimeError extends Data.TaggedError("DaemonRuntimeError")<{
     | "incompatible-daemon";
 }> {}
 
-/** Bootstrap is fixed before the service graph opens host calls. */
-export interface DaemonStartup {
-  readonly bootstrap: DaemonBootstrap;
-}
-
 /** Native scopes own workers, and a critical failure ends the process. */
-export const runDaemonRuntime = (input: DaemonStartup) =>
+export const runDaemonRuntime = (bootstrap: DaemonBootstrap) =>
   Effect.gen(function* () {
     const workers = yield* FiberSet.make<never>();
-    const path = input.bootstrap.configuration.historyExport;
+    const path = bootstrap.configuration.historyExport;
     const historyExport =
       path === undefined
         ? noHistoryExport
@@ -74,9 +67,9 @@ export const runDaemonRuntime = (input: DaemonStartup) =>
           );
     const communication = communicationLive(
       {
-        signingAuthority: input.bootstrap.signingAuthority,
+        signingAuthority: bootstrap.signingAuthority,
         registrySignerPublicKey:
-          input.bootstrap.configuration.registrySignerPublicKey,
+          bootstrap.configuration.registrySignerPublicKey,
       },
       workers,
     );
@@ -86,13 +79,13 @@ export const runDaemonRuntime = (input: DaemonStartup) =>
     const messaging = hostMessagingLayer(
       {
         historyExport,
-        experiments: input.bootstrap.configuration,
+        experiments: bootstrap.configuration,
         registrySignerPublicKey:
-          input.bootstrap.configuration.registrySignerPublicKey,
+          bootstrap.configuration.registrySignerPublicKey,
       },
       workers,
     ).pipe(Layer.provide(collectives));
-    return yield* Effect.scoped(serveMcp(input, workers)).pipe(
+    return yield* Effect.scoped(serveMcp(bootstrap, workers)).pipe(
       Effect.provide(messaging),
     );
   }).pipe(
@@ -100,32 +93,29 @@ export const runDaemonRuntime = (input: DaemonStartup) =>
     Effect.withSpan("runDaemonRuntime"),
   );
 
-function serveMcp(input: DaemonStartup, workers: FiberSet.FiberSet<never>) {
-  const failure = FiberSet.join(workers).pipe(
-    Effect.catchAllCause(stopRuntime),
-  );
+function serveMcp(
+  bootstrap: DaemonBootstrap,
+  workers: FiberSet.FiberSet<never>,
+) {
   return Effect.gen(function* () {
     const identity = yield* Identity;
     const management = yield* makeDaemonManagementOperations();
     yield* registerAtStart(
       management,
       (yield* identity.me()).kind === "registered",
-      input.bootstrap.configuration.registration,
+      bootstrap.configuration.registration,
     );
-    const handler = yield* makeHandler(
-      management,
-      input.bootstrap.mcpCredential,
-    );
+    const handler = yield* makeHandler(management, bootstrap.mcpCredential);
     yield* acquireHarnessMcpHttpServer({
-      port: input.bootstrap.configuration.mcpPort,
+      port: bootstrap.configuration.mcpPort,
       handler,
     }).pipe(Effect.mapError(() => runtimeFailure("listener")));
     yield* watchChanges(handler);
     yield* Console.log(
-      `sharnessd listening on http://${LOOPBACK_HOST}:${input.bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+      `sharnessd listening on http://${LOOPBACK_HOST}:${bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
     );
-    return yield* failure;
-  }).pipe(Effect.raceFirst(failure));
+    return yield* Effect.never;
+  }).pipe(Effect.raceFirst(FiberSet.join(workers)));
 }
 
 function makeHandler(
@@ -147,13 +137,7 @@ function makeHandler(
         readConversation: messaging.readHistory,
         readInbox: messaging.listInbox,
         readInboxSummary: inbox.readInboxSummary,
-        readEvent: ({ eventId }) =>
-          Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
-            Effect.catchTag("ParseError", () =>
-              Effect.fail({ reason: "invalid-event" }),
-            ),
-            Effect.flatMap(messaging.getInboxItem),
-          ),
+        readEvent: ({ eventId }) => messaging.getInboxItem(eventId),
         acknowledgeDelivery: messaging.acknowledgeDelivery,
         readDecisions: firewall.readDecisions,
         ...(firewall.configuration === undefined

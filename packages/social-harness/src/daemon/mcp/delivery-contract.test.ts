@@ -117,13 +117,7 @@ function deliveryHandler(
     operations: {
       send: messaging.send,
       readInbox: messaging.listInbox,
-      readEvent: ({ eventId }) =>
-        Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
-          Effect.catchTag("ParseError", () =>
-            Effect.fail({ reason: "invalid-event" }),
-          ),
-          Effect.flatMap(messaging.getInboxItem),
-        ),
+      readEvent: ({ eventId }) => messaging.getInboxItem(eventId),
       acknowledgeDelivery: messaging.acknowledgeDelivery,
       readInboxSummary: events.readInboxSummary,
       readStatus: unreachable,

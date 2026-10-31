@@ -1,8 +1,8 @@
 /** @file A real daemon inbox with scoped SQL and helpers for adding test messages. */
 
 import { SqlClient } from "@effect/sql";
-import { Effect, Layer, Schema } from "effect";
-import { DeliveryToken } from "../communication/store/index.js";
+import { Effect, Layer } from "effect";
+import type { DeliveryOperations } from "../host-protocol/operations.js";
 import { noHistoryExport } from "../daemon/inbox/host-traffic-log.js";
 import { queueIncomingItem } from "../daemon/inbox/pending.js";
 import { acknowledgeInboxItem } from "../daemon/inbox/store.js";
@@ -28,15 +28,12 @@ export const openInboxFixture = Effect.fn("openInboxFixture")(function* (
     ...inbox.events,
     operations: {
       readInbox: inbox.listInbox,
-      readEvent: ({ eventId }: { readonly eventId: string }) =>
-        Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
-          Effect.catchTag("ParseError", () =>
-            Effect.fail({ reason: "invalid-event" }),
-          ),
-          Effect.flatMap(inbox.getInboxItem),
-        ),
+      readEvent: ({ eventId }) => inbox.getInboxItem(eventId),
       acknowledgeDelivery: inbox.acknowledgeDelivery,
-    },
+    } satisfies Pick<
+      DeliveryOperations,
+      "readInbox" | "readEvent" | "acknowledgeDelivery"
+    >,
     sql,
     run,
     putInboxItem: (item: Parameters<typeof putInboxItem>[0]) =>

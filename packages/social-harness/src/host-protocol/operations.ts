@@ -80,9 +80,7 @@ export const decodePollResult = Schema.decodeUnknown(pollResultSchema);
 
 /** Read-only content lookup never acknowledges or retries delivery. */
 export const readEventRequestSchema = exactStruct({
-  eventId: Schema.propertySignature(
-    Schema.encodedBoundSchema(DeliveryToken),
-  ).annotations({
+  eventId: Schema.propertySignature(DeliveryToken).annotations({
     description:
       "The eventId of an org.social-harness/inbox.item event, or one a host's wakeup carries from an inbox item; retained content remains readable after acknowledgment.",
   }),

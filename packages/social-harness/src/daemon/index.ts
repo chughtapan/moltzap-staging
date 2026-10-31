@@ -181,7 +181,7 @@ export namespace Daemon {
           Effect.mapError(configurationFailure),
         );
       }
-      return yield* runDaemonRuntime({ bootstrap }).pipe(
+      return yield* runDaemonRuntime(bootstrap).pipe(
         Effect.mapError(runtimeStartupFailure),
       );
     });
