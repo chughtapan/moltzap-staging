@@ -1,6 +1,5 @@
 /**
- * @file Router-ordered proposal selection, addressed record certification,
- * and the resume of durable dissemination obligations.
+ * @file Selects ordered proposals, certifies records and resumes pending delivery.
  */
 /* eslint-disable max-lines -- Certification and certified-head updates share the same ordered fold transitions. */
 
