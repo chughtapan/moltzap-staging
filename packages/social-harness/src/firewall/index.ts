@@ -255,22 +255,30 @@ function liveFirewall(
     const permits = yield* Effect.makeSemaphore(
       options.configuration.maximumConcurrentChecks,
     );
-    function activate(replacement: ActiveRules) {
-      active = replacement;
-    }
-    function updatePolicy(request: typeof policyUpdateSchema.Type) {
-      return edits.withPermits(1)(
-        Effect.gen(function* () {
-          const change = yield* preparePolicyChange(
-            options,
-            active.editableRules,
-            fixedIds,
-            request,
-          );
-          return yield* activatePolicy(sql, change, activate);
-        }),
+    /** Persistence and activation complete in one interruption boundary. */
+    const updatePolicy = Effect.fn(function* (
+      request: typeof policyUpdateSchema.Type,
+    ) {
+      const { change, rules, replacement } = yield* preparePolicyChange(
+        options,
+        active.editableRules,
+        fixedIds,
+        request,
       );
-    }
+      const addedRuleIds = change.add.map((rule) => rule.id);
+      return yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* persistRules(rules, {
+            time: yield* Clock.currentTimeMillis,
+            activeRevision: replacement.configurationDigest,
+            addedRuleIds,
+            removedRuleIds: change.remove,
+          });
+          active = replacement;
+          return { activeRevision: replacement.configurationDigest };
+        }),
+      ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    }, edits.withPermits(1));
     const firewall: FirewallOperations = {
       configuration: options.configuration,
       readPolicy: () =>
@@ -281,26 +289,17 @@ function liveFirewall(
         })),
       updatePolicy,
       readDecisions: (request) => savedDecisions(sql, request),
-      check: (inputs) =>
-        Effect.suspend(() => checkBatch(options, active, permits, inputs)),
+      check: Effect.fn(function* (inputs: readonly PreparedFirewallCheck[]) {
+        const policy = active;
+        return yield* Effect.forEach(
+          inputs,
+          (input) => permits.withPermits(1)(assess(options, policy, input)),
+          { concurrency: options.configuration.maximumConcurrentChecks },
+        );
+      }),
     };
     return Object.freeze(firewall);
   });
-}
-
-function checkBatch(
-  options: CapturedOptions,
-  policy: ActiveRules,
-  permits: Effect.Semaphore,
-  inputs: readonly PreparedFirewallCheck[],
-) {
-  return Effect.forEach(
-    inputs,
-    (input) => permits.withPermits(1)(assess(options, policy, input)),
-    {
-      concurrency: options.configuration.maximumConcurrentChecks,
-    },
-  );
 }
 
 function preparePolicyChange(
@@ -319,27 +318,6 @@ function preparePolicyChange(
     yield* approveRuleChange();
     return { change, rules: next, replacement };
   });
-}
-
-/** Persistence and the sole active-policy assignment complete in one interruption boundary. */
-function activatePolicy(
-  sql: SqlClient.SqlClient,
-  prepared: Effect.Effect.Success<ReturnType<typeof preparePolicyChange>>,
-  activate: (replacement: ActiveRules) => void,
-) {
-  return Effect.uninterruptible(
-    Effect.gen(function* () {
-      const { rules, replacement, change } = prepared;
-      yield* persistRules(rules, {
-        time: yield* Clock.currentTimeMillis,
-        activeRevision: replacement.configurationDigest,
-        addedRuleIds: change.add.map((rule) => rule.id),
-        removedRuleIds: change.remove,
-      });
-      activate(replacement);
-      return { activeRevision: replacement.configurationDigest };
-    }),
-  ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 }
 
 /** Approval remains permissive until the host's human-confirmation boundary is implemented. */
@@ -550,7 +528,20 @@ function editedRules(
   { add, remove }: RuleChange,
 ) {
   return Effect.gen(function* () {
-    const kept = yield* rulesAfterRemovals(rules, fixedRuleIds, remove);
+    for (const [index, ruleId] of remove.entries()) {
+      const path: PolicyEditPath = ["remove", index];
+      if (fixedRuleIds.includes(ruleId)) {
+        return yield* new FirewallPolicyError({
+          reason: "fixed-rule",
+          ruleId,
+          path,
+        });
+      }
+      if (!rules.some((rule) => rule.id === ruleId)) {
+        return yield* invalidRule("unknown-id", { ruleId, path });
+      }
+    }
+    const kept = rules.filter((rule) => !remove.includes(rule.id));
     const ids = new Set(kept.map((rule) => rule.id));
     for (const [index, rule] of add.entries()) {
       const path: PolicyEditPath = ["add", index];
@@ -570,29 +561,6 @@ function editedRules(
       return yield* invalidRule("editable-limit");
     }
     return Object.freeze([...kept, ...add]);
-  });
-}
-
-function rulesAfterRemovals(
-  rules: readonly TextRule[],
-  fixedRuleIds: readonly string[],
-  remove: readonly string[],
-) {
-  return Effect.gen(function* () {
-    for (const [index, ruleId] of remove.entries()) {
-      const path: PolicyEditPath = ["remove", index];
-      if (fixedRuleIds.includes(ruleId)) {
-        return yield* new FirewallPolicyError({
-          reason: "fixed-rule",
-          ruleId,
-          path,
-        });
-      }
-      if (!rules.some((rule) => rule.id === ruleId)) {
-        return yield* invalidRule("unknown-id", { ruleId, path });
-      }
-    }
-    return rules.filter((rule) => !remove.includes(rule.id));
   });
 }
 
