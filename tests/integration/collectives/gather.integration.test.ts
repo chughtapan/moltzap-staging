@@ -206,8 +206,10 @@ function expectInvalidAnswerRefused(
         content: { slot: "sun" },
       },
     }).pipe(Effect.flip);
+    expect(invalid).toBeInstanceOf(SendError);
     expect(invalid).toMatchObject({
-      failure: { kind: "answer-invalid", fields: [{ field: "slot" }] },
+      reason: "content-invalid",
+      detail: expect.stringContaining('field "slot"'),
     });
   });
 }
