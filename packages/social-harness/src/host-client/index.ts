@@ -8,15 +8,7 @@ import {
   SdkHttpError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  Data,
-  Deferred,
-  Effect,
-  Redacted,
-  Ref,
-  type Scope,
-  Stream,
-} from "effect";
+import { Deferred, Effect, Redacted, Ref, type Scope, Stream } from "effect";
 import type { SendResult } from "../host-protocol/send-result.js";
 import { CollectiveError } from "../communication/collectives/contracts.js";
 import {
@@ -58,7 +50,6 @@ const CLIENT_IMPLEMENTATION = {
   name: "sharness-endpoint",
   version: packageVersion,
 } as const;
-class CloseError extends Data.TaggedError("CloseError") {}
 
 /**
  * Connect to one registered daemon for the caller's scope. The daemon's
@@ -98,13 +89,7 @@ export function safeCredentialEndpoint(endpoint: URL): boolean {
 }
 
 function closeClient(client: Client): Effect.Effect<void> {
-  return closeQuietly(() => client.close());
-}
-
-function closeQuietly(close: () => Promise<void>): Effect.Effect<void> {
-  return Effect.tryPromise({ try: close, catch: () => new CloseError() }).pipe(
-    Effect.ignore,
-  );
+  return Effect.tryPromise(() => client.close()).pipe(Effect.ignore);
 }
 
 /**
