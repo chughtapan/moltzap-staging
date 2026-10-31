@@ -40,7 +40,6 @@ import {
   Redacted,
   Schema,
   Stream,
-  Struct,
 } from "effect";
 import { absurd } from "effect/Function";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
@@ -372,12 +371,7 @@ function handleMessageAction(
         ...(result.guidance === undefined
           ? {}
           : {
-              guidance: {
-                ...result.guidance,
-                instructions: result.guidance.instructions.map((instruction) =>
-                  Struct.omit(instruction, "middlewareId"),
-                ),
-              },
+              guidance: result.guidance,
             }),
       }),
     ),

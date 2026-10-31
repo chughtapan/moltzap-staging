@@ -158,16 +158,14 @@ type ExpectedGuidanceSubject = Readonly<{
   text: string;
 }>;
 type ExpectedGuidanceInstruction =
-  | Readonly<{ middlewareId: string; ruleId: string; instruction: string }>
+  | Readonly<{ ruleId: string; instruction: string }>
   | Readonly<{
-      middlewareId: string;
       ruleId: string;
       expectation: "required" | "permitted" | "wait" | "none";
       subjects: readonly string[];
       instruction: string;
     }>
   | Readonly<{
-      middlewareId: string;
       ruleId: string;
       uncertain: Readonly<{ choice: string; probability: number }>;
       instruction: string;

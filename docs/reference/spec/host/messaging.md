@@ -165,6 +165,6 @@ collective's question and form from answer instructions. Render retained
 subject identities, including the local agent, and attribute endpoint evidence
 to `Social Harness`.
 
-Omit internal middleware identifiers and absent subjects. Check references grant
+Omit absent subjects. Check references grant
 no approval, management or system-role authority. Private traces and owner-only
 facts stay private.

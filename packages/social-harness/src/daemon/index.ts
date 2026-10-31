@@ -76,12 +76,7 @@ export {
   loadMessagePolicy,
   type Message,
   type MessageContext,
-  type MessageMiddleware,
   MessagePolicy,
-  MiddlewareError,
-  type MiddlewareInput,
-  type MiddlewareResult,
-  type RuleDescription,
   type TextPolicySettings,
   type TextRule,
 } from "../firewall/index.js";
@@ -92,7 +87,7 @@ export namespace Daemon {
   export const help = processHelp;
 
   /**
-   * Trusted composition fixes code and evidence while owner tools edit natural-language rules.
+   * Trusted composition supplies the provider and fixed rules while owner tools edit local rules.
    * See {@link withFirewall} for the composition fields.
    */
   export type FirewallOptions = ManagedFirewallOptions;
@@ -207,9 +202,9 @@ export namespace Daemon {
   ).pipe(Layer.provide(telemetry));
 
   /**
-   * Fixed middleware and persisted natural-language rules are installed before the daemon accepts host calls.
+   * Fixed and editable text rules are installed before the daemon accepts host calls.
    * The environment must not also name a message-policy document.
-   * @param options Fixed chains, provider settings and initial editable natural-language documents.
+   * @param options Provider settings, owner facts, fixed rules and initial editable rules.
    * @returns The complete daemon layer with both message boundaries checked.
    */
   export const withFirewall = (

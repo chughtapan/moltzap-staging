@@ -10,7 +10,7 @@ import {
 } from "./values.js";
 /** Only an empty database or the current stored format can be opened. */
 export type StoreOpening = "create" | "reopen";
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 const collectiveSchemaSql = `
   CREATE TABLE collective_operations (
     operation_id TEXT PRIMARY KEY,

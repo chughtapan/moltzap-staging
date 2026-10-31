@@ -31,15 +31,12 @@ priority order:
 2. Required missing evidence, unavailable checks or conflicting expectations hold.
 3. Otherwise, admit.
 
-Code and text rules have equal weight. Every declared rule needs a finding;
-a pass cannot erase another finding. Checks run in order, continuing after
-rejection within budgets. Each receives the same captured candidate and context and cannot alter them. Even an empty installed chain validates input
-and required evidence.
+Every active rule needs a finding. A pass cannot erase another rule's violation.
+Checks use the captured candidate and context and cannot alter them. An empty
+policy still validates the input and required evidence.
 
-Completed findings survive partial failure. Rules without valid results,
-including those with invalid dependencies or insufficient budget, are unavailable. Cancellation produces no
-decision. Custom code has daemon privileges; timeouts cannot isolate code that
-blocks the process.
+Completed findings survive partial failure. Rules without valid judgments or
+sufficient budget are unavailable. Cancellation produces no decision.
 
 ### Natural-language judgments
 
@@ -206,13 +203,13 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
 | `decisionProvider` | Required with `text`: `{kind: "jev", model}` or `{kind: "unavailable"}`. |
 | `textSettings` | Defaults: probability 0.5; 384,000 request bytes; 15 s per stage. |
-| `settings` | Defaults: 150 s per attempt; 70 s per middleware; 512,000 input bytes; 2,000,000 result bytes. |
+| `settings` | Defaults: 150 s per attempt; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
 
 Unknown properties and unsupported values fail. Trusted process composition may
-supply its own provider and fixed code checks. The generated API reference owns
+supply its own provider and fixed text rules. The generated API reference owns
 those callable types.
 
 Jev is an optional TypeSafe service. It trims the key from
@@ -330,7 +327,7 @@ request budget. Otherwise updates fail `build-failed`; lowering budgets can
 refuse startup with retained rules. Longer messages/evidence can still overflow.
 
 `activeRevision` hashes the complete installation with SHA-256, including mode,
-rules, settings and provenance, and is stable across identical restarts. Every
+rules, settings and provider configuration, and is stable across identical restarts. Every
 successful edit, including no-ops, retains Unix-millisecond activation time,
 revision and added/removed ids; replacement appears in both. These records
 contain no rule text or provider traces and survive restart even if no message
@@ -348,7 +345,7 @@ assessment, including refused first messages without a conversation. Incoming
 rows identify authors; endpoint-created results/failures or absent peers use
 `null`. Retained identities survive restart without lookup.
 
-`decidedBy` deduplicates deciding rules in chain order:
+`decidedBy` lists deciding rules in policy order:
 
 | Reason | Rules |
 | --- | --- |
@@ -358,17 +355,15 @@ rows identify authors; endpoint-created results/failures or absent peers use
 | Admission | Uncertain rules, otherwise none. |
 
 Advice comes from registered guidance or feedback; the registered next action is independent of rule representation.
-Sources are `code`, `fixed` or `editable`. Rule provenance explains the
-decision and grants no caller privileges. A norm proposed by a peer becomes
+Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
 active only through an authorized policy change.
 
-`cause` describes the first deciding text rule, otherwise the first deciding rule:
+`cause` describes the first deciding rule:
 
 | Cause | Meaning |
 | --- | --- |
 | `judgment` | Settled model judgment. |
 | `uncertain` | Valid uncertain judgment admitted with advice. |
 | `unavailable` | Failed/invalid/budget-exceeded/unrunnable provider or check. |
-| `code` | Code finding. |
 | `endpoint` | Hold without deciding rule, such as missing evidence or unavailable guidance. |
 | `default` | Admission without qualifying rule. |

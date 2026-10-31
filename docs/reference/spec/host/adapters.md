@@ -80,8 +80,7 @@ admitted-send guidance.
 ## Receiving messages
 
 Adapters preserve sender, conversation address and complete group membership
-under the [guidance contract](./messaging.md#local-guidance), including omitting
-internal middleware identifiers. Results and operation failures appear as
+under the [guidance contract](./messaging.md#local-guidance). Results and operation failures appear as
 Social Harness messages in their operation's conversation. Native adapters use
 each delivery's event id for its turn. Redelivery keeps that id. Withheld text
 identifies the deciding check and reason.
