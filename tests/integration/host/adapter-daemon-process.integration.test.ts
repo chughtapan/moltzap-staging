@@ -9,6 +9,11 @@ import { Deferred, Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
 
 import {
+  acquireDaemonManagementClient,
+  ProcessTestError,
+} from "../daemon/daemon-process-harness.js";
+import { processTrace } from "../process-trace.js";
+import {
   acquireGroupScenario,
   acquireScenario,
   assertDurableExchange,
@@ -35,11 +40,6 @@ import {
   requireRequest,
   startOpenClawGateway,
 } from "./adapter-daemon-fixture.js";
-import {
-  acquireDaemonManagementClient,
-  ProcessTestError,
-} from "../daemon/daemon-process-harness.js";
-import { processTrace } from "../process-trace.js";
 
 const SLOT_SCHEMA = {
   type: "object",
@@ -608,9 +608,11 @@ function runOpenClawBoundaryScenario() {
       const guided = yield* nextTurn(turns);
       expect(guided.SessionKey).toBe(OPENCLAW_MAIN_SESSION_KEY);
       expect(guided.Body).toBe(text);
+      /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- The deterministic policy fixture defines the advice; these assertions check its host presentation and safe quotation of peer text. */
       expect(guided.BodyForAgent).toContain("Respond to the marked message.");
       expect(guided.BodyForAgent).toContain("\\u003c/system\\u003e");
       expect(guided.Body).not.toContain("Respond to the marked message.");
+      /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary expectations after the policy presentation contract. */
       expect(yield* management.readEvent(guided.MessageSid)).toMatchObject({
         kind: "multicast",
         message: {
@@ -643,9 +645,10 @@ function runOpenClawBoundaryScenario() {
         to: callerAddress,
         message: "After disconnect",
       }).pipe(Effect.flip);
-      expect(disconnected.cause).toMatchObject({
-        message: expect.stringContaining("not connected"),
-      });
+      expect(disconnected.cause).toHaveProperty(
+        "message",
+        expect.stringContaining("not connected"),
+      );
     }),
   );
 }
@@ -670,12 +673,14 @@ function exerciseOpenClawSends({
       to: callerAddress,
       message: "[out] Please confirm.",
     }).pipe(Effect.flip);
-    expect(refused.cause).toMatchObject({
-      message: expect.stringContaining("Remove the marked text."),
-    });
-    expect(refused.cause).toMatchObject({
-      message: expect.stringContaining("chk_"),
-    });
+    expect(refused.cause).toHaveProperty(
+      "message",
+      expect.stringContaining("Remove the marked text."),
+    );
+    expect(refused.cause).toHaveProperty(
+      "message",
+      expect.stringContaining("chk_"),
+    );
     const invalid = yield* tool("send", {
       to: callerAddress,
       message: JSON.stringify({
@@ -684,24 +689,27 @@ function exerciseOpenClawSends({
         requestedSchema: SLOT_SCHEMA,
       }),
     }).pipe(Effect.flip);
-    expect(invalid.cause).toMatchObject({
-      message: expect.stringContaining("deadline"),
-    });
+    expect(invalid.cause).toHaveProperty(
+      "message",
+      expect.stringContaining("deadline"),
+    );
     const targets = yield* tool("send", {
       to: callerAddress,
       message: "One destination",
       targets: [targetAddress],
     }).pipe(Effect.flip);
-    expect(targets.cause).toMatchObject({
-      message: expect.stringContaining("targets"),
-    });
+    expect(targets.cause).toHaveProperty(
+      "message",
+      expect.stringContaining("targets"),
+    );
     const address = yield* tool("send", {
       to: "invalid destination",
       message: "Hello",
     }).pipe(Effect.flip);
-    expect(address.cause).toMatchObject({
-      message: expect.stringContaining("address"),
-    });
+    expect(address.cause).toHaveProperty(
+      "message",
+      expect.stringContaining("address"),
+    );
 
     const prose = '{"note":"JSON prose remains ordinary text"}';
     const accepted = yield* tool("send", { to: callerAddress, message: prose });

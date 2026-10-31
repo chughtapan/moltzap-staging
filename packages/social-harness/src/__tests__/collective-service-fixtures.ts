@@ -227,9 +227,10 @@ function createCommunication(
         const message = messages.get(
           `${reference.authorAgentId}:${reference.msgId}`,
         );
-        return message === undefined
-          ? yield* new CommunicationError({ reason: "unknown-message" })
-          : message;
+        if (message === undefined) {
+          return yield* new CommunicationError({ reason: "unknown-message" });
+        }
+        return message;
       }),
     consume: () => Effect.never,
     listConversations: () =>

@@ -8,17 +8,15 @@ import {
 import { Duration, Effect, Fiber } from "effect";
 import { expect, it } from "vitest";
 import {
+  acquireRouterHoldProxy,
+  type RouterHoldProxy,
+} from "../communication/router-hold-proxy.js";
+import {
   acquireProcessInfrastructure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   type ProcessInfrastructure,
 } from "../daemon/daemon-process-harness.js";
-import {
-  acquireOtlpReceiver,
-  awaitSpans,
-  type ExportedSpan,
-  type OtlpReceiver,
-} from "./otlp-receiver.js";
 import {
   groupAddress,
   nextItem,
@@ -27,11 +25,13 @@ import {
   startParticipants,
 } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import {
-  acquireRouterHoldProxy,
-  type RouterHoldProxy,
-} from "../communication/router-hold-proxy.js";
 import { anyNumber, anyString } from "../test-matchers.js";
+import {
+  acquireOtlpReceiver,
+  awaitSpans,
+  type ExportedSpan,
+  type OtlpReceiver,
+} from "./otlp-receiver.js";
 
 const question = "Which day works for the review?";
 

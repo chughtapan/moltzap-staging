@@ -11,9 +11,9 @@ import {
 } from "@modelcontextprotocol/client";
 import {
   AgentName,
-  InboundItem,
   AgentSigningAuthority,
   Ed25519PublicKey,
+  InboundItem,
   type MessageAddressInput,
   PrincipalId,
 } from "@moltzap/social-harness";

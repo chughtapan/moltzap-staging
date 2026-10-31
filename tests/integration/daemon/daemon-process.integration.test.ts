@@ -22,20 +22,6 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
-  acquireDaemonManagementClient,
-  acquireDaemonProcess,
-  acquireProcessInfrastructure,
-  awaitDaemonStartupFailure,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
-  makeRegistrationRequest,
-  type ProcessInfrastructure,
-  ProcessTestError,
-  type RunningProcess,
-  stopProcess,
-  waitForExit,
-} from "./daemon-process-harness.js";
-import {
   agentNotAdmittedDiagnostic,
   agentNotAdmittedRemedy,
   agentResetDocsLink,
@@ -50,6 +36,20 @@ import {
 import { processTrace } from "../process-trace.js";
 import { historyMessage } from "../saved-history.js";
 import { arrayContaining } from "../test-matchers.js";
+import {
+  acquireDaemonManagementClient,
+  acquireDaemonProcess,
+  acquireProcessInfrastructure,
+  awaitDaemonStartupFailure,
+  type DaemonProcessFixture,
+  makeDaemonProcessFixture,
+  makeRegistrationRequest,
+  type ProcessInfrastructure,
+  ProcessTestError,
+  type RunningProcess,
+  stopProcess,
+  waitForExit,
+} from "./daemon-process-harness.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
   readonly agent: AgentView;

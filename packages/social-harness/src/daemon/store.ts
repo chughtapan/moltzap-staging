@@ -6,7 +6,6 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqlClient from "@effect/sql/SqlClient";
 import { Cause, Effect, Layer, Option } from "effect";
 import { join } from "node:path";
-import type { DeliveryToken } from "../communication/store/types.js";
 import type { FirewallCompletion } from "../firewall/store/types.js";
 import type { ItemProjection, LocalAdmission } from "./inbox/types.js";
 import {
@@ -27,7 +26,6 @@ import { saveCheckDecision } from "../firewall/store/firewall.js";
 import { createFirewallTables } from "../firewall/store/schema.js";
 import {
   requireNextItemToCheck,
-  retireQueuedItem,
   settleLocalItem,
   settleQueuedItem,
 } from "./inbox/pending.js";
@@ -119,7 +117,7 @@ export function saveMessageDecision(
     }),
   ).pipe(Effect.withSpan("saveMessageDecision"));
 }
-/** Result text, answer visibility and saved evidence share the same publication. */
+/** Result text, answer visibility and completed checks commit together. */
 export function saveResultDecision(admission: LocalAdmission) {
   return transaction(
     Effect.gen(function* () {
@@ -129,11 +127,6 @@ export function saveResultDecision(admission: LocalAdmission) {
     }),
   ).pipe(Effect.withSpan("saveResultDecision"));
 }
-/** Expired requests leave the host queue without changing communication custody. */
-export function retireIncomingItem(token: DeliveryToken) {
-  return transaction(retireQueuedItem(token));
-}
-
 function initializeDatabase(options: Parameters<typeof layer>[0]) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

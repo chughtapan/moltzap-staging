@@ -21,6 +21,10 @@ import {
 } from "effect";
 import { expect, it } from "vitest";
 import {
+  acquireRouterHoldProxy,
+  type RouterHoldProxy,
+} from "../communication/router-hold-proxy.js";
+import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
   acquireProcessInfrastructure,
@@ -30,10 +34,6 @@ import {
 } from "../daemon/daemon-process-harness.js";
 import { registerFixture } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import {
-  acquireRouterHoldProxy,
-  type RouterHoldProxy,
-} from "../communication/router-hold-proxy.js";
 import { historyMessage } from "../saved-history.js";
 
 /**

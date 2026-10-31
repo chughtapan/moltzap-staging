@@ -81,23 +81,23 @@ export const answer = Effect.fn("answer")(function* (
       }),
     );
   }
-  yield* Effect.uninterruptible(
-    Effect.gen(function* () {
-      const inserted = yield* transaction(
-        claimAnswer(environment, message, response.operationId),
-      );
-      if (inserted) {
-        yield* Queue.offer(environment.observations, {
-          operationId: response.operationId,
-          role: "response",
-          destination: outgoingAddress(message),
-          reference: {
-            authorAgentId: message.author.agentId,
-            msgId: message.msgId,
-          },
-        });
-      }
-    }),
+  yield* transaction(
+    claimAnswer(environment, message, response.operationId),
+  ).pipe(
+    Effect.flatMap((inserted) =>
+      inserted
+        ? Queue.offer(environment.observations, {
+            operationId: response.operationId,
+            role: "response",
+            destination: outgoingAddress(message),
+            reference: {
+              authorAgentId: message.author.agentId,
+              msgId: message.msgId,
+            },
+          })
+        : Effect.void,
+    ),
+    Effect.uninterruptible,
   );
 });
 

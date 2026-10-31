@@ -173,19 +173,6 @@ export function sameMessage(left: Message, right: Message) {
   return Schema.equivalence(Message)(left, right);
 }
 
-/**
- * A request message's question as every member's model reads it: its text
- * parts, one per line. The collective part is a data part, so it is never
- * among them.
- * @param content The request message's content.
- * @returns The text parts, joined by newlines.
- */
-function questionText(content: Message["content"]): string {
-  return content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n");
-}
-
 /** One service scope supervises deadlines and certification observations. */
 export interface Environment {
   readonly sql: SqlClient.SqlClient;
@@ -206,4 +193,10 @@ export function transaction<A, E, R>(work: Effect.Effect<A, E, R>) {
       () => new EndpointStoreError({ reason: "persistence" }),
     ),
   );
+}
+
+function questionText(content: Message["content"]): string {
+  return content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
 }

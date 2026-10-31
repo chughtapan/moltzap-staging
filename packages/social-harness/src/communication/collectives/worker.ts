@@ -2,8 +2,8 @@
 
 import * as SqlClient from "@effect/sql/SqlClient";
 import { Cause, Clock, Deferred, Effect, Queue } from "effect";
+import type { EndpointStoreError } from "../store/index.js";
 import type { StoredCollectiveMessage } from "./store.js";
-import { EndpointStoreError } from "../store/index.js";
 import { CollectivesError } from "./contracts.js";
 import { type Environment, transaction } from "./operations.js";
 import { checkResultSize, finishLocal, finishRemote } from "./results.js";

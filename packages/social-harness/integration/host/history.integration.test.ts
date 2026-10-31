@@ -27,7 +27,7 @@ import {
   queueIncomingItem,
   settleQueuedItem,
 } from "../../src/daemon/inbox/pending.js";
-import { retireItem } from "../../src/daemon/inbox/store.js";
+import { acknowledgeInboxItem } from "../../src/daemon/inbox/store.js";
 import { makeHistoryOperations } from "../../src/daemon/messaging/history.js";
 import { managementReadConversationRequestSchema } from "../../src/host-protocol/index.js";
 import { InboundItem } from "../../src/host-protocol/items.js";
@@ -98,7 +98,7 @@ function retainView() {
         canonicalGuidance: yield* encodeRuntimeValue(guidance),
       });
       yield* settleQueuedItem(deliveryToken, "admitted");
-      yield* retireItem(deliveryToken);
+      yield* acknowledgeInboxItem(deliveryToken);
     }),
   );
 }
@@ -218,7 +218,7 @@ function firstResultPage() {
     if (first === undefined || page.continuation === null) {
       return yield* Effect.dieMessage("Expected a paginated result history");
     }
-    yield* retireItem(first.deliveryToken);
+    yield* acknowledgeInboxItem(first.deliveryToken);
     return page.continuation;
   });
 }

@@ -32,7 +32,7 @@ import {
 import {
   isMessageVisible,
   readHistoryViews,
-  retireItem,
+  acknowledgeInboxItem,
 } from "../../src/daemon/inbox/store.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../src/encoding/limits.js";
 import { InboundItem } from "../../src/host-protocol/items.js";
@@ -181,7 +181,7 @@ function retainItem(item: Effect.Effect.Success<typeof incoming>) {
       yield* queueIncomingItem(item);
       yield* putInboxItem(item);
       yield* settleQueuedItem(deliveryToken, "admitted");
-      yield* retireItem(deliveryToken);
+      yield* acknowledgeInboxItem(deliveryToken);
     }),
   );
 }

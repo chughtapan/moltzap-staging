@@ -148,23 +148,21 @@ export function putInboxItem(
   }).pipe(storeOperation, Effect.withSpan("putInboxItem"));
 }
 /** Acknowledgment preserves the immutable host binding after the host accepts it. */
-export function retireItem(
+export function acknowledgeInboxItem(
   deliveryToken: DeliveryToken,
 ): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
-    const retained = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT delivery_token FROM incoming_items WHERE delivery_token = ? AND published_item IS NOT NULL",
+    const [retained] = yield* database.unsafe<
+      Readonly<Record<string, unknown>>
+    >(
+      "UPDATE incoming_items SET acknowledged=1 WHERE delivery_token=? AND published_item IS NOT NULL RETURNING delivery_token",
       [deliveryToken],
-    ))[0];
+    );
     if (retained === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "UPDATE incoming_items SET acknowledged = 1 WHERE delivery_token = ?",
-      [deliveryToken],
-    );
-  }).pipe(storeOperation, Effect.withSpan("retireItem"));
+  }).pipe(storeOperation, Effect.withSpan("acknowledgeInboxItem"));
 }
 /** Receipt retirement and callback progress commit together across crashes. */
 export function completeWebhookDelivery(
@@ -174,7 +172,7 @@ export function completeWebhookDelivery(
   return Effect.gen(function* () {
     yield* transaction(
       Effect.gen(function* () {
-        yield* retireItem(deliveryToken);
+        yield* acknowledgeInboxItem(deliveryToken);
         yield* writeEventState(canonicalState);
       }),
     );
@@ -231,21 +229,6 @@ export function readInboxSummary(): Effect.Effect<
       newestSequence: yield* newestSequence(),
     };
   }).pipe(storeOperation, Effect.withSpan("readInboxSummary"));
-}
-/**
- * Retain the published item after its host acknowledges delivery.
- * @param deliveryToken Stable delivered identity, including an existing tombstone.
- */
-export function acknowledgeInboxItem(
-  deliveryToken: DeliveryToken,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
-  return Effect.gen(function* () {
-    yield* transaction(
-      Effect.gen(function* () {
-        yield* retireItem(deliveryToken);
-      }),
-    );
-  }).pipe(storeOperation, Effect.withSpan("acknowledgeInboxItem"));
 }
 /**
  * Read the runtime-owned event state without interpreting its private format.

@@ -98,8 +98,7 @@ can stop that conversation's progress.
 Members exchange verified proposals and evidence through Router.
 A member first signs the proposed action. Those signatures form an action
 certificate. A member then saves the record and sufficient action evidence
-and its signed dissemination envelope together before issuing a durability vote.
-The vote attests that the signer retained
+before issuing a durability vote. The vote attests that the signer retained
 that material across restart. An action signature alone does not establish that
 its signer has received the other signatures needed to recover the record.
 Members retain the complete record with both certificates before advancing,
@@ -218,11 +217,10 @@ stop later traffic.
 
 ## Messages supplied to callers
 
-First local certification of a remote record makes its verified Message available
-to the caller in durable local commit order. Catch-up fills missing messages in
-conversation order. Communication marks a record consumed only after the caller's
-handler succeeds. Handler failure or interruption can therefore repeat that Message,
-including after restart. Authors receive no self-copy.
+Communication supplies each conversation's verified Messages in order and fills
+missing messages during catch-up. A Message remains available until its handler
+succeeds. Failure or interruption can repeat delivery, including after restart.
+Authors receive no self-copy.
 
 ## Transport retries
 
