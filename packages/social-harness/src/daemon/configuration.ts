@@ -9,6 +9,7 @@ import {
   Schema,
 } from "effect";
 import type { MessagePolicyConfigurationFailure } from "../firewall/config.js";
+import type { DaemonOAuth } from "./mcp/index.js";
 import { AgentName, PrincipalId } from "../identity/identifiers.js";
 import { AgentSigningAuthority, Ed25519PublicKey } from "../identity/keys.js";
 import { OperationId } from "../identity/registry/contract.js";
@@ -113,7 +114,29 @@ const configurationFields = {
     "",
   ),
   historyExport: setting("SHARNESS_HISTORY_EXPORT", configuredPath, undefined),
-  mcpCredentialFile: setting("SHARNESS_MCP_CREDENTIAL_FILE", configuredPath),
+  mcpCredentialFile: setting(
+    "SHARNESS_MCP_CREDENTIAL_FILE",
+    configuredPath,
+    undefined,
+  ),
+  mcpBindHost: setting("SHARNESS_MCP_BIND_HOST", configuredPath, "127.0.0.1"),
+  mcpPublicUrl: setting("SHARNESS_MCP_PUBLIC_URL", configuredPath, undefined),
+  oauthIssuer: setting("SHARNESS_OAUTH_ISSUER", configuredPath, undefined),
+  oauthOwnerSubject: setting(
+    "SHARNESS_OAUTH_OWNER_SUBJECT",
+    configuredPath,
+    undefined,
+  ),
+  oauthRequiredScope: setting(
+    "SHARNESS_OAUTH_REQUIRED_SCOPE",
+    configuredPath,
+    undefined,
+  ),
+  oauthAllowedOrigins: setting(
+    "SHARNESS_OAUTH_ALLOWED_ORIGINS",
+    Schema.parseJson(Schema.Array(Schema.String)),
+    [],
+  ),
   messagePolicyFile: setting(
     "SHARNESS_MESSAGE_POLICY_FILE",
     configuredPath,
@@ -143,7 +166,7 @@ export const processHelp = [
   "Usage: sharnessd [--help]",
   "",
   "Environment:",
-  "  Admission credential: required only before registration; MCP credential file: required.",
+  "  Admission credential: required only before registration; MCP: local bearer or complete OAuth settings.",
   "  Message policy: unset, no firewall; the decision-provider key applies only with it.",
   ...Object.values(configurationFields).map((field) => `  ${field.usage}`),
   "",
@@ -215,28 +238,33 @@ export const loadDaemonProcessConfiguration: Effect.Effect<
       registrationAgentName,
       registrationOperationId,
       registrationPrincipalId,
+      mcpPublicUrl,
+      oauthIssuer,
+      oauthOwnerSubject,
+      oauthRequiredScope,
+      oauthAllowedOrigins,
       ...configuration
     } = values;
-    return registrationRequest({
-      registrationAgentName,
-      registrationOperationId,
-      registrationPrincipalId,
-    }).pipe(
-      Effect.map(
-        (registration): DaemonProcessConfiguration => ({
-          ...configuration,
-          ...(registration === undefined ? {} : { registration }),
-          agentPrivateKeyFile: Redacted.make(configuration.agentPrivateKeyFile),
-          admissionCredentialFile:
-            configuration.admissionCredentialFile === ""
-              ? undefined
-              : Redacted.make(configuration.admissionCredentialFile),
-          mcpCredentialFile: Redacted.make(configuration.mcpCredentialFile),
-          decisionProviderKeyFile:
-            configuration.decisionProviderKeyFile === undefined
-              ? undefined
-              : Redacted.make(configuration.decisionProviderKeyFile),
-        }),
+    const oauth = oauthConfiguration({
+      mcpPublicUrl,
+      oauthIssuer,
+      oauthOwnerSubject,
+      oauthRequiredScope,
+      oauthAllowedOrigins,
+      credential: configuration.mcpCredentialFile,
+      host: configuration.mcpBindHost,
+    });
+    return oauth.pipe(
+      Effect.flatMap((oauth) =>
+        registrationRequest({
+          registrationAgentName,
+          registrationOperationId,
+          registrationPrincipalId,
+        }).pipe(
+          Effect.map((registration) =>
+            processConfiguration(configuration, { oauth, registration }),
+          ),
+        ),
       ),
     );
   }),
@@ -304,9 +332,13 @@ const credentialFailure =
 const mcpCredential = credentialText.pipe(Schema.minLength(32));
 
 const loadMcpCredential = (configuration: DaemonProcessConfiguration) =>
-  readCredential(configuration.mcpCredentialFile, mcpCredential).pipe(
-    Effect.mapError(credentialFailure("mcp-credential-file", "mcp-credential")),
-  );
+  configuration.mcpCredentialFile === undefined
+    ? Effect.succeed(undefined)
+    : readCredential(configuration.mcpCredentialFile, mcpCredential).pipe(
+        Effect.mapError(
+          credentialFailure("mcp-credential-file", "mcp-credential"),
+        ),
+      );
 
 const loadConfiguredAdmissionCredential = (
   configuration: DaemonProcessConfiguration,
@@ -412,4 +444,159 @@ function invalidConfigurationMessage(error: ConfigError.InvalidData): string {
   return field === undefined
     ? "environment configuration is invalid"
     : `${name} ${field.reason}`;
+}
+
+function processConfiguration(
+  configuration: Omit<
+    Effect.Effect.Success<typeof configuredValues>,
+    | "mcpPublicUrl"
+    | "oauthIssuer"
+    | "oauthOwnerSubject"
+    | "oauthRequiredScope"
+    | "oauthAllowedOrigins"
+    | "registrationAgentName"
+    | "registrationOperationId"
+    | "registrationPrincipalId"
+  >,
+  authority: {
+    readonly oauth?: DaemonOAuth;
+    readonly registration?: DaemonProcessConfiguration["registration"];
+  },
+): DaemonProcessConfiguration {
+  return {
+    ...configuration,
+    ...(authority.oauth === undefined ? {} : { oauth: authority.oauth }),
+    ...(authority.registration === undefined
+      ? {}
+      : { registration: authority.registration }),
+    agentPrivateKeyFile: Redacted.make(configuration.agentPrivateKeyFile),
+    admissionCredentialFile:
+      configuration.admissionCredentialFile === ""
+        ? undefined
+        : Redacted.make(configuration.admissionCredentialFile),
+    mcpCredentialFile:
+      configuration.mcpCredentialFile === undefined
+        ? undefined
+        : Redacted.make(configuration.mcpCredentialFile),
+    decisionProviderKeyFile:
+      configuration.decisionProviderKeyFile === undefined
+        ? undefined
+        : Redacted.make(configuration.decisionProviderKeyFile),
+  };
+}
+
+interface OAuthInputs {
+  readonly mcpPublicUrl?: string;
+  readonly oauthIssuer?: string;
+  readonly oauthOwnerSubject?: string;
+  readonly oauthRequiredScope?: string;
+  readonly oauthAllowedOrigins: readonly string[];
+  readonly credential?: string;
+  readonly host: string;
+}
+
+/** Public authority is complete and exclusive, and never derives from request headers. */
+function oauthConfiguration(
+  input: OAuthInputs,
+): Effect.Effect<DaemonOAuth | undefined, DaemonConfigurationError> {
+  const absent = [
+    input.mcpPublicUrl,
+    input.oauthIssuer,
+    input.oauthOwnerSubject,
+    input.oauthRequiredScope,
+  ].every((value) => value === undefined);
+  if (!absent) {
+    return publicOAuthConfiguration(input);
+  }
+  return input.credential !== undefined &&
+    input.host === "127.0.0.1" &&
+    input.oauthAllowedOrigins.length === 0
+    ? Effect.succeed(undefined)
+    : Effect.fail(invalidOAuthConfiguration());
+}
+
+function publicOAuthConfiguration(
+  input: OAuthInputs,
+): Effect.Effect<DaemonOAuth, DaemonConfigurationError> {
+  if (
+    !completeOAuth(input) ||
+    !secureUrl(input.mcpPublicUrl) ||
+    !secureUrl(input.oauthIssuer)
+  ) {
+    return Effect.fail(invalidOAuthConfiguration());
+  }
+  const resource = new URL(input.mcpPublicUrl);
+  if (
+    !validResource(resource, input.mcpPublicUrl) ||
+    !validScope(input.oauthRequiredScope) ||
+    !validOrigins(input.oauthAllowedOrigins)
+  ) {
+    return Effect.fail(invalidOAuthConfiguration());
+  }
+  return Effect.succeed({
+    resource,
+    issuer: input.oauthIssuer,
+    ownerSubject: input.oauthOwnerSubject,
+    scope: input.oauthRequiredScope,
+    allowedOrigins: input.oauthAllowedOrigins,
+  });
+}
+
+function completeOAuth(
+  input: OAuthInputs,
+): input is OAuthInputs &
+  Required<
+    Pick<
+      OAuthInputs,
+      | "mcpPublicUrl"
+      | "oauthIssuer"
+      | "oauthOwnerSubject"
+      | "oauthRequiredScope"
+    >
+  > {
+  return (
+    [
+      input.mcpPublicUrl,
+      input.oauthIssuer,
+      input.oauthOwnerSubject,
+      input.oauthRequiredScope,
+    ].every((value) => value !== undefined) && input.credential === undefined
+  );
+}
+
+function validResource(url: URL, supplied: string): boolean {
+  return url.pathname === "/mcp" && url.href === supplied;
+}
+
+function validScope(value: string): boolean {
+  return /^[\x21\x23-\x5B\x5D-\x7E]+$/u.test(value);
+}
+
+function validOrigins(values: readonly string[]): boolean {
+  return values.every(
+    (value) => isSerializedOrigin(value) && value.startsWith("https://"),
+  );
+}
+
+function invalidOAuthConfiguration(): DaemonConfigurationError {
+  return new DaemonConfigurationError({
+    reason: "environment",
+    message: linked(
+      "Configure either loopback MCP bearer access or complete public OAuth settings with a canonical HTTPS /mcp resource",
+      `${RUN_SHARNESSD}#setting`,
+    ),
+  });
+}
+
+function secureUrl(value: string): boolean {
+  if (!URL.canParse(value) || value.includes("?") || value.includes("#")) {
+    return false;
+  }
+  const url = new URL(value);
+  return (
+    url.protocol === "https:" &&
+    [url.username, url.password, url.search, url.hash].every(
+      (component) => component === "",
+    )
+  );
 }

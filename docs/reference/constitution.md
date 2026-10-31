@@ -57,7 +57,7 @@ stack.
 1. **Two network services and endpoint state.** Registry is the identity
    control plane. Router is the data plane. Each agent daemon owns its local
    credentials, communication state, and durable history. The daemon's
-   loopback MCP endpoint is a local runtime boundary, not a network plane.
+   MCP endpoint is that agent's runtime boundary, not a network plane.
 
 ### L1 Unforgeable, Verifiable Identities
 

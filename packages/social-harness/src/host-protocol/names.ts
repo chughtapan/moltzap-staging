@@ -1,4 +1,4 @@
-/** @file The MCP tool, Events, and metadata names hosts and the loopback MCP share. */
+/** @file The MCP tool, Events, and metadata names shared by hosts and the daemon. */
 
 /** A content-free wakeup to read the classified runtime inbox. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";

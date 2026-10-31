@@ -393,4 +393,97 @@ describe("MCP credential configuration", () => {
   it("reports an unreadable credential file", rejectsMissingCredential);
 });
 
+const oauthValues = (directory: string) => {
+  const values = requiredConfiguration(directory);
+  values.delete("SHARNESS_MCP_CREDENTIAL_FILE");
+  values.set("SHARNESS_MCP_PUBLIC_URL", "https://mcp.example.test/mcp");
+  values.set("SHARNESS_MCP_BIND_HOST", "0.0.0.0");
+  values.set("SHARNESS_OAUTH_ISSUER", "https://issuer.example.test/");
+  values.set("SHARNESS_OAUTH_OWNER_SUBJECT", "owner-subject");
+  values.set("SHARNESS_OAUTH_REQUIRED_SCOPE", "use:mcp");
+  return values;
+};
+const loadValues = (values: Map<string, string>) =>
+  loadDaemonProcessConfiguration.pipe(
+    Effect.withConfigProvider(ConfigProvider.fromMap(values)),
+  );
+const loadsOAuth = () =>
+  Effect.gen(function* () {
+    const directory = temporaryDirectory();
+    writeFileSync(join(directory, "agent.pem"), privateKey);
+    const configuration = yield* loadValues(oauthValues(directory));
+    const bootstrap = yield* loadDaemonBootstrap(configuration);
+    expect(bootstrap.configuration.oauth).toMatchObject({
+      issuer: "https://issuer.example.test/",
+      ownerSubject: "owner-subject",
+      scope: "use:mcp",
+    });
+    expect(bootstrap.configuration.oauth?.resource.href).toBe(
+      "https://mcp.example.test/mcp",
+    );
+  });
+const rejectsIncompleteOAuth = () =>
+  Effect.gen(function* () {
+    const directory = temporaryDirectory();
+    const mixed = oauthValues(directory);
+    mixed.set("SHARNESS_MCP_CREDENTIAL_FILE", join(directory, "credential"));
+    expect(yield* failureReason(loadValues(mixed))).toBe("environment");
+    const partial = oauthValues(directory);
+    partial.delete("SHARNESS_OAUTH_OWNER_SUBJECT");
+    expect(yield* failureReason(loadValues(partial))).toBe("environment");
+    const insecure = oauthValues(directory);
+    insecure.set("SHARNESS_OAUTH_ISSUER", "http://issuer.example.test/");
+    expect(yield* failureReason(loadValues(insecure))).toBe("environment");
+    for (const suffix of ["?", "#"]) {
+      const delimited = oauthValues(directory);
+      delimited.set(
+        "SHARNESS_MCP_PUBLIC_URL",
+        `https://mcp.example.test/mcp${suffix}`,
+      );
+      expect(yield* failureReason(loadValues(delimited))).toBe("environment");
+    }
+  });
+/**
+ * Value: protects=canonical HTTPS resource authority without URI credentials;
+ * fails_when=wrong paths, normalization or embedded credentials are accepted;
+ * why_new=earlier cases covered incomplete and insecure settings; seam=none.
+ */
+const rejectsNoncanonicalResources = () =>
+  Effect.gen(function* () {
+    const directory = temporaryDirectory();
+    for (const resource of [
+      "https://mcp.example.test/other",
+      "https://MCP.example.test/mcp",
+      "https://mcp.example.test:443/mcp",
+      "https://mcp.example.test/old/../mcp",
+      "https://owner:example@mcp.example.test/mcp",
+    ]) {
+      const values = oauthValues(directory);
+      values.set("SHARNESS_MCP_PUBLIC_URL", resource);
+      expect(yield* failureReason(loadValues(values))).toBe("environment");
+    }
+    const issuerCredentials = oauthValues(directory);
+    issuerCredentials.set(
+      "SHARNESS_OAUTH_ISSUER",
+      "https://owner:example@issuer.example.test/",
+    );
+    expect(yield* failureReason(loadValues(issuerCredentials))).toBe(
+      "environment",
+    );
+    const accepted = yield* loadValues(oauthValues(directory));
+    expect(accepted.oauth?.resource.href).toBe("https://mcp.example.test/mcp");
+  });
+describe("public MCP OAuth configuration", () => {
+  it(
+    "rejects wrong paths, URI normalization and embedded credentials",
+    rejectsNoncanonicalResources,
+  );
+
+  it(
+    "starts with its fixed owner and issuer without a local credential file",
+    loadsOAuth,
+  );
+  it("rejects mixed, partial and insecure authority", rejectsIncompleteOAuth);
+});
+
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after configuration contract assertions. */

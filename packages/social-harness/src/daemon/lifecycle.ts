@@ -113,17 +113,19 @@ function serveMcp(input: DaemonStartup, workers: FiberSet.FiberSet<never>) {
       (yield* identity.me()).kind === "registered",
       input.bootstrap.configuration.registration,
     );
-    const handler = yield* makeHandler(
-      management,
-      input.bootstrap.mcpCredential,
-    );
+    const handler = yield* makeHandler(management, input.bootstrap);
     yield* acquireHarnessMcpHttpServer({
       port: input.bootstrap.configuration.mcpPort,
       handler,
+      host: input.bootstrap.configuration.mcpBindHost,
+      oauth: input.bootstrap.configuration.oauth,
     }).pipe(Effect.mapError(() => runtimeFailure("listener")));
     yield* watchChanges(handler);
+    const endpoint =
+      input.bootstrap.configuration.oauth?.resource.href ??
+      `http://${LOOPBACK_HOST}:${input.bootstrap.configuration.mcpPort}/mcp`;
     yield* Console.log(
-      `sharnessd listening on http://${LOOPBACK_HOST}:${input.bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+      `sharnessd listening on ${endpoint} (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
     );
     return yield* failure;
   }).pipe(Effect.raceFirst(failure));
@@ -131,15 +133,16 @@ function serveMcp(input: DaemonStartup, workers: FiberSet.FiberSet<never>) {
 
 function makeHandler(
   management: DaemonManagementOperations,
-  credential: DaemonBootstrap["mcpCredential"],
+  bootstrap: DaemonBootstrap,
 ) {
   return Effect.gen(function* () {
     const messaging = yield* HostMessaging;
     const inbox = yield* McpInbox;
     const firewall = yield* Firewall;
+    const authentication = yield* handlerAuthentication(bootstrap);
     return yield* makeHarnessMcpHttpHandler({
       implementation: { name: "sharnessd", version: packageVersion },
-      credential,
+      ...authentication,
       eventStore: inbox,
       operations: {
         ...management,
@@ -254,6 +257,16 @@ function classifyFailure(error: unknown): DaemonRuntimeError {
   return runtimeFailure(
     error.reason === "network-unavailable" ? "listener" : "storage",
   );
+}
+
+function handlerAuthentication(bootstrap: DaemonBootstrap) {
+  if (bootstrap.configuration.oauth !== undefined) {
+    return Effect.succeed({ oauth: bootstrap.configuration.oauth });
+  }
+  if (bootstrap.mcpCredential !== undefined) {
+    return Effect.succeed({ credential: bootstrap.mcpCredential });
+  }
+  return Effect.fail(runtimeFailure("listener"));
 }
 
 function runtimeFailure(

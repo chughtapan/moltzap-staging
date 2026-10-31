@@ -1,4 +1,4 @@
-/** @file Composes the loopback MCP catalog, authenticated handler and listener. */
+/** @file Composes the MCP catalog, authenticated handler and listener. */
 
 import {
   createMcpHandler,
@@ -20,12 +20,10 @@ import {
   Layer,
   Option,
   type ParseResult,
-  Redacted,
   type Runtime,
   Schema,
   Scope,
 } from "effect";
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { CollectiveError } from "../../communication/collectives/contracts.js";
 import type { FirewallSendError } from "../../host-protocol/advice.js";
 import type { EventStore } from "../inbox/store.js";
@@ -91,6 +89,14 @@ import {
 import { SendResultSchema } from "../../host-protocol/send-result.js";
 import { Identity } from "../../identity/local.js";
 import {
+  authenticationChallenge,
+  fetchWithAuthority,
+  makeRequestAdmission,
+  type McpAuthentication,
+  protectedResourcePath,
+  protectedResourceResponse,
+} from "./authentication.js";
+import {
   type HarnessEvents,
   makeHarnessEvents,
   makeHarnessPollEvents,
@@ -102,25 +108,6 @@ import {
 
 /* eslint-disable agent-code-guard/async-keyword -- Official MCP factories and callbacks are Promise-native. */
 
-const credentialDigest = (value: string): Uint8Array =>
-  createHash("sha256").update(value).digest();
-
-/** Every HTTP request authenticates before discovery, SDK parsing or event dispatch. */
-const authenticateHarnessRequest = (
-  request: Request,
-  credential: Redacted.Redacted,
-): boolean => {
-  const authorization = request.headers.get("authorization");
-  return (
-    authorization !== null &&
-    authorization.startsWith("Bearer ") &&
-    timingSafeEqual(
-      credentialDigest(authorization.slice("Bearer ".length)),
-      credentialDigest(Redacted.value(credential)),
-    )
-  );
-};
-
 const REGISTER_TOOL = "register";
 const STATUS_TOOL = "status";
 const SEARCH_CONVERSATIONS_TOOL = "search_conversations";
@@ -128,7 +115,7 @@ const READ_CONVERSATION_TOOL = "read_conversation";
 
 type ClosedOperationError = Readonly<{ readonly reason: string }>;
 
-/** Structural daemon operations projected onto the loopback MCP boundary. */
+/** Structural daemon operations projected onto the daemon MCP boundary. */
 export interface HarnessMcpOperations extends DeliveryOperations {
   readonly readPolicy?: () => Effect.Effect<
     typeof policyReadSchema.Type,
@@ -161,16 +148,15 @@ export interface HarnessMcpEventHandler extends McpHttpHandler {
   readonly notifyPending: () => boolean;
 }
 
-interface HarnessMcpHandlerOptions {
+type HarnessMcpHandlerOptions = McpAuthentication & {
   readonly eventStore?: EventStore;
-  readonly credential: Redacted.Redacted;
   readonly implementation: Implementation;
   readonly operations: HarnessMcpOperations;
   readonly onSubscriptionActiveChange?: (active: boolean) => void;
   readonly onerror?: (error: Error) => void;
   /** Idle keep-alive period of the message subscription; tests set it. */
   readonly keepAliveMillis?: number;
-}
+};
 
 interface RunOperationOptions<Value extends Readonly<Record<string, unknown>>> {
   readonly operation: Effect.Effect<
@@ -984,25 +970,36 @@ const guardedHandler = (
   options: HarnessMcpHandlerOptions,
   delegate: McpHttpHandler,
   events: HarnessEvents,
-  scope: Scope.CloseableScope,
+  authority: {
+    readonly scope: Scope.CloseableScope;
+    readonly admit: Effect.Effect.Success<
+      ReturnType<typeof makeRequestAdmission>
+    >;
+  },
 ): HarnessMcpEventHandler => ({
   ...delegate,
   hasActiveSubscription: events.hasActiveSubscription,
   notifyPending: events.notifyPending,
   fetch: (request, requestOptions) => {
-    if (!authenticateHarnessRequest(request, options.credential)) {
-      return Promise.resolve(
-        new Response("Unauthorized", {
-          status: 401,
-          headers: { "www-authenticate": "Bearer" },
-        }),
-      );
+    const discovery = discoveryResponse(options, request);
+    if (discovery !== undefined) {
+      return Promise.resolve(discovery);
     }
-    return delegate.fetch(request, requestOptions);
+    return Effect.runPromise(
+      authority.admit(request).pipe(
+        Effect.matchEffect({
+          onFailure: () => Effect.succeed(authenticationChallenge(options)),
+          onSuccess: (expiresAt) =>
+            Effect.tryPromise(() =>
+              fetchWithAuthority(delegate, request, requestOptions, expiresAt),
+            ).pipe(Effect.orDie),
+        }),
+      ),
+    );
   },
   close: () =>
     Effect.runPromise(
-      Effect.all([events.close, Scope.close(scope, Exit.void)], {
+      Effect.all([events.close, Scope.close(authority.scope, Exit.void)], {
         concurrency: 2,
         discard: true,
       }).pipe(
@@ -1028,6 +1025,24 @@ const acquireWebhook = (
       Effect.mapError(() => ({ reason: "persistence-failed" })),
     );
   });
+function discoveryResponse(
+  options: HarnessMcpHandlerOptions,
+  request: Request,
+): Response | undefined {
+  if (
+    options.oauth === undefined ||
+    new URL(request.url).pathname !== protectedResourcePath(options.oauth)
+  ) {
+    return undefined;
+  }
+  return request.method === "GET"
+    ? protectedResourceResponse(options.oauth)
+    : new Response("Method not allowed", {
+        status: 405,
+        headers: { allow: "GET" },
+      });
+}
+
 const acquireHandler = (
   options: HarnessMcpHandlerOptions,
   scope: Scope.CloseableScope,
@@ -1035,6 +1050,9 @@ const acquireHandler = (
   Effect.gen(function* () {
     const identity = yield* Identity;
     const services = yield* Effect.runtime();
+    const admit = yield* makeRequestAdmission(options).pipe(
+      Effect.mapError(() => ({ reason: "authentication-unavailable" })),
+    );
     const gate = yield* Effect.makeSemaphore(1);
     const webhook = yield* acquireWebhook(options, scope, gate);
     const poll =
@@ -1053,13 +1071,13 @@ const acquireHandler = (
       options,
       officialHandler(options, events, scope, { services, identity }),
       events,
-      scope,
+      { scope, admit },
     );
   });
 
 /**
  * Create one official MCP handler with explicit event resource ownership.
- * @param options Daemon operations, the bearer credential and callback persistence.
+ * @param options Daemon operations, the selected admission authority and callback persistence.
  * @returns Handler whose catalog follows the daemon's protocol state.
  */
 export const makeHarnessMcpHttpHandler = (
@@ -1074,7 +1092,7 @@ export const makeHarnessMcpHttpHandler = (
 
 /* eslint-enable agent-code-guard/async-keyword -- Restore repository defaults after the MCP boundary. */
 
-/** The loopback Streamable HTTP listener. */
+/** The guarded Streamable HTTP listener, defaulting to loopback. */
 export { acquireHarnessMcpHttpServer, LOOPBACK_HOST } from "./http.js";
 /** Management results exposed by the catalog. */
 export type {
@@ -1082,3 +1100,6 @@ export type {
   ManagementRegisterResult,
   ManagementStatusResult,
 } from "../../host-protocol/index.js";
+
+/** Fixed issuer, resource and owner settings composed by the daemon. */
+export type { DaemonOAuth } from "./authentication.js";

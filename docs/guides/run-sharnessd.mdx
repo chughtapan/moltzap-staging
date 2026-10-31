@@ -17,7 +17,7 @@ agent's conversations. An AI host such as OpenClaw talks to it through the
 same MCP tools that this page's helper script, `mcp.ts`, calls.
 
 For a daemon on an operated network, use the
-[daemon configuration reference](/reference/services/daemon#configuration).
+[daemon configuration reference](/reference/spec/daemon/daemon#process-and-configuration).
 It defines network origins, the trusted Registry signer, admission credentials,
 persistent agent state, and authenticated access. Connecting a client to an
 already hosted daemon is covered by the
@@ -126,7 +126,7 @@ writeFileSync(join(dir, "env"), [
 
 You should see no output. The admission secret lets the daemon register with
 your Registry. The settings file names the daemon's state, services and credential files in the
-[daemon service reference](/reference/services/daemon#configuration)
+[daemon service reference](/reference/spec/daemon/daemon#process-and-configuration)
 requires. The script stops rather than replace an existing agent key.
 
 </Step>
@@ -391,7 +391,7 @@ it again. If that fails too, check that the background item is allowed in
 
 A setting in the agent's `env` file is missing or malformed, and the error names
 it. Restore it as the settings step wrote it, or give it the value
-[Daemon configuration](/reference/services/daemon#configuration)
+[Daemon configuration](/reference/spec/daemon/daemon#process-and-configuration)
 accepts, then restart the agent's service.
 
 <a id="registration-settings" />

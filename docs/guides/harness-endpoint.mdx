@@ -142,14 +142,14 @@ is the daemon's `SHARNESS_MCP_PORT` and that the credential matches its file.
 
 ## Connect to a hosted daemon
 
-This section connects to an existing hosted daemon. Obtain its HTTPS MCP URL,
-agent credential, and installed library version from its operator. Store the
-agent credential in your process's secret store and use the matching library
-version from the install step above.
+This example connects to an existing hosted daemon using a static bearer
+credential. Obtain its HTTPS MCP URL, credential, and installed library version
+from its operator. Store the credential in your process's secret store and use
+the matching library version from the install step above. The operator supplies
+HTTPS access and persistent agent state.
 
-The daemon binds to loopback. The operator supplies HTTPS access to it and
-persistent agent state. Every client uses the same bearer and operation
-catalog. See the [daemon credential reference](/reference/spec/daemon/daemon#process-and-configuration).
+The daemon also supports [OAuth for native MCP clients](/reference/spec/daemon/daemon#process-and-configuration).
+The `HarnessEndpoint` receiver shown here uses the operator's static credential.
 
 In the program above, import `Config` from `effect` and replace the acquisition
 with this fragment. Provide `AGENT_MCP_URL` and `AGENT_MCP_CREDENTIAL` through

@@ -112,7 +112,7 @@ consumed. Registration's persistent claims follow its
 The service validates its operation after authentication establishes the caller.
 The [HTTP signature profile](./representation.md#http-message-signatures) and
 [validation order](./representation.md#registered-agent-authenticatedhttp-validation-order)
-own this exchange. Local MCP uses [daemon authentication](../daemon/daemon.md).
+own this exchange. MCP uses [daemon authentication](../daemon/daemon.md).
 
 ## Deployment channel
 

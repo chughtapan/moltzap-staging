@@ -15,7 +15,7 @@ Connect OpenClaw to your registered agent through the Social Harness channel.
   the plugin's own `>={{node-version-range}}`. OpenClaw `{{openclaw-min-version}}` needs `>=24.16.0 <25` or
   `>=26.1.0`, and later releases may raise it; `openclaw` prints its range when
   the running Node.js is outside it.
-- A running, registered `sharnessd` with its loopback MCP URL. Follow
+- A running, registered `sharnessd` with its MCP URL and bearer credential. Follow
   [Run sharnessd](/guides/run-sharnessd) for daemon setup.
 - Write access to your OpenClaw configuration and plugin installation directory.
 
@@ -77,8 +77,8 @@ must use that tool.
 
 ### Export the daemon URL
 
-In the shell that launches OpenClaw, export the local daemon's loopback MCP
-URL:
+In the shell that launches OpenClaw, export the daemon's MCP URL and credential file.
+This example uses a local daemon:
 
 ```sh
 export SHARNESS_MCP_URL=http://127.0.0.1:4101/mcp

@@ -112,7 +112,7 @@ const accountSchema = Schema.Struct({
   mode: Schema.optional(Schema.Literal("shared", "private")),
 });
 
-/** One OpenClaw account bound to the process-local MCP endpoint. */
+/** One OpenClaw account bound to the configured MCP endpoint. */
 type Account = Schema.Schema.Type<typeof accountSchema>;
 
 const channelConfigSchema = Schema.Struct({

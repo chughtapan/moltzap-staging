@@ -1,5 +1,5 @@
 /**
- * @file Hosts one official MCP handler on a guarded loopback Node listener and
+ * @file Hosts one official MCP handler on a guarded Node listener and
  * binds request draining and connection teardown to the enclosing scope.
  */
 
@@ -12,23 +12,36 @@ import {
   type NodeMcpRequestHandler,
   toNodeHandler,
 } from "@modelcontextprotocol/node";
-import { Deferred, Duration, Effect, Exit, Option, type Scope } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Option,
+  Schema,
+  type Scope,
+} from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The official MCP Node adapter supplies a Node RequestListener, so this process edge hosts that exact interface.
 import {
   createServer,
   type Server as NodeHttpServer,
   type RequestListener,
 } from "node:http";
+import { type DaemonOAuth, protectedResourcePath } from "./authentication.js";
 
 const HARNESS_MCP_PATH = "/mcp";
 const POST_METHOD = "POST";
-/** The daemon listener and advertised MCP URL share one loopback address. */
+/** Default listener address for local bearer deployments. */
 export const LOOPBACK_HOST = "127.0.0.1";
+/** Maximum public request representation, counted before SDK body buffering. */
+export const maximumPublicMcpRequestBytes = 1024 * 1024;
 const RESPONSE_DRAIN_GRACE_PERIOD = Duration.seconds(1);
 
 interface HarnessMcpHttpServerOptions {
   readonly port: number;
   readonly handler: McpHttpHandler;
+  readonly host?: string;
+  readonly oauth?: DaemonOAuth;
 }
 
 interface HarnessMcpRequestListener {
@@ -116,26 +129,40 @@ const makeResponseTracker = (): ResponseTracker => {
 
 const makeHarnessMcpRequestListener = (
   handler: FetchLikeMcpHandler,
+  oauth?: DaemonOAuth,
 ): HarnessMcpRequestListener => {
   const validateHost = localhostHostValidation();
   const validateOrigin = localhostOriginValidation();
-  const nodeHandler = toNodeHandler(handler);
+  const nodeHandler =
+    oauth === undefined ? toNodeHandler(handler) : boundedNodeHandler(handler);
   const responses = makeResponseTracker();
 
   const listener: RequestListener = (request, response): void => {
     if (
-      !validateHost(request, response) ||
-      !validateOrigin(request, response)
+      !admitTransport(request, response, {
+        oauth,
+        validateHost,
+        validateOrigin,
+      })
     ) {
       return;
     }
-    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (pathname !== HARNESS_MCP_PATH) {
+    const pathname = requestPath(request);
+    if (pathname === undefined) {
+      respond(400, "Bad request target.", response);
+      return;
+    }
+    const metadata =
+      oauth !== undefined && pathname === protectedResourcePath(oauth);
+    if (pathname !== HARNESS_MCP_PATH && !metadata) {
       respond(404, "Not found.", response);
       return;
     }
-    if (request.method !== POST_METHOD) {
-      respond(405, "Method not allowed.", response, { allow: POST_METHOD });
+    const method = metadata ? "GET" : POST_METHOD;
+    if (request.method !== method) {
+      respond(405, "Method not allowed.", response, {
+        allow: method,
+      });
       return;
     }
     responses.track(nodeHandler(request, response), response);
@@ -143,6 +170,85 @@ const makeHarnessMcpRequestListener = (
 
   return { listener, waitForResponses: responses.waitForResponses };
 };
+
+function requestPath(
+  request: Parameters<RequestListener>[0],
+): string | undefined {
+  const target = request.url ?? "/";
+  return URL.canParse(target, "http://localhost")
+    ? new URL(target, "http://localhost").pathname
+    : undefined;
+}
+
+/* eslint-disable agent-code-guard/async-keyword -- The SDK's Node request boundary is an async iterable and a Promise-returning listener. */
+function boundedNodeHandler(handler: FetchLikeMcpHandler) {
+  return (
+    request: Parameters<RequestListener>[0],
+    response: Parameters<RequestListener>[1],
+  ) => {
+    let overflow = false;
+    const input = {
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      async *[Symbol.asyncIterator]() {
+        let bytes = 0;
+        for await (const chunk of request.iterator({
+          destroyOnReturn: false,
+        })) {
+          const data = Schema.decodeUnknownSync(Schema.Uint8ArrayFromSelf)(
+            chunk,
+          );
+          bytes += data.byteLength;
+          if (bytes > maximumPublicMcpRequestBytes) {
+            overflow = true;
+            return;
+          }
+          yield data;
+        }
+      },
+    };
+    return toNodeHandler({
+      fetch: (webRequest, options) =>
+        overflow
+          ? Promise.resolve(
+              new Response("Request body too large.", {
+                status: 413,
+                headers: { connection: "close" },
+              }),
+            )
+          : handler.fetch(webRequest, options),
+    })(input, response);
+  };
+}
+/* eslint-enable agent-code-guard/async-keyword -- Restore repository defaults beyond the SDK boundary. */
+
+function admitTransport(
+  request: Parameters<RequestListener>[0],
+  response: Parameters<RequestListener>[1],
+  local: {
+    readonly oauth?: DaemonOAuth;
+    readonly validateHost: ReturnType<typeof localhostHostValidation>;
+    readonly validateOrigin: ReturnType<typeof localhostOriginValidation>;
+  },
+): boolean {
+  const { oauth } = local;
+  if (oauth === undefined) {
+    return (
+      local.validateHost(request, response) &&
+      local.validateOrigin(request, response)
+    );
+  }
+  if (
+    request.headers.host !== oauth.resource.host ||
+    (request.headers.origin !== undefined &&
+      !oauth.allowedOrigins.includes(request.headers.origin))
+  ) {
+    respond(403, "Forbidden", response);
+    return false;
+  }
+  return true;
+}
 
 const trackConnections = (server: NodeHttpServer): (() => void) => {
   const sockets = new Set<Socket>();
@@ -162,14 +268,17 @@ const listen = (
   options: HarnessMcpHttpServerOptions,
 ): Effect.Effect<RunningHarnessMcpHttpServer, Error> =>
   Effect.async<RunningHarnessMcpHttpServer, Error>((resume) => {
-    const requests = makeHarnessMcpRequestListener(options.handler);
+    const requests = makeHarnessMcpRequestListener(
+      options.handler,
+      options.oauth,
+    );
     const server = createServer(requests.listener);
     const destroyConnections = trackConnections(server);
     const onError = (error: Error): void => {
       resume(Effect.fail(error));
     };
     server.once("error", onError);
-    server.listen(options.port, LOOPBACK_HOST, () => {
+    server.listen(options.port, options.host ?? LOOPBACK_HOST, () => {
       server.off("error", onError);
       resume(
         Effect.succeed({
@@ -242,8 +351,8 @@ const release = (
   });
 
 /**
- * Acquire one guarded loopback `/mcp` server on the explicit configured port.
- * @param options Official MCP handler and nonzero listener port.
+ * Acquire one guarded `/mcp` server on the explicit configured port.
+ * @param options Official MCP handler, listener address and nonzero port.
  * @returns The live Node server bound to the caller's scope.
  */
 export const acquireHarnessMcpHttpServer = (

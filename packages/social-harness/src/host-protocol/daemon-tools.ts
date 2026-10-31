@@ -72,7 +72,7 @@ export const managementRegisterResultSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("idempotency_conflict") }),
 );
 
-/** The daemon lifecycle visible to the loopback operator. */
+/** The daemon lifecycle visible to its MCP clients. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects this result to JSON Schema; readers decode it additively with this schema.
 export const managementStatusResultSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("unregistered") }),

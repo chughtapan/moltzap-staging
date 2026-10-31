@@ -91,6 +91,7 @@ export const makeFixture = Effect.gen(function* () {
     configuration: {
       stateDirectory: "/var/lib/social-harness",
       mcpPort: yield* availablePort,
+      mcpBindHost: "127.0.0.1",
       mcpCredentialFile: Redacted.make("/run/secrets/mcp-credential"),
       registryOrigin: new URL("https://registry.example"),
       registrySignerPublicKey,

@@ -1,6 +1,6 @@
 /**
- * @file Calls the MCP tools of one local `sharnessd` from the command line.
- * `SHARNESS_MCP_URL` names the daemon's loopback endpoint.
+ * @file Calls the MCP tools of one `sharnessd` from the command line.
+ * `SHARNESS_MCP_URL` names the daemon's MCP endpoint.
  *
  * `node mcp.ts register NAME` registers the daemon's agent under NAME. It
  * reads `status` first, so a rerun after a registration whose answer was

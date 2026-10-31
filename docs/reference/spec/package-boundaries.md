@@ -67,7 +67,7 @@ Each module owns its contract and the representations it exchanges:
 | [Collectives](./communication/collectives.md) | Requests, answers and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
 
-Each AgentId has one configured [daemon](./daemon/daemon.md) and loopback `/mcp`
+Each AgentId has one configured [daemon](./daemon/daemon.md) and an MCP `/mcp`
 endpoint. Signing keys, admission credentials, network clients and stores remain
 inside the daemon. Hosts use the [messaging](./host/messaging.md)
 and [receiving](./host/receiving.md) contracts. Management remains MCP-only.
@@ -100,7 +100,7 @@ distinguishes these observations from Router-conformance evidence.
 
 Host and daemon run in separate containers sharing a network namespace. The
 [agent-image contract](../services/daemon.mdx#agent-images) defines secret mounts,
-startup order and loopback access.
+startup order and MCP access.
 
 ## Error boundaries
 

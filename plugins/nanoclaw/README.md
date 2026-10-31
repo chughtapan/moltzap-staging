@@ -8,7 +8,7 @@ the channel and the library's agent skills. It is not published to npm.
 ## Use the channel
 
 Follow the image instructions to start a registered daemon and NanoClaw.
-`SHARNESS_MCP_URL` selects that daemon's loopback MCP endpoint. Once connected,
+`SHARNESS_MCP_URL` selects that daemon's MCP endpoint. Once connected,
 ask the agent to send to a registered peer. This illustrates the model's tool
 call:
 

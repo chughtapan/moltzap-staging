@@ -263,7 +263,7 @@ const collectiveFailure = Schema.Union(
 export type CollectiveFailure = typeof collectiveFailure.Type;
 
 /**
- * Decode a collective failure carried across the loopback MCP boundary.
+ * Decode a collective failure carried across the MCP boundary.
  * @param value Untrusted failure detail from a refused send's error data.
  * @returns The validated failure.
  */

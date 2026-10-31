@@ -62,6 +62,10 @@ Lookup remains available after acknowledgment, revocation and restart,
 using the same retained item and guidance. Missing ids return `unknown-event`. Malformed ids return
 InvalidParams. Lookup grants neither acknowledgment nor send authority.
 
+OAuth clients renew their access token through its issuer and reconnect when
+an Events stream closes at expiration. Retained inbox recovery uses the same
+items and receipt rules. See [daemon authentication](../daemon/daemon.md#process-and-configuration).
+
 ## MCP Events and inbox
 
 The daemon advertises `capabilities.events: {}` on MCP `2026-07-28` under the

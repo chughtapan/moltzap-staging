@@ -346,7 +346,7 @@ export interface DeliveryOperations {
   ) => Effect.Effect<void, ClosedOperationError>;
 }
 
-/** Store-owned delivery identity shared across the loopback boundary. */
+/** Store-owned delivery identity shared across the MCP boundary. */
 export { DeliveryToken } from "../communication/store/types.js";
 /** Wakeup bookkeeping contains no peer content or collective protocol state. */
 export interface InboxSummary {
