@@ -35,10 +35,6 @@ export interface FirewallEvidenceRange {
   readonly conversationId?: string;
   readonly conversation?: string;
 }
-/** Several windows read in one synchronous capture, one per checked text of a result. */
-export interface FirewallEvidenceSlices {
-  readonly slices: readonly FirewallEvidence[];
-}
 /** A received item waiting for its turn to be checked. */
 export interface IncomingEntry {
   readonly deliveryToken: DeliveryToken;

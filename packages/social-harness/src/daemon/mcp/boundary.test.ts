@@ -864,7 +864,14 @@ function readsRetainedEventThroughSdk() {
     yield* store.acknowledgeInboxItem(deliveryToken);
     const { port } = yield* acquireBoundaryServer({
       ...operations,
-      readEvent: ({ eventId }) => readRuntimeEvent(eventId).pipe(store.run),
+      readEvent: ({ eventId }) =>
+        Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
+          Effect.catchTag("ParseError", () =>
+            Effect.fail({ reason: "invalid-event" }),
+          ),
+          Effect.flatMap(readRuntimeEvent),
+          store.run,
+        ),
     });
     const client = yield* acquireProtocolClient(port, "retained-event-client");
     const result = yield* Effect.tryPromise(() =>

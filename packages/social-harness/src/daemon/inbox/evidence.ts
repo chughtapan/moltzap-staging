@@ -5,7 +5,6 @@ import { Effect } from "effect";
 import type { Ed25519PublicKey } from "../../identity/keys.js";
 import type {
   FirewallEvidenceRange,
-  FirewallEvidenceSlices,
   FirewallHistoryEntry,
   FirewallLocalEntry,
 } from "./types.js";
@@ -39,7 +38,7 @@ interface HistoryItem {
 /** The candidate itself is excluded from its recent message history. */
 export function readFirewallEvidence(input: HistoryWindow) {
   return readFirewallEvidenceSlices({ ...input, ranges: [input] }).pipe(
-    Effect.flatMap(({ slices }) =>
+    Effect.flatMap((slices) =>
       slices[0] === undefined
         ? new EndpointStoreError({ reason: "corrupt" })
         : Effect.succeed(slices[0]),
@@ -63,7 +62,7 @@ export function readFirewallEvidenceSlices(input: {
       ) {
         return yield* new EndpointStoreError({ reason: "invalid-input" });
       }
-      const slices = yield* Effect.forEach(
+      return yield* Effect.forEach(
         input.ranges,
         (range) =>
           readSlice({
@@ -73,7 +72,6 @@ export function readFirewallEvidenceSlices(input: {
           }),
         { concurrency: 1 },
       );
-      return { slices } satisfies FirewallEvidenceSlices;
     }),
   ).pipe(Effect.withSpan("readFirewallEvidenceSlices"));
 }

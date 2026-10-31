@@ -172,7 +172,7 @@ function checkSources(
     const inputs = yield* Effect.forEach(
       sources,
       (source, index) => {
-        const evidence = captured.slices[index];
+        const evidence = captured[index];
         return evidence === undefined
           ? Effect.fail(new EndpointStoreError({ reason: "corrupt" }))
           : prepareSource(environment, entry, source, evidence);

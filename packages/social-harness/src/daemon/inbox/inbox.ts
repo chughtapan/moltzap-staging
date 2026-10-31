@@ -20,23 +20,17 @@ import { type InboxEntry, readInbox, readInboxItem } from "./store.js";
 
 /**
  * Lookup retains the original content and guidance after acknowledgment.
- * @param eventId Canonical event identity carried by a webhook.
+ * @param token Validated event identity carried by a webhook.
  * @returns The original item or a closed lookup failure.
  */
-export const readRuntimeEvent = (eventId: string) =>
+export const readRuntimeEvent = (token: DeliveryToken) =>
   Effect.gen(function* () {
-    const token = yield* Schema.decodeUnknown(DeliveryToken)(eventId);
     const retained = yield* readInboxItem(token);
     if (retained === undefined) {
       return yield* Effect.fail({ reason: "unknown-event" });
     }
     return yield* decodeInboxEntry(retained);
-  }).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail({ reason: "invalid-event" }),
-    ),
-    Effect.withSpan("readRuntimeEvent"),
-  );
+  }).pipe(Effect.withSpan("readRuntimeEvent"));
 
 /**
  * The retained item and the local guidance it was admitted with, if any.

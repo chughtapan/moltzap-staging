@@ -629,15 +629,11 @@ const handleSendToolCall = async (
         checkHarnessSendResult(result).pipe(Effect.orDie),
       ),
     );
-  return await validateToolOutput(
-    sendOutput,
-    await runSendOperation(
-      send,
-      input.signal,
-      input.requestScope,
-      input.services,
-    ),
-    input.name,
+  return await runSendOperation(
+    send,
+    input.signal,
+    input.requestScope,
+    input.services,
   );
 };
 

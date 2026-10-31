@@ -581,11 +581,6 @@ const removesRetiredOccurrence = () =>
         item(),
       );
       expect(
-        (yield* readRuntimeEvent("dlv_invalid")
-          .pipe(store.run)
-          .pipe(Effect.flip)).reason,
-      ).toBe("invalid-event");
-      expect(
         (yield* readRuntimeEvent(token(3)).pipe(store.run).pipe(Effect.flip))
           .reason,
       ).toBe("unknown-event");

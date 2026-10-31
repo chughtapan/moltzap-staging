@@ -65,7 +65,9 @@ function encodeAgentCard(
   agentCard: VerifiedAgentCard,
 ): Effect.Effect<unknown, DaemonManagementError> {
   return Schema.encode(AgentCard)(agentCard).pipe(
-    Effect.mapError(incompatibleDaemon),
+    Effect.mapError(
+      () => new DaemonManagementError({ reason: "incompatible-daemon" }),
+    ),
   );
 }
 
@@ -76,7 +78,7 @@ function readActiveCard(
     Effect.flatMap((card) =>
       Option.isSome(card)
         ? Effect.succeed(card.value)
-        : Effect.fail(managementFailure("not-registered")),
+        : Effect.fail(new DaemonManagementError({ reason: "not-registered" })),
     ),
   );
 }
@@ -123,7 +125,9 @@ function registerOperation(
           case "dependency-unavailable":
           case "persistence-failed":
           case "incompatible-daemon":
-            return Effect.fail(managementFailure(error.reason));
+            return Effect.fail(
+              new DaemonManagementError({ reason: error.reason }),
+            );
           default: {
             const exhaustive: never = error.reason;
             return exhaustive;
@@ -131,14 +135,4 @@ function registerOperation(
         }
       }),
     );
-}
-
-function incompatibleDaemon(): DaemonManagementError {
-  return managementFailure("incompatible-daemon");
-}
-
-function managementFailure(
-  reason: DaemonManagementError["reason"],
-): DaemonManagementError {
-  return new DaemonManagementError({ reason });
 }

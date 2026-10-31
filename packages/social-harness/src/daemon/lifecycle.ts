@@ -4,7 +4,6 @@ import { NodeFileSystem } from "@effect/platform-node";
 import {
   Cause,
   Console,
-  type Context,
   Data,
   Effect,
   FiberSet,
@@ -148,7 +147,13 @@ function makeHandler(
         readConversation: messaging.readHistory,
         readInbox: messaging.listInbox,
         readInboxSummary: inbox.readInboxSummary,
-        readEvent: ({ eventId }) => readEvent(messaging, eventId),
+        readEvent: ({ eventId }) =>
+          Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
+            Effect.catchTag("ParseError", () =>
+              Effect.fail({ reason: "invalid-event" }),
+            ),
+            Effect.flatMap(messaging.getInboxItem),
+          ),
         acknowledgeDelivery: messaging.acknowledgeDelivery,
         readDecisions: firewall.readDecisions,
         ...(firewall.configuration === undefined
@@ -160,18 +165,6 @@ function makeHandler(
       },
     });
   });
-}
-
-function readEvent(
-  messaging: Context.Tag.Service<typeof HostMessaging>,
-  eventId: string,
-) {
-  return Schema.decodeUnknown(DeliveryToken)(eventId).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail({ reason: "invalid-event" }),
-    ),
-    Effect.flatMap(messaging.getInboxItem),
-  );
 }
 
 function watchChanges(
