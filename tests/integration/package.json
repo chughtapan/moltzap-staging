@@ -115,6 +115,6 @@
   },
   "exports": {
     "./process-network": "./process-network.ts",
-    "./daemon-process-harness": "./daemon-process-harness.ts"
+    "./daemon-process-harness": "./daemon/daemon-process-harness.ts"
   }
 }

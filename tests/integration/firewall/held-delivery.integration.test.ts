@@ -34,7 +34,7 @@ import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
 } from "../communication/router-hold-proxy.js";
-import { historyMessageContent } from "../saved-history.js";
+import { historyMessage } from "../saved-history.js";
 
 /**
  * The test starts PGlite, the Registry, the Router, a hold proxy and two
@@ -332,9 +332,9 @@ function readHeldHistory(pair: HeldPair) {
       yield* readHistory(targetFixture, senderAddress),
     ]) {
       expect(history.continuation).toBeNull();
-      expect(history.records.map(historyMessageContent)).toEqual(
-        expectedContents,
-      );
+      expect(
+        history.records.map((record) => historyMessage(record).content),
+      ).toEqual(expectedContents);
     }
   });
 }

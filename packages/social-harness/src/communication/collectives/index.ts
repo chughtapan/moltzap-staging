@@ -13,6 +13,7 @@ import {
 import type { Message } from "../message.js";
 import type { EndpointStoreError } from "../store/index.js";
 import type { CollectiveId } from "./contracts.js";
+import type { StoredCollectiveMessage } from "./store.js";
 import type { Environment } from "./operations.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
 import type { Question, ResultDelivery } from "./model.js";
@@ -79,7 +80,7 @@ function makeCollectives() {
       identity: yield* Identity,
       scope: yield* Scope.Scope,
       failed: yield* Deferred.make<never, CollectivesError>(),
-      observations: yield* Queue.unbounded(),
+      observations: yield* Queue.unbounded<StoredCollectiveMessage>(),
     };
     const capture = <A, E, R>(
       effect: Effect.Effect<A, E | EndpointStoreError, R>,

@@ -17,10 +17,7 @@ import {
   storeOperation,
   transaction,
 } from "../store/database/index.js";
-import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-} from "../store/runtime-codec.js";
+import { decodeRuntimeValue, encodeRuntimeValue } from "../store/index.js";
 import { DeliveryToken } from "../store/types.js";
 import { CollectiveId } from "./contracts.js";
 import { Question, ResultDelivery } from "./model.js";
@@ -86,17 +83,20 @@ export function putCollectiveOperation(
           ? input.request.deadlineAt
           : input.value.deadlineAt;
       const canonicalRequest = yield* encodeRuntimeValue(input.request);
-      const existing = yield* readCollectiveOperation(operationId);
+      const [existing] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+        "SELECT canonical_request,origin,creator_agent_id,deadline_at FROM collective_operations WHERE operation_id=?",
+        [operationId],
+      );
       if (existing !== undefined) {
-        const prior =
-          existing.origin === "local"
-            ? existing.request
-            : existing.request.message;
-        requireSameBytes(yield* encodeRuntimeValue(prior), canonicalRequest);
+        requireSameBytes(
+          readBytes(existing, "canonical_request"),
+          canonicalRequest,
+        );
         if (
-          existing.origin !== input.origin ||
-          existing.creatorAgentId !== input.request.author.agentId ||
-          existing.deadlineAt !== deadlineAt
+          readText(existing, "origin") !== input.origin ||
+          readText(existing, "creator_agent_id") !==
+            input.request.author.agentId ||
+          readInteger(existing, "deadline_at") !== deadlineAt
         ) {
           return yield* new EndpointStoreError({ reason: "conflict" });
         }

@@ -98,22 +98,30 @@ function readSlice(window: HistoryWindow) {
       ),
     );
     const selected = [
-      ...messages.slice(0, window.maximumRecords - resultCount).reverse(),
-      ...results.slice(0, resultCount).reverse(),
+      messages.slice(0, window.maximumRecords - resultCount),
+      results.slice(0, resultCount),
     ];
     const history: Array<FirewallHistoryEntry | FirewallLocalEntry> = [];
     let bytes = 0;
-    for (const item of selected) {
-      bytes += item.bytes;
+    for (const stream of selected) {
+      const entries: Array<FirewallHistoryEntry | FirewallLocalEntry> = [];
+      for (const item of stream) {
+        bytes += item.bytes;
+        if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+          break;
+        }
+        entries.push(item.entry);
+      }
+      history.push(...entries.reverse());
       if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }
-      history.push(item.entry);
     }
     return {
       history,
       overflow: bytes > MAXIMUM_RUNTIME_ITEM_BYTES,
-      earlierHistoryOmitted: messages.length + results.length > selected.length,
+      earlierHistoryOmitted:
+        messages.length + results.length > selected.flat().length,
       pendingOutgoing:
         conversationId === undefined
           ? false

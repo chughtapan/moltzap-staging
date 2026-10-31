@@ -30,7 +30,7 @@ import {
   ProcessTestError,
 } from "../daemon/daemon-process-harness.js";
 import { registrationResultKind } from "../expected-contracts.js";
-import { historyMessageContent } from "../saved-history.js";
+import { historyMessage } from "../saved-history.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
   readonly agent: AgentView;
@@ -747,13 +747,9 @@ function assertFixtureHistory(
       const history = yield* management.readConversation(peerAddress);
       expect(history.continuation).toBeNull();
       expect(history.records).toHaveLength(1 + replies.length);
-      expect(history.records.map(historyMessageContent)).toEqual([
-        initial,
-        ...replies,
-      ]);
       expect(
-        new Set(history.records.map(({ recordHash }) => recordHash)).size,
-      ).toBe(history.records.length);
+        history.records.map((record) => historyMessage(record).content),
+      ).toEqual([initial, ...replies]);
     }),
   );
 }

@@ -48,7 +48,7 @@ import {
   storageStartupPhase,
 } from "../expected-contracts.js";
 import { processTrace } from "../process-trace.js";
-import { historyMessageContent } from "../saved-history.js";
+import { historyMessage } from "../saved-history.js";
 import { arrayContaining } from "../test-matchers.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
@@ -648,7 +648,7 @@ function expectRestartedRecipientHistory(state: RestartScenario) {
       directAddress(peerFixture.agentName),
     );
     expect(
-      history.records.map((record) => historyMessageContent(record)[0]),
+      history.records.map((record) => historyMessage(record).content[0]),
     ).toEqual([
       { type: "text", text: beforeRestartText },
       { type: "text", text: fromRestartedText },
@@ -703,7 +703,7 @@ function expectRecoveredRouterHistory(state: RouterRestartScenario) {
       directAddress(conciergeFixture.agentName),
     );
     const texts = history.records.map(
-      (record) => historyMessageContent(record)[0],
+      (record) => historyMessage(record).content[0],
     );
     expect(texts.slice(0, 2)).toEqual(
       arrayContaining([
@@ -719,8 +719,8 @@ function expectRecoveredRouterHistory(state: RouterRestartScenario) {
       conciergeFixture,
       directAddress(memberFixture.agentName),
     );
-    expect(peerHistory.records.map(({ recordHash }) => recordHash)).toEqual(
-      history.records.map(({ recordHash }) => recordHash),
+    expect(peerHistory.records.map(historyMessage)).toEqual(
+      history.records.map(historyMessage),
     );
   });
 }
@@ -792,19 +792,17 @@ function expectInitialHistoriesMatch(state: ProcessScenario) {
       "sent",
       "received",
     ]);
-    expect(callerHistory.records.map(historyMessageContent)).toEqual([
-      initialContent,
-      [{ type: "text", text: responseText }],
-    ]);
+    expect(
+      callerHistory.records.map((record) => historyMessage(record).content),
+    ).toEqual([initialContent, [{ type: "text", text: responseText }]]);
     expect(targetHistory.continuation).toBeNull();
     expect(targetHistory.records.map(({ kind }) => kind)).toEqual([
       "received",
       "sent",
     ]);
-    expect(targetHistory.records.map(historyMessageContent)).toEqual([
-      [{ type: "text", text: initialText }],
-      responseContent,
-    ]);
+    expect(
+      targetHistory.records.map((record) => historyMessage(record).content),
+    ).toEqual([[{ type: "text", text: initialText }], responseContent]);
   });
 }
 

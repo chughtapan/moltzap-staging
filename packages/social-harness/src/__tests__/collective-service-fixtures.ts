@@ -23,7 +23,7 @@ import {
 import {
   type CollectiveValue,
   encodeCollectiveContent,
-} from "../communication/collectives/wire/index.js";
+} from "../communication/collectives/wire.js";
 import { Communication, CommunicationError } from "../communication/index.js";
 import {
   type Message,
