@@ -15,6 +15,7 @@ import {
   INBOX_ITEM_EVENT,
 } from "../../host-protocol/names.js";
 import {
+  consumerConflict,
   type ConsumerOwner,
   currentConsumer,
   type PollLease,
@@ -68,7 +69,7 @@ const active = (runtime: PollRuntime): PollLease | undefined => {
   return owner.mode === "poll" ? owner.lease : undefined;
 };
 /** A stale lifetime needs explicit reacquisition and unread recovery. */
-export const consumerLost = () =>
+const consumerLost = () =>
   new ProtocolError(
     -32012,
     "Native consumer is no longer active. Acquire a new polling lease and recover the unread inbox. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
@@ -77,21 +78,10 @@ export const consumerLost = () =>
     },
   );
 /** Consumer metadata has a closed grammar independent of bearer authentication. */
-export const invalidMetadata = () =>
+const invalidMetadata = () =>
   new ProtocolError(
     -32602,
     "Invalid native consumer metadata. Echo the polling generation in request metadata. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
-  );
-/** A fresh receiver must wait for the current consumer to release its lease. */
-export const consumerConflict = () =>
-  new ProtocolError(
-    -32013,
-    "Runtime subscription already active. Release it or wait for its lease to expire. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
-    {
-      limit: "subscriptions",
-      max: 1,
-      reason: "already-listening",
-    },
   );
 const persistenceFailure = () =>
   new ProtocolError(-32603, "Event persistence failed");

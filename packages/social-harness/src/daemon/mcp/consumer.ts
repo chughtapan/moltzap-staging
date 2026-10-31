@@ -1,6 +1,9 @@
 /** @file One exclusive owner for push subscriptions, polling leases and callbacks. */
 
-import type { ServerContext } from "@modelcontextprotocol/server";
+import {
+  ProtocolError,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
 import { type Clock, type Deferred, Effect } from "effect";
 
 /** Push transport resources stay attached until request finalizers finish. */
@@ -41,6 +44,18 @@ export const makeConsumerOwner = Effect.map(
     current: { mode: "none" },
   }),
 );
+
+/** A fresh receiver must wait for the current consumer to release its lease. */
+export const consumerConflict = () =>
+  new ProtocolError(
+    -32013,
+    "Runtime subscription already active. Release it or wait for its lease to expire. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
+    {
+      limit: "subscriptions",
+      max: 1,
+      reason: "already-listening",
+    },
+  );
 
 /** Expiry releases occupancy while retained callback progress remains durable. */
 export function currentConsumer(owner: ConsumerOwner): Consumer {

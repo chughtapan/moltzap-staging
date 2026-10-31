@@ -40,11 +40,12 @@ import {
 } from "../../host-protocol/names.js";
 import { Identity } from "../../identity/local.js";
 import {
+  consumerConflict,
   type ConsumerOwner,
   currentConsumer,
   type PushSubscription,
 } from "./consumer.js";
-import { consumerConflict, type HarnessPollEvents } from "./poll.js";
+import type { HarnessPollEvents } from "./poll.js";
 /** Durable callback delivery shares this consumer boundary. */
 export { makeWebhookEvents } from "./webhook.js";
 /** Ephemeral polling shares the same consumer boundary and ownership gate. */

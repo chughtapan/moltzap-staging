@@ -21,7 +21,11 @@ import {
   type WebhookStatus,
 } from "../../host-protocol/index.js";
 import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
-import { type ConsumerOwner, currentConsumer } from "./consumer.js";
+import {
+  consumerConflict,
+  type ConsumerOwner,
+  currentConsumer,
+} from "./consumer.js";
 import {
   readWebhookChallenge,
   sendWebhook,
@@ -31,7 +35,6 @@ import {
   webhookUrl,
 } from "./event-signing.js";
 import { makeItemEvent } from "./inbox-event.js";
-import { consumerConflict } from "./poll.js";
 
 const maximumRetryDelay = 5 * 60_000;
 const maximumLease = 24 * 60 * 60_000;
