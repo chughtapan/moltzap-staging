@@ -121,6 +121,11 @@ const invalidCalls = [
   { name: "read_event", arguments: { eventId: "bad" }, paths: [["eventId"]] },
   { name: "acknowledge_delivery", arguments: {}, paths: [["deliveryToken"]] },
   {
+    name: "acknowledge_delivery",
+    arguments: { deliveryToken: `dlv_${"A".repeat(43)}`, content: "message" },
+    paths: [["content"]],
+  },
+  {
     name: "policy_update",
     arguments: {
       add: [

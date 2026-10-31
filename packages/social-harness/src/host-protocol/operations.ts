@@ -184,10 +184,6 @@ export type HarnessReadInboxResult = typeof inboxResultSchema.Type;
 export const decodeHarnessReadInboxResult =
   Schema.decodeUnknown(inboxResultSchema);
 
-/** Decoded delivery acknowledgment arguments owned by the daemon. */
-export type HarnessAcknowledgeDeliveryRequest =
-  typeof harnessAcknowledgeDeliveryRequestSchema.Type;
-
 /** Validated semantic input of one send. */
 export type HarnessSendRequest = typeof harnessSendArgumentsSchema.Type;
 
@@ -249,20 +245,6 @@ export type HarnessSendResult = SendResult;
 /** One stable pending inbound item emitted by the daemon. */
 export type HarnessMessageReadyEvent =
   typeof harnessMessageReadyEventSchema.Type;
-
-/**
- * Decode one exact delivery acknowledgment request.
- * @param value Untrusted tool arguments.
- * @returns The validated request.
- */
-export function decodeHarnessAcknowledgeDeliveryRequest(
-  value: unknown,
-): Effect.Effect<HarnessAcknowledgeDeliveryRequest, ParseResult.ParseError> {
-  return Schema.decodeUnknown(harnessAcknowledgeDeliveryRequestSchema)(
-    value,
-    exactParseOptions,
-  );
-}
 
 /**
  * Decode one exact pending-delivery notification payload.

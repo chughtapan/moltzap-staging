@@ -4,16 +4,11 @@ import { Effect, Exit, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Message } from "../communication/message.js";
 import { testAgentView } from "../__tests__/agent-card-fixtures.js";
-import {
-  CollectiveId,
-  SendInput,
-} from "../communication/collectives/contracts.js";
+import { CollectiveId } from "../communication/collectives/contracts.js";
 import { Content, MsgId } from "../communication/records/index.js";
 import { AgentAddress } from "../communication/records/values.js";
 import { DeliveryToken } from "../communication/store/index.js";
-import { exactParseOptions } from "../encoding/exact.js";
 import {
-  decodeHarnessAcknowledgeDeliveryRequest,
   decodeHarnessMessageReadyEvent,
   decodeHarnessReadInboxResult,
   decodeHarnessSendErrorData,
@@ -35,31 +30,6 @@ const content = Schema.decodeUnknownSync(Content)([
 const collectiveId = Schema.decodeUnknownSync(CollectiveId)(
   `col_${"A".repeat(64)}`,
 );
-
-function decodesExactOperationRequests(): void {
-  const operation = {
-    to: peerAddress,
-    text: "meeting invite sent",
-    collective: { op: "multicast" },
-  };
-
-  expect(
-    Effect.runSync(
-      Schema.decodeUnknown(SendInput)(operation, exactParseOptions),
-    ),
-  ).toEqual(operation);
-  expect(
-    Effect.runSync(decodeHarnessAcknowledgeDeliveryRequest({ deliveryToken })),
-  ).toEqual({ deliveryToken });
-  expect(
-    Exit.isFailure(
-      Effect.runSyncExit(
-        decodeHarnessAcknowledgeDeliveryRequest({ deliveryToken, content }),
-      ),
-    ),
-    "acknowledgment carrying content",
-  ).toBe(true);
-}
 
 function decodesCanonicalDirectDelivery(): void {
   const message: Message = {
@@ -185,9 +155,6 @@ const inconsistentDeliveries = [
 
 // @agent-code-guard/regression-only: these examples pin the exact public wire grammar and its relational identity checks.
 describe("Harness MCP operation representation", () => {
-  it("decodes exact send and acknowledgment requests", () => {
-    decodesExactOperationRequests();
-  });
   it("decodes one canonical direct multicast delivery", () => {
     decodesCanonicalDirectDelivery();
   });
