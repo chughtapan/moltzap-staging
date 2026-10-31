@@ -19,7 +19,6 @@ export function localGuidance(byte: number): CheckedGuidance {
     ],
     instructions: [
       {
-        middlewareId: "owner",
         ruleId: "respond",
         expectation: "required",
         subjects: [subject],

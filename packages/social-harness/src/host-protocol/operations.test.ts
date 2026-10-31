@@ -367,7 +367,6 @@ describe("Harness MCP results keep what they name", () => {
             subjects: [],
             instructions: [
               {
-                middlewareId: "m",
                 ruleId: "r",
                 instruction: "wait for the owner",
                 expectation: "invalid",

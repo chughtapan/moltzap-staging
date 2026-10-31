@@ -704,7 +704,6 @@ it("hands guidance and quoted peer text to the agent before acknowledging", asyn
     ],
     instructions: [
       {
-        middlewareId: "norms",
         ruleId: "reply",
         expectation: "required",
         subjects: ["hello"],

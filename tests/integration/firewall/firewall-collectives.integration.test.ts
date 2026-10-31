@@ -23,7 +23,7 @@ import {
   send,
 } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import { anyNumber } from "../test-matchers.js";
+import { anyNumber, arrayContaining } from "../test-matchers.js";
 
 const requireAll = (participants: readonly Participant[], count: 3 | 4) =>
   participants.length === count
@@ -333,9 +333,8 @@ function expectGuidedGatherAdvice({
 }
 
 const uncertainAdvice = {
-  middlewareId: "integration-markers",
   ruleId: "marked",
-  uncertain: { choice: "none", probability: 0.33 },
+  uncertain: { choice: "compliant", probability: 0.4 },
   instruction: "Respond to the marked message.",
 };
 
@@ -385,7 +384,12 @@ function expectUnsettledGatherAdvice({
       ],
     });
     expect(unsureResult.guidance).toMatchObject({
-      answers: [{ member: strict.agent, instructions: [uncertainAdvice] }],
+      answers: [
+        {
+          member: strict.agent,
+          instructions: arrayContaining([uncertainAdvice]),
+        },
+      ],
     });
   });
 }

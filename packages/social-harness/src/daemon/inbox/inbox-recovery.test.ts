@@ -3,6 +3,7 @@
 import { scopedLive as it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Schedule, Schema, Scope } from "effect";
 import { expect } from "vitest";
+import type { DecisionProvider } from "../../firewall/check.js";
 import { appendCertifiedMessage } from "../../__tests__/certified-history-fixtures.js";
 import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
 import {
@@ -10,10 +11,9 @@ import {
   seedIncoming,
 } from "../../__tests__/conversation-fixtures.js";
 import {
-  block,
+  decisionResponse,
+  decisionState,
   firewallOptions,
-  pass,
-  policy,
 } from "../../__tests__/daemon-delivery-fixtures.js";
 import { makeHostMessagingFixture } from "../../__tests__/host-messaging-fixtures.js";
 import {
@@ -109,20 +109,24 @@ it("keeps an unpresented request unanswerable after restarting its host services
     const fixture = yield* requestFixture;
     const entered = yield* Deferred.make<undefined>();
     const scope = yield* Scope.make();
-    const held = policy((input) =>
-      input.event.message.operation?.kind === "request"
-        ? Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Effect.never),
-          )
-        : Effect.succeed(pass),
-    );
+    const held: DecisionProvider = {
+      decide: (request) =>
+        decisionState(request.state).candidate.operation?.kind === "request"
+          ? Deferred.succeed(entered, undefined).pipe(
+              Effect.zipRight(Effect.never),
+            )
+          : Effect.succeed(decisionResponse(request)),
+    };
     yield* makeHostMessagingFixture(fixture.subject, {
       firewall: firewallOptions(held),
     }).pipe(Scope.extend(scope));
     yield* Deferred.await(entered);
     yield* Scope.close(scope, Exit.void);
     const resumed = yield* makeHostMessagingFixture(fixture.subject, {
-      firewall: firewallOptions(policy(() => Effect.succeed(block))),
+      firewall: firewallOptions({
+        decide: (request) =>
+          Effect.succeed(decisionResponse(request, "violation")),
+      }),
     });
     expect(
       yield* resumed.messaging.send(fixture.response).pipe(Effect.flip),

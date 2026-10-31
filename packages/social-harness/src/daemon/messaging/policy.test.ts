@@ -13,7 +13,7 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { Message } from "../../communication/message.js";
-import type { MiddlewareInput } from "../../firewall/check.js";
+import type { DecisionRequest } from "../../firewall/check.js";
 import type { HostMessaging } from "./index.js";
 import { appendCertifiedMessage } from "../../__tests__/certified-history-fixtures.js";
 import {
@@ -21,11 +21,9 @@ import {
   seedIncoming,
 } from "../../__tests__/conversation-fixtures.js";
 import {
-  block,
+  decisionResponse,
+  decisionState,
   firewallOptions,
-  observeInputs,
-  pass,
-  policy,
   rule,
   waitForChecks,
 } from "../../__tests__/daemon-delivery-fixtures.js";
@@ -41,13 +39,6 @@ function recordedCommunication(messages: Message[]) {
     send: (message) =>
       Effect.sync(() => {
         messages.push(message);
-        return {
-          kind: "completed" as const,
-          message: {
-            authorAgentId: message.author.agentId,
-            msgId: message.msgId,
-          },
-        };
       }),
     waitForMessage: unavailable,
     consume: () => Effect.never,
@@ -62,7 +53,10 @@ it("withholds a peer message from both inbox and conversation history", () =>
     const subject = yield* conversationIdentityFixture;
     yield* seedIncoming(subject);
     const runtime = yield* makeHostMessagingFixture(subject, {
-      firewall: firewallOptions(policy(() => Effect.succeed(block))),
+      firewall: firewallOptions({
+        decide: (request) =>
+          Effect.succeed(decisionResponse(request, "violation")),
+      }),
     });
     yield* waitForChecks(subject);
     expect(yield* runtime.messaging.listInbox({})).toEqual({ items: [] });
@@ -76,20 +70,10 @@ it("delivers original peer text with guidance attributed to its author and recip
     const subject = yield* conversationIdentityFixture;
     yield* seedIncoming(subject);
     const runtime = yield* makeHostMessagingFixture(subject, {
-      firewall: firewallOptions(
-        policy((input) =>
-          Effect.succeed({
-            findings: pass.findings,
-            expectations: [
-              {
-                ruleId: rule.id,
-                expectation: "required",
-                subjects: [input.event.message.id],
-              },
-            ],
-          }),
-        ),
-      ),
+      firewall: firewallOptions({
+        decide: (request) =>
+          Effect.succeed(decisionResponse(request, "compliant", "required")),
+      }),
     });
     yield* waitForChecks(subject);
     const [received] = (yield* runtime.messaging.listInbox({})).items;
@@ -125,18 +109,30 @@ it("uses the latest bounded history and excludes the candidate being assessed", 
     yield* subject.run(
       appendCertifiedMessage(subject, third, "Newest local message", true),
     );
-    const seen: MiddlewareInput[] = [];
+    const seen: DecisionRequest[] = [];
     yield* makeHostMessagingFixture(subject, {
-      firewall: firewallOptions(observeInputs(seen), {
-        maximumHistoryRecords: 2,
-      }),
+      firewall: firewallOptions(
+        {
+          decide: (request) =>
+            Effect.sync(() => {
+              if (request.stage === "compliance") {
+                seen.push(request);
+              }
+              return decisionResponse(request);
+            }),
+        },
+        {
+          maximumHistoryRecords: 2,
+        },
+      ),
     });
     yield* waitForChecks(subject);
-    expect(seen[0]?.context.history.map((entry) => entry.text)).toEqual([
+    const state = decisionState(seen[0]?.state);
+    expect(state.history.map((entry) => entry.text)).toEqual([
       "Recent local message",
       "Newest local message",
     ]);
-    expect(seen[0]?.context.earlierHistoryOmitted).toBe(true);
+    expect(state.earlierHistoryOmitted).toBe(true);
   }));
 
 it("cancels an unaccepted draft and releases the check permit for another send", () =>
@@ -144,10 +140,10 @@ it("cancels an unaccepted draft and releases the check permit for another send",
     const subject = yield* conversationIdentityFixture;
     const entered = yield* Deferred.make<undefined>();
     const messages: Message[] = [];
-    const middleware = pauseFirstCheck(entered);
+    const provider = pauseFirstCheck(entered);
     const runtime = yield* makeHostMessagingFixture(subject, {
       communication: recordedCommunication(messages),
-      firewall: firewallOptions(middleware, { maximumConcurrentChecks: 1 }),
+      firewall: firewallOptions(provider, { maximumConcurrentChecks: 1 }),
     });
     const sending = yield* runtime.messaging
       .send({ input: { to: bob, text: "Cancelled draft" } })
@@ -170,14 +166,13 @@ it("keeps a captured draft when its caller changes the original input during ass
     const messages: Message[] = [];
     const runtime = yield* makeHostMessagingFixture(subject, {
       communication: recordedCommunication(messages),
-      firewall: firewallOptions(
-        policy(() =>
+      firewall: firewallOptions({
+        decide: (request) =>
           Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Deferred.await(release)),
-            Effect.as(pass),
+            Effect.as(decisionResponse(request)),
           ),
-        ),
-      ),
+      }),
     });
     const input = { to: bob, text: "The captured draft" };
     const sending = yield* runtime.messaging
@@ -224,13 +219,12 @@ it("drains saved incoming work after restarting without configured assessment", 
     const entered = yield* Deferred.make<undefined>();
     const scope = yield* Scope.make();
     yield* makeHostMessagingFixture(subject, {
-      firewall: firewallOptions(
-        policy(() =>
+      firewall: firewallOptions({
+        decide: () =>
           Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Effect.never),
           ),
-        ),
-      ),
+      }),
     }).pipe(Scope.extend(scope));
     yield* Deferred.await(entered);
     yield* Scope.close(scope, Exit.void);
@@ -259,14 +253,15 @@ function waitForInbox(messaging: Context.Tag.Service<typeof HostMessaging>) {
 
 function pauseFirstCheck(entered: Deferred.Deferred<undefined>) {
   let checks = 0;
-  return policy(() =>
-    Effect.suspend(() => {
-      checks += 1;
-      return checks === 1
-        ? Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Effect.never),
-          )
-        : Effect.succeed(block);
-    }),
-  );
+  return {
+    decide: (request: DecisionRequest) =>
+      Effect.suspend(() => {
+        checks += 1;
+        return checks === 1
+          ? Deferred.succeed(entered, undefined).pipe(
+              Effect.zipRight(Effect.never),
+            )
+          : Effect.succeed(decisionResponse(request, "violation"));
+      }),
+  };
 }

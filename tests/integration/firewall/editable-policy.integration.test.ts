@@ -10,7 +10,6 @@ import {
   Daemon,
   type DecisionProvider,
   type DecisionRequest,
-  type MessageMiddleware,
 } from "@moltzap/social-harness/service";
 import {
   ConfigProvider,
@@ -33,11 +32,7 @@ import {
   makeRegistrationRequest,
 } from "../daemon/daemon-process-harness.js";
 import { processTrace } from "../process-trace.js";
-import {
-  anyString,
-  arrayContaining,
-  objectContaining,
-} from "../test-matchers.js";
+import { arrayContaining, objectContaining } from "../test-matchers.js";
 
 const pair = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
@@ -51,7 +46,6 @@ const pair = Effect.gen(function* () {
 
 const settings = {
   timeoutMilliseconds: 10000,
-  middlewareTimeoutMilliseconds: 8000,
   maximumInputBytes: 1000000,
   maximumResultBytes: 1000000,
 };
@@ -62,11 +56,8 @@ const provider: DecisionProvider = {
 
 const options: Daemon.FirewallOptions = {
   mode: "enforcement",
-  incoming: [],
-  outgoing: [],
   settings,
   facts: [],
-  codeDigest: "a".repeat(64),
   text: {
     provider,
     settings: {
@@ -110,35 +101,28 @@ const blockedRule = {
   text: "Never disclose private text.",
 } as const;
 
-interface FixedPolicyScenario {
-  readonly client: Client;
-  readonly codeRule: {
-    readonly id: string;
-    readonly guidance: string;
-  };
-  readonly middleware: MessageMiddleware;
-}
-
 const acquirePolicyCheckScenario = Effect.gen(function* () {
   const { alice } = yield* pair;
   const entered = yield* Deferred.make<undefined>();
   const release = yield* Deferred.make<undefined>();
-  const middleware: MessageMiddleware = {
-    id: "code",
-    revision: "1",
-    rules: [{ id: "fixed-code" }],
-    check: () =>
-      Deferred.succeed(entered, undefined).pipe(
-        Effect.zipRight(Deferred.await(release)),
-        Effect.as({
-          findings: [{ ruleId: "fixed-code", outcome: "pass" }],
-          expectations: [],
-        }),
-      ),
-  };
   yield* start(alice, {
     ...options,
-    outgoing: [middleware],
+    text: {
+      ...options.text,
+      provider: {
+        decide: (request) =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.zipRight(Deferred.await(release)),
+            Effect.as(answer(request)),
+          ),
+      },
+      fixedRules: [fixedRule],
+      settings: {
+        minimumProbability: 0.5,
+        maximumRequestBytes: 1000000,
+        timeoutMilliseconds: 5000,
+      },
+    },
   });
   const client = yield* connect(alice);
   yield* register(client, alice);
@@ -152,47 +136,12 @@ const fixedRule = {
   guidance: "Ask the owner.",
 } as const;
 
-const acquireFixedPolicyScenario = Effect.gen(function* () {
-  const { alice } = yield* pair;
-  const codeRule = {
-    id: "no-links",
-    guidance: "Send the page title instead of the link.",
-  } as const;
-  const middleware: MessageMiddleware = {
-    id: "links",
-    revision: "1",
-    rules: [codeRule],
-    check: () =>
-      Effect.succeed({
-        findings: [{ ruleId: codeRule.id, outcome: "pass" }],
-        expectations: [],
-      }),
-  };
-  yield* start(alice, {
-    ...options,
-    incoming: [middleware],
-    outgoing: [middleware],
-    text: {
-      provider,
-      settings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 1000000,
-        timeoutMilliseconds: 5000,
-      },
-      fixedRules: [fixedRule],
-    },
-  });
-  const client = yield* connect(alice);
-  yield* register(client, alice);
-  return { codeRule, middleware, client };
-});
-
 const swapDuringCheck = Effect.gen(function* () {
   const scenario = yield* acquirePolicyCheckScenario;
   const { client, entered } = scenario;
   const before = yield* read(client);
   expect(
-    yield* update(client, { remove: ["fixed-code"] }).pipe(Effect.isFailure),
+    yield* update(client, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
   ).toBe(true);
   const inFlight = yield* send(client).pipe(Effect.forkScoped);
   yield* Deferred.await(entered);
@@ -237,7 +186,7 @@ const persistAndValidate = Effect.gen(function* () {
   ).toBe(true);
   expect(yield* read(client)).toMatchObject({
     activeRevision: changed.activeRevision,
-    fixedRules: arrayContaining([{ from: "text", ...fixedRule }]),
+    fixedRules: arrayContaining([fixedRule]),
     rules: [{ id: blockedRule.id }],
   });
   expect(yield* send(client).pipe(Effect.isFailure)).toBe(true);
@@ -253,10 +202,6 @@ const persistAndValidate = Effect.gen(function* () {
   yield* send(fresh);
   yield* Fiber.interrupt(restarted);
 });
-
-const readFixed = acquireFixedPolicyScenario.pipe(
-  Effect.flatMap(expectFixedPolicyCannotBeEdited),
-);
 
 const concurrentEdits = Effect.gen(function* () {
   const { alice } = yield* pair;
@@ -330,11 +275,6 @@ describe("editable firewall through the daemon public API", () => {
     60000,
   );
   it(
-    "returns fixed natural-language text and code rule descriptions and refuses to edit them",
-    processTrace(readFixed.pipe(Effect.provide(NodeContext.layer))),
-    60000,
-  );
-  it(
     "serializes concurrent additions without losing rules across restart",
     processTrace(concurrentEdits.pipe(Effect.provide(NodeContext.layer))),
     60000,
@@ -347,36 +287,6 @@ describe("editable firewall through the daemon public API", () => {
     60000,
   );
 });
-
-function expectFixedPolicyCannotBeEdited(state: FixedPolicyScenario) {
-  return Effect.gen(function* () {
-    const { codeRule, middleware, client } = state;
-    const policy = yield* call(client, "policy_read");
-    const removeCode = yield* call(client, "policy_update", {
-      remove: [codeRule.id],
-    }).pipe(Effect.flip);
-    const replaceText = yield* call(client, "policy_update", {
-      add: [{ ...blockedRule, id: fixedRule.id }],
-    }).pipe(Effect.flip);
-    expect(policy).toEqual({
-      rules: [],
-      fixedRules: arrayContaining([
-        objectContaining({
-          from: "code",
-          middleware: middleware.id,
-          ...codeRule,
-        }),
-        objectContaining({ from: "text", ...fixedRule }),
-      ]),
-      activeRevision: anyString,
-    });
-    expect(removeCode.cause).toMatchObject({ data: { reason: "fixed-rule" } });
-    expect(replaceText.cause).toMatchObject({
-      data: { reason: "fixed-rule" },
-    });
-    expect(yield* call(client, "policy_read")).toEqual(policy);
-  });
-}
 
 function answer(request: DecisionRequest) {
   return {

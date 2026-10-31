@@ -140,16 +140,12 @@ it("refuses a policy file beside a composition's own firewall", () =>
     const error = yield* Layer.build(
       Daemon.withFirewall({
         mode: "guidance",
-        incoming: [],
-        outgoing: [],
         settings: {
           timeoutMilliseconds: 1000,
-          middlewareTimeoutMilliseconds: 1000,
           maximumInputBytes: 1000,
           maximumResultBytes: 1000,
         },
         facts: [],
-        codeDigest: "a".repeat(64),
       }),
     ).pipe(
       Effect.scoped,

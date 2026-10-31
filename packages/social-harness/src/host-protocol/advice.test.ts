@@ -58,7 +58,6 @@ const normGuidance: CheckedGuidance = {
   ],
   instructions: [
     {
-      middlewareId: "composition-norms",
       ruleId: "reply",
       expectation: "required",
       subjects: ["proposal"],
@@ -103,7 +102,6 @@ it("renders an uncertain norm's choice and probability on an admitted send", () 
     subjects: [],
     instructions: [
       {
-        middlewareId: "composition-norms",
         ruleId: "reply",
         uncertain: { choice: "wait", probability: 0.6 },
         instruction: "Confirm the day with the owner.",
@@ -228,9 +226,7 @@ it("renders settled registered advice without inventing an expectation", () => {
   const rendered = renderLocalGuidance({
     checkId,
     subjects: [],
-    instructions: [
-      { middlewareId: "owner", ruleId: "reply", instruction: advice },
-    ],
+    instructions: [{ ruleId: "reply", instruction: advice }],
   });
   expect(JSON.parse(rendered.split("\n")[1] ?? "[]")).toEqual([
     { checkId, instructions: [{ ruleId: "reply", instruction: advice }] },

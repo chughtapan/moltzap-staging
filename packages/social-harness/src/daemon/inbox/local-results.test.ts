@@ -7,18 +7,15 @@ import type { AnswerContent } from "../../communication/collectives/contracts.js
 import type { CollectiveMemberOutcome } from "../../communication/collectives/inbound.js";
 import type {
   DecisionRequest,
-  MessageMiddleware,
-  MiddlewareInput,
+  DecisionProvider,
 } from "../../firewall/check.js";
 import { digest } from "../../__tests__/agent-card-fixtures.js";
 import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
 import { conversationIdentityFixture } from "../../__tests__/conversation-fixtures.js";
 import {
+  decisionResponse,
+  decisionState,
   firewallOptions,
-  observeInputs,
-  pass,
-  policy,
-  rule,
 } from "../../__tests__/daemon-delivery-fixtures.js";
 import {
   encodeCollectiveContent,
@@ -114,12 +111,12 @@ function resultCase(
 
 function assessment(
   subject: Subject,
-  middleware: MessageMiddleware,
+  provider: DecisionProvider,
   overrides: Partial<FirewallOptions> = {},
 ) {
   return Effect.gen(function* () {
     const context = yield* Layer.build(
-      Firewall.layer(firewallOptions(middleware, overrides)),
+      Firewall.layer(firewallOptions(provider, overrides)),
     ).pipe(subject.run);
     const firewall = Context.get(context, Firewall);
     if (firewall.configuration === undefined) {
@@ -138,17 +135,26 @@ it("checks the remote answer and quoted question while trusting the agent's own 
   Effect.gen(function* () {
     const subject = yield* conversationIdentityFixture;
     const result = yield* resultCase(subject);
-    const seen: MiddlewareInput[] = [];
-    const environment = yield* assessment(subject, observeInputs(seen));
+    const seen: DecisionRequest[] = [];
+    const environment = yield* assessment(subject, {
+      decide: (request) =>
+        Effect.sync(() => {
+          if (request.stage === "compliance") {
+            seen.push(request);
+          }
+          return decisionResponse(request);
+        }),
+    });
     const admitted = yield* checkLocalItem(environment, result);
-    expect(seen.map((input) => input.event.message.text)).toEqual([
+    expect(
+      seen.map((input) => decisionState(input.state).candidate.text),
+    ).toEqual([
       renderOutcome(result.item.outcomes[1]?.outcome ?? { kind: "no-answer" }),
       JSON.stringify(question),
     ]);
-    expect(seen.map((input) => input.event.message.sender)).toEqual([
-      subject.third.card.agentId,
-      subject.remote.card.agentId,
-    ]);
+    expect(
+      seen.map((input) => decisionState(input.state).candidate.sender),
+    ).toEqual([subject.third.card.agentId, subject.remote.card.agentId]);
     expect(
       yield* decodeRuntimeValue(InboundItem, admitted.item.canonicalItem),
     ).toEqual(result.item);
@@ -162,20 +168,16 @@ it("checks only the public invalid-answer reason and keeps its original body pri
       reason: "Expected an allowed day",
     };
     const result = yield* resultCase(subject, { slot: privateAnswer }, invalid);
-    const seen: MiddlewareInput[] = [];
-    const environment = yield* assessment(
-      subject,
-      observeInputs(seen, (input) => ({
-        findings: pass.findings,
-        expectations: [
-          {
-            ruleId: rule.id,
-            expectation: "required",
-            subjects: [input.event.message.id],
-          },
-        ],
-      })),
-    );
+    const seen: DecisionRequest[] = [];
+    const environment = yield* assessment(subject, {
+      decide: (request) =>
+        Effect.sync(() => {
+          if (request.stage === "compliance") {
+            seen.push(request);
+          }
+          return decisionResponse(request, "compliant", "required");
+        }),
+    });
     const admitted = yield* checkLocalItem(environment, result);
     yield* subject.run(
       queueIncomingItem(result.entry).pipe(
@@ -184,7 +186,9 @@ it("checks only the public invalid-answer reason and keeps its original body pri
     );
     const { author, msgId } = result.remote;
     const reference = { authorAgentId: author.agentId, msgId };
-    expect(seen[0]?.event.message.text).toBe(renderOutcome(invalid));
+    expect(decisionState(seen[0]?.state).candidate.text).toBe(
+      renderOutcome(invalid),
+    );
     expect(yield* subject.run(isMessageVisible(reference))).toBe(false);
     const [view] = yield* subject.run(readHistoryViews([reference]));
     expect(
@@ -212,13 +216,23 @@ it("keeps one captured text policy while an owner edit completes during result a
     const release = yield* Deferred.make<undefined>();
     const environment = yield* assessment(
       subject,
-      policy(() =>
-        Deferred.succeed(entered, undefined).pipe(
-          Effect.zipRight(Deferred.await(release)),
-          Effect.as(pass),
-        ),
-      ),
-      batchOptions(),
+      {
+        decide: (request) =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.zipRight(Deferred.await(release)),
+            Effect.as(
+              decisionResponse(
+                request,
+                Object.values(request.questions).some(
+                  (question) => question.ruleId === "answer-review",
+                )
+                  ? "violation"
+                  : "compliant",
+              ),
+            ),
+          ),
+      },
+      { maximumConcurrentChecks: 1 },
     );
     const textRule = {
       id: "answer-review",
@@ -243,49 +257,6 @@ it("keeps one captured text policy while an owner edit completes during result a
       ],
     });
   }));
-
-function batchOptions(): Partial<FirewallOptions> {
-  return {
-    maximumConcurrentChecks: 1,
-    text: {
-      provider: {
-        decide: (request) =>
-          Effect.succeed({
-            provider: "test-provider",
-            model: "test-model",
-            usage: {},
-            raw: "",
-            answers: Object.fromEntries(
-              Object.entries(request.questions).map(([id, entry]) => [
-                id,
-                batchAnswer(request, entry),
-              ]),
-            ),
-          }),
-      },
-      settings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 60_000,
-        timeoutMilliseconds: 5_000,
-      },
-    },
-  };
-}
-
-function batchAnswer(
-  request: DecisionRequest,
-  question: DecisionRequest["questions"][string],
-) {
-  const choices = Object.keys(question.criteria);
-  const permitting = choices.includes("relevant") ? "relevant" : "none";
-  const choice = request.stage === "compliance" ? "violation" : permitting;
-  return {
-    choice,
-    probabilities: Object.fromEntries(
-      choices.map((entry) => [entry, entry === choice ? 1 : 0]),
-    ),
-  };
-}
 
 function requestSource(
   subject: Subject,
