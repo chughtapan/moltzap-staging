@@ -101,6 +101,13 @@ const blockedRule = {
   text: "Never disclose private text.",
 } as const;
 
+const fixedRule = {
+  id: "owner",
+  applies: "both",
+  text: "Follow the owner.",
+  guidance: "Ask the owner.",
+} as const;
+
 const acquirePolicyCheckScenario = Effect.gen(function* () {
   const { alice } = yield* pair;
   const entered = yield* Deferred.make<undefined>();
@@ -128,13 +135,6 @@ const acquirePolicyCheckScenario = Effect.gen(function* () {
   yield* register(client, alice);
   return { entered, release, client };
 });
-
-const fixedRule = {
-  id: "owner",
-  applies: "both",
-  text: "Follow the owner.",
-  guidance: "Ask the owner.",
-} as const;
 
 const swapDuringCheck = Effect.gen(function* () {
   const scenario = yield* acquirePolicyCheckScenario;
