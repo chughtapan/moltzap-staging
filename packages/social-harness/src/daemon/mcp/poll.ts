@@ -208,17 +208,13 @@ const replayResult = (
   cursor: Cursor,
   page: InboxPage,
 ) =>
-  Effect.forEach(page.items, (entry) => makeItemEvent(entry, now(runtime)), {
-    concurrency: 1,
-  }).pipe(
-    Effect.map((events) =>
-      result(current.generation, {
-        events,
-        truncated: false,
-        hasMore: page.nextAfter !== undefined,
-        cursor: pageCursor(runtime, current, cursor, page),
-      }),
-    ),
+  Effect.sync(() =>
+    result(current.generation, {
+      events: page.items.map((entry) => makeItemEvent(entry, now(runtime))),
+      truncated: false,
+      hasMore: page.nextAfter !== undefined,
+      cursor: pageCursor(runtime, current, cursor, page),
+    }),
   );
 
 /** Cursor advancement never retires work. Gaps trigger unread recovery, not a protocol error. */

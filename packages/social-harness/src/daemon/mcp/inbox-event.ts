@@ -1,11 +1,7 @@
 /** @file Builds host events from retained inbox items, using references for oversized payloads. */
 
-import { Effect } from "effect";
 import type { InboxEntry } from "../inbox/store.js";
-import { decodeRuntimeValue } from "../../communication/store/index.js";
-import { localGuidanceSchema } from "../../host-protocol/advice.js";
 import { maximumEventBytes } from "../../host-protocol/index.js";
-import { InboundItem } from "../../host-protocol/items.js";
 import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
 
 // safer-arch-ignore file-implicit-boundary-module: Polling and webhook delivery share this one item formatter and envelope bound; nothing outside daemon/mcp reads them.
@@ -18,15 +14,8 @@ import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
  * @param timestamp The occurrence's Unix time in milliseconds.
  * @returns A bounded event whose identity remains stable across retries.
  */
-export const makeItemEvent = Effect.fn("makeItemEvent")(function* (
-  entry: InboxEntry,
-  timestamp: number,
-) {
-  const item = yield* decodeRuntimeValue(InboundItem, entry.canonicalItem);
-  const guidance =
-    entry.canonicalGuidance === undefined
-      ? undefined
-      : yield* decodeRuntimeValue(localGuidanceSchema, entry.canonicalGuidance);
+export function makeItemEvent(entry: InboxEntry, timestamp: number) {
+  const { item, guidance } = entry;
   const event = {
     eventId: entry.deliveryToken,
     name: INBOX_ITEM_EVENT,
@@ -50,4 +39,4 @@ export const makeItemEvent = Effect.fn("makeItemEvent")(function* (
             (entry.canonicalGuidance?.byteLength ?? 0),
         },
       };
-});
+}

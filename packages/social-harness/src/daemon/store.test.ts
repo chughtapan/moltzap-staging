@@ -4,7 +4,8 @@ import { live as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
 import type { FirewallCompletion } from "../firewall/store/index.js";
-import { digest } from "../__tests__/agent-card-fixtures.js";
+import { digest, testAgentView } from "../__tests__/agent-card-fixtures.js";
+import { localGuidance } from "../__tests__/message-policy-fixtures.js";
 import {
   bytes,
   stateDirectory,
@@ -19,8 +20,18 @@ import { queueIncomingItem, readNextItemsToCheck } from "./inbox/pending.js";
 
 const item = {
   deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", 1)),
-  canonicalItem: bytes("retained host item"),
-  canonicalGuidance: bytes("retained guidance"),
+  canonicalItem: bytes(
+    JSON.stringify({
+      kind: "multicast",
+      message: {
+        msgId: digest("msg_", 1),
+        author: testAgentView("agent:bob"),
+        recipients: [testAgentView("agent:alice")],
+        content: [{ type: "text", text: "Retained host item" }],
+      },
+    }),
+  ),
+  canonicalGuidance: bytes(JSON.stringify(localGuidance(1))),
 };
 const completion: FirewallCompletion = {
   checkId: "completed-check",

@@ -10,6 +10,7 @@ import {
   storeOperation,
 } from "../../communication/store/database/index.js";
 import { DeliveryToken } from "../../communication/store/types.js";
+import { decodeItemProjection } from "./store.js";
 
 const localResults =
   "FROM incoming_items AS incoming WHERE incoming.author_agent_id IS NULL AND incoming.disposition='admitted' AND incoming.published_item IS NOT NULL";
@@ -65,17 +66,20 @@ export function readLocalResultPage(query: {
 }
 
 function resultRow(row: Readonly<Record<string, unknown>>) {
-  return Schema.decodeUnknown(DeliveryToken)(
-    readText(row, "delivery_token"),
-  ).pipe(
-    Effect.map((deliveryToken) => {
-      const guidance = readOptionalBytes(row, "canonical_guidance");
-      return {
-        deliveryToken,
-        sequence: readInteger(row, "sequence"),
-        canonicalItem: readBytes(row, "canonical_item"),
-        ...(guidance === undefined ? {} : { canonicalGuidance: guidance }),
-      };
-    }),
-  );
+  return Effect.gen(function* () {
+    const deliveryToken = yield* Schema.decodeUnknown(DeliveryToken)(
+      readText(row, "delivery_token"),
+    );
+    const guidance = readOptionalBytes(row, "canonical_guidance");
+    const projection = {
+      canonicalItem: readBytes(row, "canonical_item"),
+      ...(guidance === undefined ? {} : { canonicalGuidance: guidance }),
+    };
+    return {
+      deliveryToken,
+      sequence: readInteger(row, "sequence"),
+      ...projection,
+      ...(yield* decodeItemProjection(projection)),
+    };
+  });
 }

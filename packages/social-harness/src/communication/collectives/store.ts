@@ -192,14 +192,14 @@ export function putCollectiveMessage(input: StoredCollectiveMessage) {
   ).pipe(storeOperation, Effect.withSpan("putCollectiveMessage"));
 }
 
-/** Saved associations recover certification observations without resubmitting payloads. */
+/** An operation reads all associations; startup reads only unfinished response and close observations. */
 export function readCollectiveMessages(operationId?: CollectiveId) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       "SELECT operation_id,role,destination,author_agent_id,msg_id FROM collective_messages" +
         (operationId === undefined
-          ? " ORDER BY rowid"
+          ? " WHERE role IN ('response','close') AND operation_id IN (SELECT operation_id FROM collective_operations WHERE phase!='completed') ORDER BY rowid"
           : " WHERE operation_id=? ORDER BY rowid"),
       operationId === undefined ? [] : [operationId],
     );

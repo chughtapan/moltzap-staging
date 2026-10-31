@@ -14,9 +14,7 @@ import {
   EndpointStoreError,
 } from "../../communication/store/index.js";
 import { exactStruct } from "../../encoding/exact.js";
-import { localGuidanceSchema } from "../../host-protocol/advice.js";
-import { InboundItem } from "../../host-protocol/items.js";
-import { type InboxEntry, readInbox, readInboxItem } from "./store.js";
+import { readInbox, readInboxItem } from "./store.js";
 
 /**
  * Lookup retains the original content and guidance after acknowledgment.
@@ -29,31 +27,13 @@ export const readRuntimeEvent = (token: DeliveryToken) =>
     if (retained === undefined) {
       return yield* Effect.fail({ reason: "unknown-event" });
     }
-    return yield* decodeInboxEntry(retained);
-  }).pipe(Effect.withSpan("readRuntimeEvent"));
-
-/**
- * The retained item and the local guidance it was admitted with, if any.
- * @param retained One inbox entry's canonical item and guidance bytes.
- * @returns The decoded item and guidance, or a corrupt-store failure.
- */
-export function decodeInboxEntry(
-  retained: Pick<InboxEntry, "canonicalItem" | "canonicalGuidance">,
-) {
-  return Effect.gen(function* () {
     return {
-      item: yield* decodeRuntimeValue(InboundItem, retained.canonicalItem),
-      ...(retained.canonicalGuidance === undefined
+      item: retained.item,
+      ...(retained.guidance === undefined
         ? {}
-        : {
-            guidance: yield* decodeRuntimeValue(
-              localGuidanceSchema,
-              retained.canonicalGuidance,
-            ),
-          }),
+        : { guidance: retained.guidance }),
     };
-  }).pipe(Effect.withSpan("decodeInboxEntry"));
-}
+  }).pipe(Effect.withSpan("readRuntimeEvent"));
 
 const cursorSchema = exactStruct({
   after: Schema.NonNegativeInt,
@@ -98,17 +78,11 @@ export const readRuntimeInbox = (
     const page = yield* decodeCursor(input.cursor).pipe(
       Effect.flatMap((bounds) => readInbox(bounds)),
     );
-    const items = yield* Effect.forEach(
-      page.items,
-      (entry) =>
-        Effect.gen(function* () {
-          return {
-            deliveryToken: entry.deliveryToken,
-            ...(yield* decodeInboxEntry(entry)),
-          };
-        }),
-      { concurrency: 1 },
-    );
+    const items = page.items.map((entry) => ({
+      deliveryToken: entry.deliveryToken,
+      item: entry.item,
+      ...(entry.guidance === undefined ? {} : { guidance: entry.guidance }),
+    }));
     if (page.nextAfter === undefined) {
       return { items };
     }

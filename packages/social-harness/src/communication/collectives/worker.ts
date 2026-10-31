@@ -131,9 +131,7 @@ function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
 function resume(environment: Environment) {
   return Effect.gen(function* () {
     for (const saved of yield* Store.readCollectiveMessages()) {
-      if (saved.role !== "request") {
-        yield* Queue.offer(environment.observations, saved);
-      }
+      yield* Queue.offer(environment.observations, saved);
     }
     for (const operation of yield* Store.readPendingRemoteCloses()) {
       yield* finishRemote(environment, operation.operationId);

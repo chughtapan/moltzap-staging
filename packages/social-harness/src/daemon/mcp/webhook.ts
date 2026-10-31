@@ -532,10 +532,7 @@ const prepareOccurrence = (runtime: WebhookRuntime) =>
         return null;
       }
       const timestamp = now(runtime);
-      const body = yield* makeItemEvent(entry, timestamp).pipe(
-        Effect.map((event) => JSON.stringify(event)),
-        Effect.mapError(persistenceFailure),
-      );
+      const body = JSON.stringify(makeItemEvent(entry, timestamp));
       const next = {
         ...registration,
         outbox: {

@@ -7,11 +7,7 @@ import type { InboundItem } from "../../host-protocol/items.js";
 import type { DeliveryOperations } from "../../host-protocol/operations.js";
 import type { HistoryExportPort } from "../inbox/host-traffic-log.js";
 import { DeliveryAcknowledgeError } from "../../communication/conversations/errors.js";
-import {
-  decodeInboxEntry,
-  readRuntimeEvent,
-  readRuntimeInbox,
-} from "../inbox/inbox.js";
+import { readRuntimeEvent, readRuntimeInbox } from "../inbox/inbox.js";
 import {
   acknowledgeInboxItem,
   completeWebhookDelivery,
@@ -35,7 +31,7 @@ export const makeInboxOperations = Effect.fn("makeInboxOperations")(function* (
       Effect.tap((page) =>
         Effect.forEach(
           page.items,
-          (entry) => record(entry.deliveryToken, Effect.succeed(entry)),
+          (entry) => record(entry.deliveryToken, entry.item),
           { concurrency: 1, discard: true },
         ),
       ),
@@ -55,16 +51,12 @@ function historyRecorder(historyExport: HistoryExportPort) {
   return Effect.gen(function* () {
     const gate = yield* Effect.makeSemaphore(1);
     const exported = new Set<DeliveryToken>();
-    return <E>(
-      token: DeliveryToken,
-      read: Effect.Effect<{ readonly item: InboundItem }, E>,
-    ) =>
+    return (token: DeliveryToken, item: InboundItem) =>
       gate.withPermits(1)(
         Effect.gen(function* () {
           if (exported.has(token)) {
             return;
           }
-          const { item } = yield* read;
           yield* historyExport.record({
             kind: "inbound",
             item,
@@ -93,7 +85,7 @@ function eventOperations(
         Effect.tap((page) =>
           Effect.forEach(
             page.items,
-            (entry) => record(entry.deliveryToken, decodeInboxEntry(entry)),
+            (entry) => record(entry.deliveryToken, entry.item),
             { concurrency: 1, discard: true },
           ),
         ),

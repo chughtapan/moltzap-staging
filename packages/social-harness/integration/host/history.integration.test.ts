@@ -18,6 +18,7 @@ import {
 } from "../../src/__tests__/store-schema-fixtures.js";
 import { Communication } from "../../src/communication/index.js";
 import { Message } from "../../src/communication/message.js";
+import { AgentAddress } from "../../src/communication/records/values.js";
 import { transaction } from "../../src/communication/store/database/index.js";
 import {
   DeliveryToken,
@@ -169,23 +170,25 @@ const localOnly = Communication.of({
   readHistory: unused,
 });
 
-function saveLocalResult(byte: number) {
+function saveLocalResult(byte: number, address = "agent:bob") {
   return Effect.gen(function* () {
     const token = Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", byte));
     const item = yield* Schema.decodeUnknown(InboundItem)({
       kind: "collectiveResult",
       op: "gather",
       operationId: collectiveOperationId(alice.agentId, byte),
-      to: "agent:bob",
+      to: address,
       closedBy: "deadline",
       closedAt: Date.now(),
       question: `Question ${byte}`,
-      outcomes: [{ member: bob, outcome: { kind: "no-answer" } }],
+      outcomes: [
+        { member: testAgentView(address), outcome: { kind: "no-answer" } },
+      ],
     });
     const canonicalItem = yield* encodeRuntimeValue(item);
     yield* queueIncomingItem({
       deliveryToken: token,
-      conversation: "agent:bob",
+      conversation: address,
       canonicalItem,
       canonicalSources: yield* encodeRuntimeValue({ answers: [] }),
     });
@@ -194,6 +197,60 @@ function saveLocalResult(byte: number) {
     return { kind: "result" as const, deliveryToken: token, item };
   });
 }
+
+it("pages the merged result and message addresses without repeating shared conversations", () =>
+  withDaemonStore(stateDirectory(), () =>
+    Effect.gen(function* () {
+      const addresses = Array.from(
+        { length: 51 },
+        (_, index) => `agent:peer-${String(index).padStart(3, "0")}`,
+      );
+      yield* Effect.forEach(
+        addresses,
+        (address, index) => saveLocalResult(index + 1, address),
+        {
+          concurrency: 1,
+          discard: true,
+        },
+      );
+      const combined = Communication.of({
+        ...localOnly,
+        listConversations: () =>
+          Effect.succeed({
+            conversations: [
+              {
+                conversationId: "shared",
+                members: [alice, testAgentView("agent:peer-000")],
+              },
+              {
+                conversationId: "messages-only",
+                members: [alice, testAgentView("agent:peer-999")],
+              },
+            ],
+            hasMore: false,
+          }),
+      });
+      const history = makeHistoryOperations(
+        mcpIdentity(),
+        combined,
+        yield* SqlClient.SqlClient,
+      );
+      expect(yield* history.listConversations({})).toEqual({
+        kind: "page",
+        addresses: addresses.slice(0, 50),
+        hasMore: true,
+      });
+      expect(
+        yield* history.listConversations({
+          afterAddress: AgentAddress.make("agent:peer-049"),
+        }),
+      ).toEqual({
+        kind: "page",
+        addresses: ["agent:peer-050", "agent:peer-999"],
+        hasMore: false,
+      });
+    }),
+  ));
 
 function firstResultPage() {
   return Effect.gen(function* () {
