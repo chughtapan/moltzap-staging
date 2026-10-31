@@ -1,12 +1,13 @@
 /** @file Adapts messages and saved visibility to firewall assessment inputs. */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Clock, Effect, Option } from "effect";
+import { Clock, Effect, Array as EffectArray, Option, Order } from "effect";
 import { createHash } from "node:crypto";
 import type {
   FirewallOperations,
   PreparedFirewallCheck,
 } from "../../firewall/index.js";
+import type { InboundItem } from "../../host-protocol/items.js";
 import type { Ed25519PublicKey } from "../../identity/keys.js";
 import type {
   FirewallEvidence,
@@ -33,19 +34,15 @@ import {
   type AgentAddress,
   agentAddressOf,
 } from "../../communication/records/values.js";
-import {
-  decodeRuntimeValue,
-  EndpointStoreError,
-} from "../../communication/store/index.js";
+import { EndpointStoreError } from "../../communication/store/index.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import { compareAgentIds } from "../../encoding/identifier.js";
 import {
   ENDPOINT_SENDER,
   type HistoryEntry,
   type Message,
-  MessageContext,
+  type MessageContext,
 } from "../../firewall/check.js";
-import { InboundItem } from "../../host-protocol/items.js";
 import {
   questionText,
   renderCollectiveQuestion,
@@ -54,7 +51,11 @@ import {
   renderContent,
   renderOutcome,
 } from "../../host-protocol/render.js";
-import { AgentView, type VerifiedAgentCard } from "../../identity/cards.js";
+import {
+  type AgentView,
+  agentViewOf,
+  type VerifiedAgentCard,
+} from "../../identity/cards.js";
 import { readFirewallEvidence } from "./evidence.js";
 
 /** The daemon supplies verified attribution and its existing durable evidence capability. */
@@ -110,9 +111,10 @@ const messageProjection = Effect.fn("firewallMessageProjection")(function* (
     message: {
       id: messageId(shared),
       sender: shared.author.agentId,
-      recipients: shared.recipients
-        .map((agent) => agent.agentId)
-        .sort(compareAgentIds),
+      recipients: EffectArray.sort(
+        EffectArray.map(shared.recipients, (agent) => agent.agentId),
+        Order.string,
+      ),
       text: projected.text,
       ...(projected.operation === undefined
         ? {}
@@ -148,13 +150,13 @@ const contextFrom = Effect.fn("firewallContext")(function* (
   );
   const cards = new Map<string, AgentView>();
   for (const card of [
-    AgentView.make(environment.localAgentCard),
+    agentViewOf(environment.localAgentCard),
     ...candidateCards,
     ...history.flatMap((entry) => entry.cards),
   ]) {
     cards.set(card.agentId, card);
   }
-  const context = new MessageContext({
+  const context: MessageContext = {
     agentId: localAgentId,
     principal: environment.localAgentCard.principalId,
     participants: [...cards.values()].map((card) => ({
@@ -166,7 +168,7 @@ const contextFrom = Effect.fn("firewallContext")(function* (
     now: yield* Clock.currentTimeMillis,
     facts: environment.firewall.configuration.facts,
     gaps: evidenceGaps(evidence),
-  });
+  };
   return { context, cards: [...cards.values()] };
 });
 
@@ -409,7 +411,7 @@ export const prepareOutgoingQuestionCheck = Effect.fn(
   const message: Message = {
     id: hashedId(`${question.author.agentId}:${question.operationId}`),
     sender: question.author.agentId,
-    recipients: question.recipients.map((agent) => agent.agentId),
+    recipients: EffectArray.map(question.recipients, (agent) => agent.agentId),
     text: renderCollectiveQuestion(question),
     operation: {
       kind: "request",
@@ -474,26 +476,30 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
   function* (
     environment: FirewallEnvironment,
     entry: IncomingEntry,
+    item: Extract<
+      InboundItem,
+      { readonly kind: "multicast" | "collectiveRequest" }
+    >,
   ): Effect.fn.Return<PreparedFirewallCheck, EndpointStoreError> {
-    const item = yield* decodeRuntimeValue(InboundItem, entry.canonicalItem);
-    if (item.kind !== "multicast" && item.kind !== "collectiveRequest") {
-      return yield* new EndpointStoreError({ reason: "invalid-input" });
-    }
     const evidence = yield* readFirewallEvidence({
       message: item.message,
       conversation: entry.conversation,
       maximumRecords: environment.firewall.configuration.maximumHistoryRecords,
       registrySignerPublicKey: environment.registrySignerPublicKey,
     }).pipe(Effect.provideService(SqlClient.SqlClient, environment.sql));
-    const message =
+    const message: Message =
       item.kind === "multicast"
         ? (yield* messageProjection(item.message)).message
         : {
             id: messageId(item.message),
             sender: item.message.author.agentId,
-            recipients: item.message.recipients
-              .map((agent) => agent.agentId)
-              .sort(compareAgentIds),
+            recipients: EffectArray.sort(
+              EffectArray.map(
+                item.message.recipients,
+                (agent) => agent.agentId,
+              ),
+              Order.string,
+            ),
             text: renderCollectiveRequestBody(item),
             operation: {
               kind: "request",

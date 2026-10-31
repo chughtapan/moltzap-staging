@@ -185,11 +185,6 @@ export type HarnessReadInboxResult = typeof inboxResultSchema.Type;
 export const decodeHarnessReadInboxResult =
   Schema.decodeUnknown(inboxResultSchema);
 
-/** Validate one send's input before it runs. */
-export const decodeHarnessSendRequest = Schema.decodeUnknown(
-  harnessSendRequestSchema,
-);
-
 /** Decoded delivery acknowledgment arguments owned by the daemon. */
 export type HarnessAcknowledgeDeliveryRequest =
   typeof harnessAcknowledgeDeliveryRequestSchema.Type;

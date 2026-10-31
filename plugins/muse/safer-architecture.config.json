@@ -15,5 +15,7 @@
       "reason": "Intra-monorepo client SDK; channels depend on its public surface"
     }
   ],
-  "allowedTestPublicSubpaths": []
+  "allowedTestPublicSubpaths": [],
+  "maxFolderChildren": 24,
+  "maxFolderChildrenIncludingTests": 48
 }

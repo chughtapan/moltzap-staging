@@ -180,7 +180,7 @@ export function packageEslintConfig(options: PackageEslintOptions) {
     },
     makeStrictBlock(TEST_SUPPORT_FILES, languageOptions, strictRules),
     makePresetBlock(
-      ["src/**/*.integration.test.ts"],
+      ["src/**/*.integration.test.ts", "integration/**/*.integration.test.ts"],
       languageOptions,
       guard.configs.integrationTests,
     ),

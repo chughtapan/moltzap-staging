@@ -155,7 +155,7 @@ function checkMessage(
   >,
 ) {
   return Effect.gen(function* () {
-    const prepared = yield* prepareIncomingCheck(environment, entry);
+    const prepared = yield* prepareIncomingCheck(environment, entry, item);
     const [checked] = yield* environment.firewall.check([prepared]);
     if (checked === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });

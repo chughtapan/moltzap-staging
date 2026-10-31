@@ -31,7 +31,7 @@ import {
   MessageContext,
 } from "../check.js";
 import {
-  firewallDecisionsSchema,
+  type firewallDecisionsSchema,
   firewallDecisionSummarySchema,
   firewallInstallationSchema,
 } from "../config.js";
@@ -42,6 +42,13 @@ const activationRow = Schema.Struct({
   activeRevision: Schema.String,
   addedRuleIds: ruleIds,
   removedRuleIds: ruleIds,
+});
+const completedCheckSchema = exactStruct({
+  result: firewallCheckSchema,
+  summaries: Schema.Array(firewallDecisionSummarySchema),
+});
+const savedSummarySchema = Schema.Struct({
+  summaries: completedCheckSchema.fields.summaries,
 });
 const auditDisposition = Schema.Literal("admitted", "withheld");
 /** Missing policy means initial rules have never been seeded, distinct from an empty list. */
@@ -195,30 +202,29 @@ export function saveCheckDecision(
  */
 export function readDecisions(request: { readonly since?: number }) {
   return Effect.gen(function* () {
-    const entries = yield* readFirewallDecisions(request.since);
-    const rows = yield* Effect.forEach(entries, (entry) =>
-      decodeRuntimeValue(completedCheckSchema, entry.canonicalResult).pipe(
-        Effect.map(({ summaries }) =>
-          summaries.map((summary) => ({
-            ...summary,
-            checkId: entry.checkId,
-            time: entry.time,
-          })),
-        ),
-      ),
-    );
-    return yield* Schema.decodeUnknown(firewallDecisionsSchema)({
-      decisions: rows.flat(),
+    const decisions: Array<
+      (typeof firewallDecisionsSchema.Type.decisions)[number]
+    > = [];
+    for (const entry of yield* readFirewallDecisions(request.since)) {
+      const { summaries } = yield* decodeRuntimeValue(
+        savedSummarySchema,
+        entry.canonicalResult,
+      );
+      for (const summary of summaries) {
+        decisions.push({
+          ...summary,
+          checkId: entry.checkId,
+          time: entry.time,
+        });
+      }
+    }
+    return {
+      decisions,
       activations: (yield* readFirewallActivations(request)).map(
         (entry) => entry.activation,
       ),
-    });
-  }).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
-    ),
-    Effect.withSpan("readDecisions"),
-  );
+    } satisfies typeof firewallDecisionsSchema.Type;
+  }).pipe(Effect.withSpan("readDecisions"));
 }
 function auditEntry(
   row: Readonly<Record<string, unknown>>,
@@ -244,10 +250,6 @@ const firewallAuditInput = exactStruct({
   context: MessageContext,
   agents: Schema.Array(AgentView),
   message: Schema.NullOr(Message),
-});
-const completedCheckSchema = exactStruct({
-  result: firewallCheckSchema,
-  summaries: Schema.Array(firewallDecisionSummarySchema),
 });
 
 /**
