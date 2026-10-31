@@ -270,7 +270,7 @@ function readMessageIntents(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
                 canonical_intent, canonical_message, completed_record_hash
-         FROM message_intents WHERE canonical_intent IS NOT NULL AND failure_reason IS NULL ${conversationId === undefined ? "" : "AND conversation_id = ?"} ORDER BY author_agent_id, msg_id`,
+         FROM message_intents WHERE canonical_intent IS NOT NULL AND failure_reason IS NULL ${conversationId === undefined ? "" : "AND conversation_id = ?"} ORDER BY rowid`,
         [...(conversationId === undefined ? [] : [conversationId])],
       )).map((row) => {
         const completedRecordHash = readOptionalText(

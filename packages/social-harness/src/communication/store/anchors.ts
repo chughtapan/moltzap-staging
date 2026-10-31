@@ -784,7 +784,7 @@ function readConversationMessageIntents(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
                 canonical_intent, canonical_message, completed_record_hash
          FROM message_intents WHERE conversation_id = ? AND canonical_intent IS NOT NULL AND failure_reason IS NULL
-         ORDER BY author_agent_id, msg_id`,
+         ORDER BY rowid`,
         [conversationId],
       )).map((row) => {
         const completedRecordHash = readOptionalText(

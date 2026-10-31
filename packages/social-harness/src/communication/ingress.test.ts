@@ -22,6 +22,7 @@ import {
   storeCertifiedFirstMessage,
 } from "../__tests__/certified-history-fixtures.js";
 import { conversationIdentityFixture } from "../__tests__/conversation-fixtures.js";
+import { openOuterBody } from "../__tests__/outer-body-fixtures.js";
 import {
   batch,
   emptyBatch,
@@ -39,6 +40,7 @@ import { AgentName } from "../identity/identifiers.js";
 import { AgentSigningAuthority } from "../identity/keys.js";
 import { saveLocalIdentity } from "../identity/local-store.js";
 import { localIdentityLayer } from "../identity/local.js";
+import { RegistryConnectionError } from "../identity/registry/contract.js";
 import { Registry } from "../identity/registry/index.js";
 import { Communication, CommunicationError } from "./index.js";
 import {
@@ -178,38 +180,16 @@ function prepareIngress(refused: RefusedEnvelope) {
   });
 }
 
-function registryFor(subject: Subject) {
-  return Registry.of({
-    register: () => Effect.dieMessage("The consumer is already registered"),
-    lookup: (request) => {
-      const card = [
-        subject.local.card,
-        subject.remote.card,
-        subject.third.card,
-      ].find((candidate) =>
-        "agentName" in request
-          ? candidate.agentName === request.agentName
-          : candidate.agentId === request.agentId,
-      );
-      return Effect.succeed(
-        card === undefined
-          ? { kind: "not_found" as const }
-          : { kind: "found" as const, agentCard: card },
-      );
-    },
-  });
-}
-
 function openCommunication(
   subject: Subject,
   router: Context.Tag.Service<typeof Router>,
+  registry?: Context.Tag.Service<typeof Registry>,
 ) {
   return Effect.gen(function* () {
     yield* subject.run(saveLocalIdentity(subject.local.card));
-    const registry = registryFor(subject);
     const dependencies = Layer.mergeAll(
       Layer.succeed(SqlClient.SqlClient, subject.sql),
-      Layer.succeed(Registry, registry),
+      Layer.succeed(Registry, registry ?? registryFor(subject)),
       Layer.succeed(Router, router),
     );
     const identity = localIdentityLayer({
@@ -231,6 +211,28 @@ function openCommunication(
       ).pipe(Layer.provideMerge(identity)),
     );
     return { communication: Context.get(context, Communication), workers };
+  });
+}
+
+function registryFor(subject: Subject) {
+  return Registry.of({
+    register: () => Effect.dieMessage("The consumer is already registered"),
+    lookup: (request) => {
+      const card = [
+        subject.local.card,
+        subject.remote.card,
+        subject.third.card,
+      ].find((candidate) =>
+        "agentName" in request
+          ? candidate.agentName === request.agentName
+          : candidate.agentId === request.agentId,
+      );
+      return Effect.succeed(
+        card === undefined
+          ? { kind: "not_found" as const }
+          : { kind: "found" as const, agentCard: card },
+      );
+    },
   });
 }
 
@@ -464,4 +466,73 @@ it("offers the same certified Message again after its consumer fails", () =>
     );
     expect(message.author).toEqual(agentViewOf(subject.remote.card));
     expect(message.recipients).toEqual([agentViewOf(subject.local.card)]);
+  }));
+
+it("keeps accepted messages in order when the first preparation temporarily cannot reach Registry", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const failLookup = yield* Ref.make(true);
+    const available = registryFor(subject);
+    const registry = Registry.of({
+      ...available,
+      lookup: (request) =>
+        Ref.getAndSet(failLookup, false).pipe(
+          Effect.flatMap((fail) =>
+            fail
+              ? Effect.fail(new RegistryConnectionError())
+              : available.lookup(request),
+          ),
+        ),
+    });
+    const firstProposal = yield* Deferred.make<Message["msgId"]>();
+    const router = Router.of({
+      poll: ({ request }) =>
+        request.pollCursor === undefined
+          ? Effect.succeed(
+              emptyBatch(
+                subject.anchor.routerInstanceId,
+                subject.anchor.pollCursor,
+              ),
+            )
+          : Effect.never,
+      send: ({ request }) =>
+        openOuterBody(request.signedMessage, subject.local).pipe(
+          Effect.flatMap((body) =>
+            body.kind === "direct" && body.packet.kind === "action_proposal"
+              ? Deferred.succeed(
+                  firstProposal,
+                  body.packet.action.messageIntent.msgId,
+                )
+              : Effect.void,
+          ),
+          Effect.zipRight(Effect.never),
+          Effect.orDie,
+        ),
+    });
+    const { communication } = yield* openCommunication(
+      subject,
+      router,
+      registry,
+    );
+    const first = yield* messageFromParticipants(
+      agentViewOf(subject.local.card),
+      [agentViewOf(subject.remote.card)],
+      {
+        msgId: yield* mintMsgId(),
+        content: [{ type: "text", text: "request" }],
+      },
+    );
+    const later: Message = {
+      ...first,
+      msgId: yield* mintMsgId(),
+      content: [{ type: "text", text: "close" }],
+    };
+    yield* subject.sql.withTransaction(
+      communication
+        .send(first)
+        .pipe(Effect.zipRight(communication.send(later))),
+    );
+    expect(
+      yield* Deferred.await(firstProposal).pipe(Effect.timeout("3 seconds")),
+    ).toBe(first.msgId);
   }));

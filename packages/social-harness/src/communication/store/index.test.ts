@@ -199,6 +199,45 @@ function atomicallyBindsFirstIntentWithItsFoundation() {
     }),
   );
 }
+function restoresPreparedMessagesInAcceptanceOrder() {
+  const directory = stateDirectory();
+  const conversationId = "conversation:ordered-messages";
+  const original = foundation(conversationId);
+  const first = messageIntent(conversationId, "msg_z");
+  const later = messageIntent(conversationId, "msg_a");
+  return Effect.gen(function* () {
+    yield* withDaemonStore(directory, (store) =>
+      Effect.gen(function* () {
+        yield* bindLocalIdentity(store);
+        yield* acceptIntent(store, first);
+        yield* acceptIntent(store, later);
+        yield* store.bindMessageIntent({
+          kind: "new-conversation",
+          foundation: original,
+          intent: first,
+        });
+        yield* store.bindMessageIntent({
+          kind: "existing-conversation",
+          intent: later,
+        });
+      }),
+    );
+    yield* withDaemonStore(directory, (store) =>
+      Effect.gen(function* () {
+        expect((yield* store.recover()).messageIntents).toEqual([first, later]);
+        const restarted = yield* store.restartEmptyConversation({
+          expectedFoundation: original,
+          replacementFoundation: {
+            ...original,
+            anchorHash: original.anchorHash + ":replacement",
+            canonicalAnchor: bytes("replacement anchor"),
+          },
+        });
+        expect(restarted.messageIntents).toEqual([first, later]);
+      }),
+    );
+  });
+}
 function atomicallyLocksVerifiedFirstMessageFoundation() {
   const directory = stateDirectory();
   const conversationId = "conversation:first-message-lock";
@@ -924,6 +963,10 @@ describe("endpoint durable Router outbox", () => {
   );
 });
 describe("endpoint empty-history Router restart", () => {
+  it(
+    "restores prepared messages in acceptance order",
+    restoresPreparedMessagesInAcceptanceOrder,
+  );
   it(
     "retains intents while replacing only incomplete state",
     restartsOnlyAnEmptyConversationAtomically,

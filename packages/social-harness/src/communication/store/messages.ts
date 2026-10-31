@@ -67,14 +67,18 @@ export function readAcceptedMessage(reference: MessageReference) {
   }).pipe(storeOperation, Effect.withSpan("readAcceptedMessage"));
 }
 
-/** Workers discover committed work even when an acceptance wake preceded its commit. */
+/** Each conversation prepares its earliest accepted message before offering the next. */
 export function readUnpreparedMessages() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* Effect.forEach(
       yield* sql.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason
-         FROM message_intents WHERE canonical_intent IS NULL AND completed_record_hash IS NULL AND failure_reason IS NULL ORDER BY rowid`,
+         FROM message_intents WHERE rowid IN (
+           SELECT MIN(rowid) FROM message_intents
+           WHERE canonical_intent IS NULL AND completed_record_hash IS NULL AND failure_reason IS NULL
+           GROUP BY conversation_id
+         ) ORDER BY rowid`,
       ),
       readAcceptedRow,
       { concurrency: 1 },
