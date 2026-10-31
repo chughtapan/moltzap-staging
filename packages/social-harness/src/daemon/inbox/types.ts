@@ -43,7 +43,6 @@ export interface IncomingEntry {
   /** Original messages remain private while the projected item is presented to the host. */
   readonly canonicalSources?: Uint8Array;
   readonly message?: MessageReference;
-  readonly sequence: number;
 }
 /**
  * One local item's admission: the queued bytes it was checked as, the

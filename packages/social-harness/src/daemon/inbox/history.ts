@@ -78,7 +78,6 @@ function resultRow(row: Readonly<Record<string, unknown>>) {
     return {
       deliveryToken,
       sequence: readInteger(row, "sequence"),
-      ...projection,
       ...(yield* decodeItemProjection(projection)),
     };
   });

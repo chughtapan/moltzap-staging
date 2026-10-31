@@ -99,7 +99,6 @@ function resultCase(
     }
     const sources = { answers: [own, remote], request };
     const entry = {
-      sequence: 1,
       deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", 7)),
       conversation: "group:alice,bob,carol",
       canonicalItem: yield* encodeRuntimeValue(decoded),
@@ -191,12 +190,7 @@ it("checks only the public invalid-answer reason and keeps its original body pri
     );
     expect(yield* subject.run(isMessageVisible(reference))).toBe(false);
     const [view] = yield* subject.run(readHistoryViews([reference]));
-    expect(
-      yield* decodeRuntimeValue(
-        InboundItem,
-        view?.canonicalItem ?? new Uint8Array(),
-      ),
-    ).toEqual(result.item);
+    expect(view?.item).toEqual(result.item);
     const guidance = yield* decodeRuntimeValue(
       localGuidanceSchema,
       admitted.item.canonicalGuidance ?? new Uint8Array(),

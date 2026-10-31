@@ -322,7 +322,6 @@ export function readHistoryViews(
           };
           view = {
             deliveryToken,
-            ...projection,
             ...(yield* decodeItemProjection(projection)),
           };
           retained.set(deliveryToken, view);
@@ -423,6 +422,7 @@ function guidanceBytes(
   return value === undefined ? {} : { canonicalGuidance: value };
 }
 /** A saved permitted projection of the same authored message. */
-export interface HistoryView extends ItemProjection, RetainedItem {
+export interface HistoryView extends RetainedItem {
+  readonly deliveryToken: DeliveryToken;
   readonly message: MessageReference;
 }

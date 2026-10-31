@@ -25,7 +25,7 @@ import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
 import { saveCheckDecision } from "../../firewall/store/firewall.js";
 
 const columns =
-  "sequence,delivery_token,conversation,canonical_item,canonical_sources,author_agent_id,msg_id";
+  "delivery_token,conversation,canonical_item,canonical_sources,author_agent_id,msg_id";
 
 const incomingSchema = `
 CREATE TABLE incoming_items (
@@ -80,7 +80,7 @@ export function findIncomingMessage(message: MessageReference) {
 }
 
 /** A delivery token and source message bind immutable public and private bytes independently. */
-export function queueIncomingItem(item: Omit<IncomingEntry, "sequence">) {
+export function queueIncomingItem(item: IncomingEntry) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const values = yield* queueValues(item);
@@ -111,12 +111,7 @@ export function readNextItemsToCheck() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT ${columns
-        .split(",")
-        .map((column) => `item.${column}`)
-        .join(
-          ",",
-        )} FROM incoming_items item WHERE item.disposition='pending' AND NOT EXISTS(SELECT 1 FROM incoming_items earlier WHERE earlier.conversation=item.conversation AND earlier.disposition='pending' AND earlier.sequence<item.sequence) ORDER BY item.sequence LIMIT 32`,
+      `SELECT ${columns} FROM incoming_items item WHERE item.disposition='pending' AND NOT EXISTS(SELECT 1 FROM incoming_items earlier WHERE earlier.conversation=item.conversation AND earlier.disposition='pending' AND earlier.sequence<item.sequence) ORDER BY item.sequence LIMIT 32`,
     );
     return yield* Effect.forEach(rows, incomingEntry, { concurrency: 1 });
   }).pipe(storeOperation, Effect.withSpan("readNextItemsToCheck"));
@@ -232,10 +227,7 @@ export function markMessageVisibility(
   }).pipe(storeOperation, Effect.withSpan("markMessageVisibility"));
 }
 
-function requireSameItem(
-  prior: IncomingEntry,
-  item: Omit<IncomingEntry, "sequence">,
-) {
+function requireSameItem(prior: IncomingEntry, item: IncomingEntry) {
   return Effect.gen(function* () {
     requireSameBytes(prior.canonicalItem, item.canonicalItem);
     requireSameOptionalBytes(prior.canonicalSources, item.canonicalSources);
@@ -260,7 +252,6 @@ function incomingEntry(row: Readonly<Record<string, unknown>>) {
       ),
       conversation: readText(row, "conversation"),
       canonicalItem: readBytes(row, "canonical_item"),
-      sequence: readInteger(row, "sequence"),
       ...(sources === undefined ? {} : { canonicalSources: sources }),
       ...(author === undefined || id === undefined
         ? {}
@@ -279,7 +270,7 @@ function incomingEntry(row: Readonly<Record<string, unknown>>) {
   );
 }
 
-function queueValues(item: Omit<IncomingEntry, "sequence">) {
+function queueValues(item: IncomingEntry) {
   return Effect.gen(function* () {
     requireText(item.conversation);
     requireBytes(item.canonicalItem);

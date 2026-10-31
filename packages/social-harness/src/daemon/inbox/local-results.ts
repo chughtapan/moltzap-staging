@@ -2,13 +2,12 @@
 
 import * as SqlClient from "@effect/sql/SqlClient";
 import { Effect, Array as EffectArray } from "effect";
-import type { CheckedMessage } from "../../firewall/index.js";
-import type { InboundItem } from "../../host-protocol/items.js";
 import type {
-  FirewallEvidence,
-  IncomingEntry,
-  LocalAdmission,
-} from "./types.js";
+  CheckedMessage,
+  PreparedFirewallCheck,
+} from "../../firewall/index.js";
+import type { InboundItem } from "../../host-protocol/items.js";
+import type { IncomingEntry, LocalAdmission } from "./types.js";
 import { ResultSources } from "../../communication/collectives/index.js";
 import {
   messageMembers,
@@ -57,9 +56,36 @@ export function checkLocalItem(
   environment: FirewallEnvironment,
   local: LocalItemCheck,
 ): Effect.Effect<LocalAdmission, EndpointStoreError> {
-  return local.item.kind === "operationFailed"
-    ? failureAdmission(local.entry)
-    : resultAdmission(environment, local.entry, local.item);
+  return Effect.gen(function* () {
+    const { entry, item } = local;
+    if (item.kind === "operationFailed") {
+      return {
+        queuedItem: entry.canonicalItem,
+        item: {
+          deliveryToken: entry.deliveryToken,
+          canonicalItem: entry.canonicalItem,
+        },
+        completions: [],
+        visibility: [],
+      };
+    }
+    const sources = yield* decodeRuntimeValue(
+      ResultSources,
+      entry.canonicalSources ?? new Uint8Array(),
+    );
+    const checked = yield* checkSources(
+      environment,
+      entry,
+      selectedSources(item, sources, environment.localAgentCard.agentId),
+    );
+    const projected = projectResult(item, checked);
+    return {
+      queuedItem: entry.canonicalItem,
+      item: yield* projectedEntry(entry, projected, resultGuidance(checked)),
+      completions: checked.map((source) => source.checked.completion),
+      visibility: sourceVisibility(item, sources, checked),
+    };
+  });
 }
 
 /** Only source text actually quoted in a public result grants raw-message visibility. */
@@ -87,43 +113,6 @@ export function resultVisibility(
                 outcome.outcome.kind === "declined"),
           ),
   }));
-}
-
-function failureAdmission(entry: IncomingEntry) {
-  return Effect.succeed({
-    queuedItem: entry.canonicalItem,
-    item: {
-      deliveryToken: entry.deliveryToken,
-      canonicalItem: entry.canonicalItem,
-    },
-    completions: [],
-    visibility: [],
-  } satisfies LocalAdmission);
-}
-
-function resultAdmission(
-  environment: FirewallEnvironment,
-  entry: IncomingEntry,
-  item: ResultItem,
-) {
-  return Effect.gen(function* () {
-    const sources = yield* decodeRuntimeValue(
-      ResultSources,
-      entry.canonicalSources ?? new Uint8Array(),
-    );
-    const checked = yield* checkSources(
-      environment,
-      entry,
-      selectedSources(item, sources, environment.localAgentCard.agentId),
-    );
-    const projected = projectResult(item, checked);
-    return {
-      queuedItem: entry.canonicalItem,
-      item: yield* projectedEntry(entry, projected, resultGuidance(checked)),
-      completions: checked.map((source) => source.checked.completion),
-      visibility: sourceVisibility(item, sources, checked),
-    } satisfies LocalAdmission;
-  });
 }
 
 function selectedSources(
@@ -168,50 +157,37 @@ function checkSources(
       maximumRecords: environment.firewall.configuration.maximumHistoryRecords,
       registrySignerPublicKey: environment.registrySignerPublicKey,
     }).pipe(Effect.provideService(SqlClient.SqlClient, environment.sql));
-    const inputs = yield* Effect.forEach(
-      sources,
-      (source, index) => {
-        const evidence = captured[index];
-        return evidence === undefined
-          ? Effect.fail(new EndpointStoreError({ reason: "corrupt" }))
-          : prepareSource(environment, entry, source, evidence);
-      },
-      { concurrency: 1 },
-    );
+    const inputs: PreparedFirewallCheck[] = [];
+    for (const [index, source] of sources.entries()) {
+      const evidence = captured[index];
+      if (evidence === undefined) {
+        return yield* new EndpointStoreError({ reason: "corrupt" });
+      }
+      const projected = yield* projectMessage(source.message);
+      inputs.push(
+        yield* prepareMessageCheck(environment, {
+          direction: "incoming",
+          canonicalCandidate: entry.canonicalItem,
+          evidence,
+          message: { ...projected.message, text: source.text },
+          cards: messageMembers(source.message),
+        }),
+      );
+    }
     const checks =
       inputs.length === 0 ? [] : yield* environment.firewall.check(inputs);
     if (checks.length !== sources.length) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    return yield* Effect.forEach(
-      sources,
-      (source, index) =>
-        checks[index] === undefined
-          ? Effect.fail(new EndpointStoreError({ reason: "corrupt" }))
-          : Effect.succeed({ ...source, checked: checks[index] }),
-      { concurrency: 1 },
-    );
-  });
-}
-
-function prepareSource(
-  environment: FirewallEnvironment,
-  entry: IncomingEntry,
-  source: SourceText,
-  evidence: FirewallEvidence,
-) {
-  return Effect.gen(function* () {
-    const projected = yield* projectMessage(source.message);
-    return yield* prepareMessageCheck(environment, {
-      direction: "incoming",
-      canonicalCandidate: entry.canonicalItem,
-      evidence,
-      message: {
-        ...projected.message,
-        text: source.text,
-      },
-      cards: messageMembers(source.message),
-    });
+    const checked: CheckedSource[] = [];
+    for (const [index, source] of sources.entries()) {
+      const check = checks[index];
+      if (check === undefined) {
+        return yield* new EndpointStoreError({ reason: "corrupt" });
+      }
+      checked.push({ ...source, checked: check });
+    }
+    return checked;
   });
 }
 
