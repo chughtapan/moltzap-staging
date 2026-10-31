@@ -107,31 +107,6 @@ export function readFirewallActivations(request: { readonly since?: number }) {
     );
   }).pipe(storeOperation, Effect.withSpan("readFirewallActivations"));
 }
-/** Completion time includes checks that started before a caller's previous poll. */
-export function readFirewallDecisions(since = 0) {
-  return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
-    if (!Number.isSafeInteger(since) || since < 0) {
-      return yield* new EndpointStoreError({ reason: "invalid-input" });
-    }
-    return (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT check_id,
-    canonical_candidate, canonical_input, canonical_result, disposition, decided_at
-    FROM firewall_checks WHERE decided_at >= ?
-    ORDER BY decided_at DESC, rowid DESC LIMIT 100`,
-      [since],
-    )).map((row) => ({
-      checkId: readText(row, "check_id"),
-      canonicalCandidate: readBytes(row, "canonical_candidate"),
-      canonicalInput: readBytes(row, "canonical_input"),
-      canonicalResult: readBytes(row, "canonical_result"),
-      disposition: Schema.decodeUnknownSync(auditDisposition)(
-        readText(row, "disposition"),
-      ),
-      time: readInteger(row, "decided_at"),
-    }));
-  }).pipe(storeOperation, Effect.withSpan("readFirewallDecisions"));
-}
 /** Saves one completed assessment; interruption before completion leaves no audit row. */
 export function saveCheckDecision(
   completion: FirewallCompletion,
@@ -185,24 +160,41 @@ export function saveCheckDecision(
 /**
  * Returns retained decisions without message content, private inputs,
  * diagnostics or rule text. Includes registered advice only for rules that
- * determined the decision.
+ * determined the decision. Completion time includes checks that started
+ * before a caller's previous poll.
  */
 export function readDecisions(request: { readonly since?: number }) {
   return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const since = request.since ?? 0;
+    if (!Number.isSafeInteger(since) || since < 0) {
+      return yield* new EndpointStoreError({ reason: "invalid-input" });
+    }
+    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+      `SELECT check_id, canonical_result, disposition, decided_at
+    FROM firewall_checks WHERE decided_at >= ?
+    ORDER BY decided_at DESC, rowid DESC LIMIT 100`,
+      [since],
+    );
     const decisions: Array<
       (typeof firewallDecisionsSchema.Type.decisions)[number]
     > = [];
-    for (const entry of yield* readFirewallDecisions(request.since)) {
+    for (const row of rows) {
+      const checkId = readText(row, "check_id");
+      const disposition = Schema.decodeUnknownSync(auditDisposition)(
+        readText(row, "disposition"),
+      );
+      const time = readInteger(row, "decided_at");
       const { summaries } = yield* decodeRuntimeValue(
         savedSummarySchema,
-        entry.canonicalResult,
+        readBytes(row, "canonical_result"),
       );
       for (const summary of summaries) {
         decisions.push({
           ...summary,
-          disposition: entry.disposition,
-          checkId: entry.checkId,
-          time: entry.time,
+          disposition,
+          checkId,
+          time,
         });
       }
     }
@@ -210,5 +202,5 @@ export function readDecisions(request: { readonly since?: number }) {
       decisions,
       activations: yield* readFirewallActivations(request),
     } satisfies typeof firewallDecisionsSchema.Type;
-  }).pipe(Effect.withSpan("readDecisions"));
+  }).pipe(storeOperation, Effect.withSpan("readDecisions"));
 }

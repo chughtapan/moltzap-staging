@@ -6,7 +6,6 @@ export type { FirewallActivation, FirewallCompletion } from "./types.js";
 export {
   readDecisions,
   readFirewallActivations,
-  readFirewallDecisions,
   readFirewallPolicy,
   saveCheckDecision,
   writeFirewallPolicy,

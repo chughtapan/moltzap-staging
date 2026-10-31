@@ -3,6 +3,7 @@
 import { live as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
+import type { firewallDecisionSummarySchema } from "../firewall/config.js";
 import type { FirewallCompletion } from "../firewall/store/index.js";
 import { digest, testAgentView } from "../__tests__/agent-card-fixtures.js";
 import { localGuidance } from "../__tests__/message-policy-fixtures.js";
@@ -33,12 +34,21 @@ const item = {
   ),
   canonicalGuidance: bytes(JSON.stringify(localGuidance(1))),
 };
+const summary: typeof firewallDecisionSummarySchema.Type = {
+  direction: "incoming",
+  peer: testAgentView("agent:bob"),
+  outcome: "allow",
+  cause: "default",
+  decidedBy: [],
+  checkedRuleIds: [],
+  activeRevision: "retained-policy",
+};
 const completion: FirewallCompletion = {
   checkId: "completed-check",
   direction: "incoming",
   canonicalCandidate: item.canonicalItem,
   canonicalInput: bytes("captured policy and evidence"),
-  canonicalResult: bytes("completed judgment"),
+  canonicalResult: bytes(JSON.stringify({ summaries: [summary] })),
   admit: true,
 };
 
@@ -68,7 +78,7 @@ function publish(store: TestStore) {
     expect(rejected).toEqual(
       new EndpointStoreError({ reason: "invalid-input" }),
     );
-    expect(yield* store.readFirewallDecisions()).toEqual([]);
+    expect((yield* store.readDecisions({})).decisions).toEqual([]);
     expect(yield* store.readInboxItem(item.deliveryToken)).toBeUndefined();
     expect(yield* readNextItemsToCheck()).toHaveLength(1);
     yield* store.saveMessageDecision(item, completion);
@@ -79,12 +89,34 @@ function publish(store: TestStore) {
 function expectRetained(store: TestStore) {
   return Effect.gen(function* () {
     expect(yield* readNextItemsToCheck()).toEqual([]);
-    const [saved] = yield* store.readFirewallDecisions();
-    expect(saved).toMatchObject({
-      canonicalCandidate: completion.canonicalCandidate,
-      canonicalInput: completion.canonicalInput,
-      canonicalResult: completion.canonicalResult,
-    });
+    expect((yield* store.readDecisions({})).decisions).toMatchObject([
+      { ...summary, checkId: completion.checkId, disposition: "admitted" },
+    ]);
+    yield* store.saveCheckDecision(completion);
+    expect(
+      yield* store
+        .saveCheckDecision({
+          ...completion,
+          canonicalCandidate: bytes("different candidate"),
+        })
+        .pipe(Effect.flip),
+    ).toEqual(new EndpointStoreError({ reason: "conflict" }));
+    expect(
+      yield* store
+        .saveCheckDecision({
+          ...completion,
+          canonicalInput: bytes("different policy and evidence"),
+        })
+        .pipe(Effect.flip),
+    ).toEqual(new EndpointStoreError({ reason: "conflict" }));
+    expect(
+      yield* store
+        .saveCheckDecision({
+          ...completion,
+          canonicalResult: bytes("different judgment"),
+        })
+        .pipe(Effect.flip),
+    ).toEqual(new EndpointStoreError({ reason: "conflict" }));
     return yield* store.readInboxItem(item.deliveryToken);
   });
 }
