@@ -161,7 +161,7 @@ function retireUnusableClose(saved: StoredCollectiveMessage) {
       if (
         operation?.origin === "remote" &&
         operation.phase === "finalizing" &&
-        operation.close?.value.included.some(
+        operation.close?.included.some(
           (reference) =>
             reference.authorAgentId === saved.reference.authorAgentId &&
             reference.msgId === saved.reference.msgId,

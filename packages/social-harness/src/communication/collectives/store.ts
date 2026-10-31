@@ -28,12 +28,10 @@ type CloseValue = Extract<CollectiveValue, { readonly kind: "close" }>;
 
 interface OperationState {
   readonly operationId: CollectiveId;
-  readonly creatorAgentId: AgentId;
   readonly deadlineAt: number;
   readonly phase: "collecting" | "finalizing" | "completed";
   readonly deliveryToken: DeliveryToken;
-  readonly delivered: boolean;
-  readonly close?: { readonly message: Message; readonly value: CloseValue };
+  readonly close?: CloseValue;
   readonly result?: {
     readonly item: ResultDelivery["item"];
     readonly answers: readonly MessageReference[];
@@ -415,15 +413,13 @@ function readOperation(
     }
     const state: OperationState = {
       operationId,
-      creatorAgentId,
       phase,
       deadlineAt: readInteger(row, "deadline_at"),
       deliveryToken: yield* decodeValue(
         DeliveryToken,
         readText(row, "delivery_token"),
       ),
-      delivered: readInteger(row, "delivered") === 1,
-      ...(close === undefined ? {} : { close }),
+      ...(close === undefined ? {} : { close: close.value }),
       ...(result === undefined ? {} : { result }),
     };
     if (origin === "local") {

@@ -1,8 +1,8 @@
 /** @file Interprets verified collective traffic in its delivery transaction. */
 
 import type * as SqlClient from "@effect/sql/SqlClient";
-import { Clock, Effect, Option, Queue } from "effect";
-import type { Message } from "../message.js";
+import { Clock, Effect, Option, Queue, Schema } from "effect";
+import { Message } from "../message.js";
 import type { EndpointStoreError } from "../store/index.js";
 import type { CollectivesError } from "./contracts.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
@@ -10,7 +10,6 @@ import {
   type Environment,
   operationParticipants,
   requestItem,
-  sameMessage,
   sameParticipants,
   self,
   transaction,
@@ -93,7 +92,7 @@ function receiveRequest(
         return Option.none<IncomingItem>();
       }
       const saved = existing.request.message;
-      return sameMessage(saved, message)
+      return Schema.equivalence(Message)(saved, message)
         ? Option.some<IncomingItem>(requestItem(message, value))
         : Option.none<IncomingItem>();
     }
@@ -130,7 +129,7 @@ function receiveAnswer(
       participants.op === "all_gather"
         ? !sameParticipants(participants.request, message)
         : message.recipients.length !== 1 ||
-          message.recipients[0]?.agentId !== operation.creatorAgentId
+          message.recipients[0]?.agentId !== participants.request.author.agentId
     ) {
       return;
     }
@@ -159,7 +158,7 @@ function receiveClose(
       operation === undefined ||
       operation.origin !== "remote" ||
       operation.phase !== "collecting" ||
-      operation.creatorAgentId !== message.author.agentId
+      operation.request.message.author.agentId !== message.author.agentId
     ) {
       return;
     }

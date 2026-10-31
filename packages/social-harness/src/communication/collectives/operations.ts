@@ -18,7 +18,7 @@ import type {
 import type { CollectiveValue } from "./wire.js";
 import { AgentView } from "../../identity/cards.js";
 import {
-  Message,
+  type Message,
   messageFromParticipants,
   messageMembers,
   replyAddress,
@@ -93,17 +93,13 @@ export function requestItem(
 export function operationParticipants(operation: StoredCollectiveOperation) {
   if (operation.origin === "local") {
     const question = operation.request;
-    const request = {
-      author: question.author,
-      recipients: question.recipients,
-    };
     return {
       op: question.op,
       members: question.recipients,
       question: question.text,
       requestedSchema: question.requestedSchema,
-      request,
-      to: outgoingAddress(request),
+      request: question,
+      to: outgoingAddress(question),
     };
   }
   const { message, value } = operation.request;
@@ -166,11 +162,6 @@ export function sameParticipants(
     messageMembers(left),
     messageMembers(right),
   );
-}
-
-/** The author and id cannot be reused with changed content or participants. */
-export function sameMessage(left: Message, right: Message) {
-  return Schema.equivalence(Message)(left, right);
 }
 
 /** One service scope supervises deadlines and certification observations. */

@@ -1,13 +1,13 @@
 /** @file Freezes selected answers and publishes recoverable results. */
 
-import { Clock, Deferred, Effect, Option, Schema } from "effect";
+import { Clock, Deferred, Effect, Option } from "effect";
 import type { AgentView } from "../../identity/cards.js";
 import type { Message, MessageReference } from "../message.js";
 import type { collectiveClosure, CollectiveId } from "./contracts.js";
 import type { StoredCollectiveOperation } from "./store.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
 import { encodeRuntimeValue, EndpointStoreError } from "../store/index.js";
-import { ResultDelivery, type ResultSources } from "./model.js";
+import type { ResultDelivery, ResultSources } from "./model.js";
 import {
   type Environment,
   makeMessage,
@@ -26,24 +26,7 @@ import {
 } from "./wire.js";
 
 type Closure = typeof collectiveClosure.Type;
-type Participants = ReturnType<typeof operationParticipants>;
 type Close = Extract<CollectiveValue, { readonly kind: "close" }>;
-
-/** Final fields are frozen before the close is accepted in the same transaction. */
-export const finishLocal = Effect.fn("finishLocal")(function* (
-  environment: Environment,
-  operationId: CollectiveId,
-) {
-  return yield* transaction(freezeLocal(environment, operationId));
-});
-
-/** Close and own-answer events advance remote completion without a periodic scan. */
-export const finishRemote = Effect.fn("finishRemote")(function* (
-  environment: Environment,
-  operationId: CollectiveId,
-) {
-  yield* transaction(completeRemote(environment, operationId));
-});
 
 /** Final item and assembled source bytes retain independent publication budgets. */
 export function checkResultSize(result: {
@@ -74,130 +57,112 @@ export function consumeResults<E, R>(
   );
 }
 
-function freezeLocal(environment: Environment, operationId: CollectiveId) {
-  return Effect.gen(function* () {
-    const operation = yield* Store.readCollectiveOperation(operationId);
-    if (
-      operation === undefined ||
-      operation.origin !== "local" ||
-      operation.phase !== "collecting"
-    ) {
-      return undefined;
-    }
-    const participants = operationParticipants(operation);
-    const answers = yield* Store.readCollectiveAnswers(operationId);
-    const closure = completionAt(
-      operation.deadlineAt,
-      participants.members.length,
-      answers.length,
-      yield* Clock.currentTimeMillis,
-    );
-    if (closure === undefined) {
-      return undefined;
-    }
-    const result = yield* makeResult(operation, answers, closure);
-    yield* checkResultSize(result);
-    yield* Store.saveCollectiveResult({
-      operationId,
-      item: result.item,
-      answers: answers.map((answer) => ({
-        authorAgentId: answer.author.agentId,
-        msgId: answer.msgId,
-      })),
-      complete: participants.op === "gather",
-    });
-    if (participants.op === "gather") {
-      return undefined;
-    }
-    const close = yield* makeGroupClose(
-      operation,
-      participants,
-      answers,
-      closure,
-    );
-    yield* saveMessage(environment, operationId, "close", close);
-    return {
-      operationId,
-      role: "close" as const,
-      destination: participants.to,
-      reference: { authorAgentId: close.author.agentId, msgId: close.msgId },
-    };
-  });
-}
+/** Final fields and the close are accepted in the same transaction. */
+export const finishLocal = Effect.fn("finishLocal")(
+  (environment: Environment, operationId: CollectiveId) =>
+    transaction(
+      Effect.gen(function* () {
+        const operation = yield* Store.readCollectiveOperation(operationId);
+        if (
+          operation === undefined ||
+          operation.origin !== "local" ||
+          operation.phase !== "collecting"
+        ) {
+          return undefined;
+        }
+        const participants = operationParticipants(operation);
+        const answers = yield* Store.readCollectiveAnswers(operationId);
+        const now = yield* Clock.currentTimeMillis;
+        if (
+          answers.length < participants.members.length &&
+          now < operation.deadlineAt
+        ) {
+          return undefined;
+        }
+        const closure: Closure = {
+          closedAt: now,
+          closedBy:
+            answers.length === participants.members.length
+              ? "settled"
+              : "deadline",
+        };
+        const result = yield* makeResult(operation, answers, closure);
+        yield* checkResultSize(result);
+        const included = answers.map((answer) => ({
+          authorAgentId: answer.author.agentId,
+          msgId: answer.msgId,
+        }));
+        yield* Store.saveCollectiveResult({
+          operationId,
+          item: result.item,
+          answers: included,
+          complete: participants.op === "gather",
+        });
+        if (participants.op === "gather") {
+          return undefined;
+        }
+        const content = yield* encodeCollectiveContent({
+          kind: "close",
+          operationId,
+          ...closure,
+          included,
+        }).pipe(
+          Effect.catchTag(
+            "CollectiveContentError",
+            () => new EndpointStoreError({ reason: "corrupt" }),
+          ),
+        );
+        const close = yield* makeMessage(
+          operation.request.author,
+          operation.request.recipients,
+          content,
+        );
+        yield* saveMessage(environment, operationId, "close", close);
+        return {
+          operationId,
+          role: "close" as const,
+          destination: participants.to,
+          reference: {
+            authorAgentId: close.author.agentId,
+            msgId: close.msgId,
+          },
+        };
+      }),
+    ),
+);
 
-function completionAt(
-  deadlineAt: number,
-  members: number,
-  answers: number,
-  now: number,
-): Closure | undefined {
-  if (answers < members && now < deadlineAt) {
-    return undefined;
-  }
-  return {
-    closedAt: now,
-    closedBy: answers === members ? "settled" : "deadline",
-  };
-}
-
-function makeGroupClose(
-  operation: StoredCollectiveOperation,
-  participants: Participants,
-  answers: readonly Message[],
-  closure: Closure,
-) {
-  return Effect.gen(function* () {
-    const operationId = operation.operationId;
-    const content = yield* encodeCollectiveContent({
-      kind: "close",
-      operationId,
-      ...closure,
-      included: answers.map((answer) => ({
-        authorAgentId: answer.author.agentId,
-        msgId: answer.msgId,
-      })),
-    }).pipe(
-      Effect.catchTag(
-        "CollectiveContentError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
-    return yield* makeMessage(
-      participants.request.author,
-      participants.request.recipients,
-      content,
-    );
-  });
-}
-
-function completeRemote(environment: Environment, operationId: CollectiveId) {
-  return Effect.gen(function* () {
-    const operation = yield* Store.readCollectiveOperation(operationId);
-    if (
-      operation === undefined ||
-      operation.origin !== "remote" ||
-      operation.phase !== "finalizing" ||
-      operation.close === undefined
-    ) {
-      return;
-    }
-    const { value } = operation.close;
-    const selected = yield* selectAnswers(environment, operationId, value);
-    if (Option.isSome(selected)) {
-      const result = yield* makeResult(operation, selected.value, {
-        closedAt: value.closedAt,
-        closedBy: value.closedBy,
-      });
-      yield* checkResultSize(result);
-      yield* Store.saveCollectiveResult({
-        operationId,
-        item: result.item,
-        answers: value.included,
-        complete: true,
-      });
-    }
-  });
-}
+/** Close and own-answer events advance remote completion without a periodic scan. */
+export const finishRemote = Effect.fn("finishRemote")(
+  (environment: Environment, operationId: CollectiveId) =>
+    transaction(
+      Effect.gen(function* () {
+        const operation = yield* Store.readCollectiveOperation(operationId);
+        if (
+          operation === undefined ||
+          operation.origin !== "remote" ||
+          operation.phase !== "finalizing" ||
+          operation.close === undefined
+        ) {
+          return;
+        }
+        const value = operation.close;
+        const selected = yield* selectAnswers(environment, operationId, value);
+        if (Option.isSome(selected)) {
+          const result = yield* makeResult(operation, selected.value, {
+            closedAt: value.closedAt,
+            closedBy: value.closedBy,
+          });
+          yield* checkResultSize(result);
+          yield* Store.saveCollectiveResult({
+            operationId,
+            item: result.item,
+            answers: value.included,
+            complete: true,
+          });
+        }
+      }),
+    ),
+);
 
 function selectAnswers(
   environment: Environment,
@@ -293,7 +258,7 @@ function makeResult(
     if (first === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    const item = yield* Schema.decodeUnknown(ResultDelivery.fields.item)({
+    const item: ResultDelivery["item"] = {
       kind: "collectiveResult",
       op: participants.op,
       operationId: operation.operationId,
@@ -301,12 +266,7 @@ function makeResult(
       to: participants.to,
       question: participants.question,
       outcomes: [first, ...rest],
-    }).pipe(
-      Effect.catchTag(
-        "ParseError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
+    };
     const request =
       operation.origin === "remote" ? operation.request.message : undefined;
     return {
