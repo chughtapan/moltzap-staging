@@ -16,6 +16,7 @@ import { expect } from "vitest";
 import { identifier } from "../__tests__/agent-card-fixtures.js";
 import {
   buildCertifiedFirstMessage,
+  storeCertifiedFirstMessage,
   type SigningIdentity,
 } from "../__tests__/certified-history-fixtures.js";
 import { conversationIdentityFixture } from "../__tests__/conversation-fixtures.js";
@@ -37,8 +38,12 @@ import { saveLocalIdentity } from "../identity/local-store.js";
 import { localIdentityLayer } from "../identity/local.js";
 import { Registry } from "../identity/registry/index.js";
 import { Communication } from "./index.js";
-import { type Message, messageFromIntent } from "./message.js";
-import { DirectPacket, signOuterPacket } from "./records/index.js";
+import {
+  type Message,
+  messageFromIntent,
+  messageFromParticipants,
+} from "./message.js";
+import { DirectPacket, signOuterPacket, mintMsgId } from "./records/index.js";
 import { Router } from "./router/index.js";
 import { communicationLive } from "./service/index.js";
 
@@ -286,3 +291,80 @@ it.each<{ readonly body: string; readonly refused: RefusedEnvelope }>([
 ])("delivers the next certified message after refusing $body", ({ refused }) =>
   deliversAfterRefusedBody(refused),
 );
+
+it("accepts an immutable message while Router is unavailable and rolls acceptance back with the caller transaction", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const { communication } = yield* openCommunication(
+      subject,
+      Router.of({ poll: () => Effect.never, send: () => Effect.never }),
+    );
+    const message = yield* messageFromParticipants(
+      agentViewOf(subject.local.card),
+      [agentViewOf(subject.remote.card)],
+      {
+        msgId: yield* mintMsgId(),
+        content: [{ type: "text", text: "accepted offline" }],
+      },
+    );
+    yield* communication.send(message).pipe(Effect.timeout("1 second"));
+    yield* communication.send(message);
+    const conflict = yield* communication
+      .send({ ...message, content: [{ type: "text", text: "different" }] })
+      .pipe(Effect.flip);
+    expect(conflict.reason).toBe("message-conflict");
+    const rolledBack = { ...message, msgId: yield* mintMsgId() };
+    yield* subject.sql
+      .withTransaction(
+        communication
+          .send(rolledBack)
+          .pipe(Effect.zipRight(Effect.fail("cancel operation"))),
+      )
+      .pipe(Effect.flip);
+    const missing = yield* communication
+      .waitForMessage({
+        authorAgentId: rolledBack.author.agentId,
+        msgId: rolledBack.msgId,
+      })
+      .pipe(Effect.flip);
+    expect(missing.reason).toBe("unknown-message");
+  }));
+
+it("returns the retained Message after certified history is reopened without Router", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const record = yield* buildCertifiedFirstMessage(
+      subject.remote,
+      subject.local,
+      subject.membership,
+      subject.anchor.routerInstanceId,
+    );
+    yield* subject.run(
+      storeCertifiedFirstMessage(
+        subject.store,
+        subject.local.card,
+        subject.membership,
+        record,
+      ),
+    );
+    const expected = yield* messageFromIntent(
+      subject.membership.members.map(agentViewOf),
+      record.actionCertifiedRecord.recordCore.action.messageIntent,
+    );
+    const offline = Router.of({
+      poll: () => Effect.never,
+      send: () => Effect.never,
+    });
+    const read = Effect.scoped(
+      openCommunication(subject, offline).pipe(
+        Effect.flatMap(({ communication }) =>
+          communication.waitForMessage({
+            authorAgentId: expected.author.agentId,
+            msgId: expected.msgId,
+          }),
+        ),
+      ),
+    );
+    expect(yield* read).toEqual(expected);
+    expect(yield* read).toEqual(expected);
+  }));

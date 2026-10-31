@@ -20,7 +20,7 @@ import type {
   AgentSigningAuthority,
   Ed25519PublicKey,
 } from "../../identity/keys.js";
-import { SendError } from "../conversations/errors.js";
+import { isTerminalSendFailure, SendError } from "../conversations/errors.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
@@ -257,21 +257,15 @@ function prepareAcceptedMessages(environment: Environment) {
             ({ message }) =>
               engine.prepareMessage(message).pipe(
                 Effect.catchTag("SendError", (error) => {
-                  switch (error.reason) {
-                    case "network-unavailable":
-                    case "delivery-pending":
-                    case "outcome-unknown":
-                    case "persistence-failed":
-                      return Effect.void;
-                    default:
-                      return Store.failMessage(
+                  return isTerminalSendFailure(error.reason)
+                    ? Store.failMessage(
                         {
                           authorAgentId: message.author.agentId,
                           msgId: message.msgId,
                         },
                         error.reason,
-                      );
-                  }
+                      )
+                    : Effect.void;
                 }),
               ),
             { concurrency: 1, discard: true },

@@ -129,18 +129,16 @@ export function saveMessage(
         msgId: message.msgId,
       },
     });
-    yield* environment.communication
-      .send(message)
-      .pipe(
-        Effect.catchTag(
-          "CommunicationError",
-          (error) =>
-            new CollectivesError({
-              reason: "message-failed",
-              detail: error.reason,
-            }),
-        ),
-      );
+    yield* environment.communication.send(message).pipe(
+      Effect.catchTag(
+        "CommunicationError",
+        (error) =>
+          new CollectivesError({
+            reason: "message-failed",
+            detail: error.reason,
+          }),
+      ),
+    );
     return inserted;
   }).pipe(Effect.withSpan("saveMessage"));
 }

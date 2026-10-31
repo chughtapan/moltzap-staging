@@ -19,13 +19,11 @@ import type {
   EnginePhases,
   EngineRuntime,
 } from "./engine-context.js";
-import { decodeCanonical } from "../../encoding/canonical-json.js";
 import { AgentSigningAuthority } from "../../identity/keys.js";
 import { wireVersions } from "../../identity/wire-version.js";
 import { Message } from "../message.js";
 import {
   type DecodedOuterBody,
-  MessageIntent,
   type MsgId,
   RecordHash,
 } from "../records/index.js";
@@ -337,14 +335,14 @@ const readPendingMessages = (
   SqlClient.SqlClient
 > =>
   Store.readUnconsumedRecords().pipe(
+    Effect.mapError(listenStoreFailure),
     Effect.flatMap((history) =>
       readStoredHistory(
         runtime.input.registrySignerPublicKey,
         history,
         history.records,
-      ),
+      ).pipe(Effect.mapError(listenRepresentationFailure)),
     ),
-    Effect.catchAll(() => Effect.fail(listenRepresentationFailure())),
   );
 
 const acknowledgeMessage = (recordHash: RecordHash) =>
@@ -405,10 +403,7 @@ const hydrateMessageIntents = (
     messageIntents,
     (stored) =>
       Effect.gen(function* () {
-        const intent = yield* decodeCanonical(
-          MessageIntent,
-          stored.canonicalIntent,
-        ).pipe(Effect.mapError(representationInitializationFailure));
+        const { intent } = stored;
         const completion = yield* Deferred.make<RecordHash, SendError>();
         yield* Effect.sync(() => {
           runtime.intents.set(intent.msgId, {

@@ -63,8 +63,7 @@ export function lockProposalInTransaction(
 /**
  * Deletes one proposal lock inside a caller-owned transaction, with the
  * action signatures held for its action and every record staged for that
- * action, including the record's durability votes and dissemination
- * obligation. The caller shows the action can never be certified; kept
+ * action, including the record's durability votes and signed outbox association. The caller shows the action can never be certified; kept
  * without the lock, any of these rows would name an action no durable lock
  * selects, which startup refuses.
  * @param lock The durable lock to release.
@@ -77,8 +76,9 @@ export function releaseProposalLock(
     const staged = `SELECT record_hash FROM staged_records
     WHERE conversation_id = ?1 AND action_hash = ?2`;
     for (const statement of [
-      `DELETE FROM dissemination_obligations
-     WHERE conversation_id = ?1 AND record_hash IN (${staged})`,
+      `UPDATE outbound_messages SET record_hash=NULL,
+       disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END
+       WHERE conversation_id=?1 AND record_hash IN (${staged})`,
       `DELETE FROM protocol_evidence
      WHERE conversation_id = ?1 AND evidence_kind = 'durability'
        AND subject_id IN (${staged})`,

@@ -21,6 +21,16 @@ export const sendFailureReasons = [
 /** Distinguishes a refusal from work that remains pending or uncertain. */
 export type SendFailure = (typeof sendFailureReasons)[number];
 
+/** Temporary availability or uncertain storage leaves accepted work recoverable. */
+export function isTerminalSendFailure(reason: SendFailure): boolean {
+  return (
+    reason !== "network-unavailable" &&
+    reason !== "delivery-pending" &&
+    reason !== "outcome-unknown" &&
+    reason !== "persistence-failed"
+  );
+}
+
 /**
  * What each failure means, in words a model reads as a tool error. The text
  * states only the cause. A failed send was not sent, except `outcome-unknown`,

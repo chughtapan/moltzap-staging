@@ -29,6 +29,7 @@ import {
   InitialAnchorBody,
   type InitialAnchorBody as InitialAnchorBodyValue,
   MembershipDescriptor,
+  MessageIntent,
   type RecordCore,
   RecordCore as RecordCoreSchema,
   RecordHash,
@@ -825,4 +826,31 @@ function isCertified(
       certified.conversationId === record.conversationId &&
       certified.recordHash === record.recordHash,
   );
+}
+
+/** Decoded intent identity and completion are validated once by the protocol's stored reader. */
+export function readStoredMessageIntent(stored: Store.MessageIntent) {
+  return Effect.gen(function* () {
+    const intent = yield* decodeCanonical(
+      MessageIntent,
+      stored.canonicalIntent,
+    );
+    if (
+      intent.conversationId !== stored.conversationId ||
+      intent.membershipHash !== stored.membershipHash ||
+      intent.authorAgentId !== stored.authorAgentId ||
+      intent.msgId !== stored.msgId
+    ) {
+      return yield* persistenceFailure();
+    }
+    const completedRecordHash =
+      stored.completedRecordHash === undefined
+        ? undefined
+        : yield* Schema.decodeUnknown(RecordHash)(stored.completedRecordHash);
+    return {
+      intent,
+      canonicalIntent: stored.canonicalIntent,
+      completedRecordHash,
+    };
+  });
 }

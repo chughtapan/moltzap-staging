@@ -1,6 +1,6 @@
 /** @file Messages retain their authors, recipients and content across delivery and recovery. */
 
-import { Schema } from "effect";
+import { Effect, ParseResult, Schema } from "effect";
 import { exactStruct } from "../encoding/exact.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { AgentView } from "../identity/cards.js";
@@ -77,13 +77,26 @@ export function messageFromParticipants(
   recipients: readonly Message["author"][],
   intent: Pick<Message, "msgId" | "content">,
 ) {
-  return Schema.decodeUnknown(Message)({
-    author,
-    recipients: [...recipients].sort((left, right) =>
-      compareAscii(left.agentName, right.agentName),
-    ),
-    ...intent,
-  });
+  return Effect.try({
+    try: () =>
+      structuredClone({
+        author,
+        recipients: [...recipients].sort((left, right) =>
+          compareAscii(left.agentName, right.agentName),
+        ),
+        ...intent,
+      }),
+    catch: () =>
+      new ParseResult.ParseError({
+        issue: new ParseResult.Type(
+          Message.ast,
+          undefined,
+          "Message cannot be captured",
+        ),
+      }),
+  }).pipe(
+    Effect.flatMap((captured) => Schema.decodeUnknown(Message)(captured)),
+  );
 }
 
 /** Constructs one message from fixed participants and the author's retained content. */

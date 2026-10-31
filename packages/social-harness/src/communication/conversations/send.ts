@@ -39,7 +39,7 @@ import {
 } from "../records/index.js";
 import { compareAgentIds } from "../records/values.js";
 import * as Store from "../store/index.js";
-import { SendError } from "./errors.js";
+import { isTerminalSendFailure, SendError } from "./errors.js";
 import { anchorHashAtHead } from "./history/index.js";
 import { markRetries, type RetryOutcome } from "./retry-markers.js";
 import {
@@ -281,7 +281,24 @@ export const proposeIntent = (
       actionHash,
     });
     return actionHash;
-  }).pipe(Effect.withSpan("proposeIntent"));
+  }).pipe(
+    Effect.tapError((error) =>
+      isTerminalSendFailure(error.reason)
+        ? Store.failMessage(
+            {
+              authorAgentId: localIntent.intent.authorAgentId,
+              msgId: localIntent.intent.msgId,
+            },
+            error.reason,
+          ).pipe(
+            Effect.mapError(storeFailure),
+            Effect.zipRight(Deferred.fail(localIntent.completion, error)),
+            Effect.asVoid,
+          )
+        : Effect.void,
+    ),
+    Effect.withSpan("proposeIntent"),
+  );
 
 interface LocalProposal {
   readonly conversation: EngineConversation;

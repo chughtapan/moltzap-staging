@@ -703,7 +703,7 @@ function clearIncompleteConversationState(
     const database = yield* SqlClient.SqlClient;
     const conversationId = expected.conversationId;
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM dissemination_obligations WHERE conversation_id = ?",
+      "UPDATE outbound_messages SET record_hash=NULL, disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END WHERE conversation_id=?",
       [conversationId],
     );
     yield* database.unsafe<Readonly<Record<string, unknown>>>(

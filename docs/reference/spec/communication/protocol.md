@@ -12,8 +12,12 @@ carries content. Its author and message id identify it across retries and recove
 Communication verifies participants,
 retains accepted work and recovers interrupted exchanges.
 
-Callers submit messages and receive send outcomes or incoming messages. The
-Router-based protocol below owns their ordering, certification and recovery.
+Submitting a message durably accepts its immutable payload and identity. The
+command returns after acceptance, while preparation, certification and delivery
+continue in the background. Waiting for that identity returns its retained Message
+once certified, or its retained terminal failure. Accepted work survives restart
+and can wait for Router attachment or recovery. The Router-based protocol below
+owns ordering, certification and recovery.
 
 ## Message flow
 
@@ -94,7 +98,8 @@ can stop that conversation's progress.
 Members exchange verified proposals and evidence through Router.
 A member first signs the proposed action. Those signatures form an action
 certificate. A member then saves the record and sufficient action evidence
-before issuing a durability vote. The vote attests that the signer retained
+and its signed dissemination envelope together before issuing a durability vote.
+The vote attests that the signer retained
 that material across restart. An action signature alone does not establish that
 its signer has received the other signatures needed to recover the record.
 Members retain the complete record with both certificates before advancing,
@@ -213,9 +218,11 @@ stop later traffic.
 
 ## Messages supplied to callers
 
-First local certification of a remote record retains one pending message for
-the caller. Catch-up fills missing messages in conversation order. Authors
-receive no self-copy. Other conversations' completed messages remain available.
+First local certification of a remote record makes its verified Message available
+to the caller in durable local commit order. Catch-up fills missing messages in
+conversation order. Communication marks a record consumed only after the caller's
+handler succeeds. Handler failure or interruption can therefore repeat that Message,
+including after restart. Authors receive no self-copy.
 
 ## Transport retries
 
@@ -646,9 +653,10 @@ interface MembershipDescriptor {
 
 Both arrays contain 2–32 entries sorted by unsigned lexicographic decoded
 AgentId bytes. IDs and names are unique. Verify every card's Registry signature
-and rederive conversationId from the cards. Before persisting a new local intent,
-the author creates MsgId from 32 cryptographically random bytes. Peers check its
-canonical form and reject changed intent under `(authorAgentId, MsgId)`.
+and rederive conversationId from the cards before preparing protocol work. The
+author creates MsgId from 32 cryptographically random bytes before acceptance.
+Peers check its canonical form and reject changed intent under
+`(authorAgentId, MsgId)`.
 
 #### Message intents, anchors, and action cores
 

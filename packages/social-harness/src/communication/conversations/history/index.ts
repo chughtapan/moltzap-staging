@@ -34,6 +34,7 @@ export {
   observedHeadIsResolved,
   readStoredHistory,
   readStoredRecord,
+  readStoredMessageIntent,
   recordFromStore,
   stagedSuccessor,
   type StoredRowError,
