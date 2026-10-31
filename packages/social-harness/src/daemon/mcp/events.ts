@@ -20,6 +20,7 @@ import {
 } from "effect";
 import { randomUUID } from "node:crypto";
 import type { InboxSummary } from "../../host-protocol/operations.js";
+import type { HarnessPollEvents } from "./poll.js";
 import {
   eventListInput,
   eventPollInput,
@@ -45,7 +46,6 @@ import {
   currentConsumer,
   type PushSubscription,
 } from "./consumer.js";
-import type { HarnessPollEvents } from "./poll.js";
 /** Durable callback delivery shares this consumer boundary. */
 export { makeWebhookEvents } from "./webhook.js";
 /** Ephemeral polling shares the same consumer boundary and ownership gate. */

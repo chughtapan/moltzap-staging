@@ -8,8 +8,8 @@ import { queueIncomingItem } from "../daemon/inbox/pending.js";
 import { acknowledgeInboxItem } from "../daemon/inbox/store.js";
 import { makeInboxOperations } from "../daemon/messaging/inbox.js";
 import { layer } from "../daemon/store.js";
-import { publishTestInboxItem as putInboxItem } from "./store-schema-fixtures.js";
 import { LIVE_WIRE_VERSIONS } from "../identity/wire-version.js";
+import { publishTestInboxItem as putInboxItem } from "./store-schema-fixtures.js";
 
 /** Test events use the production inbox and receiver callbacks over one database. */
 export const openInboxFixture = Effect.fn("openInboxFixture")(function* (

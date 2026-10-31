@@ -30,9 +30,9 @@ import {
   settleQueuedItem,
 } from "../../src/daemon/inbox/pending.js";
 import {
+  acknowledgeInboxItem,
   isMessageVisible,
   readHistoryViews,
-  acknowledgeInboxItem,
 } from "../../src/daemon/inbox/store.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../src/encoding/limits.js";
 import { InboundItem } from "../../src/host-protocol/items.js";

@@ -239,7 +239,7 @@ function verifyUpgrade(
       process.execPath,
       [
         "--import",
-        join(import.meta.dirname, "../launcher-provenance.ts"),
+        join(import.meta.dirname, "../daemon/launcher-provenance.ts"),
         join(
           prefix,
           "node_modules/@moltzap/social-harness/bin/sharnessd-launcher",
