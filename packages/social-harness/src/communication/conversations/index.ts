@@ -3,9 +3,9 @@
  */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Data, Deferred, Effect, type Scope } from "effect";
+import { Data, Effect, type Scope } from "effect";
 import type { Message } from "../message.js";
-import type { DecodedOuterBody, MsgId, RecordHash } from "../records/index.js";
+import type { DecodedOuterBody, RecordHash } from "../records/index.js";
 import type {
   RouterDiscontinuityReason,
   RouterIngressDisposition,
@@ -30,7 +30,11 @@ import {
   acceptEngineRecoveryIngress,
   resumeEngineFolds,
 } from "./certification/index.js";
-import { DeliveryAcknowledgeError, ListenError, SendError } from "./errors.js";
+import {
+  DeliveryAcknowledgeError,
+  ListenError,
+  type SendError,
+} from "./errors.js";
 import { readStoredHistory } from "./history/index.js";
 import { makeOutbox } from "./outbox.js";
 import { recoverEngineState } from "./restore.js";
@@ -89,9 +93,6 @@ interface EnginePendingMessage {
 
 /** Stable private engine capability consumed by daemon composition. */
 export interface EndpointEngine {
-  /** Observe one durable local intent without rechecking, rebinding, or sending a replacement. */
-  readonly observeMessage: (msgId: MsgId) => Effect.Effect<void, SendError>;
-
   /** Prepares accepted work without waiting for certification. */
   readonly prepareMessage: (
     accepted: AcceptedMessage,
@@ -332,7 +333,12 @@ const makeRuntime = (
       input,
       wireVersion: yield* wireVersions.emitted,
       conversations: recovered.conversations,
-      intents: new Map(),
+      intents: new Map(
+        recovered.messageIntents.map(({ intent, canonicalIntent }) => [
+          intent.msgId,
+          { intent, canonicalIntent },
+        ]),
+      ),
       completedMessages: recovered.completedMessages,
       actionFolds: recovered.actionFolds,
       recordFolds: recovered.recordFolds,
@@ -345,33 +351,6 @@ const makeRuntime = (
       scope,
     };
   });
-
-const hydrateMessageIntents = (
-  runtime: EngineRuntime,
-  messageIntents: Effect.Effect.Success<
-    ReturnType<typeof recoverEngineState>
-  >["messageIntents"],
-): Effect.Effect<void, EngineInitializationError, SqlClient.SqlClient> =>
-  Effect.forEach(
-    messageIntents,
-    (stored) =>
-      Effect.gen(function* () {
-        const { intent } = stored;
-        const completion = yield* Deferred.make<RecordHash, SendError>();
-        yield* Effect.sync(() => {
-          runtime.intents.set(intent.msgId, {
-            intent,
-            canonicalIntent: stored.canonicalIntent,
-            completion,
-          });
-        });
-        const completedRecordHash = runtime.completedMessages.get(intent.msgId);
-        if (completedRecordHash !== undefined) {
-          yield* Deferred.succeed(completion, completedRecordHash);
-        }
-      }),
-    { concurrency: 1, discard: true },
-  );
 
 const initializeRuntime = (
   input: EndpointEngineInput,
@@ -388,9 +367,7 @@ const initializeRuntime = (
     const recovered = yield* recoverEngineState(input, recovery).pipe(
       Effect.mapError(recoveryInitializationFailure),
     );
-    const runtime = yield* makeRuntime(input, recovered, yield* Effect.scope);
-    yield* hydrateMessageIntents(runtime, recovered.messageIntents);
-    return runtime;
+    return yield* makeRuntime(input, recovered, yield* Effect.scope);
   });
 
 const resumeRuntime = (runtime: EngineRuntime) =>
@@ -437,7 +414,6 @@ const endpointEngine = (
 ): EndpointEngine => {
   const provideSql = Effect.provideService(SqlClient.SqlClient, sql);
   return Object.freeze({
-    observeMessage: (msgId: MsgId) => observeMessage(runtime, msgId),
     prepareMessage: (accepted: AcceptedMessage) =>
       prepareMessage(runtime, accepted).pipe(provideSql),
     readPendingMessages: () => readPendingMessages(runtime).pipe(provideSql),
@@ -478,25 +454,6 @@ export const makeEndpointEngine = (
     yield* resumeRuntime(runtime);
     return endpointEngine(runtime, yield* SqlClient.SqlClient);
   }).pipe(Effect.withSpan("makeEndpointEngine"));
-
-/**
- * Observe the retained local intent without preparing or binding a replacement.
- * @param runtime The active engine whose completion latches retain local ownership.
- * @param msgId The already-bound local message to observe.
- * @returns Completion once the original message certifies, or its retained send failure.
- */
-function observeMessage(runtime: EngineRuntime, msgId: MsgId) {
-  return Effect.suspend(() => {
-    const complete = runtime.completedMessages.get(msgId);
-    if (complete !== undefined) {
-      return Effect.void;
-    }
-    const retained = runtime.intents.get(msgId);
-    return retained === undefined
-      ? Effect.fail(new SendError({ reason: "certification-unavailable" }))
-      : Deferred.await(retained.completion).pipe(Effect.asVoid);
-  });
-}
 
 /** Assessment context asks communication whether accepted outgoing work remains. */
 export { hasPendingMessages } from "../store/index.js";

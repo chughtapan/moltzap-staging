@@ -154,10 +154,23 @@ function prepareAndObserve(
   engine: EndpointEngine,
   message: Message,
 ) {
-  return prepareAcceptedMessage(harness, engine, message).pipe(
-    Effect.zipRight(engine.drainOutbound.pipe(Effect.orDie)),
-    Effect.zipRight(engine.observeMessage(message.msgId)),
-  );
+  return Effect.gen(function* () {
+    const store = yield* prepareAcceptedMessage(harness, engine, message);
+    yield* engine.drainOutbound.pipe(Effect.orDie);
+    yield* untilLive(
+      store
+        .run(
+          testStore.readAcceptedMessage({
+            authorAgentId: message.author.agentId,
+            msgId: message.msgId,
+          }),
+        )
+        .pipe(
+          Effect.orDie,
+          Effect.map((retained) => retained?.completed === true),
+        ),
+    );
+  });
 }
 
 /** The fixture accepts through storage before exercising protocol preparation. */
@@ -185,6 +198,7 @@ function prepareAcceptedMessage(
       )
       .pipe(Effect.orDie);
     yield* engine.prepareMessage({ message, canonicalMessage });
+    return store;
   });
 }
 

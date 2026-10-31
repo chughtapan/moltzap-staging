@@ -28,6 +28,7 @@ import type {
   StoredOutboundMessage,
 } from "../../store/index.js";
 import type { EngineRuntime } from "../engine-context.js";
+import { untilLive } from "../../../__tests__/advance-clock.js";
 import {
   digest,
   identifier,
@@ -5783,7 +5784,19 @@ function prepareAndObserve(
       .pipe(Effect.orDie);
     yield* engine.prepareMessage({ message, canonicalMessage });
     yield* engine.drainOutbound.pipe(Effect.orDie);
-    yield* engine.observeMessage(message.msgId);
+    yield* untilLive(
+      store
+        .run(
+          testStore.readAcceptedMessage({
+            authorAgentId: message.author.agentId,
+            msgId: message.msgId,
+          }),
+        )
+        .pipe(
+          Effect.orDie,
+          Effect.map((retained) => retained?.completed === true),
+        ),
+    );
   });
 }
 

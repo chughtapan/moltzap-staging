@@ -33,7 +33,6 @@ import {
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
-  type RecordHash,
   type VerifiedMembership,
   verifyMembershipDescriptor,
 } from "../records/index.js";
@@ -286,7 +285,6 @@ export const proposeIntent = (
             error.reason,
           ).pipe(
             Effect.mapError(storeFailure),
-            Effect.zipRight(Deferred.fail(localIntent.completion, error)),
             Effect.tap(() =>
               Effect.sync(() =>
                 runtime.intents.delete(localIntent.intent.msgId),
@@ -702,8 +700,7 @@ function activateIntent(
 
 /**
  * A bound intent remains recoverable when its initial proposal fails.
- * Install its completion latch before proposing so certification and recovery
- * observe the same message identity.
+ * Retain its identity before proposing so certification and recovery find it.
  */
 function activateBoundIntent(
   runtime: EngineRuntime,
@@ -711,29 +708,12 @@ function activateBoundIntent(
 ): Effect.Effect<void, SendError, SqlClient.SqlClient> {
   const { canonicalIntent, intent } = prepared;
   return Effect.gen(function* () {
-    const retained = runtime.intents.get(intent.msgId);
-    if (retained !== undefined) {
-      const completedRecordHash = runtime.completedMessages.get(intent.msgId);
-      if (completedRecordHash !== undefined) {
-        yield* Deferred.succeed(retained.completion, completedRecordHash);
-      } else {
-        yield* proposeIntent(runtime, retained);
-      }
-      return;
-    }
-    const completion = yield* Deferred.make<RecordHash, SendError>();
-    const localIntent: EngineMessageIntent = {
+    const localIntent = runtime.intents.get(intent.msgId) ?? {
       intent,
       canonicalIntent,
-      completion,
     };
-    const completedRecordHash = runtime.completedMessages.get(intent.msgId);
-    yield* Effect.sync(() => {
-      runtime.intents.set(intent.msgId, localIntent);
-    });
-    if (completedRecordHash !== undefined) {
-      yield* Deferred.succeed(completion, completedRecordHash);
-    } else {
+    runtime.intents.set(intent.msgId, localIntent);
+    if (!runtime.completedMessages.has(intent.msgId)) {
       yield* proposeIntent(runtime, localIntent);
     }
   }).pipe(Effect.catchAll(() => Effect.void));

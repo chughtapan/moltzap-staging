@@ -56,7 +56,7 @@ interface RecoveredEngineState {
   readonly conversations: Map<ConversationIdValue, EngineConversation>;
   readonly actionFolds: Map<ActionHash, EngineActionFold>;
   readonly recordFolds: Map<RecordHashValue, EngineActionFold>;
-  readonly completedMessages: Map<string, RecordHashValue>;
+  readonly completedMessages: Set<string>;
   readonly messageIntents: ReadonlyArray<
     Effect.Effect.Success<ReturnType<typeof readStoredMessageIntent>>
   >;
@@ -109,11 +109,9 @@ export const recoverEngineState = (
       (stored) => readStoredMessageIntent(stored, verifiedMemberships),
       { concurrency: 1 },
     );
-    const completedMessages = new Map(
+    const completedMessages = new Set(
       messageIntents.flatMap((stored) =>
-        stored.completedRecordHash === undefined
-          ? []
-          : [[stored.intent.msgId, stored.completedRecordHash] as const],
+        stored.completedRecordHash === undefined ? [] : [stored.intent.msgId],
       ),
     );
     return {

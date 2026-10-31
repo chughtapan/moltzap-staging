@@ -10,6 +10,7 @@ import {
   Fiber,
   FiberSet,
   Layer,
+  Option,
   Queue,
   Ref,
   Schema,
@@ -300,7 +301,7 @@ it.each<{ readonly body: string; readonly refused: RefusedEnvelope }>([
   deliversAfterRefusedBody(refused),
 );
 
-it("accepts an immutable message while Router is unavailable and rolls acceptance back with the caller transaction", () =>
+it("retains offline messages across cancelled waits and rolls acceptance back with the caller transaction", () =>
   Effect.gen(function* () {
     const subject = yield* conversationIdentityFixture;
     const { communication } = yield* openCommunication(
@@ -340,6 +341,21 @@ it("accepts an immutable message while Router is unavailable and rolls acceptanc
     expect(missing).toEqual(
       new CommunicationError({ reason: "unknown-message" }),
     );
+    const reference = {
+      authorAgentId: message.author.agentId,
+      msgId: message.msgId,
+    };
+    expect(
+      yield* communication
+        .waitForMessage(reference)
+        .pipe(Effect.timeoutOption("150 millis")),
+    ).toEqual(Option.none());
+    const pending = yield* subject.run(
+      subject.store.readAcceptedMessage(reference),
+    );
+    expect(pending?.message).toEqual(message);
+    expect(pending?.completed).toBe(false);
+    expect(pending?.failure).toBeUndefined();
   }));
 
 it("returns the retained Message after certified history is reopened without Router", () =>

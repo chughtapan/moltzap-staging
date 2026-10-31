@@ -5,7 +5,7 @@
  */
 
 import type * as SqlClient from "@effect/sql/SqlClient";
-import type { Context, Deferred, Effect, Scope } from "effect";
+import type { Context, Effect, Scope } from "effect";
 import type { ClientRepresentationError } from "../../encoding/canonical-json.js";
 import type { VerifiedAgentCard } from "../../identity/cards.js";
 import type { SignedMessage } from "../../identity/envelope/signed-message.js";
@@ -76,7 +76,6 @@ export interface AcceptedMessage {
 export interface EngineMessageIntent {
   readonly intent: MessageIntent;
   readonly canonicalIntent: Uint8Array;
-  readonly completion: Deferred.Deferred<RecordHash, SendError>;
   proposedActionHash?: ActionHash;
 }
 
@@ -142,8 +141,8 @@ export interface EngineRuntime {
   readonly input: EndpointEngineInput;
   readonly conversations: Map<ConversationId, EngineConversation>;
   readonly intents: Map<string, EngineMessageIntent>;
-  /** Locally complete message ids and the hash of each one's certified record. */
-  readonly completedMessages: Map<string, RecordHash>;
+  /** Locally complete message ids retained for the engine's lifetime. */
+  readonly completedMessages: Set<string>;
   readonly actionFolds: Map<ActionHash, EngineActionFold>;
   readonly recordFolds: Map<RecordHash, EngineActionFold>;
   readonly gate: Effect.Semaphore;

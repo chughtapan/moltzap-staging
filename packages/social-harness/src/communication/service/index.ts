@@ -253,10 +253,7 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
         return yield* sendFailure(new SendError({ reason }));
       }
       if (retained.completed) {
-        const engine = yield* Deferred.await(environment.ready);
-        yield* engine
-          .observeMessage(reference.msgId)
-          .pipe(Effect.mapError(sendFailure));
+        yield* Deferred.await(environment.ready);
         return retained.message;
       }
       yield* Effect.sleep(Duration.millis(100));

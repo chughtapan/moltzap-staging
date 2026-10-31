@@ -1,7 +1,7 @@
 /** @file Certified head updates and reproposal of pending local messages. */
 
 import type * as SqlClient from "@effect/sql/SqlClient";
-import { Deferred, Effect } from "effect";
+import { Effect } from "effect";
 import type { CertifiedRecord } from "../../records/index.js";
 import type {
   EngineActionFold,
@@ -12,12 +12,13 @@ import type {
 import type { SendError } from "../errors.js";
 import { RouterWorkerPersistenceError } from "../../router/index.js";
 
-const applyPromotionState = (
+/** Updates the certified head and local completion index after durable promotion. */
+export function completePromotion(
   runtime: EngineRuntime,
   fold: EngineActionFold,
   record: CertifiedRecord,
-) =>
-  Effect.sync(() => {
+): Effect.Effect<void> {
+  return Effect.sync(() => {
     fold.certified = true;
     fold.conversation.head = {
       recordHash: record.actionCertifiedRecord.recordHash,
@@ -27,31 +28,10 @@ const applyPromotionState = (
       fold.action.messageIntent.authorAgentId !==
       runtime.input.localAgentCard.agentId
     ) {
-      return undefined;
+      return;
     }
-    runtime.completedMessages.set(
-      fold.action.messageIntent.msgId,
-      record.actionCertifiedRecord.recordHash,
-    );
-    return runtime.intents.get(fold.action.messageIntent.msgId);
+    runtime.completedMessages.add(fold.action.messageIntent.msgId);
   });
-
-/** Updates the certified head and resolves a local sender after durable promotion. */
-export function completePromotion(
-  runtime: EngineRuntime,
-  fold: EngineActionFold,
-  record: CertifiedRecord,
-): Effect.Effect<void, never, SqlClient.SqlClient> {
-  return applyPromotionState(runtime, fold, record).pipe(
-    Effect.flatMap((intent) =>
-      intent === undefined
-        ? Effect.void
-        : Deferred.succeed(
-            intent.completion,
-            record.actionCertifiedRecord.recordHash,
-          ).pipe(Effect.asVoid),
-    ),
-  );
 }
 
 type ReproposalDisposition = "fail" | "ignore";
