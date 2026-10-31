@@ -651,16 +651,11 @@ export function decodeBehavior<Failure>(
     }
     const frontmatter = yield* decodeFrontmatter(parts[1], refused);
     const metadata = frontmatter.metadata["social-harness"];
-    const rules = yield* Schema.decodeUnknown(editableDocumentSchema)([
-      {
-        id: frontmatter.name,
-        text: parts[2].trim(),
-        ...metadata,
-      },
-    ]).pipe(Effect.mapError(() => refused("schema")));
-    return yield* Effect.fromNullable(rules[0]).pipe(
-      Effect.mapError(() => refused("schema")),
-    );
+    return yield* Schema.decodeUnknown(editableRuleSchema)({
+      id: frontmatter.name,
+      text: parts[2].trim(),
+      ...metadata,
+    }).pipe(Effect.mapError(() => refused("schema")));
   }).pipe(Effect.withSpan("decodeBehavior"));
 }
 
@@ -745,8 +740,7 @@ function readBehavior(root: string, directory: string, path: string) {
       MAXIMUM_BEHAVIOR_BYTES,
       refused,
     );
-    const rule = yield* decodeBehavior(bytes, refused);
-    return { rule };
+    return yield* decodeBehavior(bytes, refused);
   });
 }
 
@@ -758,11 +752,12 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     if (text === undefined) {
       return { policy, behaviorRulePaths };
     }
-    yield* Schema.decodeUnknown(editableDocumentSchema)(text.initialRules).pipe(
-      Effect.mapError(() =>
-        policyConfigurationError("message-policy", "text.initialRules"),
-      ),
-    );
+    if (text.initialRules.length > MAXIMUM_EDITABLE_RULES) {
+      return yield* policyConfigurationError(
+        "message-policy",
+        "text.initialRules",
+      );
+    }
     const state = {
       root,
       ids: new Set(
@@ -771,7 +766,11 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
       behaviorRulePaths,
       initialRuleCount: text.initialRules.length,
     };
-    const fixed = yield* loadFixedBehaviors(text, state);
+    const fixed = yield* loadBehaviors(
+      text.fixedBehaviors ?? [],
+      "fixedBehaviors",
+      state,
+    );
     const initial = yield* loadBehaviors(
       text.initialBehaviors ?? [],
       "initialBehaviors",
@@ -780,11 +779,8 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     const resolved: MessagePolicy = {
       ...policy,
       text: {
-        fixedRules: [...text.fixedRules, ...fixed.map(({ rule }) => rule)],
-        initialRules: [
-          ...text.initialRules,
-          ...initial.map(({ rule }) => rule),
-        ],
+        fixedRules: [...text.fixedRules, ...fixed],
+        initialRules: [...text.initialRules, ...initial],
       },
     };
     return {
@@ -792,14 +788,6 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
       behaviorRulePaths,
     };
   });
-}
-
-/** Every fixed document resolves through the policy file's own directory. */
-function loadFixedBehaviors(
-  text: NonNullable<MessagePolicy["text"]>,
-  state: BehaviorState,
-) {
-  return loadBehaviors(text.fixedBehaviors ?? [], "fixedBehaviors", state);
 }
 
 function loadBehaviors(
@@ -814,7 +802,7 @@ function loadBehaviors(
       Effect.gen(function* () {
         const path = `text.${field}.${index}`;
         const behavior = yield* readBehavior(state.root, directory, path);
-        if (state.ids.has(behavior.rule.id)) {
+        if (state.ids.has(behavior.id)) {
           return yield* invalidBehavior(path, "duplicate-id");
         }
         if (field === "initialBehaviors") {
@@ -823,8 +811,8 @@ function loadBehaviors(
             return yield* invalidBehavior(path, "editable-limit");
           }
         }
-        state.ids.add(behavior.rule.id);
-        state.behaviorRulePaths.set(behavior.rule.id, path);
+        state.ids.add(behavior.id);
+        state.behaviorRulePaths.set(behavior.id, path);
         return behavior;
       }),
     { concurrency: 1 },
