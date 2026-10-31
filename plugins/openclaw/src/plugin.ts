@@ -152,10 +152,8 @@ interface TurnSender {
 }
 
 /**
- * One OpenClaw turn rendered from one inbound item. `id` is the certified
- * message's `MsgId` for a multicast or a request, and a turn id derived from
- * the operation id for a result or a failure, which no message carries.
- * `address` is the conversation the turn belongs to and replies go to.
+ * One retained delivery becomes one host turn under its stable event id.
+ * `address` selects the conversation for replies.
  */
 interface HostTurn {
   readonly id: string;
@@ -180,13 +178,6 @@ interface TextSend {
   readonly accountId?: string | null;
   readonly to: unknown;
   readonly text: unknown;
-}
-
-interface ChannelPluginDeps {
-  readonly harnessEndpointForAccount?: (
-    accountId: string,
-    account: Account,
-  ) => HarnessEndpoint | undefined;
 }
 
 class OpenClawInboundError extends Data.TaggedError("OpenClawInboundError")<{
@@ -259,13 +250,10 @@ const carriesTargets = Schema.is(Schema.NonEmptyArray(Schema.Unknown));
  * Inbound callback success permits acknowledgment of host handoff. The host
  * owns processing and retry policy, and final assistant text stays private.
  *
- * @param deps Optional process-local dependency overrides used by tests.
  * @returns The Social Harness channel plugin.
  * @internal
  */
-export function createChannelPlugin(
-  deps: ChannelPluginDeps = {},
-): ChannelPlugin<Account> {
+export function createChannelPlugin(): ChannelPlugin<Account> {
   const connectedAccount: ConnectedAccountState = {};
   return {
     ...createChannelPluginBase<Account>({
@@ -276,8 +264,7 @@ export function createChannelPlugin(
     config: createConfigSection(),
     messaging: createMessagingSection(),
     gateway: {
-      startAccount: (ctx) =>
-        startAccountConnection(ctx, connectedAccount, deps),
+      startAccount: (ctx) => startAccountConnection(ctx, connectedAccount),
     },
     actions: createMessageActions(connectedAccount),
     message: createMessageSection(connectedAccount),
@@ -460,7 +447,6 @@ function normalizeMessageTarget(raw: string): ResolvedMessageTarget | null {
 function startAccountConnection(
   ctx: ChannelGatewayContext<Account>,
   connectedAccount: ConnectedAccountState,
-  deps: ChannelPluginDeps,
 ) {
   if (ctx.abortSignal.aborted) {
     return Promise.resolve();
@@ -468,7 +454,7 @@ function startAccountConnection(
   return runHostPromise(
     requireOpenClawAccountRuntime(ctx).pipe(
       Effect.flatMap((runtime) =>
-        acquireAccountEndpoint(deps, ctx.accountId, ctx.account).pipe(
+        acquireAccountEndpoint().pipe(
           Effect.flatMap((endpoint) =>
             runAccountConnection(ctx, runtime, endpoint, connectedAccount),
           ),
@@ -538,15 +524,7 @@ function hasOpenClawRoutingRuntime(runtime: ChannelRuntimeSurface): boolean {
   );
 }
 
-function acquireAccountEndpoint(
-  deps: ChannelPluginDeps,
-  accountId: string,
-  account: Account,
-) {
-  const injected = deps.harnessEndpointForAccount?.(accountId, account);
-  if (injected !== undefined) {
-    return Effect.succeed(injected);
-  }
+function acquireAccountEndpoint() {
   return Effect.gen(function* () {
     const endpoint = yield* Config.url("SHARNESS_MCP_URL");
     const credentialFile = yield* Config.redacted(
@@ -1123,14 +1101,10 @@ function readSendInput({
 }
 
 /**
- * OpenClaw's result for one Client send, identified by a Social Harness id so
- * OpenClaw records the send as sent. A multicast or answer reports the message
- * it created: a multicast's `msgId` is the id recipients see as `MessageSid`,
- * and `read_conversation` shows either message by it; its conversation is
- * routing metadata. A gather or all_gather reports its `operationId`: a
- * gather sends a message to each member, and the Client does not return the id of an
- * all_gather's one group message.
- * @param result The Client's send result.
+ * Accepted messages report their author-scoped id; collective questions report
+ * their operation id. OpenClaw records this outgoing result separately from
+ * the retained event identity of an incoming turn.
+ * @param result The daemon's accepted send.
  * @returns The send result OpenClaw records.
  */
 function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {

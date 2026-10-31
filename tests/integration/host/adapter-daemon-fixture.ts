@@ -78,6 +78,7 @@ interface OpenClawConfig {
       readonly accounts: readonly [
         {
           readonly id: string;
+          readonly mode?: "shared" | "private";
         },
       ];
     };
@@ -253,7 +254,10 @@ interface OpenClawGatewayStatus {
 interface OpenClawGatewayContext {
   readonly cfg: OpenClawConfig;
   readonly accountId: string;
-  readonly account: { readonly id: string };
+  readonly account: {
+    readonly id: string;
+    readonly mode?: "shared" | "private";
+  };
   readonly abortSignal: AbortSignal;
   readonly runtime: {
     readonly log: (message: string) => void;
@@ -261,6 +265,11 @@ interface OpenClawGatewayContext {
     readonly exit: (code: number) => void;
   };
   readonly channelRuntime: ObservedOpenClawAccountRuntime["channel"];
+  readonly log?: {
+    readonly info: (message: string) => void;
+    readonly warn: (message: string) => void;
+    readonly error: (message: string) => void;
+  };
   readonly getStatus: () => OpenClawGatewayStatus;
   readonly setStatus: (status: OpenClawGatewayStatus) => void;
 }
@@ -274,6 +283,7 @@ export interface OpenClawMessageActionContext {
   readonly params: {
     readonly to: string;
     readonly message: string;
+    readonly targets?: readonly string[];
   };
 }
 
@@ -347,13 +357,14 @@ export function groupAddress(agentNames: readonly string[]) {
 /** Starts and registers two isolated daemon endpoints under the caller’s scope. */
 export function acquireScenario(
   prefix: string,
+  firewall?: "guidance" | "enforcement",
 ): Effect.Effect<Scenario, ProcessTestError, Scope.Scope> {
   return Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
     const [caller, target] = yield* Effect.all(
       [
         makeDaemonProcessFixture(infrastructure, `${prefix}-caller`),
-        makeDaemonProcessFixture(infrastructure, `${prefix}-target`),
+        makeDaemonProcessFixture(infrastructure, `${prefix}-target`, firewall),
       ] as const,
       { concurrency: 2 },
     );
@@ -372,13 +383,14 @@ export function acquireScenario(
 /** Starts three registered daemons so all-gather exercises multiple remote members. */
 export function acquireGroupScenario(
   prefix: string,
+  firewall?: "guidance" | "enforcement",
 ): Effect.Effect<GroupScenario, ProcessTestError, Scope.Scope> {
   return Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
     const [caller, target, peer] = yield* Effect.all(
       [
         makeDaemonProcessFixture(infrastructure, `${prefix}-caller`),
-        makeDaemonProcessFixture(infrastructure, `${prefix}-target`),
+        makeDaemonProcessFixture(infrastructure, `${prefix}-target`, firewall),
         makeDaemonProcessFixture(infrastructure, `${prefix}-peer`),
       ] as const,
       { concurrency: 3 },
@@ -440,8 +452,7 @@ export function directAddress(agentName: string) {
 
 /**
  * Creates the smallest account runtime needed by the process-boundary test.
- * The channel package test covers OpenClaw's real inbound runner; this fixture
- * records only the values that must survive the daemon process boundary.
+ * The fixture records the public host values across a real daemon connection.
  */
 export function makeObservedOpenClawAccountRuntime(
   fixture: OpenClawRuntimeFixture,
@@ -527,9 +538,13 @@ export function startOpenClawGateway(
   target: DaemonProcessFixture,
   channelPlugin: StableOpenClawChannelPlugin,
   runtime: ObservedOpenClawAccountRuntime,
+  options: {
+    readonly mode?: "shared" | "private";
+    readonly logLines?: string[];
+  } = {},
 ) {
   return Effect.gen(function* () {
-    const cfg = openClawConfig(target.stateDirectory);
+    const cfg = openClawConfig(target.stateDirectory, options.mode);
     const connected = yield* Deferred.make<undefined>();
     yield* useDaemonEndpoint(target);
 
@@ -545,7 +560,10 @@ export function startOpenClawGateway(
     const gatewayContext: OpenClawGatewayContext = {
       cfg,
       accountId: OPENCLAW_ACCOUNT_ID,
-      account: { id: OPENCLAW_ACCOUNT_ID },
+      account: {
+        id: OPENCLAW_ACCOUNT_ID,
+        ...(options.mode === undefined ? {} : { mode: options.mode }),
+      },
       abortSignal: abortController.signal,
       runtime: {
         log: () => {},
@@ -553,6 +571,18 @@ export function startOpenClawGateway(
         exit: () => {},
       },
       channelRuntime: runtime.channel,
+      ...(options.logLines === undefined
+        ? {}
+        : {
+            log: {
+              info: (message: string) =>
+                options.logLines?.push(`info: ${message}`),
+              warn: (message: string) =>
+                options.logLines?.push(`warn: ${message}`),
+              error: (message: string) =>
+                options.logLines?.push(`error: ${message}`),
+            },
+          }),
       getStatus: () => status,
       setStatus: (next) => {
         status = next;
@@ -585,11 +615,16 @@ export function awaitSignal(
 }
 
 /** Binds the host session store to one isolated daemon state directory. */
-export function openClawConfig(stateDirectory: string): OpenClawConfig {
+export function openClawConfig(
+  stateDirectory: string,
+  mode?: "shared" | "private",
+): OpenClawConfig {
   return {
     channels: {
       sharness: {
-        accounts: [{ id: OPENCLAW_ACCOUNT_ID }],
+        accounts: [
+          { id: OPENCLAW_ACCOUNT_ID, ...(mode === undefined ? {} : { mode }) },
+        ],
       },
     },
     session: { store: stateDirectory },
@@ -620,7 +655,10 @@ export function makeTurnQueueRuntime(
           agentId: "primary",
           channel: "sharness",
           accountId: input.accountId ?? OPENCLAW_ACCOUNT_ID,
-          sessionKey: OPENCLAW_MAIN_SESSION_KEY,
+          sessionKey:
+            input.peer === undefined
+              ? OPENCLAW_MAIN_SESSION_KEY
+              : `agent:primary:sharness:${input.peer.kind}:${input.peer.id}`,
           mainSessionKey: OPENCLAW_MAIN_SESSION_KEY,
           lastRoutePolicy: "session",
           matchedBy: "default",

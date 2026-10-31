@@ -8,7 +8,7 @@ surface. The channel id is `"sharness"`.
 
 This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
-or another adapter. It receives an injected or MCP-backed `HarnessEndpoint`; it
+or another adapter. It receives an MCP-backed `HarnessEndpoint`; it
 does not acquire a daemon, profile, Registry admission material, signing key,
 raw Router credential, network client, or local store.
 

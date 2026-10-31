@@ -82,8 +82,10 @@ admitted-send guidance.
 Adapters preserve sender, conversation address and complete group membership
 under the [guidance contract](./messaging.md#local-guidance), including omitting
 internal middleware identifiers. Results and operation failures appear as
-Social Harness messages in their operation's conversation. OpenClaw uses
-`operationId` for the turn. Withheld text identifies the deciding check and reason.
+Social Harness messages in their operation's conversation. Native adapters use
+the retained delivery event id for every turn. Redelivery keeps that id, and
+authenticated `read_event` retrieves its full item and guidance. Withheld text
+identifies the deciding check and reason.
 
 [Handoff](./receiving.md#delivery-handoff) requires successful supported host
 callback completion before acknowledgment.

@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/client";
 import {
   AgentName,
+  InboundItem,
   AgentSigningAuthority,
   Ed25519PublicKey,
   type MessageAddressInput,
@@ -131,6 +132,9 @@ export interface DaemonManagementClient {
   readonly readConversation: (
     address: MessageAddressInput,
   ) => Effect.Effect<ManagementReadConversationResult, ProcessTestError>;
+  readonly readEvent: (
+    eventId: string,
+  ) => Effect.Effect<InboundItem, ProcessTestError>;
   readonly callExpectingProtocolError: (
     name: string,
     toolArguments: Readonly<Record<string, unknown>>,
@@ -966,6 +970,13 @@ function startNetworkRouter(
 
 function managementOperations(client: Client): DaemonManagementClient {
   const management: DaemonManagementClient = {
+    readEvent: (eventId) =>
+      callAndDecode({
+        client,
+        name: "read_event",
+        arguments: { eventId },
+        schema: Schema.Struct({ item: InboundItem }),
+      }).pipe(Effect.map(({ item }) => item)),
     register: (request) =>
       callAndDecode({
         client,
