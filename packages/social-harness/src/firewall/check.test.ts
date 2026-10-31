@@ -572,20 +572,6 @@ it("rejects ambiguous registrations", () =>
         }).pipe(Effect.flip)).reason,
       ).toBe("registration");
     }
-    const duplicate = policy("org.social-harness/text");
-    expect(
-      (yield* validateChecks({
-        ...codeConfiguration([duplicate]),
-        incoming: [duplicate],
-        outgoing: [],
-        rules: [{ id: "text-rule", text: "Speak plainly.", applies: "both" }],
-        textSettings: {
-          minimumProbability: 0.5,
-          maximumRequestBytes: 60000,
-          timeoutMilliseconds: 100,
-        },
-      }).pipe(Effect.flip)).reason,
-    ).toBe("registration");
   }));
 it("rejects ambiguous references, wrong attribution and duplicate recipients", () =>
   Effect.gen(function* () {

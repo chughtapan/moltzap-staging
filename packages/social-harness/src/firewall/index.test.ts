@@ -15,12 +15,7 @@ import {
   encodeRuntimeValue,
 } from "../communication/store/index.js";
 import { readCredential } from "../daemon/credentials.js";
-import {
-  firewallCheckSchema,
-  Message,
-  MessageContext,
-  type MessageMiddleware,
-} from "./check.js";
+import { Message, MessageContext, type MessageMiddleware } from "./check.js";
 import {
   loadMessagePolicy,
   MAXIMUM_BEHAVIOR_BYTES,
@@ -31,7 +26,11 @@ import {
   makeFirewall,
   type PreparedFirewallCheck,
 } from "./index.js";
-import { readFirewallPolicy, writeFirewallPolicy } from "./store/index.js";
+import {
+  readFirewallPolicy,
+  saveCheckDecision,
+  writeFirewallPolicy,
+} from "./store/index.js";
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Indexed safe errors and atomic policy state are the public edit contract. */
 
 // @agent-code-guard/regression-only: Construction and restart regressions protect fixed rules, immutable provenance and retained-result privacy.
@@ -486,15 +485,14 @@ it("omits provider traces from the completed result while preserving its judgmen
       expect(completed.result.judgment).toBe("reject");
       expect(completed.result.checks[0]?.trace).toEqual(trace);
       expect(completed.completion.admit).toBe(false);
-      const retained = yield* decodeRuntimeValue(
-        firewallCheckSchema,
-        completed.completion.canonicalResult,
-      );
-      expect(retained.checks).toHaveLength(1);
-      expect(retained.checks[0]).not.toHaveProperty("trace");
-      expect(retained.checks[0]).toMatchObject({
-        findings: [{ ruleId: "privacy", outcome: "violation" }],
+      yield* saveCheckDecision(completed.completion);
+      const feed = yield* firewall.readDecisions({});
+      expect(feed.decisions[0]).toMatchObject({
+        outcome: "reject",
+        cause: "code",
+        decidedBy: [{ ruleId: "privacy", from: "code" }],
       });
+      expect(JSON.stringify(feed)).not.toContain(trace.data);
     }),
   ));
 
