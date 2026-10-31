@@ -601,9 +601,8 @@ const expiresStream = () =>
       }),
     );
     expect(replacement.status).toBe(200);
-    yield* Effect.tryPromise(
-      () => replacement.body?.cancel() ?? Promise.resolve(),
-    );
+    const reader = yield* activeReader(replacement);
+    yield* Effect.tryPromise(() => reader.cancel());
   });
 
 const sharesInboxCustody = () =>
