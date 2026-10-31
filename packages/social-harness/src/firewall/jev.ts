@@ -193,10 +193,8 @@ export function makeJevDecisionProvider(options: {
 }): DecisionProvider {
   const configuration = Object.freeze({ ...options });
   return {
-    provenance: Object.freeze({
-      format: "jev.configuration.v1",
-      data: JSON.stringify({ origin, model: configuration.model }),
-    }),
+    provider: providerName,
+    model: configuration.model,
     decide: (request) =>
       requestJev(request, configuration).pipe(
         Effect.provide(FetchHttpClient.layer),

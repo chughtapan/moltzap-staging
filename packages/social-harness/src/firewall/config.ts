@@ -8,7 +8,6 @@ import {
   type Redacted,
   Schema,
 } from "effect";
-import { createHash } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -29,35 +28,12 @@ export const nextActionSchema = Schema.Literal(
   "seek-approval",
 );
 
-/** Descriptive provenance is retained as data and carries no execution authority. */
-export class PrivateCheckTrace extends Schema.Class<PrivateCheckTrace>(
-  "PrivateCheckTrace",
-)({
-  format: Schema.NonEmptyTrimmedString,
-  data: Schema.String,
-}) {}
-
 /** Facts are supplied by trusted composition; visibility limits references shown to the agent. */
 export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
   id: identifier,
   source: identifier,
   text: Schema.NonEmptyString,
   visibility: Schema.Literal("runtime", "assessor"),
-}) {}
-
-/** Runtime advice can only select templates registered by trusted composition. */
-export class RuleDescription extends Schema.Class<RuleDescription>(
-  "RuleDescription",
-)({
-  id: identifier,
-  guidance: Schema.optional(Schema.NonEmptyString),
-  notifySender: Schema.optional(Schema.Boolean),
-  feedback: Schema.optional(
-    Schema.Struct({
-      text: Schema.NonEmptyString,
-      nextAction: nextActionSchema,
-    }),
-  ),
 }) {}
 
 /**
@@ -69,17 +45,24 @@ export class RuleDescription extends Schema.Class<RuleDescription>(
  * for installation identifiers, ownership and edit validation.
  */
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
-  ...RuleDescription.fields,
+  id: identifier,
+  guidance: Schema.optional(Schema.NonEmptyString),
+  notifySender: Schema.optional(Schema.Boolean),
+  feedback: Schema.optional(
+    Schema.Struct({
+      text: Schema.NonEmptyString,
+      nextAction: nextActionSchema,
+    }),
+  ),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
 }) {}
 
-/** Bounds apply to the complete check and each registered code check. */
+/** Bounds apply to one complete text assessment. */
 export class FirewallSettings extends Schema.Class<FirewallSettings>(
   "FirewallSettings",
 )({
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
-  middlewareTimeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
   maximumInputBytes: Schema.Positive.pipe(Schema.int()),
   maximumResultBytes: Schema.Positive.pipe(Schema.int()),
 }) {}
@@ -123,26 +106,10 @@ export const policyUpdateSchema = exactStruct({
   ),
 });
 
-/**
- * A fixed rule as trusted composition installed it: natural-language text, or the
- * description a code middleware declares for a rule it checks in code.
- */
-const fixedRuleSchema = Schema.Union(
-  exactStruct({
-    from: Schema.Literal("code"),
-    middleware: Schema.NonEmptyString,
-    ...RuleDescription.fields,
-  }),
-  exactStruct({
-    from: Schema.Literal("text"),
-    ...TextRule.fields,
-  }),
-);
-
 /** The digest identifies the entire active installation, including fixed policy. */
 export const policyReadSchema = exactStruct({
   rules: editableDocumentSchema,
-  fixedRules: Schema.Array(fixedRuleSchema),
+  fixedRules: Schema.Array(TextRule),
   activeRevision: Schema.NonEmptyString,
 });
 
@@ -176,7 +143,6 @@ const decisionCause = Schema.Literal(
   "judgment",
   "uncertain",
   "unavailable",
-  "code",
   "endpoint",
   "default",
 );
@@ -185,8 +151,7 @@ const decisionCause = Schema.Literal(
  * One row per peer contains no message content or provider traces. The only
  * text is `decidedBy[].advice`, the deciding rule's own registered feedback,
  * or its guidance for an admission. `decidedBy[].from` says where the rule is
- * defined, as `policy_read` lists it: a code middleware, a fixed natural-language rule,
- * or an owner-editable natural-language rule. `checkedRuleIds` lists every rule with a
+ * defined: a fixed or owner-editable natural-language rule. `checkedRuleIds` lists every rule with a
  * finding in the completed chain.
  */
 export const firewallDecisionSummarySchema = exactStruct({
@@ -197,7 +162,7 @@ export const firewallDecisionSummarySchema = exactStruct({
   decidedBy: Schema.Array(
     exactStruct({
       ruleId: Schema.NonEmptyString,
-      from: Schema.Literal("code", "fixed", "editable"),
+      from: Schema.Literal("fixed", "editable"),
       advice: Schema.optional(Schema.NonEmptyString),
     }),
   ),
@@ -412,7 +377,6 @@ const defaultTextSettings = {
 /** Per-check bounds sized for natural-language assessment of a full history window. */
 const defaultSettings = {
   timeoutMilliseconds: 150_000,
-  middlewareTimeoutMilliseconds: 70_000,
   maximumInputBytes: 512_000,
   maximumResultBytes: 2_000_000,
 };
@@ -528,7 +492,6 @@ const decisionProviderKey = Schema.Trim.pipe(
 /** A configured document with the decision provider it names, and its behavior sources. */
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
-  readonly fixedBehaviorDigests?: readonly string[];
   readonly provider: LoadedDecisionProvider;
   readonly behaviorRulePaths: ReadonlyMap<string, string>;
 }
@@ -563,7 +526,6 @@ export const loadMessagePolicy = (
     const resolved = yield* resolveBehaviors(policy, dirname(path));
     return Option.some({
       policy: resolved.policy,
-      fixedBehaviorDigests: resolved.fixedBehaviorDigests,
       behaviorRulePaths: resolved.behaviorRulePaths,
       provider: yield* loadDecisionProvider(
         policy,
@@ -585,42 +547,12 @@ interface BehaviorState {
 export const firewallConfigurationSchema = Schema.Struct({
   mode: Schema.Literal("guidance", "enforcement"),
   facts: Schema.Array(OwnerFact),
-  codeDigest: Schema.String.pipe(Schema.pattern(/^[a-f0-9]{64}$/u)),
   maximumHistoryRecords: Schema.Int.pipe(Schema.between(1, 1024)),
   maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
 });
 
-/** Registration provenance is retained without giving it execution authority. */
-const firewallRegistrationSchema = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  revision: Schema.NonEmptyTrimmedString,
-  rules: Schema.Array(RuleDescription),
-  provenance: PrivateCheckTrace,
-});
-
-/** The exact installation used by an attempt survives later process configuration. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Retained audit decoding composes the exact installation grammar owned by policy.
-export const firewallInstallationSchema = Schema.Struct({
-  configuration: firewallConfigurationSchema,
-  settings: FirewallSettings,
-  incoming: Schema.Array(firewallRegistrationSchema),
-  outgoing: Schema.Array(firewallRegistrationSchema),
-  text: Schema.optional(
-    Schema.Struct({
-      edition: Schema.NonEmptyString,
-      revision: Schema.NonEmptyString,
-      rules: Schema.Array(TextRule),
-      fixedRuleIds: Schema.Array(Schema.NonEmptyString),
-      settings: TextPolicySettings,
-      provider: Schema.optional(PrivateCheckTrace),
-    }),
-  ),
-});
-
 /** Evidence limits and fixed facts are immutable for a process installation. */
 export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
-/** Each retained check identifies the exact rule registrations it assessed. */
-export type FirewallInstallation = typeof firewallInstallationSchema.Type;
 
 /**
  * Where a rule installation failure's fix is written: the rules-not-installed
@@ -815,7 +747,7 @@ function readBehavior(root: string, directory: string, path: string) {
       refused,
     );
     const rule = yield* decodeBehavior(bytes, refused);
-    return { rule, digest: createHash("sha256").update(bytes).digest("hex") };
+    return { rule };
   });
 }
 
@@ -825,7 +757,7 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     const behaviorRulePaths = new Map<string, string>();
     const text = policy.text;
     if (text === undefined) {
-      return { policy, behaviorRulePaths, fixedBehaviorDigests: undefined };
+      return { policy, behaviorRulePaths };
     }
     yield* Schema.decodeUnknown(editableDocumentSchema)(text.initialRules).pipe(
       Effect.mapError(() =>
@@ -859,8 +791,6 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     return {
       policy: resolved,
       behaviorRulePaths,
-      fixedBehaviorDigests:
-        fixed.length === 0 ? undefined : fixed.map(({ digest }) => digest),
     };
   });
 }

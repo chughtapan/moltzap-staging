@@ -15,14 +15,9 @@ import {
   type FirewallSettings,
   nextActionSchema,
   OwnerFact,
-  PrivateCheckTrace,
-  RuleDescription,
   type TextPolicySettings,
   type TextRule,
 } from "./config.js";
-
-/** Identifies retained assessments produced by the configured text rules. */
-const textCheckId = "org.social-harness/text";
 
 /** Captured policy data is independent of provider acquisition and durable retention. */
 export interface CheckConfiguration {
@@ -36,7 +31,6 @@ export interface CheckConfiguration {
 export interface CheckMessageInput extends CheckConfiguration {
   readonly event: MessageEvent;
   readonly context: MessageContext;
-  readonly code: readonly MessageMiddleware[];
   readonly provider?: DecisionProvider;
 }
 
@@ -48,14 +42,9 @@ export const firewallRefusalReasonSchema = Schema.Literal(
   "check-unavailable",
 );
 
-/** A completed assessment either admits or names a closed refusal reason. */
-const firewallReasonSchema = Schema.Literal(
-  "eligible",
-  ...firewallRefusalReasonSchema.literals,
-);
+type Reason = "eligible" | typeof firewallRefusalReasonSchema.Type;
 
 const instruction = {
-  middlewareId: Schema.NonEmptyTrimmedString,
   ruleId: Schema.NonEmptyTrimmedString,
   instruction: Schema.NonEmptyString,
 };
@@ -170,34 +159,24 @@ const messageEvent = Schema.Union(
 /** Direction determines whether the message is received or still an unsent draft. */
 export type MessageEvent = typeof messageEvent.Type;
 
-/**
- * Pass is local to one rule; only the complete firewall may return allow. An
- * uncertain pass is a judgment the decision provider could not settle:
- * it admits, and keeps the provider's choice and probability so the agent is advised and
- * the audit can count it. It precedes plain pass, which would otherwise
- * decode it without those fields.
- */
-const policyFinding = Schema.Union(
-  Schema.Struct({
-    ruleId: identifier,
-    outcome: Schema.Literal("pass"),
-    reason: Schema.Literal("uncertain"),
-    choice: identifier,
-    probability,
-  }),
-  Schema.Struct({
-    ruleId: identifier,
-    outcome: Schema.Literal("pass", "not-applicable", "violation"),
-  }),
-  Schema.Struct({
-    ruleId: identifier,
-    outcome: Schema.Literal("hold"),
-    reason: Schema.Literal("unresolved-evidence", "check-unavailable"),
-  }),
-);
-
-/** Rule findings accumulate independently of their text or code representation. */
-type PolicyFinding = typeof policyFinding.Type;
+/** An unsettled valid judgment admits with registered advice. */
+export type PolicyFinding =
+  | {
+      readonly ruleId: string;
+      readonly outcome: "pass";
+      readonly reason: "uncertain";
+      readonly choice: string;
+      readonly probability: number;
+    }
+  | {
+      readonly ruleId: string;
+      readonly outcome: "pass" | "not-applicable" | "violation";
+    }
+  | {
+      readonly ruleId: string;
+      readonly outcome: "hold";
+      readonly reason: "unresolved-evidence" | "check-unavailable";
+    };
 
 /** Local response conduct under a rule, with subjects restricted to admitted visible messages or the incoming event. */
 export class ResponseExpectation extends Schema.Class<ResponseExpectation>(
@@ -208,70 +187,21 @@ export class ResponseExpectation extends Schema.Class<ResponseExpectation>(
   subjects: Schema.Array(identifier),
 }) {}
 
-/** A result is atomic: interrupted middleware has no returned partial findings. */
-export class MiddlewareResult extends Schema.Class<MiddlewareResult>(
-  "MiddlewareResult",
-)({
-  findings: Schema.Array(policyFinding),
-  expectations: Schema.Array(ResponseExpectation),
-  trace: Schema.optional(PrivateCheckTrace),
-}) {}
+interface TextAssessment {
+  readonly findings: readonly PolicyFinding[];
+  readonly expectations: readonly ResponseExpectation[];
+  readonly trace?: { readonly format: string; readonly data: string };
+}
 
-/** Operational failures carry closed reasons, never arbitrary exception text. */
-export class MiddlewareError extends Data.TaggedError("MiddlewareError")<{
-  readonly reason:
-    | "unavailable"
-    | "timeout"
-    | "invalid-result"
-    | "budget"
-    | "defect";
-}> {}
-
-/** Earlier judgments cannot replace evidence or erase another rule's restriction. */
-class MiddlewareObservation extends Schema.Class<MiddlewareObservation>(
-  "MiddlewareObservation",
-)({
-  source: Schema.Literal("code", "text"),
-  middlewareId: identifier,
-  revision: identifier,
-  status: Schema.Literal("completed", "unavailable"),
-  findings: Schema.Array(policyFinding),
-  expectations: Schema.Array(ResponseExpectation),
-}) {}
-
-/** Each invocation gets immutable message evidence and authorized context. */
-export class MiddlewareInput extends Schema.Class<MiddlewareInput>(
-  "MiddlewareInput",
-)({
-  event: messageEvent,
-  context: MessageContext,
-}) {}
-
-/**
- * Registered code checks contribute findings alongside natural-language judgments. Code is trusted;
- * it receives no conversation or store capability and must not retain conversation
- * state or perform messaging side effects.
- *
- * Middleware ids must be unique within each direction. Change the revision
- * whenever code policy behavior changes. Every declared rule must return a
- * finding, and subject references must name admitted runtime-visible evidence.
- * Registration copies and freezes metadata, but cannot isolate mutable closure
- * state or interrupt blocking JavaScript.
- */
-export interface MessageMiddleware {
-  readonly id: string;
-  readonly revision: string;
-  readonly rules: readonly RuleDescription[];
-  /** Descriptive audit data declared by trusted composition, never authority. */
-  readonly provenance?: PrivateCheckTrace;
-  readonly check: (
-    input: MiddlewareInput,
-  ) => Effect.Effect<MiddlewareResult, MiddlewareError>;
+/** Evidence is detached before inference starts. */
+export interface CapturedInput {
+  readonly event: MessageEvent;
+  readonly context: MessageContext;
 }
 
 /** Invalid construction or evidence is a typed failure, never permission. */
 export class CheckInputError extends Data.TaggedError("CheckInputError")<{
-  readonly reason: "settings" | "registration" | "message" | "context";
+  readonly reason: "settings" | "rules" | "message" | "context";
 }> {}
 
 /** Offline callers capture the same owned evidence used by managed checks. */
@@ -288,116 +218,88 @@ export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
 /** Assessment and retained decisions share one validated, detached input. */
 export function checkCapturedMessage(
   input: Omit<CheckMessageInput, "event" | "context">,
-  captured: MiddlewareInput,
+  captured: CapturedInput,
 ): Effect.Effect<FirewallCheck, CheckInputError> {
   return Effect.gen(function* () {
     yield* validateEvidence(captured);
-    const deadline =
-      (yield* Clock.currentTimeMillis) + input.settings.timeoutMilliseconds;
-    const registrations: Registration[] = input.code.map((entry) => ({
-      source: "code",
-      id: entry.id,
-      rules: entry.rules,
-    }));
-    const checks: MiddlewareCheck[] = [];
-    for (const entry of input.code) {
-      checks.push(
-        yield* runCheck(
-          { ...entry, source: "code" },
-          invokeMiddleware(entry, captured),
-          captured,
-          { settings: input.settings, deadline },
-        ),
-      );
+    const selected = forDirection(input.rules, captured.event.direction);
+    if (selected.rules.length === 0) {
+      return composeDecision(captured.context, input.rules, {
+        findings: selected.skipped,
+        expectations: [],
+      });
     }
-    if (input.rules.length > 0 && input.textSettings !== undefined) {
-      const text = {
-        source: "text" as const,
-        id: textCheckId,
-        revision: input.revision,
-        rules: input.rules,
-      };
-      registrations.push(text);
-      checks.push(
-        yield* runCheck(
-          text,
-          checkText(
-            captured,
-            {
-              ...forDirection(input.rules, captured.event.direction),
-              revision: input.revision,
-            },
-            input.textSettings,
-            input.provider,
+    const settings = input.textSettings;
+    if (settings === undefined) {
+      return yield* new CheckInputError({ reason: "settings" });
+    }
+    const assessed = yield* captureResult(
+      Effect.suspend(() => {
+        if (
+          utf8.encode(JSON.stringify(captured)).byteLength >
+          input.settings.maximumInputBytes
+        ) {
+          return Effect.fail(new DecisionProviderError({ reason: "budget" }));
+        }
+        return checkText(
+          captured,
+          { ...selected, revision: input.revision },
+          settings,
+          input.provider,
+        );
+      }).pipe(
+        Effect.flatMap((result) =>
+          utf8.encode(JSON.stringify(result)).byteLength >
+          input.settings.maximumResultBytes
+            ? Effect.fail(new DecisionProviderError({ reason: "budget" }))
+            : Effect.succeed(result),
+        ),
+        Effect.timeoutFail({
+          duration: input.settings.timeoutMilliseconds,
+          onTimeout: () => new DecisionProviderError({ reason: "timeout" }),
+        }),
+      ),
+      () => new DecisionProviderError({ reason: "defect" }),
+    );
+    const result = Either.match(assessed, {
+      onLeft: (failure): TextAssessment => ({
+        findings: [
+          ...selected.rules.map(
+            (rule): PolicyFinding => ({
+              ruleId: rule.id,
+              outcome: "hold",
+              reason: "check-unavailable",
+            }),
           ),
-          captured,
-          { settings: input.settings, deadline },
-        ),
-      );
-    }
-    return composeDecision(captured.context, registrations, checks);
+          ...selected.skipped,
+        ],
+        expectations: [],
+        trace: {
+          format: "text-policy/v1",
+          data: JSON.stringify({ failure: { reason: failure.reason } }),
+        },
+      }),
+      onRight: (result) => result,
+    });
+    return composeDecision(captured.context, input.rules, result);
   }).pipe(Effect.withSpan("Firewall.checkCapturedMessage"));
 }
 
-/** Every installed entry is attributed, including a skipped or failed check. */
-export interface MiddlewareCheck extends MiddlewareObservation {
-  readonly elapsedMilliseconds: number;
-  readonly failure?: MiddlewareError;
-  readonly trace?: PrivateCheckTrace;
+/** Private findings and traces stay separate from advice permitted for the host. */
+export interface FirewallCheck extends TextAssessment {
+  readonly judgment: "allow" | "reject" | "hold";
+  readonly reason: Reason;
+  readonly feedback: readonly {
+    readonly nextAction: typeof nextActionSchema.Type;
+    readonly text: string;
+  }[];
+  readonly guidance: readonly (typeof registeredGuidanceSchema.Type)[];
 }
 
-/** Registered local instructions accompany expected response conduct and permitted subjects. */
-interface ResponseGuidance extends ResponseExpectation {
-  readonly middlewareId: string;
-  readonly instruction: string;
-}
-
-/** One uncertain judgment retains only registered advice and the selected probability. */
 type UncertainGuidance = Extract<
   FirewallCheck["guidance"][number],
   { readonly uncertain: unknown }
 >;
-
-/** Private audit is separate from the only fields intended for a runtime. */
-export const firewallCheckSchema = exactStruct({
-  judgment: Schema.Literal("allow", "reject", "hold"),
-  reason: firewallReasonSchema,
-  feedback: Schema.Array(
-    Schema.Struct({ nextAction: nextActionSchema, text: Schema.String }),
-  ),
-  guidance: Schema.Array(registeredGuidanceSchema),
-  checks: Schema.Array(
-    Schema.Struct({
-      ...MiddlewareObservation.fields,
-      /** Wall-clock subtraction can be negative after a clock adjustment. */
-      elapsedMilliseconds: Schema.Finite,
-      failure: Schema.optional(
-        Schema.transform(
-          Schema.Struct({
-            _tag: Schema.Literal("MiddlewareError"),
-            reason: Schema.Literal(
-              "unavailable",
-              "timeout",
-              "invalid-result",
-              "budget",
-              "defect",
-            ),
-          }),
-          Schema.instanceOf(MiddlewareError),
-          {
-            strict: true,
-            decode: (error) => new MiddlewareError(error),
-            encode: (error) => ({ _tag: error._tag, reason: error.reason }),
-          },
-        ),
-      ),
-      trace: Schema.optional(PrivateCheckTrace),
-    }),
-  ),
-});
-
-/** The complete check keeps private traces distinct from runtime advice. */
-export type FirewallCheck = typeof firewallCheckSchema.Type;
 
 /**
  * Question semantics have a recorded edition independent of rule wording.
@@ -465,7 +367,8 @@ export class DecisionProviderError extends Data.TaggedError(
 /** Entirely code-based chains have no dependency on this optional capability. */
 export interface DecisionProvider {
   /** Requested provider configuration, retained even when no response arrives. */
-  readonly provenance?: PrivateCheckTrace;
+  readonly provider?: string;
+  readonly model?: string;
   readonly decide: (
     request: DecisionRequest,
   ) => Effect.Effect<DecisionResponse, DecisionProviderError>;
@@ -532,24 +435,6 @@ export type CheckedGuidance = typeof checkedGuidanceSchema.Type;
 
 const utf8 = new TextEncoder();
 
-/** Metadata is copied before code or retained audit can observe it. */
-const middlewareRegistrationSchema = Schema.Struct({
-  id: Schema.NonEmptyTrimmedString,
-  revision: Schema.NonEmptyTrimmedString,
-  rules: Schema.NonEmptyArray(RuleDescription),
-  provenance: Schema.optional(PrivateCheckTrace),
-});
-
-const failureReason = Schema.Literal(
-  "unavailable",
-  "timeout",
-  "invalid-result",
-  "budget",
-  "defect",
-);
-
-type Reason = FirewallCheck["reason"];
-
 const judgments: Readonly<Record<Reason, FirewallCheck["judgment"]>> = {
   eligible: "allow",
   "rule-violation": "reject",
@@ -587,23 +472,10 @@ const defaultFeedback: Readonly<Record<Reason, FirewallCheck["feedback"]>> = {
  * for an admission, or its feedback when the reason permits its next action.
  */
 export interface DecidingRule {
-  readonly source: "code" | "text";
-  readonly middlewareId: string;
   readonly ruleId: string;
   readonly finding: "settled" | "uncertain" | "unavailable";
   readonly advice?: string;
 }
-
-interface Registration {
-  readonly source: "code" | "text";
-  readonly id: string;
-  readonly rules: readonly RuleDescription[];
-}
-
-type Observation = Pick<
-  MiddlewareObservation,
-  "source" | "middlewareId" | "status" | "findings" | "expectations"
->;
 
 type QuestionEntry = readonly [string, DecisionRequest["questions"][string]];
 
@@ -652,20 +524,10 @@ const stageCatalog = {
   }
 >;
 
-/** Startup and edits reject a whole rule set before it can become active or be persisted. */
+/** Startup and edits reject rule sets that cannot form a bounded request. */
 export const validateChecks = Effect.fn("Firewall.validateChecks")(function* (
-  input: CheckConfiguration & {
-    readonly incoming: readonly MessageMiddleware[];
-    readonly outgoing: readonly MessageMiddleware[];
-  },
+  input: CheckConfiguration,
 ) {
-  if (
-    ![input.incoming, input.outgoing].every((chain) =>
-      validRegistrationIds(chain),
-    )
-  ) {
-    return yield* new CheckInputError({ reason: "registration" });
-  }
   yield* validateTextRules(input);
 });
 
@@ -703,91 +565,57 @@ export function decodeFrozen<A, I>(
   );
 }
 
-/** Capture executable registration without retaining caller-owned metadata. */
-export const captureRegistration = Effect.fn("Firewall.captureEntry")(
-  function* (entry: MessageMiddleware) {
-    const metadata = yield* decodeFrozen(middlewareRegistrationSchema, {
-      id: entry.id,
-      revision: entry.revision,
-      rules: entry.rules,
-      ...(entry.provenance === undefined
-        ? {}
-        : { provenance: entry.provenance }),
-    }).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new CheckInputError({ reason: "registration" })),
-      ),
-    );
-    if (
-      new Set(metadata.rules.map((rule) => rule.id)).size !==
-      metadata.rules.length
-    ) {
-      return yield* new CheckInputError({ reason: "registration" });
-    }
-    const check = yield* Effect.try({
-      try: () => entry.check.bind(entry),
-      catch: () => new CheckInputError({ reason: "registration" }),
-    });
-    return Object.freeze({ ...metadata, check });
-  },
-);
-
-/** Missing applicable advice receives the safe default for the final reason. */
+/** Missing registered feedback receives the safe default for the final reason. */
 export function projectFeedback(
-  middleware: readonly Registration[],
-  checks: readonly MiddlewareCheck[],
+  rules: readonly TextRule[],
+  findings: readonly PolicyFinding[],
   reason: Reason,
 ): FirewallCheck["feedback"] {
-  const feedback = middleware.flatMap((entry) => {
-    const selected =
-      checks
-        .find(
-          (check) =>
-            check.middlewareId === entry.id && check.source === entry.source,
-        )
-        ?.findings.filter((finding) => matchesReason(finding, reason))
-        .map((finding) => finding.ruleId) ?? [];
-    return entry.rules.flatMap((rule) =>
-      selected.includes(rule.id) && rule.feedback !== undefined
-        ? [{ ...rule.feedback }]
-        : [],
-    );
-  });
+  const selected = new Set(
+    findings
+      .filter((finding) => matchesReason(finding, reason))
+      .map((finding) => finding.ruleId),
+  );
+  const feedback = rules.flatMap((rule) =>
+    selected.has(rule.id) && rule.feedback !== undefined
+      ? [{ ...rule.feedback }]
+      : [],
+  );
   return feedback.length === 0
     ? defaultFeedback[reason].map((entry) => ({ ...entry }))
     : feedback;
 }
 
-/**
- * The rules that produced `reason`, once each in chain order. An admission
- * is decided by the rules assessed as uncertain, which admit with guidance, and
- * by no rule otherwise. An unavailable check is decided by every rule it
- * registers; a hold on unresolved evidence by its holding rules and any
- * conflicting expectations. Every other reason is decided by the findings
- * that select it. A hold on missing context evidence alone has no rule.
- */
+/** One rule contributes one attribution entry even when several judgments select it. */
 export function decidingRules(
   reason: Reason,
-  middleware: readonly Registration[],
-  checks: readonly Observation[],
+  rules: readonly TextRule[],
+  assessment: TextAssessment,
 ): readonly DecidingRule[] {
-  const selected = checks.flatMap((check) =>
-    checkDeciders(reason, middleware, check),
-  );
-  const conflicting =
-    reason === "unresolved-evidence"
-      ? conflictingExpectations(checks).map((entry) => ({
-          source: entry.source,
-          middlewareId: entry.middlewareId,
-          ruleId: entry.ruleId,
-          finding: "settled" as const,
-        }))
-      : [];
+  const selected: DecidingRule[] = assessment.findings.flatMap((finding) => {
+    const kind = decidingFinding(finding, reason);
+    return kind === undefined
+      ? []
+      : [{ ruleId: finding.ruleId, finding: kind }];
+  });
+  if (reason === "unresolved-evidence") {
+    selected.push(
+      ...conflictingExpectations(assessment.expectations).map(
+        (ruleId): DecidingRule => ({ ruleId, finding: "settled" }),
+      ),
+    );
+  }
   const unique = new Map<string, DecidingRule>();
-  for (const rule of [...selected, ...conflicting]) {
-    const key = JSON.stringify([rule.source, rule.middlewareId, rule.ruleId]);
-    if (!unique.has(key)) {
-      unique.set(key, withAdvice(reason, middleware, rule));
+  for (const entry of selected) {
+    if (!unique.has(entry.ruleId)) {
+      const advice = registeredAdvice(
+        reason,
+        rules.find((rule) => rule.id === entry.ruleId),
+      );
+      unique.set(
+        entry.ruleId,
+        advice === undefined ? entry : { ...entry, advice },
+      );
     }
   }
   return [...unique.values()];
@@ -796,10 +624,7 @@ export function decidingRules(
 /** Detaches and freezes message evidence before assessment or retention can observe it. */
 export function captureInput(event: MessageEvent, context: MessageContext) {
   return Effect.gen(function* () {
-    const capturedEvent = yield* decodeFrozen(
-      MiddlewareInput.fields.event,
-      event,
-    ).pipe(
+    const capturedEvent = yield* decodeFrozen(messageEvent, event).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new CheckInputError({ reason: "message" })),
       ),
@@ -851,7 +676,7 @@ function freezeData(value: unknown): void {
 }
 
 /** Attribution and reference identity are checked once against the captured evidence. */
-function validateEvidence({ event, context }: MiddlewareInput) {
+function validateEvidence({ event, context }: CapturedInput) {
   const { message } = event;
   const references = [
     message.id,
@@ -878,231 +703,48 @@ function validateEvidence({ event, context }: MiddlewareInput) {
   return Effect.void;
 }
 
-/** Code policies receive exactly the same reference and advice validation as text. */
-function validResult(
-  result: MiddlewareResult,
-  middleware: MessageMiddleware,
-  input: MiddlewareInput,
-): boolean {
-  const rules = new Map(middleware.rules.map((rule) => [rule.id, rule]));
-  const covered = new Set(result.findings.map((finding) => finding.ruleId));
-  const subjects = new Set(
-    input.context.history
-      .filter(
-        (message) =>
-          message.admission === "admitted" && message.visibility === "runtime",
-      )
-      .map((message) => message.id),
-  );
-  if (input.event.direction === "incoming") {
-    subjects.add(input.event.message.id);
-  }
-  return (
-    middleware.rules.every((rule) => covered.has(rule.id)) &&
-    result.findings.every((finding) => rules.has(finding.ruleId)) &&
-    new Set(result.expectations.map((expectation) => expectation.ruleId))
-      .size === result.expectations.length &&
-    result.expectations.every(
-      (expectation) =>
-        rules.has(expectation.ruleId) &&
-        new Set(expectation.subjects).size === expectation.subjects.length &&
-        expectation.subjects.every((subject) => subjects.has(subject)),
-    )
-  );
-}
-
-function invokeMiddleware(
-  middleware: MessageMiddleware,
-  input: MiddlewareInput,
-) {
-  return Effect.gen(function* () {
-    const returned = yield* Effect.suspend(() => middleware.check(input));
-    const result = yield* decodeFrozen(MiddlewareResult, returned).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new MiddlewareError({ reason: "invalid-result" })),
-      ),
-    );
-    if (!validResult(result, middleware, input)) {
-      return yield* new MiddlewareError({ reason: "invalid-result" });
-    }
-    return result;
-  }).pipe(Effect.withSpan("Firewall.invokeMiddleware"));
-}
-
-function unavailable(
-  middleware: Registration & { readonly revision: string },
-  failure: MiddlewareError,
-  elapsedMilliseconds: number,
-): MiddlewareCheck {
-  return {
-    source: middleware.source,
-    middlewareId: middleware.id,
-    revision: middleware.revision,
-    status: "unavailable",
-    findings: [],
-    expectations: [],
-    elapsedMilliseconds,
-    failure: new MiddlewareError({
-      reason: Schema.is(failureReason)(failure.reason)
-        ? failure.reason
-        : "unavailable",
-    }),
-  };
-}
-
-function runCheck(
-  middleware: Registration & { readonly revision: string },
-  assessment: Effect.Effect<MiddlewareResult, MiddlewareError>,
-  input: MiddlewareInput,
-  budget: {
-    readonly settings: FirewallSettings;
-    readonly deadline: number;
-  },
-) {
-  const { settings, deadline } = budget;
-  return Effect.gen(function* (): Effect.fn.Return<MiddlewareCheck> {
-    const started = yield* Clock.currentTimeMillis;
-    const remaining = deadline - started;
-    if (remaining <= 0) {
-      return unavailable(
-        middleware,
-        new MiddlewareError({ reason: "timeout" }),
-        0,
-      );
-    }
-    const timeout = Math.min(remaining, settings.middlewareTimeoutMilliseconds);
-    const returned = yield* captureResult(
-      Effect.suspend(() =>
-        utf8.encode(JSON.stringify(input)).byteLength >
-        settings.maximumInputBytes
-          ? Effect.fail(new MiddlewareError({ reason: "budget" }))
-          : assessment,
-      ).pipe(
-        Effect.flatMap((result) =>
-          utf8.encode(JSON.stringify(result)).byteLength >
-          settings.maximumResultBytes
-            ? Effect.fail(new MiddlewareError({ reason: "budget" }))
-            : Effect.succeed(result),
-        ),
-        Effect.timeoutFail({
-          duration: timeout,
-          onTimeout: () => new MiddlewareError({ reason: "timeout" }),
-        }),
-      ),
-      () => new MiddlewareError({ reason: "defect" }),
-    ).pipe(Effect.withSpan("Firewall.boundedCheck"));
-    const elapsedMilliseconds = (yield* Clock.currentTimeMillis) - started;
-    return Either.match(returned, {
-      onLeft: (failure) =>
-        unavailable(middleware, failure, elapsedMilliseconds),
-      onRight: (result) =>
-        elapsedMilliseconds > timeout
-          ? unavailable(
-              middleware,
-              new MiddlewareError({ reason: "timeout" }),
-              elapsedMilliseconds,
-            )
-          : {
-              source: middleware.source,
-              middlewareId: middleware.id,
-              revision: middleware.revision,
-              status: "completed",
-              elapsedMilliseconds,
-              findings: result.findings,
-              expectations: result.expectations,
-              trace: result.trace,
-            },
-    });
-  }).pipe(Effect.withSpan("Firewall.runCheck"));
-}
-
-/**
- * Settled violations and operational holds survive later permissive findings.
- */
 function composeDecision(
   context: MessageContext,
-  middleware: readonly Registration[],
-  checks: readonly MiddlewareCheck[],
+  rules: readonly TextRule[],
+  assessment: TextAssessment,
 ): FirewallCheck {
-  const reason = selectReason(context, checks);
+  const reason = selectReason(context, assessment);
   return {
+    ...assessment,
     judgment: judgments[reason],
     reason,
-    feedback: projectFeedback(middleware, checks, reason),
+    feedback: projectFeedback(rules, assessment.findings, reason),
     guidance:
       reason === "eligible" || reason === "rule-violation"
-        ? projectGuidance(middleware, checks)
+        ? projectGuidance(rules, assessment)
         : [],
-    checks,
   };
 }
 
 function selectReason(
   context: MessageContext,
-  checks: readonly MiddlewareCheck[],
+  assessment: TextAssessment,
 ): Reason {
-  const findings = checks.flatMap((check) => check.findings);
+  const { findings, expectations } = assessment;
   if (findings.some((finding) => finding.outcome === "violation")) {
     return "rule-violation";
   }
-  if (unavailableCheck(checks, findings)) {
+  if (
+    findings.some(
+      (finding) =>
+        finding.outcome === "hold" && finding.reason === "check-unavailable",
+    )
+  ) {
     return "check-unavailable";
   }
-  if (unresolvedCheck(context, checks, findings)) {
+  if (
+    context.gaps.length !== 0 ||
+    findings.some((finding) => finding.outcome === "hold") ||
+    conflictingExpectations(expectations).length !== 0
+  ) {
     return "unresolved-evidence";
   }
   return "eligible";
-}
-
-/** The rules of one check that produced `reason`. */
-function checkDeciders(
-  reason: Reason,
-  middleware: readonly Registration[],
-  check: Observation,
-): DecidingRule[] {
-  if (reason === "check-unavailable" && check.status === "unavailable") {
-    const registered =
-      middleware.find(
-        (entry) =>
-          entry.id === check.middlewareId && entry.source === check.source,
-      )?.rules ?? [];
-    return registered.map((rule) => ({
-      source: check.source,
-      middlewareId: check.middlewareId,
-      ruleId: rule.id,
-      finding: "unavailable",
-    }));
-  }
-  return check.findings.flatMap((finding) => {
-    const kind = decidingFinding(finding, reason);
-    return kind === undefined
-      ? []
-      : [
-          {
-            source: check.source,
-            middlewareId: check.middlewareId,
-            ruleId: finding.ruleId,
-            finding: kind,
-          },
-        ];
-  });
-}
-
-function withAdvice(
-  reason: Reason,
-  middleware: readonly Registration[],
-  rule: DecidingRule,
-): DecidingRule {
-  const advice = registeredAdvice(
-    reason,
-    middleware
-      .find(
-        (entry) =>
-          entry.id === rule.middlewareId && entry.source === rule.source,
-      )
-      ?.rules.find((described) => described.id === rule.ruleId),
-  );
-  return advice === undefined ? rule : { ...rule, advice };
 }
 
 /** How a finding decided `reason`, or undefined when it did not. */
@@ -1122,10 +764,7 @@ function decidingFinding(
   return finding.outcome === "hold" ? "uncertain" : "settled";
 }
 
-function registeredAdvice(
-  reason: Reason,
-  rule?: RuleDescription,
-): string | undefined {
+function registeredAdvice(reason: Reason, rule?: TextRule): string | undefined {
   if (rule === undefined) {
     return undefined;
   }
@@ -1134,53 +773,10 @@ function registeredAdvice(
     : (rule.feedback?.text ?? rule.guidance);
 }
 
-function unavailableCheck(
-  checks: readonly MiddlewareCheck[],
-  findings: readonly PolicyFinding[],
-): boolean {
-  return (
-    checks.some((check) => check.status === "unavailable") ||
-    findings.some(
-      (finding) =>
-        finding.outcome === "hold" && finding.reason === "check-unavailable",
-    )
-  );
-}
-
-function unresolvedCheck(
-  context: MessageContext,
-  checks: readonly MiddlewareCheck[],
-  findings: readonly PolicyFinding[],
-): boolean {
-  return (
-    context.gaps.length !== 0 ||
-    findings.some((finding) => finding.outcome === "hold") ||
-    conflictingExpectations(checks).length !== 0
-  );
-}
-
-/**
- * The rules whose unscoped opposing expectations conflict; a conflict is
- * unresolved, never a last-writer override.
- */
+/** Opposing expectations with overlapping subjects require unresolved-evidence handling. */
 function conflictingExpectations(
-  checks: ReadonlyArray<
-    Pick<MiddlewareObservation, "source" | "middlewareId" | "expectations">
-  >,
-): ReadonlyArray<{
-  readonly source: "code" | "text";
-  readonly middlewareId: string;
-  readonly ruleId: string;
-}> {
-  const expectations = checks.flatMap((check) =>
-    check.expectations.map((expectation) => ({
-      source: check.source,
-      middlewareId: check.middlewareId,
-      ruleId: expectation.ruleId,
-      expectation: expectation.expectation,
-      subjects: expectation.subjects,
-    })),
-  );
+  expectations: readonly ResponseExpectation[],
+): readonly string[] {
   return expectations
     .filter((expectation) =>
       expectations.some(
@@ -1188,11 +784,7 @@ function conflictingExpectations(
           opposing(expectation, other) && overlapping(expectation, other),
       ),
     )
-    .map((expectation) => ({
-      source: expectation.source,
-      middlewareId: expectation.middlewareId,
-      ruleId: expectation.ruleId,
-    }));
+    .map((expectation) => expectation.ruleId);
 }
 
 function opposing(
@@ -1235,35 +827,21 @@ function matchesReason(finding: PolicyFinding, reason: Reason): boolean {
  * and probability.
  */
 function projectGuidance(
-  middleware: readonly Registration[],
-  checks: readonly MiddlewareCheck[],
+  rules: readonly TextRule[],
+  assessment: TextAssessment,
 ): FirewallCheck["guidance"] {
-  return checks.flatMap((check) => {
-    const entry = middleware.find(
-      (candidate) =>
-        candidate.id === check.middlewareId &&
-        candidate.source === check.source,
-    );
-    const instructionFor = (ruleId: string) =>
-      entry?.rules.find((rule) => rule.id === ruleId)?.guidance ??
-      entry?.rules.find((rule) => rule.id === ruleId)?.feedback?.text;
-    const expected = check.expectations.flatMap(
-      (expectation): ResponseGuidance[] => {
-        const instruction = instructionFor(expectation.ruleId);
-        return instruction === undefined
-          ? []
-          : [
-              {
-                ruleId: expectation.ruleId,
-                expectation: expectation.expectation,
-                subjects: [...expectation.subjects],
-                middlewareId: check.middlewareId,
-                instruction,
-              },
-            ];
-      },
-    );
-    const uncertain = check.findings.flatMap((finding): UncertainGuidance[] => {
+  const instructionFor = (ruleId: string) => {
+    const rule = rules.find((rule) => rule.id === ruleId);
+    return rule?.guidance ?? rule?.feedback?.text;
+  };
+  const expected = assessment.expectations.flatMap((expectation) => {
+    const instruction = instructionFor(expectation.ruleId);
+    return instruction === undefined
+      ? []
+      : [{ ...expectation, subjects: [...expectation.subjects], instruction }];
+  });
+  const uncertain = assessment.findings.flatMap(
+    (finding): UncertainGuidance[] => {
       if (!("choice" in finding)) {
         return [];
       }
@@ -1272,7 +850,6 @@ function projectGuidance(
         ? []
         : [
             {
-              middlewareId: check.middlewareId,
               ruleId: finding.ruleId,
               uncertain: {
                 choice: finding.choice,
@@ -1281,31 +858,15 @@ function projectGuidance(
               instruction,
             },
           ];
-    });
-    return [...expected, ...uncertain, ...settledGuidance(check, entry)];
-  });
-}
-
-/** Settled violations retain registered advice when guidance mode admits the candidate. */
-function settledGuidance(check: MiddlewareCheck, entry?: Registration) {
-  return check.findings.flatMap((finding) => {
-    if (finding.outcome !== "violation") {
-      return [];
-    }
-    const rule = entry?.rules.find(
-      (registered) => registered.id === finding.ruleId,
-    );
-    const instruction = rule?.guidance ?? rule?.feedback?.text;
-    return instruction === undefined
+    },
+  );
+  const violations = assessment.findings.flatMap((finding) => {
+    const instruction = instructionFor(finding.ruleId);
+    return finding.outcome !== "violation" || instruction === undefined
       ? []
-      : [
-          {
-            middlewareId: check.middlewareId,
-            ruleId: finding.ruleId,
-            instruction,
-          },
-        ];
+      : [{ ruleId: finding.ruleId, instruction }];
   });
+  return [...expected, ...uncertain, ...violations];
 }
 
 function decideWithinBudget(
@@ -1446,14 +1007,14 @@ function unsettled(
  * assesses the draft against those independently established expectations.
  */
 function checkText(
-  input: MiddlewareInput,
+  input: CapturedInput,
   policy: Pick<TextCheck, "rules" | "revision"> & {
     readonly skipped: readonly PolicyFinding[];
   },
   settings: TextPolicySettings,
   provider?: DecisionProvider,
 ) {
-  return Effect.gen(function* (): Effect.fn.Return<MiddlewareResult> {
+  return Effect.gen(function* (): Effect.fn.Return<TextAssessment> {
     const check: TextCheck = {
       event: input.event,
       context: input.context,
@@ -1530,7 +1091,7 @@ function assessCompliance(
 
 function forDirection(
   rules: readonly TextRule[],
-  direction: MiddlewareInput["event"]["direction"],
+  direction: CapturedInput["event"]["direction"],
 ) {
   return Object.freeze({
     rules: Object.freeze(
@@ -1933,20 +1494,9 @@ function* subjectQuestions(
   }
 }
 
-function validRegistrationIds(chain: readonly MessageMiddleware[]): boolean {
-  const identities = chain.map((entry) => entry.id);
-  return (
-    new Set(identities).size === identities.length &&
-    chain.every(
-      (entry) =>
-        new Set(entry.rules.map((rule) => rule.id)).size === entry.rules.length,
-    )
-  );
-}
-
 function validateTextRules(input: CheckConfiguration) {
   if (new Set(input.rules.map((rule) => rule.id)).size !== input.rules.length) {
-    return Effect.fail(new CheckInputError({ reason: "registration" }));
+    return Effect.fail(new CheckInputError({ reason: "rules" }));
   }
   if (input.rules.length === 0) {
     return Effect.void;
@@ -1967,5 +1517,5 @@ function validateTextRules(input: CheckConfiguration) {
   );
   return fits
     ? Effect.void
-    : Effect.fail(new CheckInputError({ reason: "registration" }));
+    : Effect.fail(new CheckInputError({ reason: "rules" }));
 }

@@ -22,18 +22,10 @@ import {
   transaction,
 } from "../../communication/store/database/index.js";
 import { decodeRuntimeValue } from "../../communication/store/index.js";
-import { exactStruct } from "../../encoding/exact.js";
-import { AgentView } from "../../identity/cards.js";
-import {
-  type FirewallCheck,
-  firewallCheckSchema,
-  Message,
-  MessageContext,
-} from "../check.js";
+import type { FirewallCheck } from "../check.js";
 import {
   type firewallDecisionsSchema,
   firewallDecisionSummarySchema,
-  firewallInstallationSchema,
 } from "../config.js";
 const ruleIds = Schema.parseJson(Schema.Array(Schema.NonEmptyString));
 const activationRow = Schema.Struct({
@@ -43,12 +35,8 @@ const activationRow = Schema.Struct({
   addedRuleIds: ruleIds,
   removedRuleIds: ruleIds,
 });
-const completedCheckSchema = exactStruct({
-  result: firewallCheckSchema,
-  summaries: Schema.Array(firewallDecisionSummarySchema),
-});
 const savedSummarySchema = Schema.Struct({
-  summaries: completedCheckSchema.fields.summaries,
+  summaries: Schema.Array(firewallDecisionSummarySchema),
 });
 const auditDisposition = Schema.Literal("admitted", "withheld");
 /** Missing policy means initial rules have never been seeded, distinct from an empty list. */
@@ -245,44 +233,10 @@ function auditEntry(
     canonicalResult,
   };
 }
-const firewallAuditInput = exactStruct({
-  configurationDigest: Schema.String.pipe(Schema.pattern(/^[a-f0-9]{64}$/u)),
-  installation: firewallInstallationSchema,
-  context: MessageContext,
-  agents: Schema.Array(AgentView),
-  message: Schema.NullOr(Message),
-});
-
 /**
  * A check as the store retains it: every field except the decision-provider
  * traces, which stay in memory with the code that produced the check.
  */
 export const withoutTraces = (check: FirewallCheck) => ({
-  ...check,
-  checks: check.checks.map((middleware) => Struct.omit(middleware, "trace")),
+  ...Struct.omit(check, "trace"),
 });
-/**
- * Opaque retained bytes are interpreted only by their Client delivery owner.
- * A retained result that holds provider traces decodes without them.
- */
-export const decodeFirewallAuditEntry = Effect.fn("decodeFirewallAuditEntry")(
-  function* (entry: FirewallAuditEntry) {
-    const input = yield* decodeRuntimeValue(
-      firewallAuditInput,
-      entry.canonicalInput,
-    );
-    const completed = yield* decodeRuntimeValue(
-      completedCheckSchema,
-      entry.canonicalResult,
-    );
-    const result = withoutTraces(completed.result);
-    return {
-      checkId: entry.checkId,
-      direction: entry.direction,
-      disposition: entry.disposition,
-      candidate: entry.canonicalCandidate,
-      input,
-      result,
-    };
-  },
-);

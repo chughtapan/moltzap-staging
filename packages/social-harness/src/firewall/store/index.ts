@@ -4,7 +4,6 @@
 export type { FirewallActivation, FirewallCompletion } from "./types.js";
 /** Rules and completed checks share the daemon's SQL client. */
 export {
-  decodeFirewallAuditEntry,
   readDecisions,
   readFirewallActivations,
   readFirewallDecisions,
