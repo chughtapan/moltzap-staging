@@ -2,10 +2,10 @@
 
 import type * as SqlClient from "@effect/sql/SqlClient";
 import { Clock, Effect, Option, Queue, Schema } from "effect";
-import { Message } from "../message.js";
 import type { EndpointStoreError } from "../store/index.js";
 import type { CollectivesError } from "./contracts.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
+import { Message } from "../message.js";
 import {
   type Environment,
   operationParticipants,
