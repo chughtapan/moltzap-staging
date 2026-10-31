@@ -389,13 +389,18 @@ function expectUnsettledGatherAdvice({
         },
       ],
     });
-    expect(unsureResult.guidance).toMatchObject({
-      answers: [
-        {
-          member: strict.agent,
-          instructions: arrayContaining([uncertainAdvice]),
-        },
-      ],
+    const guidance = unsureResult.guidance;
+    if (guidance === undefined || !("answers" in guidance)) {
+      return yield* Effect.dieMessage(
+        "expected guidance for collective answers",
+      );
+    }
+    const advice = guidance.answers.find(
+      ({ member }) => member.agentId === strict.agent.agentId,
+    );
+    expect(advice).toMatchObject({
+      member: strict.agent,
+      instructions: arrayContaining([uncertainAdvice]),
     });
   });
 }
