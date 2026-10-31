@@ -49,7 +49,8 @@ export function enqueueOutbound(
   );
 }
 /**
- * Retains one validated envelope inside a caller-owned SQLite transaction.
+ * The caller's transaction keeps lookup and insertion on one leased connection.
+ * Repeated envelope identities retain the same complete bytes and conversation.
  * @param message Canonical complete signed envelope.
  * @returns The retained envelope under its envelope identity.
  */
@@ -72,9 +73,8 @@ export function enqueueOutboundInTransaction(
         existing.outbound.canonicalSignedMessage,
         message.canonicalSignedMessage,
       );
-      return copyOutbound(existing.outbound);
+      return existing.outbound;
     }
-    yield* requireEnvelopeIdAvailable(message.envelopeId);
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `INSERT INTO outbound_messages
         (conversation_id, envelope_id,
@@ -88,9 +88,7 @@ export function enqueueOutboundInTransaction(
         message.recordHash ?? null,
       ],
     );
-    return copyOutbound({
-      ...message,
-    });
+    return copyOutbound(message);
   }).pipe(storeOperation, Effect.withSpan("enqueueOutboundInTransaction"));
 }
 /**
@@ -122,7 +120,7 @@ export function beginOutbound(
         return Object.freeze({
           kind: "pending",
           mode,
-          outbound: copyOutbound(retained.outbound),
+          outbound: retained.outbound,
         });
       }),
     );
@@ -139,7 +137,7 @@ export function completeOutbound(
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
-    validateStoredOutbound(outbound);
+    validateMessageInput(outbound);
     return yield* transaction(
       Effect.gen(function* () {
         const retained = yield* requireOutbound(outbound.envelopeId);
@@ -178,7 +176,7 @@ export function discardOutbound(
     const database = yield* SqlClient.SqlClient;
     const distinctIds = new Set<string>();
     for (const outbound of outbounds) {
-      validateStoredOutbound(outbound);
+      validateMessageInput(outbound);
       if (distinctIds.has(outbound.envelopeId)) {
         return yield* new EndpointStoreError({ reason: "invalid-input" });
       }
@@ -234,7 +232,7 @@ export function readPendingOutbound(
          FROM outbound_messages WHERE disposition = 'pending' ${conversationId === undefined ? "" : "AND conversation_id = ?"}
          ORDER BY outbound_sequence`,
         [...(conversationId === undefined ? [] : [conversationId])],
-      )).map((row) => copyOutbound(readOutbound(row).outbound)),
+      )).map((row) => readOutbound(row).outbound),
     );
   }).pipe(storeOperation, Effect.withSpan("readPendingOutbound"));
 }
@@ -290,14 +288,13 @@ function readOutbound(
   if (attempted !== 0 && attempted !== 1) {
     throw new StoreSignal("corrupt");
   }
+  const recordHash = readOptionalText(row, "record_hash");
   return Object.freeze({
     outbound: Object.freeze({
       conversationId: readText(row, "conversation_id"),
       envelopeId: readText(row, "envelope_id"),
       wireVersion: readText(row, "wire_version"),
-      ...(readOptionalText(row, "record_hash") === undefined
-        ? {}
-        : { recordHash: readOptionalText(row, "record_hash") }),
+      ...(recordHash === undefined ? {} : { recordHash }),
       canonicalSignedMessage: readBytes(row, "canonical_signed_message"),
     }),
     attempted: attempted === 1,
@@ -332,26 +329,6 @@ function requireConversation(
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
   }).pipe(storeOperation);
-}
-function requireEnvelopeIdAvailable(
-  envelopeId: string,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
-  return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
-    if (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM outbound_messages
-         WHERE envelope_id = ? LIMIT 1`,
-        [envelopeId],
-      ))[0] !== undefined
-    ) {
-      return yield* new EndpointStoreError({ reason: "conflict" });
-    }
-  }).pipe(storeOperation);
-}
-function validateStoredOutbound(outbound: StoredOutboundMessage): void {
-  requireText(outbound.envelopeId);
-  validateMessageInput(outbound);
 }
 function validateMessageInput(message: OutboundMessageInput): void {
   requireText(message.wireVersion);

@@ -420,7 +420,25 @@ function stageInitialOutbound(fixture: OutboundLifecycleFixture) {
       yield* store.putConversationFoundation(
         foundation(fixture.message.conversationId),
       );
-      const staged = yield* store.enqueueOutbound(fixture.message);
+      const { staged, repeated } = yield* Effect.all(
+        {
+          staged: store.enqueueOutbound(fixture.message),
+          repeated: store.enqueueOutbound(fixture.message),
+        },
+        { concurrency: 2 },
+      );
+      expect(repeated).toEqual(staged);
+      repeated.canonicalSignedMessage.fill(0);
+      const snapshot = yield* recoverOnlyOutbound(store);
+      expect(snapshot).toEqual(staged);
+      snapshot.canonicalSignedMessage.fill(0);
+      yield* expectReason(
+        store.enqueueOutbound({
+          ...fixture.message,
+          canonicalSignedMessage: bytes("conflicting envelope"),
+        }),
+        "conflict",
+      );
       expect(staged.envelopeId).toBe(fixture.message.envelopeId);
       expect(yield* store.beginOutbound(staged.envelopeId)).toEqual({
         kind: "pending",

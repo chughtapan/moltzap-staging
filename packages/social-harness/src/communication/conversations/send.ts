@@ -632,9 +632,7 @@ function bindPreparedIntent(
   prepared: PreparedIntent,
 ): Effect.Effect<void, SendError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
-    const message = {
-      intent: storedIntent(prepared),
-    };
+    const intent = storedIntent(prepared);
     const retained = runtime.conversations.get(prepared.intent.conversationId);
     if (retained !== undefined) {
       if (retained.membership.hash !== prepared.membership.hash) {
@@ -642,7 +640,7 @@ function bindPreparedIntent(
       }
       return yield* Store.bindMessageIntent({
         kind: "existing-conversation",
-        ...message,
+        intent,
       }).pipe(
         Effect.catchTag("EndpointStoreError", (error) =>
           failBind(runtime, error),
@@ -654,7 +652,7 @@ function bindPreparedIntent(
     yield* Store.bindMessageIntent({
       kind: "new-conversation",
       foundation: created.foundation,
-      ...message,
+      intent,
     }).pipe(
       Effect.catchTag("EndpointStoreError", (error) =>
         failBind(runtime, error),
