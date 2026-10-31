@@ -160,10 +160,12 @@ function readHistory(
       .readHistory(state.query)
       .pipe(Effect.mapError(communicationFailure));
     const views = yield* readHistoryViews(
-      page.messages.map((message) => ({
-        authorAgentId: message.author.agentId,
-        msgId: message.msgId,
-      })),
+      page.messages
+        .filter((message) => message.author.agentId !== me.agentId)
+        .map((message) => ({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+        })),
     ).pipe(Effect.catchTag("EndpointStoreError", storeFailure));
     const records = yield* historyRecords(me, page.messages, views);
     if (page.continuation !== null) {

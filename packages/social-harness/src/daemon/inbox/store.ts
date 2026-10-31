@@ -309,24 +309,30 @@ export function readHistoryViews(
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const views: HistoryView[] = [];
+    const retained = new Map<DeliveryToken, Omit<HistoryView, "message">>();
     for (const message of messages) {
       const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
         "SELECT i.delivery_token,i.published_item AS canonical_item,i.canonical_guidance FROM message_visibility v JOIN incoming_items i USING(delivery_token) WHERE v.author_agent_id=? AND v.msg_id=? AND i.published_item IS NOT NULL",
         [message.authorAgentId, message.msgId],
       ))[0];
       if (row !== undefined) {
-        const projection = {
-          canonicalItem: readBytes(row, "canonical_item"),
-          ...guidanceBytes(row),
-        };
-        views.push({
-          message,
-          deliveryToken: yield* Schema.decodeUnknown(DeliveryToken)(
-            readText(row, "delivery_token"),
-          ),
-          ...projection,
-          ...(yield* decodeItemProjection(projection)),
-        });
+        const deliveryToken = yield* Schema.decodeUnknown(DeliveryToken)(
+          readText(row, "delivery_token"),
+        );
+        let view = retained.get(deliveryToken);
+        if (view === undefined) {
+          const projection = {
+            canonicalItem: readBytes(row, "canonical_item"),
+            ...guidanceBytes(row),
+          };
+          view = {
+            deliveryToken,
+            ...projection,
+            ...(yield* decodeItemProjection(projection)),
+          };
+          retained.set(deliveryToken, view);
+        }
+        views.push({ message, ...view });
       }
     }
     return views;
