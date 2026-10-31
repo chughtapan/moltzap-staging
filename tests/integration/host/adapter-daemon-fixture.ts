@@ -28,9 +28,9 @@ import {
   makeDaemonProcessFixture,
   makeRegistrationRequest,
   ProcessTestError,
-} from "./daemon-process-harness.js";
-import { registrationResultKind } from "./expected-contracts.js";
-import { historyMessageContent } from "./saved-history.js";
+} from "../daemon/daemon-process-harness.js";
+import { registrationResultKind } from "../expected-contracts.js";
+import { historyMessageContent } from "../saved-history.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
   readonly agent: AgentView;

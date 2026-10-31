@@ -21,9 +21,9 @@ import {
   nextItem,
   type Participant,
   send,
-} from "./participants.js";
-import { processTrace } from "./process-trace.js";
-import { anyNumber } from "./test-matchers.js";
+} from "../participants.js";
+import { processTrace } from "../process-trace.js";
+import { anyNumber } from "../test-matchers.js";
 
 const requireAll = (participants: readonly Participant[], count: 3 | 4) =>
   participants.length === count

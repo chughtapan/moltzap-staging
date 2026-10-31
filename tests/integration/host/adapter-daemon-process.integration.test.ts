@@ -35,8 +35,8 @@ import {
   requireRequest,
   startOpenClawGateway,
 } from "./adapter-daemon-fixture.js";
-import { ProcessTestError } from "./daemon-process-harness.js";
-import { processTrace } from "./process-trace.js";
+import { ProcessTestError } from "../daemon/daemon-process-harness.js";
+import { processTrace } from "../process-trace.js";
 
 const SLOT_SCHEMA = {
   type: "object",

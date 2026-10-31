@@ -27,14 +27,14 @@ import {
   type DaemonProcessFixture,
   type FirewallMode,
   makeDaemonProcessFixture,
-} from "./daemon-process-harness.js";
-import { registerFixture } from "./participants.js";
-import { processTrace } from "./process-trace.js";
+} from "../daemon/daemon-process-harness.js";
+import { registerFixture } from "../participants.js";
+import { processTrace } from "../process-trace.js";
 import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
-} from "./router-hold-proxy.js";
-import { historyMessageContent } from "./saved-history.js";
+} from "../communication/router-hold-proxy.js";
+import { historyMessageContent } from "../saved-history.js";
 
 /**
  * The test starts PGlite, the Registry, the Router, a hold proxy and two

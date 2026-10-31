@@ -11,9 +11,9 @@ import {
   nextItem,
   type Participant,
   send,
-} from "./participants.js";
-import { processTrace } from "./process-trace.js";
-import { anyNumber, anyString } from "./test-matchers.js";
+} from "../participants.js";
+import { processTrace } from "../process-trace.js";
+import { anyNumber, anyString } from "../test-matchers.js";
 
 const requireThree = (participants: readonly Participant[]) => {
   const [requester, first, second] = participants;

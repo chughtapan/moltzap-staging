@@ -185,7 +185,7 @@ const MODERN_PROTOCOL_VERSION = "2026-07-28";
 
 const WORKSPACE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  "../..",
+  "../../..",
 );
 
 /** Children use the current Node installation and system executables. */
@@ -214,7 +214,7 @@ const DAEMON_BINARY = join(
 
 const FIREWALL_DAEMON = join(
   WORKSPACE_ROOT,
-  "tests/integration/firewall-daemon.ts",
+  "tests/integration/firewall/firewall-daemon.ts",
 );
 
 /** Fixture failures preserve causal errors for diagnostics. */

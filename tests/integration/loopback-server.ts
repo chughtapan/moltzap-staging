@@ -9,7 +9,10 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { LOOPBACK_HOST, ProcessTestError } from "./daemon-process-harness.js";
+import {
+  LOOPBACK_HOST,
+  ProcessTestError,
+} from "./daemon/daemon-process-harness.js";
 
 /** Callback types for handlers served by the loopback Node listener. */
 export type { IncomingMessage, ServerResponse };

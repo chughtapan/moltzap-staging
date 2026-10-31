@@ -31,13 +31,13 @@ import {
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
-} from "./daemon-process-harness.js";
-import { processTrace } from "./process-trace.js";
+} from "../daemon/daemon-process-harness.js";
+import { processTrace } from "../process-trace.js";
 import {
   anyString,
   arrayContaining,
   objectContaining,
-} from "./test-matchers.js";
+} from "../test-matchers.js";
 
 const pair = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;

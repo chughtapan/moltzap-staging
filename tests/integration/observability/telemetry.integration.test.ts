@@ -12,7 +12,7 @@ import {
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   type ProcessInfrastructure,
-} from "./daemon-process-harness.js";
+} from "../daemon/daemon-process-harness.js";
 import {
   acquireOtlpReceiver,
   awaitSpans,
@@ -25,13 +25,13 @@ import {
   type Participant,
   send,
   startParticipants,
-} from "./participants.js";
-import { processTrace } from "./process-trace.js";
+} from "../participants.js";
+import { processTrace } from "../process-trace.js";
 import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
-} from "./router-hold-proxy.js";
-import { anyNumber, anyString } from "./test-matchers.js";
+} from "../communication/router-hold-proxy.js";
+import { anyNumber, anyString } from "../test-matchers.js";
 
 const question = "Which day works for the review?";
 

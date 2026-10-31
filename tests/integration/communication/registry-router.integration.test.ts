@@ -34,7 +34,7 @@ import {
   makeRouterRunner,
   type RegistryInfrastructure,
   testVersionMismatchRoundTrips,
-} from "./client-version-roundtrip.js";
+} from "../client-version-roundtrip.js";
 import {
   acquireDaemonManagementClient,
   acquireDaemonProcesses,
@@ -54,9 +54,9 @@ import {
   serviceReady,
   startPgliteRegistry,
   stopProcess,
-} from "./daemon-process-harness.js";
-import { acquireLoopbackServer } from "./loopback-server.js";
-import { processTrace } from "./process-trace.js";
+} from "../daemon/daemon-process-harness.js";
+import { acquireLoopbackServer } from "../loopback-server.js";
+import { processTrace } from "../process-trace.js";
 const ADMISSION_CREDENTIAL = "registry-router-e2e-admission";
 const REGISTERED_KIND = "registered";
 const FOUND_KIND = "found";

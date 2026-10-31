@@ -46,10 +46,10 @@ import {
   registrationResultKind,
   resetReleaseDocsAnchor,
   storageStartupPhase,
-} from "./expected-contracts.js";
-import { processTrace } from "./process-trace.js";
-import { historyMessageContent } from "./saved-history.js";
-import { arrayContaining } from "./test-matchers.js";
+} from "../expected-contracts.js";
+import { processTrace } from "../process-trace.js";
+import { historyMessageContent } from "../saved-history.js";
+import { arrayContaining } from "../test-matchers.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
   readonly agent: AgentView;

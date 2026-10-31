@@ -17,7 +17,7 @@ import {
   makeRegistrationRequest,
   processTestError,
   type ProcessTestError,
-} from "./daemon-process-harness.ts";
+} from "./daemon/daemon-process-harness.ts";
 import { historyMessageContent } from "./saved-history.js";
 
 /* eslint-disable agent-code-guard/async-keyword, agent-code-guard/promise-type -- node:test consumes promises at the fixture boundary. */

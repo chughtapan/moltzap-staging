@@ -3,13 +3,16 @@
 import type { Buffer } from "node:buffer";
 import { Cause, Duration, Effect, Ref, Schema, type Scope } from "effect";
 import protobuf from "protobufjs";
-import { LOOPBACK_HOST, ProcessTestError } from "./daemon-process-harness.js";
+import {
+  LOOPBACK_HOST,
+  ProcessTestError,
+} from "../daemon/daemon-process-harness.js";
 import {
   acquireLoopbackServer,
   type IncomingMessage,
   readBody,
   type ServerResponse,
-} from "./loopback-server.js";
+} from "../loopback-server.js";
 
 /** A scalar attribute value as OTLP carries it. */
 type AttributeValue = string | number | boolean;
