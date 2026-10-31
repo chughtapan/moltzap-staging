@@ -179,7 +179,7 @@ export type PolicyFinding =
     };
 
 /** Local response conduct under a rule, with subjects restricted to admitted visible messages or the incoming event. */
-export class ResponseExpectation extends Schema.Class<ResponseExpectation>(
+class ResponseExpectation extends Schema.Class<ResponseExpectation>(
   "ResponseExpectation",
 )({
   ruleId: identifier,
