@@ -50,9 +50,12 @@ const open = (state: Reception) =>
           cursor: null,
         }),
       );
-      state.cursor = result.cursor;
-      state.generation = result._meta[HARNESS_CONSUMER_META_KEY].generation;
-      return state.generation;
+      const generation = result._meta[HARNESS_CONSUMER_META_KEY].generation;
+      yield* Effect.sync(() => {
+        state.cursor = result.cursor;
+        state.generation = generation;
+      });
+      return generation;
     }),
   );
 
@@ -90,7 +93,9 @@ const receive = Effect.fn("poll.receive")(function* (
   if (result._meta[HARNESS_CONSUMER_META_KEY].generation !== generation) {
     return yield* Effect.fail(new ListenError({ reason: "decode-failed" }));
   }
-  state.cursor = result.cursor;
+  yield* Effect.sync(() => {
+    state.cursor = result.cursor;
+  });
   if (result.events.length !== 0 || result.truncated) {
     yield* Queue.offer(state.queue, Take.of(undefined));
   }

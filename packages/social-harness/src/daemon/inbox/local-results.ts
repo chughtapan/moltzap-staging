@@ -85,7 +85,7 @@ export function checkLocalItem(
       completions: checked.map((source) => source.checked.completion),
       visibility: sourceVisibility(item, sources, checked),
     };
-  });
+  }).pipe(Effect.withSpan("checkLocalItem"));
 }
 
 /** Only source text actually quoted in a public result grants raw-message visibility. */

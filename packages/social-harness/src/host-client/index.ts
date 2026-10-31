@@ -436,6 +436,7 @@ function pendingInbox(
 function acquireListenerSlot(
   active: Ref.Ref<boolean>,
 ): Effect.Effect<void, ListenError, Scope.Scope> {
+  // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- Stream.unwrapScoped in messages owns the listener slot.
   return Effect.acquireRelease(
     Ref.getAndSet(active, true).pipe(
       Effect.filterOrFail(
