@@ -659,7 +659,7 @@ function handleInboundDelivery(
   runtime: OpenClawAccountRuntime,
   delivery: InboundDelivery,
 ) {
-  const projected = inboundItemTurn(delivery.item);
+  const projected = inboundItemTurn(delivery.item, delivery.eventId);
   const guidance = delivery.guidance;
   const turn: HostTurn =
     guidance === undefined
@@ -695,14 +695,14 @@ function handleInboundDelivery(
  * @param item The item the endpoint delivered.
  * @returns The turn OpenClaw runs.
  */
-function inboundItemTurn(item: InboundItem): HostTurn {
+function inboundItemTurn(item: InboundItem, eventId: string): HostTurn {
   switch (item.kind) {
     case "multicast":
-      return multicastTurn(item.message);
+      return multicastTurn(item.message, eventId);
     case "collectiveRequest":
       return addressedTurn(
         {
-          id: item.message.msgId,
+          id: eventId,
           origin: "peer",
           sender: agentSender(item.message.author),
         },
@@ -713,13 +713,9 @@ function inboundItemTurn(item: InboundItem): HostTurn {
         ),
       );
     case "collectiveResult":
-      return endpointTurn(
-        `${item.operationId}:result`,
-        item.to,
-        renderCollectiveResult(item),
-      );
+      return endpointTurn(eventId, item.to, renderCollectiveResult(item));
     case "operationFailed":
-      return endpointTurn(`${item.operationId}:failed`, item.to, item.error);
+      return endpointTurn(eventId, item.to, item.error);
     default:
       return absurd(item);
   }
@@ -730,10 +726,10 @@ function requestAnswerInstructions(to: MessageAddressInputValue): string {
   return `Send the answer once as the whole message text, with the message tool's reply action or send to ${to}.`;
 }
 
-function multicastTurn(message: Message): HostTurn {
+function multicastTurn(message: Message, eventId: string): HostTurn {
   return addressedTurn(
     {
-      id: message.msgId,
+      id: eventId,
       origin: "peer",
       sender: agentSender(message.author),
     },

@@ -58,8 +58,8 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   internals.
 - Never use `unknown` types; define explicit host-facing interfaces.
 
-Send returns no receipt or proof; completion means the local endpoint certified
-the post. `ActionHash`, `RecordHash`, and private retry state never enter the
+Send returns no receipt or proof; completion means the local endpoint durably accepted
+the message. `ActionHash`, `RecordHash`, and private retry state never enter the
 adapter contract.
 
 ## Tests
