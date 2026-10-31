@@ -7,10 +7,8 @@ export { EndpointStoreError } from "./database/values.js";
 export type {
   CertifiedRecord,
   ConversationFoundation,
-  DisseminationObligation,
   EmptyConversationRestart,
   EndpointRecovery,
-  InboundDeliveryInput,
   MessageIntent,
   OutboundMessageInput,
   ProposalLock,
@@ -62,19 +60,19 @@ export {
 } from "./collectives.js";
 /** Accepted work, certified history and network retry obligations share SQL transactions. */
 export {
-  acknowledgeDelivery,
   beginOutbound,
   completeOutbound,
   discardOutbound,
-  enqueueDisseminationOutbound,
   enqueueOutbound,
-  readPendingDeliveries,
-} from "./queues/index.js";
+  readRecordOutbound,
+} from "./queues/outbound.js";
 /** History pages remain anchored while later records are appended. */
 export {
   readStoredConversation as readConversation,
   readMemberships,
   readRecentConversation,
+  readUnconsumedRecords,
+  consumeRecord,
   recoverStoredState as recover,
 } from "./reads.js";
 /** Record acceptance retains exact bytes and separately attributed evidence. */
@@ -82,6 +80,15 @@ export {
   applyCertifiedRecord,
   mergeEvidence,
   promoteRecord,
-  stageRecordForDissemination,
+  stageRecordAndOutbound,
   supersedeProposalLock,
 } from "./records.js";
+
+/** Accepted message payloads and terminal outcomes share the caller's transaction. */
+export {
+  acceptMessage,
+  readAcceptedMessage,
+  readUnpreparedMessages,
+  failMessage,
+  hasPendingMessages,
+} from "./messages.js";

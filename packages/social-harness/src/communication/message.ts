@@ -71,6 +71,21 @@ export type Message = typeof Message.Type;
 
 type Participants = Pick<Message, "author" | "recipients">;
 
+/** Captures the known author and recipients without reconstructing a member list. */
+export function messageFromParticipants(
+  author: Message["author"],
+  recipients: readonly Message["author"][],
+  intent: Pick<Message, "msgId" | "content">,
+) {
+  return Schema.decodeUnknown(Message)({
+    author,
+    recipients: [...recipients].sort((left, right) =>
+      compareAscii(left.agentName, right.agentName),
+    ),
+    ...intent,
+  });
+}
+
 /** Constructs one message from fixed participants and the author's retained content. */
 export function messageFromIntent(
   members: readonly AgentView[],

@@ -1,13 +1,11 @@
 /**
  * @file Records built from an in-memory fold: the certified records, their
- * store rows and evidence rows, and the inbound delivery a remote record
- * projects to.
+ * store rows and evidence rows, and their retained protocol evidence.
  */
 
 import { Effect } from "effect";
 import type { AgentId } from "../../../identity/identifiers.js";
 import type {
-  InboundDeliveryInput,
   ProtocolEvidence,
   StagedRecord,
   CertifiedRecord as StoredCertifiedRecord,
@@ -22,9 +20,7 @@ import {
   encodeCanonical,
   representationFailure,
 } from "../../../encoding/canonical-json.js";
-import { agentViewOf } from "../../../identity/cards.js";
 import { SignedMessage } from "../../../identity/envelope/signed-message.js";
-import { Message, messageFromIntent } from "../../message.js";
 import {
   type ActionCertifiedRecord,
   type AnchorHash,
@@ -39,7 +35,7 @@ import {
   type CertificateSignatures,
   certifiedRecord,
   orderedSignatures,
-} from "./certificates/index.js";
+} from "./certificates.js";
 
 /**
  * The hash of a conversation's current anchor, which its next record binds.
@@ -224,25 +220,3 @@ export const storedCertifiedRecord = (
     );
     return { ...staged, actionEvidence, durabilityEvidence };
   }).pipe(Effect.withSpan("storedCertifiedRecord"));
-
-/**
- * Encode the remote projection atomically retained during promotion.
- * @param conversation The verified conversation the record belongs to.
- * @param record The certified record projected for the local host.
- * @param recipientAgentId The local agent that owns the pending delivery,
- * which `AgentId` cannot express and nothing here checks.
- * @returns The canonical inbound message bound to its recipient.
- */
-export const inboundDelivery = (
-  conversation: EngineConversation,
-  record: CertifiedRecord,
-  recipientAgentId: AgentId,
-): Effect.Effect<InboundDeliveryInput, ClientRepresentationError> =>
-  messageFromIntent(
-    conversation.membership.members.map(agentViewOf),
-    record.actionCertifiedRecord.recordCore.action.messageIntent,
-  ).pipe(
-    Effect.mapError(representationFailure),
-    Effect.flatMap((message) => encodeCanonical(Message, message)),
-    Effect.map((canonicalMessage) => ({ recipientAgentId, canonicalMessage })),
-  );

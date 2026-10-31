@@ -2,7 +2,7 @@
 
 import type * as SqlClient from "@effect/sql/SqlClient";
 import { Effect, Queue, Schedule } from "effect";
-import type { DisseminationObligation } from "../store/index.js";
+import type { StagedRecord } from "../store/index.js";
 import type {
   EndpointEngineInput,
   EngineConversation,
@@ -74,16 +74,32 @@ function bindOutbox(state: OutboxState): EngineOutbox {
       queueBody(state, conversation, { kind: "direct", packet }),
     queueEvidence: (conversation, evidence) =>
       queueBody(state, conversation, { kind: "evidence", message: evidence }),
-    queueActionCertifiedRecord: (conversation, packet) =>
-      queueBody(
-        state,
-        conversation,
-        { kind: "direct", packet },
-        {
+    stageRecord: (conversation, packet, record) =>
+      Effect.gen(function* () {
+        const retained = yield* Store.readRecordOutbound(
+          conversation.conversationId,
+          record.recordHash,
+        );
+        if (retained !== undefined) {
+          yield* push(state, [retained.envelopeId]);
+          return;
+        }
+        const message = yield* sign(state, conversation.membership, {
+          kind: "direct",
+          packet,
+        });
+        const canonicalSignedMessage = yield* encodeCanonical(
+          SignedMessage,
+          message,
+        );
+        const outbound = yield* Store.stageRecordAndOutbound(record, {
           conversationId: conversation.conversationId,
-          recordHash: packet.recordHash,
-        },
-      ),
+          envelopeId: message.envelopeId,
+          wireVersion: SignedMessage.wireVersion(message),
+          canonicalSignedMessage,
+        });
+        yield* push(state, [outbound.envelopeId]);
+      }),
     enqueueSigned: (conversationId, message) =>
       enqueueSigned(state, conversationId, message),
     resume: (envelopeIds) => push(state, envelopeIds),
@@ -100,11 +116,10 @@ function queueBody(
   state: OutboxState,
   conversation: EngineConversation,
   body: DecodedOuterBody,
-  obligation?: DisseminationObligation,
 ): Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient> {
   return sign(state, conversation.membership, body).pipe(
     Effect.flatMap((message) =>
-      enqueueSigned(state, conversation.conversationId, message, obligation),
+      enqueueSigned(state, conversation.conversationId, message),
     ),
   );
 }
@@ -128,7 +143,6 @@ function enqueueSigned(
   state: OutboxState,
   conversationId: ConversationId,
   message: SignedMessage,
-  obligation?: DisseminationObligation,
 ): Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient> {
   return encodeCanonical(SignedMessage, message).pipe(
     Effect.flatMap((canonicalSignedMessage) => {
@@ -138,9 +152,7 @@ function enqueueSigned(
         wireVersion: SignedMessage.wireVersion(message),
         canonicalSignedMessage,
       };
-      return obligation === undefined
-        ? Store.enqueueOutbound(input)
-        : Store.enqueueDisseminationOutbound(obligation, input);
+      return Store.enqueueOutbound(input);
     }),
     Effect.flatMap((outbound) => push(state, [outbound.envelopeId])),
   );

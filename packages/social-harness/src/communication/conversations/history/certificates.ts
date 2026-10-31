@@ -5,7 +5,7 @@
  */
 
 import { Effect, type ParseResult, Schema } from "effect";
-import { SignedMessage } from "../../../../identity/envelope/signed-message.js";
+import { SignedMessage } from "../../../identity/envelope/signed-message.js";
 import {
   type ActionCertifiedRecord,
   type CertifiedRecord,
@@ -13,7 +13,7 @@ import {
   type RecordCore,
   type RecordHash,
   type RouterAnchor,
-} from "../../../records/index.js";
+} from "../../records/index.js";
 
 /** The nonempty encoded signer messages one certificate carries. */
 export type CertificateSignatures =

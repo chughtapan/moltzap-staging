@@ -14,6 +14,7 @@ import {
   EndpointStoreError,
   readBytes,
   readInteger,
+  readOptionalText,
   readText,
   requireBytes,
   requireEqual,
@@ -77,13 +78,14 @@ export function enqueueOutboundInTransaction(
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `INSERT INTO outbound_messages
         (conversation_id, envelope_id,
-         canonical_signed_message, wire_version, attempted, disposition)
-       VALUES (?, ?, ?, ?, 0, 'pending')`,
+         canonical_signed_message, wire_version, record_hash, attempted, disposition)
+       VALUES (?, ?, ?, ?, ?, 0, 'pending')`,
       [
         message.conversationId,
         message.envelopeId,
         copyBytes(message.canonicalSignedMessage),
         message.wireVersion,
+        message.recordHash ?? null,
       ],
     );
     return copyOutbound({
@@ -199,12 +201,7 @@ export function discardOutbound(
         for (const outbound of retained) {
           if (outbound.disposition === "pending") {
             yield* database.unsafe<Readonly<Record<string, unknown>>>(
-              `UPDATE dissemination_obligations SET envelope_id = NULL
-             WHERE envelope_id = ?`,
-              [outbound.outbound.envelopeId],
-            );
-            yield* database.unsafe<Readonly<Record<string, unknown>>>(
-              `UPDATE outbound_messages SET disposition = 'discarded'
+              `UPDATE outbound_messages SET disposition = 'discarded', record_hash = NULL
              WHERE envelope_id = ? AND disposition = 'pending'`,
               [outbound.outbound.envelopeId],
             );
@@ -233,7 +230,7 @@ export function readPendingOutbound(
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, envelope_id,
-                canonical_signed_message, wire_version, attempted, disposition
+                canonical_signed_message, wire_version, record_hash, attempted, disposition
          FROM outbound_messages WHERE disposition = 'pending' ${conversationId === undefined ? "" : "AND conversation_id = ?"}
          ORDER BY outbound_sequence`,
         [...(conversationId === undefined ? [] : [conversationId])],
@@ -263,7 +260,7 @@ function findOutbound(
     const database = yield* SqlClient.SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `SELECT conversation_id, envelope_id,
-              canonical_signed_message, wire_version, attempted, disposition
+              canonical_signed_message, wire_version, record_hash, attempted, disposition
        FROM outbound_messages WHERE envelope_id = ?`,
       [envelopeId],
     ))[0];
@@ -282,6 +279,9 @@ function readOutbound(
       conversationId: readText(row, "conversation_id"),
       envelopeId: readText(row, "envelope_id"),
       wireVersion: readText(row, "wire_version"),
+      ...(readOptionalText(row, "record_hash") === undefined
+        ? {}
+        : { recordHash: readOptionalText(row, "record_hash") }),
       canonicalSignedMessage: readBytes(row, "canonical_signed_message"),
     }),
     attempted: attempted === 1,
@@ -357,4 +357,17 @@ function copyOutbound(outbound: StoredOutboundMessage): StoredOutboundMessage {
     ...outbound,
     canonicalSignedMessage: copyBytes(outbound.canonicalSignedMessage),
   });
+}
+
+/** The outbox itself owns the exact signed envelope for one staged record. */
+export function readRecordOutbound(conversationId: string, recordHash: string) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+      `SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
+       FROM outbound_messages WHERE conversation_id=? AND record_hash=?`,
+      [conversationId, recordHash],
+    );
+    return row === undefined ? undefined : readOutbound(row).outbound;
+  }).pipe(storeOperation);
 }

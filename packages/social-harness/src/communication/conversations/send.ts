@@ -587,6 +587,26 @@ export const acceptMessage = (
     if (message.author.agentId !== runtime.input.localAgentCard.agentId) {
       return yield* new SendError({ reason: "membership-invalid" });
     }
+    const sorted = messageMembers(message)
+      .map((member) => member.agentId)
+      .sort(compareAgentIds);
+    const [first, second, ...rest] = sorted;
+    if (first === undefined || second === undefined) {
+      return yield* new SendError({ reason: "membership-invalid" });
+    }
+    const conversationId = yield* deriveConversationId([
+      first,
+      second,
+      ...rest,
+    ]).pipe(Effect.mapError(representationFailure));
+    yield* Store.acceptMessage({
+      authorAgentId: message.author.agentId,
+      msgId: message.msgId,
+      conversationId,
+      canonicalMessage: yield* encodeCanonical(Message, message).pipe(
+        Effect.mapError(representationFailure),
+      ),
+    }).pipe(Effect.mapError(storeFailure));
     const retained = runtime.intents.get(message.msgId);
     if (retained !== undefined) {
       yield* requireSameMessage(runtime, retained, message);

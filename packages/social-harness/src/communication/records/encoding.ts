@@ -2,20 +2,20 @@
 
 import { Effect, Encoding, Schema } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import type { VerifiedAgentCard } from "../../../identity/cards.js";
-import type { AgentId } from "../../../identity/identifiers.js";
-import type { AgentSigningAuthority } from "../../../identity/keys.js";
+import type { VerifiedAgentCard } from "../../identity/cards.js";
+import type { AgentId } from "../../identity/identifiers.js";
+import type { AgentSigningAuthority } from "../../identity/keys.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
   encodeCanonical,
   representationFailure,
-} from "../../../encoding/canonical-json.js";
+} from "../../encoding/canonical-json.js";
 import {
   decodeCanonicalBase64Url,
   isStrictlyAscending,
-} from "../../../encoding/identifier.js";
-import { SealedBody } from "../../../identity/envelope/sealed-body.js";
+} from "../../encoding/identifier.js";
+import { SealedBody } from "../../identity/envelope/sealed-body.js";
 import {
   EnvelopeId,
   type EnvelopeId as EnvelopeIdValue,
@@ -23,8 +23,8 @@ import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
   type VerifiedSignedMessage,
-} from "../../../identity/envelope/signed-message.js";
-import { WIRE_VERSION } from "../../../identity/wire-version.js";
+} from "../../identity/envelope/signed-message.js";
+import { WIRE_VERSION } from "../../identity/wire-version.js";
 import {
   ActionCore,
   ActionHash,
@@ -51,13 +51,13 @@ import {
   RecordCore,
   RecordHash,
   type RecordHash as RecordHashValue,
-} from "../schemas.js";
+} from "./schemas.js";
 import {
   compareAgentIds,
   MsgId,
   type MsgId as MsgIdValue,
   wireProfiles,
-} from "../values.js";
+} from "./values.js";
 
 /* eslint-disable jsdoc/require-jsdoc -- The package-private representation facade documents this closed protocol vocabulary. */
 

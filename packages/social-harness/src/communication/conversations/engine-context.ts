@@ -37,7 +37,7 @@ import type {
   RouterWorkerPersistenceError,
   RouterWorkerSendError,
 } from "../router/index.js";
-import type { EndpointStoreError } from "../store/index.js";
+import type { EndpointStoreError, StagedRecord } from "../store/index.js";
 import type { SendError } from "./errors.js";
 
 /** RouterWorker operations consumed by the engine's outbound queue. */
@@ -180,12 +180,12 @@ export interface EngineOutbox {
     evidence: SignedMessage,
   ) => Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient>;
   /**
-   * Send an action-certified record and attach its envelope to the durable
-   * obligation staged with it, so a restart resends it only when unattached.
+   * Stage a record together with its signed envelope before any durability vote.
    */
-  readonly queueActionCertifiedRecord: (
+  readonly stageRecord: (
     conversation: EngineConversation,
     packet: ActionCertifiedRecord,
+    record: StagedRecord,
   ) => Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient>;
   /**
    * Stage an envelope that `sign` returned; any other `SignedMessage` would
@@ -244,11 +244,6 @@ export interface EnginePhases {
   >;
   /** Resume the evidence work of one recovered conversation's folds. */
   readonly resumeFolds: (
-    runtime: EngineRuntime,
-    conversationId: ConversationId,
-  ) => Effect.Effect<void, RouterWorkerPersistenceError, SqlClient.SqlClient>;
-  /** Re-attach one recovered conversation's dissemination obligations. */
-  readonly resumeDissemination: (
     runtime: EngineRuntime,
     conversationId: ConversationId,
   ) => Effect.Effect<void, RouterWorkerPersistenceError, SqlClient.SqlClient>;

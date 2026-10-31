@@ -261,11 +261,11 @@ function bindMessageIntentInTransaction(
        FROM message_intents WHERE author_agent_id = ? AND msg_id = ?`,
       [intent.authorAgentId, intent.msgId],
     ))[0];
-    if (existing !== undefined) {
-      requireEqual(
-        readText(existing, "conversation_id"),
-        intent.conversationId,
-      );
+    if (existing === undefined) {
+      return yield* new EndpointStoreError({ reason: "not-found" });
+    }
+    requireEqual(readText(existing, "conversation_id"), intent.conversationId);
+    if (readOptionalText(existing, "membership_hash") !== undefined) {
       requireEqual(
         readText(existing, "membership_hash"),
         intent.membershipHash,
@@ -276,17 +276,14 @@ function bindMessageIntentInTransaction(
       );
       return "existing";
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO message_intents
-        (author_agent_id, msg_id, conversation_id, membership_hash,
-         canonical_intent)
-       VALUES (?, ?, ?, ?, ?)`,
+    yield* database.unsafe(
+      `UPDATE message_intents SET membership_hash=?,canonical_intent=?
+       WHERE author_agent_id=? AND msg_id=?`,
       [
+        intent.membershipHash,
+        intent.canonicalIntent,
         intent.authorAgentId,
         intent.msgId,
-        intent.conversationId,
-        intent.membershipHash,
-        copyBytes(intent.canonicalIntent),
       ],
     );
     return "inserted";
@@ -782,7 +779,7 @@ function readConversationMessageIntents(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
                 canonical_intent, completed_record_hash
-         FROM message_intents WHERE conversation_id = ?
+         FROM message_intents WHERE conversation_id = ? AND canonical_intent IS NOT NULL AND failure_reason IS NULL
          ORDER BY author_agent_id, msg_id`,
         [conversationId],
       )).map((row) => {

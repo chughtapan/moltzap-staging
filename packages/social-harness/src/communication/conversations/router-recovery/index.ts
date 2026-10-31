@@ -1175,9 +1175,6 @@ function resumeConversation(
     run.retainedOutbounds.delete(conversationId);
     return runtime.outbox.resume(retained);
   }).pipe(
-    Effect.zipRight(
-      runtime.phases.resumeDissemination(runtime, conversationId),
-    ),
     Effect.zipRight(runtime.phases.resumeFolds(runtime, conversationId)),
     Effect.zipRight(
       runtime.outbox.serialized(resumeIntents(run, conversationId)),
