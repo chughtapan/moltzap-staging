@@ -322,13 +322,18 @@ function expectGuidedGatherAdvice({
         { member: strict.agent, outcome: { kind: "answered" } },
       ],
     });
-    expect(result.guidance).toMatchObject({
-      answers: [
-        {
-          member: requester.agent,
-          instructions: [{ instruction: "Respond to the marked message." }],
-        },
-      ],
+    const guidance = result.guidance;
+    if (guidance === undefined || !("answers" in guidance)) {
+      return yield* Effect.dieMessage(
+        "expected guidance for collective answers",
+      );
+    }
+    const advice = guidance.answers.find(
+      ({ member }) => member.agentId === requester.agent.agentId,
+    );
+    expect(advice).toMatchObject({
+      member: requester.agent,
+      instructions: [{ instruction: "Respond to the marked message." }],
     });
   });
 }
