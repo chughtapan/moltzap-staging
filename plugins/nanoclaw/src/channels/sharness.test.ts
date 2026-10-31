@@ -831,19 +831,6 @@ function requestItem(op: string, to: string) {
   });
 }
 
-/* eslint-enable agent-code-guard/async-keyword -- Restore Effect-first defaults after the Promise-native host boundary tests. */
-/* eslint-enable agent-code-guard/acquire-release-requires-scope -- Restore the scope guard after the adapter-owned acquisition fake. */
-
-function testAgentView(name: string): AgentView {
-  const byte = ["alice", "bob", "carol"].indexOf(name) + 1;
-  const suffix = Encoding.encodeBase64Url(new Uint8Array(16).fill(byte));
-  return Schema.decodeUnknownSync(AgentView)({
-    agentId: `agt_${suffix}`,
-    agentName: name,
-    principalId: `prn_${suffix}`,
-  });
-}
-
 it("preserves distinct delivery identities when two group authors use the same message id", async () => {
   const fake = makeEndpoint();
   const host = makeHost();
@@ -870,8 +857,23 @@ it("preserves distinct delivery identities when two group authors use the same m
   });
   enqueue(fake, first);
   enqueue(fake, second, undefined, secondEvent);
-  await vi.waitFor(() => expect(host.onInboundEvent).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => {
+    expect(host.onInboundEvent).toHaveBeenCalledTimes(2);
+  });
   expect(
     host.onInboundEvent.mock.calls.map(([event]) => event.message.id),
   ).toEqual([EVENT_ID, secondEvent]);
 });
+
+/* eslint-enable agent-code-guard/async-keyword -- Restore Effect-first defaults after the Promise-native host boundary tests. */
+/* eslint-enable agent-code-guard/acquire-release-requires-scope -- Restore the scope guard after the adapter-owned acquisition fake. */
+
+function testAgentView(name: string): AgentView {
+  const byte = ["alice", "bob", "carol"].indexOf(name) + 1;
+  const suffix = Encoding.encodeBase64Url(new Uint8Array(16).fill(byte));
+  return Schema.decodeUnknownSync(AgentView)({
+    agentId: `agt_${suffix}`,
+    agentName: name,
+    principalId: `prn_${suffix}`,
+  });
+}

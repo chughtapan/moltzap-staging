@@ -190,15 +190,6 @@ export function messageFields(message: Message) {
   };
 }
 
-/**
- * A stable message id derived from an identity no two messages share.
- * @param identity The author-scoped identity the id stands for.
- * @returns The id a check and its guidance refer to.
- */
-export function hashedId(identity: string): string {
-  return `msg_${createHash("sha256").update(identity).digest("hex")}`;
-}
-
 /** A projected message's text and operation, before attribution. */
 interface ProjectedText {
   readonly text: string;
@@ -292,6 +283,15 @@ function projectRequest(
 
 function messageId(message: Pick<SharedMessage, "author" | "msgId">): string {
   return hashedId(`${message.author.agentId}:${message.msgId}`);
+}
+
+/**
+ * A stable message id derived from an identity no two messages share.
+ * @param identity The author-scoped identity the id stands for.
+ * @returns The id a check and its guidance refer to.
+ */
+function hashedId(identity: string): string {
+  return `msg_${createHash("sha256").update(identity).digest("hex")}`;
 }
 
 /** One history entry and the cards its attribution needs. */

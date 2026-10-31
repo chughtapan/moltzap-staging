@@ -212,12 +212,8 @@ function createCommunication(
   sent: Queue.Queue<Message>,
   database: TestDatabase,
 ) {
-  let retained = retainedMessages.get(database);
-  if (retained === undefined) {
-    retained = new Map<string, Message>();
-    retainedMessages.set(database, retained);
-  }
-  const messages = retained;
+  const messages = retainedMessages.get(database) ?? new Map<string, Message>();
+  retainedMessages.set(database, messages);
   return Communication.of({
     send: (message) =>
       Effect.gen(function* () {

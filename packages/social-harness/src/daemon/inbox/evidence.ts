@@ -112,7 +112,8 @@ function readSlice(window: HistoryWindow) {
         }
         entries.push(item.entry);
       }
-      history.push(...entries.reverse());
+      entries.reverse();
+      history.push(...entries);
       if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }

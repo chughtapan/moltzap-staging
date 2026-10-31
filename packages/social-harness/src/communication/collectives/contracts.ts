@@ -219,12 +219,6 @@ export const SendResultSchema = Schema.Union(
   }),
 ).annotations({ identifier: "SendResult" });
 /**
- * An accepted message, answer or question operation.
- * @useDeclaredType
- */
-type SendResult = typeof SendResultSchema.Type;
-
-/**
  * Why a collective send was refused, discriminated by `kind`: a gather or
  * all_gather whose schema is outside the form-mode grammar, whose request
  * message some member could not receive, or whose deadline passed while its

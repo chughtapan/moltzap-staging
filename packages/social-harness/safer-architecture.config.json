@@ -1,6 +1,6 @@
 {
   "minFolderReadmeChildren": 9007199254740991,
-  "maxFolderCycles": 1,
+  "maxFolderCycles": 2,
   "facadeFiles": [
     {
       "file": "encoding/exact.ts",

@@ -2,21 +2,21 @@
 
 import { Clock, Deferred, Effect, Option, Schema } from "effect";
 import type { AgentView } from "../../identity/cards.js";
-import type { Environment } from "./operations.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
-import { Message, type MessageReference } from "../message.js";
-import { transaction } from "./operations.js";
-import { encodeRuntimeValue, EndpointStoreError } from "../store/index.js";
-import * as Store from "./store.js";
+import type { Message, MessageReference } from "../message.js";
+import type { collectiveClosure, CollectiveId } from "./contracts.js";
 import type { StoredCollectiveOperation } from "./store.js";
-import { type collectiveClosure, CollectiveId } from "./contracts.js";
-import { ResultDelivery, ResultSources } from "./model.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
+import { encodeRuntimeValue, EndpointStoreError } from "../store/index.js";
+import { ResultDelivery, type ResultSources } from "./model.js";
 import {
+  type Environment,
   makeMessage,
   operationParticipants,
   saveMessage,
   self,
+  transaction,
 } from "./operations.js";
+import * as Store from "./store.js";
 import { outcomeOfResponse } from "./validation.js";
 import {
   type CollectiveValue,
@@ -59,7 +59,7 @@ export function checkResultSize(result: {
     ) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
-  });
+  }).pipe(Effect.withSpan("checkResultSize"));
 }
 
 /** Handler success and handoff retirement share the caller fiber transaction. */

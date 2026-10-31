@@ -1,22 +1,25 @@
 /** @file Captures questions and claims exact outgoing answers. */
 
 import { Clock, Effect, Option, Queue, Schema } from "effect";
-import type { Environment } from "./operations.js";
-import { AgentView } from "../../identity/cards.js";
-import { Message } from "../message.js";
-import { transaction } from "./operations.js";
-import * as Store from "./store.js";
-import { answerFieldsText, type CollectiveId } from "./contracts.js";
-import { CollectivesError } from "./contracts.js";
+import type { Message } from "../message.js";
 import type { Question } from "./model.js";
+import { AgentView } from "../../identity/cards.js";
 import {
+  answerFieldsText,
+  type CollectiveId,
+  CollectivesError,
+} from "./contracts.js";
+import {
+  type Environment,
   makeMessage,
   outgoingAddress,
   requestItem,
   sameParticipants,
   saveMessage,
   self,
+  transaction,
 } from "./operations.js";
+import * as Store from "./store.js";
 import { validateAnswer } from "./validation.js";
 import {
   collectiveRequesterOf,
@@ -27,9 +30,8 @@ import {
 /** The fixed question and its request messages are accepted in one transaction. */
 export const ask = Effect.fn("ask")(function* (
   environment: Environment,
-  input: Question,
+  question: Question,
 ) {
-  const question = input;
   const author = yield* self(environment);
   if (
     !Schema.equivalence(AgentView)(question.author, author) ||
@@ -56,9 +58,8 @@ export const getRequest = Effect.fn("getRequest")(function* (
 /** Acceptance claims the answer until its original message completes or fails. */
 export const answer = Effect.fn("answer")(function* (
   environment: Environment,
-  input: Message,
+  message: Message,
 ) {
-  const message = input;
   const author = yield* self(environment);
   const response = yield* readResponse(message);
   if (!Schema.equivalence(AgentView)(message.author, author)) {

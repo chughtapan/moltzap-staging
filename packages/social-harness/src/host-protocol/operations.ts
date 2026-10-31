@@ -109,7 +109,6 @@ export const harnessSendArgumentsSchema = exactStruct({
       "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
   }),
 });
-const harnessSendRequestSchema = harnessSendArgumentsSchema;
 const harnessMessageReadyEventSchema = Schema.Struct({
   deliveryToken: DeliveryToken,
   item: InboundItem,
@@ -190,7 +189,7 @@ export type HarnessAcknowledgeDeliveryRequest =
   typeof harnessAcknowledgeDeliveryRequestSchema.Type;
 
 /** Validated semantic input of one send. */
-export type HarnessSendRequest = typeof harnessSendRequestSchema.Type;
+export type HarnessSendRequest = typeof harnessSendArgumentsSchema.Type;
 
 /**
  * Decoded error data of one refused `send_message` call.

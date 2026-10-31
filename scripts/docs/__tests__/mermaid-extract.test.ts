@@ -3,7 +3,6 @@
 import { describe, expect, it } from "vitest";
 import { extractMermaidBlocks } from "../mermaid-lint.ts";
 
-// eslint-disable-next-line max-lines-per-function, sonarjs/max-lines-per-function -- This declarative test group keeps its related regression cases and source fixtures together.
 describe("extractMermaidBlocks", () => {
   // @agent-code-guard/regression-only: fixed syntax and gate failure fixtures exercise distinct regressions.
   it("returns empty list when the source has no fenced blocks", () => {

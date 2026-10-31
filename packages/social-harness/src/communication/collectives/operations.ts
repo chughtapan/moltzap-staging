@@ -1,11 +1,21 @@
 /** @file Keeps operation audiences and message identities fixed. */
 
-import { Effect, Schema } from "effect";
 import * as SqlClient from "@effect/sql/SqlClient";
-import type { Context, Deferred, Queue, Scope } from "effect";
+import {
+  type Context,
+  type Deferred,
+  Effect,
+  type Queue,
+  Schema,
+  type Scope,
+} from "effect";
 import type { Identity } from "../../identity/local.js";
 import type { Communication } from "../index.js";
-import { EndpointStoreError } from "../store/database/index.js";
+import type {
+  StoredCollectiveMessage,
+  StoredCollectiveOperation,
+} from "./store.js";
+import type { CollectiveValue } from "./wire.js";
 import { AgentView } from "../../identity/cards.js";
 import {
   Message,
@@ -15,14 +25,9 @@ import {
 } from "../message.js";
 import { mintMsgId } from "../records/index.js";
 import { agentAddressOf } from "../records/values.js";
+import { EndpointStoreError } from "../store/database/index.js";
+import { type CollectiveId, CollectivesError } from "./contracts.js";
 import * as Store from "./store.js";
-import type {
-  StoredCollectiveMessage,
-  StoredCollectiveOperation,
-} from "./store.js";
-import type { CollectiveId } from "./contracts.js";
-import { CollectivesError } from "./contracts.js";
-import type { CollectiveValue } from "./wire.js";
 
 /** Identity registration is independent of protocol startup. */
 export function self(environment: Environment) {
@@ -175,7 +180,7 @@ export function sameMessage(left: Message, right: Message) {
  * @param content The request message's content.
  * @returns The text parts, joined by newlines.
  */
-export function questionText(content: Message["content"]): string {
+function questionText(content: Message["content"]): string {
   return content
     .flatMap((part) => (part.type === "text" ? [part.text] : []))
     .join("\n");

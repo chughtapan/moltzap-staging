@@ -213,6 +213,7 @@ export function readDecisions(request: { readonly since?: number }) {
       for (const summary of summaries) {
         decisions.push({
           ...summary,
+          disposition: entry.disposition,
           checkId: entry.checkId,
           time: entry.time,
         });

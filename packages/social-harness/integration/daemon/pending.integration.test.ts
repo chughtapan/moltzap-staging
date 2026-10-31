@@ -23,8 +23,6 @@ import {
   DeliveryToken,
   encodeRuntimeValue,
 } from "../../src/communication/store/index.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../src/encoding/limits.js";
-import { InboundItem } from "../../src/host-protocol/items.js";
 import {
   findIncomingMessage,
   markMessageVisibility,
@@ -36,6 +34,8 @@ import {
   readHistoryViews,
   retireItem,
 } from "../../src/daemon/inbox/store.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../src/encoding/limits.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
 
 const message = Schema.decodeUnknownSync(Message)({
   msgId: digest("msg_", 1),

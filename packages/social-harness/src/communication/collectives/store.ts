@@ -242,11 +242,12 @@ export function recordCollectiveAnswer(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const operation = yield* readCollectiveOperation(operationId);
+      if (operation === undefined || operation.phase === "completed") {
+        return false;
+      }
       if (
-        operation === undefined ||
-        operation.phase === "completed" ||
-        (operation.origin === "local" &&
-          (operation.phase !== "collecting" || now >= operation.deadlineAt))
+        operation.origin === "local" &&
+        (operation.phase !== "collecting" || now >= operation.deadlineAt)
       ) {
         return false;
       }
@@ -389,49 +390,28 @@ function readOperation(
       AgentId,
       readText(row, "creator_agent_id"),
     );
-    const origin = readText(row, "origin");
-    const phase = readText(row, "phase");
-    if (
-      (origin !== "local" && origin !== "remote") ||
-      (phase !== "collecting" &&
-        phase !== "finalizing" &&
-        phase !== "completed")
-    ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
+    const origin = yield* decodeValue(
+      Schema.Literal("local", "remote"),
+      readText(row, "origin"),
+    );
+    const phase = yield* decodeValue(
+      Schema.Literal("collecting", "finalizing", "completed"),
+      readText(row, "phase"),
+    );
     const closeBytes = readOptionalBytes(row, "canonical_close");
     const close =
       closeBytes === undefined
         ? undefined
         : yield* readPart(closeBytes, "close");
-    const resultBytes = readOptionalBytes(row, "canonical_result");
-    const refsBytes = readOptionalBytes(row, "canonical_answer_refs");
-    if ((resultBytes === undefined) !== (refsBytes === undefined)) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    const result =
-      resultBytes === undefined || refsBytes === undefined
-        ? undefined
-        : {
-            item: yield* decodeRuntimeValue(
-              ResultDelivery.fields.item,
-              resultBytes,
-            ),
-            answers: yield* decodeRuntimeValue(
-              Schema.Array(MessageReference).pipe(
-                Schema.maxItems(maximumMembers - 1),
-              ),
-              refsBytes,
-            ),
-          };
-    if (
-      (close !== undefined &&
-        (origin !== "remote" ||
-          close.value.operationId !== operationId ||
-          close.message.author.agentId !== creatorAgentId)) ||
-      (result !== undefined && result.item.operationId !== operationId)
-    ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
+    const result = yield* readResult(row, operationId);
+    if (close !== undefined) {
+      if (
+        origin !== "remote" ||
+        close.value.operationId !== operationId ||
+        close.message.author.agentId !== creatorAgentId
+      ) {
+        return yield* new EndpointStoreError({ reason: "corrupt" });
+      }
     }
     const state: OperationState = {
       operationId,
@@ -472,6 +452,35 @@ function readOperation(
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     return { ...state, origin, request };
+  });
+}
+
+function readResult(
+  row: Readonly<Record<string, unknown>>,
+  operationId: CollectiveId,
+) {
+  return Effect.gen(function* () {
+    const bytes = readOptionalBytes(row, "canonical_result");
+    const refs = readOptionalBytes(row, "canonical_answer_refs");
+    if (bytes === undefined && refs === undefined) {
+      return undefined;
+    }
+    if (bytes === undefined || refs === undefined) {
+      return yield* new EndpointStoreError({ reason: "corrupt" });
+    }
+    const item = yield* decodeRuntimeValue(ResultDelivery.fields.item, bytes);
+    if (item.operationId !== operationId) {
+      return yield* new EndpointStoreError({ reason: "corrupt" });
+    }
+    return {
+      item,
+      answers: yield* decodeRuntimeValue(
+        Schema.Array(MessageReference).pipe(
+          Schema.maxItems(maximumMembers - 1),
+        ),
+        refs,
+      ),
+    };
   });
 }
 

@@ -12,6 +12,7 @@ import { collectiveOperationId } from "../../src/__tests__/collective-id-fixture
 import { mcpIdentity } from "../../src/__tests__/mcp-http-fixtures.js";
 import { localGuidance } from "../../src/__tests__/message-policy-fixtures.js";
 import {
+  publishTestInboxItem as putInboxItem,
   stateDirectory,
   withDaemonStore,
 } from "../../src/__tests__/store-schema-fixtures.js";
@@ -22,15 +23,14 @@ import {
   DeliveryToken,
   encodeRuntimeValue,
 } from "../../src/communication/store/index.js";
-import { managementReadConversationRequestSchema } from "../../src/host-protocol/index.js";
-import { InboundItem } from "../../src/host-protocol/items.js";
 import {
   queueIncomingItem,
   settleQueuedItem,
 } from "../../src/daemon/inbox/pending.js";
-import { publishTestInboxItem as putInboxItem } from "../../src/__tests__/store-schema-fixtures.js";
 import { retireItem } from "../../src/daemon/inbox/store.js";
 import { makeHistoryOperations } from "../../src/daemon/messaging/history.js";
+import { managementReadConversationRequestSchema } from "../../src/host-protocol/index.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
 
 const alice = testAgentView("agent:alice");
 const bob = testAgentView("agent:bob");

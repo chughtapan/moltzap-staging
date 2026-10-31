@@ -92,7 +92,6 @@ describe("requireRoots", () => {
   });
 });
 
-// eslint-disable-next-line max-lines-per-function, sonarjs/max-lines-per-function -- This declarative test group keeps its related regression cases and source fixtures together.
 describe("collectDiagramFiles", () => {
   // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
   it("descends subdirectories and skips node_modules", async () => {

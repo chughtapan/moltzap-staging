@@ -2,11 +2,10 @@
 
 import * as SqlClient from "@effect/sql/SqlClient";
 import { Cause, Clock, Deferred, Effect, Queue } from "effect";
-import type { Environment } from "./operations.js";
 import type { StoredCollectiveMessage } from "./store.js";
-import { transaction } from "./operations.js";
 import { EndpointStoreError } from "../store/index.js";
 import { CollectivesError } from "./contracts.js";
+import { type Environment, transaction } from "./operations.js";
 import { checkResultSize, finishLocal, finishRemote } from "./results.js";
 import * as Store from "./store.js";
 
@@ -27,7 +26,7 @@ export function runWorker(environment: Environment) {
             Effect.forever,
           ),
         ],
-        { concurrency: "unbounded", discard: true },
+        { concurrency: 2, discard: true },
       ),
     ),
   );
@@ -85,30 +84,15 @@ function observeMessage(
     ) {
       return;
     }
-    const completion = yield* environment.communication
+    const message = yield* environment.communication
       .waitForMessage(saved.reference)
-      .pipe(Effect.either);
-    if (completion._tag === "Left") {
-      if (saved.role === "close") {
-        const item = {
-          kind: "operationFailed" as const,
-          operationId: saved.operationId,
-          to: saved.destination,
-          error: `The collective result could not be shared: ${completion.left.reason}`,
-        };
-        yield* checkResultSize({ item, sources: { answers: [] } });
-        yield* transaction(Store.failCollectiveClose(saved.operationId, item));
-      } else if (saved.role === "response") {
-        yield* retireUnusableClose(saved);
-      }
+      .pipe(
+        Effect.catchTag("CommunicationError", (error) =>
+          failOperationMessage(saved, error.reason).pipe(Effect.as(undefined)),
+        ),
+      );
+    if (message === undefined) {
       return;
-    }
-    const message = completion.right;
-    if (
-      message.author.agentId !== saved.reference.authorAgentId ||
-      message.msgId !== saved.reference.msgId
-    ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     yield* transaction(
       Effect.gen(function* () {
@@ -124,6 +108,23 @@ function observeMessage(
         }
       }),
     );
+  });
+}
+
+function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
+  return Effect.gen(function* () {
+    if (saved.role === "close") {
+      const item = {
+        kind: "operationFailed" as const,
+        operationId: saved.operationId,
+        to: saved.destination,
+        error: `The collective result could not be shared: ${reason}`,
+      };
+      yield* checkResultSize({ item, sources: { answers: [] } });
+      yield* transaction(Store.failCollectiveClose(saved.operationId, item));
+    } else if (saved.role === "response") {
+      yield* retireUnusableClose(saved);
+    }
   });
 }
 

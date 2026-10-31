@@ -2,21 +2,21 @@
 
 import type * as SqlClient from "@effect/sql/SqlClient";
 import { Clock, Effect, Option, Queue } from "effect";
-import type { Environment } from "./operations.js";
+import type { Message } from "../message.js";
+import type { EndpointStoreError } from "../store/index.js";
 import type { CollectivesError } from "./contracts.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
-import { Message } from "../message.js";
-import { transaction } from "./operations.js";
-import * as Store from "./store.js";
-import { type EndpointStoreError } from "../store/index.js";
 import {
+  type Environment,
   operationParticipants,
   requestItem,
   sameMessage,
   sameParticipants,
   self,
+  transaction,
 } from "./operations.js";
 import { finishLocal, finishRemote } from "./results.js";
+import * as Store from "./store.js";
 import {
   collectiveRequesterOf,
   type CollectiveValue,

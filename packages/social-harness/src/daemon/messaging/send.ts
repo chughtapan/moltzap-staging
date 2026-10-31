@@ -6,6 +6,7 @@ import type {
   Communication,
   CommunicationError,
 } from "../../communication/index.js";
+import type { Content } from "../../communication/records/values.js";
 import type {
   DeliveryOperations,
   HarnessSendRequest,
@@ -37,7 +38,6 @@ import {
   replyAddress,
 } from "../../communication/message.js";
 import { mintMsgId } from "../../communication/records/index.js";
-import type { Content } from "../../communication/records/values.js";
 import { saveCheckDecision } from "../../firewall/store/index.js";
 import { canonicalMessageAddress } from "../../host-protocol/address.js";
 import {

@@ -29,8 +29,8 @@ import {
   question,
   wireMessage,
 } from "../../__tests__/collective-service-fixtures.js";
-import { Message } from "../message.js";
 import { CommunicationError } from "../index.js";
+import { Message } from "../message.js";
 import { transaction } from "../store/database/index.js";
 import { CollectivesError, type ResultDelivery } from "./index.js";
 import { readCollectiveValue } from "./wire.js";

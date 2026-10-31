@@ -21,10 +21,10 @@ import {
   DeliveryToken,
   encodeRuntimeValue,
 } from "../../src/communication/store/index.js";
-import { InboundItem } from "../../src/host-protocol/items.js";
-import { makeInboxOperations } from "../../src/daemon/messaging/inbox.js";
 import { noHistoryExport } from "../../src/daemon/inbox/host-traffic-log.js";
 import { readRuntimeInbox } from "../../src/daemon/inbox/inbox.js";
+import { makeInboxOperations } from "../../src/daemon/messaging/inbox.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Durable tombstone and snapshot fixtures pin exact store outcomes. */
 

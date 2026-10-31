@@ -11,6 +11,7 @@ import {
 } from "../../src/__tests__/agent-card-fixtures.js";
 import { collectiveOperationId } from "../../src/__tests__/collective-id-fixtures.js";
 import {
+  publishTestInboxItem as putInboxItem,
   stateDirectory,
   withDaemonStore,
 } from "../../src/__tests__/store-schema-fixtures.js";
@@ -18,9 +19,8 @@ import {
   DeliveryToken,
   encodeRuntimeValue,
 } from "../../src/communication/store/index.js";
-import { InboundItem } from "../../src/host-protocol/items.js";
-import { publishTestInboxItem as putInboxItem } from "../../src/__tests__/store-schema-fixtures.js";
 import { makeInboxOperations } from "../../src/daemon/messaging/inbox.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
 
 const token = Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", 9));
 const item = Schema.decodeUnknownSync(InboundItem)({

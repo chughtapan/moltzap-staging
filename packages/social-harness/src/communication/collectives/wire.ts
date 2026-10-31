@@ -8,6 +8,7 @@
  * each shape in turn.
  */
 
+import type { ParseOptions } from "effect/SchemaAST";
 import {
   Array as Arr,
   Data,
@@ -18,7 +19,6 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import type { ParseOptions } from "effect/SchemaAST";
 import { randomBytes } from "node:crypto";
 import { exactStruct } from "../../encoding/exact.js";
 import { AgentId } from "../../identity/identifiers.js";
@@ -31,9 +31,9 @@ import {
   collectiveClosure,
   CollectiveId,
   DeclineResponse,
+  describeIssues,
   EpochMillis,
   RequestedSchema,
-  describeIssues,
 } from "./contracts.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Effect Schemas take the names of the MCP specification shapes they mirror. */
@@ -267,22 +267,18 @@ const FormFieldValue = Schema.declare(
  * One property of an MCP form-mode `requestedSchema`. Decoding keeps only the
  * keywords of the shape that admitted the property.
  */
-export const FormFieldSchema = Schema.transformOrFail(
-  Schema.Unknown,
-  FormFieldValue,
-  {
-    strict: true,
-    decode: (value) =>
-      Either.match(admitFormField(value), {
-        onLeft: (message) =>
-          ParseResult.fail(
-            new ParseResult.Type(FormFieldValue.ast, value, message),
-          ),
-        onRight: (field) => ParseResult.succeed(field),
-      }),
-    encode: (field) => ParseResult.succeed(field),
-  },
-);
+const FormFieldSchema = Schema.transformOrFail(Schema.Unknown, FormFieldValue, {
+  strict: true,
+  decode: (value) =>
+    Either.match(admitFormField(value), {
+      onLeft: (message) =>
+        ParseResult.fail(
+          new ParseResult.Type(FormFieldValue.ast, value, message),
+        ),
+      onRight: (field) => ParseResult.succeed(field),
+    }),
+  encode: (field) => ParseResult.succeed(field),
+});
 
 /**
  * Admit one property under the first shape that matches it.

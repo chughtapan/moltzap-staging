@@ -12,14 +12,13 @@ import {
 } from "effect";
 import type { Message } from "../message.js";
 import type { EndpointStoreError } from "../store/index.js";
-import type { CollectiveId } from "./contracts.js";
-import type { StoredCollectiveMessage } from "./store.js";
-import type { Environment } from "./operations.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
 import type { Question, ResultDelivery } from "./model.js";
+import type { Environment } from "./operations.js";
+import type { StoredCollectiveMessage } from "./store.js";
 import { Identity } from "../../identity/local.js";
 import { Communication } from "../index.js";
-import { CollectivesError } from "./contracts.js";
+import { type CollectiveId, CollectivesError } from "./contracts.js";
 import { receive } from "./receive.js";
 import { answer, ask, getRequest } from "./requests.js";
 import { consumeResults } from "./results.js";
@@ -65,11 +64,7 @@ export { Question, ResultDelivery, ResultSources } from "./model.js";
 export { type CollectiveValue, readCollectiveValue } from "./wire.js";
 
 /** Host draft construction uses the same admitted operation representation. */
-export {
-  encodeCollectiveContent,
-  FormModeSchema,
-  mintCollectiveId,
-} from "./wire.js";
+export { encodeCollectiveContent, mintCollectiveId } from "./wire.js";
 
 /** Captures one SQL client and owns the workers that outlive individual calls. */
 function makeCollectives() {
