@@ -15,6 +15,8 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { Identity } from "../../identity/local.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,
@@ -42,7 +44,9 @@ const operations: HarnessMcpOperations = {
 };
 const acquireHandler = (active = true) =>
   Effect.gen(function* () {
+    const store = yield* openInboxFixture(stateDirectory());
     const handler = yield* makeHarnessMcpHttpHandler({
+      eventStore: store,
       credential: mcpTestCredential,
       implementation,
       operations: operations,

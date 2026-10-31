@@ -88,7 +88,8 @@ function communicationEdge(
           },
         } as const),
       ),
-    waitForMessage: () => Effect.void,
+    waitForMessage: () =>
+      Effect.dieMessage("Delivery fixture does not wait for protocol messages"),
     consume: (handle) =>
       Queue.take(incoming).pipe(
         Effect.flatMap((entry) =>

@@ -20,6 +20,8 @@ import { decodeHarnessSendErrorData } from "../../host-protocol/operations.js";
 import { AgentName, PrincipalId } from "../../identity/identifiers.js";
 import { Identity } from "../../identity/local.js";
 import { OperationId } from "../../identity/registry/contract.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,
@@ -41,7 +43,9 @@ const operations: HarnessMcpOperations = {
 
 const acquireHandler = (selected: HarnessMcpOperations, registered = true) =>
   Effect.gen(function* () {
+    const store = yield* openInboxFixture(stateDirectory());
     const handler = yield* makeHarnessMcpHttpHandler({
+      eventStore: store,
       credential: mcpTestCredential,
       implementation: { name: "tool-contract-test", version: "1" },
       operations: selected,

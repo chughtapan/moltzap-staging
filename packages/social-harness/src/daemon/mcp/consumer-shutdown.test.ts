@@ -28,7 +28,10 @@ import {
   type HarnessEvents,
   makeHarnessEvents,
   makeHarnessPollEvents,
+  makeWebhookEvents,
 } from "./events.js";
+
+import { makeConsumerOwner } from "./consumer.js";
 
 const info = { name: "consumer-shutdown", version: "1" };
 const summary = () => Effect.succeed({ pendingCount: 0, newestSequence: 0 });
@@ -122,6 +125,10 @@ const acquireFixture = Effect.fn("acquireConsumerFixture")(function* (
   const held = yield* blockedReceive;
   const waiting = yield* Deferred.make<undefined>();
   const gate = observedGate(waiting);
+  const owner = yield* makeConsumerOwner;
+  const webhook = yield* makeWebhookEvents(store, gate.gate, owner).pipe(
+    Effect.provide(NodeHttpClient.layer),
+  );
   const poll = yield* makeHarnessPollEvents(
     {
       ...store,
@@ -129,9 +136,12 @@ const acquireFixture = Effect.fn("acquireConsumerFixture")(function* (
         blockedPoll ? held.blocked.pipe(Effect.zipRight(summary())) : summary(),
     },
     gate.gate,
+    owner,
   );
   const events = yield* makeHarnessEvents({
     gate: gate.gate,
+    owner,
+    webhook,
     poll,
     summary,
   }).pipe(Effect.provideService(Identity, mcpIdentity(true)));
@@ -211,7 +221,7 @@ it("rejects a bound renewal queued before consumer revocation without renewing i
       error: { data: { reason: "consumer-revoked" } },
     });
     yield* Fiber.join(revoke);
-    expect(fixture.events.hasActiveSubscription()).toBe(false);
+    expect((yield* fixture.events.status).mode).toBe("none");
   }));
 
 it("closes a poll when a later owner stream waits for its gate", () =>

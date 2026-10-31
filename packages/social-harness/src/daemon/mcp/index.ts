@@ -90,6 +90,8 @@ import {
 } from "../../host-protocol/operations.js";
 import { SendResultSchema } from "../../host-protocol/send-result.js";
 import { Identity } from "../../identity/local.js";
+import { type ConsumerOwner, makeConsumerOwner } from "./consumer.js";
+
 import {
   type HarnessEvents,
   makeHarnessEvents,
@@ -157,19 +159,15 @@ export interface HarnessMcpOperations extends DeliveryOperations {
 
 /** Official handler with one content-free daemon notification edge. */
 export interface HarnessMcpEventHandler extends McpHttpHandler {
-  readonly hasActiveSubscription: () => boolean;
   readonly notifyPending: () => boolean;
 }
 
 interface HarnessMcpHandlerOptions {
-  readonly eventStore?: EventStore;
+  readonly eventStore: EventStore;
   readonly credential: Redacted.Redacted;
   readonly implementation: Implementation;
   readonly operations: HarnessMcpOperations;
-  readonly onSubscriptionActiveChange?: (active: boolean) => void;
   readonly onerror?: (error: Error) => void;
-  /** Idle keep-alive period of the message subscription; tests set it. */
-  readonly keepAliveMillis?: number;
 }
 
 interface RunOperationOptions<Value extends Readonly<Record<string, unknown>>> {
@@ -987,7 +985,6 @@ const guardedHandler = (
   scope: Scope.CloseableScope,
 ): HarnessMcpEventHandler => ({
   ...delegate,
-  hasActiveSubscription: events.hasActiveSubscription,
   notifyPending: events.notifyPending,
   fetch: (request, requestOptions) => {
     if (!authenticateHarnessRequest(request, options.credential)) {
@@ -1016,13 +1013,11 @@ const acquireWebhook = (
   options: HarnessMcpHandlerOptions,
   scope: Scope.CloseableScope,
   gate: Effect.Semaphore,
+  owner: ConsumerOwner,
 ) =>
   Effect.gen(function* () {
-    if (options.eventStore === undefined) {
-      return undefined;
-    }
     const context = yield* Layer.buildWithScope(webhookHttpClientLayer, scope);
-    return yield* makeWebhookEvents(options.eventStore, gate).pipe(
+    return yield* makeWebhookEvents(options.eventStore, gate, owner).pipe(
       Effect.provide(context),
       Scope.extend(scope),
       Effect.mapError(() => ({ reason: "persistence-failed" })),
@@ -1036,18 +1031,15 @@ const acquireHandler = (
     const identity = yield* Identity;
     const services = yield* Effect.runtime();
     const gate = yield* Effect.makeSemaphore(1);
-    const webhook = yield* acquireWebhook(options, scope, gate);
-    const poll =
-      options.eventStore === undefined
-        ? undefined
-        : yield* makeHarnessPollEvents(options.eventStore, gate);
+    const owner = yield* makeConsumerOwner;
+    const webhook = yield* acquireWebhook(options, scope, gate, owner);
+    const poll = yield* makeHarnessPollEvents(options.eventStore, gate, owner);
     const events = yield* makeHarnessEvents({
-      ...(webhook === undefined ? {} : { webhook }),
-      ...(poll === undefined ? {} : { poll }),
+      owner,
+      webhook,
+      poll,
       summary: options.operations.readInboxSummary,
       gate,
-      keepAliveMillis: options.keepAliveMillis,
-      onActiveChange: options.onSubscriptionActiveChange,
     });
     return guardedHandler(
       options,

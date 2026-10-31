@@ -100,7 +100,6 @@ interface EventSubscriptionGrant {
 
 /** Durable callback delivery for the daemon's authenticated clients. */
 export interface HarnessWebhookEvents {
-  readonly hasActiveSubscription: () => boolean;
   readonly subscribe: (
     input: EventSubscribeInput,
     authorize?: Effect.Effect<void, ProtocolError>,

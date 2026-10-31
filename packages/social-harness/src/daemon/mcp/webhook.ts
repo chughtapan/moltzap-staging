@@ -2,7 +2,7 @@
 
 import { HttpClient } from "@effect/platform";
 import { ProtocolError } from "@modelcontextprotocol/server";
-import { type Clock, Effect, Schema, type Scope } from "effect";
+import { Effect, Schema, type Scope } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { EventStore } from "../inbox/store.js";
 import {
@@ -30,6 +30,8 @@ import {
   webhookUrl,
 } from "./event-signing.js";
 import { makeItemEvent } from "./inbox-event.js";
+import { type ConsumerOwner, currentConsumer } from "./consumer.js";
+import { consumerConflict } from "./poll.js";
 
 const maximumRetryDelay = 5 * 60_000;
 const maximumLease = 24 * 60 * 60_000;
@@ -72,7 +74,7 @@ const subscriptionId = (url: string) =>
 interface WebhookRuntime {
   readonly store: EventStore;
   readonly client: HttpClient.HttpClient;
-  readonly clock: Clock.Clock;
+  readonly owner: ConsumerOwner;
   readonly gate: Effect.Semaphore;
   readonly deliveryGate: Effect.Semaphore;
   verified?: {
@@ -86,10 +88,13 @@ interface WebhookRuntime {
   retrying?: string;
 }
 const now = (runtime: WebhookRuntime) =>
-  runtime.clock.unsafeCurrentTimeMillis();
-const active = (runtime: WebhookRuntime) =>
-  runtime.state.registration !== null &&
-  runtime.state.registration.expiresAt > now(runtime);
+  runtime.owner.clock.unsafeCurrentTimeMillis();
+const active = (runtime: WebhookRuntime) => {
+  const current = currentConsumer(runtime.owner);
+  return (
+    current.mode === "webhook" && current.lease === runtime.state.registration
+  );
+};
 /**
  * Make a persisted registration current, keeping the `webhook` marker in
  * step; every state change goes through here.
@@ -100,6 +105,14 @@ const active = (runtime: WebhookRuntime) =>
 function adopt(runtime: WebhookRuntime, state: State): Effect.Effect<void> {
   return Effect.sync(() => {
     runtime.state = state;
+    if (
+      state.registration !== null &&
+      state.registration.expiresAt > now(runtime)
+    ) {
+      runtime.owner.current = { mode: "webhook", lease: state.registration };
+    } else if (currentConsumer(runtime.owner).mode === "webhook") {
+      runtime.owner.current = { mode: "none" };
+    }
   }).pipe(Effect.zipRight(markWaitingDelivery(runtime)));
 }
 
@@ -300,20 +313,22 @@ const initialRegistration = (input: {
 });
 
 const checkRegistration = (runtime: WebhookRuntime, id: string) =>
-  Effect.suspend(() =>
-    runtime.state.registration !== null && runtime.state.registration.id !== id
+  Effect.suspend(() => {
+    const current = currentConsumer(runtime.owner);
+    if (current.mode !== "none" && current.mode !== "webhook") {
+      return Effect.fail(consumerConflict());
+    }
+    return runtime.state.registration !== null &&
+      runtime.state.registration.id !== id
       ? Effect.fail(
           new ProtocolError(
             -32013,
             "Revoke the retained subscription before configuring another callback",
-            {
-              limit: "subscriptions",
-              max: 1,
-            },
+            { limit: "subscriptions", max: 1 },
           ),
         )
-      : Effect.void,
-  );
+      : Effect.void;
+  });
 
 const activateRegistration = (
   runtime: WebhookRuntime,
@@ -597,7 +612,6 @@ const unsubscribe = (runtime: WebhookRuntime, url: string) =>
   });
 
 const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
-  hasActiveSubscription: () => active(runtime),
   subscribe: (input, authorize) =>
     subscribe(runtime, input, authorize ?? Effect.void),
   unsubscribe: (input) =>
@@ -625,11 +639,13 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
  * and closing the scope settles a marker still open.
  * @param store Daemon-owned registration and delivery persistence.
  * @param gate Serializes subscription state with native push ownership.
+ * @param owner Shared push, poll and callback occupancy.
  * @returns Protocol operations using the current Effect HTTP client and clock.
  */
 export const makeWebhookEvents = (
   store: EventStore,
   gate: Effect.Semaphore,
+  owner: ConsumerOwner,
 ): Effect.Effect<
   HarnessWebhookEvents,
   ProtocolError,
@@ -639,7 +655,6 @@ export const makeWebhookEvents = (
     const client = (yield* HttpClient.HttpClient).pipe(
       HttpClient.withTracerDisabledWhen(() => true),
     );
-    const clock = yield* Effect.clock;
     const retained = yield* store
       .readEventState()
       .pipe(Effect.mapError(persistenceFailure));
@@ -653,13 +668,13 @@ export const makeWebhookEvents = (
     const runtime: WebhookRuntime = {
       store,
       client,
-      clock,
+      owner,
       state,
       gate,
       deliveryGate,
       generation: 0,
     };
     yield* Effect.addFinalizer(() => settleOnClose(runtime));
-    yield* markWaitingDelivery(runtime);
+    yield* adopt(runtime, state);
     return webhookOperations(runtime);
   }).pipe(Effect.withSpan("makeWebhookEvents"));
