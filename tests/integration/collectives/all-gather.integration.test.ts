@@ -94,10 +94,11 @@ function expectUnknownAllGatherMemberRefused(requester: Participant) {
       60,
     ).pipe(Effect.flip);
     expect(failure).toBeInstanceOf(SendError);
-    expect(failure).toMatchObject({
-      reason: "unknown-agent",
-      detail: expect.stringContaining("agent:all-gather-nobody"),
-    });
+    expect(failure).toMatchObject({ reason: "unknown-agent" });
+    expect(failure).toHaveProperty(
+      "detail",
+      expect.stringContaining("agent:all-gather-nobody"),
+    );
   });
 }
 

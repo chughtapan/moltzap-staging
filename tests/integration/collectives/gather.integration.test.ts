@@ -85,10 +85,11 @@ function expectUnknownGatherMemberRefused({ requester }: GatherParticipants) {
       collective: { op: "gather", deadline: 60, requestedSchema: slotSchema },
     }).pipe(Effect.flip);
     expect(failure).toBeInstanceOf(SendError);
-    expect(failure).toMatchObject({
-      reason: "unknown-agent",
-      detail: expect.stringContaining("agent:gather-nobody"),
-    });
+    expect(failure).toMatchObject({ reason: "unknown-agent" });
+    expect(failure).toHaveProperty(
+      "detail",
+      expect.stringContaining("agent:gather-nobody"),
+    );
   });
 }
 
@@ -207,10 +208,11 @@ function expectInvalidAnswerRefused(
       },
     }).pipe(Effect.flip);
     expect(invalid).toBeInstanceOf(SendError);
-    expect(invalid).toMatchObject({
-      reason: "content-invalid",
-      detail: expect.stringContaining('field "slot"'),
-    });
+    expect(invalid).toMatchObject({ reason: "content-invalid" });
+    expect(invalid).toHaveProperty(
+      "detail",
+      expect.stringContaining('field "slot"'),
+    );
   });
 }
 
