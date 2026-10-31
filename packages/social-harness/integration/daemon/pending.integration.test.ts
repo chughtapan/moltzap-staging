@@ -3,36 +3,39 @@
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
-import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
 import {
+  digest,
+  testAgentView,
+} from "../../src/__tests__/agent-card-fixtures.js";
+import { collectiveOperationId } from "../../src/__tests__/collective-id-fixtures.js";
+import {
+  publishTestInboxItem as putInboxItem,
   stateDirectory,
   withDaemonStore,
-} from "../../__tests__/store-schema-fixtures.js";
-import { Message } from "../../communication/message.js";
+} from "../../src/__tests__/store-schema-fixtures.js";
+import { Message } from "../../src/communication/message.js";
 import {
   EndpointStoreError,
   transaction,
-} from "../../communication/store/database/index.js";
+} from "../../src/communication/store/database/index.js";
 import {
   decodeRuntimeValue,
   DeliveryToken,
   encodeRuntimeValue,
-} from "../../communication/store/index.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
-import { InboundItem } from "../../host-protocol/items.js";
+} from "../../src/communication/store/index.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../src/encoding/limits.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
 import {
   findIncomingMessage,
   markMessageVisibility,
   queueIncomingItem,
   settleQueuedItem,
-} from "./pending.js";
+} from "../../src/daemon/inbox/pending.js";
 import {
   isMessageVisible,
-  putInboxItem,
   readHistoryViews,
   retireItem,
-} from "./store.js";
+} from "../../src/daemon/inbox/store.js";
 
 const message = Schema.decodeUnknownSync(Message)({
   msgId: digest("msg_", 1),

@@ -3,24 +3,28 @@
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, Array as EffectArray, Schema } from "effect";
 import { describe, expect } from "vitest";
-import type { HarnessMessageReadyEvent } from "../../host-protocol/operations.js";
-import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
-import { openTestDatabase } from "../../__tests__/communication-test-database.js";
-import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
+import type { HarnessMessageReadyEvent } from "../../src/host-protocol/operations.js";
 import {
+  digest,
+  testAgentView,
+} from "../../src/__tests__/agent-card-fixtures.js";
+import { collectiveOperationId } from "../../src/__tests__/collective-id-fixtures.js";
+import { openTestDatabase } from "../../src/__tests__/communication-test-database.js";
+import { localGuidance } from "../../src/__tests__/message-policy-fixtures.js";
+import {
+  publishTestInboxEvent,
   stateDirectory,
   withDaemonStore,
-} from "../../__tests__/store-schema-fixtures.js";
-import { Message } from "../../communication/message.js";
+} from "../../src/__tests__/store-schema-fixtures.js";
+import { Message } from "../../src/communication/message.js";
 import {
   DeliveryToken,
   encodeRuntimeValue,
-} from "../../communication/store/index.js";
-import { InboundItem } from "../../host-protocol/items.js";
-import { makeInboxOperations } from "../messaging/inbox.js";
-import { noHistoryExport } from "./host-traffic-log.js";
-import { persistInboxItem, readRuntimeInbox } from "./inbox.js";
+} from "../../src/communication/store/index.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
+import { makeInboxOperations } from "../../src/daemon/messaging/inbox.js";
+import { noHistoryExport } from "../../src/daemon/inbox/host-traffic-log.js";
+import { readRuntimeInbox } from "../../src/daemon/inbox/inbox.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Durable tombstone and snapshot fixtures pin exact store outcomes. */
 
@@ -78,12 +82,12 @@ const preservesTokenBindings = () => {
       withDaemonStore(path, (store) =>
         Effect.gen(function* () {
           yield* store.acknowledgeInboxItem(token(1));
-          yield* persistInboxItem({
+          yield* publishTestInboxEvent({
             deliveryToken: token(1),
             item: failure,
           });
           expect((yield* readRuntimeInbox({})).items).toEqual([]);
-          const changed = yield* persistInboxItem({
+          const changed = yield* publishTestInboxEvent({
             deliveryToken: token(1),
             item: request,
           }).pipe(Effect.flip);
@@ -100,7 +104,7 @@ const freezesPagesAcrossArrivalsAndAcknowledgments = () =>
       yield* Effect.forEach(
         EffectArray.range(1, 51),
         (index) =>
-          persistInboxItem({
+          publishTestInboxEvent({
             deliveryToken: token(index),
             item: failure,
           }),
@@ -109,7 +113,7 @@ const freezesPagesAcrossArrivalsAndAcknowledgments = () =>
       const first = yield* readRuntimeInbox({});
       expect(first.items).toHaveLength(50);
       expect(first.nextCursor).toBeDefined();
-      yield* persistInboxItem({
+      yield* publishTestInboxEvent({
         deliveryToken: token(52),
         item: failure,
       });
@@ -136,7 +140,7 @@ const commitsReceiptAtomically = () => {
     yield* Effect.scoped(
       withDaemonStore(path, (store) =>
         Effect.gen(function* () {
-          yield* persistInboxItem({
+          yield* publishTestInboxEvent({
             deliveryToken: token(1),
             item: failure,
           });

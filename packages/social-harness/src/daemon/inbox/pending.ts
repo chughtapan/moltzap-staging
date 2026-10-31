@@ -36,8 +36,11 @@ CREATE TABLE incoming_items (
  canonical_sources BLOB,
  author_agent_id TEXT,
  msg_id TEXT,
- anchor INTEGER NOT NULL CHECK(anchor>=0),
  check_id TEXT,
+ published_sequence INTEGER UNIQUE,
+ published_item BLOB,
+ canonical_guidance BLOB,
+ acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN(0,1)),
  disposition TEXT NOT NULL DEFAULT 'pending' CHECK(disposition IN ('pending','admitted','withheld')),
  CHECK((author_agent_id IS NULL)=(msg_id IS NULL)),
  UNIQUE(author_agent_id,msg_id)
@@ -48,10 +51,7 @@ CREATE TABLE message_visibility (
  author_agent_id TEXT NOT NULL,msg_id TEXT NOT NULL,admitted INTEGER NOT NULL CHECK(admitted IN(0,1)),delivery_token TEXT NOT NULL,
  PRIMARY KEY(author_agent_id,msg_id)
 ) STRICT;
-CREATE TABLE local_history (
- sequence INTEGER PRIMARY KEY AUTOINCREMENT,conversation TEXT NOT NULL,anchor INTEGER NOT NULL CHECK(anchor>=0),canonical_entry BLOB NOT NULL
-) STRICT;
-CREATE INDEX local_history_window ON local_history(conversation,anchor);
+CREATE INDEX incoming_unread ON incoming_items(published_sequence) WHERE acknowledged=0 AND published_item IS NOT NULL;
 `;
 
 /** Host queue, visibility and projected history share the inbox transaction lifetime. */
@@ -93,7 +93,7 @@ export function queueIncomingItem(item: Omit<IncomingEntry, "sequence">) {
       return;
     }
     yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "INSERT INTO incoming_items(delivery_token,conversation,canonical_item,canonical_sources,author_agent_id,msg_id,anchor) SELECT ?,?,?,?,?,?,COALESCE(MAX(rowid),0) FROM certified_records",
+      "INSERT INTO incoming_items(delivery_token,conversation,canonical_item,canonical_sources,author_agent_id,msg_id) VALUES(?,?,?,?,?,?)",
       [
         item.deliveryToken,
         item.conversation,
@@ -125,7 +125,6 @@ export function readNextItemsToCheck() {
 /** Result judgments and their saved host history settle in the publication transaction. */
 export function settleLocalItem(admission: LocalAdmission) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     yield* requireNextItemToCheck(
       admission.item.deliveryToken,
       admission.queuedItem,
@@ -144,14 +143,6 @@ export function settleLocalItem(admission: LocalAdmission) {
         admission.item.deliveryToken,
       );
     }
-    yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "INSERT INTO local_history(conversation,anchor,canonical_entry) SELECT ?,anchor,? FROM incoming_items WHERE delivery_token=?",
-      [
-        admission.evidence.conversation,
-        admission.evidence.canonicalEntry,
-        admission.item.deliveryToken,
-      ],
-    );
     yield* settleQueuedItem(admission.item.deliveryToken, "admitted");
   }).pipe(storeOperation, Effect.withSpan("settleLocalItem"));
 }

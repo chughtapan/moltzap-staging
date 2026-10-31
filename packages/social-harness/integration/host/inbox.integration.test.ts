@@ -4,20 +4,23 @@ import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
-import type { HistoryExportRecord } from "../inbox/host-traffic-log.js";
-import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
+import type { HistoryExportRecord } from "../../src/daemon/inbox/host-traffic-log.js";
+import {
+  digest,
+  testAgentView,
+} from "../../src/__tests__/agent-card-fixtures.js";
+import { collectiveOperationId } from "../../src/__tests__/collective-id-fixtures.js";
 import {
   stateDirectory,
   withDaemonStore,
-} from "../../__tests__/store-schema-fixtures.js";
+} from "../../src/__tests__/store-schema-fixtures.js";
 import {
   DeliveryToken,
   encodeRuntimeValue,
-} from "../../communication/store/index.js";
-import { InboundItem } from "../../host-protocol/items.js";
-import { putInboxItem } from "../inbox/store.js";
-import { makeInboxOperations } from "./inbox.js";
+} from "../../src/communication/store/index.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
+import { publishTestInboxItem as putInboxItem } from "../../src/__tests__/store-schema-fixtures.js";
+import { makeInboxOperations } from "../../src/daemon/messaging/inbox.js";
 
 const token = Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", 9));
 const item = Schema.decodeUnknownSync(InboundItem)({
@@ -66,7 +69,7 @@ it("keeps an unread item when acknowledgment cannot be persisted", () =>
     Effect.gen(function* () {
       const { inbox, sql } = yield* inboxFixture();
       yield* sql.unsafe(
-        "CREATE TRIGGER fail_receipt BEFORE UPDATE ON runtime_inbox BEGIN SELECT RAISE(ABORT, 'receipt write failed'); END",
+        "CREATE TRIGGER fail_receipt BEFORE UPDATE ON incoming_items BEGIN SELECT RAISE(ABORT, 'receipt write failed'); END",
       );
       const failure = yield* inbox.acknowledgeDelivery(token).pipe(Effect.flip);
       // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The closed acknowledgment failure tells callers to retry retained delivery.

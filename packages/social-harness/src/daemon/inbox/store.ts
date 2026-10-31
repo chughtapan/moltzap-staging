@@ -74,14 +74,6 @@ export function createInboxTables() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     for (const statement of `
-  CREATE TABLE runtime_inbox (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-    delivery_token TEXT NOT NULL UNIQUE,
-    canonical_item BLOB NOT NULL,
-    canonical_guidance BLOB,
-    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1))
-  ) STRICT;
-  CREATE INDEX runtime_inbox_unread ON runtime_inbox(sequence) WHERE acknowledged = 0;
   CREATE TABLE runtime_events (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     canonical_state BLOB NOT NULL
@@ -100,7 +92,7 @@ export function readInboxItem(deliveryToken: DeliveryToken) {
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT sequence, canonical_item, canonical_guidance, acknowledged FROM runtime_inbox WHERE delivery_token = ?",
+      "SELECT published_sequence AS sequence, published_item AS canonical_item, canonical_guidance, acknowledged FROM incoming_items WHERE delivery_token = ? AND published_item IS NOT NULL",
       [deliveryToken],
     ))[0];
     return row === undefined
@@ -133,7 +125,7 @@ export function putInboxItem(
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
     const retained = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT canonical_item, canonical_guidance FROM runtime_inbox WHERE delivery_token = ?",
+      "SELECT published_item AS canonical_item, canonical_guidance FROM incoming_items WHERE delivery_token = ? AND published_item IS NOT NULL",
       [item.deliveryToken],
     ))[0];
     if (retained !== undefined) {
@@ -145,10 +137,13 @@ export function putInboxItem(
       requireSameOptionalBytes(priorGuidance, item.canonicalGuidance);
       return "existing";
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "INSERT INTO runtime_inbox (delivery_token, canonical_item, canonical_guidance) VALUES (?, ?, ?)",
-      [item.deliveryToken, item.canonicalItem, item.canonicalGuidance ?? null],
+    const published = yield* database.unsafe<Readonly<Record<string, unknown>>>(
+      "UPDATE incoming_items SET published_item=?,canonical_guidance=?,published_sequence=(SELECT COALESCE(MAX(published_sequence),0)+1 FROM incoming_items) WHERE delivery_token=? RETURNING delivery_token",
+      [item.canonicalItem, item.canonicalGuidance ?? null, item.deliveryToken],
     );
+    if (published.length === 0) {
+      return yield* new EndpointStoreError({ reason: "not-found" });
+    }
     return "inserted";
   }).pipe(storeOperation, Effect.withSpan("putInboxItem"));
 }
@@ -159,14 +154,14 @@ export function retireItem(
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
     const retained = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT delivery_token FROM runtime_inbox WHERE delivery_token = ?",
+      "SELECT delivery_token FROM incoming_items WHERE delivery_token = ? AND published_item IS NOT NULL",
       [deliveryToken],
     ))[0];
     if (retained === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "UPDATE runtime_inbox SET acknowledged = 1 WHERE delivery_token = ?",
+      "UPDATE incoming_items SET acknowledged = 1 WHERE delivery_token = ?",
       [deliveryToken],
     );
   }).pipe(storeOperation, Effect.withSpan("retireItem"));
@@ -199,7 +194,7 @@ export function readInbox(
     const through = requireSequence(input.through ?? (yield* newestSequence()));
     const limit = pageLimit(input, after, through);
     const rows = yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT sequence, delivery_token, canonical_item, canonical_guidance FROM runtime_inbox WHERE acknowledged = 0 AND sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?",
+      "SELECT published_sequence AS sequence, delivery_token, published_item AS canonical_item, canonical_guidance FROM incoming_items WHERE acknowledged=0 AND published_item IS NOT NULL AND published_sequence>? AND published_sequence<=? ORDER BY published_sequence LIMIT ?",
       [after, through, limit + 1],
     );
     const items = collectPage(rows, limit);
@@ -225,7 +220,7 @@ export function readInboxSummary(): Effect.Effect<
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT COUNT(*) AS pending FROM runtime_inbox WHERE acknowledged = 0",
+      "SELECT COUNT(*) AS pending FROM incoming_items WHERE acknowledged=0 AND published_item IS NOT NULL",
       [],
     ))[0];
     if (row === undefined) {
@@ -238,7 +233,7 @@ export function readInboxSummary(): Effect.Effect<
   }).pipe(storeOperation, Effect.withSpan("readInboxSummary"));
 }
 /**
- * Retire the host projection and any underlying pending protocol row atomically.
+ * Retain the published item after its host acknowledges delivery.
  * @param deliveryToken Stable delivered identity, including an existing tombstone.
  */
 export function acknowledgeInboxItem(
@@ -310,7 +305,7 @@ export function readHistoryViews(
     const views: HistoryView[] = [];
     for (const message of messages) {
       const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT i.delivery_token,i.canonical_item,i.canonical_guidance FROM message_visibility v JOIN runtime_inbox i USING(delivery_token) WHERE v.author_agent_id=? AND v.msg_id=?",
+        "SELECT i.delivery_token,i.published_item AS canonical_item,i.canonical_guidance FROM message_visibility v JOIN incoming_items i USING(delivery_token) WHERE v.author_agent_id=? AND v.msg_id=? AND i.published_item IS NOT NULL",
         [message.authorAgentId, message.msgId],
       ))[0];
       if (row !== undefined) {
@@ -341,7 +336,7 @@ function newestSequence(): Effect.Effect<
   return Effect.gen(function* () {
     const database = yield* SqlClient.SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT COALESCE(MAX(sequence), 0) AS newest FROM runtime_inbox",
+      "SELECT COALESCE(MAX(published_sequence), 0) AS newest FROM incoming_items",
       [],
     ))[0];
     if (row === undefined) {

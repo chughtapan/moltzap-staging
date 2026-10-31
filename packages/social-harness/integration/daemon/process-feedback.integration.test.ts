@@ -7,7 +7,7 @@ import { Effect, Stream } from "effect";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { acquireOtlpReceiver } from "./otlp-receiver.js";
+import { acquireOtlpReceiver } from "../fixtures/otlp-receiver.js";
 
 const binary = fileURLToPath(new URL("../bin/sharnessd", import.meta.url));
 const processName = "sharnessd";

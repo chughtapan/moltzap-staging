@@ -1,7 +1,7 @@
 /** @file Adapts messages and saved visibility to firewall assessment inputs. */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Clock, Effect, Option, Schema } from "effect";
+import { Clock, Effect, Option } from "effect";
 import { createHash } from "node:crypto";
 import type {
   FirewallOperations,
@@ -39,12 +39,18 @@ import {
 } from "../../communication/store/index.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import { compareAgentIds } from "../../encoding/identifier.js";
-import { HistoryEntry, Message, MessageContext } from "../../firewall/check.js";
+import {
+  ENDPOINT_SENDER,
+  type HistoryEntry,
+  type Message,
+  MessageContext,
+} from "../../firewall/check.js";
 import { InboundItem } from "../../host-protocol/items.js";
 import {
   questionText,
   renderCollectiveQuestion,
   renderCollectiveRequestBody,
+  renderCollectiveResult,
   renderContent,
   renderOutcome,
 } from "../../host-protocol/render.js";
@@ -101,7 +107,7 @@ const messageProjection = Effect.fn("firewallMessageProjection")(function* (
     ),
   );
   return {
-    message: yield* decodeMessage({
+    message: {
       id: messageId(shared),
       sender: shared.author.agentId,
       recipients: shared.recipients
@@ -111,7 +117,7 @@ const messageProjection = Effect.fn("firewallMessageProjection")(function* (
       ...(projected.operation === undefined
         ? {}
         : { operation: projected.operation }),
-    }),
+    },
     supported: projected.supported,
   } satisfies MessageProjection;
 });
@@ -163,21 +169,6 @@ const contextFrom = Effect.fn("firewallContext")(function* (
   });
   return { context, cards: [...cards.values()] };
 });
-
-/**
- * Reject an assessment input that its owning schema cannot decode.
- * @param value The message's fields.
- * @returns The validated message.
- */
-export function decodeMessage(
-  value: unknown,
-): Effect.Effect<Message, EndpointStoreError> {
-  return Schema.decodeUnknown(Message)(value).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
-    ),
-  );
-}
 
 /**
  * A message's own fields, without its class, so a projection can replace
@@ -316,9 +307,24 @@ function decodeHistory(
   localAgentId: string,
 ): Effect.Effect<DecodedHistory, EndpointStoreError> {
   return Effect.gen(function* () {
-    if ("canonicalEntry" in entry) {
+    if ("item" in entry) {
+      const item = entry.item;
       return {
-        entry: yield* decodeRuntimeValue(HistoryEntry, entry.canonicalEntry),
+        entry: {
+          id: hashedId(`${ENDPOINT_SENDER}:${item.operationId}`),
+          sender: ENDPOINT_SENDER,
+          recipients: [localAgentId],
+          text:
+            item.kind === "collectiveResult"
+              ? renderCollectiveResult(item)
+              : item.error,
+          operation:
+            item.kind === "collectiveResult"
+              ? { kind: "result", op: item.op, operationId: item.operationId }
+              : { kind: "failure", operationId: item.operationId },
+          visibility: "runtime",
+          admission: "admitted",
+        },
         cards: [],
       } satisfies DecodedHistory;
     }
@@ -400,7 +406,7 @@ export const prepareOutgoingQuestionCheck = Effect.fn(
       () => new EndpointStoreError({ reason: "invalid-input" }),
     ),
   );
-  const message = yield* decodeMessage({
+  const message: Message = {
     id: hashedId(`${question.author.agentId}:${question.operationId}`),
     sender: question.author.agentId,
     recipients: question.recipients.map((agent) => agent.agentId),
@@ -411,7 +417,7 @@ export const prepareOutgoingQuestionCheck = Effect.fn(
       operationId: question.operationId,
       deadlineAt: question.deadlineAt,
     },
-  });
+  };
   return yield* outgoingCheck(
     environment,
     question,
@@ -482,7 +488,7 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
     const message =
       item.kind === "multicast"
         ? (yield* messageProjection(item.message)).message
-        : yield* decodeMessage({
+        : {
             id: messageId(item.message),
             sender: item.message.author.agentId,
             recipients: item.message.recipients
@@ -495,7 +501,7 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
               operationId: item.message.content.operationId,
               deadlineAt: item.message.content.deadlineAt,
             },
-          });
+          };
     return yield* prepareMessageCheck(environment, {
       direction: "incoming",
       evidence,

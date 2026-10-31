@@ -50,6 +50,7 @@ const PACKAGE_SOURCE_FILES = [
 ];
 
 const TEST_SUPPORT_FILES = [
+  "integration/**/*.ts",
   "src/**/*.test.ts",
   "src/**/*.spec.ts",
   "src/**/*.integration.test.ts",

@@ -21,20 +21,14 @@ import {
   EndpointStoreError,
 } from "../../communication/store/index.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
-import { ENDPOINT_SENDER, type Message } from "../../firewall/check.js";
 import {
   type LocalGuidance,
   refusalReason,
 } from "../../host-protocol/advice.js";
-import {
-  renderCollectiveResult,
-  renderOutcome,
-} from "../../host-protocol/render.js";
+import { renderOutcome } from "../../host-protocol/render.js";
 import { readFirewallEvidenceSlices } from "./evidence.js";
 import {
-  decodeMessage,
   type FirewallEnvironment,
-  hashedId,
   messageFields,
   prepareMessageCheck,
   projectHistoryMessage,
@@ -65,7 +59,7 @@ export function checkLocalItem(
   local: LocalItemCheck,
 ): Effect.Effect<LocalAdmission, EndpointStoreError> {
   return local.item.kind === "operationFailed"
-    ? failureAdmission(environment, local.entry, local.item)
+    ? failureAdmission(local.entry)
     : resultAdmission(environment, local.entry, local.item);
 }
 
@@ -96,27 +90,16 @@ export function resultVisibility(
   }));
 }
 
-function failureAdmission(
-  environment: FirewallEnvironment,
-  entry: IncomingEntry,
-  item: FailureItem,
-) {
-  return Effect.gen(function* () {
-    const message = yield* localMessage(environment, entry, item.error, {
-      kind: "failure",
-      operationId: item.operationId,
-    });
-    return {
-      queuedItem: entry.canonicalItem,
-      item: {
-        deliveryToken: entry.deliveryToken,
-        canonicalItem: entry.canonicalItem,
-      },
-      completions: [],
-      visibility: [],
-      evidence: yield* localEvidence(item.to, message),
-    } satisfies LocalAdmission;
-  });
+function failureAdmission(entry: IncomingEntry) {
+  return Effect.succeed({
+    queuedItem: entry.canonicalItem,
+    item: {
+      deliveryToken: entry.deliveryToken,
+      canonicalItem: entry.canonicalItem,
+    },
+    completions: [],
+    visibility: [],
+  } satisfies LocalAdmission);
 }
 
 function resultAdmission(
@@ -135,18 +118,11 @@ function resultAdmission(
       selectedSources(item, sources, environment.localAgentCard.agentId),
     );
     const projected = projectResult(item, checked);
-    const message = yield* localMessage(
-      environment,
-      entry,
-      renderCollectiveResult(projected),
-      { kind: "result", op: item.op, operationId: item.operationId },
-    );
     return {
       queuedItem: entry.canonicalItem,
       item: yield* projectedEntry(entry, projected, resultGuidance(checked)),
       completions: checked.map((source) => source.checked.completion),
       visibility: sourceVisibility(item, sources, checked),
-      evidence: yield* localEvidence(item.to, message),
     } satisfies LocalAdmission;
   });
 }
@@ -234,10 +210,10 @@ function prepareSource(
       direction: "incoming",
       canonicalCandidate: entry.canonicalItem,
       evidence,
-      message: yield* decodeMessage({
+      message: {
         ...messageFields(projected.message),
         text: source.text,
-      }),
+      },
       cards: messageMembers(source.message),
     });
   });
@@ -329,28 +305,4 @@ function projectedEntry(
       ...(fits ? { canonicalGuidance } : {}),
     };
   });
-}
-
-function localMessage(
-  environment: FirewallEnvironment,
-  entry: IncomingEntry,
-  text: string,
-  operation: NonNullable<Message["operation"]>,
-) {
-  return decodeMessage({
-    id: hashedId(`${ENDPOINT_SENDER}:${entry.deliveryToken}`),
-    sender: ENDPOINT_SENDER,
-    recipients: [environment.localAgentCard.agentId],
-    text,
-    operation,
-  });
-}
-
-/** The runtime-visible evidence a local item leaves in its conversation. */
-function localEvidence(conversation: ResultItem["to"], message: Message) {
-  return encodeRuntimeValue({
-    ...messageFields(message),
-    visibility: "runtime",
-    admission: "admitted",
-  }).pipe(Effect.map((canonicalEntry) => ({ conversation, canonicalEntry })));
 }

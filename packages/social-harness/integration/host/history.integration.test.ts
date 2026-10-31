@@ -4,26 +4,33 @@ import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
-import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
-import { mcpIdentity } from "../../__tests__/mcp-http-fixtures.js";
-import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
+import {
+  digest,
+  testAgentView,
+} from "../../src/__tests__/agent-card-fixtures.js";
+import { collectiveOperationId } from "../../src/__tests__/collective-id-fixtures.js";
+import { mcpIdentity } from "../../src/__tests__/mcp-http-fixtures.js";
+import { localGuidance } from "../../src/__tests__/message-policy-fixtures.js";
 import {
   stateDirectory,
   withDaemonStore,
-} from "../../__tests__/store-schema-fixtures.js";
-import { Communication } from "../../communication/index.js";
-import { Message } from "../../communication/message.js";
-import { transaction } from "../../communication/store/database/index.js";
+} from "../../src/__tests__/store-schema-fixtures.js";
+import { Communication } from "../../src/communication/index.js";
+import { Message } from "../../src/communication/message.js";
+import { transaction } from "../../src/communication/store/database/index.js";
 import {
   DeliveryToken,
   encodeRuntimeValue,
-} from "../../communication/store/index.js";
-import { managementReadConversationRequestSchema } from "../../host-protocol/index.js";
-import { InboundItem } from "../../host-protocol/items.js";
-import { queueIncomingItem, settleQueuedItem } from "../inbox/pending.js";
-import { putInboxItem, retireItem } from "../inbox/store.js";
-import { makeHistoryOperations } from "./history.js";
+} from "../../src/communication/store/index.js";
+import { managementReadConversationRequestSchema } from "../../src/host-protocol/index.js";
+import { InboundItem } from "../../src/host-protocol/items.js";
+import {
+  queueIncomingItem,
+  settleQueuedItem,
+} from "../../src/daemon/inbox/pending.js";
+import { publishTestInboxItem as putInboxItem } from "../../src/__tests__/store-schema-fixtures.js";
+import { retireItem } from "../../src/daemon/inbox/store.js";
+import { makeHistoryOperations } from "../../src/daemon/messaging/history.js";
 
 const alice = testAgentView("agent:alice");
 const bob = testAgentView("agent:bob");

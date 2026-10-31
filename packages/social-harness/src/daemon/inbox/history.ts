@@ -12,7 +12,7 @@ import {
 import { DeliveryToken } from "../../communication/store/types.js";
 
 const localResults =
-  "FROM incoming_items AS incoming JOIN runtime_inbox AS inbox USING(delivery_token) WHERE incoming.author_agent_id IS NULL AND incoming.disposition='admitted'";
+  "FROM incoming_items AS incoming WHERE incoming.author_agent_id IS NULL AND incoming.disposition='admitted' AND incoming.published_item IS NOT NULL";
 
 /** Local results remain discoverable when no messages were sent. */
 export function listLocalResultConversations(after = "") {
@@ -34,7 +34,7 @@ export function localResultBoundary(conversation: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT COALESCE(MAX(inbox.sequence),0) AS newest ${localResults} AND incoming.conversation=?`,
+      `SELECT COALESCE(MAX(incoming.published_sequence),0) AS newest ${localResults} AND incoming.conversation=?`,
       [conversation],
     ))[0];
     return row === undefined ? 0 : readInteger(row, "newest");
@@ -51,7 +51,7 @@ export function readLocalResultPage(query: {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT inbox.sequence,inbox.delivery_token,inbox.canonical_item,inbox.canonical_guidance ${localResults} AND incoming.conversation=? AND inbox.sequence>? AND inbox.sequence<=? ORDER BY inbox.sequence LIMIT ?`,
+      `SELECT incoming.published_sequence AS sequence,incoming.delivery_token,incoming.published_item AS canonical_item,incoming.canonical_guidance ${localResults} AND incoming.conversation=? AND incoming.published_sequence>? AND incoming.published_sequence<=? ORDER BY incoming.published_sequence LIMIT ?`,
       [query.conversation, query.after, query.through, query.limit + 1],
     );
     const items = yield* Effect.forEach(rows.slice(0, query.limit), resultRow, {

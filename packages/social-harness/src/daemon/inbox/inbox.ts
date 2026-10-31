@@ -4,7 +4,6 @@ import type * as SqlClient from "@effect/sql/SqlClient";
 import { Effect, Encoding, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type {
-  HarnessMessageReadyEvent,
   HarnessReadInboxRequest,
   HarnessReadInboxResult,
 } from "../../host-protocol/operations.js";
@@ -17,12 +16,7 @@ import {
 import { exactStruct } from "../../encoding/exact.js";
 import { localGuidanceSchema } from "../../host-protocol/advice.js";
 import { InboundItem } from "../../host-protocol/items.js";
-import {
-  type InboxEntry,
-  putInboxItem,
-  readInbox,
-  readInboxItem,
-} from "./store.js";
+import { type InboxEntry, readInbox, readInboxItem } from "./store.js";
 
 /**
  * Lookup retains the original content and guidance after acknowledgment.
@@ -72,27 +66,6 @@ const cursorSchema = exactStruct({
   through: Schema.NonNegativeInt,
 });
 
-/**
- * Persist a classified item before any host can observe its delivery identity.
- * Reclassification retains guidance admitted under an earlier daemon composition.
- * @param event Stable delivery identity and classified payload.
- * @returns Completion once the immutable token binding is durable.
- */
-export const persistInboxItem = (
-  event: HarnessMessageReadyEvent,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> =>
-  Effect.gen(function* () {
-    const canonicalItem = yield* encodeRuntimeValue(event.item);
-    const retained = yield* readInboxItem(event.deliveryToken);
-    yield* putInboxItem({
-      deliveryToken: event.deliveryToken,
-      canonicalItem,
-      ...(retained?.canonicalGuidance === undefined
-        ? {}
-        : { canonicalGuidance: retained.canonicalGuidance }),
-    });
-  }).pipe(Effect.withSpan("persistInboxItem"));
-
 const decodeCursor = (
   cursor?: string,
 ): Effect.Effect<
@@ -137,15 +110,7 @@ export const readRuntimeInbox = (
         Effect.gen(function* () {
           return {
             deliveryToken: entry.deliveryToken,
-            item: yield* decodeRuntimeValue(InboundItem, entry.canonicalItem),
-            ...(entry.canonicalGuidance === undefined
-              ? {}
-              : {
-                  guidance: yield* decodeRuntimeValue(
-                    localGuidanceSchema,
-                    entry.canonicalGuidance,
-                  ),
-                }),
+            ...(yield* decodeInboxEntry(entry)),
           };
         }),
       { concurrency: 1 },

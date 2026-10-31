@@ -30,7 +30,7 @@
         "src/**/*.types-check.ts",
         "src/daemon/launcher/index.ts",
         "vitest*.config.ts",
-        "integration/*.integration.test.ts"
+        "integration/**/*.integration.test.ts"
       ],
       "project": [
         "src/**/*.ts",
