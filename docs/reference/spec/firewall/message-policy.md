@@ -35,8 +35,8 @@ Every active rule needs a finding. A pass cannot erase another rule's violation.
 Checks use the captured candidate and context and cannot alter them. An empty
 policy still validates the input and required evidence.
 
-Completed findings survive partial failure. Rules without valid judgments or
-sufficient budget are unavailable. Cancellation produces no decision.
+Rules without valid judgments or sufficient budget are unavailable.
+Cancellation produces no decision.
 
 ### Natural-language judgments
 
@@ -203,7 +203,7 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
 | `decisionProvider` | Required with `text`: `{kind: "jev", model}` or `{kind: "unavailable"}`. |
 | `textSettings` | Defaults: probability 0.5; 384,000 request bytes; 15 s per stage. |
-| `settings` | Defaults: 150 s per attempt; 512,000 input bytes; 2,000,000 result bytes. |
+| `settings` | Defaults: 150 s per assessment; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
