@@ -1,6 +1,6 @@
 /** @file A requester and three members run all_gather operations through four real daemons. */
 
-import { CollectiveError } from "@moltzap/social-harness";
+import { SendError } from "@moltzap/social-harness";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -86,21 +86,17 @@ interface AllGatherParticipants {
 }
 
 /** A refused operation sends nothing before the valid all_gather requests arrive. */
-function expectUnreachableAllGatherRefused(requester: Participant) {
+function expectUnknownAllGatherMemberRefused(requester: Participant) {
   return Effect.gen(function* () {
-    const unreachable = yield* allGather(
+    const failure = yield* allGather(
       requester,
       "group:all-gather-member-a,all-gather-nobody,all-gather-requester",
       60,
     ).pipe(Effect.flip);
-    expect(unreachable).toBeInstanceOf(CollectiveError);
-    expect(unreachable).toMatchObject({
-      failure: {
-        kind: "members-unreachable",
-        members: [
-          { member: "agent:all-gather-nobody", reason: "unknown-agent" },
-        ],
-      },
+    expect(failure).toBeInstanceOf(SendError);
+    expect(failure).toMatchObject({
+      reason: "unknown-agent",
+      detail: expect.stringContaining("agent:all-gather-nobody"),
     });
   });
 }
@@ -141,7 +137,7 @@ function startAllGatherAndExpectRequests({
 
 const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireFour;
-  yield* expectUnreachableAllGatherRefused(participants.requester);
+  yield* expectUnknownAllGatherMemberRefused(participants.requester);
   const started = yield* startAllGatherAndExpectRequests(participants);
   yield* answerAllGatherAndExpectSharedResult(
     participants,
