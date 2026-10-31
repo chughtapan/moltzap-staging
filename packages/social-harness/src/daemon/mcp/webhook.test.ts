@@ -77,13 +77,13 @@ const onSteppedClock = <Value, Failure>(
 
 /** Select callbacks by their signed event identity, independently of verification traffic. */
 const eventPosts = (
-  posts: ReturnType<typeof scriptedWebhook>["posts"],
+  posts: Effect.Effect.Success<ReturnType<typeof scriptedWebhook>>["posts"],
   byte: number,
 ) => posts.filter((post) => post.headers["webhook-id"] === token(byte));
 
 /** Verification challenges have their own signed identity prefix. */
 const verificationPosts = (
-  posts: ReturnType<typeof scriptedWebhook>["posts"],
+  posts: Effect.Effect.Success<ReturnType<typeof scriptedWebhook>>["posts"],
 ) =>
   posts.filter((post) =>
     post.headers["webhook-id"]?.startsWith("msg_verification_"),
@@ -100,7 +100,7 @@ const signsVerifiesAndRotates = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       const grant = yield* events.subscribe(input);
       const control = test.posts[0];
@@ -147,7 +147,7 @@ const retainsTerminalRejections = () =>
     Effect.gen(function* () {
       for (const status of [410, 413]) {
         const store = yield* openInboxFixture(stateDirectory());
-        const test = scriptedWebhook(store);
+        const test = yield* scriptedWebhook(store);
         const events = yield* test.acquire;
         yield* enqueue(store, 1);
         yield* events.subscribe(input);
@@ -175,7 +175,7 @@ it("delivers local guidance and its subject map through a signed webhook", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       const guidance = localGuidance(1);
       yield* store.putInboxItem({
@@ -202,7 +202,7 @@ const verifiesRotatedSecret = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       const grant = yield* events.subscribe(input);
       const rotated = {
@@ -229,7 +229,7 @@ const permitsReadAndRevokeDuringDelivery = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -250,7 +250,6 @@ const permitsReadAndRevokeDuringDelivery = () =>
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(delivery);
       expect((yield* events.status).mode).toBe("none");
-      expect(events.hasActiveSubscription()).toBe(false);
       expect((yield* store.readInboxSummary()).pendingCount).toBe(1);
     }),
   );
@@ -259,7 +258,7 @@ const refusesExpiredReceipt = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe({ ...input, ttlMs: 60_000 });
@@ -274,8 +273,7 @@ const refusesExpiredReceipt = () =>
       const delivery = yield* events.observe().pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
       yield* stepClock("61 seconds");
-      expect(events.hasActiveSubscription()).toBe(false);
-      const poll = yield* makeHarnessPollEvents(store, test.gate);
+      const poll = yield* makeHarnessPollEvents(store, test.gate, test.owner);
       yield* poll.poll(
         { name: input.name, arguments: {}, cursor: null },
         {},
@@ -283,7 +281,7 @@ const refusesExpiredReceipt = () =>
       );
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(delivery);
-      expect(poll.hasActiveSubscription()).toBe(true);
+      expect((yield* poll.status).mode).toBe("poll");
       expect((yield* store.readInboxSummary()).pendingCount).toBe(1);
     }),
   ).pipe(onSteppedClock);
@@ -297,7 +295,7 @@ const refreshPreservesTerminalReceipt = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -328,7 +326,7 @@ const retriesAcrossRestart = () => {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const store = yield* openInboxFixture(path);
-        const test = scriptedWebhook(store);
+        const test = yield* scriptedWebhook(store);
         const events = yield* test.acquire;
         yield* enqueue(store, 1);
         yield* events.subscribe(input);
@@ -342,7 +340,7 @@ const retriesAcrossRestart = () => {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const store = yield* openInboxFixture(path);
-        const test = scriptedWebhook(store);
+        const test = yield* scriptedWebhook(store);
         const events = yield* test.acquire;
         yield* events.observe();
         expect(eventPosts(test.posts, 1)[0]?.body).toBe(original);
@@ -414,7 +412,7 @@ const marksADeliveryBusyUntilItsReceipt = () => {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const store = yield* openInboxFixture(path);
-        const test = scriptedWebhook(store);
+        const test = yield* scriptedWebhook(store);
         const events = yield* test.acquire;
         yield* enqueue(store, 1);
         yield* events.subscribe(input);
@@ -427,7 +425,7 @@ const marksADeliveryBusyUntilItsReceipt = () => {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const store = yield* openInboxFixture(path);
-        const events = yield* scriptedWebhook(store).acquire;
+        const events = yield* (yield* scriptedWebhook(store)).acquire;
         yield* events.observe();
       }),
     );
@@ -451,7 +449,7 @@ const settlesALapsedDeliveryAsGivenUp = () => {
   return Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -478,7 +476,7 @@ const settlesARevokedDeliveryAsInterrupted = () => {
   return Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -498,7 +496,7 @@ const resumesExhaustedCallbacks = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -532,7 +530,7 @@ const boundsPayloadAndDrains = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       const large = "世界".repeat(100_000);
       yield* enqueue(store, 1, large);
@@ -557,7 +555,6 @@ const boundsPayloadAndDrains = () =>
       yield* stepClock("1 day");
       yield* events.observe();
       expect((yield* events.status).mode).toBe("webhook");
-      expect(events.hasActiveSubscription()).toBe(false);
       expect((yield* store.readInboxSummary()).pendingCount).toBe(1);
     }),
   ).pipe(onSteppedClock);
@@ -566,7 +563,7 @@ const removesRetiredOccurrence = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openInboxFixture(stateDirectory());
-      const test = scriptedWebhook(store);
+      const test = yield* scriptedWebhook(store);
       const events = yield* test.acquire;
       yield* enqueue(store, 1);
       yield* events.subscribe(input);
@@ -628,14 +625,15 @@ const rejectsUnsafeCallbacks = () =>
       url: "https://localhost/private",
     }).pipe(Effect.provide(webhookHttpClientLayer), Effect.flip);
     expect(dnsBlocked.reason).toBe("connection_refused");
-    const test = scriptedWebhook(yield* openInboxFixture(stateDirectory()));
+    const test = yield* scriptedWebhook(
+      yield* openInboxFixture(stateDirectory()),
+    );
     test.status(302);
     const events = yield* test.acquire;
     expect((yield* events.subscribe(input).pipe(Effect.flip)).code).toBe(
       -32015,
     );
     expect(verificationPosts(test.posts)).toHaveLength(1);
-    expect(events.hasActiveSubscription()).toBe(false);
   }).pipe(Effect.scoped);
 
 // @agent-code-guard/regression-only: External callback signatures, crash recovery and trust boundaries require conformance coverage.

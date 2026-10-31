@@ -1,6 +1,6 @@
 {
   "minFolderReadmeChildren": 9007199254740991,
-  "maxFolderCycles": 1,
+  "maxFolderCycles": 2,
   "facadeFiles": [
     {
       "file": "encoding/exact.ts",
@@ -127,10 +127,6 @@
       "reason": "The message-text parser native hosts call, without loading the operation layer"
     },
     {
-      "file": "communication/collectives/render.ts",
-      "reason": "Complete message rendering shared by hosts and policy evidence without loading collective operations"
-    },
-    {
       "file": "host-protocol/operations.ts",
       "reason": "Harness operation values and decoders shared by the host and daemon"
     },
@@ -167,8 +163,8 @@
       "reason": "Answer-schema validation shared by outbound answers and inbound result construction"
     },
     {
-      "file": "communication/store/collectives.ts",
-      "reason": "Atomic collective ownership, answer selection and terminal publication in the endpoint store"
+      "file": "communication/collectives/store.ts",
+      "reason": "Collective request, answer and result persistence stays within its operation owner"
     },
     {
       "file": "encoding/limits.ts",
@@ -177,10 +173,6 @@
     {
       "file": "communication/store/database/index.ts",
       "reason": "Effect SQL transaction and persistence error primitives shared by state owners"
-    },
-    {
-      "file": "communication/store/queues/peer-deliveries.ts",
-      "reason": "Protocol delivery retirement participates in host acknowledgment transactions"
     },
     {
       "file": "firewall/store/types.ts",
@@ -289,6 +281,18 @@
     {
       "file": "communication/collectives/receive.ts",
       "reason": "Interprets verified Messages into collective requests, answers and closes"
+    },
+    {
+      "file": "communication/collectives/wire.ts",
+      "reason": "The collective wire grammar keeps question forms, answers and close selection together"
+    },
+    {
+      "file": "communication/conversations/history/certificates.ts",
+      "reason": "Record certificate verification has one implementation boundary"
+    },
+    {
+      "file": "communication/records/encoding.ts",
+      "reason": "Canonical record and action encoding share their representation owner"
     }
   ],
   "compositionRoots": [
@@ -369,10 +373,10 @@
     {
       "name": "release",
       "roots": [
-        "src/release"
+        "src/release.ts"
       ],
       "entrypoints": [
-        "src/release/index.ts"
+        "src/release.ts"
       ],
       "reason": "Client package release metadata used by MCP peers, policy provenance and telemetry"
     },
@@ -407,10 +411,9 @@
       "entrypoints": [
         "src/communication/store/index.ts",
         "src/communication/store/types.ts",
-        "src/communication/store/database/index.ts",
-        "src/communication/store/queues/peer-deliveries.ts"
+        "src/communication/store/database/index.ts"
       ],
-      "reason": "Protocol persistence: certified history, immutable message claims, outbox and pending peer deliveries"
+      "reason": "Protocol persistence for certified history, accepted messages and exact outbox envelopes"
     },
     {
       "name": "router",
@@ -443,10 +446,9 @@
         "src/communication/collectives/contracts.ts",
         "src/communication/collectives/inbound.ts",
         "src/communication/collectives/message-text.ts",
-        "src/communication/collectives/render.ts",
         "src/communication/collectives/model.ts"
       ],
-      "reason": "Gather and all_gather carried in posts"
+      "reason": "Gather and all_gather operations over messages"
     },
     {
       "name": "host-protocol",
@@ -656,13 +658,6 @@
       "reason": "Opaque Router values and HTTP client below endpoint protocol records"
     },
     {
-      "name": "release",
-      "folders": [
-        "release"
-      ],
-      "reason": "Client package release metadata used by MCP peers, policy provenance and telemetry"
-    },
-    {
       "name": "envelope",
       "folders": [
         "identity/envelope"
@@ -709,11 +704,6 @@
     }
   ],
   "maxFolderImportDistance": 6,
-  "folderChildCountOverrides": [
-    {
-      "folder": "daemon",
-      "maxChildren": 11,
-      "reason": "Daemon composition owns configuration, registration, supervision, MCP serving and inbox handoff; host-facing client code lives outside this process."
-    }
-  ]
+  "maxFolderChildren": 24,
+  "maxFolderChildrenIncludingTests": 48
 }

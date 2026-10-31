@@ -4,10 +4,11 @@ import * as SqlClient from "@effect/sql/SqlClient";
 import { Effect } from "effect";
 import type {
   CertifiedRecord,
-  InboundDeliveryInput,
+  OutboundMessageInput,
   ProposalLock,
   ProtocolEvidence,
   StagedRecord,
+  StoredOutboundMessage,
   StoreMutation,
 } from "./types.js";
 
@@ -26,9 +27,9 @@ import {
   transaction,
 } from "./database/index.js";
 import {
-  retainDeliveryInTransaction,
-  retainDisseminationInTransaction,
-} from "./queues/index.js";
+  enqueueOutboundInTransaction,
+  readRecordOutbound,
+} from "./queues/outbound.js";
 import {
   findProposalLock,
   findStagedReanchor,
@@ -40,35 +41,38 @@ import {
   releaseProposalLock,
   requireSameRecord,
 } from "./rows/index.js";
-/**
- * Atomically stages an action-certified record and its send obligation.
- *
- * @param record Verified record core whose complete action evidence is durable.
- * @returns Whether either exact durable component was inserted.
- */
-export function stageRecordForDissemination(
+/** A record and its exact signed dissemination envelope commit before a durability vote. */
+export function stageRecordAndOutbound(
   record: StagedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
-  return Effect.gen(function* () {
-    validateStagedRecord(record);
-    return yield* transaction(
-      Effect.gen(function* () {
-        if (
-          (yield* findStagedRecord(
-            record.conversationId,
-            record.recordHash,
-          )) === undefined
-        ) {
-          yield* requireNoReanchorAwayFrom(record);
-        }
-        const staged = yield* stageRecordInTransaction(record);
-        const obligation = yield* retainDisseminationInTransaction(record);
-        return staged === "inserted" || obligation === "inserted"
-          ? "inserted"
-          : "existing";
-      }),
-    );
-  }).pipe(storeOperation, Effect.withSpan("stageRecordForDissemination"));
+  outbound: OutboundMessageInput,
+): Effect.Effect<
+  StoredOutboundMessage,
+  EndpointStoreError,
+  SqlClient.SqlClient
+> {
+  return transaction(
+    Effect.gen(function* () {
+      validateStagedRecord(record);
+      requireEqual(record.conversationId, outbound.conversationId);
+      if (
+        (yield* findStagedRecord(record.conversationId, record.recordHash)) ===
+        undefined
+      ) {
+        yield* requireNoReanchorAwayFrom(record);
+      }
+      yield* stageRecordInTransaction(record);
+      const retained = yield* readRecordOutbound(
+        record.conversationId,
+        record.recordHash,
+      );
+      return retained !== undefined && retained.disposition !== "discarded"
+        ? retained.outbound
+        : yield* enqueueOutboundInTransaction({
+            ...outbound,
+            recordHash: record.recordHash,
+          });
+    }),
+  ).pipe(storeOperation, Effect.withSpan("stageRecordAndOutbound"));
 }
 /**
  * Merges one stable evidence item without replacing a conflicting value.
@@ -146,25 +150,22 @@ export function supersedeProposalLock(
 }
 /**
  * Atomically promotes a complete record, advances its head, and retains its
- * local message completion or remote host delivery.
+ * local message completion.
  *
  * @param record Verified complete certified record.
- * @param delivery Canonical remote host message, absent for the local author.
  * @returns Whether any durable state was inserted.
  */
 export function promoteRecord(
   record: CertifiedRecord,
-  delivery?: InboundDeliveryInput,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
-    return yield* transaction(promoteRecordInTransaction(record, delivery));
+    return yield* transaction(promoteRecordInTransaction(record));
   }).pipe(storeOperation, Effect.withSpan("promoteRecord"));
 }
 /**
  * Atomically stages and promotes a record received whole, with its
- * certificates' evidence and its local message completion or remote host
- * delivery. A crash therefore never leaves its core staged without its
+ * certificates' evidence and its local message completion. A crash therefore never leaves its core staged without its
  * certification, where a restart could not tell it from a record this
  * endpoint staged for its own durability vote. This endpoint casts no vote
  * for it, so its core is staged even under an anchor this endpoint has
@@ -172,19 +173,17 @@ export function promoteRecord(
  * signature, including this endpoint's earlier signature, casts no new vote.
  *
  * @param record Verified complete certified record.
- * @param delivery Canonical remote host message, absent for the local author.
  * @returns Whether any durable state was inserted.
  */
 export function applyCertifiedRecord(
   record: CertifiedRecord,
-  delivery?: InboundDeliveryInput,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
     return yield* transaction(
       Effect.gen(function* () {
         const staged = yield* stageRecordInTransaction(record);
-        const promoted = yield* promoteRecordInTransaction(record, delivery);
+        const promoted = yield* promoteRecordInTransaction(record);
         return staged === "inserted" || promoted === "inserted"
           ? "inserted"
           : "existing";
@@ -234,8 +233,6 @@ function stageRecordInTransaction(
 }
 function promoteRecordInTransaction(
   record: CertifiedRecord,
-
-  delivery?: InboundDeliveryInput,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     const staged = yield* findStagedRecord(
@@ -248,20 +245,13 @@ function promoteRecordInTransaction(
     requireSameRecord(staged, record);
     const evidenceMutation = yield* mergeCertifiedEvidence(record);
     if (yield* hasCertifiedRecord(record.conversationId, record.recordHash)) {
-      const deliveryMutation = yield* retainDeliveryInTransaction(
-        record,
-        delivery,
-      );
-      return evidenceMutation === "inserted" || deliveryMutation === "inserted"
-        ? "inserted"
-        : "existing";
+      return evidenceMutation;
     }
     const position = yield* readStoredPosition(record.conversationId);
     requireEqual(position.currentAnchorHash, record.anchorHash);
     requireEqual(position.headRecordHash, record.previousRecordHash);
     yield* insertCertifiedRecord(record, position.headOrdinal + 1);
     yield* completeLocalMessageIntent(record);
-    yield* retainDeliveryInTransaction(record, delivery);
     return "inserted";
   }).pipe(storeOperation);
 }

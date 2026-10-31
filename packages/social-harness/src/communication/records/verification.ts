@@ -29,7 +29,7 @@ import {
   hashMessageIntent,
   hashRecord,
   type OuterMembership,
-} from "./encoding/index.js";
+} from "./encoding.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,

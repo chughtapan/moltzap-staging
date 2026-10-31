@@ -23,9 +23,12 @@ import {
 import {
   type CollectiveValue,
   encodeCollectiveContent,
-} from "../communication/collectives/wire/index.js";
-import { Communication, type SendOutcome } from "../communication/index.js";
-import { type Message, messageFromIntent } from "../communication/message.js";
+} from "../communication/collectives/wire.js";
+import { Communication, CommunicationError } from "../communication/index.js";
+import {
+  type Message,
+  messageFromParticipants,
+} from "../communication/message.js";
 import { MsgId } from "../communication/records/index.js";
 import { Identity } from "../identity/local.js";
 import { digest, testAgentView } from "./agent-card-fixtures.js";
@@ -38,9 +41,11 @@ import {
 interface FixtureInput {
   readonly database?: TestDatabase;
   readonly agent?: AgentView;
-  readonly waitForMessage?: Context.Tag.Service<
-    typeof Communication
-  >["waitForMessage"];
+  readonly waitForMessage?: (
+    reference: Parameters<
+      Context.Tag.Service<typeof Communication>["waitForMessage"]
+    >[0],
+  ) => Effect.Effect<void, CommunicationError>;
   readonly send?: Context.Tag.Service<typeof Communication>["send"];
 }
 
@@ -66,14 +71,6 @@ export function pendingBob() {
     const completion = yield* Deferred.make<undefined>();
     const fixture = yield* openCollectives({
       agent: bob,
-      send: (message) =>
-        Effect.succeed({
-          kind: "pending",
-          message: {
-            authorAgentId: message.author.agentId,
-            msgId: message.msgId,
-          },
-        }),
       waitForMessage: () => Deferred.await(completion),
     });
     return { ...fixture, completion };
@@ -87,7 +84,7 @@ export function openCollectives(input: FixtureInput = {}) {
     const agent = input.agent ?? alice;
     const sent = yield* Queue.unbounded<Message>();
     const results = yield* Queue.unbounded<ResultDelivery>();
-    const communication = createCommunication(input, sent);
+    const communication = createCommunication(input, sent, database);
     const identity = registeredIdentity(agent);
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
@@ -184,8 +181,7 @@ export function wireMessage(
 ) {
   return Effect.gen(function* () {
     const content = yield* encodeCollectiveContent(value, options.text);
-    return yield* messageFromIntent([author, ...recipients], {
-      authorAgentId: author.agentId,
+    return yield* messageFromParticipants(author, recipients, {
       msgId: Schema.decodeUnknownSync(MsgId)(digest("msg_", options.byte)),
       content,
     });
@@ -209,23 +205,33 @@ export function question(
   });
 }
 
-function createCommunication(input: FixtureInput, sent: Queue.Queue<Message>) {
+const retainedMessages = new WeakMap<TestDatabase, Map<string, Message>>();
+
+function createCommunication(
+  input: FixtureInput,
+  sent: Queue.Queue<Message>,
+  database: TestDatabase,
+) {
+  const messages = retainedMessages.get(database) ?? new Map<string, Message>();
+  retainedMessages.set(database, messages);
   return Communication.of({
     send: (message) =>
-      Queue.offer(sent, message).pipe(
-        Effect.zipRight(
-          input.send === undefined
-            ? Effect.succeed<SendOutcome>({
-                kind: "completed",
-                message: {
-                  authorAgentId: message.author.agentId,
-                  msgId: message.msgId,
-                },
-              })
-            : input.send(message),
-        ),
-      ),
-    waitForMessage: input.waitForMessage ?? (() => Effect.void),
+      Effect.gen(function* () {
+        yield* input.send?.(message) ?? Effect.void;
+        messages.set(`${message.author.agentId}:${message.msgId}`, message);
+        yield* Queue.offer(sent, message);
+      }),
+    waitForMessage: (reference) =>
+      Effect.gen(function* () {
+        yield* input.waitForMessage?.(reference) ?? Effect.void;
+        const message = messages.get(
+          `${reference.authorAgentId}:${reference.msgId}`,
+        );
+        if (message === undefined) {
+          return yield* new CommunicationError({ reason: "unknown-message" });
+        }
+        return message;
+      }),
     consume: () => Effect.never,
     listConversations: () =>
       Effect.succeed({ conversations: [], hasMore: false }),

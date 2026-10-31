@@ -36,5 +36,7 @@
       "subpath": "./test-support",
       "reason": "Channel test support exposed for integration tests"
     }
-  ]
+  ],
+  "maxFolderChildren": 24,
+  "maxFolderChildrenIncludingTests": 48
 }

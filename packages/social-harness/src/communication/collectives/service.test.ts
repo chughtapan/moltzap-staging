@@ -29,21 +29,22 @@ import {
   question,
   wireMessage,
 } from "../../__tests__/collective-service-fixtures.js";
+import { CommunicationError } from "../index.js";
 import { Message } from "../message.js";
 import { transaction } from "../store/database/index.js";
 import { CollectivesError, type ResultDelivery } from "./index.js";
-import { readCollectiveValue } from "./wire/index.js";
+import { readCollectiveValue } from "./wire.js";
 
 class HandlerUnavailable extends Data.TaggedError("HandlerUnavailable") {}
 
 it("saves separate gather requests without exposing the other recipients", () =>
   Effect.gen(function* () {
-    const fixture = yield* openCollectives({ send: () => Effect.never });
+    const fixture = yield* openCollectives();
     const captured = question((yield* Clock.currentTimeMillis) + 5000, [
       bob,
       carol,
     ]);
-    const accepted = yield* fixture.service.ask(captured);
+    yield* fixture.service.ask(captured);
     const messages = [
       yield* Queue.take(fixture.sent),
       yield* Queue.take(fixture.sent),
@@ -52,17 +53,28 @@ it("saves separate gather requests without exposing the other recipients", () =>
       [bob],
       [carol],
     ]);
-    const refs = messages.map((message) => message.msgId);
-    expect(accepted.msgIds).toEqual(refs);
-    expect((yield* fixture.service.ask(captured)).msgIds).toEqual(refs);
+    yield* fixture.service.ask(captured);
     yield* fixture.close;
     const restarted = yield* openCollectives({ database: fixture.database });
-    const restored = [
-      yield* Queue.take(restarted.sent),
-      yield* Queue.take(restarted.sent),
-    ];
-    expect(restored).toEqual(messages);
-    expect(restored.map((message) => message.msgId)).toEqual(refs);
+    yield* restarted.collect();
+    const response = yield* declineMessage(
+      bob,
+      [alice],
+      captured.operationId,
+      3,
+    );
+    yield* restarted.service.receive(response);
+    const other = yield* declineMessage(
+      carol,
+      [alice],
+      captured.operationId,
+      4,
+    );
+    yield* restarted.service.receive(other);
+    expect((yield* Queue.take(restarted.results)).sources.answers).toEqual([
+      response,
+      other,
+    ]);
   }));
 
 it("counts the first answer once and retains its original source", () =>
@@ -162,7 +174,7 @@ it("publishes the all_gather close with both parts of every selected message ide
       [bob, carol],
       "all_gather",
     );
-    yield* fixture.collect();
+    const consuming = yield* fixture.collect();
     yield* fixture.service.ask(captured);
     yield* Queue.take(fixture.sent);
     const one = yield* declineMessage(
@@ -191,8 +203,85 @@ it("publishes the all_gather close with both parts of every selected message ide
         }),
       ),
     );
-    const result = yield* Queue.take(fixture.results);
+    const result = yield* Queue.take(fixture.results).pipe(
+      Effect.raceFirst(Fiber.join(consuming)),
+    );
     expect(result.sources.answers).toEqual([one, two]);
+  }));
+
+it("recovers a frozen result while its accepted close is still certifying", () =>
+  Effect.gen(function* () {
+    const completion = yield* Deferred.make<undefined>();
+    const fixture = yield* openCollectives({
+      waitForMessage: () => Deferred.await(completion),
+    });
+    const captured = question(
+      (yield* Clock.currentTimeMillis) + 250,
+      [bob, carol],
+      "all_gather",
+    );
+    yield* fixture.service.ask(captured);
+    yield* Queue.take(fixture.sent);
+    const selected = yield* declineMessage(
+      bob,
+      [alice, carol],
+      captured.operationId,
+      43,
+    );
+    yield* fixture.service.receive(selected);
+    const close = yield* Queue.take(fixture.sent);
+    expect(yield* readCollectiveValue(close.content)).toEqual(
+      Option.some(
+        expect.objectContaining({
+          included: [{ authorAgentId: bob.agentId, msgId: selected.msgId }],
+        }),
+      ),
+    );
+    const late = yield* declineMessage(
+      carol,
+      [alice, bob],
+      captured.operationId,
+      44,
+    );
+    yield* fixture.service.receive(late);
+    yield* fixture.close;
+    const restarted = yield* openCollectives({ database: fixture.database });
+    yield* restarted.collect();
+    const result = yield* Queue.take(restarted.results);
+    expect(result.sources.answers).toEqual([selected]);
+    expect(result.item).toMatchObject({
+      outcomes: [
+        { member: bob, outcome: { kind: "declined" } },
+        { member: carol, outcome: { kind: "no-answer" } },
+      ],
+    });
+  }));
+
+it("rolls back an answer claim when Communication refuses its acceptance", () =>
+  Effect.gen(function* () {
+    const fixture = yield* openCollectives({
+      agent: bob,
+      send: () =>
+        Effect.fail(new CommunicationError({ reason: "persistence-failed" })),
+    });
+    const operationId = collectiveOperationId(alice.agentId);
+    yield* fixture.service.receive(
+      yield* aliceRequest((yield* Clock.currentTimeMillis) + 5000, {
+        operationId,
+      }),
+    );
+    const refused = yield* declineMessage(bob, [alice], operationId, 45);
+    expect(
+      yield* fixture.service.answer(refused).pipe(Effect.flip),
+    ).toMatchObject({ reason: "message-failed", detail: "persistence-failed" });
+    yield* fixture.close;
+    const restarted = yield* openCollectives({
+      database: fixture.database,
+      agent: bob,
+    });
+    const accepted = yield* declineMessage(bob, [alice], operationId, 46);
+    yield* restarted.service.answer(accepted);
+    expect(yield* Queue.take(restarted.sent)).toEqual(accepted);
   }));
 
 it("retains a received question and pending own answer without minting another message on restart", () =>
@@ -222,6 +311,7 @@ it("retains a received question and pending own answer without minting another m
       database: fixture.database,
       agent: bob,
     });
+    yield* restarted.service.answer(message);
     expect(yield* Queue.take(restarted.sent)).toEqual(message);
     expect(yield* restarted.service.getRequest(operationId)).toMatchObject({
       msgId: request.msgId,
@@ -422,12 +512,21 @@ it("does not admit a request under another author's operation namespace", () =>
     });
   }));
 
-it("fails result consumption when a scoped custody worker defects", () =>
+it("propagates a certification observer defect to the result consumer", () =>
   Effect.gen(function* () {
-    const defect = new Error("communication worker defect");
-    const fixture = yield* openCollectives({ send: () => Effect.die(defect) });
-    yield* fixture.service.ask(
-      question((yield* Clock.currentTimeMillis) + 5000),
+    const defect = new Error("communication observer defect");
+    const fixture = yield* openCollectives({
+      agent: bob,
+      waitForMessage: () => Effect.die(defect),
+    });
+    const operationId = collectiveOperationId(alice.agentId);
+    yield* fixture.service.receive(
+      yield* aliceRequest((yield* Clock.currentTimeMillis) + 5000, {
+        operationId,
+      }),
+    );
+    yield* fixture.service.answer(
+      yield* declineMessage(bob, [alice], operationId, 42),
     );
     const exit = yield* fixture.service
       .consumeResults(() => Effect.void)
@@ -437,11 +536,9 @@ it("fails result consumption when a scoped custody worker defects", () =>
         "result consumption unexpectedly completed",
       );
     }
-    const propagated = Option.getOrUndefined(Cause.dieOption(exit.cause));
-    if (!(propagated instanceof Error)) {
-      return yield* Effect.dieMessage("expected the original worker defect");
-    }
-    expect(propagated.message).toEqual(defect.message);
+    expect(Option.getOrUndefined(Cause.dieOption(exit.cause))).toMatchObject({
+      message: defect.message,
+    });
   }));
 
 it("publishes independent results while incoming handlers share SQL transactions with workers", () =>

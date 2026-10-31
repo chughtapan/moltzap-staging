@@ -1,27 +1,33 @@
 /** @file Keeps operation audiences and message identities fixed. */
 
-import { Effect, Option, Schema } from "effect";
-import type { Environment } from "./environment.js";
+import * as SqlClient from "@effect/sql/SqlClient";
+import {
+  type Context,
+  type Deferred,
+  Effect,
+  type Queue,
+  Schema,
+  type Scope,
+} from "effect";
+import type { Identity } from "../../identity/local.js";
+import type { Communication } from "../index.js";
+import type {
+  StoredCollectiveMessage,
+  StoredCollectiveOperation,
+} from "./store.js";
+import type { CollectiveValue } from "./wire.js";
 import { AgentView } from "../../identity/cards.js";
 import {
   Message,
-  messageFromIntent,
+  messageFromParticipants,
   messageMembers,
   replyAddress,
 } from "../message.js";
 import { mintMsgId } from "../records/index.js";
 import { agentAddressOf } from "../records/values.js";
-import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-  EndpointStoreError,
-  type StoredCollectiveOperation,
-} from "../store/index.js";
-import * as Store from "../store/index.js";
-import { CollectivesError } from "./errors.js";
-import { Question } from "./model.js";
-import { questionText } from "./render.js";
-import { type CollectiveValue, readCollectiveValue } from "./wire/index.js";
+import { EndpointStoreError } from "../store/database/index.js";
+import { type CollectiveId, CollectivesError } from "./contracts.js";
+import * as Store from "./store.js";
 
 /** Identity registration is independent of protocol startup. */
 export function self(environment: Environment) {
@@ -38,15 +44,14 @@ export function self(environment: Environment) {
   );
 }
 
-/** The author mints one identity before the message enters outgoing custody. */
+/** Request and close identities are fixed before Communication accepts them. */
 export function makeMessage(
   author: AgentView,
   recipients: readonly AgentView[],
   content: Message["content"],
 ) {
   return Effect.gen(function* () {
-    return yield* messageFromIntent([author, ...recipients], {
-      authorAgentId: author.agentId,
+    return yield* messageFromParticipants(author, recipients, {
       msgId: yield* mintMsgId().pipe(
         Effect.catchTag(
           "ClientRepresentationError",
@@ -84,64 +89,62 @@ export function requestItem(
   };
 }
 
-/** Local questions and received requests preserve their original audiences. */
+/** Stored questions are decoded once by their owning reader. */
 export function operationParticipants(operation: StoredCollectiveOperation) {
-  return Effect.gen(function* () {
-    if (operation.origin === "local") {
-      const question = yield* decodeRuntimeValue(
-        Question,
-        operation.canonicalRequest,
-      );
-      const request = {
-        author: question.author,
-        recipients: question.recipients,
-      };
-      return {
-        op: question.op,
-        members: question.recipients,
-        question: question.text,
-        requestedSchema: question.requestedSchema,
-        request,
-        to: outgoingAddress(request),
-      };
-    }
-    const request = yield* decodeRuntimeValue(
-      Message,
-      operation.canonicalRequest,
-    );
-    const value = yield* readCollectiveValue(request.content).pipe(
-      Effect.catchTag(
-        "CollectivePartInvalidError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
-    if (Option.isNone(value) || value.value.kind !== "operation") {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    return {
-      op: value.value.op,
-      members: request.recipients,
-      question: requestItem(request, value.value).message.content.question,
-      requestedSchema: value.value.requestedSchema,
-      request,
-      to: replyAddress(request),
+  if (operation.origin === "local") {
+    const question = operation.request;
+    const request = {
+      author: question.author,
+      recipients: question.recipients,
     };
-  }).pipe(Effect.withSpan("operationParticipants"));
+    return {
+      op: question.op,
+      members: question.recipients,
+      question: question.text,
+      requestedSchema: question.requestedSchema,
+      request,
+      to: outgoingAddress(request),
+    };
+  }
+  const { message, value } = operation.request;
+  return {
+    op: value.op,
+    members: message.recipients,
+    question: questionText(message.content),
+    requestedSchema: value.requestedSchema,
+    request: message,
+    to: replyAddress(message),
+  };
 }
 
-/** Role and destination select one immutable outgoing message for retries. */
+/** Acceptance and the collective claim use the same caller transaction. */
 export function saveMessage(
-  operationId: string,
+  environment: Environment,
+  operationId: CollectiveId,
   role: "request" | "response" | "close",
   message: Message,
 ) {
   return Effect.gen(function* () {
-    yield* Store.putCollectiveMessage({
+    const inserted = yield* Store.putCollectiveMessage({
       operationId,
       role,
       destination: outgoingAddress(message),
-      canonicalMessage: yield* encodeRuntimeValue(message),
+      reference: {
+        authorAgentId: message.author.agentId,
+        msgId: message.msgId,
+      },
     });
+    yield* environment.communication.send(message).pipe(
+      Effect.catchTag(
+        "CommunicationError",
+        (error) =>
+          new CollectivesError({
+            reason: "message-failed",
+            detail: error.reason,
+          }),
+      ),
+    );
+    return inserted;
   }).pipe(Effect.withSpan("saveMessage"));
 }
 
@@ -168,4 +171,32 @@ export function sameParticipants(
 /** The author and id cannot be reused with changed content or participants. */
 export function sameMessage(left: Message, right: Message) {
   return Schema.equivalence(Message)(left, right);
+}
+
+/** One service scope supervises deadlines and certification observations. */
+export interface Environment {
+  readonly sql: SqlClient.SqlClient;
+  readonly communication: Context.Tag.Service<typeof Communication>;
+  readonly identity: Context.Tag.Service<typeof Identity>;
+  readonly scope: Scope.Scope;
+  readonly failed: Deferred.Deferred<never, CollectivesError>;
+  readonly observations: Queue.Queue<StoredCollectiveMessage>;
+}
+
+/** Business refusals and handler failures keep their type when SQL rolls back. */
+export function transaction<A, E, R>(work: Effect.Effect<A, E, R>) {
+  return Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql.withTransaction(work),
+  ).pipe(
+    Effect.catchTag(
+      "SqlError",
+      () => new EndpointStoreError({ reason: "persistence" }),
+    ),
+  );
+}
+
+function questionText(content: Message["content"]): string {
+  return content
+    .flatMap((part) => (part.type === "text" ? [part.text] : []))
+    .join("\n");
 }

@@ -79,7 +79,6 @@ const recoverCanonicalContent = () =>
     yield* delivery.acknowledge;
     expect((yield* fixture.store.readInboxSummary()).pendingCount).toBe(0);
     yield* Fiber.interrupt(listening);
-    expect(fixture.handler.hasActiveSubscription()).toBe(false);
     const request = makeToolCallRequest({
       id: "retained-native-work",
       name: "read_event",
@@ -112,7 +111,6 @@ const signalIdleReadiness = () =>
       Effect.forkScoped,
     );
     yield* Deferred.await(ready);
-    expect(fixture.handler.hasActiveSubscription()).toBe(true);
     const other = yield* acquireHarnessEndpoint(fixture.address, options);
     expect(
       (yield* other.messages.pipe(Stream.runDrain, Effect.flip)).reason,
@@ -159,7 +157,6 @@ const fenceAfterFailedCleanup = () =>
       Stream.take(1),
       Stream.runDrain,
     );
-    expect(fixture.handler.hasActiveSubscription()).toBe(true);
     yield* acquireHarnessEndpoint(fixture.address, options);
     const delivery = yield* Deferred.await(received);
     expect((yield* delivery.acknowledge.pipe(Effect.flip)).reason).toBe(
@@ -238,7 +235,6 @@ const releaseAfterReadinessFailure = () =>
     });
     const result = yield* endpoint.messages.pipe(Stream.runDrain, Effect.exit);
     expect(result._tag).toBe("Failure");
-    expect(fixture.handler.hasActiveSubscription()).toBe(false);
   });
 
 const forwardRequest = (

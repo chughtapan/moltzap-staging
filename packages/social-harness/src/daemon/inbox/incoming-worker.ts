@@ -11,11 +11,7 @@ import {
   EndpointStoreError,
 } from "../../communication/store/index.js";
 import { InboundItem } from "../../host-protocol/items.js";
-import {
-  retireIncomingItem,
-  saveMessageDecision,
-  saveResultDecision,
-} from "../store.js";
+import { saveMessageDecision, saveResultDecision } from "../store.js";
 import {
   type FirewallEnvironment,
   prepareIncomingCheck,
@@ -131,13 +127,16 @@ function checkPendingMessage(
         return yield* checkMessage(environment, entry, item);
       case "collectiveRequest": {
         if (yield* requestExpired(item)) {
-          return yield* retireIncomingItem(entry.deliveryToken);
+          return yield* transaction(retireQueuedItem(entry.deliveryToken));
         }
         return yield* checkMessage(environment, entry, item);
       }
       case "collectiveResult":
       case "operationFailed":
-        return yield* checkResult(environment, entry, item);
+        return yield* checkLocalItem(environment, { entry, item }).pipe(
+          Effect.flatMap(saveResultDecision),
+          Effect.asVoid,
+        );
       default: {
         const exhaustive: never = item;
         return exhaustive;
@@ -155,7 +154,7 @@ function checkMessage(
   >,
 ) {
   return Effect.gen(function* () {
-    const prepared = yield* prepareIncomingCheck(environment, entry);
+    const prepared = yield* prepareIncomingCheck(environment, entry, item);
     const [checked] = yield* environment.firewall.check([prepared]);
     if (checked === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
@@ -174,20 +173,6 @@ function checkMessage(
       expired ? { ...checked.completion, admit: false } : checked.completion,
     );
   });
-}
-
-function checkResult(
-  environment: FirewallEnvironment,
-  entry: IncomingEntry,
-  item: Extract<
-    InboundItem,
-    { readonly kind: "collectiveResult" | "operationFailed" }
-  >,
-) {
-  return checkLocalItem(environment, { entry, item }).pipe(
-    Effect.flatMap(saveResultDecision),
-    Effect.asVoid,
-  );
 }
 
 /** Unconfigured assessment drains the same durable queue without producing policy decisions. */

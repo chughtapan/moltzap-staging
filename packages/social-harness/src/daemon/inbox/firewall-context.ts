@@ -1,12 +1,13 @@
 /** @file Adapts messages and saved visibility to firewall assessment inputs. */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Clock, Effect, Option, Schema } from "effect";
+import { Clock, Effect, Array as EffectArray, Option, Order } from "effect";
 import { createHash } from "node:crypto";
 import type {
   FirewallOperations,
   PreparedFirewallCheck,
 } from "../../firewall/index.js";
+import type { InboundItem } from "../../host-protocol/items.js";
 import type { Ed25519PublicKey } from "../../identity/keys.js";
 import type {
   FirewallEvidence,
@@ -33,22 +34,28 @@ import {
   type AgentAddress,
   agentAddressOf,
 } from "../../communication/records/values.js";
-import {
-  decodeRuntimeValue,
-  EndpointStoreError,
-} from "../../communication/store/index.js";
+import { EndpointStoreError } from "../../communication/store/index.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import { compareAgentIds } from "../../encoding/identifier.js";
-import { HistoryEntry, Message, MessageContext } from "../../firewall/check.js";
-import { InboundItem } from "../../host-protocol/items.js";
+import {
+  ENDPOINT_SENDER,
+  type HistoryEntry,
+  type Message,
+  type MessageContext,
+} from "../../firewall/check.js";
 import {
   questionText,
   renderCollectiveQuestion,
   renderCollectiveRequestBody,
+  renderCollectiveResult,
   renderContent,
   renderOutcome,
 } from "../../host-protocol/render.js";
-import { AgentView, type VerifiedAgentCard } from "../../identity/cards.js";
+import {
+  type AgentView,
+  agentViewOf,
+  type VerifiedAgentCard,
+} from "../../identity/cards.js";
 import { readFirewallEvidence } from "./evidence.js";
 
 /** The daemon supplies verified attribution and its existing durable evidence capability. */
@@ -101,17 +108,18 @@ const messageProjection = Effect.fn("firewallMessageProjection")(function* (
     ),
   );
   return {
-    message: yield* decodeMessage({
+    message: {
       id: messageId(shared),
       sender: shared.author.agentId,
-      recipients: shared.recipients
-        .map((agent) => agent.agentId)
-        .sort(compareAgentIds),
+      recipients: EffectArray.sort(
+        EffectArray.map(shared.recipients, (agent) => agent.agentId),
+        Order.string,
+      ),
       text: projected.text,
       ...(projected.operation === undefined
         ? {}
         : { operation: projected.operation }),
-    }),
+    },
     supported: projected.supported,
   } satisfies MessageProjection;
 });
@@ -142,13 +150,13 @@ const contextFrom = Effect.fn("firewallContext")(function* (
   );
   const cards = new Map<string, AgentView>();
   for (const card of [
-    AgentView.make(environment.localAgentCard),
+    agentViewOf(environment.localAgentCard),
     ...candidateCards,
     ...history.flatMap((entry) => entry.cards),
   ]) {
     cards.set(card.agentId, card);
   }
-  const context = new MessageContext({
+  const context: MessageContext = {
     agentId: localAgentId,
     principal: environment.localAgentCard.principalId,
     participants: [...cards.values()].map((card) => ({
@@ -160,24 +168,9 @@ const contextFrom = Effect.fn("firewallContext")(function* (
     now: yield* Clock.currentTimeMillis,
     facts: environment.firewall.configuration.facts,
     gaps: evidenceGaps(evidence),
-  });
+  };
   return { context, cards: [...cards.values()] };
 });
-
-/**
- * Reject an assessment input that its owning schema cannot decode.
- * @param value The message's fields.
- * @returns The validated message.
- */
-export function decodeMessage(
-  value: unknown,
-): Effect.Effect<Message, EndpointStoreError> {
-  return Schema.decodeUnknown(Message)(value).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
-    ),
-  );
-}
 
 /**
  * A message's own fields, without its class, so a projection can replace
@@ -195,15 +188,6 @@ export function messageFields(message: Message) {
       ? {}
       : { operation: message.operation }),
   };
-}
-
-/**
- * A stable message id derived from an identity no two messages share.
- * @param identity The author-scoped identity the id stands for.
- * @returns The id a check and its guidance refer to.
- */
-export function hashedId(identity: string): string {
-  return `msg_${createHash("sha256").update(identity).digest("hex")}`;
 }
 
 /** A projected message's text and operation, before attribution. */
@@ -301,6 +285,15 @@ function messageId(message: Pick<SharedMessage, "author" | "msgId">): string {
   return hashedId(`${message.author.agentId}:${message.msgId}`);
 }
 
+/**
+ * A stable message id derived from an identity no two messages share.
+ * @param identity The author-scoped identity the id stands for.
+ * @returns The id a check and its guidance refer to.
+ */
+function hashedId(identity: string): string {
+  return `msg_${createHash("sha256").update(identity).digest("hex")}`;
+}
+
 /** One history entry and the cards its attribution needs. */
 interface DecodedHistory {
   readonly entry: typeof HistoryEntry.Type;
@@ -316,9 +309,24 @@ function decodeHistory(
   localAgentId: string,
 ): Effect.Effect<DecodedHistory, EndpointStoreError> {
   return Effect.gen(function* () {
-    if ("canonicalEntry" in entry) {
+    if ("item" in entry) {
+      const item = entry.item;
       return {
-        entry: yield* decodeRuntimeValue(HistoryEntry, entry.canonicalEntry),
+        entry: {
+          id: hashedId(`${ENDPOINT_SENDER}:${item.operationId}`),
+          sender: ENDPOINT_SENDER,
+          recipients: [localAgentId],
+          text:
+            item.kind === "collectiveResult"
+              ? renderCollectiveResult(item)
+              : item.error,
+          operation:
+            item.kind === "collectiveResult"
+              ? { kind: "result", op: item.op, operationId: item.operationId }
+              : { kind: "failure", operationId: item.operationId },
+          visibility: "runtime",
+          admission: "admitted",
+        },
         cards: [],
       } satisfies DecodedHistory;
     }
@@ -400,10 +408,10 @@ export const prepareOutgoingQuestionCheck = Effect.fn(
       () => new EndpointStoreError({ reason: "invalid-input" }),
     ),
   );
-  const message = yield* decodeMessage({
+  const message: Message = {
     id: hashedId(`${question.author.agentId}:${question.operationId}`),
     sender: question.author.agentId,
-    recipients: question.recipients.map((agent) => agent.agentId),
+    recipients: EffectArray.map(question.recipients, (agent) => agent.agentId),
     text: renderCollectiveQuestion(question),
     operation: {
       kind: "request",
@@ -411,7 +419,7 @@ export const prepareOutgoingQuestionCheck = Effect.fn(
       operationId: question.operationId,
       deadlineAt: question.deadlineAt,
     },
-  });
+  };
   return yield* outgoingCheck(
     environment,
     question,
@@ -468,26 +476,30 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
   function* (
     environment: FirewallEnvironment,
     entry: IncomingEntry,
+    item: Extract<
+      InboundItem,
+      { readonly kind: "multicast" | "collectiveRequest" }
+    >,
   ): Effect.fn.Return<PreparedFirewallCheck, EndpointStoreError> {
-    const item = yield* decodeRuntimeValue(InboundItem, entry.canonicalItem);
-    if (item.kind !== "multicast" && item.kind !== "collectiveRequest") {
-      return yield* new EndpointStoreError({ reason: "invalid-input" });
-    }
     const evidence = yield* readFirewallEvidence({
       message: item.message,
       conversation: entry.conversation,
       maximumRecords: environment.firewall.configuration.maximumHistoryRecords,
       registrySignerPublicKey: environment.registrySignerPublicKey,
     }).pipe(Effect.provideService(SqlClient.SqlClient, environment.sql));
-    const message =
+    const message: Message =
       item.kind === "multicast"
         ? (yield* messageProjection(item.message)).message
-        : yield* decodeMessage({
+        : {
             id: messageId(item.message),
             sender: item.message.author.agentId,
-            recipients: item.message.recipients
-              .map((agent) => agent.agentId)
-              .sort(compareAgentIds),
+            recipients: EffectArray.sort(
+              EffectArray.map(
+                item.message.recipients,
+                (agent) => agent.agentId,
+              ),
+              Order.string,
+            ),
             text: renderCollectiveRequestBody(item),
             operation: {
               kind: "request",
@@ -495,7 +507,7 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
               operationId: item.message.content.operationId,
               deadlineAt: item.message.content.deadlineAt,
             },
-          });
+          };
     return yield* prepareMessageCheck(environment, {
       direction: "incoming",
       evidence,

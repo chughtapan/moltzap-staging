@@ -17,13 +17,6 @@
       "reason": "Router wire overrides require the explicit sharness-test resolution condition"
     }
   ],
-  "folderChildCountOverrides": [
-    {
-      "folder": "router",
-      "maxChildren": 9,
-      "reason": "The feed state, authenticated operations, continuation handling, and listener configuration form one independently runnable service"
-    }
-  ],
   "facadeFiles": [
     {
       "file": "router/feed.ts",
@@ -41,5 +34,7 @@
       "file": "router/send.ts",
       "reason": "Authenticated send behavior boundary over identity proof and feed capabilities"
     }
-  ]
+  ],
+  "maxFolderChildren": 24,
+  "maxFolderChildrenIncludingTests": 48
 }

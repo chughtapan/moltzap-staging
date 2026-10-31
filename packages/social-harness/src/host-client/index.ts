@@ -40,7 +40,7 @@ import {
   type DeliveryToken,
   type HarnessSendErrorData,
 } from "../host-protocol/operations.js";
-import { packageVersion } from "../release/index.js";
+import { packageVersion } from "../release.js";
 import {
   ConnectError,
   type HarnessEndpoint,

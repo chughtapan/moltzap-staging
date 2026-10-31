@@ -20,8 +20,8 @@ import {
 } from "effect";
 import { randomUUID } from "node:crypto";
 import type { InboxSummary } from "../../host-protocol/operations.js";
+import type { HarnessPollEvents } from "./poll.js";
 import {
-  decodeConsumerMetadata,
   eventListInput,
   eventPollInput,
   type EventPollInput,
@@ -42,10 +42,10 @@ import {
 import { Identity } from "../../identity/local.js";
 import {
   consumerConflict,
-  consumerLost,
-  type HarnessPollEvents,
-  invalidMetadata,
-} from "./poll.js";
+  type ConsumerOwner,
+  currentConsumer,
+  type PushSubscription,
+} from "./consumer.js";
 /** Durable callback delivery shares this consumer boundary. */
 export { makeWebhookEvents } from "./webhook.js";
 /** Ephemeral polling shares the same consumer boundary and ownership gate. */
@@ -53,30 +53,20 @@ export { makeHarnessPollEvents } from "./poll.js";
 /** Effect HTTP connection policy for callback delivery. */
 export { webhookHttpClientLayer } from "./event-signing.js";
 
-interface ActivePush {
-  readonly context: ServerContext;
-  readonly stop: Deferred.Deferred<undefined>;
-  readonly closed: Deferred.Deferred<undefined>;
-  ready: boolean;
-  previousSequence: number;
-}
-
 interface EventsOptions {
   readonly summary: () => Effect.Effect<
     InboxSummary,
     { readonly reason: string }
   >;
   readonly gate: Effect.Semaphore;
-  readonly webhook?: HarnessWebhookEvents;
-  readonly poll?: HarnessPollEvents;
-  readonly keepAliveMillis?: number;
-  readonly onActiveChange?: (active: boolean) => void;
+  readonly owner: ConsumerOwner;
+  readonly webhook: HarnessWebhookEvents;
+  readonly poll: HarnessPollEvents;
 }
 
 /** Official SDK request handlers and the daemon's content-free wakeup edge. */
 export interface HarnessEvents {
   readonly install: (server: McpServer["server"]) => void;
-  readonly hasActiveSubscription: () => boolean;
   readonly notifyPending: () => boolean;
   readonly close: Effect.Effect<void>;
   readonly status: Effect.Effect<WebhookStatus, ProtocolError>;
@@ -127,7 +117,7 @@ const requireAvailable = (occupied: boolean): void => {
 };
 
 const notify = (
-  push: ActivePush,
+  push: PushSubscription,
   method: string,
   params: Readonly<Record<string, unknown>>,
 ) =>
@@ -200,29 +190,16 @@ interface EventsRuntime {
   readonly options: EventsOptions;
   readonly lifetime: Scope.CloseableScope;
   readonly wakeups: Queue.Queue<boolean>;
-  active?: ActivePush;
   closed: boolean;
   revocations: number;
-  reportedActive: boolean;
 }
-const hasPollingConsumer = (runtime: EventsRuntime) =>
-  runtime.options.poll?.hasActiveSubscription() ?? false;
-const hasWebhookConsumer = (runtime: EventsRuntime) =>
-  runtime.options.webhook?.hasActiveSubscription() ?? false;
 const admissionClosed = (runtime: EventsRuntime) =>
   runtime.closed || runtime.revocations > 0;
-const hasConsumer = (runtime: EventsRuntime) =>
-  runtime.active !== undefined ||
-  hasPollingConsumer(runtime) ||
-  hasWebhookConsumer(runtime);
-const reportOwnership = (runtime: EventsRuntime) => {
-  const active = hasConsumer(runtime);
-  if (active !== runtime.reportedActive) {
-    runtime.reportedActive = active;
-    runtime.options.onActiveChange?.(active);
-  }
+const currentPush = (runtime: EventsRuntime): PushSubscription | undefined => {
+  const current = currentConsumer(runtime.options.owner);
+  return current.mode === "push" ? current.push : undefined;
 };
-const publishPush = (push: ActivePush, summary: InboxSummary) => {
+const publishPush = (push: PushSubscription, summary: InboxSummary) => {
   if (
     !push.ready ||
     summary.pendingCount === 0 ||
@@ -245,9 +222,9 @@ const publishPush = (push: ActivePush, summary: InboxSummary) => {
   );
 };
 const dispatch = (runtime: EventsRuntime, summary: InboxSummary) => {
-  const push = runtime.active;
+  const push = currentPush(runtime);
   return push === undefined
-    ? (runtime.options.webhook?.observe() ?? Effect.void)
+    ? runtime.options.webhook.observe()
     : publishPush(push, summary).pipe(
         Effect.catchAll(() =>
           Deferred.succeed(push.stop, undefined).pipe(Effect.asVoid),
@@ -263,26 +240,20 @@ const publish = (runtime: EventsRuntime) =>
     )
     .pipe(
       Effect.flatten,
-      Effect.tap(() =>
-        Effect.sync(() => {
-          reportOwnership(runtime);
-        }),
-      ),
       Effect.catchAll(() =>
         Effect.logWarning(
           "MCP Events delivery deferred after a persistence failure",
         ),
       ),
     );
-const releasePush = (runtime: EventsRuntime, push: ActivePush) =>
+const releasePush = (runtime: EventsRuntime, push: PushSubscription) =>
   Effect.sync(() => {
-    if (runtime.active === push) {
-      delete runtime.active;
-      reportOwnership(runtime);
+    if (currentPush(runtime) === push) {
+      runtime.options.owner.current = { mode: "none" };
     }
   }).pipe(Effect.zipRight(Deferred.succeed(push.closed, undefined)));
-const keepAlive = (runtime: EventsRuntime, push: ActivePush) =>
-  Effect.sleep(runtime.options.keepAliveMillis ?? 20_000).pipe(
+const keepAlive = (push: PushSubscription) =>
+  Effect.sleep(20_000).pipe(
     Effect.zipRight(
       notify(push, "notifications/events/heartbeat", { cursor: null }),
     ),
@@ -304,7 +275,7 @@ const stream = (
       });
       const stop = yield* Deferred.make<undefined>();
       const closed = yield* Deferred.make<undefined>();
-      const push: ActivePush = {
+      const push: PushSubscription = {
         context,
         stop,
         closed,
@@ -314,8 +285,11 @@ const stream = (
       yield* Effect.addFinalizer(() => releasePush(runtime, push));
       yield* runtime.options.gate.withPermits(1)(
         Effect.sync(() => {
-          requireAvailable(admissionClosed(runtime) || hasConsumer(runtime));
-          runtime.active = push;
+          requireAvailable(
+            admissionClosed(runtime) ||
+              currentConsumer(runtime.options.owner).mode !== "none",
+          );
+          runtime.options.owner.current = { mode: "push", push };
         }),
       );
       yield* notify(push, "notifications/events/active", {
@@ -324,10 +298,9 @@ const stream = (
       });
       yield* Effect.sync(() => {
         push.ready = true;
-        reportOwnership(runtime);
         runtime.wakeups.unsafeOffer(true);
       });
-      yield* keepAlive(runtime, push);
+      yield* keepAlive(push);
       yield* Deferred.await(stop);
       return {};
     }),
@@ -346,28 +319,20 @@ const descriptor = () => ({
     additionalProperties: false,
   },
 });
-const itemDescriptors = (runtime: EventsRuntime) => {
-  const delivery = [
-    ...(runtime.options.poll === undefined ? [] : ["poll"]),
-    ...(runtime.options.webhook === undefined ? [] : ["webhook"]),
-  ];
-  return delivery.length === 0
-    ? []
-    : [
-        {
-          name: INBOX_ITEM_EVENT,
-          description:
-            "A Social Harness message, collective request, result, or failure. Large events reference their full content through read_event. Processing and notifications follow the user's task configuration.",
-          delivery,
-          inputSchema: {
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          },
-          payloadSchema: itemEventDataJsonSchema,
-        },
-      ];
-};
+const itemDescriptors = () => [
+  {
+    name: INBOX_ITEM_EVENT,
+    description:
+      "A Social Harness message, collective request, result, or failure. Large events reference their full content through read_event. Processing and notifications follow the user's task configuration.",
+    delivery: ["poll", "webhook"],
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    payloadSchema: itemEventDataJsonSchema,
+  },
+];
 
 /** SDK validation exceptions become typed refusals for consumer-lifetime handling. */
 const authorizePoll = (runtime: EventsRuntime) =>
@@ -377,8 +342,9 @@ const authorizePoll = (runtime: EventsRuntime) =>
         Effect.sync(() => {
           requireAvailable(
             admissionClosed(runtime) ||
-              runtime.active !== undefined ||
-              hasWebhookConsumer(runtime),
+              !["none", "poll"].includes(
+                currentConsumer(runtime.options.owner).mode,
+              ),
           );
         }),
       ),
@@ -395,23 +361,7 @@ const poll = (
   runtime: EventsRuntime,
   input: EventPollInput,
   metadata: unknown,
-) =>
-  (
-    runtime.options.poll?.poll(input, metadata, authorizePoll(runtime)) ??
-    Effect.fail(
-      new ProtocolError(
-        -32014,
-        "Polling requires an authenticated daemon with an admitted inbox. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
-        { feature: "poll" },
-      ),
-    )
-  ).pipe(
-    Effect.tap(() =>
-      Effect.sync(() => {
-        reportOwnership(runtime);
-      }),
-    ),
-  );
+) => runtime.options.poll.poll(input, metadata, authorizePoll(runtime));
 
 const installReadHandlers = (
   runtime: EventsRuntime,
@@ -425,7 +375,7 @@ const installReadHandlers = (
         throw new ProtocolError(-32602, "Invalid event catalog cursor");
       }
       return {
-        events: [descriptor(), ...itemDescriptors(runtime)],
+        events: [descriptor(), ...itemDescriptors()],
       };
     },
   );
@@ -461,20 +411,15 @@ const subscribe = (runtime: EventsRuntime, input: EventSubscribeInput) =>
         }
         requireNoReplay(input.cursor);
         const webhook = runtime.options.webhook;
-        if (webhook === undefined || input.delivery.mode !== "webhook") {
-          throw new ProtocolError(-32014, "Webhook delivery is unavailable", {
-            feature: "deliveryMode",
-            value: input.delivery.mode,
-          });
-        }
         return webhook
           .subscribe(
             input,
             Effect.sync(() => {
               requireAvailable(
                 admissionClosed(runtime) ||
-                  runtime.active !== undefined ||
-                  hasPollingConsumer(runtime),
+                  !["none", "webhook"].includes(
+                    currentConsumer(runtime.options.owner).mode,
+                  ),
               );
             }),
           )
@@ -482,7 +427,6 @@ const subscribe = (runtime: EventsRuntime, input: EventSubscribeInput) =>
             Effect.map((grant) => ({ ...grant })),
             Effect.tap(() =>
               Effect.sync(() => {
-                reportOwnership(runtime);
                 runtime.wakeups.unsafeOffer(true);
               }),
             ),
@@ -495,19 +439,7 @@ const unsubscribe = (runtime: EventsRuntime, input: EventUnsubscribeInput) => {
     throw new ProtocolError(-32011, "Event not found", { kind: "event" });
   }
   const webhook = runtime.options.webhook;
-  if (webhook === undefined) {
-    throw new ProtocolError(-32011, "Subscription not found", {
-      kind: "subscription",
-    });
-  }
-  return webhook.unsubscribe(input).pipe(
-    Effect.tap(() =>
-      Effect.sync(() => {
-        reportOwnership(runtime);
-      }),
-    ),
-    Effect.as({}),
-  );
+  return webhook.unsubscribe(input).pipe(Effect.as({}));
 };
 const install = (runtime: EventsRuntime, server: McpServer["server"]) => {
   installReadHandlers(runtime, server);
@@ -539,25 +471,30 @@ const close = (runtime: EventsRuntime) =>
   Effect.gen(function* () {
     runtime.closed = true;
     yield* Scope.close(runtime.lifetime, Exit.void);
-    yield* runtime.options.poll?.revoke ?? Effect.void;
+    yield* runtime.options.poll.revoke;
   });
 const status = (
   runtime: EventsRuntime,
 ): Effect.Effect<WebhookStatus, ProtocolError> =>
   Effect.suspend(() => {
-    if (runtime.active !== undefined) {
-      return Effect.succeed({ mode: "push" });
+    const current = currentConsumer(runtime.options.owner);
+    switch (current.mode) {
+      case "push":
+        return Effect.succeed({ mode: "push" });
+      case "poll":
+        return runtime.options.poll.status;
+      case "none":
+      case "webhook":
+        return runtime.options.webhook.status;
+      default:
+        return current satisfies never;
     }
-    if (runtime.options.poll?.hasActiveSubscription()) {
-      return runtime.options.poll.status;
-    }
-    return runtime.options.webhook?.status ?? Effect.succeed({ mode: "none" });
   });
 const revoke = (runtime: EventsRuntime) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       runtime.revocations += 1;
-      return runtime.active;
+      return currentPush(runtime);
     }),
     (push) =>
       Effect.gen(function* () {
@@ -565,35 +502,19 @@ const revoke = (runtime: EventsRuntime) =>
           yield* Deferred.succeed(push.stop, undefined);
           yield* Deferred.await(push.closed);
         }
-        yield* runtime.options.poll?.revoke ?? Effect.void;
-        yield* runtime.options.webhook?.revoke ?? Effect.void;
+        yield* runtime.options.poll.revoke;
+        yield* runtime.options.webhook.revoke;
       }),
     () =>
       Effect.sync(() => {
         runtime.revocations -= 1;
-        reportOwnership(runtime);
       }),
   );
 
-/** Inbox inspection remains usable without a poll consumer; native receipts are fenced. */
-const nativeOperation = <A, E>(
-  runtime: EventsRuntime,
-  metadata: unknown,
-  operation: Effect.Effect<A, E>,
-) =>
-  runtime.options.poll?.nativeOperation(metadata, operation) ??
-  decodeConsumerMetadata(metadata).pipe(
-    Effect.catchTag("ParseError", () => Effect.fail(invalidMetadata())),
-    Effect.flatMap(
-      (binding): Effect.Effect<A, E | ProtocolError> =>
-        binding !== undefined ? Effect.fail(consumerLost()) : operation,
-    ),
-  );
 const assembled = (runtime: EventsRuntime): HarnessEvents => ({
   install: (server) => {
     install(runtime, server);
   },
-  hasActiveSubscription: () => hasConsumer(runtime),
   notifyPending: () => {
     if (runtime.closed) {
       return false;
@@ -605,8 +526,8 @@ const assembled = (runtime: EventsRuntime): HarnessEvents => ({
   status: status(runtime),
   revoke: revoke(runtime),
   nativeOperation: (metadata, operation) =>
-    nativeOperation(runtime, metadata, operation),
-  resume: (runtime.options.webhook?.resume ?? Effect.void).pipe(
+    runtime.options.poll.nativeOperation(metadata, operation),
+  resume: runtime.options.webhook.resume.pipe(
     Effect.tap(() => Effect.sync(() => runtime.wakeups.unsafeOffer(true))),
   ),
 });
@@ -630,7 +551,6 @@ export const makeHarnessEvents = (
       wakeups,
       closed: false,
       revocations: 0,
-      reportedActive: false,
     };
     yield* Scope.addFinalizer(lifetime, Queue.shutdown(wakeups));
     yield* Queue.take(wakeups).pipe(
@@ -638,13 +558,11 @@ export const makeHarnessEvents = (
       Effect.forever,
       Effect.forkIn(lifetime),
     );
-    if (options.webhook !== undefined || options.poll !== undefined) {
-      yield* Effect.sleep(1000).pipe(
-        Effect.tap(() => Effect.sync(() => wakeups.unsafeOffer(true))),
-        Effect.forever,
-        Effect.forkIn(lifetime),
-      );
-      wakeups.unsafeOffer(true);
-    }
+    yield* Effect.sleep(1000).pipe(
+      Effect.tap(() => Effect.sync(() => wakeups.unsafeOffer(true))),
+      Effect.forever,
+      Effect.forkIn(lifetime),
+    );
+    wakeups.unsafeOffer(true);
     return assembled(runtime);
   }).pipe(Effect.withSpan("makeHarnessEvents"));

@@ -338,7 +338,6 @@ const closesBlockedReceive = (kind: BlockedOperation["kind"]) =>
     );
     yield* Deferred.await(interrupted);
     yield* Fiber.interrupt(running);
-    expect(handler.hasActiveSubscription()).toBe(false);
     expect((yield* store.readInboxSummary()).pendingCount).toBe(1);
   });
 

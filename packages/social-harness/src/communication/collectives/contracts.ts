@@ -219,17 +219,6 @@ export const SendResultSchema = Schema.Union(
   }),
 ).annotations({ identifier: "SendResult" });
 /**
- * An accepted message, answer or question operation.
- * @useDeclaredType
- */
-type SendResult = typeof SendResultSchema.Type;
-
-/** Private accepted-message identities accompany the host-visible operation outcome. */
-export type CollectiveSendOutcome = SendResult & {
-  readonly msgIds: readonly MsgId[];
-};
-
-/**
  * Why a collective send was refused, discriminated by `kind`: a gather or
  * all_gather whose schema is outside the form-mode grammar, whose request
  * message some member could not receive, or whose deadline passed while its
@@ -373,3 +362,17 @@ export class CollectiveError extends Data.TaggedError("CollectiveError")<{
 }
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore the package naming rules after the Schema/type pairs. */
+
+/** Operation failures remain distinct from messaging and storage failures. */
+export class CollectivesError extends Data.TaggedError("CollectivesError")<{
+  readonly reason:
+    | "not-registered"
+    | "invalid-question"
+    | "request-none"
+    | "request-expired"
+    | "request-answered"
+    | "answer-invalid"
+    | "persistence-failed"
+    | "message-failed";
+  readonly detail?: string;
+}> {}

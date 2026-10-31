@@ -2,55 +2,42 @@
 
 import { Clock, Deferred, Effect, Option, Schema } from "effect";
 import type { AgentView } from "../../identity/cards.js";
-import type { Environment } from "./environment.js";
+import type { Message, MessageReference } from "../message.js";
+import type { collectiveClosure, CollectiveId } from "./contracts.js";
+import type { StoredCollectiveOperation } from "./store.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
-import { Message, type MessageReference } from "../message.js";
-import { transaction } from "../store/database/index.js";
+import { encodeRuntimeValue, EndpointStoreError } from "../store/index.js";
+import { ResultDelivery, type ResultSources } from "./model.js";
 import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-  EndpointStoreError,
-  type StoredCollectiveOperation,
-} from "../store/index.js";
-import * as Store from "../store/index.js";
-import { type collectiveClosure, CollectiveId } from "./contracts.js";
-import {
-  frozenResult,
-  type FrozenResult,
-  ResultDelivery,
-  ResultSources,
-} from "./model.js";
-import {
+  type Environment,
   makeMessage,
   operationParticipants,
   saveMessage,
   self,
+  transaction,
 } from "./operations.js";
+import * as Store from "./store.js";
 import { outcomeOfResponse } from "./validation.js";
 import {
   type CollectiveValue,
   encodeCollectiveContent,
   type FormModeSchema,
   readCollectiveValue,
-} from "./wire/index.js";
+} from "./wire.js";
 
 type Closure = typeof collectiveClosure.Type;
-type Participants = Effect.Effect.Success<
-  ReturnType<typeof operationParticipants>
->;
+type Participants = ReturnType<typeof operationParticipants>;
 type Close = Extract<CollectiveValue, { readonly kind: "close" }>;
 
-/** A group result waits for its saved close to certify before publication. */
+/** Final fields are frozen before the close is accepted in the same transaction. */
 export const finishLocal = Effect.fn("finishLocal")(function* (
+  environment: Environment,
   operationId: CollectiveId,
 ) {
-  const frozen = yield* transaction(freezeLocal(operationId));
-  if (frozen !== undefined && frozen.close === undefined) {
-    yield* publishResult(operationId, frozen);
-  }
+  return yield* transaction(freezeLocal(environment, operationId));
 });
 
-/** A close selects only the retained first answer under each named identity. */
+/** Close and own-answer events advance remote completion without a periodic scan. */
 export const finishRemote = Effect.fn("finishRemote")(function* (
   environment: Environment,
   operationId: CollectiveId,
@@ -58,23 +45,21 @@ export const finishRemote = Effect.fn("finishRemote")(function* (
   yield* transaction(completeRemote(environment, operationId));
 });
 
-/** Public item bytes and private source bytes retain independent size bounds. */
-export function publishResult(operationId: string, result: FrozenResult) {
+/** Final item and assembled source bytes retain independent publication budgets. */
+export function checkResultSize(result: {
+  readonly item: ResultDelivery["item"];
+  readonly sources: ResultSources;
+}) {
   return Effect.gen(function* () {
-    const canonicalResult = yield* encodeRuntimeValue(result.item);
-    const canonicalSources = yield* encodeRuntimeValue(result.sources);
+    const item = yield* encodeRuntimeValue(result.item);
+    const sources = yield* encodeRuntimeValue(result.sources);
     if (
-      canonicalResult.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES ||
-      canonicalSources.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
+      item.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES ||
+      sources.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
     ) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
-    yield* Store.completeCollectiveOperation({
-      operationId,
-      canonicalResult,
-      canonicalSources,
-    });
-  }).pipe(Effect.withSpan("publishResult"));
+  }).pipe(Effect.withSpan("checkResultSize"));
 }
 
 /** Handler success and handoff retirement share the caller fiber transaction. */
@@ -89,24 +74,18 @@ export function consumeResults<E, R>(
   );
 }
 
-function freezeLocal(operationId: CollectiveId) {
+function freezeLocal(environment: Environment, operationId: CollectiveId) {
   return Effect.gen(function* () {
     const operation = yield* Store.readCollectiveOperation(operationId);
     if (
       operation === undefined ||
       operation.origin !== "local" ||
-      operation.phase === "completed"
+      operation.phase !== "collecting"
     ) {
       return undefined;
     }
-    if (operation.canonicalSelection !== undefined) {
-      return yield* decodeRuntimeValue(
-        frozenResult,
-        operation.canonicalSelection,
-      );
-    }
-    const participants = yield* operationParticipants(operation);
-    const answers = yield* savedAnswers(operationId);
+    const participants = operationParticipants(operation);
+    const answers = yield* Store.readCollectiveAnswers(operationId);
     const closure = completionAt(
       operation.deadlineAt,
       participants.members.length,
@@ -116,20 +95,33 @@ function freezeLocal(operationId: CollectiveId) {
     if (closure === undefined) {
       return undefined;
     }
-    const frozen = yield* selectedResult(
+    const result = yield* makeResult(operation, answers, closure);
+    yield* checkResultSize(result);
+    yield* Store.saveCollectiveResult({
+      operationId,
+      item: result.item,
+      answers: answers.map((answer) => ({
+        authorAgentId: answer.author.agentId,
+        msgId: answer.msgId,
+      })),
+      complete: participants.op === "gather",
+    });
+    if (participants.op === "gather") {
+      return undefined;
+    }
+    const close = yield* makeGroupClose(
       operation,
       participants,
       answers,
       closure,
     );
-    yield* Store.finalizeCollectiveOperation(
+    yield* saveMessage(environment, operationId, "close", close);
+    return {
       operationId,
-      yield* encodeRuntimeValue(frozen),
-    );
-    if (frozen.close !== undefined) {
-      yield* saveMessage(operationId, "close", frozen.close);
-    }
-    return frozen;
+      role: "close" as const,
+      destination: participants.to,
+      reference: { authorAgentId: close.author.agentId, msgId: close.msgId },
+    };
   });
 }
 
@@ -148,22 +140,6 @@ function completionAt(
   };
 }
 
-function selectedResult(
-  operation: StoredCollectiveOperation,
-  participants: Participants,
-  answers: readonly Message[],
-  closure: Closure,
-) {
-  return Effect.gen(function* () {
-    const result = yield* makeResult(operation, answers, closure);
-    const close =
-      participants.op === "all_gather"
-        ? yield* makeGroupClose(operation, participants, answers, closure)
-        : undefined;
-    return { ...result, ...(close === undefined ? {} : { close }) };
-  });
-}
-
 function makeGroupClose(
   operation: StoredCollectiveOperation,
   participants: Participants,
@@ -171,14 +147,7 @@ function makeGroupClose(
   closure: Closure,
 ) {
   return Effect.gen(function* () {
-    const operationId = yield* Schema.decodeUnknown(CollectiveId)(
-      operation.operationId,
-    ).pipe(
-      Effect.catchTag(
-        "ParseError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
+    const operationId = operation.operationId;
     const content = yield* encodeCollectiveContent({
       kind: "close",
       operationId,
@@ -208,36 +177,24 @@ function completeRemote(environment: Environment, operationId: CollectiveId) {
       operation === undefined ||
       operation.origin !== "remote" ||
       operation.phase !== "finalizing" ||
-      operation.canonicalSelection === undefined
+      operation.close === undefined
     ) {
       return;
     }
-    const message = yield* decodeRuntimeValue(
-      Message,
-      operation.canonicalSelection,
-    );
-    const value = yield* readCollectiveValue(message.content).pipe(
-      Effect.catchTag(
-        "CollectivePartInvalidError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
-    if (Option.isNone(value) || value.value.kind !== "close") {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    const selected = yield* selectAnswers(
-      environment,
-      operationId,
-      value.value,
-    );
+    const { value } = operation.close;
+    const selected = yield* selectAnswers(environment, operationId, value);
     if (Option.isSome(selected)) {
-      yield* publishResult(
+      const result = yield* makeResult(operation, selected.value, {
+        closedAt: value.closedAt,
+        closedBy: value.closedBy,
+      });
+      yield* checkResultSize(result);
+      yield* Store.saveCollectiveResult({
         operationId,
-        yield* makeResult(operation, selected.value, {
-          closedAt: value.value.closedAt,
-          closedBy: value.value.closedBy,
-        }),
-      );
+        item: result.item,
+        answers: value.included,
+        complete: true,
+      });
     }
   });
 }
@@ -255,7 +212,7 @@ function selectAnswers(
       yield* Store.retireCollectiveOperation(operationId);
       return Option.none<readonly Message[]>();
     }
-    const answers = yield* savedAnswers(operationId);
+    const answers = yield* Store.readCollectiveAnswers(operationId);
     const selected = answersFor(answers, close.included);
     if (selected.length === close.included.length) {
       return Option.some(selected);
@@ -306,21 +263,12 @@ function ownAnswerPending(
       return false;
     }
     return (yield* Store.readCollectiveMessages(operationId)).some(
-      (entry) => entry.role === "response",
+      (entry) =>
+        entry.role === "response" &&
+        entry.reference.authorAgentId === own.authorAgentId &&
+        entry.reference.msgId === own.msgId,
     );
   });
-}
-
-function savedAnswers(operationId: string) {
-  return Store.readCollectiveAnswers(operationId).pipe(
-    Effect.flatMap((rows) =>
-      Effect.forEach(
-        rows,
-        (row) => decodeRuntimeValue(Message, row.canonicalMessage),
-        { concurrency: 1 },
-      ),
-    ),
-  );
 }
 
 function makeResult(
@@ -329,7 +277,7 @@ function makeResult(
   closure: Closure,
 ) {
   return Effect.gen(function* () {
-    const participants = yield* operationParticipants(operation);
+    const participants = operationParticipants(operation);
     const outcomes = yield* Effect.forEach(
       participants.members,
       (member) =>
@@ -360,9 +308,7 @@ function makeResult(
       ),
     );
     const request =
-      operation.origin === "remote"
-        ? yield* decodeRuntimeValue(Message, operation.canonicalRequest)
-        : undefined;
+      operation.origin === "remote" ? operation.request.message : undefined;
     return {
       item,
       sources: { answers, ...(request === undefined ? {} : { request }) },
@@ -411,29 +357,32 @@ function deliverNextResult<E, R>(
     if (operation === undefined) {
       return yield* Effect.sleep("100 millis");
     }
-    if (
-      operation.canonicalResult === undefined ||
-      operation.canonicalSources === undefined
-    ) {
+    if (operation.result === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    const result = yield* Schema.decodeUnknown(ResultDelivery)({
+    const answers = answersFor(
+      yield* Store.readCollectiveAnswers(operation.operationId),
+      operation.result.answers,
+    );
+    if (answers.length !== operation.result.answers.length) {
+      return yield* new EndpointStoreError({ reason: "corrupt" });
+    }
+    const request =
+      operation.origin === "remote" &&
+      operation.result.item.kind === "collectiveResult"
+        ? operation.request.message
+        : undefined;
+    const sources: ResultSources = {
+      answers,
+      ...(request === undefined ? {} : { request }),
+    };
+    const result: ResultDelivery = {
       operationId: operation.operationId,
       deliveryToken: operation.deliveryToken,
-      item: yield* decodeRuntimeValue(
-        ResultDelivery.fields.item,
-        operation.canonicalResult,
-      ),
-      sources: yield* decodeRuntimeValue(
-        ResultSources,
-        operation.canonicalSources,
-      ),
-    }).pipe(
-      Effect.catchTag(
-        "ParseError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
+      item: operation.result.item,
+      sources,
+    };
+    yield* checkResultSize(result);
     yield* transaction(
       handle(result).pipe(
         Effect.zipRight(Store.retireCollectiveResult(operation.operationId)),

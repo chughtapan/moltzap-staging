@@ -3,7 +3,9 @@
  */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Data, Deferred, Duration, Effect, Schema, type Scope } from "effect";
+import { Data, Deferred, Duration, Effect, type Scope } from "effect";
+import type { Message } from "../message.js";
+import type { DecodedOuterBody, MsgId, RecordHash } from "../records/index.js";
 import type {
   RouterDiscontinuityReason,
   RouterIngressDisposition,
@@ -13,30 +15,22 @@ import type {
   RouterWorkerRecoveryError,
   RouterWorkerSendError,
 } from "../router/index.js";
-import type { DeliveryToken, EndpointStoreError } from "../store/index.js";
+import type { EndpointStoreError } from "../store/index.js";
 import type {
   EndpointEngineInput,
   EnginePhases,
   EngineRuntime,
 } from "./engine-context.js";
-import { decodeCanonical } from "../../encoding/canonical-json.js";
 import { AgentSigningAuthority } from "../../identity/keys.js";
 import { wireVersions } from "../../identity/wire-version.js";
-import { Message } from "../message.js";
-import {
-  type DecodedOuterBody,
-  MessageIntent,
-  type MsgId,
-  RecordHash,
-} from "../records/index.js";
 import * as Store from "../store/index.js";
 import {
   acceptEngineIngress,
   acceptEngineRecoveryIngress,
-  resumeDisseminationObligations,
   resumeEngineFolds,
 } from "./certification/index.js";
 import { DeliveryAcknowledgeError, ListenError, SendError } from "./errors.js";
+import { readStoredHistory } from "./history/index.js";
 import { makeOutbox } from "./outbox.js";
 import { recoverEngineState } from "./restore.js";
 import {
@@ -94,7 +88,6 @@ export class EngineOutboundError extends Data.TaggedError(
 
 /** Verified messages remain pending until the Communication handler finishes. */
 interface EnginePendingMessage {
-  readonly deliveryToken: DeliveryToken;
   readonly recordHash: RecordHash;
   readonly message: Message;
 }
@@ -106,6 +99,9 @@ export interface EndpointEngine {
     msgId: MsgId,
   ) => Effect.Effect<EngineSentMessage, SendError>;
 
+  /** Prepares accepted work without waiting for certification. */
+  readonly prepareMessage: (message: Message) => Effect.Effect<void, SendError>;
+
   /** Accepts and certifies the caller's immutable message identity. */
   readonly send: (
     message: Message,
@@ -115,7 +111,7 @@ export interface EndpointEngine {
     ListenError
   >;
   readonly acknowledgeMessage: (
-    deliveryToken: DeliveryToken,
+    recordHash: RecordHash,
   ) => Effect.Effect<void, DeliveryAcknowledgeError>;
   readonly acceptRouterIngress: (
     ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -327,39 +323,27 @@ const send = (
     Effect.withSpan("EndpointEngine.send"),
   );
 
-const readPendingMessages = (): Effect.Effect<
+const readPendingMessages = (
+  runtime: EngineRuntime,
+): Effect.Effect<
   readonly EnginePendingMessage[],
   ListenError,
   SqlClient.SqlClient
 > =>
-  Store.readPendingDeliveries().pipe(
+  Store.readUnconsumedRecords().pipe(
     Effect.mapError(listenStoreFailure),
-    Effect.flatMap((deliveries) =>
-      Effect.forEach(
-        deliveries,
-        (delivery) =>
-          Effect.all({
-            message: decodeCanonical(Message, delivery.canonicalMessage),
-            recordHash: Schema.decodeUnknown(RecordHash)(delivery.recordHash),
-          }).pipe(
-            Effect.mapError(listenRepresentationFailure),
-            Effect.map(({ message, recordHash }) => ({
-              deliveryToken: delivery.deliveryToken,
-              recordHash,
-              message,
-            })),
-          ),
-        { concurrency: 1 },
-      ),
+    Effect.flatMap((history) =>
+      readStoredHistory(
+        runtime.input.registrySignerPublicKey,
+        history,
+        history.records,
+      ).pipe(Effect.mapError(listenRepresentationFailure)),
     ),
   );
 
-const acknowledgeMessage = (
-  deliveryToken: DeliveryToken,
-): Effect.Effect<void, DeliveryAcknowledgeError, SqlClient.SqlClient> =>
-  Store.acknowledgeDelivery(deliveryToken).pipe(
+const acknowledgeMessage = (recordHash: RecordHash) =>
+  Store.consumeRecord(recordHash).pipe(
     Effect.mapError(acknowledgeStoreFailure),
-    Effect.asVoid,
   );
 
 const validateLocalIdentity = (
@@ -376,7 +360,6 @@ const enginePhases: EnginePhases = {
   acceptIngress: acceptEngineIngress,
   acceptRecoveryIngress: acceptEngineRecoveryIngress,
   resumeFolds: resumeEngineFolds,
-  resumeDissemination: resumeDisseminationObligations,
   rearmCatchUp: rearmPausedCatchUp,
   headAdvanced: recoveryHeadAdvanced,
   isRecovering,
@@ -416,10 +399,7 @@ const hydrateMessageIntents = (
     messageIntents,
     (stored) =>
       Effect.gen(function* () {
-        const intent = yield* decodeCanonical(
-          MessageIntent,
-          stored.canonicalIntent,
-        ).pipe(Effect.mapError(representationInitializationFailure));
+        const { intent } = stored;
         const completion = yield* Deferred.make<RecordHash, SendError>();
         yield* Effect.sync(() => {
           runtime.intents.set(intent.msgId, {
@@ -458,9 +438,6 @@ const initializeRuntime = (
 
 const resumeRuntime = (runtime: EngineRuntime) =>
   Effect.gen(function* () {
-    yield* resumeDisseminationObligations(runtime).pipe(
-      Effect.mapError(resumeFoldFailure),
-    );
     yield* resumeEngineFolds(runtime).pipe(Effect.mapError(resumeFoldFailure));
     yield* Effect.forEach(
       runtime.intents.values(),
@@ -504,10 +481,12 @@ const endpointEngine = (
   const provideSql = Effect.provideService(SqlClient.SqlClient, sql);
   return Object.freeze({
     observeMessage: (msgId: MsgId) => observeMessage(runtime, msgId),
+    prepareMessage: (message: Message) =>
+      acceptMessage(runtime, message).pipe(Effect.asVoid, provideSql),
     send: (message: Message) => send(runtime, message).pipe(provideSql),
-    readPendingMessages: () => readPendingMessages().pipe(provideSql),
-    acknowledgeMessage: (token: DeliveryToken) =>
-      acknowledgeMessage(token).pipe(provideSql),
+    readPendingMessages: () => readPendingMessages(runtime).pipe(provideSql),
+    acknowledgeMessage: (recordHash: RecordHash) =>
+      acknowledgeMessage(recordHash).pipe(provideSql),
     acceptRouterIngress: (ingress: RouterWorkerIngress<DecodedOuterBody>) =>
       acceptEngineIngressWithRecovery(runtime, ingress).pipe(provideSql),
     recoverCertifiedHistory: (recovery: RouterWorkerRecovery) =>
@@ -564,3 +543,6 @@ function observeMessage(runtime: EngineRuntime, msgId: MsgId) {
         );
   });
 }
+
+/** Assessment context asks communication whether accepted outgoing work remains. */
+export { hasPendingMessages } from "../store/index.js";

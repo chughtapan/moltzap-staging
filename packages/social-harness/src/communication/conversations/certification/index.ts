@@ -60,7 +60,6 @@ import {
   makeActionFold,
 } from "../engine-context.js";
 import {
-  inboundDelivery,
   makeActionCertifiedRecord,
   makeCertifiedRecord,
   protocolEvidence,
@@ -69,9 +68,6 @@ import {
   storedCertifiedRecord,
 } from "../history/index.js";
 import { completePromotion, rebasePendingIntents } from "./head.js";
-
-/** Dissemination resume, bound as the `resumeDissemination` engine phase. */
-export { resumeDisseminationObligations } from "./dissemination.js";
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();
 
@@ -483,35 +479,15 @@ const localDurabilityEvidence = (
     yield* completeLocalEvidence(runtime, fold, "durability", evidence);
   });
 
-/**
- * The store rows of a fold's complete certified record: the record with the
- * fold's action signatures and the given durability votes, and, for another
- * member's message, its inbound delivery.
- * @param runtime Engine whose agent the delivery is for.
- * @param fold Fold of the record's action.
- * @param record The complete certified record.
- * @param votes Durability votes stored with the record.
- * @returns The stored record, and the delivery of a remote message.
- */
+/** Keeps the verified record and its two certificates in one atomic store input. */
 const certifiedRecordRows = (
-  runtime: EngineRuntime,
-  fold: EngineActionFold,
   record: CertifiedRecord,
+  actionEvidence: Iterable<SignedMessage>,
   votes: Iterable<SignedMessage>,
 ) =>
-  Effect.gen(function* () {
-    const localAgentId = runtime.input.localAgentCard.agentId;
-    const stored = yield* storedCertifiedRecord(
-      record,
-      fold.actionEvidence.values(),
-      votes,
-    );
-    const delivery =
-      fold.action.messageIntent.authorAgentId === localAgentId
-        ? undefined
-        : yield* inboundDelivery(fold.conversation, record, localAgentId);
-    return { stored, delivery };
-  }).pipe(Effect.mapError(localRepresentationFailure));
+  storedCertifiedRecord(record, actionEvidence, votes).pipe(
+    Effect.mapError(localRepresentationFailure),
+  );
 
 /**
  * Store a fold's complete record as certified and install it as its
@@ -533,14 +509,13 @@ const promote = (
   SqlClient.SqlClient
 > =>
   Effect.gen(function* () {
-    const { stored, delivery } = yield* certifiedRecordRows(
-      runtime,
-      fold,
+    const stored = yield* certifiedRecordRows(
       record,
+      fold.actionEvidence.values(),
       fold.durabilityEvidence.values(),
     );
     yield* Effect.uninterruptible(
-      Store.promoteRecord(stored, delivery).pipe(
+      Store.promoteRecord(stored).pipe(
         Effect.zipRight(completePromotion(runtime, fold, record)),
       ),
     );
@@ -600,19 +575,18 @@ const stageActionCertificate = (
       const stored = yield* stagedRecord(record).pipe(
         Effect.mapError(localRepresentationFailure),
       );
-      yield* Store.stageRecordForDissemination(stored);
       yield* Effect.uninterruptible(
-        runtime.outbox
-          .queueActionCertifiedRecord(fold.conversation, record)
-          .pipe(
-            Effect.mapError(() => persistenceFailure()),
-            Effect.zipRight(
-              Effect.sync(() => {
-                fold.recordHash = record.recordHash;
-                runtime.recordFolds.set(record.recordHash, fold);
-              }),
-            ),
+        runtime.outbox.stageRecord(fold.conversation, record, stored).pipe(
+          Effect.catchTag("ClientRepresentationError", () =>
+            Effect.fail(persistenceFailure()),
           ),
+          Effect.zipRight(
+            Effect.sync(() => {
+              fold.recordHash = record.recordHash;
+              runtime.recordFolds.set(record.recordHash, fold);
+            }),
+          ),
+        ),
       );
     }
     yield* localDurabilityEvidence(runtime, fold);
@@ -1019,14 +993,13 @@ const acceptCertifiedRecord = (
     if (fold === undefined) {
       return "ignored";
     }
-    const { stored, delivery } = yield* certifiedRecordRows(
-      runtime,
-      fold,
+    const stored = yield* certifiedRecordRows(
       record,
+      fold.actionEvidence.values(),
       votes,
     );
     yield* Effect.uninterruptible(
-      Store.applyCertifiedRecord(stored, delivery).pipe(
+      Store.applyCertifiedRecord(stored).pipe(
         Effect.zipRight(
           retainCertifiedFold(runtime, fold, actionRecord, votes),
         ),
@@ -1166,14 +1139,41 @@ const resumeFold = (
   fold: EngineActionFold,
 ): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient.SqlClient> =>
   Effect.gen(function* () {
+    const retainedRecord =
+      fold.recordHash === undefined
+        ? undefined
+        : yield* makeActionCertifiedRecord(
+            fold,
+            yield* actionAnchorHash(fold),
+          ).pipe(Effect.mapError(localRepresentationFailure));
+    if (
+      retainedRecord !== undefined &&
+      (yield* Store.readRecordOutbound(
+        fold.conversation.conversationId,
+        retainedRecord.recordHash,
+      )) !== undefined
+    ) {
+      const stored = yield* stagedRecord(retainedRecord).pipe(
+        Effect.mapError(localRepresentationFailure),
+      );
+      yield* runtime.outbox
+        .stageRecord(fold.conversation, retainedRecord, stored)
+        .pipe(
+          Effect.catchTag("ClientRepresentationError", () =>
+            Effect.fail(persistenceFailure()),
+          ),
+        );
+    }
     yield* localActionEvidence(runtime, fold);
     yield* maybeCertifyAction(runtime, fold);
     if (fold.recordHash !== undefined) {
       yield* localDurabilityEvidence(runtime, fold);
-      const record = yield* makeActionCertifiedRecord(
-        fold,
-        yield* actionAnchorHash(fold),
-      ).pipe(Effect.mapError(localRepresentationFailure));
+      const record =
+        retainedRecord ??
+        (yield* makeActionCertifiedRecord(
+          fold,
+          yield* actionAnchorHash(fold),
+        ).pipe(Effect.mapError(localRepresentationFailure)));
       yield* maybePromote(runtime, fold, record);
     }
   }).pipe(

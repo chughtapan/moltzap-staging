@@ -30,7 +30,7 @@ import { generatePollCursorKey, makePollCursorCodec } from "../poll-cursor.js";
 import { makePollWaiters, type PollWaiters } from "../poll-waiters.js";
 import { makeRouterPoll } from "../poll.js";
 
-/* eslint-disable max-lines-per-function, sonarjs/max-lines-per-function, max-nested-callbacks, agent-code-guard/no-hardcoded-assertion-literals -- Effect.gen scenarios keep each state transition and its observations together. */
+/* eslint-disable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Effect.gen scenarios keep each state transition and its observations together. */
 const utf8Encoder = new TextEncoder();
 const structurallyValidSignature =
   "KDxTl7gpBIOcp3KzWrPaXGOI8uSNov6xWPXKa421caAinNAc-_pYc_kzBuUde6eY0Ayp21se-jZdCvMGLlbYDg";
@@ -998,4 +998,4 @@ describe("held poll behavior", () => {
   );
 });
 
-/* eslint-enable max-lines-per-function, sonarjs/max-lines-per-function, max-nested-callbacks, agent-code-guard/no-hardcoded-assertion-literals -- Restore production defaults after the scenario suite. */
+/* eslint-enable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Restore production defaults after the scenario suite. */

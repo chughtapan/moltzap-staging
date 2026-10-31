@@ -21,7 +21,7 @@ import {
   makeDaemonProcessFixture,
   makeRegistrationRequest,
   processTestError,
-} from "./daemon-process-harness.js";
+} from "./daemon/daemon-process-harness.js";
 import { registrationResultKind } from "./expected-contracts.js";
 
 /** One endpoint and the items its subscription has delivered, in order. */

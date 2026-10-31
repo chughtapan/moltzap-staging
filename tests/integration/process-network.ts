@@ -17,8 +17,8 @@ import {
   makeRegistrationRequest,
   processTestError,
   type ProcessTestError,
-} from "./daemon-process-harness.ts";
-import { historyMessageContent } from "./saved-history.js";
+} from "./daemon/daemon-process-harness.ts";
+import { historyMessage } from "./saved-history.js";
 
 /* eslint-disable agent-code-guard/async-keyword, agent-code-guard/promise-type -- node:test consumes promises at the fixture boundary. */
 
@@ -188,7 +188,9 @@ function readContents(fixture: DaemonProcessFixture, address: string) {
           Schema.decodeUnknownSync(MessageAddressInput)(address),
         ),
       ),
-      Effect.map((result) => result.records.map(historyMessageContent)),
+      Effect.map((result) =>
+        result.records.map((record) => historyMessage(record).content),
+      ),
     ),
   );
 }

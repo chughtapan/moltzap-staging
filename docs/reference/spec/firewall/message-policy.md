@@ -43,8 +43,9 @@ blocks the process.
 
 ### Natural-language judgments
 
-Text rules describe applicability and required conduct. Providers assess
-applicability and local response expectations, then candidate compliance.
+Text rules describe when they apply and the conduct they require. Providers
+assess local response expectations, then candidate compliance. Each judgment
+accounts for the rule's scope.
 Outgoing expectations use preceding evidence without the draft's text or identity.
 Outgoing compliance consumes settled local expectations. Incoming compliance
 assesses the peer sender and candidate against the rule without imposing the
@@ -56,9 +57,8 @@ probable than another option. Probability sums and the selected option's
 distance from the maximum tolerate 0.02; this does not settle a less probable
 choice.
 
-Valid judgment uncertainty admits with registered advice, including in enforcement:
-uncertain applicability is still assessed, but uncertain
-expectations or subjects create no obligation or reference. Findings retain
+Valid judgment uncertainty admits with registered advice, including in enforcement.
+Uncertain expectations or subjects create no obligation or reference. Findings retain
 the provider's choice and probability, with registered guidance when present.
 Settled violations retain their effect. Invalid output or
 provider failure is unavailable; required missing evidence still holds.
@@ -105,10 +105,9 @@ In-flight checks keep their captured rules. Later checks use successful edits.
 
 ### Available history
 
-The window captures the latest conversation history when assessment begins,
-excluding the message being checked. It contains up to 256 messages in
-conversation order, configurable from 1–1024, and includes local result and
-failure evidence under that address.
+Assessment captures bounded message and local-result histories under the
+conversation address, excluding the candidate. Each history preserves its own
+order. Their combined limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
 Exceeding the history window's separate 2 MiB budget, or unresolved outgoing
@@ -135,9 +134,10 @@ Earlier decisions retain the rules and registered advice that applied at that
 time. Only completed checks enter decision history. Completed decisions and guidance
 survive restart and acknowledgment. Daemon-generated results
 are stored without synthetic firewall checks. Private provider traces stay in
-memory. Decision summaries contain deciding
-rule ids and registered advice, with message content and private evidence
-excluded. An edit changes future checks.
+memory. Each completed record saves its decision summary with the assessed
+policy revision, checked and deciding rule ids, origins and registered advice.
+Reads return that saved summary without message content or private evidence.
+An edit changes future checks.
 
 ## Collective operations
 

@@ -8,7 +8,7 @@ surface. The channel id is `"sharness"`.
 
 This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
-or another adapter. It receives an injected or MCP-backed `HarnessEndpoint`; it
+or another adapter. It receives an MCP-backed `HarnessEndpoint`; it
 does not acquire a daemon, profile, Registry admission material, signing key,
 raw Router credential, network client, or local store.
 
@@ -58,8 +58,8 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   internals.
 - Never use `unknown` types; define explicit host-facing interfaces.
 
-Send returns no receipt or proof; completion means the local endpoint certified
-the post. `ActionHash`, `RecordHash`, and private retry state never enter the
+Send returns no receipt or proof; completion means the local endpoint durably accepted
+the message. `ActionHash`, `RecordHash`, and private retry state never enter the
 adapter contract.
 
 ## Tests

@@ -189,26 +189,31 @@ const decisionCause = Schema.Literal(
  * or an owner-editable natural-language rule. `checkedRuleIds` lists every rule with a
  * finding in the completed chain.
  */
+export const firewallDecisionSummarySchema = exactStruct({
+  direction: Schema.Literal("incoming", "outgoing"),
+  peer: Schema.NullOr(AgentView),
+  outcome: Schema.Literal("allow", "reject", "hold"),
+  cause: decisionCause,
+  decidedBy: Schema.Array(
+    exactStruct({
+      ruleId: Schema.NonEmptyString,
+      from: Schema.Literal("code", "fixed", "editable"),
+      advice: Schema.optional(Schema.NonEmptyString),
+    }),
+  ),
+  checkedRuleIds: Schema.Array(Schema.NonEmptyString),
+  activeRevision: Schema.NonEmptyString,
+});
+
+/** The saved publication outcome accompanies the assessment's captured summary. */
 export const firewallDecisionsSchema = exactStruct({
   activations: Schema.Array(firewallActivationSchema),
   decisions: Schema.Array(
     exactStruct({
+      ...firewallDecisionSummarySchema.fields,
+      disposition: Schema.Literal("admitted", "withheld"),
       checkId: Schema.NonEmptyString,
       time: Schema.NonNegativeInt,
-      direction: Schema.Literal("incoming", "outgoing"),
-      peer: Schema.NullOr(AgentView),
-      outcome: Schema.Literal("allow", "reject", "hold"),
-      disposition: Schema.Literal("admitted", "withheld"),
-      cause: decisionCause,
-      decidedBy: Schema.Array(
-        exactStruct({
-          ruleId: Schema.NonEmptyString,
-          from: Schema.Literal("code", "fixed", "editable"),
-          advice: Schema.optional(Schema.NonEmptyString),
-        }),
-      ),
-      checkedRuleIds: Schema.Array(Schema.NonEmptyString),
-      activeRevision: Schema.NonEmptyString,
     }),
   ),
 });
@@ -600,6 +605,16 @@ export const firewallInstallationSchema = Schema.Struct({
   settings: FirewallSettings,
   incoming: Schema.Array(firewallRegistrationSchema),
   outgoing: Schema.Array(firewallRegistrationSchema),
+  text: Schema.optional(
+    Schema.Struct({
+      edition: Schema.NonEmptyString,
+      revision: Schema.NonEmptyString,
+      rules: Schema.Array(TextRule),
+      fixedRuleIds: Schema.Array(Schema.NonEmptyString),
+      settings: TextPolicySettings,
+      provider: Schema.optional(PrivateCheckTrace),
+    }),
+  ),
 });
 
 /** Evidence limits and fixed facts are immutable for a process installation. */

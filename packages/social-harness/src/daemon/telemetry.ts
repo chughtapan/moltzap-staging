@@ -5,7 +5,7 @@ import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { Config, Effect, Either, Layer, Option } from "effect";
-import { packageVersion } from "../release/index.js";
+import { packageVersion } from "../release.js";
 import { DaemonConfigurationError } from "./bootstrap.js";
 
 /**

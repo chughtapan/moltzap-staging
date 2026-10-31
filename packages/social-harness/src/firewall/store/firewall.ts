@@ -25,17 +25,14 @@ import { decodeRuntimeValue } from "../../communication/store/index.js";
 import { exactStruct } from "../../encoding/exact.js";
 import { AgentView } from "../../identity/cards.js";
 import {
-  type DecidingRule,
-  decidingRules,
   type FirewallCheck,
   firewallCheckSchema,
   Message,
   MessageContext,
-  textCheckId,
-  textPolicyFormat,
 } from "../check.js";
 import {
-  firewallDecisionsSchema,
+  type firewallDecisionsSchema,
+  firewallDecisionSummarySchema,
   firewallInstallationSchema,
 } from "../config.js";
 const ruleIds = Schema.parseJson(Schema.Array(Schema.NonEmptyString));
@@ -45,6 +42,13 @@ const activationRow = Schema.Struct({
   activeRevision: Schema.String,
   addedRuleIds: ruleIds,
   removedRuleIds: ruleIds,
+});
+const completedCheckSchema = exactStruct({
+  result: firewallCheckSchema,
+  summaries: Schema.Array(firewallDecisionSummarySchema),
+});
+const savedSummarySchema = Schema.Struct({
+  summaries: completedCheckSchema.fields.summaries,
 });
 const auditDisposition = Schema.Literal("admitted", "withheld");
 /** Missing policy means initial rules have never been seeded, distinct from an empty list. */
@@ -198,26 +202,30 @@ export function saveCheckDecision(
  */
 export function readDecisions(request: { readonly since?: number }) {
   return Effect.gen(function* () {
-    const entries = yield* readFirewallDecisions(request.since);
-    const rows = yield* Effect.forEach(
-      entries,
-      (entry) => decisionRows(entry),
-      {
-        concurrency: 1,
-      },
-    );
-    return yield* Schema.decodeUnknown(firewallDecisionsSchema)({
-      decisions: rows.flat(),
+    const decisions: Array<
+      (typeof firewallDecisionsSchema.Type.decisions)[number]
+    > = [];
+    for (const entry of yield* readFirewallDecisions(request.since)) {
+      const { summaries } = yield* decodeRuntimeValue(
+        savedSummarySchema,
+        entry.canonicalResult,
+      );
+      for (const summary of summaries) {
+        decisions.push({
+          ...summary,
+          disposition: entry.disposition,
+          checkId: entry.checkId,
+          time: entry.time,
+        });
+      }
+    }
+    return {
+      decisions,
       activations: (yield* readFirewallActivations(request)).map(
         (entry) => entry.activation,
       ),
-    });
-  }).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
-    ),
-    Effect.withSpan("readDecisions"),
-  );
+    } satisfies typeof firewallDecisionsSchema.Type;
+  }).pipe(Effect.withSpan("readDecisions"));
 }
 function auditEntry(
   row: Readonly<Record<string, unknown>>,
@@ -244,6 +252,7 @@ const firewallAuditInput = exactStruct({
   agents: Schema.Array(AgentView),
   message: Schema.NullOr(Message),
 });
+
 /**
  * A check as the store retains it: every field except the decision-provider
  * traces, which stay in memory with the code that produced the check.
@@ -262,9 +271,11 @@ export const decodeFirewallAuditEntry = Effect.fn("decodeFirewallAuditEntry")(
       firewallAuditInput,
       entry.canonicalInput,
     );
-    const result = withoutTraces(
-      yield* decodeRuntimeValue(firewallCheckSchema, entry.canonicalResult),
+    const completed = yield* decodeRuntimeValue(
+      completedCheckSchema,
+      entry.canonicalResult,
     );
+    const result = withoutTraces(completed.result);
     return {
       checkId: entry.checkId,
       direction: entry.direction,
@@ -275,152 +286,3 @@ export const decodeFirewallAuditEntry = Effect.fn("decodeFirewallAuditEntry")(
     };
   },
 );
-function decisionRows(
-  entry: FirewallAuditEntry & {
-    readonly time: number;
-  },
-) {
-  return decodeFirewallAuditEntry(entry).pipe(
-    Effect.flatMap((check) =>
-      ruleOrigin(check.input.installation[check.direction]).pipe(
-        Effect.flatMap((origin) => projectDecision(check, entry.time, origin)),
-      ),
-    ),
-  );
-}
-type DecodedCheck = Effect.Effect.Success<
-  ReturnType<typeof decodeFirewallAuditEntry>
->;
-type DecodedResult = DecodedCheck["result"];
-type DecisionRow = (typeof firewallDecisionsSchema.Type.decisions)[number];
-type Registration = DecodedCheck["input"]["installation"]["incoming"][number];
-const textProvenance = Schema.parseJson(
-  Schema.Struct({
-    fixedRuleIds: Schema.Array(Schema.String),
-  }),
-);
-type RuleOrigin = (
-  rule: DecidingRule,
-) => Pick<DecisionRow["decidedBy"][number], "from">;
-function projectDecision(
-  check: DecodedCheck,
-  time: number,
-  origin: RuleOrigin,
-) {
-  const result = check.result;
-  const message = check.input.message;
-  const peers =
-    message === null ? [null] : decisionPeers(message, check.direction);
-  const rules = decisionRules(
-    result,
-    check.input.installation[check.direction],
-    origin,
-  );
-  return Effect.forEach(
-    peers,
-    (peerAgentId) => {
-      const peer =
-        peerAgentId === null
-          ? null
-          : check.input.agents.find((agent) => agent.agentId === peerAgentId);
-      return peer === undefined
-        ? Effect.fail(new EndpointStoreError({ reason: "corrupt" }))
-        : Effect.succeed({
-            checkId: check.checkId,
-            time,
-            direction: check.direction,
-            peer,
-            outcome: result.judgment,
-            disposition: check.disposition,
-            ...rules,
-            activeRevision: check.input.configurationDigest,
-          });
-    },
-    { concurrency: 1 },
-  );
-}
-function decisionRules(
-  result: DecodedResult,
-  registrations: readonly Registration[],
-  origin: RuleOrigin,
-) {
-  const checkedRuleIds = [
-    ...new Set(
-      result.checks.flatMap((middleware) =>
-        middleware.findings.map((finding) => finding.ruleId),
-      ),
-    ),
-  ];
-  const deciding = decidingRules(result.reason, registrations, result.checks);
-  const text = new Set(
-    registrations
-      .filter((entry) => entry.provenance.format === textPolicyFormat)
-      .map((entry) => entry.id),
-  );
-  const cause = decisionCause(result, deciding, text);
-  const decidedBy = deciding.map((rule) => ({
-    ruleId: rule.ruleId,
-    ...origin(rule),
-    ...(rule.advice === undefined ? {} : { advice: rule.advice }),
-  }));
-  return { cause, decidedBy, checkedRuleIds };
-}
-/** Retained installation provenance distinguishes fixed, editable and code rules. */
-function ruleOrigin(registrations: readonly Registration[]) {
-  return Effect.gen(function* () {
-    const text = registrations.find(
-      (entry) =>
-        entry.id === textCheckId &&
-        entry.provenance.format === textPolicyFormat,
-    );
-    const recorded =
-      text === undefined
-        ? { fixedRuleIds: [] }
-        : yield* Schema.decodeUnknown(textProvenance)(text.provenance.data);
-    const fixed = new Set(recorded.fixedRuleIds);
-    return (rule: DecidingRule): ReturnType<RuleOrigin> => {
-      if (rule.middlewareId !== text?.id) {
-        return { from: "code" };
-      }
-      return fixed.has(rule.ruleId) ? { from: "fixed" } : { from: "editable" };
-    };
-  });
-}
-function decisionCause(
-  result: DecodedResult,
-  deciding: readonly DecidingRule[],
-  text: ReadonlySet<string>,
-): DecisionRow["cause"] {
-  const first =
-    deciding.find((rule) => text.has(rule.middlewareId)) ?? deciding[0];
-  if (first === undefined) {
-    return emptyCause(result);
-  }
-  if (first.finding === "unavailable") {
-    return "unavailable";
-  }
-  if (!text.has(first.middlewareId)) {
-    return "code";
-  }
-  return first.finding === "uncertain" ? "uncertain" : "judgment";
-}
-function emptyCause(result: DecodedResult): DecisionRow["cause"] {
-  if (
-    result.reason === "check-unavailable" &&
-    result.checks.some((check) => check.status === "unavailable")
-  ) {
-    return "unavailable";
-  }
-  return result.judgment === "allow" ? "default" : "endpoint";
-}
-/** Results and failures name no peer because the endpoint produces their text. */
-function decisionPeers(
-  message: NonNullable<DecodedCheck["input"]["message"]>,
-  direction: "incoming" | "outgoing",
-): ReadonlyArray<string | null> {
-  if (direction === "outgoing") {
-    return message.recipients;
-  }
-  const kind = message.operation?.kind;
-  return kind === "result" || kind === "failure" ? [null] : [message.sender];
-}

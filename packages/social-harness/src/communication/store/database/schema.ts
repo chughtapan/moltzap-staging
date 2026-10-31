@@ -10,7 +10,7 @@ import {
 } from "./values.js";
 /** Only an empty database or the current stored format can be opened. */
 export type StoreOpening = "create" | "reopen";
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 const collectiveSchemaSql = `
   CREATE TABLE collective_operations (
     operation_id TEXT PRIMARY KEY,
@@ -19,9 +19,9 @@ const collectiveSchemaSql = `
     canonical_request BLOB NOT NULL,
     deadline_at INTEGER NOT NULL,
     phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','finalizing','completed')),
-    canonical_selection BLOB,
+    canonical_close BLOB,
     canonical_result BLOB,
-    canonical_sources BLOB,
+    canonical_answer_refs BLOB,
     delivery_token TEXT NOT NULL UNIQUE,
     delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1))
   ) STRICT;
@@ -31,14 +31,11 @@ const collectiveSchemaSql = `
     destination TEXT NOT NULL,
     author_agent_id TEXT NOT NULL,
     msg_id TEXT NOT NULL,
-    canonical_message BLOB NOT NULL,
-    completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
     PRIMARY KEY(operation_id,role,destination),
     UNIQUE(author_agent_id,msg_id)
   ) STRICT;
   CREATE UNIQUE INDEX collective_one_response ON collective_messages(operation_id) WHERE role='response';
   CREATE UNIQUE INDEX collective_one_close ON collective_messages(operation_id) WHERE role='close';
-  CREATE INDEX collective_pending_messages ON collective_messages(completed) WHERE completed=0;
   CREATE INDEX collective_pending_results ON collective_operations(delivered) WHERE phase='completed' AND delivered=0;
   CREATE TABLE collective_answers (
     operation_id TEXT NOT NULL REFERENCES collective_operations(operation_id),
@@ -57,9 +54,11 @@ const schemaSql = `
     author_agent_id TEXT NOT NULL,
     msg_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    membership_hash TEXT NOT NULL,
-    canonical_intent BLOB NOT NULL,
+    membership_hash TEXT,
+    canonical_message BLOB NOT NULL,
+    canonical_intent BLOB,
     completed_record_hash TEXT,
+    failure_reason TEXT,
     PRIMARY KEY (author_agent_id, msg_id),
     FOREIGN KEY (conversation_id, membership_hash)
       REFERENCES memberships(conversation_id, membership_hash)
@@ -129,6 +128,7 @@ const schemaSql = `
     conversation_id TEXT NOT NULL,
     record_hash TEXT NOT NULL,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0,1)),
     PRIMARY KEY (conversation_id, record_hash),
     UNIQUE (conversation_id, ordinal),
     FOREIGN KEY (conversation_id, record_hash)
@@ -150,40 +150,21 @@ const schemaSql = `
     FOREIGN KEY (conversation_id, selected_record_hash)
       REFERENCES certified_records(conversation_id, record_hash)
   ) STRICT;
-  CREATE TABLE pending_deliveries (
-    delivery_sequence INTEGER PRIMARY KEY,
-    delivery_token TEXT NOT NULL UNIQUE,
-    conversation_id TEXT NOT NULL,
-    record_hash TEXT NOT NULL,
-    recipient_agent_id TEXT NOT NULL,
-    canonical_message BLOB NOT NULL,
-    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1)),
-    UNIQUE (conversation_id, record_hash, recipient_agent_id),
-    FOREIGN KEY (conversation_id, record_hash)
-      REFERENCES certified_records(conversation_id, record_hash)
-  ) STRICT;
-  CREATE INDEX pending_deliveries_by_record ON pending_deliveries(record_hash);
   CREATE TABLE outbound_messages (
     outbound_sequence INTEGER PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
     envelope_id TEXT NOT NULL UNIQUE,
+    record_hash TEXT,
     canonical_signed_message BLOB NOT NULL,
     wire_version TEXT NOT NULL,
     attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
     disposition TEXT NOT NULL CHECK (
       disposition IN ('pending', 'accepted', 'discarded')
-    )
+    ),
+    FOREIGN KEY (conversation_id, record_hash) REFERENCES staged_records(conversation_id, record_hash)
   ) STRICT;
-  CREATE TABLE dissemination_obligations (
-    obligation_sequence INTEGER PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
-    record_hash TEXT NOT NULL,
-    envelope_id TEXT UNIQUE,
-    UNIQUE (conversation_id, record_hash),
-    FOREIGN KEY (conversation_id, record_hash)
-      REFERENCES staged_records(conversation_id, record_hash),
-    FOREIGN KEY (envelope_id) REFERENCES outbound_messages(envelope_id)
-  ) STRICT;
+  CREATE UNIQUE INDEX outbound_current_record ON outbound_messages(conversation_id,record_hash)
+    WHERE record_hash IS NOT NULL AND disposition<>'discarded';
 `;
 /** Driver failures and invalid stored values stay inside the closed persistence boundary. */
 export const storeOperation = <A, E, R>(

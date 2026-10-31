@@ -48,8 +48,8 @@ raw Router credential, network client, or local store.
 - Keep host-shape failures distinct from closed Client failures without
   exposing private action evidence, credentials, or protocol state.
 
-Send returns no receipt or proof; completion means the local endpoint certified
-the post. `ActionHash`, `RecordHash`, and private retry state never enter the
+Send returns no receipt or proof; completion means the local endpoint durably accepted
+the message. `ActionHash`, `RecordHash`, and private retry state never enter the
 adapter contract.
 
 ## Tests

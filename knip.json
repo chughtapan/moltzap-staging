@@ -30,12 +30,12 @@
         "src/**/*.types-check.ts",
         "src/daemon/launcher/index.ts",
         "vitest*.config.ts",
-        "integration/*.integration.test.ts"
+        "integration/**/*.integration.test.ts"
       ],
       "project": [
         "src/**/*.ts",
         "*.ts",
-        "integration/*.ts"
+        "integration/**/*.ts"
       ]
     },
     "plugins/nanoclaw": {
@@ -83,8 +83,8 @@
     "tests/integration": {
       "entry": [
         "**/*.integration.test.ts",
-        "firewall-daemon.ts",
-        "launcher-provenance.ts",
+        "firewall/firewall-daemon.ts",
+        "daemon/launcher-provenance.ts",
         "**/*vitest*.config.ts"
       ],
       "project": [

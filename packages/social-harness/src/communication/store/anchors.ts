@@ -257,15 +257,19 @@ function bindMessageIntentInTransaction(
     }
     requireEqual(identity.agentId, intent.authorAgentId);
     const existing = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, membership_hash, canonical_intent
+      `SELECT conversation_id, membership_hash, canonical_intent, canonical_message
        FROM message_intents WHERE author_agent_id = ? AND msg_id = ?`,
       [intent.authorAgentId, intent.msgId],
     ))[0];
-    if (existing !== undefined) {
-      requireEqual(
-        readText(existing, "conversation_id"),
-        intent.conversationId,
-      );
+    if (existing === undefined) {
+      return yield* new EndpointStoreError({ reason: "not-found" });
+    }
+    requireEqual(readText(existing, "conversation_id"), intent.conversationId);
+    requireSameBytes(
+      readBytes(existing, "canonical_message"),
+      intent.canonicalMessage,
+    );
+    if (readOptionalText(existing, "membership_hash") !== undefined) {
       requireEqual(
         readText(existing, "membership_hash"),
         intent.membershipHash,
@@ -276,17 +280,14 @@ function bindMessageIntentInTransaction(
       );
       return "existing";
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO message_intents
-        (author_agent_id, msg_id, conversation_id, membership_hash,
-         canonical_intent)
-       VALUES (?, ?, ?, ?, ?)`,
+    yield* database.unsafe(
+      `UPDATE message_intents SET membership_hash=?,canonical_intent=?
+       WHERE author_agent_id=? AND msg_id=?`,
       [
+        intent.membershipHash,
+        intent.canonicalIntent,
         intent.authorAgentId,
         intent.msgId,
-        intent.conversationId,
-        intent.membershipHash,
-        copyBytes(intent.canonicalIntent),
       ],
     );
     return "inserted";
@@ -706,7 +707,7 @@ function clearIncompleteConversationState(
     const database = yield* SqlClient.SqlClient;
     const conversationId = expected.conversationId;
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM dissemination_obligations WHERE conversation_id = ?",
+      "UPDATE outbound_messages SET record_hash=NULL, disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END WHERE conversation_id=?",
       [conversationId],
     );
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
@@ -781,9 +782,9 @@ function readConversationMessageIntents(
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
-                canonical_intent, completed_record_hash
-         FROM message_intents WHERE conversation_id = ?
-         ORDER BY author_agent_id, msg_id`,
+                canonical_intent, canonical_message, completed_record_hash
+         FROM message_intents WHERE conversation_id = ? AND canonical_intent IS NOT NULL AND failure_reason IS NULL
+         ORDER BY rowid`,
         [conversationId],
       )).map((row) => {
         const completedRecordHash = readOptionalText(
@@ -796,6 +797,7 @@ function readConversationMessageIntents(
           authorAgentId: readText(row, "author_agent_id"),
           msgId: readText(row, "msg_id"),
           canonicalIntent: readBytes(row, "canonical_intent"),
+          canonicalMessage: readBytes(row, "canonical_message"),
           ...(completedRecordHash === undefined ? {} : { completedRecordHash }),
         });
       }),

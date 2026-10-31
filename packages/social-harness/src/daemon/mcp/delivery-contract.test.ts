@@ -25,7 +25,7 @@ import {
   mcpTestCredential,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { CollectiveId } from "../../communication/collectives/contracts.js";
-import { encodeCollectiveContent } from "../../communication/collectives/wire/index.js";
+import { encodeCollectiveContent } from "../../communication/collectives/wire.js";
 import { Communication } from "../../communication/index.js";
 import { AgentAddress } from "../../communication/records/index.js";
 import { DeliveryToken } from "../../communication/store/index.js";
@@ -88,7 +88,8 @@ function communicationEdge(
           },
         } as const),
       ),
-    waitForMessage: () => Effect.void,
+    waitForMessage: () =>
+      Effect.dieMessage("Delivery fixture does not wait for protocol messages"),
     consume: (handle) =>
       Queue.take(incoming).pipe(
         Effect.flatMap((entry) =>

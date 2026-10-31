@@ -41,6 +41,7 @@ vi.mock("@moltzap/social-harness", async (importOriginal) => ({
   acquireHarnessEndpoint: boundary.acquire,
 }));
 
+const EVENT_ID = `dlv_${"A".repeat(43)}`;
 const MESSAGE_ID = `msg_${"A".repeat(43)}`;
 const OPERATION_ID = `col_${"A".repeat(64)}`;
 const GROUP = "group:alice,bob,carol";
@@ -100,12 +101,13 @@ function enqueue(
   fake: ReturnType<typeof makeEndpoint>,
   item: InboundItem,
   guidance?: LocalGuidance,
+  eventId = EVENT_ID,
 ) {
   const acknowledged = vi.fn<() => void>();
   Effect.runSync(
     Queue.offer(fake.inbox, {
       item,
-      eventId: "unused-event-reference",
+      eventId,
       ...(guidance === undefined ? {} : { guidance }),
       acknowledge: Effect.sync(() => {
         acknowledged();
@@ -299,7 +301,7 @@ it("projects direct metadata before routing and acknowledges only after host suc
       platformId: "agent:alice",
       threadId: null,
     },
-    message: { id: MESSAGE_ID, kind: "chat", isMention: true, isGroup: false },
+    message: { id: EVENT_ID, kind: "chat", isMention: true, isGroup: false },
   });
   if (event === undefined) {
     throw new Error("Host did not receive a turn");
@@ -386,7 +388,7 @@ it.each([
     const event = host.onInboundEvent.mock.calls[0]?.[0];
     expect(event).toMatchObject({
       replyTo: { platformId: to },
-      message: { id: MESSAGE_ID, isGroup },
+      message: { id: EVENT_ID, isGroup },
     });
     if (event === undefined) {
       throw new Error("Host did not receive a turn");
@@ -828,6 +830,40 @@ function requestItem(op: string, to: string) {
     },
   });
 }
+
+it("preserves distinct delivery identities when two group authors use the same message id", async () => {
+  const fake = makeEndpoint();
+  const host = makeHost();
+  const channel = await createAdapter();
+  await channel.setup(host);
+  const secondEvent = `dlv_${"B".repeat(43)}`;
+  const first = Schema.decodeUnknownSync(InboundItem)({
+    kind: "multicast",
+    message: {
+      msgId: MESSAGE_ID,
+      author: testAgentView("alice"),
+      recipients: [testAgentView("bob"), testAgentView("carol")],
+      content: [{ type: "text", text: "Alice's message" }],
+    },
+  });
+  const second = Schema.decodeUnknownSync(InboundItem)({
+    kind: "multicast",
+    message: {
+      msgId: MESSAGE_ID,
+      author: testAgentView("bob"),
+      recipients: [testAgentView("alice"), testAgentView("carol")],
+      content: [{ type: "text", text: "Bob's message" }],
+    },
+  });
+  enqueue(fake, first);
+  enqueue(fake, second, undefined, secondEvent);
+  await vi.waitFor(() => {
+    expect(host.onInboundEvent).toHaveBeenCalledTimes(2);
+  });
+  expect(
+    host.onInboundEvent.mock.calls.map(([event]) => event.message.id),
+  ).toEqual([EVENT_ID, secondEvent]);
+});
 
 /* eslint-enable agent-code-guard/async-keyword -- Restore Effect-first defaults after the Promise-native host boundary tests. */
 /* eslint-enable agent-code-guard/acquire-release-requires-scope -- Restore the scope guard after the adapter-owned acquisition fake. */

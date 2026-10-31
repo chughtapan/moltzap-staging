@@ -26,6 +26,7 @@ import {
   HARNESS_CONSUMER_META_KEY,
   INBOX_ITEM_EVENT,
 } from "../../host-protocol/names.js";
+import { makeConsumerOwner } from "./consumer.js";
 import { makeHarnessPollEvents } from "./poll.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- External protocol codes, closed lifecycle errors and retained inbox counts are conformance expectations. */
@@ -43,7 +44,11 @@ const item = (text: string) =>
 const acquireFixture = Effect.gen(function* () {
   const store = yield* openInboxFixture(stateDirectory());
   const gate = yield* Effect.makeSemaphore(1);
-  const poll = yield* makeHarnessPollEvents(store, gate);
+  const poll = yield* makeHarnessPollEvents(
+    store,
+    gate,
+    yield* makeConsumerOwner,
+  );
   const add = (byte: number, text?: string) =>
     encodeRuntimeValue(item(text ?? `item ${String(byte)}`)).pipe(
       Effect.flatMap((canonicalItem) =>
@@ -175,10 +180,10 @@ const expiresAndRenews = () =>
         yield* TestClock.adjust("45 seconds");
         const renewed = yield* next(fixture, started);
         yield* TestClock.adjust("45 seconds");
-        expect(fixture.poll.hasActiveSubscription()).toBe(true);
+        expect((yield* fixture.poll.status).mode).toBe("poll");
         yield* next(fixture, renewed);
         yield* TestClock.adjust("61 seconds");
-        expect(fixture.poll.hasActiveSubscription()).toBe(false);
+        expect((yield* fixture.poll.status).mode).toBe("none");
         const expired = yield* next(fixture, renewed).pipe(Effect.flip);
         expect(expired).toMatchObject({ code: -32012 });
         const replacement = yield* bootstrap(fixture);
@@ -203,7 +208,7 @@ const releasesExplicitly = () =>
         },
         Effect.void,
       );
-      expect(fixture.poll.hasActiveSubscription()).toBe(false);
+      expect((yield* fixture.poll.status).mode).toBe("none");
       expect((yield* fixture.store.readInboxSummary()).pendingCount).toBe(1);
       const replacement = yield* bootstrap(fixture);
       const stale = yield* receipt(fixture, started, 1).pipe(Effect.flip);
@@ -247,6 +252,7 @@ const fencesRestart = () =>
       const restarted = yield* makeHarnessPollEvents(
         fixture.store,
         fixture.gate,
+        yield* makeConsumerOwner,
       );
       const stale = yield* restarted
         .nativeOperation(
@@ -300,14 +306,15 @@ const releasesFailedBootstrap = () =>
             }),
         },
         fixture.gate,
+        yield* makeConsumerOwner,
       );
       const failed = yield* polling
         .poll(input, {}, Effect.void)
         .pipe(Effect.flip);
       expect(failed).toMatchObject({ code: -32603 });
-      expect(polling.hasActiveSubscription()).toBe(false);
+      expect((yield* polling.status).mode).toBe("none");
       yield* polling.poll(input, {}, Effect.void);
-      expect(polling.hasActiveSubscription()).toBe(true);
+      expect((yield* polling.status).mode).toBe("poll");
     }),
   );
 

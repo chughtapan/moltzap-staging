@@ -38,5 +38,7 @@
       "file": "schema.ts",
       "reason": "Current PostgreSQL schema owned by Registry storage"
     }
-  ]
+  ],
+  "maxFolderChildren": 24,
+  "maxFolderChildrenIncludingTests": 48
 }

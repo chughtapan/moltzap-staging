@@ -27,6 +27,7 @@ export interface MessageIntent {
   readonly authorAgentId: string;
   readonly msgId: string;
   readonly canonicalIntent: Uint8Array;
+  readonly canonicalMessage: Uint8Array;
   readonly completedRecordHash?: string;
 }
 /** Atomic binding for a message in either retained or newly founded history. */
@@ -94,20 +95,9 @@ export interface CertifiedRecord extends StagedRecord {
   readonly actionEvidence: readonly ProtocolEvidence[];
   readonly durabilityEvidence: readonly ProtocolEvidence[];
 }
-/** Canonical host message inserted when a remote record becomes certified. */
-export interface InboundDeliveryInput {
-  readonly recipientAgentId: string;
-  readonly canonicalMessage: Uint8Array;
-}
-/** One stable pending runtime delivery, including its retained tombstone. */
-export interface PendingDelivery extends InboundDeliveryInput {
-  readonly deliveryToken: DeliveryToken;
-  readonly conversationId: string;
-  readonly recordHash: string;
-  readonly acknowledged: boolean;
-}
 /** Canonical complete outer message before it receives a stable outbox key. */
 export interface OutboundMessageInput {
+  readonly recordHash?: string;
   readonly wireVersion: string;
   readonly conversationId: string;
   readonly envelopeId: string;
@@ -115,14 +105,6 @@ export interface OutboundMessageInput {
 }
 /** One immutable signed envelope retained across transport retries. */
 export type StoredOutboundMessage = OutboundMessageInput;
-/**
- * A staged action-certified record this endpoint still owes its members,
- * until its outer envelope is attached to an outbox row.
- */
-export interface DisseminationObligation {
-  readonly conversationId: string;
-  readonly recordHash: string;
-}
 /** Durable disposition chosen immediately before one Router attempt. */
 export type OutboundAttempt =
   | Readonly<{
@@ -179,8 +161,6 @@ export interface EndpointRecovery {
   readonly evidence: readonly ProtocolEvidence[];
   readonly certifiedRecords: readonly CertifiedRecord[];
   readonly stagedReanchors: readonly RecoveredReanchor[];
-  readonly pendingDeliveries: readonly PendingDelivery[];
-  readonly disseminationObligations: readonly DisseminationObligation[];
   readonly outboundMessages: readonly StoredOutboundMessage[];
 }
 /** Certified records bounded by the conversation head captured for the first page. */
@@ -190,34 +170,4 @@ export interface HistoryPage {
   readonly anchors: readonly StoredAnchor[];
   readonly authoredRecordHashes: readonly string[];
   readonly continuation: string | null;
-}
-/** A collective owns its immutable request independently of protocol delivery. */
-export interface CollectiveOperationInput {
-  readonly operationId: string;
-  readonly creatorAgentId: string;
-  readonly origin: "local" | "remote";
-  readonly canonicalRequest: Uint8Array;
-  readonly deadlineAt: number;
-}
-/** Completion and result handoff remain recoverable under one retained identity. */
-export interface StoredCollectiveOperation extends CollectiveOperationInput {
-  readonly phase: "collecting" | "finalizing" | "completed";
-  readonly canonicalSelection?: Uint8Array;
-  readonly canonicalResult?: Uint8Array;
-  readonly canonicalSources?: Uint8Array;
-  readonly deliveryToken: DeliveryToken;
-  readonly delivered: boolean;
-}
-/** One role and destination always resubmit the same saved message. */
-export interface StoredCollectiveMessage {
-  readonly operationId: string;
-  readonly role: "request" | "response" | "close";
-  readonly destination: string;
-  readonly canonicalMessage: Uint8Array;
-}
-/** The collector's first saved answer is the authoritative deadline event. */
-export interface CollectiveAnswerReference {
-  readonly operationId: string;
-  readonly member: string;
-  readonly canonicalMessage: Uint8Array;
 }

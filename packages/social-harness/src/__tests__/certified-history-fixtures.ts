@@ -12,10 +12,10 @@ import type {
 import type { AgentSigningAuthority } from "../identity/keys.js";
 import type { TestStore } from "./store-schema-fixtures.js";
 import {
-  inboundDelivery,
   protocolEvidence,
   stagedRecord,
 } from "../communication/conversations/history/index.js";
+import { Message, messageFromIntent } from "../communication/message.js";
 import {
   ActionCore,
   type ActionHash,
@@ -38,7 +38,11 @@ import {
   type VerifiedMembership,
 } from "../communication/records/index.js";
 import { encodeCanonical } from "../encoding/canonical-json.js";
-import { AgentCard, type VerifiedAgentCard } from "../identity/cards.js";
+import {
+  AgentCard,
+  agentViewOf,
+  type VerifiedAgentCard,
+} from "../identity/cards.js";
 import { SignedMessage } from "../identity/envelope/signed-message.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
 
@@ -128,10 +132,7 @@ export const storeCertifiedFirstMessage = (
     });
     yield* lockFirstMessage(store, membership, record);
     yield* bindLocalIntent(store, local, membership, record);
-    yield* store.applyCertifiedRecord(
-      yield* storedRecordRow(record),
-      yield* remoteMessage(local, membership, record),
-    );
+    yield* store.applyCertifiedRecord(yield* storedRecordRow(record));
   }).pipe(Effect.orDie, Effect.withSpan("storeCertifiedFirstMessage"));
 
 /** The real endpoint store and the two members that certify each history extension. */
@@ -250,10 +251,7 @@ function storeCertifiedMessage(
       actionHash: core.actionHash,
       canonicalActionCore: yield* encodeCanonical(ActionCore, core.action),
     });
-    yield* store.applyCertifiedRecord(
-      yield* storedRecordRow(record),
-      yield* remoteMessage(local.card, membership, record),
-    );
+    yield* store.applyCertifiedRecord(yield* storedRecordRow(record));
   });
 }
 
@@ -448,28 +446,6 @@ function evidenceRows(
   );
 }
 
-function remoteMessage(
-  local: VerifiedAgentCard,
-  membership: VerifiedMembership,
-  record: CertifiedRecord,
-) {
-  const certified = record.actionCertifiedRecord;
-  if (
-    certified.recordCore.action.messageIntent.authorAgentId === local.agentId
-  ) {
-    return Effect.succeed(undefined);
-  }
-  return inboundDelivery(
-    {
-      conversationId: membership.descriptor.conversationId,
-      membership,
-      currentAnchor: certified.routerAnchor,
-    },
-    record,
-    local.agentId,
-  );
-}
-
 /** Locally certified messages must first have an immutable intent, as the engine requires. */
 function bindLocalIntent(
   store: TestStore,
@@ -482,6 +458,16 @@ function bindLocalIntent(
     if (intent.authorAgentId !== local.agentId) {
       return;
     }
+    const canonicalMessage = yield* encodeCanonical(
+      Message,
+      yield* messageFromIntent(membership.members.map(agentViewOf), intent),
+    );
+    yield* store.acceptMessage({
+      authorAgentId: intent.authorAgentId,
+      msgId: intent.msgId,
+      conversationId: intent.conversationId,
+      canonicalMessage,
+    });
     yield* store.bindMessageIntent({
       kind: "existing-conversation",
       intent: {
@@ -490,6 +476,7 @@ function bindLocalIntent(
         authorAgentId: intent.authorAgentId,
         msgId: intent.msgId,
         canonicalIntent: yield* encodeCanonical(MessageIntent, intent),
+        canonicalMessage,
       },
     });
   });

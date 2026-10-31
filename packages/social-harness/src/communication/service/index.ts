@@ -12,6 +12,8 @@ import {
   type ParseResult,
   Queue,
   Ref,
+  Schedule,
+  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -19,16 +21,23 @@ import type {
   AgentSigningAuthority,
   Ed25519PublicKey,
 } from "../../identity/keys.js";
-import type { SendError } from "../conversations/errors.js";
 import {
   type ClientRepresentationError,
-  decodeCanonical,
   encodeCanonical,
   sameBytes,
 } from "../../encoding/canonical-json.js";
-import { AgentCard, type VerifiedAgentCard } from "../../identity/cards.js";
+import {
+  AgentCard,
+  agentViewOf,
+  type VerifiedAgentCard,
+} from "../../identity/cards.js";
 import { LocalIdentity } from "../../identity/local.js";
 import { Registry } from "../../identity/registry/index.js";
+import {
+  isTerminalSendFailure,
+  SendError,
+  sendFailureReasons,
+} from "../conversations/errors.js";
 import {
   type EndpointEngine,
   type EngineInitializationError,
@@ -36,17 +45,20 @@ import {
   makeEndpointEngine,
   verifyStoredMembership,
 } from "../conversations/index.js";
+import { Communication, CommunicationError } from "../index.js";
 import {
-  Communication,
-  CommunicationError,
-  type SendOutcome,
-} from "../index.js";
-import { Message, type MessageReference } from "../message.js";
+  type Message,
+  messageMembers,
+  type MessageReference,
+  Message as MessageSchema,
+} from "../message.js";
 import {
   type DecodedOuterBody,
   decodeOuterBody,
+  deriveConversationId,
   type OuterBodyReader,
 } from "../records/index.js";
+import { compareAgentIds } from "../records/values.js";
 import {
   makeRouterWorker,
   Router,
@@ -76,8 +88,6 @@ interface Environment {
   readonly faults: Deferred.Deferred<never, Store.EndpointStoreError>;
 }
 
-const STARTUP_WAIT = Duration.seconds(45);
-
 /** Services are available before registration; their workers share the process's failure supervision. */
 export function communicationLive(
   settings: CommunicationSettings,
@@ -105,6 +115,7 @@ export function communicationLive(
           Effect.zipRight(Effect.never),
         ),
       );
+      yield* supervise(workers, prepareAcceptedMessages(environment));
       return makeCommunication(environment);
     }).pipe(Effect.withSpan("communicationLive")),
   );
@@ -118,14 +129,7 @@ function makeCommunication(
     environment.sql,
   );
   return {
-    send: (message) =>
-      captureMessage(message).pipe(
-        Effect.flatMap((captured) =>
-          requireEngine(environment).pipe(
-            Effect.flatMap((engine) => sendMessage(engine, captured)),
-          ),
-        ),
-      ),
+    send: (message) => acceptMessage(environment, message).pipe(provideSql),
     waitForMessage: (message) =>
       waitForMessage(environment, message).pipe(provideSql),
     consume: (handle) => consumeIncoming(environment, handle),
@@ -165,27 +169,6 @@ function consumeIncoming<E, R>(
   );
 }
 
-function captureMessage(message: Message) {
-  return encodeCanonical(Message, message).pipe(
-    Effect.flatMap((bytes) => decodeCanonical(Message, bytes)),
-    Effect.catchTag(
-      "ClientRepresentationError",
-      () => new CommunicationError({ reason: "content-invalid" }),
-    ),
-  );
-}
-
-function requireEngine(environment: Environment) {
-  return registeredCard(environment).pipe(
-    Effect.zipRight(Deferred.await(environment.ready)),
-    Effect.timeoutFail({
-      duration: STARTUP_WAIT,
-      onTimeout: () =>
-        new CommunicationError({ reason: "network-unavailable" }),
-    }),
-  );
-}
-
 function registeredCard(environment: Environment) {
   return Ref.get(environment.identity).pipe(
     Effect.flatMap((card) =>
@@ -196,49 +179,114 @@ function registeredCard(environment: Environment) {
   );
 }
 
-function sendMessage(
-  engine: EndpointEngine,
-  message: Message,
-): Effect.Effect<SendOutcome, CommunicationError> {
-  const reference = {
-    authorAgentId: message.author.agentId,
-    msgId: message.msgId,
-  };
-  return engine.send(message).pipe(
-    Effect.as<SendOutcome>({ kind: "completed", message: reference }),
-    Effect.catchTag("SendError", (error) =>
-      error.reason === "delivery-pending"
-        ? Effect.succeed<SendOutcome>({ kind: "pending", message: reference })
-        : new CommunicationError({ reason: error.reason }),
+function acceptMessage(environment: Environment, message: Message) {
+  return Effect.gen(function* () {
+    const local = agentViewOf(yield* registeredCard(environment));
+    if (
+      message.author.agentId !== local.agentId ||
+      message.author.agentName !== local.agentName ||
+      message.author.principalId !== local.principalId
+    ) {
+      return yield* new CommunicationError({ reason: "membership-invalid" });
+    }
+    const ids = messageMembers(message)
+      .map((member) => member.agentId)
+      .sort(compareAgentIds);
+    const [first, second, ...rest] = ids;
+    if (first === undefined || second === undefined) {
+      return yield* new CommunicationError({ reason: "membership-invalid" });
+    }
+    const conversationId = yield* deriveConversationId([
+      first,
+      second,
+      ...rest,
+    ]);
+    yield* Store.acceptMessage({
+      authorAgentId: message.author.agentId,
+      msgId: message.msgId,
+      conversationId,
+      canonicalMessage: yield* encodeCanonical(MessageSchema, message),
+    });
+  }).pipe(
+    Effect.catchTag(
+      "ClientRepresentationError",
+      () => new CommunicationError({ reason: "content-invalid" }),
+    ),
+    Effect.catchTag(
+      "EndpointStoreError",
+      (error) =>
+        new CommunicationError({
+          reason:
+            error.reason === "conflict"
+              ? "message-conflict"
+              : "persistence-failed",
+        }),
     ),
   );
 }
 
-function waitForMessage(environment: Environment, message: MessageReference) {
+function waitForMessage(environment: Environment, reference: MessageReference) {
   return Effect.gen(function* () {
     const card = yield* registeredCard(environment);
-    if (message.authorAgentId !== card.agentId) {
+    if (reference.authorAgentId !== card.agentId) {
       return yield* new CommunicationError({ reason: "unknown-message" });
     }
-    const rows = yield* environment.sql
-      .unsafe(
-        "SELECT 1 FROM message_intents WHERE author_agent_id = ? AND msg_id = ?",
-        [message.authorAgentId, message.msgId],
-      )
-      .pipe(
+    while (true) {
+      const retained = yield* Store.readAcceptedMessage(reference).pipe(
         Effect.catchTag(
-          "SqlError",
+          "EndpointStoreError",
           () => new CommunicationError({ reason: "persistence-failed" }),
         ),
       );
-    if (rows.length === 0) {
-      return yield* new CommunicationError({ reason: "unknown-message" });
+      if (retained === undefined) {
+        return yield* new CommunicationError({ reason: "unknown-message" });
+      }
+      if (retained.failure !== undefined) {
+        const reason = yield* Schema.decodeUnknown(
+          Schema.Literal(...sendFailureReasons),
+        )(retained.failure).pipe(
+          Effect.catchTag(
+            "ParseError",
+            () => new CommunicationError({ reason: "persistence-failed" }),
+          ),
+        );
+        return yield* sendFailure(new SendError({ reason }));
+      }
+      if (retained.completed) {
+        const engine = yield* Deferred.await(environment.ready);
+        yield* engine
+          .observeMessage(reference.msgId)
+          .pipe(Effect.mapError(sendFailure));
+        return retained.message;
+      }
+      yield* Effect.sleep(Duration.millis(100));
     }
-    const engine = yield* requireEngine(environment);
-    yield* engine
-      .observeMessage(message.msgId)
-      .pipe(Effect.mapError(sendFailure));
   });
+}
+
+function prepareAcceptedMessages(environment: Environment) {
+  return Effect.gen(function* () {
+    const engine = yield* Deferred.await(environment.ready);
+    for (const { message } of yield* Store.readUnpreparedMessages()) {
+      yield* engine.prepareMessage(message).pipe(
+        Effect.catchTag("SendError", (error) =>
+          isTerminalSendFailure(error.reason)
+            ? Store.failMessage(
+                {
+                  authorAgentId: message.author.agentId,
+                  msgId: message.msgId,
+                },
+                error.reason,
+              )
+            : Effect.void,
+        ),
+      );
+    }
+  }).pipe(
+    Effect.provideService(SqlClient.SqlClient, environment.sql),
+    Effect.repeat(Schedule.spaced(Duration.millis(200))),
+    Effect.zipRight(Effect.never),
+  );
 }
 
 function sendFailure(error: SendError) {
@@ -475,7 +523,7 @@ function consumeMessages<E, R>(
             (delivery) =>
               handle(delivery.message).pipe(
                 Effect.zipRight(
-                  engine.acknowledgeMessage(delivery.deliveryToken).pipe(
+                  engine.acknowledgeMessage(delivery.recordHash).pipe(
                     Effect.catchTag(
                       "DeliveryAcknowledgeError",
                       () =>

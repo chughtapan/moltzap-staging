@@ -4,7 +4,11 @@ import { effect as it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 import { digest, testAgentView } from "../__tests__/agent-card-fixtures.js";
-import { Message, messageFromIntent } from "./message.js";
+import {
+  Message,
+  messageFromIntent,
+  messageFromParticipants,
+} from "./message.js";
 import { MsgId } from "./records/values.js";
 
 const alice = testAgentView("alice");
@@ -48,3 +52,16 @@ it.each([
     expect(Exit.isFailure(decoded)).toBe(true);
   }),
 );
+
+it("captures nested content independently of the caller's objects", () =>
+  Effect.gen(function* () {
+    const data = { times: ["monday"] };
+    const message = yield* messageFromParticipants(alice, [bob], {
+      msgId,
+      content: [{ type: "data", value: data }],
+    });
+    data.times.push("tuesday");
+    expect(message.content).toEqual([
+      { type: "data", value: { times: ["monday"] } },
+    ]);
+  }));

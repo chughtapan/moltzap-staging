@@ -1,6 +1,5 @@
 /** @file Pins Events discovery and failure isolation through loopback HTTP. */
 
-import type { Implementation } from "@modelcontextprotocol/server";
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
@@ -13,6 +12,12 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  type Implementation,
+  PROTOCOL_VERSION_META_KEY,
+} from "@modelcontextprotocol/server";
+import {
   Deferred,
   Duration,
   Effect,
@@ -21,6 +26,8 @@ import {
   Schema,
   Scope,
   Stream,
+  TestClock,
+  TestContext,
 } from "effect";
 import {
   Agent,
@@ -40,6 +47,7 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import {
   CollectiveError,
   CollectiveId,
@@ -96,18 +104,14 @@ const operations: HarnessMcpOperations = {
 function acquireBoundaryServer(
   selectedOperations: HarnessMcpOperations,
   registered = true,
-  onSubscriptionActiveChange?: (active: boolean) => void,
-  keepAliveMillis?: number,
 ) {
   return Effect.gen(function* () {
+    const store = yield* openInboxFixture(stateDirectory());
     const handler = yield* makeHarnessMcpHttpHandler({
+      eventStore: store,
       credential: mcpTestCredential,
       implementation: IMPLEMENTATION,
       operations: selectedOperations,
-      ...(onSubscriptionActiveChange === undefined
-        ? {}
-        : { onSubscriptionActiveChange }),
-      keepAliveMillis,
     }).pipe(Effect.provideService(Identity, mcpIdentity(registered)));
     const server = yield* acquireHarnessMcpHttpServer({ port: 0, handler });
     const address = server.address();
@@ -297,65 +301,97 @@ function reportsUnexpectedSubscriptionLoss() {
   });
 }
 
-function keepsIdleSubscriptionAlive() {
+function emitsIdleHeartbeat() {
   return Effect.gen(function* () {
-    expect(yield* idleSubscriptionOutcome(100)).toEqual({ dropped: false });
-  });
-}
-
-function losesIdleSubscriptionWithoutKeepAlive() {
-  return Effect.gen(function* () {
-    const outcome = yield* idleSubscriptionOutcome(60_000);
-    expect(outcome).toMatchObject({
-      dropped: true,
-      cause: { reason: "transport-failed" },
+    const store = yield* openInboxFixture(stateDirectory());
+    const handler = yield* makeHarnessMcpHttpHandler({
+      eventStore: store,
+      credential: mcpTestCredential,
+      implementation: IMPLEMENTATION,
+      operations,
+    }).pipe(Effect.provideService(Identity, mcpIdentity(true)));
+    yield* Effect.addFinalizer(() =>
+      Effect.tryPromise({
+        try: () => handler.close(),
+        catch: (cause) => new Error("MCP handler closure failed", { cause }),
+      }).pipe(Effect.orDie),
+    );
+    const active = yield* Deferred.make<undefined>();
+    const heartbeat = yield* Deferred.make<string>();
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        handler.fetch(
+          new Request("http://127.0.0.1/mcp", {
+            method: "POST",
+            headers: {
+              ...mcpTestHeaders,
+              "content-type": "application/json",
+              accept: "text/event-stream",
+              "mcp-method": "events/stream",
+              "mcp-name": INBOX_PENDING_EVENT,
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: "heartbeat",
+              method: "events/stream",
+              params: {
+                name: INBOX_PENDING_EVENT,
+                arguments: {},
+                cursor: null,
+                _meta: {
+                  [PROTOCOL_VERSION_META_KEY]: MODERN_PROTOCOL_VERSION,
+                  [CLIENT_INFO_META_KEY]: IMPLEMENTATION,
+                  [CLIENT_CAPABILITIES_META_KEY]: {},
+                },
+              },
+            }),
+          }),
+        ),
+      catch: (cause) => new Error("MCP event request failed", { cause }),
     });
-    expect(outcome.dropped ? outcome.cause : undefined).toBeInstanceOf(
-      ListenError,
-    );
-  });
-}
-
-/**
- * Node's fetch aborts a silent response body after its body timeout (300 s
- * by default). The test compresses that to 1 s: an idle subscription with
- * keep-alive frames outlives three seconds of silence, one without them
- * fails as transport-failed. The undici devDependency is pinned to the
- * version Node bundles (`process.versions.undici`), because only that version
- * shares the global-dispatcher symbol Node's own fetch reads; if the two
- * diverge, the control test below fails instead of passing vacuously.
- */
-function idleSubscriptionOutcome(keepAliveMillis: number) {
-  return Effect.gen(function* () {
-    yield* routeRequestsThrough(new Agent({ bodyTimeout: 1000 }));
-    const { receive } = yield* observeListeningSubscription(keepAliveMillis);
-    return yield* Fiber.join(receive).pipe(
-      Effect.timeoutTo({
-        duration: Duration.seconds(3),
-        onTimeout: () => ({ dropped: false as const }),
-        onSuccess: (cause) => ({ dropped: true as const, cause }),
+    const body = yield* Effect.fromNullable(response.body);
+    yield* Stream.fromReadableStream(
+      () => body,
+      (cause) => new Error("Event stream failed", { cause }),
+    ).pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.tap((line) => {
+        if (line.includes("notifications/events/active")) {
+          return Deferred.succeed(active, undefined);
+        }
+        if (line.includes("notifications/events/heartbeat")) {
+          return Deferred.succeed(heartbeat, line);
+        }
+        return Effect.void;
       }),
+      Stream.runDrain,
+      Effect.forkScoped,
     );
-  });
+    yield* Deferred.await(active);
+    yield* TestClock.adjust("1 minute");
+    const frame = yield* Schema.decodeUnknown(Schema.parseJson())(
+      (yield* Deferred.await(heartbeat)).replace(/^data:\s*/u, ""),
+    );
+    expect(frame).toMatchObject({
+      method: "notifications/events/heartbeat",
+      params: { cursor: null },
+    });
+  }).pipe(Effect.provide(TestContext.TestContext));
 }
 
 /** A boundary server with one endpoint listening on it, and the fiber observing that stream's end. */
-function observeListeningSubscription(keepAliveMillis?: number) {
+function observeListeningSubscription() {
   return Effect.gen(function* () {
     const subscriptionActive = yield* Deferred.make<undefined>();
-    const { port, server } = yield* acquireBoundaryServer(
-      operations,
-      true,
-      (active) => {
-        if (active) {
-          Effect.runSync(Deferred.succeed(subscriptionActive, undefined));
-        }
-      },
-      keepAliveMillis,
-    );
+    const { port, server } = yield* acquireBoundaryServer(operations, true);
     const endpoint = yield* acquireHarnessEndpoint(
       new URL(`http://127.0.0.1:${port}/mcp`),
-      { credential: mcpTestCredential, receiveMode: "push" },
+      {
+        credential: mcpTestCredential,
+        receiveMode: "push",
+        onReady: Deferred.succeed(subscriptionActive, undefined),
+      },
     );
     const receive = yield* endpoint.messages.pipe(
       Stream.runHead,
@@ -878,14 +914,7 @@ describe("Harness MCP HTTP boundary", () => {
     "sanitizes unexpected operation defects",
     sanitizesUnexpectedOperationDefects,
   );
-  it(
-    "keeps an idle subscription alive past the fetch body timeout",
-    keepsIdleSubscriptionAlive,
-  );
-  it(
-    "loses an idle subscription to the fetch body timeout without keep-alive",
-    losesIdleSubscriptionWithoutKeepAlive,
-  );
+  it("emits heartbeat frames while a subscription is idle", emitsIdleHeartbeat);
   it(
     "reports an unexpected subscription disconnect",
     reportsUnexpectedSubscriptionLoss,

@@ -4,12 +4,6 @@ import { Context, Data, type Effect } from "effect";
 import type { AgentView } from "../identity/cards.js";
 import type { Message, MessageReference } from "./message.js";
 
-/** Accepted work can remain pending while peers or the network are unavailable. */
-export interface SendOutcome {
-  readonly kind: "completed" | "pending";
-  readonly message: MessageReference;
-}
-
 /** Communication failures distinguish refused work from unknown acceptance. */
 export class CommunicationError extends Data.TaggedError("CommunicationError")<{
   readonly reason:
@@ -60,14 +54,14 @@ export interface MessagePage {
 export class Communication extends Context.Tag("@moltzap/Communication")<
   Communication,
   {
-    /** Accepts the same message on every retry and waits within the configured bound. */
+    /** Durably accepts the immutable message before background certification begins. */
     readonly send: (
       message: Message,
-    ) => Effect.Effect<SendOutcome, CommunicationError>;
+    ) => Effect.Effect<void, CommunicationError>;
     /** Observes accepted work without submitting a replacement. */
     readonly waitForMessage: (
       message: MessageReference,
-    ) => Effect.Effect<void, CommunicationError>;
+    ) => Effect.Effect<Message, CommunicationError>;
     /** Retires a handoff after durable handler success and stops before later work on failure. */
     readonly consume: <E, R>(
       handle: (message: Message) => Effect.Effect<void, E, R>,

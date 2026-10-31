@@ -23,7 +23,7 @@ import {
 import {
   encodeCollectiveContent,
   FormModeSchema,
-} from "../../communication/collectives/wire/index.js";
+} from "../../communication/collectives/wire.js";
 import { messageFromIntent } from "../../communication/message.js";
 import { mintMsgId } from "../../communication/records/index.js";
 import {

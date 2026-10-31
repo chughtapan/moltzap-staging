@@ -413,52 +413,6 @@ it("keeps an invalid answer's usage in the trace", () =>
       accounting: { provider: "test-decisions", model: "test-model", usage },
     });
   }));
-/** A stated choice can trail the maximum within the provider probability tolerance. */
-const nearTie = {
-  choice: "relevant",
-  probabilities: { relevant: 0.49, irrelevant: 0.5, unresolved: 0.01 },
-};
-it("accepts a near-tie and admits an unsettled applicability judgment", () =>
-  Effect.gen(function* () {
-    const result = yield* check(
-      provider({ "applicability:privacy:assessment": nearTie }),
-    );
-    expect(result.reason).toBe("eligible");
-    expect(result.checks[0]?.trace?.data).toContain(
-      JSON.stringify(nearTie.probabilities),
-    );
-  }));
-it("admits a group message whose rule applicability is uncertain, advising that judgment", () =>
-  Effect.gen(function* () {
-    const requests: DecisionRequest[] = [];
-    const result = yield* check(
-      provider(
-        { "applicability:proposal-acceptance:assessment": nearTie },
-        requests,
-      ),
-      {
-        message: {
-          ...draft,
-          recipients: ["participant-agent", "third-agent"],
-        },
-        context: {
-          ...context,
-          participants: [
-            ...context.participants,
-            { agentId: "third-agent", principal: "third" },
-          ],
-        },
-      },
-    );
-    expect(result.judgment).toBe("allow");
-    expect(result.guidance).toContainEqual({
-      middlewareId: "org.social-harness/text",
-      ruleId: "proposal-acceptance",
-      uncertain: { choice: "relevant", probability: 0.49 },
-      instruction: reminder,
-    });
-    expect(requests.map((entry) => entry.stage)).toContain("compliance");
-  }));
 it.each([
   {
     name: "a restrictive choice",
@@ -570,7 +524,7 @@ it("captures evidence before asynchronous inference", () =>
       decide: (request) =>
         Effect.gen(function* () {
           requests.push(request);
-          if (request.stage === "applicability") {
+          if (request.stage === "expectations") {
             yield* Deferred.succeed(started, undefined);
             yield* Deferred.await(release);
           }
@@ -637,17 +591,7 @@ it.each([
   },
 ])("preserves provider interruption with $name", ({ cancellation }) =>
   Effect.gen(function* () {
-    const stages: string[] = [];
-    const decisions: DecisionProvider = {
-      decide: (request) =>
-        Effect.gen(function* () {
-          stages.push(request.stage);
-          if (request.stage === "applicability") {
-            return yield* cancellation;
-          }
-          return responseFor(request);
-        }),
-    };
+    const decisions: DecisionProvider = { decide: () => cancellation };
     const running = yield* check(decisions).pipe(Effect.fork);
     const exit = yield* Fiber.await(running);
     expect(
@@ -656,19 +600,8 @@ it.each([
         onSuccess: () => false,
       }),
     ).toBe(true);
-    expect(stages).toEqual(["applicability"]);
   }),
 );
-it("does not prune a rule labeled irrelevant", () =>
-  Effect.gen(function* () {
-    const result = yield* check(
-      provider({
-        "applicability:privacy:assessment": "irrelevant",
-        "compliance:privacy:assessment": "violation",
-      }),
-    );
-    expect(result.judgment).toBe("reject");
-  }));
 it.each([
   {
     name: "rounded",

@@ -44,7 +44,7 @@ import { makePollWaiters } from "../poll-waiters.js";
 import { makeRouterSend } from "../send.js";
 
 /* eslint sonarjs/no-empty-test-file: "off" -- Effect's scoped registrations are invisible to Sonar's direct Vitest-call detector. */
-/* eslint-disable max-lines-per-function, sonarjs/max-lines-per-function, max-nested-callbacks, agent-code-guard/no-hardcoded-assertion-literals -- Each scenario observes the deep capability at its public or private call boundary. */
+/* eslint-disable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Each scenario observes the deep capability at its public or private call boundary. */
 const utf8Encoder = new TextEncoder();
 
 const identifierPayload = (seed: number): string =>
@@ -618,4 +618,4 @@ describe("configuration behavior", () => {
   );
 });
 
-/* eslint-enable max-lines-per-function, sonarjs/max-lines-per-function, max-nested-callbacks, agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after the process scenarios. */
+/* eslint-enable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after the process scenarios. */

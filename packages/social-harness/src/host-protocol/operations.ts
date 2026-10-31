@@ -109,7 +109,6 @@ export const harnessSendArgumentsSchema = exactStruct({
       "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
   }),
 });
-const harnessSendRequestSchema = harnessSendArgumentsSchema;
 const harnessMessageReadyEventSchema = Schema.Struct({
   deliveryToken: DeliveryToken,
   item: InboundItem,
@@ -185,17 +184,12 @@ export type HarnessReadInboxResult = typeof inboxResultSchema.Type;
 export const decodeHarnessReadInboxResult =
   Schema.decodeUnknown(inboxResultSchema);
 
-/** Validate one send's input before it runs. */
-export const decodeHarnessSendRequest = Schema.decodeUnknown(
-  harnessSendRequestSchema,
-);
-
 /** Decoded delivery acknowledgment arguments owned by the daemon. */
 export type HarnessAcknowledgeDeliveryRequest =
   typeof harnessAcknowledgeDeliveryRequestSchema.Type;
 
 /** Validated semantic input of one send. */
-export type HarnessSendRequest = typeof harnessSendRequestSchema.Type;
+export type HarnessSendRequest = typeof harnessSendArgumentsSchema.Type;
 
 /**
  * Decoded error data of one refused `send_message` call.

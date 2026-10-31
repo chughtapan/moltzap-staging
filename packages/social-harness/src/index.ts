@@ -1,5 +1,5 @@
 /** @file Host entry for endpoint operations, delivery schemas, and immutable identity and envelope values. */
-// safer-arch-ignore no-folder-cycle: release/index.ts imports package.json for the Client release version, which places the package root below every domain that reads it, while this facade re-exports from host-client.
+// safer-arch-ignore no-folder-cycle: release.ts imports package.json for the Client release version, which places the package root below every domain that reads it, while this facade re-exports from host-client.
 // safer-arch-ignore require-curated-public-facade: Named re-exports join endpoint operations and delivery schemas with the immutable identities, cards, signing authority, attributed envelopes, and wire constants hosts read from their owning domains.
 // safer-arch-ignore no-large-public-surface: Hosts share one entry for endpoint operations, inbound items, immutable identity and envelope values, and launcher wire constants; Registry and Router composition use ./service, while process verification uses the condition-only internal entry.
 

@@ -21,7 +21,7 @@ import { DeliveryToken } from "../communication/store/index.js";
 import { Firewall } from "../firewall/index.js";
 import { Identity, LocalIdentity } from "../identity/local.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
-import { packageVersion } from "../release/index.js";
+import { packageVersion } from "../release.js";
 import {
   makeHistoryExport,
   noHistoryExport,
@@ -29,7 +29,7 @@ import {
 import {
   type DaemonManagementOperations,
   makeDaemonManagementOperations,
-} from "./management/index.js";
+} from "./management.js";
 import {
   acquireHarnessMcpHttpServer,
   LOOPBACK_HOST,

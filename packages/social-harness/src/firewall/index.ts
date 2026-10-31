@@ -28,6 +28,8 @@ import {
   captureRegistration,
   checkCapturedMessage,
   type CheckedGuidance,
+  type DecidingRule,
+  decidingRules,
   type DecisionProvider,
   DecisionProviderError,
   decodeFrozen,
@@ -37,7 +39,7 @@ import {
   MessageContext,
   type MessageMiddleware,
   projectFeedback,
-  textMetadata,
+  textQuestionEdition,
   validateChecks,
 } from "./check.js";
 import {
@@ -46,6 +48,7 @@ import {
   type FirewallConfiguration,
   firewallConfigurationSchema,
   type firewallDecisionsSchema,
+  type firewallDecisionSummarySchema,
   type FirewallInstallation,
   FirewallPolicyError,
   FirewallSettings,
@@ -481,10 +484,7 @@ function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
       outgoing: options.outgoing,
       settings: options.settings,
     });
-    const metadata = installationMetadata(
-      options,
-      text.rules.length === 0 ? undefined : textMetadata(text),
-    );
+    const metadata = installationMetadata(options, text);
     return {
       metadata,
       editableRules: rules,
@@ -526,7 +526,7 @@ function textRules(options: CapturedOptions, rules: readonly TextRule[]) {
 
 function installationMetadata(
   options: CapturedOptions,
-  text?: ReturnType<typeof textMetadata>,
+  text: Effect.Effect.Success<ReturnType<typeof textRules>>,
 ): FirewallInstallation {
   const describe = ({
     id,
@@ -545,14 +545,24 @@ function installationMetadata(
   const metadata: FirewallInstallation = {
     configuration: options.configuration,
     settings: options.settings,
-    incoming: [
-      ...options.incoming.map(describe),
-      ...(text === undefined ? [] : [text]),
-    ],
-    outgoing: [
-      ...options.outgoing.map(describe),
-      ...(text === undefined ? [] : [text]),
-    ],
+    incoming: options.incoming.map(describe),
+    outgoing: options.outgoing.map(describe),
+    ...(text.rules.length === 0 || options.text === undefined
+      ? {}
+      : {
+          text: {
+            edition: textQuestionEdition,
+            revision: text.revision,
+            rules: text.rules,
+            fixedRuleIds: text.fixedRuleIds,
+            settings: options.text.settings,
+            ...(options.text.provider.provenance === undefined
+              ? {}
+              : {
+                  provider: options.text.provider.provenance,
+                }),
+          },
+        }),
   };
   return metadata;
 }
@@ -803,9 +813,10 @@ function assess(
         canonicalCandidate: input.canonicalCandidate,
         canonicalInput: yield* retainedInput(active, input),
         admit,
-        canonicalResult: yield* encodeRuntimeValue(
-          withoutTraces(projection.result),
-        ),
+        canonicalResult: yield* encodeRuntimeValue({
+          result: withoutTraces(projection.result),
+          summaries: yield* decisionSummaries(active, input, projection.result),
+        }),
       },
       ...(admit && projection.guidance !== undefined
         ? { guidance: projection.guidance }
@@ -828,7 +839,6 @@ function evaluateMessage(
           rules: active.rules,
           settings: options.settings,
           revision: active.revision,
-          fixedRuleIds: active.fixedRuleIds,
           ...(options.text === undefined
             ? {}
             : {
@@ -850,6 +860,104 @@ function retainedInput(active: ActiveRules, input: CapturedCheck) {
     agents: input.agents,
     message: input.evidence.event?.message ?? null,
   });
+}
+
+type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
+
+/** Final public attribution uses the same captured rules and result as admission. */
+function decisionSummaries(
+  active: ActiveRules,
+  input: CapturedCheck,
+  result: FirewallCheck,
+): Effect.Effect<readonly DecisionSummary[], EndpointStoreError> {
+  const registrations = [
+    ...active.metadata[input.direction].map((entry) => ({
+      ...entry,
+      source: "code" as const,
+    })),
+    ...result.checks
+      .filter((check) => check.source === "text")
+      .map((check) => ({
+        source: "text" as const,
+        id: check.middlewareId,
+        rules: active.rules,
+      })),
+  ];
+  const deciding = decidingRules(result.reason, registrations, result.checks);
+  const cause = summaryCause(result, deciding);
+  const decidedBy = deciding.map(
+    (rule): DecisionSummary["decidedBy"][number] => {
+      let from: DecisionSummary["decidedBy"][number]["from"] = "editable";
+      if (rule.source === "code") {
+        from = "code";
+      } else if (active.fixedRuleIds.includes(rule.ruleId)) {
+        from = "fixed";
+      }
+      return {
+        ruleId: rule.ruleId,
+        from,
+        ...(rule.advice === undefined ? {} : { advice: rule.advice }),
+      };
+    },
+  );
+  const checkedRuleIds = [
+    ...new Set(
+      result.checks.flatMap((check) =>
+        check.findings.map((finding) => finding.ruleId),
+      ),
+    ),
+  ];
+  const message = input.evidence.event?.message;
+  const kind = message?.operation?.kind;
+  let peers: ReadonlyArray<string | null> = [null];
+  if (message !== undefined && kind !== "result" && kind !== "failure") {
+    peers =
+      input.direction === "outgoing" ? message.recipients : [message.sender];
+  }
+  return Effect.forEach(
+    peers,
+    (identity) => {
+      const peer =
+        identity === null
+          ? null
+          : input.agents.find((agent) => agent.agentId === identity);
+      if (peer === undefined) {
+        return Effect.fail(new EndpointStoreError({ reason: "corrupt" }));
+      }
+      return Effect.succeed({
+        direction: input.direction,
+        peer,
+        outcome: result.judgment,
+        cause,
+        decidedBy,
+        checkedRuleIds,
+        activeRevision: active.configurationDigest,
+      });
+    },
+    { concurrency: 1 },
+  );
+}
+
+function summaryCause(
+  result: FirewallCheck,
+  deciding: readonly DecidingRule[],
+): DecisionSummary["cause"] {
+  const first = deciding.find((rule) => rule.source === "text") ?? deciding[0];
+  if (
+    first?.finding === "unavailable" ||
+    (first === undefined &&
+      result.reason === "check-unavailable" &&
+      result.checks.some((check) => check.status === "unavailable"))
+  ) {
+    return "unavailable";
+  }
+  if (first === undefined) {
+    return result.judgment === "allow" ? "default" : "endpoint";
+  }
+  if (first.source === "code") {
+    return "code";
+  }
+  return first.finding === "uncertain" ? "uncertain" : "judgment";
 }
 
 /** A local reference correlates an assessment without granting lookup authority. */

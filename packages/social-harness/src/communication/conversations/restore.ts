@@ -43,6 +43,7 @@ import {
 } from "./engine-context.js";
 import {
   decodeStoredAnchor,
+  readStoredMessageIntent,
   recordFromStore,
   type StoredRowError,
   storedRowMatchesCore,
@@ -57,7 +58,7 @@ interface RecoveredEngineState {
   readonly recordFolds: Map<RecordHashValue, EngineActionFold>;
   readonly completedMessages: Map<string, RecordHashValue>;
   readonly messageIntents: ReadonlyArray<
-    EndpointRecovery["messageIntents"][number]
+    Effect.Effect.Success<ReturnType<typeof readStoredMessageIntent>>
   >;
   readonly outboundMessages: readonly StoredOutboundMessage[];
 }
@@ -103,13 +104,24 @@ export const recoverEngineState = (
       actionFolds,
       recordFolds,
     });
-    const completedMessages = yield* recoverCompletedMessages(recovery);
+    const messageIntents = yield* Effect.forEach(
+      recovery.messageIntents,
+      (stored) => readStoredMessageIntent(stored, verifiedMemberships),
+      { concurrency: 1 },
+    );
+    const completedMessages = new Map(
+      messageIntents.flatMap((stored) =>
+        stored.completedRecordHash === undefined
+          ? []
+          : [[stored.intent.msgId, stored.completedRecordHash] as const],
+      ),
+    );
     return {
       conversations,
       actionFolds,
       recordFolds,
       completedMessages,
-      messageIntents: recovery.messageIntents,
+      messageIntents,
       outboundMessages,
     };
   }).pipe(Effect.withSpan("recoverEngineState"));
@@ -427,26 +439,6 @@ function completeRecoveredFold(
   }
   fold.recordHash = record.actionCertifiedRecord.recordHash;
   fold.certified = true;
-}
-
-function recoverCompletedMessages(
-  recovery: EndpointRecovery,
-): Effect.Effect<Map<string, RecordHashValue>, ParseResult.ParseError> {
-  return Effect.forEach(
-    recovery.messageIntents.flatMap((intent) =>
-      intent.completedRecordHash === undefined
-        ? []
-        : [{ msgId: intent.msgId, recordHash: intent.completedRecordHash }],
-    ),
-    (completed) =>
-      Schema.decodeUnknown(RecordHash)(completed.recordHash).pipe(
-        Effect.map((recordHash): [string, RecordHashValue] => [
-          completed.msgId,
-          recordHash,
-        ]),
-      ),
-    { concurrency: 1 },
-  ).pipe(Effect.map((entries) => new Map(entries)));
 }
 
 /**

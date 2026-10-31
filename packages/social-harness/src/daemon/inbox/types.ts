@@ -3,6 +3,7 @@
 import type { Message, MessageReference } from "../../communication/message.js";
 import type { DeliveryToken } from "../../communication/store/index.js";
 import type { FirewallCompletion } from "../../firewall/store/types.js";
+import type { InboundItem } from "../../host-protocol/items.js";
 /** Immutable bytes offered to the host under one delivery identity. */
 export interface ItemProjection {
   readonly deliveryToken: DeliveryToken;
@@ -14,17 +15,12 @@ export interface FirewallHistoryEntry {
   readonly message: Message;
   readonly visible: boolean;
 }
-/**
- * Evidence of a local item the runtime was shown, such as a collective
- * result, which no certified record carries. Its entry bytes are the
- * delivery layer's own history projection.
- */
+/** A retained local result or failure available to later assessment. */
 export interface FirewallLocalEntry {
-  readonly canonicalEntry: Uint8Array;
-}
-/** One local item's evidence: the conversation address it belongs to and its entry. */
-interface FirewallLocalEvidence extends FirewallLocalEntry {
-  readonly conversation: string;
+  readonly item: Extract<
+    InboundItem,
+    { readonly kind: "collectiveResult" | "operationFailed" }
+  >;
 }
 /** Recent conversation evidence captured for one candidate. */
 export interface FirewallEvidence {
@@ -67,5 +63,4 @@ export interface LocalAdmission {
     readonly message: MessageReference;
     readonly admitted: boolean;
   }>;
-  readonly evidence: FirewallLocalEvidence;
 }

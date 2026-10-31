@@ -1,32 +1,28 @@
 /** @file Interprets verified collective traffic in its delivery transaction. */
 
 import type * as SqlClient from "@effect/sql/SqlClient";
-import { Clock, Effect, Option } from "effect";
-import type { Environment } from "./environment.js";
-import type { CollectivesError } from "./errors.js";
+import { Clock, Effect, Option, Queue } from "effect";
+import type { Message } from "../message.js";
+import type { EndpointStoreError } from "../store/index.js";
+import type { CollectivesError } from "./contracts.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
-import { Message } from "../message.js";
-import { agentAddressOf } from "../records/values.js";
-import { transaction } from "../store/database/index.js";
-import * as Store from "../store/index.js";
 import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-  type EndpointStoreError,
-} from "../store/index.js";
-import {
+  type Environment,
   operationParticipants,
   requestItem,
   sameMessage,
   sameParticipants,
   self,
+  transaction,
 } from "./operations.js";
+import { finishLocal, finishRemote } from "./results.js";
+import * as Store from "./store.js";
 import {
   collectiveRequesterOf,
   type CollectiveValue,
   readCollectiveValue,
   type ResponseValue,
-} from "./wire/index.js";
+} from "./wire.js";
 
 /** Only durable interpretation runs in the communication handoff transaction. */
 export function receive(environment: Environment, message: Message) {
@@ -60,9 +56,13 @@ function receivePart(
     case "operation":
       return receiveRequest(environment, message, value);
     case "response":
-      return receiveAnswer(message, value).pipe(Effect.as(Option.none()));
+      return receiveAnswer(environment, message, value).pipe(
+        Effect.as(Option.none()),
+      );
     case "close":
-      return receiveClose(message, value).pipe(Effect.as(Option.none()));
+      return receiveClose(environment, message, value).pipe(
+        Effect.as(Option.none()),
+      );
     default: {
       const exhaustive: never = value;
       return exhaustive;
@@ -92,26 +92,25 @@ function receiveRequest(
       if (existing.origin !== "remote") {
         return Option.none<IncomingItem>();
       }
-      const saved = yield* decodeRuntimeValue(
-        Message,
-        existing.canonicalRequest,
-      );
+      const saved = existing.request.message;
       return sameMessage(saved, message)
         ? Option.some<IncomingItem>(requestItem(message, value))
         : Option.none<IncomingItem>();
     }
     yield* Store.putCollectiveOperation({
-      operationId: value.operationId,
-      creatorAgentId: message.author.agentId,
       origin: "remote",
-      canonicalRequest: yield* encodeRuntimeValue(message),
-      deadlineAt: value.deadlineAt,
+      request: message,
+      value,
     });
     return Option.some<IncomingItem>(requestItem(message, value));
   });
 }
 
-function receiveAnswer(message: Message, response: ResponseValue) {
+function receiveAnswer(
+  environment: Environment,
+  message: Message,
+  response: ResponseValue,
+) {
   return Effect.gen(function* () {
     const operation = yield* Store.readCollectiveOperation(
       response.operationId,
@@ -119,7 +118,7 @@ function receiveAnswer(message: Message, response: ResponseValue) {
     if (operation === undefined || operation.phase === "completed") {
       return;
     }
-    const participants = yield* operationParticipants(operation);
+    const participants = operationParticipants(operation);
     if (
       !participants.members.some(
         (member) => member.agentId === message.author.agentId,
@@ -135,18 +134,22 @@ function receiveAnswer(message: Message, response: ResponseValue) {
     ) {
       return;
     }
-    yield* Store.recordCollectiveAnswer(
-      {
-        operationId: response.operationId,
-        member: agentAddressOf(message.author),
-        canonicalMessage: yield* encodeRuntimeValue(message),
-      },
+    const recorded = yield* Store.recordCollectiveAnswer(
+      response.operationId,
+      message,
       yield* Clock.currentTimeMillis,
     );
+    if (recorded && operation.origin === "local") {
+      const close = yield* finishLocal(environment, operation.operationId);
+      if (close !== undefined) {
+        yield* Queue.offer(environment.observations, close);
+      }
+    }
   });
 }
 
 function receiveClose(
+  environment: Environment,
   message: Message,
   value: Extract<CollectiveValue, { readonly kind: "close" }>,
 ) {
@@ -160,21 +163,22 @@ function receiveClose(
     ) {
       return;
     }
-    const request = yield* decodeRuntimeValue(
-      Message,
-      operation.canonicalRequest,
-    );
-    const participants = yield* operationParticipants(operation);
+    const request = operation.request.message;
+    const participants = operationParticipants(operation);
     if (
       participants.op !== "all_gather" ||
       !sameParticipants(request, message)
     ) {
       return;
     }
-    yield* Store.finalizeCollectiveOperation(
-      value.operationId,
-      yield* encodeRuntimeValue(message),
+    yield* Store.saveRemoteClose(value.operationId, message);
+    yield* finishRemote(environment, value.operationId);
+    const own = (yield* Store.readCollectiveMessages(value.operationId)).find(
+      (entry) => entry.role === "response",
     );
+    if (own !== undefined) {
+      yield* Queue.offer(environment.observations, own);
+    }
   });
 }
 

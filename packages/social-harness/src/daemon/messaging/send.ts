@@ -1,11 +1,16 @@
 /** @file Captures host commands, checks policy and transfers accepted work to messaging services. */
 
 import { SqlClient } from "@effect/sql";
-import { Clock, type Context, DateTime, Effect, Schema, Struct } from "effect";
+import { Clock, type Context, DateTime, Effect, Schema } from "effect";
 import type {
   Communication,
   CommunicationError,
 } from "../../communication/index.js";
+import type { Content } from "../../communication/records/values.js";
+import type {
+  DeliveryOperations,
+  HarnessSendRequest,
+} from "../../host-protocol/operations.js";
 import type { AgentView } from "../../identity/cards.js";
 import type { Identity } from "../../identity/local.js";
 import type { HistoryExportPort } from "../inbox/host-traffic-log.js";
@@ -19,7 +24,6 @@ import {
   type Collectives,
   type CollectivesError,
   encodeCollectiveContent,
-  FormModeSchema,
   mintCollectiveId,
 } from "../../communication/collectives/index.js";
 import { Question } from "../../communication/collectives/model.js";
@@ -29,23 +33,17 @@ import {
 } from "../../communication/conversations/errors.js";
 import {
   type Message,
-  messageFromIntent,
+  messageFromParticipants,
   messageMembers,
   replyAddress,
 } from "../../communication/message.js";
 import { mintMsgId } from "../../communication/records/index.js";
-import { Content } from "../../communication/records/values.js";
 import { saveCheckDecision } from "../../firewall/store/index.js";
 import { canonicalMessageAddress } from "../../host-protocol/address.js";
 import {
   FirewallSendError,
   refusalReason,
 } from "../../host-protocol/advice.js";
-import {
-  decodeHarnessSendRequest,
-  type DeliveryOperations,
-  type HarnessSendRequest,
-} from "../../host-protocol/operations.js";
 import {
   type FirewallEnvironment,
   prepareOutgoingCheck,
@@ -71,12 +69,7 @@ export interface SendContext {
 export const sendOperation =
   (context: SendContext): DeliveryOperations["send"] =>
   (request) =>
-    decodeHarnessSendRequest(request).pipe(
-      Effect.catchTag(
-        "ParseError",
-        () => new SendError({ reason: "content-invalid" }),
-      ),
-      Effect.flatMap((decoded) => send(context, decoded)),
+    send(context, request).pipe(
       Effect.tapBoth({
         onFailure: (error) =>
           DateTime.now.pipe(
@@ -238,17 +231,16 @@ function start(
         input.collective,
       );
       const guidance = yield* checkQuestion(question, environment);
-      const result = yield* context.collectives.ask(question);
+      yield* context.collectives.ask(question);
       return {
-        ...Struct.omit(result, "msgIds"),
+        kind: "collective" as const,
+        operationId: question.operationId,
         ...(guidance === undefined ? {} : { guidance }),
       };
     }
-    const message = yield* capturedMessage(
-      author,
-      destination.agents,
-      Content.make([{ type: "text", text: input.text }]),
-    );
+    const message = yield* capturedMessage(author, destination.agents, [
+      { type: "text", text: input.text },
+    ]);
     const guidance = yield* checkMessage(message, environment);
     yield* context.communication
       .send(message)
@@ -298,9 +290,12 @@ function answer(
       content,
     );
     const guidance = yield* checkMessage(message, environment);
-    const result = yield* context.collectives.answer(message);
+    yield* context.collectives.answer(message);
     return {
-      ...Struct.omit(result, "msgIds"),
+      kind: "response" as const,
+      msgId: message.msgId,
+      address: destination.address,
+      operationId: input.collectiveResponse.operationId,
       ...(guidance === undefined ? {} : { guidance }),
     };
   });
@@ -322,9 +317,7 @@ function captureQuestion(
       operationId: yield* mintCollectiveId(author.agentId),
       op: collective.op,
       text,
-      requestedSchema: yield* Schema.decodeUnknown(FormModeSchema)(
-        collective.requestedSchema,
-      ),
+      requestedSchema: collective.requestedSchema,
       deadlineAt: (yield* Clock.currentTimeMillis) + collective.deadline * 1000,
     });
   });
@@ -353,8 +346,7 @@ function capturedMessage(
   content: Content,
 ) {
   return Effect.gen(function* () {
-    return yield* messageFromIntent([author, ...agents], {
-      authorAgentId: author.agentId,
+    return yield* messageFromParticipants(author, agents, {
       msgId: yield* mintMsgId(),
       content,
     });

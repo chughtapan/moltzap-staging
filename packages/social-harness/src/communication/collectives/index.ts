@@ -1,16 +1,24 @@
 /** @file Collectives owns question lifetimes, first answers and durable result handoffs. */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Context, Deferred, Effect, Layer, type Option, Scope } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  type Option,
+  Queue,
+  Scope,
+} from "effect";
 import type { Message } from "../message.js";
 import type { EndpointStoreError } from "../store/index.js";
-import type { CollectiveId, CollectiveSendOutcome } from "./contracts.js";
-import type { Environment } from "./environment.js";
 import type { InboundItem as IncomingItem } from "./inbound.js";
 import type { Question, ResultDelivery } from "./model.js";
+import type { Environment } from "./operations.js";
+import type { StoredCollectiveMessage } from "./store.js";
 import { Identity } from "../../identity/local.js";
 import { Communication } from "../index.js";
-import { CollectivesError } from "./errors.js";
+import { type CollectiveId, CollectivesError } from "./contracts.js";
 import { receive } from "./receive.js";
 import { answer, ask, getRequest } from "./requests.js";
 import { consumeResults } from "./results.js";
@@ -21,12 +29,7 @@ export class Collectives extends Context.Tag("@moltzap/Collectives")<
   Collectives,
   {
     /** Accepts the captured operation before its deadline. */
-    readonly ask: (
-      question: Question,
-    ) => Effect.Effect<
-      Extract<CollectiveSendOutcome, { readonly kind: "collective" }>,
-      CollectivesError
-    >;
+    readonly ask: (question: Question) => Effect.Effect<void, CollectivesError>;
     /** Returns the original recognized request even after it closes. */
     readonly getRequest: (
       operationId: CollectiveId,
@@ -37,10 +40,7 @@ export class Collectives extends Context.Tag("@moltzap/Collectives")<
     /** Rechecks the selected request and saves the exact outgoing message atomically. */
     readonly answer: (
       message: Message,
-    ) => Effect.Effect<
-      Extract<CollectiveSendOutcome, { readonly kind: "response" }>,
-      CollectivesError
-    >;
+    ) => Effect.Effect<void, CollectivesError>;
     /** Interprets verified traffic without waiting for policy assessment. */
     readonly receive: (
       message: Message,
@@ -51,24 +51,20 @@ export class Collectives extends Context.Tag("@moltzap/Collectives")<
     ) => Effect.Effect<never, E | CollectivesError, R>;
   }
 >() {
-  /** The scope owns deadlines and accepted message submissions through restart handoff. */
+  /** The scope owns deadlines and certification observations through restart handoff. */
   static readonly layer = Layer.scoped(Collectives, makeCollectives());
 }
 
 /** Callers distinguish operation refusals from retained-message progress. */
-export { CollectivesError } from "./errors.js";
+export { CollectivesError } from "./contracts.js";
 
 /** Shared operation values remain independent of service construction. */
 export { Question, ResultDelivery, ResultSources } from "./model.js";
 /** Only Collectives interprets operation content. */
-export { type CollectiveValue, readCollectiveValue } from "./wire/index.js";
+export { type CollectiveValue, readCollectiveValue } from "./wire.js";
 
 /** Host draft construction uses the same admitted operation representation. */
-export {
-  encodeCollectiveContent,
-  FormModeSchema,
-  mintCollectiveId,
-} from "./wire/index.js";
+export { encodeCollectiveContent, mintCollectiveId } from "./wire.js";
 
 /** Captures one SQL client and owns the workers that outlive individual calls. */
 function makeCollectives() {
@@ -79,7 +75,7 @@ function makeCollectives() {
       identity: yield* Identity,
       scope: yield* Scope.Scope,
       failed: yield* Deferred.make<never, CollectivesError>(),
-      activeMessages: new Set(),
+      observations: yield* Queue.unbounded<StoredCollectiveMessage>(),
     };
     const capture = <A, E, R>(
       effect: Effect.Effect<A, E | EndpointStoreError, R>,

@@ -19,7 +19,7 @@ import { makeHostMessagingFixture } from "../../__tests__/host-messaging-fixture
 import {
   encodeCollectiveContent,
   FormModeSchema,
-} from "../../communication/collectives/wire/index.js";
+} from "../../communication/collectives/wire.js";
 import { AgentAddress } from "../../communication/records/values.js";
 
 const bob = Schema.decodeUnknownSync(AgentAddress)("agent:bob");

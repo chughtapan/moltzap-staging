@@ -96,6 +96,7 @@ import {
   protectedResourcePath,
   protectedResourceResponse,
 } from "./authentication.js";
+import { type ConsumerOwner, makeConsumerOwner } from "./consumer.js";
 import {
   type HarnessEvents,
   makeHarnessEvents,
@@ -144,18 +145,14 @@ export interface HarnessMcpOperations extends DeliveryOperations {
 
 /** Official handler with one content-free daemon notification edge. */
 export interface HarnessMcpEventHandler extends McpHttpHandler {
-  readonly hasActiveSubscription: () => boolean;
   readonly notifyPending: () => boolean;
 }
 
 type HarnessMcpHandlerOptions = McpAuthentication & {
-  readonly eventStore?: EventStore;
+  readonly eventStore: EventStore;
   readonly implementation: Implementation;
   readonly operations: HarnessMcpOperations;
-  readonly onSubscriptionActiveChange?: (active: boolean) => void;
   readonly onerror?: (error: Error) => void;
-  /** Idle keep-alive period of the message subscription; tests set it. */
-  readonly keepAliveMillis?: number;
 };
 
 interface RunOperationOptions<Value extends Readonly<Record<string, unknown>>> {
@@ -978,7 +975,6 @@ const guardedHandler = (
   },
 ): HarnessMcpEventHandler => ({
   ...delegate,
-  hasActiveSubscription: events.hasActiveSubscription,
   notifyPending: events.notifyPending,
   fetch: (request, requestOptions) => {
     const discovery = discoveryResponse(options, request);
@@ -1013,13 +1009,11 @@ const acquireWebhook = (
   options: HarnessMcpHandlerOptions,
   scope: Scope.CloseableScope,
   gate: Effect.Semaphore,
+  owner: ConsumerOwner,
 ) =>
   Effect.gen(function* () {
-    if (options.eventStore === undefined) {
-      return undefined;
-    }
     const context = yield* Layer.buildWithScope(webhookHttpClientLayer, scope);
-    return yield* makeWebhookEvents(options.eventStore, gate).pipe(
+    return yield* makeWebhookEvents(options.eventStore, gate, owner).pipe(
       Effect.provide(context),
       Scope.extend(scope),
       Effect.mapError(() => ({ reason: "persistence-failed" })),
@@ -1054,18 +1048,15 @@ const acquireHandler = (
       Effect.mapError(() => ({ reason: "authentication-unavailable" })),
     );
     const gate = yield* Effect.makeSemaphore(1);
-    const webhook = yield* acquireWebhook(options, scope, gate);
-    const poll =
-      options.eventStore === undefined
-        ? undefined
-        : yield* makeHarnessPollEvents(options.eventStore, gate);
+    const owner = yield* makeConsumerOwner;
+    const webhook = yield* acquireWebhook(options, scope, gate, owner);
+    const poll = yield* makeHarnessPollEvents(options.eventStore, gate, owner);
     const events = yield* makeHarnessEvents({
-      ...(webhook === undefined ? {} : { webhook }),
-      ...(poll === undefined ? {} : { poll }),
+      owner,
+      webhook,
+      poll,
       summary: options.operations.readInboxSummary,
       gate,
-      keepAliveMillis: options.keepAliveMillis,
-      onActiveChange: options.onSubscriptionActiveChange,
     });
     return guardedHandler(
       options,

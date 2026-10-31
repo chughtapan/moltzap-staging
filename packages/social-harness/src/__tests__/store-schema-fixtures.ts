@@ -1,23 +1,33 @@
 /** @file Isolated state directories and scoped endpoint store fixtures. */
 
-import type { SqlClient } from "@effect/sql";
+import { SqlClient } from "@effect/sql";
 import { Effect } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Store tests create and remove real SQLite state directories around independent Effect scopes.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onTestFinished } from "vitest";
-import type {
-  CertifiedRecord,
-  ConversationFoundation,
-  EndpointStoreError,
-  OutboxTooOldError,
+import type { HarnessMessageReadyEvent } from "../host-protocol/operations.js";
+import { replyAddress } from "../communication/message.js";
+import { storeOperation } from "../communication/store/database/index.js";
+import {
+  type CertifiedRecord,
+  type ConversationFoundation,
+  decodeRuntimeValue,
+  encodeRuntimeValue,
+  type EndpointStoreError,
+  type OutboxTooOldError,
 } from "../communication/store/index.js";
 import * as Communication from "../communication/store/index.js";
+import {
+  queueIncomingItem,
+  settleQueuedItem,
+} from "../daemon/inbox/pending.js";
 import * as Inbox from "../daemon/inbox/store.js";
 import * as Daemon from "../daemon/store.js";
 import { layer } from "../daemon/store.js";
 import * as Firewall from "../firewall/store/index.js";
+import { InboundItem } from "../host-protocol/items.js";
 import { bindIdentity, readIdentityBinding } from "../identity/local-store.js";
 import { LIVE_WIRE_VERSIONS } from "../identity/wire-version.js";
 import { digest } from "./agent-card-fixtures.js";
@@ -40,6 +50,7 @@ export const testStore = {
   ...Firewall,
   ...Inbox,
   ...Daemon,
+  putInboxItem: publishTestInboxItem,
   bindIdentity,
   readIdentityBinding,
 };
@@ -127,4 +138,54 @@ export function storedConversation(label: string): StoredConversation {
 /** UTF-8 bytes of `value`, the form the store's canonical columns hold. */
 export function bytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
+}
+
+/** Publishes a real queued item while tests omit the background assessment worker. */
+export function publishTestInboxItem(
+  item: Parameters<typeof Inbox.putInboxItem>[0],
+) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const exists =
+      (yield* sql`SELECT 1 FROM incoming_items WHERE delivery_token=${item.deliveryToken}`)[0];
+    if (exists === undefined) {
+      const decoded = yield* decodeRuntimeValue(
+        InboundItem,
+        item.canonicalItem,
+      );
+      yield* queueIncomingItem({
+        deliveryToken: item.deliveryToken,
+        canonicalItem: item.canonicalItem,
+        ...(decoded.kind === "multicast" || decoded.kind === "collectiveRequest"
+          ? {
+              message: {
+                authorAgentId: decoded.message.author.agentId,
+                msgId: decoded.message.msgId,
+              },
+            }
+          : {}),
+        conversation:
+          decoded.kind === "multicast" || decoded.kind === "collectiveRequest"
+            ? replyAddress(decoded.message)
+            : decoded.to,
+      });
+    }
+    const mutation = yield* Inbox.putInboxItem(item);
+    yield* settleQueuedItem(item.deliveryToken, "admitted");
+    return mutation;
+  }).pipe(storeOperation, Effect.withSpan("publishTestInboxItem"));
+}
+
+/** Retains previously published guidance when exercising replay after acknowledgment. */
+export function publishTestInboxEvent(event: HarnessMessageReadyEvent) {
+  return Effect.gen(function* () {
+    const retained = yield* Inbox.readInboxItem(event.deliveryToken);
+    yield* publishTestInboxItem({
+      deliveryToken: event.deliveryToken,
+      canonicalItem: yield* encodeRuntimeValue(event.item),
+      ...(retained?.canonicalGuidance === undefined
+        ? {}
+        : { canonicalGuidance: retained.canonicalGuidance }),
+    });
+  }).pipe(Effect.withSpan("publishTestInboxEvent"));
 }

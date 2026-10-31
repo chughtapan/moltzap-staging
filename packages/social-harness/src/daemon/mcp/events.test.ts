@@ -11,10 +11,19 @@ import {
   McpServer,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/server";
-import { Chunk, Deferred, Effect, Fiber, Schema, Stream } from "effect";
+import {
+  Chunk,
+  Deferred,
+  Effect,
+  Fiber,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { describe, expect } from "vitest";
 import type { HarnessMessageReadyEvent } from "../../host-protocol/operations.js";
 import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   loopbackMcpEndpoint,
   mcpIdentity,
@@ -22,12 +31,22 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
-import { DeliveryToken } from "../../communication/store/index.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
+import {
+  DeliveryToken,
+  encodeRuntimeValue,
+} from "../../communication/store/index.js";
 import { acquireHarnessEndpoint } from "../../host-client/index.js";
 import { InboundItem } from "../../host-protocol/items.js";
 import { INBOX_PENDING_EVENT } from "../../host-protocol/names.js";
 import { Identity } from "../../identity/local.js";
-import { type HarnessEvents, makeHarnessEvents } from "./events.js";
+import { makeConsumerOwner } from "./consumer.js";
+import {
+  type HarnessEvents,
+  makeHarnessEvents,
+  makeHarnessPollEvents,
+  makeWebhookEvents,
+} from "./events.js";
 import {
   type HarnessMcpOperations,
   makeHarnessMcpHttpHandler,
@@ -94,17 +113,24 @@ const registerInboxTools = (
  */
 const yieldAfterReservation = (
   gate: Effect.Semaphore,
-  current: () => HarnessEvents,
+  current: () => HarnessEvents | undefined,
 ): Effect.Semaphore => {
   let triggered = false;
   const arrive = Effect.suspend(() => {
     const events = current();
-    if (triggered || !events.hasActiveSubscription()) {
-      return Effect.void;
-    }
-    triggered = true;
-    events.notifyPending();
-    return Effect.yieldNow();
+    return events === undefined
+      ? Effect.void
+      : events.status.pipe(
+          Effect.orDie,
+          Effect.flatMap((status) => {
+            if (triggered || status.mode !== "push") {
+              return Effect.void;
+            }
+            triggered = true;
+            events.notifyPending();
+            return Effect.yieldNow();
+          }),
+        );
   });
   return {
     resize: (permits) => gate.resize(permits),
@@ -120,66 +146,39 @@ const yieldAfterReservation = (
 const unreachable = () =>
   Effect.dieMessage("events scenario reached an unrelated operation");
 
-/** An in-memory inbox: unread items in order and the newest sequence. */
-interface MemoryInbox {
-  readonly unread: HarnessMessageReadyEvent[];
-  sequence: number;
-}
-
-/**
- * Registered daemon operations over `inbox`; operations outside the events
- * scenarios die.
- */
-const inboxOperations = (inbox: MemoryInbox): HarnessMcpOperations => ({
-  readStatus: unreachable,
-  register: unreachable,
-  searchConversations: unreachable,
-  readConversation: unreachable,
-  send: unreachable,
-  readEvent: unreachable,
-  readInbox: () => Effect.sync(() => ({ items: [...inbox.unread] })),
-  readInboxSummary: () =>
-    Effect.sync(() => ({
-      pendingCount: inbox.unread.length,
-      newestSequence: inbox.sequence,
-    })),
-  acknowledgeDelivery: (deliveryToken) =>
-    Effect.sync(() => {
-      const index = inbox.unread.findIndex(
-        (entry) => entry.deliveryToken === deliveryToken,
-      );
-      if (index >= 0) {
-        inbox.unread.splice(index, 1);
-      }
-    }),
-});
-
-/**
- * The production MCP handler for a registered daemon over an in-memory inbox,
- * served on loopback HTTP.
- */
+/** The complete production handler over a real inbox on loopback HTTP. */
 const acquireEventsServer = Effect.gen(function* () {
-  const inbox: MemoryInbox = { unread: [], sequence: 0 };
-  const attached = yield* Deferred.make<undefined>();
-  const detached = yield* Deferred.make<undefined>();
+  const store = yield* openInboxFixture(stateDirectory());
   const handler = yield* makeHarnessMcpHttpHandler({
     credential: mcpTestCredential,
     implementation,
-    operations: inboxOperations(inbox),
-    onSubscriptionActiveChange: (active) => {
-      Effect.runFork(Deferred.succeed(active ? attached : detached, undefined));
-    },
+    eventStore: store,
+    operations: {
+      ...store.operations,
+      readInboxSummary: store.readInboxSummary,
+      readStatus: unreachable,
+      register: unreachable,
+      searchConversations: unreachable,
+      readConversation: unreachable,
+      send: unreachable,
+    } satisfies HarnessMcpOperations,
   }).pipe(Effect.provideService(Identity, mcpIdentity(true)));
   const endpoint = yield* loopbackMcpEndpoint(handler);
   return {
     endpoint,
-    attached,
-    detached,
-    add: (item: HarnessMessageReadyEvent) => {
-      inbox.unread.push(item);
-      inbox.sequence += 1;
-      handler.notifyPending();
-    },
+    add: (entry: HarnessMessageReadyEvent) =>
+      Effect.gen(function* () {
+        yield* store.putInboxItem({
+          deliveryToken: entry.deliveryToken,
+          canonicalItem: yield* encodeRuntimeValue(entry.item),
+          ...(entry.guidance === undefined
+            ? {}
+            : {
+                canonicalGuidance: yield* encodeRuntimeValue(entry.guidance),
+              }),
+        });
+        handler.notifyPending();
+      }),
   };
 });
 
@@ -193,8 +192,18 @@ const acquireRacingEventsServer = Effect.gen(function* () {
   const acknowledged: string[] = [];
   let sequence = 0;
   const gate = yield* Effect.makeSemaphore(1);
-  const events: HarnessEvents = yield* makeHarnessEvents({
-    gate: yieldAfterReservation(gate, () => events),
+  const owner = yield* makeConsumerOwner;
+  const store = yield* openInboxFixture(stateDirectory());
+  const poll = yield* makeHarnessPollEvents(store, gate, owner);
+  const webhook = yield* makeWebhookEvents(store, gate, owner).pipe(
+    Effect.provide(NodeHttpClient.layer),
+  );
+  let currentEvents: HarnessEvents | undefined = undefined;
+  const events = yield* makeHarnessEvents({
+    owner,
+    poll,
+    webhook,
+    gate: yieldAfterReservation(gate, () => currentEvents),
 
     summary: () =>
       Effect.sync(() => ({
@@ -202,6 +211,7 @@ const acquireRacingEventsServer = Effect.gen(function* () {
         newestSequence: sequence,
       })),
   }).pipe(Effect.provideService(Identity, mcpIdentity(true)));
+  currentEvents = events;
   const handler = createMcpHandler(
     () => {
       const capabilities = {
@@ -221,11 +231,12 @@ const acquireRacingEventsServer = Effect.gen(function* () {
     endpoint,
     events,
     acknowledged,
-    add: (item: HarnessMessageReadyEvent) => {
-      unread.push(item);
-      sequence += 1;
-      events.notifyPending();
-    },
+    add: (item: HarnessMessageReadyEvent) =>
+      Effect.sync(() => {
+        unread.push(item);
+        sequence += 1;
+        events.notifyPending();
+      }),
   };
 });
 
@@ -241,6 +252,7 @@ const rawRequest = (
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
         "mcp-method": method,
+        ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
       }),
       HttpClientRequest.bodyUnsafeJson({
         jsonrpc: "2.0",
@@ -294,28 +306,11 @@ const discoversDraftEvents = () =>
     expect(replay).toMatchObject({ error: { code: -32014 } });
   });
 
-const acceptsOmittedSubscribeCursor = () =>
-  Effect.gen(function* () {
-    const { endpoint } = yield* acquireEventsServer;
-    const omittedCursor = yield* rawRequest(endpoint, "events/subscribe", {
-      name: "org.social-harness/inbox.item",
-      arguments: {},
-      delivery: {
-        mode: "webhook",
-        url: "https://callback.example/events",
-        secret: "unavailable",
-      },
-    });
-    expect(omittedCursor).toMatchObject({
-      error: { code: -32014, data: { feature: "deliveryMode" } },
-    });
-  });
-
 const catchesUpAndDrainsNewArrivals = () =>
   Effect.gen(function* () {
     const harness = yield* acquireRacingEventsServer;
     const guidance = localGuidance(1);
-    harness.add({ ...delivery(1), guidance });
+    yield* harness.add({ ...delivery(1), guidance });
     const endpoint = yield* acquireHarnessEndpoint(harness.endpoint, {
       credential: mcpTestCredential,
       receiveMode: "push",
@@ -332,7 +327,7 @@ const catchesUpAndDrainsNewArrivals = () =>
       Effect.forkScoped,
     );
     yield* Deferred.await(firstAccepted);
-    harness.add(delivery(2));
+    yield* harness.add(delivery(2));
     harness.events.notifyPending();
     harness.events.notifyPending();
     const items = yield* Fiber.join(received);
@@ -353,9 +348,11 @@ const catchesUpAndDrainsNewArrivals = () =>
 const preservesExclusiveOwnership = () =>
   Effect.gen(function* () {
     const harness = yield* acquireEventsServer;
+    const attached = yield* Deferred.make<undefined>();
     const first = yield* acquireHarnessEndpoint(harness.endpoint, {
       credential: mcpTestCredential,
       receiveMode: "push",
+      onReady: Deferred.succeed(attached, undefined),
     });
     const second = yield* acquireHarnessEndpoint(harness.endpoint, {
       credential: mcpTestCredential,
@@ -365,12 +362,31 @@ const preservesExclusiveOwnership = () =>
       Stream.runDrain,
       Effect.forkScoped,
     );
-    yield* Deferred.await(harness.attached);
+    yield* Deferred.await(attached);
     const refused = yield* second.messages.pipe(Stream.runHead, Effect.flip);
     expect(refused.reason).toBe("already-listening");
     yield* Fiber.interrupt(running);
-    yield* Deferred.await(harness.detached);
-    harness.add(delivery(3));
+    yield* rawRequest(harness.endpoint, "tools/call", {
+      name: "event_subscription_status",
+      arguments: {},
+    }).pipe(
+      Effect.flatMap(
+        Schema.decodeUnknown(
+          Schema.Struct({
+            result: Schema.Struct({
+              structuredContent: Schema.Struct({ mode: Schema.String }),
+            }),
+          }),
+        ),
+      ),
+      Effect.map((output) => output.result.structuredContent.mode),
+      Effect.repeat({
+        while: (mode) => mode !== "none",
+        schedule: Schedule.spaced("1 millis"),
+      }),
+      Effect.timeout("2 seconds"),
+    );
+    yield* harness.add(delivery(3));
     const replay = yield* second.messages.pipe(
       Stream.take(1),
       Stream.runCollect,
@@ -382,10 +398,6 @@ const preservesExclusiveOwnership = () =>
 
 // @agent-code-guard/regression-only: these finite protocol transcripts pin interoperability with the official SDK and real loopback HTTP.
 describe("MCP Events draft interoperability", () => {
-  it(
-    "accepts an omitted subscription cursor before applying delivery policy",
-    acceptsOmittedSubscribeCursor,
-  );
   it(
     "advertises discovery and preserves draft errors for unknown events and replay",
     discoversDraftEvents,

@@ -1,7 +1,7 @@
 /** @file Saved decisions explain completed message checks without exposing private evidence. */
 
 import { scopedLive as it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { expect } from "vitest";
 import type { TextRule } from "../config.js";
 import { testAgentView } from "../../__tests__/agent-card-fixtures.js";
@@ -69,13 +69,6 @@ const review: TextRule = {
   },
 };
 
-const announce = {
-  id: "announce-once",
-  applies: "both",
-  text: "Announce the final meeting time once.",
-  guidance: "Announce the final time once.",
-} as const satisfies TextRule;
-
 const contacts = {
   id: "contacts",
   feedback: { nextAction: "stop", text: "Only known contacts may write." },
@@ -100,10 +93,10 @@ function codePolicy(
   };
 }
 
-/** Configured safety rules take `safety`; other questions receive compliant answers. */
+/** Selected rules receive the requested compliance judgment. */
 function decisionProvider(
   rules: ReadonlyArray<{ readonly id: string }> = [],
-  safety?: "violation" | "unresolved",
+  compliance?: "violation" | "unresolved",
 ): DecisionProvider {
   return {
     decide: (request) =>
@@ -119,7 +112,7 @@ function decisionProvider(
               question,
               request.stage === "compliance" &&
                 rules.some((rule) => rule.id === question.ruleId)
-                ? safety
+                ? compliance
                 : undefined,
             ),
           ]),
@@ -127,32 +120,6 @@ function decisionProvider(
       }),
   };
 }
-
-/** The configured norm has uncertain applicability; other questions settle. */
-const nearTieProvider: DecisionProvider = {
-  decide: (request) =>
-    Effect.succeed({
-      provider: "test-provider",
-      model: "test-model",
-      usage: {},
-      raw: "",
-      answers: Object.fromEntries(
-        Object.entries(request.questions).map(([id, question]) => [
-          id,
-          request.stage === "applicability" && question.ruleId === announce.id
-            ? {
-                choice: "relevant",
-                probabilities: {
-                  relevant: 0.49,
-                  irrelevant: 0.5,
-                  unresolved: 0.01,
-                },
-              }
-            : certain(question),
-        ]),
-      ),
-    }),
-};
 
 /** A decision provider that is never reachable. */
 const unreachable: DecisionProvider = {
@@ -302,28 +269,6 @@ it("names the editable rule whose valid uncertain judgment carries registered gu
             ruleId: review.id,
             from: "editable",
             advice: review.feedback?.text,
-          }),
-        ]),
-      },
-    ]);
-  }));
-
-it("names the rule whose valid uncertain applicability carries registered guidance", () =>
-  Effect.gen(function* () {
-    const feed = yield* decideIncoming(
-      options([], text(nearTieProvider, { initial: [announce] })),
-    );
-
-    expect(feed.decisions).toMatchObject([
-      {
-        outcome: "allow",
-        disposition: "admitted",
-        cause: "uncertain",
-        decidedBy: arrayContaining([
-          expect.objectContaining({
-            ruleId: announce.id,
-            from: "editable",
-            advice: announce.guidance,
           }),
         ]),
       },
@@ -519,6 +464,79 @@ it("keeps the deciding rules recorded before a later edit removes them", () =>
             }),
           ]),
         },
+      ]);
+    }),
+  ));
+
+it("reports publication withholding separately from an allowing assessment", () =>
+  withDaemonStore(stateDirectory(), () =>
+    Effect.gen(function* () {
+      const firewall = yield* makeFirewall(options([contactsPolicy("pass")]));
+      const checked = yield* firewall.check([
+        yield* preparedMessage("incoming"),
+      ]);
+      const assessment = yield* Effect.fromNullable(checked[0]);
+      expect(assessment).toMatchObject({
+        result: { judgment: "allow" },
+        completion: { admit: true },
+      });
+      yield* saveCheckDecision({ ...assessment.completion, admit: false });
+      expect((yield* firewall.readDecisions({})).decisions).toMatchObject([
+        { outcome: "allow", disposition: "withheld" },
+      ]);
+    }),
+  ));
+
+it("keeps one batch's captured policy when an edit activates between its checks", () =>
+  withDaemonStore(stateDirectory(), () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<undefined>();
+      const release = yield* Deferred.make<undefined>();
+      const judgments = decisionProvider([privacy], "violation");
+      const provider: DecisionProvider = {
+        decide: (request) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return yield* judgments.decide(request);
+          }),
+      };
+      const firewall = yield* makeFirewall({
+        ...options([], text(provider, { initial: [privacy] })),
+        maximumConcurrentChecks: 1,
+      });
+      const captured = yield* firewall.readPolicy();
+      const request = yield* preparedMessage("incoming");
+      const running = yield* firewall
+        .check([request, request])
+        .pipe(Effect.fork);
+      yield* Deferred.await(started);
+      const replacement = yield* firewall.updatePolicy({
+        remove: [privacy.id],
+        add: [review],
+      });
+      yield* Deferred.succeed(release, undefined);
+      const checked = yield* Fiber.join(running);
+      yield* Effect.forEach(
+        checked,
+        (entry) => saveCheckDecision(entry.completion),
+        { concurrency: 1 },
+      );
+      const feed = yield* firewall.readDecisions({});
+      expect(feed.decisions.map((entry) => entry.activeRevision)).toEqual([
+        captured.activeRevision,
+        captured.activeRevision,
+      ]);
+      expect(feed.decisions.map((entry) => entry.outcome)).toEqual([
+        "reject",
+        "reject",
+      ]);
+      expect(feed.decisions[0]?.decidedBy).toEqual([
+        { ruleId: privacy.id, from: "editable", advice: privacy.feedback.text },
+      ]);
+      expect(replacement.activeRevision).not.toBe(captured.activeRevision);
+      expect(yield* firewall.check([request])).toMatchObject([
+        { result: { judgment: "allow" } },
       ]);
     }),
   ));

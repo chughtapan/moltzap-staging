@@ -83,7 +83,7 @@ type RouterClientFailure = Effect.Effect.Error<
   ReturnType<Context.Tag.Service<typeof Router>["poll"]>
 >;
 
-/* eslint-disable max-lines, max-lines-per-function, sonarjs/max-lines-per-function, @typescript-eslint/no-invalid-void-type -- The scripted scenarios keep each Router trace and its exact ordering assertions together, and their latch Deferreds carry no value. */
+/* eslint-disable max-lines, max-lines-per-function, @typescript-eslint/no-invalid-void-type -- The scripted scenarios keep each Router trace and its exact ordering assertions together, and their latch Deferreds carry no value. */
 
 const callbacks = (input?: {
   readonly accepted?: Ref.Ref<string[]>;
@@ -1743,4 +1743,4 @@ describe("private Router worker", () => {
     withDaemonStore(stateDirectory(), () => persistenceFaultEndsPollLoop()));
 });
 
-/* eslint-enable max-lines, max-lines-per-function, sonarjs/max-lines-per-function, @typescript-eslint/no-invalid-void-type -- Restore repository defaults. */
+/* eslint-enable max-lines, max-lines-per-function, @typescript-eslint/no-invalid-void-type -- Restore repository defaults. */

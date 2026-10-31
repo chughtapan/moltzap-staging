@@ -96,6 +96,7 @@ function issuerFixture(
   } = {},
 ) {
   return Effect.gen(function* () {
+    const inbox = store ?? (yield* openInboxFixture(stateDirectory()));
     const keys = yield* Effect.tryPromise(() => generateKeyPair("RS256"));
     const jwk = yield* Effect.tryPromise(() => exportJWK(keys.publicKey));
     const issuerPath = behavior.path ?? "/";
@@ -113,7 +114,7 @@ function issuerFixture(
     const sign = signer(issuer, keys.privateKey);
     const token = () => sign({});
     const handler = yield* fixtureHandler(oauth, {
-      store,
+      store: inbox,
       delay: behavior.delay ?? 0,
       onStatus: behavior.onStatus,
     });
@@ -341,7 +342,16 @@ const checksMethodEnvelope = () =>
       expect(response.status).toBe(400);
       yield* Effect.tryPromise(() => response.text());
     }
-    expect(fixture.handler.hasActiveSubscription()).toBe(false);
+    const status = yield* Effect.tryPromise(() =>
+      request(fixture.endpoint, token, "tools/call", {
+        name: "event_subscription_status",
+        arguments: {},
+      }),
+    );
+    expect(yield* Effect.tryPromise(() => status.json())).toHaveProperty(
+      "result.structuredContent.mode",
+      "none",
+    );
   });
 
 /**
@@ -573,8 +583,17 @@ const expiresStream = () =>
     );
     expect(text).toContain("notifications/events/active");
     yield* Effect.yieldNow();
-    expect(fixture.handler.hasActiveSubscription()).toBe(false);
     const fresh = yield* Effect.tryPromise(() => fixture.token());
+    const status = yield* Effect.tryPromise(() =>
+      request(fixture.endpoint, fresh, "tools/call", {
+        name: "event_subscription_status",
+        arguments: {},
+      }),
+    );
+    expect(yield* Effect.tryPromise(() => status.json())).toHaveProperty(
+      "result.structuredContent.mode",
+      "none",
+    );
     const replacement = yield* Effect.tryPromise(() =>
       request(fixture.endpoint, fresh, "events/stream", {
         name: INBOX_PENDING_EVENT,
@@ -776,7 +795,7 @@ function incomingResponse(incoming: IncomingMessage): Response {
 function fixtureHandler(
   oauth: DaemonOAuth,
   input: {
-    readonly store?: Effect.Effect.Success<ReturnType<typeof openInboxFixture>>;
+    readonly store: Effect.Effect.Success<ReturnType<typeof openInboxFixture>>;
     readonly delay: number;
     readonly onStatus?: () => void;
   },
@@ -796,15 +815,12 @@ function fixtureHandler(
   return makeHarnessMcpHttpHandler({
     oauth,
     implementation: { name: "oauth-test", version: "1" },
-    operations:
-      input.store === undefined
-        ? base
-        : {
-            ...base,
-            ...input.store.operations,
-            readInboxSummary: input.store.readInboxSummary,
-          },
-    ...(input.store === undefined ? {} : { eventStore: input.store }),
+    operations: {
+      ...base,
+      ...input.store.operations,
+      readInboxSummary: input.store.readInboxSummary,
+    },
+    eventStore: input.store,
   }).pipe(Effect.provideService(Identity, mcpIdentity()));
 }
 

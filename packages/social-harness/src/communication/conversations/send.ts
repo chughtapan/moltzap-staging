@@ -39,7 +39,7 @@ import {
 } from "../records/index.js";
 import { compareAgentIds } from "../records/values.js";
 import * as Store from "../store/index.js";
-import { SendError } from "./errors.js";
+import { isTerminalSendFailure, SendError } from "./errors.js";
 import { anchorHashAtHead } from "./history/index.js";
 import { markRetries, type RetryOutcome } from "./retry-markers.js";
 import {
@@ -281,7 +281,29 @@ export const proposeIntent = (
       actionHash,
     });
     return actionHash;
-  }).pipe(Effect.withSpan("proposeIntent"));
+  }).pipe(
+    Effect.tapError((error) =>
+      isTerminalSendFailure(error.reason)
+        ? Store.failMessage(
+            {
+              authorAgentId: localIntent.intent.authorAgentId,
+              msgId: localIntent.intent.msgId,
+            },
+            error.reason,
+          ).pipe(
+            Effect.mapError(storeFailure),
+            Effect.zipRight(Deferred.fail(localIntent.completion, error)),
+            Effect.tap(() =>
+              Effect.sync(() =>
+                runtime.intents.delete(localIntent.intent.msgId),
+              ),
+            ),
+            Effect.asVoid,
+          )
+        : Effect.void,
+    ),
+    Effect.withSpan("proposeIntent"),
+  );
 
 interface LocalProposal {
   readonly conversation: EngineConversation;
@@ -576,6 +598,7 @@ interface PreparedIntent {
   readonly membership: VerifiedMembership;
   readonly intent: MessageIntent;
   readonly canonicalIntent: Uint8Array;
+  readonly canonicalMessage: Uint8Array;
 }
 
 /** Captured message identity survives preparation and every subsequent retry. */
@@ -587,6 +610,27 @@ export const acceptMessage = (
     if (message.author.agentId !== runtime.input.localAgentCard.agentId) {
       return yield* new SendError({ reason: "membership-invalid" });
     }
+    const sorted = messageMembers(message)
+      .map((member) => member.agentId)
+      .sort(compareAgentIds);
+    const [first, second, ...rest] = sorted;
+    if (first === undefined || second === undefined) {
+      return yield* new SendError({ reason: "membership-invalid" });
+    }
+    const conversationId = yield* deriveConversationId([
+      first,
+      second,
+      ...rest,
+    ]).pipe(Effect.mapError(representationFailure));
+    const canonicalMessage = yield* encodeCanonical(Message, message).pipe(
+      Effect.mapError(representationFailure),
+    );
+    yield* Store.acceptMessage({
+      authorAgentId: message.author.agentId,
+      msgId: message.msgId,
+      conversationId,
+      canonicalMessage,
+    }).pipe(Effect.mapError(storeFailure));
     const retained = runtime.intents.get(message.msgId);
     if (retained !== undefined) {
       yield* requireSameMessage(runtime, retained, message);
@@ -611,6 +655,7 @@ export const acceptMessage = (
       membership,
       intent,
       canonicalIntent,
+      canonicalMessage,
     });
     return { msgId: message.msgId, completion: activation.completion };
   }).pipe(Effect.withSpan("acceptMessage"));
@@ -648,6 +693,7 @@ function storedIntent(prepared: PreparedIntent): StoredMessageIntent {
     authorAgentId: prepared.intent.authorAgentId,
     msgId: prepared.intent.msgId,
     canonicalIntent: prepared.canonicalIntent,
+    canonicalMessage: prepared.canonicalMessage,
   };
 }
 

@@ -23,7 +23,6 @@ import {
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, vi } from "vitest";
 import type { RegistryLookupResult } from "../../../identity/registry/contract.js";
-import type { Message } from "../../message.js";
 import type {
   EndpointRecovery,
   StoredOutboundMessage,
@@ -66,6 +65,7 @@ import { SignedMessage } from "../../../identity/envelope/signed-message.js";
 import { Ed25519PublicKey } from "../../../identity/keys.js";
 import { saveLocalIdentity } from "../../../identity/local-store.js";
 import { WIRE_VERSION } from "../../../identity/wire-version.js";
+import { Message, messageFromIntent } from "../../message.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
@@ -131,7 +131,7 @@ import {
 } from "./catch-up.js";
 import { catchUpRetryAttempts } from "./index.js";
 
-/* eslint-disable max-lines, max-lines-per-function, max-statements, sonarjs/max-lines-per-function -- One exact cryptographic trace keeps protocol order and assertions together. */
+/* eslint-disable max-lines, max-lines-per-function -- One exact cryptographic trace keeps protocol order and assertions together. */
 
 /** The Router-worker operations an engine consumes. */
 type EngineRouterPort = EndpointEngineInput["routerWorker"];
@@ -1461,28 +1461,14 @@ const restartWithNonLexicalAgentOrder = () =>
     ).toEqual([fixture.certifiedRecord.actionCertifiedRecord.recordHash]);
   });
 
-/**
- * Retains the fixture's certified record and writes its dissemination
- * obligation with no outbox row attached, the state a crash between staging
- * a record for dissemination and queueing its copy leaves an obligation in.
- * @param fixture Endpoint whose store receives the rows.
- * @returns The staged record the obligation names.
- */
-const stageUnattachedDissemination = (fixture: RecoveryFixture) =>
-  retainCertifiedRecord(fixture).pipe(
-    Effect.zipRight(fixture.store.run(testStore.recover())),
-    Effect.flatMap(({ stagedRecords }) =>
-      Effect.fromNullable(stagedRecords[0]),
-    ),
-    Effect.tap((record) =>
-      fixture.store.run(testStore.stageRecordForDissemination(record)),
-    ),
-    Effect.orDie,
-  );
-
 const stageAttachedDissemination = (fixture: RecoveryFixture) =>
   Effect.gen(function* () {
-    const record = yield* stageUnattachedDissemination(fixture);
+    yield* retainCertifiedRecord(fixture);
+    const [record] = (yield* fixture.store.run(testStore.recover()))
+      .stagedRecords;
+    if (record === undefined) {
+      return yield* Effect.dieMessage("The fixture has no staged record");
+    }
     const message = yield* signOuterPacket({
       packet: fixture.certifiedRecord.actionCertifiedRecord,
       membership: fixture.membership,
@@ -1490,21 +1476,12 @@ const stageAttachedDissemination = (fixture: RecoveryFixture) =>
       signingAuthority: fixture.local.authority,
     });
     return yield* fixture.store.run(
-      testStore.enqueueDisseminationOutbound(
-        {
-          conversationId: record.conversationId,
-          recordHash: record.recordHash,
-        },
-        {
-          conversationId: record.conversationId,
-          envelopeId: message.envelopeId,
-          wireVersion: WIRE_VERSION,
-          canonicalSignedMessage: yield* encodeCanonical(
-            SignedMessage,
-            message,
-          ),
-        },
-      ),
+      testStore.stageRecordAndOutbound(record, {
+        conversationId: record.conversationId,
+        envelopeId: message.envelopeId,
+        wireVersion: WIRE_VERSION,
+        canonicalSignedMessage: yield* encodeCanonical(SignedMessage, message),
+      }),
     );
   }).pipe(Effect.orDie);
 
@@ -2506,7 +2483,6 @@ const recoverDisseminationObligations = () =>
     const fixture = yield* makeFixture;
     const stale = yield* stageAttachedDissemination(fixture);
     const before = yield* fixture.store.run(testStore.recover());
-    expect(before.disseminationObligations).toHaveLength(0);
     expect(before.outboundMessages).toHaveLength(1);
     const resumedOutbound = fixture.normalOutbound;
     const { recovery: recovering, outbound: recoveryOutbound } =
@@ -2542,7 +2518,6 @@ const recoverDisseminationObligations = () =>
     ).toBe(durabilityVoteKind);
     expect(yield* Queue.size(resumedOutbound)).toBe(0);
     const after = yield* fixture.store.run(testStore.recover());
-    expect(after.disseminationObligations).toHaveLength(0);
     expect(after.outboundMessages).toHaveLength(0);
   });
 
@@ -5602,6 +5577,21 @@ const openPeerEngine = (fixture: RecoveryFixture) =>
     }).pipe(Effect.provideService(SqlClient.SqlClient, store.sql));
     const { messageIntent } =
       fixture.certifiedRecord.actionCertifiedRecord.recordCore.action;
+    const canonicalMessage = yield* encodeCanonical(
+      Message,
+      yield* messageFromIntent(
+        fixture.membership.members.map(agentViewOf),
+        messageIntent,
+      ),
+    );
+    yield* store.run(
+      testStore.acceptMessage({
+        authorAgentId: messageIntent.authorAgentId,
+        msgId: messageIntent.msgId,
+        conversationId: messageIntent.conversationId,
+        canonicalMessage,
+      }),
+    );
     yield* store.run(
       testStore.bindMessageIntent({
         kind: "existing-conversation",
@@ -5611,6 +5601,7 @@ const openPeerEngine = (fixture: RecoveryFixture) =>
           authorAgentId: messageIntent.authorAgentId,
           msgId: messageIntent.msgId,
           canonicalIntent: yield* encodeCanonical(MessageIntent, messageIntent),
+          canonicalMessage,
         },
       }),
     );
@@ -8309,7 +8300,6 @@ const retriesWhileARecordPageAwaitsPromotion = () =>
         acceptIngress: unexpected,
         acceptRecoveryIngress: () => Effect.succeed(acceptedDisposition),
         resumeFolds: unexpected,
-        resumeDissemination: unexpected,
         rearmCatchUp: unexpected,
         isRecovering: () => true,
         headAdvanced: advanceHead,
@@ -8399,7 +8389,7 @@ describe("held catch-up pages", () => {
   );
 });
 
-/* eslint-enable max-lines, max-lines-per-function, max-statements, sonarjs/max-lines-per-function -- Restore repository defaults. */
+/* eslint-enable max-lines, max-lines-per-function -- Restore repository defaults. */
 
 /**
  * The remote member's MESSAGE proposal at the fixture's retained head.
@@ -8574,47 +8564,6 @@ const sendsARetainedOutboxRowAfterAColdStart = () =>
     ).toEqual([]);
   });
 
-/**
- * The store holds a record's dissemination obligation with no outbox row.
- * The engine that starts over the store queues the record's action-certified
- * copy for it at startup, so the copy goes out on the next drain without
- * waiting for a Router recovery. Fails when startup leaves an obligation
- * unattached.
- * @returns The trace, run to completion.
- */
-const sendsAnUnattachedObligationsCopyAfterAColdStart = () =>
-  Effect.gen(function* () {
-    const fixture = yield* makeFixture;
-    yield* stageUnattachedDissemination(fixture);
-    const before = yield* fixture.store.run(testStore.recover());
-
-    const restarted = yield* makeEndpointEngine(fixture.input).pipe(
-      Effect.provideService(SqlClient.SqlClient, fixture.store.sql),
-    );
-    yield* restarted.drainOutbound;
-    const sent = yield* Effect.forEach(
-      yield* Queue.takeAll(fixture.normalOutbound),
-      (message) => openForwarded(message),
-      { concurrency: 1 },
-    );
-
-    expect(
-      before.disseminationObligations,
-      "unattached obligations before the restart",
-    ).toHaveLength(1);
-    expect(
-      sent.filter(
-        (body) =>
-          body.kind === "direct" &&
-          body.packet.kind === "action_certified_record",
-      ),
-      "action-certified copies the restarted engine sent",
-    ).toHaveLength(1);
-    expect(
-      (yield* fixture.store.run(testStore.recover())).disseminationObligations,
-    ).toEqual([]);
-  });
-
 describe("evidence and outbox rows an engine resumes", () => {
   it("sends its signature for a proposal it signed again after a Router restart recovery", () =>
     resendsItsSignatureForAHeldProposal("router_restarted", 1));
@@ -8623,9 +8572,5 @@ describe("evidence and outbox rows an engine resumes", () => {
   it(
     "sends an outbox row the store retained once a restarted engine's loop runs",
     sendsARetainedOutboxRowAfterAColdStart,
-  );
-  it(
-    "queues the copy an unattached dissemination obligation owes when an engine starts",
-    sendsAnUnattachedObligationsCopyAfterAColdStart,
   );
 });

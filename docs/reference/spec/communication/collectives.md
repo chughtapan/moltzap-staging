@@ -31,34 +31,31 @@ returns `deadline-passed` without a message.
 
 Send one request per peer in its direct conversation. The requester is excluded
 from the respondents. Gathering from several peers does not create a group
-conversation. Wait up to 20 seconds for communication to complete each request, bounded by
-the deadline, then return the operation id. Pending requests continue independently.
-Failure for one resolved peer does not abort others.
+conversation. Return the operation id after the question and its request messages
+are durably accepted. Certification and delivery continue independently.
 
 Communication accepts a send when it retains the message for completion.
-If every request fails before acceptance,
-return `members-unreachable` without a result. Otherwise validate each first
-answer against the stored schema and complete when every member has an outcome
-or the deadline passes.
+Acceptance of the operation and its request messages is atomic. A refusal leaves
+no accepted operation. After acceptance, validate each first answer against the
+stored schema and complete when every member has an outcome or the deadline passes.
 
 ## All-gather
 
 Require the requester and at least two peers. Smaller sets fail with
 `membership-invalid`. Send one group request,
-returning its operation id after communication completes the request. A refusal before acceptance
-returns `members-unreachable` with every member and reason. Accepted requests still pending after 20 seconds or at expiry return
-`delivery-pending` and stay active.
+returning its operation id after durable acceptance. Certification and delivery
+continue independently of the caller.
 
 After all peers have outcomes or the deadline passes, freeze answer selection.
-Once communication completes the request, send a close in the group
-conversation identifying the counted answers in member order. Members retain answers but show none to their
+Accept a close in the group conversation identifying the counted answers.
+Communication preserves the request-before-close order. Members retain answers but show none to their
 agents before the close. Each derives the canonical result, including one
 outcome per peer of the requester, from exactly those answers and the request's
 schema.
 
-The requester emits its result after communication completes the close. A pending close keeps
-the operation finalizing with that message. Confirmed failure before closing-message
-acceptance produces `operationFailed`.
+The requester emits its result after the close certifies. An accepted close keeps
+the frozen result pending under the same message identity. A terminal preparation
+or certification failure replaces the unpublished result with `operationFailed`.
 
 ## Answers
 

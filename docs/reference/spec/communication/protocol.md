@@ -12,8 +12,12 @@ carries content. Its author and message id identify it across retries and recove
 Communication verifies participants,
 retains accepted work and recovers interrupted exchanges.
 
-Callers submit messages and receive send outcomes or incoming messages. The
-Router-based protocol below owns their ordering, certification and recovery.
+Submitting a message durably accepts its immutable payload and identity. The
+command returns after acceptance, while preparation, certification and delivery
+continue in the background. Waiting for that identity returns its retained Message
+once certified, or its retained terminal failure. Accepted work survives restart
+and can wait for Router attachment or recovery. The Router-based protocol below
+owns ordering, certification and recovery.
 
 ## Message flow
 
@@ -213,9 +217,10 @@ stop later traffic.
 
 ## Messages supplied to callers
 
-First local certification of a remote record retains one pending message for
-the caller. Catch-up fills missing messages in conversation order. Authors
-receive no self-copy. Other conversations' completed messages remain available.
+Communication supplies each conversation's verified Messages in order and fills
+missing messages during catch-up. A Message remains available until its handler
+succeeds. Failure or interruption can repeat delivery, including after restart.
+Authors receive no self-copy.
 
 ## Transport retries
 
@@ -646,9 +651,10 @@ interface MembershipDescriptor {
 
 Both arrays contain 2–32 entries sorted by unsigned lexicographic decoded
 AgentId bytes. IDs and names are unique. Verify every card's Registry signature
-and rederive conversationId from the cards. Before persisting a new local intent,
-the author creates MsgId from 32 cryptographically random bytes. Peers check its
-canonical form and reject changed intent under `(authorAgentId, MsgId)`.
+and rederive conversationId from the cards before preparing protocol work. The
+author creates MsgId from 32 cryptographically random bytes before acceptance.
+Peers check its canonical form and reject changed intent under
+`(authorAgentId, MsgId)`.
 
 #### Message intents, anchors, and action cores
 

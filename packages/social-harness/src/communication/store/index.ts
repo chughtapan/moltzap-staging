@@ -7,10 +7,8 @@ export { EndpointStoreError } from "./database/values.js";
 export type {
   CertifiedRecord,
   ConversationFoundation,
-  DisseminationObligation,
   EmptyConversationRestart,
   EndpointRecovery,
-  InboundDeliveryInput,
   MessageIntent,
   OutboundMessageInput,
   ProposalLock,
@@ -30,8 +28,6 @@ export { isSemanticStoreRejection } from "./types.js";
 export { decodeRuntimeValue, encodeRuntimeValue } from "./runtime-codec.js";
 /** Pending envelopes cannot be re-signed when their live window expires. */
 export { OutboxTooOldError } from "./database/values.js";
-/** Immutable collective ownership, existing message claims, and terminal delivery. */
-export type { StoredCollectiveOperation } from "./types.js";
 /** Protocol writes and reads use the caller's shared SQL environment. */
 export {
   applyCatchUpReanchor,
@@ -43,38 +39,21 @@ export {
   restartEmptyConversation,
   stageReanchor,
 } from "./anchors.js";
-/** Collective identities and accepted claims survive process interruption. */
-export {
-  completeCollectiveMessage,
-  completeCollectiveOperation,
-  finalizeCollectiveOperation,
-  putCollectiveMessage,
-  putCollectiveOperation,
-  readCollectiveAnswers,
-  readCollectiveMessages,
-  readCollectiveOperation,
-  readNextCollectiveResult,
-  readOpenCollectiveOperations,
-  readPendingCollectiveMessages,
-  recordCollectiveAnswer,
-  retireCollectiveOperation,
-  retireCollectiveResult,
-} from "./collectives.js";
 /** Accepted work, certified history and network retry obligations share SQL transactions. */
 export {
-  acknowledgeDelivery,
   beginOutbound,
   completeOutbound,
   discardOutbound,
-  enqueueDisseminationOutbound,
   enqueueOutbound,
-  readPendingDeliveries,
-} from "./queues/index.js";
+  readRecordOutbound,
+} from "./queues/outbound.js";
 /** History pages remain anchored while later records are appended. */
 export {
+  consumeRecord,
   readStoredConversation as readConversation,
   readMemberships,
   readRecentConversation,
+  readUnconsumedRecords,
   recoverStoredState as recover,
 } from "./reads.js";
 /** Record acceptance retains exact bytes and separately attributed evidence. */
@@ -82,6 +61,15 @@ export {
   applyCertifiedRecord,
   mergeEvidence,
   promoteRecord,
-  stageRecordForDissemination,
+  stageRecordAndOutbound,
   supersedeProposalLock,
 } from "./records.js";
+
+/** Accepted message payloads and terminal outcomes share the caller's transaction. */
+export {
+  acceptMessage,
+  failMessage,
+  hasPendingMessages,
+  readAcceptedMessage,
+  readUnpreparedMessages,
+} from "./messages.js";

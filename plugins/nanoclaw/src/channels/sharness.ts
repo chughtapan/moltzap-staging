@@ -520,7 +520,7 @@ class HarnessChannelAdapter {
     if (config === null) {
       return Effect.void;
     }
-    const projected = projectItem(delivery.item);
+    const projected = projectItem(delivery.item, delivery.eventId);
     let text = projected.text;
     if (delivery.guidance !== undefined) {
       text =
@@ -597,12 +597,12 @@ class HarnessChannelAdapter {
 }
 
 /** Each item keeps its canonical attribution and conversation before guidance is added. */
-function projectItem(item: InboundItem): ProjectedItem {
+function projectItem(item: InboundItem, eventId: string): ProjectedItem {
   switch (item.kind) {
     case "multicast":
       return {
         origin: "peer",
-        id: item.message.msgId,
+        id: eventId,
         address: replyAddress(item.message),
         sender: `agent:${item.message.author.agentName}`,
         text: renderContent(item.message.content),
@@ -610,7 +610,7 @@ function projectItem(item: InboundItem): ProjectedItem {
     case "collectiveRequest":
       return {
         origin: "peer",
-        id: item.message.msgId,
+        id: eventId,
         address: replyAddress(item.message),
         sender: `agent:${item.message.author.agentName}`,
         text: renderCollectiveRequest(
@@ -621,7 +621,7 @@ function projectItem(item: InboundItem): ProjectedItem {
     case "collectiveResult":
       return {
         origin: "endpoint",
-        id: `${item.operationId}:result`,
+        id: eventId,
         address: item.to,
         sender: ENDPOINT_SENDER,
         text: renderCollectiveResult(item),
@@ -629,7 +629,7 @@ function projectItem(item: InboundItem): ProjectedItem {
     case "operationFailed":
       return {
         origin: "endpoint",
-        id: `${item.operationId}:failed`,
+        id: eventId,
         address: item.to,
         sender: ENDPOINT_SENDER,
         text: item.error,

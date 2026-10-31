@@ -1,4 +1,4 @@
-/** @file The daemon combines verified recent messages with its saved host visibility and result history. */
+/** @file Combines recent messages and retained local results for firewall assessment. */
 
 import * as SqlClient from "@effect/sql/SqlClient";
 import { Effect } from "effect";
@@ -9,7 +9,10 @@ import type {
   FirewallHistoryEntry,
   FirewallLocalEntry,
 } from "./types.js";
-import { readRecentMessages } from "../../communication/conversations/index.js";
+import {
+  hasPendingMessages,
+  readRecentMessages,
+} from "../../communication/conversations/index.js";
 import { messageMembers } from "../../communication/message.js";
 import { deriveConversationId } from "../../communication/records/index.js";
 import {
@@ -19,25 +22,21 @@ import {
   storeOperation,
   transaction,
 } from "../../communication/store/database/index.js";
+import { decodeRuntimeValue } from "../../communication/store/index.js";
 import { compareAgentIds } from "../../encoding/identifier.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
+import { InboundItem } from "../../host-protocol/items.js";
 
-interface PositionedEntry {
-  readonly sequence: number;
-  readonly local: boolean;
-  readonly bytes: number;
-  readonly entry: FirewallHistoryEntry | FirewallLocalEntry;
-}
-interface Peekable {
-  readonly peek: () => PositionedEntry | undefined;
-  readonly take: () => void;
-}
 interface HistoryWindow extends FirewallEvidenceRange {
   readonly maximumRecords: number;
   readonly registrySignerPublicKey: Ed25519PublicKey;
 }
+interface HistoryItem {
+  readonly bytes: number;
+  readonly entry: FirewallHistoryEntry | FirewallLocalEntry;
+}
 
-/** A candidate is excluded by author and message id while assessment sees the latest history. */
+/** The candidate itself is excluded from its recent message history. */
 export function readFirewallEvidence(input: HistoryWindow) {
   return readFirewallEvidenceSlices({ ...input, ranges: [input] }).pipe(
     Effect.flatMap(({ slices }) =>
@@ -49,7 +48,7 @@ export function readFirewallEvidence(input: HistoryWindow) {
   );
 }
 
-/** One transaction captures all result texts against the same durable history. */
+/** All texts in a result see the same committed history. */
 export function readFirewallEvidenceSlices(input: {
   readonly ranges: readonly FirewallEvidenceRange[];
   readonly maximumRecords: number;
@@ -86,21 +85,48 @@ function readSlice(window: HistoryWindow) {
       (window.message === undefined
         ? undefined
         : yield* conversationOf(window.message));
-    const records = yield* recordEntries({
+    const messages = yield* messageHistory({
       ...window,
       ...(conversationId === undefined ? {} : { conversationId }),
     });
-    const locals = yield* localEntries(window);
+    const results = yield* resultHistory(window);
+    const resultCount = Math.min(
+      results.length,
+      Math.max(
+        window.maximumRecords - messages.length,
+        Math.floor(window.maximumRecords / 2),
+      ),
+    );
+    const selected = [
+      messages.slice(0, window.maximumRecords - resultCount),
+      results.slice(0, resultCount),
+    ];
+    const history: Array<FirewallHistoryEntry | FirewallLocalEntry> = [];
+    let bytes = 0;
+    for (const stream of selected) {
+      const entries: Array<FirewallHistoryEntry | FirewallLocalEntry> = [];
+      for (const item of stream) {
+        bytes += item.bytes;
+        if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+          break;
+        }
+        entries.push(item.entry);
+      }
+      entries.reverse();
+      history.push(...entries);
+      if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+        break;
+      }
+    }
     return {
+      history,
+      overflow: bytes > MAXIMUM_RUNTIME_ITEM_BYTES,
+      earlierHistoryOmitted:
+        messages.length + results.length > selected.flat().length,
       pendingOutgoing:
         conversationId === undefined
           ? false
-          : yield* unresolvedSend(conversationId),
-      ...mergedWindow(
-        peekable(records[Symbol.iterator]()),
-        peekable(locals[Symbol.iterator]()),
-        window.maximumRecords,
-      ),
+          : yield* hasPendingMessages(conversationId),
     };
   }).pipe(storeOperation);
 }
@@ -121,20 +147,7 @@ function conversationOf(
       );
 }
 
-function unresolvedSend(conversationId: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    return (
-      (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT 1 AS pending FROM message_intents WHERE conversation_id=? AND completed_record_hash IS NULL LIMIT 1",
-        [conversationId],
-      ))[0] !== undefined
-    );
-  }).pipe(storeOperation);
-}
-
-/** Communication verifies the bounded messages before the host attaches local visibility. */
-function recordEntries(window: HistoryWindow) {
+function messageHistory(window: HistoryWindow) {
   return Effect.gen(function* () {
     if (window.conversationId === undefined) {
       return [];
@@ -144,105 +157,57 @@ function recordEntries(window: HistoryWindow) {
       conversationId: window.conversationId,
       maximumRecords: window.maximumRecords + 1,
     });
+    const sql = yield* SqlClient.SqlClient;
     return yield* Effect.forEach(
-      messages
-        .filter(
-          (entry) =>
-            entry.message.author.agentId !== window.message?.author.agentId ||
-            entry.message.msgId !== window.message?.msgId,
-        )
-        .slice(0, window.maximumRecords + 1),
+      messages.filter(
+        (entry) =>
+          entry.message.author.agentId !== window.message?.author.agentId ||
+          entry.message.msgId !== window.message?.msgId,
+      ),
       (entry) =>
         Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
           const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
             "SELECT admitted FROM message_visibility WHERE author_agent_id=? AND msg_id=?",
             [entry.message.author.agentId, entry.message.msgId],
           ))[0];
           return {
-            sequence: entry.sequence,
-            local: false,
             bytes: entry.bytes,
             entry: {
               message: entry.message,
               visible: row !== undefined && readInteger(row, "admitted") === 1,
             },
-          } satisfies PositionedEntry;
+          } satisfies HistoryItem;
         }),
       { concurrency: 1 },
     );
   });
 }
 
-/** Local results remain in the host view that was saved when they were presented. */
-function localEntries(window: HistoryWindow) {
+function resultHistory(window: HistoryWindow) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT anchor,canonical_entry FROM local_history WHERE conversation=? ORDER BY anchor DESC,sequence DESC LIMIT ?",
+      "SELECT published_item FROM incoming_items WHERE conversation=? AND author_agent_id IS NULL AND published_item IS NOT NULL ORDER BY published_sequence DESC LIMIT ?",
       [window.conversation ?? null, window.maximumRecords + 1],
     );
-    return rows.map((row): PositionedEntry => {
-      const canonicalEntry = readBytes(row, "canonical_entry");
-      return {
-        sequence: readInteger(row, "anchor"),
-        local: true,
-        bytes: canonicalEntry.byteLength,
-        entry: { canonicalEntry },
-      };
-    });
+    return yield* Effect.forEach(
+      rows,
+      (row) =>
+        Effect.gen(function* () {
+          const bytes = readBytes(row, "published_item");
+          const item = yield* decodeRuntimeValue(InboundItem, bytes);
+          if (
+            item.kind !== "collectiveResult" &&
+            item.kind !== "operationFailed"
+          ) {
+            return yield* new EndpointStoreError({ reason: "corrupt" });
+          }
+          return {
+            bytes: bytes.byteLength,
+            entry: { item },
+          } satisfies HistoryItem;
+        }),
+      { concurrency: 1 },
+    );
   }).pipe(storeOperation);
-}
-
-function mergedWindow(
-  records: Peekable,
-  locals: Peekable,
-  maximumRecords: number,
-) {
-  const history: Array<FirewallHistoryEntry | FirewallLocalEntry> = [];
-  let bytes = 0;
-  for (
-    let next = newer(records.peek(), locals.peek());
-    next !== undefined;
-    next = newer(records.peek(), locals.peek())
-  ) {
-    if (history.length === maximumRecords) {
-      return historyWindow(history, false, true);
-    }
-    (next.local ? locals : records).take();
-    bytes += next.bytes;
-    if (bytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
-      return historyWindow(history, true, false);
-    }
-    history.push(next.entry);
-  }
-  return historyWindow(history, false, false);
-}
-/** The newer of two window candidates; a local entry follows the record at its anchor. */
-function newer(
-  record?: PositionedEntry,
-  local?: PositionedEntry,
-): PositionedEntry | undefined {
-  if (record === undefined || local === undefined) {
-    return record ?? local;
-  }
-  return local.sequence >= record.sequence ? local : record;
-}
-function peekable(source: Iterator<PositionedEntry>): Peekable {
-  let head = source.next();
-  return {
-    peek: (): PositionedEntry | undefined =>
-      head.done === true ? undefined : head.value,
-    take: (): void => {
-      head = source.next();
-    },
-  };
-}
-function historyWindow(
-  history: Array<FirewallHistoryEntry | FirewallLocalEntry>,
-  overflow: boolean,
-  earlierHistoryOmitted: boolean,
-) {
-  history.reverse();
-  return { history, overflow, earlierHistoryOmitted };
 }

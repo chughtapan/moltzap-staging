@@ -13,7 +13,7 @@ import {
   withDaemonStore,
 } from "../__tests__/store-schema-fixtures.js";
 import { Registry } from "../identity/registry/index.js";
-import { makeDaemonManagementOperations } from "./management/index.js";
+import { makeDaemonManagementOperations } from "./management.js";
 
 function heldRegistry(
   fixture: Fixture,

@@ -14,10 +14,12 @@ import type {
 import {
   type ClientRepresentationError,
   decodeCanonical,
+  encodeCanonical,
+  sameBytes,
 } from "../../../encoding/canonical-json.js";
 import { agentViewOf } from "../../../identity/cards.js";
 import { SignedMessage } from "../../../identity/envelope/signed-message.js";
-import { type Message, messageFromIntent } from "../../message.js";
+import { Message, messageFromIntent } from "../../message.js";
 import {
   type AnchorHash as AnchorHashValue,
   type CertifiedRecord,
@@ -29,6 +31,7 @@ import {
   InitialAnchorBody,
   type InitialAnchorBody as InitialAnchorBodyValue,
   MembershipDescriptor,
+  MessageIntent,
   type RecordCore,
   RecordCore as RecordCoreSchema,
   RecordHash,
@@ -59,7 +62,7 @@ import {
   type CertificateSignatures,
   certifiedRecord,
   orderedSignatures,
-} from "./certificates/index.js";
+} from "./certificates.js";
 
 /** Why a stored row failed to decode or to match what it claims to hold. */
 export type StoredRowError =
@@ -453,6 +456,52 @@ export function observedAnchorIsResolved(
           candidate.anchorHash === anchorHash,
       )?.previousAnchorHash,
   );
+}
+
+/** Decoded intent identity and completion are validated once by the protocol's stored reader. */
+export function readStoredMessageIntent(
+  stored: Store.MessageIntent,
+  memberships: ReadonlyMap<ConversationIdValue, VerifiedMembership>,
+) {
+  return Effect.gen(function* () {
+    const intent = yield* decodeCanonical(
+      MessageIntent,
+      stored.canonicalIntent,
+    );
+    if (
+      intent.conversationId !== stored.conversationId ||
+      intent.membershipHash !== stored.membershipHash ||
+      intent.authorAgentId !== stored.authorAgentId ||
+      intent.msgId !== stored.msgId
+    ) {
+      return yield* persistenceFailure();
+    }
+    const membership = memberships.get(intent.conversationId);
+    if (membership === undefined) {
+      return yield* persistenceFailure();
+    }
+    const message = yield* messageFromIntent(
+      membership.members.map(agentViewOf),
+      intent,
+    );
+    if (
+      !sameBytes(
+        yield* encodeCanonical(Message, message),
+        stored.canonicalMessage,
+      )
+    ) {
+      return yield* persistenceFailure();
+    }
+    const completedRecordHash =
+      stored.completedRecordHash === undefined
+        ? undefined
+        : yield* Schema.decodeUnknown(RecordHash)(stored.completedRecordHash);
+    return {
+      intent,
+      canonicalIntent: stored.canonicalIntent,
+      completedRecordHash,
+    };
+  }).pipe(Effect.withSpan("readStoredMessageIntent"));
 }
 
 function recoveryOnlyContainsMemberships(

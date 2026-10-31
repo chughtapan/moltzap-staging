@@ -18,7 +18,7 @@ export {
   signEvidenceMessage,
   signOuterEvidence,
   signOuterPacket,
-} from "./encoding/index.js";
+} from "./encoding.js";
 export {
   ActionCertifiedRecord,
   ActionCore,

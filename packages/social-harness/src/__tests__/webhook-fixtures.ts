@@ -11,6 +11,7 @@ import {
   DeliveryToken,
   encodeRuntimeValue,
 } from "../communication/store/index.js";
+import { makeConsumerOwner } from "../daemon/mcp/consumer.js";
 import { makeWebhookEvents } from "../daemon/mcp/webhook.js";
 import { localGuidanceSchema } from "../host-protocol/advice.js";
 import { InboundItem } from "../host-protocol/items.js";
@@ -140,7 +141,10 @@ export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
  * @param store The store the webhook reads.
  * @returns The scripted callback's controls and the events to acquire.
  */
-export const scriptedWebhook = (store: InboxFixture) => {
+export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
+  store: InboxFixture,
+) {
+  const owner = yield* makeConsumerOwner;
   const gate = Effect.unsafeMakeSemaphore(1);
   let status = 200;
   let challengeValid = true;
@@ -162,6 +166,7 @@ export const scriptedWebhook = (store: InboxFixture) => {
   );
   return {
     gate,
+    owner,
     posts,
     status: (value: number) => {
       status = value;
@@ -172,8 +177,8 @@ export const scriptedWebhook = (store: InboxFixture) => {
     onEvent: (effect: Effect.Effect<void>) => {
       onEvent = effect;
     },
-    acquire: makeWebhookEvents(store, gate).pipe(
+    acquire: makeWebhookEvents(store, gate, owner).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
     ),
   };
-};
+});

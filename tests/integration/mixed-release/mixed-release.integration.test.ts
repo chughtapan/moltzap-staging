@@ -31,7 +31,7 @@ import {
   makeDaemonProcessFixture,
   makeRegistrationRequest,
   ProcessTestError,
-} from "../daemon-process-harness.js";
+} from "../daemon/daemon-process-harness.js";
 
 // @agent-code-guard/regression-only: Regression cases exercise the reviewed release selection, reset boundary, missing metadata, and registry outage failures; the real process exchange checks interoperability.
 

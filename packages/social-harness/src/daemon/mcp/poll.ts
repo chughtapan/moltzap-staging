@@ -1,7 +1,7 @@
 /** @file Bounded draft Events polling and an ephemeral, fenced native consumer lease. */
 
 import { ProtocolError } from "@modelcontextprotocol/server";
-import { type Clock, Effect, Encoding, Schema } from "effect";
+import { Effect, Encoding, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 import type { EventStore, InboxPage } from "../inbox/store.js";
 import {
@@ -14,6 +14,12 @@ import {
   HARNESS_CONSUMER_META_KEY,
   INBOX_ITEM_EVENT,
 } from "../../host-protocol/names.js";
+import {
+  consumerConflict,
+  type ConsumerOwner,
+  currentConsumer,
+  type PollLease,
+} from "./consumer.js";
 import { makeItemEvent } from "./inbox-event.js";
 
 const POLL_INTERVAL_MILLIS = 1000;
@@ -32,20 +38,14 @@ const cursorSchema = Schema.Struct({
 });
 type Cursor = typeof cursorSchema.Type;
 
-interface ActivePoll {
-  readonly generation: string;
-  expiresAt: number;
-}
 interface PollRuntime {
   readonly store: EventStore;
   readonly gate: Effect.Semaphore;
-  readonly clock: Clock.Clock;
-  active?: ActivePoll;
+  readonly owner: ConsumerOwner;
 }
 
 /** Poll and native receipt share one gate with push/webhook ownership changes. */
 export interface HarnessPollEvents {
-  readonly hasActiveSubscription: () => boolean;
   readonly poll: (
     input: EventPollInput,
     metadata: unknown,
@@ -62,13 +62,14 @@ export interface HarnessPollEvents {
   readonly revoke: Effect.Effect<void>;
 }
 
-const now = (runtime: PollRuntime) => runtime.clock.unsafeCurrentTimeMillis();
-const active = (runtime: PollRuntime): ActivePoll | undefined =>
-  runtime.active !== undefined && runtime.active.expiresAt > now(runtime)
-    ? runtime.active
-    : undefined;
+const now = (runtime: PollRuntime) =>
+  runtime.owner.clock.unsafeCurrentTimeMillis();
+const active = (runtime: PollRuntime): PollLease | undefined => {
+  const owner = currentConsumer(runtime.owner);
+  return owner.mode === "poll" ? owner.lease : undefined;
+};
 /** A stale lifetime needs explicit reacquisition and unread recovery. */
-export const consumerLost = () =>
+const consumerLost = () =>
   new ProtocolError(
     -32012,
     "Native consumer is no longer active. Acquire a new polling lease and recover the unread inbox. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
@@ -77,21 +78,10 @@ export const consumerLost = () =>
     },
   );
 /** Consumer metadata has a closed grammar independent of bearer authentication. */
-export const invalidMetadata = () =>
+const invalidMetadata = () =>
   new ProtocolError(
     -32602,
     "Invalid native consumer metadata. Echo the polling generation in request metadata. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
-  );
-/** A fresh receiver must wait for the current consumer to release its lease. */
-export const consumerConflict = () =>
-  new ProtocolError(
-    -32013,
-    "Runtime subscription already active. Release it or wait for its lease to expire. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer",
-    {
-      limit: "subscriptions",
-      max: 1,
-      reason: "already-listening",
-    },
   );
 const persistenceFailure = () =>
   new ProtocolError(-32603, "Event persistence failed");
@@ -100,7 +90,7 @@ const readMetadata = (metadata: unknown) =>
 const requireConsumer = (
   runtime: PollRuntime,
   metadata?: ConsumerMetadata,
-): Effect.Effect<ActivePoll, ProtocolError> =>
+): Effect.Effect<PollLease, ProtocolError> =>
   Effect.suspend(() => {
     const current = active(runtime);
     if (
@@ -133,7 +123,7 @@ const result = (
   nextPollMs: POLL_INTERVAL_MILLIS,
   _meta: { [HARNESS_CONSUMER_META_KEY]: { generation } },
 });
-const fresh = (runtime: PollRuntime, current: ActivePoll, truncated: boolean) =>
+const fresh = (runtime: PollRuntime, current: PollLease, truncated: boolean) =>
   runtime.store.readInboxSummary().pipe(
     Effect.catchTag("EndpointStoreError", () =>
       Effect.fail(persistenceFailure()),
@@ -173,20 +163,20 @@ const acquireConsumer = (
     if (input.cursor != null) {
       return yield* Effect.fail(consumerLost());
     }
-    if (active(runtime) !== undefined) {
+    if (currentConsumer(runtime.owner).mode !== "none") {
       return yield* Effect.fail(consumerConflict());
     }
     const current = {
       generation: randomUUID(),
       expiresAt: now(runtime) + POLL_LEASE_MILLIS,
     };
-    runtime.active = current;
+    runtime.owner.current = { mode: "poll", lease: current };
     return current;
   });
 
 const cursorIsCurrent = (
   runtime: PollRuntime,
-  current: ActivePoll,
+  current: PollLease,
   cursor: Cursor,
   maxAgeMs: number,
 ): boolean => {
@@ -202,7 +192,7 @@ const cursorIsCurrent = (
 
 const pageCursor = (
   runtime: PollRuntime,
-  current: ActivePoll,
+  current: PollLease,
   cursor: Cursor,
   page: InboxPage,
 ): string =>
@@ -214,7 +204,7 @@ const pageCursor = (
   });
 const replayResult = (
   runtime: PollRuntime,
-  current: ActivePoll,
+  current: PollLease,
   cursor: Cursor,
   page: InboxPage,
 ) =>
@@ -235,7 +225,7 @@ const replayResult = (
 const replay = (
   runtime: PollRuntime,
   input: EventPollInput,
-  current: ActivePoll,
+  current: PollLease,
   cursor: Cursor,
 ) =>
   Effect.gen(function* () {
@@ -264,12 +254,12 @@ const replay = (
 const position = (
   runtime: PollRuntime,
   input: EventPollInput,
-  current: ActivePoll,
+  current: PollLease,
   binding?: ConsumerMetadata,
 ) =>
   Effect.gen(function* () {
     if (binding?.release === true) {
-      delete runtime.active;
+      runtime.owner.current = { mode: "none" };
       return result(current.generation, {
         events: [],
         truncated: false,
@@ -327,8 +317,8 @@ const poll = (
         ),
         Effect.onError(() =>
           Effect.sync(() => {
-            if (binding === undefined && runtime.active === current) {
-              delete runtime.active;
+            if (binding === undefined && active(runtime) === current) {
+              runtime.owner.current = { mode: "none" };
             }
           }),
         ),
@@ -363,11 +353,11 @@ const nativeOperation = <A, E>(
 export const makeHarnessPollEvents = (
   store: EventStore,
   gate: Effect.Semaphore,
+  owner: ConsumerOwner,
 ): Effect.Effect<HarnessPollEvents> =>
-  Effect.gen(function* () {
-    const runtime: PollRuntime = { store, gate, clock: yield* Effect.clock };
+  Effect.sync(() => {
+    const runtime: PollRuntime = { store, gate, owner };
     const events: HarnessPollEvents = {
-      hasActiveSubscription: () => active(runtime) !== undefined,
       poll: (input, metadata, authorize) =>
         poll(runtime, input, metadata, authorize),
       nativeOperation: (metadata, operation) =>
@@ -380,7 +370,9 @@ export const makeHarnessPollEvents = (
       }),
       revoke: gate.withPermits(1)(
         Effect.sync(() => {
-          delete runtime.active;
+          if (currentConsumer(owner).mode === "poll") {
+            owner.current = { mode: "none" };
+          }
         }),
       ),
     };

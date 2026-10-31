@@ -10,11 +10,13 @@ import {
 import { Effect, Option, Schema, SchemaAST } from "effect";
 import { describe, expect } from "vitest";
 import { requestId } from "../../__tests__/collective-operation-fixtures.js";
+import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   mcpIdentity,
   mcpTestCredential,
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
+import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
 import { FirewallPolicyError } from "../../firewall/config.js";
 import { decodeHarnessSendErrorData } from "../../host-protocol/operations.js";
 import { AgentName, PrincipalId } from "../../identity/identifiers.js";
@@ -41,7 +43,9 @@ const operations: HarnessMcpOperations = {
 
 const acquireHandler = (selected: HarnessMcpOperations, registered = true) =>
   Effect.gen(function* () {
+    const store = yield* openInboxFixture(stateDirectory());
     const handler = yield* makeHarnessMcpHttpHandler({
+      eventStore: store,
       credential: mcpTestCredential,
       implementation: { name: "tool-contract-test", version: "1" },
       operations: selected,
