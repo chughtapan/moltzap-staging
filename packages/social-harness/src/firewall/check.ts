@@ -294,7 +294,7 @@ export class DecisionProviderError extends Data.TaggedError(
   readonly accounting?: Pick<DecisionResponse, "provider" | "model" | "usage">;
 }> {}
 
-/** Entirely code-based chains have no dependency on this optional capability. */
+/** Injected providers receive frozen requests and return validated responses. */
 export interface DecisionProvider {
   /** Requested provider configuration, retained even when no response arrives. */
   readonly provider?: string;
@@ -424,25 +424,25 @@ const attribution =
 
 const stageCatalog = {
   expectations: {
-    criteria: {
+    criteria: Object.freeze({
       required: "The agent is expected to speak now under this rule.",
       permitted: "The agent may speak now under this rule, but need not.",
       wait: "The agent should wait for a specified event or another participant before speaking.",
       none: "No response is called for by this rule, or this rule does not apply.",
       unresolved:
         "Required evidence is missing or the expected behavior is uncertain.",
-    },
+    }),
     instructions:
       "What is the agent expected to do now under this rule? Outgoing expectations depend on prior evidence, never on an unsent draft. For incoming events, assess expectations conditional on admission. Do not treat withheld or assessor-only messages as delivered requests.",
   },
   compliance: {
-    criteria: {
+    criteria: Object.freeze({
       compliant:
         "The exact candidate complies with this rule in context, or the rule is inapplicable.",
       violation:
         "The candidate violates this rule in timing, content, or required process. Do not add requirements absent from the rule.",
       unresolved: "Required evidence is missing or compliance is uncertain.",
-    },
+    }),
     instructions:
       "Does this exact candidate comply with the rule? For outgoing drafts, assess the local agent against independently settled expectations in state.responseExpectations; a draft cannot grant itself permission to speak. For incoming messages, assess the peer sender and peer-authored candidate against the rule, never against the local recipient's response expectations. Do not add scheduling, approval, or tool-receipt requirements absent from the rule. Missing tool logs do not prove a tool action did not happen. Evaluate relevance yourself; a none expectation for an inapplicable rule does not forbid speech.",
   },
@@ -453,6 +453,14 @@ const stageCatalog = {
     readonly instructions: string;
   }
 >;
+
+const subjectCriteria = Object.freeze({
+  relevant:
+    "This message bears on the subject or conversation state addressed by this rule.",
+  irrelevant:
+    "This message does not bear on the subject or conversation state addressed by this rule.",
+  unresolved: "Required evidence is missing or relevance cannot be determined.",
+});
 
 /** Assessment and retained decisions share one validated, detached input. */
 export function checkCapturedMessage(
@@ -592,35 +600,33 @@ export function decidingRules(
   rules: readonly TextRule[],
   assessment: TextAssessment,
 ): readonly DecidingRule[] {
-  const selected: DecidingRule[] = assessment.findings.flatMap((finding) => {
+  const selected = new Map<string, DecidingRule["finding"]>();
+  for (const finding of assessment.findings) {
     const kind = decidingFinding(finding, reason);
-    return kind === undefined
-      ? []
-      : [{ ruleId: finding.ruleId, finding: kind }];
-  });
-  if (reason === "unresolved-evidence") {
-    selected.push(
-      ...conflictingExpectations(assessment.expectations).map(
-        (ruleId): DecidingRule => ({ ruleId, finding: "settled" }),
-      ),
-    );
+    if (kind !== undefined && !selected.has(finding.ruleId)) {
+      selected.set(finding.ruleId, kind);
+    }
   }
-  const unique = new Map<string, DecidingRule>();
-  for (const entry of selected) {
-    if (!unique.has(entry.ruleId)) {
-      const advice = registeredAdvice(
-        reason,
-        rules.find((rule) => rule.id === entry.ruleId),
-      );
-      unique.set(
-        entry.ruleId,
-        advice === undefined ? entry : { ...entry, advice },
-      );
+  if (reason === "unresolved-evidence") {
+    for (const ruleId of conflictingExpectations(assessment.expectations)) {
+      if (!selected.has(ruleId)) {
+        selected.set(ruleId, "settled");
+      }
     }
   }
   return rules.flatMap((rule) => {
-    const decision = unique.get(rule.id);
-    return decision === undefined ? [] : [decision];
+    const finding = selected.get(rule.id);
+    if (finding === undefined) {
+      return [];
+    }
+    const advice = registeredAdvice(reason, rule);
+    return [
+      {
+        ruleId: rule.id,
+        finding,
+        ...(advice === undefined ? {} : { advice }),
+      },
+    ];
   });
 }
 
@@ -768,10 +774,7 @@ function decidingFinding(
   return finding.outcome === "hold" ? "uncertain" : "settled";
 }
 
-function registeredAdvice(reason: Reason, rule?: TextRule): string | undefined {
-  if (rule === undefined) {
-    return undefined;
-  }
+function registeredAdvice(reason: Reason, rule: TextRule): string | undefined {
   return reason === "eligible"
     ? (rule.guidance ?? rule.feedback?.text)
     : (rule.feedback?.text ?? rule.guidance);
@@ -1289,24 +1292,36 @@ function textPolicyFitsBudget(
   });
 }
 
+/** Stops building at the byte limit without exposing a partial request. */
 function prepareRequest(
   stage: PolicyStage,
   state: string,
   questions: Iterable<QuestionEntry>,
   maximumBytes: number,
 ): DecisionRequest | Extract<PolicyStageTrace, { readonly status: "failed" }> {
-  const request = { stage, state, questions: {} };
-  const remaining =
+  const collected: Record<string, DecisionRequest["questions"][string]> = {};
+  const request = { stage, state, questions: collected };
+  let remaining =
     maximumBytes - utf8.encode(JSON.stringify(request)).byteLength;
-  const entries = collectQuestions(questions, remaining);
-  return entries === undefined
-    ? {
+  let separatorBytes = 0;
+  for (const [id, question] of questions) {
+    remaining -=
+      utf8.encode(JSON.stringify({ [id]: question })).byteLength -
+      2 +
+      separatorBytes;
+    if (remaining < 0) {
+      return {
         stage,
         status: "failed",
         failure: new DecisionProviderError({ reason: "budget" }),
         elapsedMilliseconds: 0,
-      }
-    : Object.freeze({ ...request, questions: freezeQuestions(entries) });
+      };
+    }
+    collected[id] = Object.freeze(question);
+    separatorBytes = 1;
+  }
+  Object.freeze(collected);
+  return Object.freeze(request);
 }
 
 function policyState(
@@ -1404,26 +1419,6 @@ function catalogState(policy: Pick<TextCheck, "rules" | "revision">) {
   };
 }
 
-/** Stop materializing questions at the byte limit; no partial request escapes. */
-function collectQuestions(
-  questions: Iterable<QuestionEntry>,
-  remainingBytes: number,
-): readonly QuestionEntry[] | undefined {
-  const entries: QuestionEntry[] = [];
-  let remaining = remainingBytes;
-  for (const entry of questions) {
-    remaining -=
-      utf8.encode(JSON.stringify({ [entry[0]]: entry[1] })).byteLength -
-      2 +
-      (entries.length === 0 ? 0 : 1);
-    if (remaining < 0) {
-      return undefined;
-    }
-    entries.push(entry);
-  }
-  return entries;
-}
-
 function* allQuestions(
   stage: PolicyStage,
   rules: TextCheck["rules"],
@@ -1433,25 +1428,6 @@ function* allQuestions(
     yield assessmentQuestion(stage, rule.id, index);
     yield* subjectQuestions(subjects, rule.id, index);
   }
-}
-
-/** Audit consumers and injected providers cannot change another assessment. */
-function freezeQuestions(
-  entries: ReadonlyArray<
-    readonly [string, DecisionRequest["questions"][string]]
-  >,
-): DecisionRequest["questions"] {
-  return Object.freeze(
-    Object.fromEntries(
-      entries.map(([id, question]) => [
-        id,
-        Object.freeze({
-          ...question,
-          criteria: Object.freeze({ ...question.criteria }),
-        }),
-      ]),
-    ),
-  );
 }
 
 function assessmentQuestion(
@@ -1492,14 +1468,7 @@ function* subjectQuestions(
         purpose: "subject",
         subject,
         instructions: `Apply state.instructions first. Under rule ${JSON.stringify(ruleId)}, does runtime-visible message ${JSON.stringify(subject)} help establish what the agent should address or why it should wait or remain silent? Assess this message independently; multiple messages may be relevant. A relevant reference does not itself create an obligation to reply.`,
-        criteria: {
-          relevant:
-            "This message bears on the subject or conversation state addressed by this rule.",
-          irrelevant:
-            "This message does not bear on the subject or conversation state addressed by this rule.",
-          unresolved:
-            "Required evidence is missing or relevance cannot be determined.",
-        },
+        criteria: subjectCriteria,
       },
     ];
   }
