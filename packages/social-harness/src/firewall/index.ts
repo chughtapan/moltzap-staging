@@ -33,8 +33,8 @@ import {
   DecisionProviderError,
   decodeFrozen,
   ENDPOINT_SENDER,
-  freezeData,
   type FirewallCheck,
+  freezeData,
   type Message,
   MessageContext,
   projectFeedback,
@@ -54,7 +54,7 @@ import {
   MAXIMUM_BEHAVIOR_BYTES,
   MAXIMUM_EDITABLE_RULES,
   type PolicyProblem,
-  policyReadSchema,
+  type policyReadSchema,
   type policyUpdateResultSchema,
   policyUpdateSchema,
   TextPolicySettings,
@@ -199,8 +199,7 @@ const invalidRule = (
 
 function initialPolicy(source: FirewallOptions | LoadedMessagePolicy) {
   return Effect.gen(function* () {
-    const options =
-      "policy" in source ? yield* configuredOptions(source) : source;
+    const options = "policy" in source ? configuredOptions(source) : source;
     const captured = yield* captureOptions(options).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
@@ -349,32 +348,30 @@ function approveRuleChange(): Effect.Effect<void, FirewallPolicyError> {
 }
 
 function configuredOptions(loaded: LoadedMessagePolicy) {
-  return Effect.gen(function* () {
-    const policy = loaded.policy;
-    const provider: DecisionProvider =
-      loaded.provider.kind === "jev"
-        ? retryingTransientFailures(makeJevDecisionProvider(loaded.provider))
+  const policy = loaded.policy;
+  const provider: DecisionProvider =
+    loaded.provider.kind === "jev"
+      ? retryingTransientFailures(makeJevDecisionProvider(loaded.provider))
+      : {
+          decide: () =>
+            Effect.fail(new DecisionProviderError({ reason: "transport" })),
+        };
+  return {
+    mode: policy.mode,
+    settings: policy.settings,
+    facts: policy.facts,
+    maximumHistoryRecords: policy.maximumHistoryRecords,
+    maximumConcurrentChecks: policy.maximumConcurrentChecks,
+    text:
+      policy.text === undefined
+        ? undefined
         : {
-            decide: () =>
-              Effect.fail(new DecisionProviderError({ reason: "transport" })),
-          };
-    return {
-      mode: policy.mode,
-      settings: policy.settings,
-      facts: policy.facts,
-      maximumHistoryRecords: policy.maximumHistoryRecords,
-      maximumConcurrentChecks: policy.maximumConcurrentChecks,
-      text:
-        policy.text === undefined
-          ? undefined
-          : {
-              fixedRules: policy.text.fixedRules,
-              initialRules: policy.text.initialRules,
-              settings: policy.textSettings,
-              provider,
-            },
-    } satisfies FirewallOptions;
-  });
+            fixedRules: policy.text.fixedRules,
+            initialRules: policy.text.initialRules,
+            settings: policy.textSettings,
+            provider,
+          },
+  } satisfies FirewallOptions;
 }
 
 function captureOptions(options: FirewallOptions) {

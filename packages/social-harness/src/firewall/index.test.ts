@@ -15,7 +15,7 @@ import {
   encodeRuntimeValue,
 } from "../communication/store/index.js";
 import { readCredential } from "../daemon/credentials.js";
-import { Message, MessageContext, type DecisionProvider } from "./check.js";
+import { type DecisionProvider, Message, MessageContext } from "./check.js";
 import {
   loadMessagePolicy,
   MAXIMUM_BEHAVIOR_BYTES,
@@ -477,24 +477,7 @@ it("retains a text judgment without saving private provider traces", () =>
             model: "test-model",
             raw: privateResponse,
             usage: {},
-            answers: Object.fromEntries(
-              Object.entries(request.questions).map(([id, question]) => {
-                const choice =
-                  request.stage === "compliance" ? "violation" : "none";
-                return [
-                  id,
-                  {
-                    choice,
-                    probabilities: Object.fromEntries(
-                      Object.keys(question.criteria).map((option) => [
-                        option,
-                        Number(option === choice),
-                      ]),
-                    ),
-                  },
-                ];
-              }),
-            ),
+            answers: rejectingAnswers(request),
           }),
       };
       const firewall = yield* makeFirewall(textOptions(decisions));
@@ -547,6 +530,26 @@ it("captures provider identity and distinguishes model changes", () =>
       });
     }),
   ));
+
+function rejectingAnswers(request: Parameters<DecisionProvider["decide"]>[0]) {
+  return Object.fromEntries(
+    Object.entries(request.questions).map(([id, question]) => {
+      const choice = request.stage === "compliance" ? "violation" : "none";
+      return [
+        id,
+        {
+          choice,
+          probabilities: Object.fromEntries(
+            Object.keys(question.criteria).map((option) => [
+              option,
+              Number(option === choice),
+            ]),
+          ),
+        },
+      ];
+    }),
+  );
+}
 
 function textOptions(provider: DecisionProvider): FirewallOptions {
   return {

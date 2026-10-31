@@ -23,6 +23,8 @@ import {
   validateChecks,
 } from "./check.js";
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Judgments and safe boundary failures are the behavior under test. */
+// @agent-code-guard/regression-only: Captured evidence, configured text limits and inference deadlines protect concrete boundary failures.
+
 const draft: typeof Message.Encoded = {
   id: "draft",
   sender: "local-agent",

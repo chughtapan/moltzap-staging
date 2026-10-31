@@ -239,6 +239,44 @@ it("names the editable rule whose valid uncertain judgment carries registered gu
     ]);
   }));
 
+it("lists deciding rules in policy order when different stages leave them unsettled", () =>
+  Effect.gen(function* () {
+    const provider: DecisionProvider = {
+      decide: (request) => {
+        const uncertain =
+          request.stage === "expectations" ? review.id : privacy.id;
+        return Effect.succeed({
+          provider: "test",
+          model: "test",
+          raw: "",
+          usage: {},
+          answers: Object.fromEntries(
+            Object.entries(request.questions).map(([id, question]) => [
+              id,
+              certain(
+                question,
+                question.purpose === "assessment" &&
+                  question.ruleId === uncertain
+                  ? "unresolved"
+                  : undefined,
+              ),
+            ]),
+          ),
+        });
+      },
+    };
+    const feed = yield* decideIncoming(
+      options(text(provider, { fixed: [privacy, review] })),
+    );
+    expect(feed.decisions).toMatchObject([
+      { outcome: "allow", cause: "uncertain" },
+    ]);
+    expect(feed.decisions[0]?.decidedBy.map((rule) => rule.ruleId)).toEqual([
+      privacy.id,
+      review.id,
+    ]);
+  }));
+
 it("reports an unreachable decision provider as the cause of a hold", () =>
   Effect.gen(function* () {
     const feed = yield* decideIncoming(
@@ -283,12 +321,11 @@ it("names both norms whose expectations conflict", () =>
             Object.entries(request.questions).map(([id, question]) => {
               let choice = "compliant";
               if (request.stage === "expectations") {
-                choice =
-                  question.purpose === "subject"
-                    ? "irrelevant"
-                    : question.ruleId === reply.id
-                      ? "required"
-                      : "wait";
+                if (question.purpose === "subject") {
+                  choice = "irrelevant";
+                } else {
+                  choice = question.ruleId === reply.id ? "required" : "wait";
+                }
               }
               return [
                 id,

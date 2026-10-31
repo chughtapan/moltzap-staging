@@ -13,7 +13,7 @@ import { exactStruct } from "../encoding/exact.js";
 import { AgentView } from "../identity/cards.js";
 import {
   type FirewallSettings,
-  nextActionSchema,
+  type nextActionSchema,
   OwnerFact,
   type TextPolicySettings,
   type TextRule,
@@ -215,85 +215,15 @@ export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
   return yield* checkCapturedMessage(input, captured);
 });
 
-/** Assessment and retained decisions share one validated, detached input. */
-export function checkCapturedMessage(
-  input: Omit<CheckMessageInput, "event" | "context">,
-  captured: CapturedInput,
-): Effect.Effect<FirewallCheck, CheckInputError> {
-  return Effect.gen(function* () {
-    yield* validateEvidence(captured);
-    const selected = forDirection(input.rules, captured.event.direction);
-    if (selected.rules.length === 0) {
-      return composeDecision(captured.context, input.rules, {
-        findings: selected.skipped,
-        expectations: [],
-      });
-    }
-    const settings = input.textSettings;
-    if (settings === undefined) {
-      return yield* new CheckInputError({ reason: "settings" });
-    }
-    const assessed = yield* captureResult(
-      Effect.suspend(() => {
-        if (
-          utf8.encode(JSON.stringify(captured)).byteLength >
-          input.settings.maximumInputBytes
-        ) {
-          return Effect.fail(new DecisionProviderError({ reason: "budget" }));
-        }
-        return checkText(
-          captured,
-          { ...selected, revision: input.revision },
-          settings,
-          input.provider,
-        );
-      }).pipe(
-        Effect.flatMap((result) =>
-          utf8.encode(JSON.stringify(result)).byteLength >
-          input.settings.maximumResultBytes
-            ? Effect.fail(new DecisionProviderError({ reason: "budget" }))
-            : Effect.succeed(result),
-        ),
-        Effect.timeoutFail({
-          duration: input.settings.timeoutMilliseconds,
-          onTimeout: () => new DecisionProviderError({ reason: "timeout" }),
-        }),
-      ),
-      () => new DecisionProviderError({ reason: "defect" }),
-    );
-    const result = Either.match(assessed, {
-      onLeft: (failure): TextAssessment => ({
-        findings: [
-          ...selected.rules.map(
-            (rule): PolicyFinding => ({
-              ruleId: rule.id,
-              outcome: "hold",
-              reason: "check-unavailable",
-            }),
-          ),
-          ...selected.skipped,
-        ],
-        expectations: [],
-        trace: {
-          format: "text-policy/v1",
-          data: JSON.stringify({ failure: { reason: failure.reason } }),
-        },
-      }),
-      onRight: (result) => result,
-    });
-    return composeDecision(captured.context, input.rules, result);
-  }).pipe(Effect.withSpan("Firewall.checkCapturedMessage"));
-}
-
 /** Private findings and traces stay separate from advice permitted for the host. */
 export interface FirewallCheck extends TextAssessment {
   readonly judgment: "allow" | "reject" | "hold";
   readonly reason: Reason;
-  readonly feedback: readonly {
+  readonly feedback: ReadonlyArray<{
     readonly nextAction: typeof nextActionSchema.Type;
     readonly text: string;
-  }[];
-  readonly guidance: readonly (typeof registeredGuidanceSchema.Type)[];
+  }>;
+  readonly guidance: ReadonlyArray<typeof registeredGuidanceSchema.Type>;
 }
 
 type UncertainGuidance = Extract<
@@ -364,7 +294,7 @@ export class DecisionProviderError extends Data.TaggedError(
   readonly accounting?: Pick<DecisionResponse, "provider" | "model" | "usage">;
 }> {}
 
-/** The provider returns judgments for the explicit questions in one stage. */
+/** Entirely code-based chains have no dependency on this optional capability. */
 export interface DecisionProvider {
   /** Requested provider configuration, retained even when no response arrives. */
   readonly provider?: string;
@@ -524,6 +454,76 @@ const stageCatalog = {
   }
 >;
 
+/** Assessment and retained decisions share one validated, detached input. */
+export function checkCapturedMessage(
+  input: Omit<CheckMessageInput, "event" | "context">,
+  captured: CapturedInput,
+): Effect.Effect<FirewallCheck, CheckInputError> {
+  return Effect.gen(function* () {
+    yield* validateEvidence(captured);
+    const selected = forDirection(input.rules, captured.event.direction);
+    if (selected.rules.length === 0) {
+      return composeDecision(captured.context, input.rules, {
+        findings: selected.skipped,
+        expectations: [],
+      });
+    }
+    const settings = input.textSettings;
+    if (settings === undefined) {
+      return yield* new CheckInputError({ reason: "settings" });
+    }
+    const assessed = yield* captureResult(
+      Effect.suspend(() => {
+        if (
+          utf8.encode(JSON.stringify(captured)).byteLength >
+          input.settings.maximumInputBytes
+        ) {
+          return Effect.fail(new DecisionProviderError({ reason: "budget" }));
+        }
+        return checkText(
+          captured,
+          { ...selected, revision: input.revision },
+          settings,
+          input.provider,
+        );
+      }).pipe(
+        Effect.flatMap((result) =>
+          utf8.encode(JSON.stringify(result)).byteLength >
+          input.settings.maximumResultBytes
+            ? Effect.fail(new DecisionProviderError({ reason: "budget" }))
+            : Effect.succeed(result),
+        ),
+        Effect.timeoutFail({
+          duration: input.settings.timeoutMilliseconds,
+          onTimeout: () => new DecisionProviderError({ reason: "timeout" }),
+        }),
+      ),
+      () => new DecisionProviderError({ reason: "defect" }),
+    );
+    const result = Either.match(assessed, {
+      onLeft: (failure): TextAssessment => ({
+        findings: [
+          ...selected.rules.map(
+            (rule): PolicyFinding => ({
+              ruleId: rule.id,
+              outcome: "hold",
+              reason: "check-unavailable",
+            }),
+          ),
+          ...selected.skipped,
+        ],
+        expectations: [],
+        trace: {
+          format: "text-policy/v1",
+          data: JSON.stringify({ failure: { reason: failure.reason } }),
+        },
+      }),
+      onRight: (result) => result,
+    });
+    return composeDecision(captured.context, input.rules, result);
+  }).pipe(Effect.withSpan("Firewall.checkCapturedMessage"));
+}
+
 /** Startup and edits reject rule sets that cannot form a bounded request. */
 export const validateChecks = Effect.fn("Firewall.validateChecks")(function* (
   input: CheckConfiguration,
@@ -618,7 +618,10 @@ export function decidingRules(
       );
     }
   }
-  return [...unique.values()];
+  return rules.flatMap((rule) => {
+    const decision = unique.get(rule.id);
+    return decision === undefined ? [] : [decision];
+  });
 }
 
 /** Detaches and freezes message evidence before assessment or retention can observe it. */
@@ -636,6 +639,17 @@ export function captureInput(event: MessageEvent, context: MessageContext) {
     );
     return Object.freeze({ event: capturedEvent, context: capturedContext });
   }).pipe(Effect.withSpan("Firewall.captureInput"));
+}
+
+/** Freeze newly decoded data that no caller owns. */
+export function freezeData(value: unknown): void {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  for (const child of Object.values(value)) {
+    freezeData(child);
+  }
+  Object.freeze(value);
 }
 
 /**
@@ -663,17 +677,6 @@ function captureResult<A, E, R>(
     },
     onSuccess: (value) => Effect.succeed(Either.right(value)),
   });
-}
-
-/** Freeze newly decoded data that no caller owns. */
-export function freezeData(value: unknown): void {
-  if (typeof value !== "object" || value === null) {
-    return;
-  }
-  for (const child of Object.values(value)) {
-    freezeData(child);
-  }
-  Object.freeze(value);
 }
 
 /** Attribution and reference identity are checked once against the captured evidence. */
@@ -839,7 +842,14 @@ function projectGuidance(
     const instruction = instructionFor(expectation.ruleId);
     return instruction === undefined
       ? []
-      : [{ ...expectation, subjects: [...expectation.subjects], instruction }];
+      : [
+          {
+            ruleId: expectation.ruleId,
+            expectation: expectation.expectation,
+            subjects: [...expectation.subjects],
+            instruction,
+          },
+        ];
   });
   const uncertain = assessment.findings.flatMap(
     (finding): UncertainGuidance[] => {

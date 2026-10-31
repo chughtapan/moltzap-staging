@@ -4,6 +4,7 @@ import * as SqlClient from "@effect/sql/SqlClient";
 import * as SqlSchema from "@effect/sql/SqlSchema";
 import { Effect, Schema, Struct } from "effect";
 
+import type { FirewallCheck } from "../check.js";
 import type {
   FirewallActivation,
   FirewallAuditEntry,
@@ -22,7 +23,6 @@ import {
   transaction,
 } from "../../communication/store/database/index.js";
 import { decodeRuntimeValue } from "../../communication/store/index.js";
-import type { FirewallCheck } from "../check.js";
 import {
   type firewallDecisionsSchema,
   firewallDecisionSummarySchema,
