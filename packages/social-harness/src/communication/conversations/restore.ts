@@ -57,6 +57,7 @@ interface RecoveredEngineState {
   readonly actionFolds: Map<ActionHash, EngineActionFold>;
   readonly recordFolds: Map<RecordHashValue, EngineActionFold>;
   readonly completedMessages: Set<string>;
+  /** Verified pending intents retain their durable acceptance order. */
   readonly messageIntents: ReadonlyArray<
     Effect.Effect.Success<ReturnType<typeof readStoredMessageIntent>>
   >;
@@ -119,7 +120,9 @@ export const recoverEngineState = (
       actionFolds,
       recordFolds,
       completedMessages,
-      messageIntents,
+      messageIntents: messageIntents.filter(
+        (stored) => stored.completedRecordHash === undefined,
+      ),
       outboundMessages,
     };
   }).pipe(Effect.withSpan("recoverEngineState"));

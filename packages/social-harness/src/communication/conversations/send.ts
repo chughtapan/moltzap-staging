@@ -708,13 +708,14 @@ function activateBoundIntent(
 ): Effect.Effect<void, SendError, SqlClient.SqlClient> {
   const { canonicalIntent, intent } = prepared;
   return Effect.gen(function* () {
+    if (runtime.completedMessages.has(intent.msgId)) {
+      return;
+    }
     const localIntent = runtime.intents.get(intent.msgId) ?? {
       intent,
       canonicalIntent,
     };
     runtime.intents.set(intent.msgId, localIntent);
-    if (!runtime.completedMessages.has(intent.msgId)) {
-      yield* proposeIntent(runtime, localIntent);
-    }
+    yield* proposeIntent(runtime, localIntent);
   }).pipe(Effect.catchAll(() => Effect.void));
 }

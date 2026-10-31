@@ -509,6 +509,7 @@ function completePromotion(
     ) {
       return;
     }
+    runtime.intents.delete(fold.action.messageIntent.msgId);
     runtime.completedMessages.add(fold.action.messageIntent.msgId);
   });
 }
@@ -564,8 +565,7 @@ const rebasePendingIntents = (
     : Effect.forEach(
         runtime.intents.values(),
         (pending) =>
-          pending.intent.conversationId === conversationId &&
-          !runtime.completedMessages.has(pending.intent.msgId)
+          pending.intent.conversationId === conversationId
             ? reproposePendingIntent(runtime, pending)
             : Effect.void,
         { concurrency: 1, discard: true },

@@ -1197,9 +1197,7 @@ function resumeIntents(
   const { runtime } = run;
   return Effect.forEach(
     [...runtime.intents.values()].filter(
-      (intent) =>
-        intent.intent.conversationId === conversationId &&
-        !runtime.completedMessages.has(intent.intent.msgId),
+      (intent) => intent.intent.conversationId === conversationId,
     ),
     (intent) =>
       Effect.suspend(() => {

@@ -1858,7 +1858,7 @@ function ordersCompetingProposalsBeforeActionVotes(input: {
   });
 }
 
-/** Re-preparing the same accepted Message retains one certified record. */
+/** Re-preparing a certified Message retains one record across engine restart. */
 function resumesCapturedMessage() {
   return Effect.gen(function* () {
     const harness = yield* makeProtocolHarness();
@@ -1870,6 +1870,12 @@ function resumesCapturedMessage() {
     yield* pump(harness, yield* takeReadyBatch(harness));
     yield* Fiber.join(sending).pipe(Effect.orDie);
     yield* prepareAndObserve(harness, author, message).pipe(Effect.orDie);
+    const identity = yield* requireAt(harness.identities, 0, "author identity");
+    const store = yield* requireAt(harness.stores, 0, "author store");
+    const restarted = yield* restartMember(harness, identity, store).pipe(
+      Effect.orDie,
+    );
+    yield* prepareAndObserve(harness, restarted, message).pipe(Effect.orDie);
     expect(yield* certifiedRecordCounts(harness)).toEqual([1, 1, 1, 1]);
   });
 }
@@ -2118,7 +2124,7 @@ describe("fixed-message endpoint protocol", () => {
     TEST_TIMEOUT_MS,
   );
   it(
-    "re-prepares an accepted message without certifying it twice",
+    "re-prepares an accepted message after certification and restart without certifying it twice",
     resumesCapturedMessage,
     TEST_TIMEOUT_MS,
   );

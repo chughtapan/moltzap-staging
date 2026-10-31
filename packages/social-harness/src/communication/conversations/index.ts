@@ -376,12 +376,10 @@ const resumeRuntime = (runtime: EngineRuntime) =>
     yield* Effect.forEach(
       runtime.intents.values(),
       (intent) =>
-        runtime.completedMessages.has(intent.intent.msgId)
-          ? Effect.void
-          : proposeIntent(runtime, intent).pipe(
-              Effect.asVoid,
-              Effect.catchTag("SendError", resumeIntentFailure),
-            ),
+        proposeIntent(runtime, intent).pipe(
+          Effect.asVoid,
+          Effect.catchTag("SendError", resumeIntentFailure),
+        ),
       { concurrency: 1, discard: true },
     );
   });

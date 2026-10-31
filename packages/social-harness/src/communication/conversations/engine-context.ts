@@ -140,6 +140,7 @@ export interface EngineRuntime {
   readonly wireVersion: string;
   readonly input: EndpointEngineInput;
   readonly conversations: Map<ConversationId, EngineConversation>;
+  /** Pending local intents, released after durable certification. */
   readonly intents: Map<string, EngineMessageIntent>;
   /** Locally complete message ids retained for the engine's lifetime. */
   readonly completedMessages: Set<string>;

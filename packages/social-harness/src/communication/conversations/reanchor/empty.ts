@@ -211,11 +211,7 @@ function storedIntentMatches(
   stored: StoredMessageIntent,
 ): boolean {
   const pending = runtime.intents.get(stored.msgId);
-  if (
-    pending === undefined ||
-    stored.completedRecordHash !== undefined ||
-    runtime.completedMessages.has(stored.msgId)
-  ) {
+  if (pending === undefined || stored.completedRecordHash !== undefined) {
     return false;
   }
   return [
