@@ -65,7 +65,7 @@ import { SignedMessage } from "../../../identity/envelope/signed-message.js";
 import { Ed25519PublicKey } from "../../../identity/keys.js";
 import { saveLocalIdentity } from "../../../identity/local-store.js";
 import { WIRE_VERSION } from "../../../identity/wire-version.js";
-import { type Message, messageFromIntent } from "../../message.js";
+import { Message, messageFromIntent } from "../../message.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
