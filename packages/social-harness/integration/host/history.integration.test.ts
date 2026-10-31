@@ -2,7 +2,7 @@
 
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Array, Effect, Schema } from "effect";
 import { expect } from "vitest";
 import {
   digest,
@@ -104,6 +104,7 @@ function retainView() {
   );
 }
 
+// @agent-code-guard/regression-only: Exercises SQLite restart, fixed history heads and the 50-address page boundary.
 // eslint-disable-next-line sonarjs/assertions-in-tests -- The reopened SQL fixture performs the retained-view assertions in checkRetainedHistory.
 it("retains acknowledged permitted views after restart without exposing unchecked peer messages", () => {
   const directory = stateDirectory();
@@ -201,9 +202,8 @@ function saveLocalResult(byte: number, address = "agent:bob") {
 it("pages the merged result and message addresses without repeating shared conversations", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
-      const addresses = Array.from(
-        { length: 51 },
-        (_, index) => `agent:peer-${String(index).padStart(3, "0")}`,
+      const addresses = Array.range(0, 50).map(
+        (index) => `agent:peer-${String(index).padStart(3, "0")}`,
       );
       yield* Effect.forEach(
         addresses,
@@ -255,7 +255,7 @@ it("pages the merged result and message addresses without repeating shared conve
 function firstResultPage() {
   return Effect.gen(function* () {
     const saved = yield* Effect.forEach(
-      Array.from({ length: 51 }).keys(),
+      Array.range(0, 50),
       (index) => saveLocalResult(index + 1),
       { concurrency: 1 },
     );

@@ -43,8 +43,6 @@ import { inboxWakeups } from "./events.js";
 import { acknowledgeReason, isReason, listenFailure } from "./failures.js";
 import { pollWakeups } from "./poll.js";
 
-/* eslint-disable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type -- The official MCP client lifecycle is Promise-native and is converted to Effect at this private edge. */
-
 const MODERN_PROTOCOL_VERSION = "2026-07-28";
 const CLIENT_IMPLEMENTATION = {
   name: "sharness-endpoint",
@@ -508,8 +506,6 @@ function acquireEndpoint(
     } satisfies HarnessEndpoint;
   });
 }
-
-/* eslint-enable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type -- Restore strict defaults after the Promise-native MCP edge. */
 
 /** The capability this module acquires, and its connect and delivery types. */
 export {

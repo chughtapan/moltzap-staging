@@ -19,6 +19,7 @@ import {
   StoreSignal,
   transaction,
 } from "../../communication/store/database/index.js";
+import { decodeRuntimeValue } from "../../communication/store/index.js";
 import {
   DeliveryToken,
   type StoreMutation,
@@ -29,7 +30,6 @@ import {
   localGuidanceSchema,
 } from "../../host-protocol/advice.js";
 import { InboundItem } from "../../host-protocol/items.js";
-import { decodeRuntimeValue } from "../../communication/store/index.js";
 // safer-arch-ignore file-implicit-boundary-module: Daemon publication and host delivery share inbox operations within the caller’s SQL transaction.
 import { createIncomingTables } from "./pending.js";
 const MAXIMUM_PAGE_ITEMS = 50;
@@ -332,6 +332,25 @@ export function readHistoryViews(
     return views;
   }).pipe(storeOperation, Effect.withSpan("readHistoryViews"));
 }
+/** Retained projections share one item and guidance decoder across delivery and history. */
+export function decodeItemProjection(
+  projection: Pick<ItemProjection, "canonicalItem" | "canonicalGuidance">,
+): Effect.Effect<RetainedItem, EndpointStoreError> {
+  return Effect.gen(function* () {
+    return {
+      item: yield* decodeRuntimeValue(InboundItem, projection.canonicalItem),
+      ...(projection.canonicalGuidance === undefined
+        ? {}
+        : {
+            guidance: yield* decodeRuntimeValue(
+              localGuidanceSchema,
+              projection.canonicalGuidance,
+            ),
+          }),
+    };
+  }).pipe(Effect.withSpan("decodeItemProjection"));
+}
+
 function requireSequence(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new StoreSignal("invalid-continuation");
@@ -405,23 +424,4 @@ function guidanceBytes(
 /** A saved permitted projection of the same authored message. */
 export interface HistoryView extends ItemProjection, RetainedItem {
   readonly message: MessageReference;
-}
-
-/** Retained projections share one item and guidance decoder across delivery and history. */
-export function decodeItemProjection(
-  projection: Pick<ItemProjection, "canonicalItem" | "canonicalGuidance">,
-): Effect.Effect<RetainedItem, EndpointStoreError> {
-  return Effect.gen(function* () {
-    return {
-      item: yield* decodeRuntimeValue(InboundItem, projection.canonicalItem),
-      ...(projection.canonicalGuidance === undefined
-        ? {}
-        : {
-            guidance: yield* decodeRuntimeValue(
-              localGuidanceSchema,
-              projection.canonicalGuidance,
-            ),
-          }),
-    };
-  });
 }
