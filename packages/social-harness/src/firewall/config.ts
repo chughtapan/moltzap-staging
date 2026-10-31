@@ -134,10 +134,9 @@ const firewallActivationSchema = exactStruct({
 /**
  * How a decision's outcome came about. `judgment` is a settled natural-language
  * judgment and `uncertain` an unsettled one admitted with registered advice.
- * `unavailable` is a check that could not run: the decision provider failed
- * or was unreachable, or a middleware failed or timed out. `code` is a code
- * middleware's finding. `endpoint` is a hold Client makes itself without a
- * deciding rule, and `default` an admission no rule qualified.
+ * `unavailable` identifies failed, timed-out or unrunnable assessment.
+ * `endpoint` identifies a hold without a deciding rule, and `default` an
+ * admission without a qualifying finding.
  */
 const decisionCause = Schema.Literal(
   "judgment",
@@ -152,7 +151,7 @@ const decisionCause = Schema.Literal(
  * text is `decidedBy[].advice`, the deciding rule's own registered feedback,
  * or its guidance for an admission. `decidedBy[].from` says where the rule is
  * defined: a fixed or owner-editable natural-language rule. `checkedRuleIds` lists every rule with a
- * finding in the completed chain.
+ * finding in the completed assessment.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
@@ -556,7 +555,7 @@ export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
  * Where a rule installation failure's fix is written: the rules-not-installed
- * entry covers invalid rules and catalogs that exceed the request budget.
+ * entry covers invalid rule sets that exceed the request budget.
  * Storage failures have no policy-document fix to link.
  */
 const installationDocs: Readonly<

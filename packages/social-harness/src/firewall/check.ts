@@ -364,7 +364,7 @@ export class DecisionProviderError extends Data.TaggedError(
   readonly accounting?: Pick<DecisionResponse, "provider" | "model" | "usage">;
 }> {}
 
-/** Entirely code-based chains have no dependency on this optional capability. */
+/** The provider returns judgments for the explicit questions in one stage. */
 export interface DecisionProvider {
   /** Requested provider configuration, retained even when no response arrives. */
   readonly provider?: string;
@@ -665,7 +665,8 @@ function captureResult<A, E, R>(
   });
 }
 
-function freezeData(value: unknown): void {
+/** Freeze newly decoded data that no caller owns. */
+export function freezeData(value: unknown): void {
   if (typeof value !== "object" || value === null) {
     return;
   }

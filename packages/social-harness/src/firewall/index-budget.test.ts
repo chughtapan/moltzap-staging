@@ -97,11 +97,8 @@ function options(requests: DecisionRequest[], maximumRequestBytes?: number) {
     const text = yield* Effect.fromNullable(policy.text);
     return {
       mode: policy.mode,
-      incoming: [],
-      outgoing: [],
       facts: policy.facts,
       settings: policy.settings,
-      codeDigest: "a".repeat(64),
       text: {
         fixedRules: text.fixedRules,
         initialRules: text.initialRules,
@@ -249,11 +246,11 @@ it("rejects an oversized edit while prior policy still checks messages and reope
   }));
 
 it.each(["fixedRules", "initialRules"] as const)(
-  "rejects an intrinsically oversized file-loaded %s catalog without changing file or store",
-  rejectCatalogFromFile,
+  "rejects an intrinsically oversized file-loaded %s rule set without changing file or store",
+  rejectRulesFromFile,
 );
 
-function rejectCatalogFromFile(field: "fixedRules" | "initialRules") {
+function rejectRulesFromFile(field: "fixedRules" | "initialRules") {
   return Effect.gen(function* () {
     const path = join(stateDirectory(), "policy.json");
     const contents = JSON.stringify({

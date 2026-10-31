@@ -33,6 +33,7 @@ import {
   DecisionProviderError,
   decodeFrozen,
   ENDPOINT_SENDER,
+  freezeData,
   type FirewallCheck,
   type Message,
   MessageContext,
@@ -229,7 +230,7 @@ function loadRules(options: CapturedOptions) {
         Effect.fail(persistenceFailure()),
       ),
     );
-    const selected =
+    const rules =
       stored === undefined
         ? (options.text?.initialRules ?? [])
         : (yield* decodeRuntimeValue(storedPolicySchema, stored).pipe(
@@ -237,16 +238,7 @@ function loadRules(options: CapturedOptions) {
               Effect.fail(persistenceFailure()),
             ),
           )).rules;
-    const rules = yield* decodeFrozen(editableDocumentSchema, selected).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(
-          new FirewallPolicyError({
-            reason:
-              stored === undefined ? "build-failed" : "persistence-failed",
-          }),
-        ),
-      ),
-    );
+    freezeData(rules);
     return { stored, rules };
   });
 }
@@ -539,7 +531,15 @@ function behaviorRule(text: string, path: PolicyEditPath) {
   if (bytes.length > MAXIMUM_BEHAVIOR_BYTES) {
     return Effect.fail(invalidRule("too-large", { path }));
   }
-  return decodeBehavior(bytes, (problem) => invalidRule(problem, { path }));
+  return decodeBehavior(bytes, (problem) =>
+    invalidRule(problem, { path }),
+  ).pipe(
+    Effect.tap((rule) =>
+      Effect.sync(() => {
+        freezeData(rule);
+      }),
+    ),
+  );
 }
 
 /**
@@ -572,9 +572,7 @@ function editedRules(
     if (kept.length + add.length > MAXIMUM_EDITABLE_RULES) {
       return yield* invalidRule("editable-limit");
     }
-    return yield* decodeFrozen(editableDocumentSchema, [...kept, ...add]).pipe(
-      Effect.mapError(() => invalidRule("schema")),
-    );
+    return Object.freeze([...kept, ...add]);
   });
 }
 

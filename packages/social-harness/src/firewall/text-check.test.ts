@@ -87,11 +87,10 @@ const settings: typeof TextPolicySettings.Encoded = {
 };
 const firewallSettings = {
   timeoutMilliseconds: 2000,
-  middlewareTimeoutMilliseconds: 1000,
   maximumInputBytes: 300000,
   maximumResultBytes: 1000000,
 };
-/** Each generated example runs two full chains alongside other CI workers. */
+/** Each generated example runs two complete assessments alongside other CI workers. */
 const propertyTimeoutMilliseconds = 15000;
 /**
  * A provider's answers: each question keyed in `choices` by
@@ -176,11 +175,10 @@ function check(
       textSettings: options.settings ?? settings,
       revision: "a".repeat(64),
     };
-    yield* validateChecks({ ...configuration, incoming: [], outgoing: [] });
+    yield* validateChecks(configuration);
     return yield* checkMessage({
       ...configuration,
       provider: decisions,
-      code: [],
       event: {
         direction: options.incoming ? "incoming" : "outgoing",
         message: options.message ?? draft,
@@ -189,54 +187,6 @@ function check(
     });
   });
 }
-it.each([false, true])(
-  "continues configured text assessment after code rejection with provider unavailable=%s",
-  (unavailable) =>
-    Effect.gen(function* () {
-      const requests: DecisionRequest[] = [];
-      const decisions: DecisionProvider = {
-        decide: (request) =>
-          Effect.suspend(() => {
-            requests.push(request);
-            return unavailable
-              ? Effect.fail(new DecisionProviderError({ reason: "transport" }))
-              : Effect.succeed(responseFor(request));
-          }),
-      };
-      const result = yield* checkMessage({
-        event: { direction: "outgoing", message: draft },
-        context,
-        code: [
-          {
-            id: "code",
-            revision: "fixture",
-            rules: [{ id: "code-rule" }],
-            check: () =>
-              Effect.succeed({
-                findings: [{ ruleId: "code-rule", outcome: "violation" }],
-                expectations: [],
-              }),
-          },
-        ],
-        rules: [proposalAcceptance],
-        revision: "a".repeat(64),
-        settings: firewallSettings,
-        textSettings: settings,
-        provider: decisions,
-      });
-      expect(result.reason).toBe("rule-violation");
-      expect(requests.length).toBeGreaterThan(0);
-      expect(result.checks.flatMap((check) => check.findings)).toContainEqual(
-        unavailable
-          ? {
-              ruleId: proposalAcceptance.id,
-              outcome: "hold",
-              reason: "check-unavailable",
-            }
-          : { ruleId: proposalAcceptance.id, outcome: "pass" },
-      );
-    }),
-);
 it("preserves the receiver of an injected provider method", () =>
   Effect.gen(function* () {
     const stateful = {
@@ -247,7 +197,7 @@ it("preserves the receiver of an injected provider method", () =>
     };
     const result = yield* check(stateful);
     expect(result.judgment).toBe("allow");
-    expect(result.checks[0]?.trace?.data).toContain(stateful.model);
+    expect(result.trace?.data).toContain(stateful.model);
   }));
 it("reports earlier history omissions to the provider without holding or colliding with owner facts", () =>
   Effect.gen(function* () {
@@ -404,7 +354,7 @@ it("keeps an invalid answer's usage in the trace", () =>
         }),
     });
     const { stages } = Schema.decodeUnknownSync(stageFailures)(
-      result.checks[0]?.trace?.data,
+      result.trace?.data,
     );
     expect(
       stages.find((entry) => entry.stage === "compliance")?.failure,
@@ -445,7 +395,6 @@ it("admits a confidently unresolved response expectation as guidance", () =>
     );
     expect(result.judgment).toBe("allow");
     expect(result.guidance).toContainEqual({
-      middlewareId: "org.social-harness/text",
       ruleId: "proposal-acceptance",
       uncertain: { choice: "unresolved", probability: 1 },
       instruction: reminder,
@@ -482,12 +431,11 @@ it("admits an unsettled expectation as guidance and assesses compliance against 
     const compliance = requests.find((entry) => entry.stage === "compliance");
     expect(result.judgment).toBe("allow");
     expect(result.guidance).toContainEqual({
-      middlewareId: "org.social-harness/text",
       ruleId: "proposal-acceptance",
       uncertain: { choice: "required", probability: 0.4 },
       instruction: reminder,
     });
-    expect(result.checks[0]?.findings).toContainEqual({
+    expect(result.findings).toContainEqual({
       ruleId: "proposal-acceptance",
       outcome: "pass",
       reason: "uncertain",
@@ -550,7 +498,6 @@ it("returns rule repair with only registered feedback", () =>
     expect(result.judgment).toBe("reject");
     expect(result.feedback).toEqual([{ nextAction: "revise", text: repair }]);
     expect(result.guidance).toContainEqual({
-      middlewareId: "org.social-harness/text",
       ruleId: proposalAcceptance.id,
       instruction: reminder,
     });
@@ -564,7 +511,7 @@ it("retains a settled violation beside another rule's valid uncertainty", () =>
       }),
     );
     expect(result.reason).toBe("rule-violation");
-    expect(result.checks[0]?.findings).toContainEqual({
+    expect(result.findings).toContainEqual({
       ruleId: "privacy",
       outcome: "violation",
     });
@@ -626,9 +573,7 @@ it.each([
         settings: { ...settings, minimumProbability: 0.8 },
       });
       expect(allowed.judgment).toBe("allow");
-      expect(allowed.checks[0]?.trace?.data).toContain(
-        JSON.stringify(probabilities),
-      );
+      expect(allowed.trace?.data).toContain(JSON.stringify(probabilities));
       expect(held.reason).toBe("eligible");
     }),
 );
@@ -682,7 +627,6 @@ it("projects incoming advice using only admitted visible subjects", () =>
     expect(result.judgment).toBe("allow");
     expect(result.guidance).toEqual([
       {
-        middlewareId: "org.social-harness/text",
         ruleId: "proposal-acceptance",
         expectation: "required",
         subjects: ["availability", "proposal"],
@@ -710,7 +654,6 @@ it("leaves an unsettled reference out of an incoming expectation", () =>
     expect(result.judgment).toBe("allow");
     expect(result.guidance).toEqual([
       {
-        middlewareId: "org.social-harness/text",
         ruleId: "proposal-acceptance",
         expectation: "required",
         subjects: ["proposal"],
@@ -742,7 +685,7 @@ it("routes each text rule without consulting the provider for the opposite direc
     });
     expect(result.judgment).toBe("allow");
     expect(requests).toEqual([]);
-    expect(result.checks[0]?.findings).toEqual([
+    expect(result.findings).toEqual([
       { ruleId: incomingOnly.id, outcome: "not-applicable" },
     ]);
   }));
@@ -770,7 +713,6 @@ it("checks incoming peer content without imposing local response expectations", 
     ).toEqual([]);
     expect(result.judgment).toBe("allow");
     expect(result.guidance).toContainEqual({
-      middlewareId: "org.social-harness/text",
       ruleId: proposalAcceptance.id,
       expectation: "required",
       subjects: ["availability", draft.id],
@@ -903,7 +845,7 @@ it("bounds large policy-history products without submitting partial requests", (
     expect(result.reason).toBe("check-unavailable");
     expect(requests).toEqual([]);
     expect(
-      new TextEncoder().encode(result.checks[0]?.trace?.data).byteLength,
+      new TextEncoder().encode(result.trace?.data).byteLength,
     ).toBeLessThan(settings.maximumRequestBytes);
   }));
 it("holds oversized context without truncating it", () =>

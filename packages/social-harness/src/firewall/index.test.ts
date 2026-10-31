@@ -15,7 +15,7 @@ import {
   encodeRuntimeValue,
 } from "../communication/store/index.js";
 import { readCredential } from "../daemon/credentials.js";
-import { Message, MessageContext, type MessageMiddleware } from "./check.js";
+import { Message, MessageContext, type DecisionProvider } from "./check.js";
 import {
   loadMessagePolicy,
   MAXIMUM_BEHAVIOR_BYTES,
@@ -33,7 +33,7 @@ import {
 } from "./store/index.js";
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Indexed safe errors and atomic policy state are the public edit contract. */
 
-// @agent-code-guard/regression-only: Construction and restart regressions protect fixed rules, immutable provenance and retained-result privacy.
+// @agent-code-guard/regression-only: Construction and restart regressions protect fixed rules, captured provider identity and retained-result privacy.
 
 const FORMAT = "org.social-harness/message-policy/v2";
 
@@ -464,104 +464,107 @@ function replaceAndReopen(
   });
 }
 
-it("omits provider traces from the completed result while preserving its judgment", () =>
+it("retains a text judgment without saving private provider traces", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
-      const trace = { format: "test-provider/v1", data: "private response" };
-      const middleware: MessageMiddleware = {
-        id: "privacy",
-        revision: "v1",
-        rules: [{ id: "privacy" }],
-        check: () =>
+      const privateResponse = "private response";
+      const decisions: DecisionProvider = {
+        provider: "test",
+        model: "test-model",
+        decide: (request) =>
           Effect.succeed({
-            findings: [{ ruleId: "privacy", outcome: "violation" }],
-            expectations: [],
-            trace,
+            provider: "test",
+            model: "test-model",
+            raw: privateResponse,
+            usage: {},
+            answers: Object.fromEntries(
+              Object.entries(request.questions).map(([id, question]) => {
+                const choice =
+                  request.stage === "compliance" ? "violation" : "none";
+                return [
+                  id,
+                  {
+                    choice,
+                    probabilities: Object.fromEntries(
+                      Object.keys(question.criteria).map((option) => [
+                        option,
+                        Number(option === choice),
+                      ]),
+                    ),
+                  },
+                ];
+              }),
+            ),
           }),
       };
-      const firewall = yield* makeFirewall(codeOptions(middleware));
+      const firewall = yield* makeFirewall(textOptions(decisions));
       const [checked] = yield* firewall.check([yield* preparedCheck()]);
       const completed = yield* Effect.fromNullable(checked);
-      expect(completed.result.judgment).toBe("reject");
-      expect(completed.result.checks[0]?.trace).toEqual(trace);
-      expect(completed.completion.admit).toBe(false);
+      expect(completed.result).toMatchObject({ judgment: "reject" });
+      expect(completed.result.trace?.data).toContain(privateResponse);
       yield* saveCheckDecision(completed.completion);
-      const feed = yield* firewall.readDecisions({});
-      expect(feed.decisions[0]).toMatchObject({
-        outcome: "reject",
-        cause: "code",
-        decidedBy: [{ ruleId: "privacy", from: "code" }],
-      });
-      expect(JSON.stringify(feed)).not.toContain(trace.data);
+      expect((yield* firewall.readDecisions({})).decisions).toMatchObject([
+        {
+          outcome: "reject",
+          cause: "judgment",
+          decidedBy: [{ ruleId: FIXED.id, from: "fixed" }],
+        },
+      ]);
+      expect(
+        new TextDecoder().decode(completed.completion.canonicalResult),
+      ).not.toContain(privateResponse);
     }),
   ));
 
-it("captures immutable installation provenance and distinguishes provider model changes", () =>
+it("captures provider identity and distinguishes model changes", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
-      const registration = {
-        id: "model-policy",
-        revision: "v1",
-        rules: [{ id: "privacy" }],
-        provenance: { format: "provider", data: "model-one" },
-        check: () =>
-          Effect.succeed({
-            findings: [{ ruleId: "privacy", outcome: "violation" as const }],
-            expectations: [],
-          }),
+      const provider = {
+        provider: "test",
+        model: "model-one",
+        decide: () => Effect.never,
       };
-      const first = yield* makeFirewall(codeOptions(registration));
-      registration.provenance.data = "model-two";
-      const second = yield* makeFirewall(codeOptions(registration));
+      const first = yield* makeFirewall(textOptions(provider));
+      provider.model = "model-two";
+      const second = yield* makeFirewall(textOptions(provider));
+      const original = yield* first.readPolicy();
+      const changed = yield* second.readPolicy();
+      expect(original.activeRevision).not.toBe(changed.activeRevision);
       const candidate = yield* preparedCheck();
-      const original = yield* retainedInstallation(first, candidate);
-      const changed = yield* retainedInstallation(second, candidate);
-      expect(original.installation.incoming[0]?.provenance.data).toBe(
-        "model-one",
+      const [checked] = yield* first.check([candidate]);
+      const retained = yield* decodeRuntimeValue(
+        Schema.Struct({
+          installation: Schema.Struct({
+            provider: Schema.String,
+            model: Schema.String,
+          }),
+        }),
+        (yield* Effect.fromNullable(checked)).completion.canonicalInput,
       );
-      expect(changed.installation.incoming[0]?.provenance.data).toBe(
-        "model-two",
-      );
-      expect(original.configurationDigest).not.toBe(
-        changed.configurationDigest,
-      );
+      expect(retained.installation).toEqual({
+        provider: "test",
+        model: "model-one",
+      });
     }),
   ));
 
-function retainedInstallation(
-  firewall: Effect.Effect.Success<ReturnType<typeof makeFirewall>>,
-  candidate: PreparedFirewallCheck,
-) {
-  return Effect.gen(function* () {
-    const [checked] = yield* firewall.check([candidate]);
-    return yield* decodeRuntimeValue(
-      Schema.Struct({
-        configurationDigest: Schema.String,
-        installation: Schema.Struct({
-          incoming: Schema.Array(
-            Schema.Struct({
-              provenance: Schema.Struct({ data: Schema.String }),
-            }),
-          ),
-        }),
-      }),
-      (yield* Effect.fromNullable(checked)).completion.canonicalInput,
-    );
-  });
-}
-
-function codeOptions(middleware: MessageMiddleware): FirewallOptions {
+function textOptions(provider: DecisionProvider): FirewallOptions {
   return {
-    incoming: [middleware],
-    outgoing: [middleware],
     mode: "enforcement",
     facts: [],
-    codeDigest: "a".repeat(64),
     settings: {
-      timeoutMilliseconds: 1_000,
-      middlewareTimeoutMilliseconds: 100,
+      timeoutMilliseconds: 100,
       maximumInputBytes: 100_000,
       maximumResultBytes: 100_000,
+    },
+    text: {
+      fixedRules: [FIXED],
+      provider,
+      settings: {
+        minimumProbability: 0.5,
+        maximumRequestBytes: 60_000,
+        timeoutMilliseconds: 50,
+      },
     },
   };
 }

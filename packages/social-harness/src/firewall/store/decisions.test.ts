@@ -19,9 +19,6 @@ import {
   type DecisionRequest,
   Message,
   MessageContext,
-  type MessageMiddleware,
-  MiddlewareError,
-  type MiddlewareResult,
 } from "../check.js";
 import {
   Firewall,
@@ -35,7 +32,6 @@ import { readDecisions, saveCheckDecision } from "./index.js";
 
 const settings = {
   timeoutMilliseconds: 10_000,
-  middlewareTimeoutMilliseconds: 8_000,
   maximumInputBytes: 1_000_000,
   maximumResultBytes: 100_000,
 };
@@ -68,30 +64,6 @@ const review: TextRule = {
     text: "The owner reviews new scheduling requests.",
   },
 };
-
-const contacts = {
-  id: "contacts",
-  feedback: { nextAction: "stop", text: "Only known contacts may write." },
-} as const;
-
-function contactsPolicy(outcome: "pass" | "violation") {
-  return codePolicy([contacts], {
-    findings: [{ ruleId: contacts.id, outcome }],
-    expectations: [],
-  });
-}
-
-function codePolicy(
-  rules: MessageMiddleware["rules"],
-  result: MiddlewareResult,
-): MessageMiddleware {
-  return {
-    id: "contacts-code",
-    revision: "test-v1",
-    rules,
-    check: () => Effect.succeed(result),
-  };
-}
 
 /** Selected rules receive the requested compliance judgment. */
 function decisionProvider(
@@ -145,17 +117,11 @@ function certain(
   };
 }
 
-/** Editable firewall options with `code` in both directions and an optional natural-language policy. */
-function options(
-  code: readonly MessageMiddleware[],
-  text?: FirewallOptions["text"],
-): FirewallOptions {
+/** Real policy installation uses deterministic text judgments. */
+function options(text?: FirewallOptions["text"]): FirewallOptions {
   return {
-    incoming: code,
-    outgoing: code,
     settings,
     facts: [],
-    codeDigest: "a".repeat(64),
     mode: "enforcement",
     ...(text === undefined ? {} : { text }),
   };
@@ -224,7 +190,6 @@ it("names the fixed natural-language rule whose settled judgment blocked a messa
   Effect.gen(function* () {
     const feed = yield* decideIncoming(
       options(
-        [],
         text(decisionProvider([privacy], "violation"), {
           fixed: [privacy],
         }),
@@ -252,7 +217,6 @@ it("names the editable rule whose valid uncertain judgment carries registered gu
   Effect.gen(function* () {
     const feed = yield* decideIncoming(
       options(
-        [],
         text(decisionProvider([review], "unresolved"), {
           initial: [review],
         }),
@@ -278,7 +242,7 @@ it("names the editable rule whose valid uncertain judgment carries registered gu
 it("reports an unreachable decision provider as the cause of a hold", () =>
   Effect.gen(function* () {
     const feed = yield* decideIncoming(
-      options([], text(unreachable, { fixed: [review] })),
+      options(text(unreachable, { fixed: [review] })),
     );
 
     expect(feed.decisions).toMatchObject([
@@ -296,104 +260,73 @@ it("reports an unreachable decision provider as the cause of a hold", () =>
     ]);
   }));
 
-it("reports a code middleware that timed out as the cause of a hold", () =>
-  Effect.gen(function* () {
-    const timedOut: MessageMiddleware = {
-      ...contactsPolicy("pass"),
-      check: () => Effect.fail(new MiddlewareError({ reason: "timeout" })),
-    };
-
-    const feed = yield* decideIncoming(options([timedOut]));
-
-    expect(feed.decisions).toMatchObject([
-      {
-        outcome: "hold",
-        cause: "unavailable",
-        decidedBy: arrayContaining([
-          expect.objectContaining({ ruleId: contacts.id, from: "code" }),
-        ]),
-      },
-    ]);
-  }));
-
-it("names the code rule that blocked a message", () =>
-  Effect.gen(function* () {
-    const feed = yield* decideIncoming(options([contactsPolicy("violation")]));
-
-    expect(feed.decisions).toMatchObject([
-      {
-        outcome: "reject",
-        cause: "code",
-        decidedBy: arrayContaining([
-          expect.objectContaining({
-            ruleId: contacts.id,
-            from: "code",
-            advice: contacts.feedback.text,
-          }),
-        ]),
-      },
-    ]);
-  }));
-
 it("names both norms whose expectations conflict", () =>
   Effect.gen(function* () {
-    const reply = { id: "reply" } as const;
-    const wait = { id: "wait" } as const;
-
-    const feed = yield* decideIncoming(
-      options([
-        codePolicy([reply, wait], {
-          findings: [
-            { ruleId: reply.id, outcome: "pass" },
-            { ruleId: wait.id, outcome: "pass" },
-          ],
-          expectations: [
-            { ruleId: reply.id, expectation: "required", subjects: [] },
-            { ruleId: wait.id, expectation: "wait", subjects: [] },
-          ],
+    const reply: TextRule = {
+      id: "reply",
+      applies: "both",
+      text: "Answer the question.",
+    };
+    const wait: TextRule = {
+      id: "wait",
+      applies: "both",
+      text: "Wait for the owner.",
+    };
+    const provider: DecisionProvider = {
+      decide: (request) =>
+        Effect.succeed({
+          provider: "test",
+          model: "test",
+          raw: "",
+          usage: {},
+          answers: Object.fromEntries(
+            Object.entries(request.questions).map(([id, question]) => {
+              let choice = "compliant";
+              if (request.stage === "expectations") {
+                choice =
+                  question.purpose === "subject"
+                    ? "irrelevant"
+                    : question.ruleId === reply.id
+                      ? "required"
+                      : "wait";
+              }
+              return [
+                id,
+                {
+                  choice,
+                  probabilities: Object.fromEntries(
+                    Object.keys(question.criteria).map((option) => [
+                      option,
+                      Number(option === choice),
+                    ]),
+                  ),
+                },
+              ];
+            }),
+          ),
         }),
-      ]),
+    };
+    const feed = yield* decideIncoming(
+      options(text(provider, { fixed: [reply, wait] })),
     );
 
     expect(feed.decisions).toMatchObject([
       {
         outcome: "hold",
-        cause: "code",
-        decidedBy: arrayContaining([
-          expect.objectContaining({ ruleId: reply.id, from: "code" }),
-          expect.objectContaining({ ruleId: wait.id, from: "code" }),
-        ]),
-      },
-    ]);
-  }));
-
-it("names code and natural-language rules that both blocked, reading the cause from the natural-language one", () =>
-  Effect.gen(function* () {
-    const feed = yield* decideIncoming(
-      options(
-        [contactsPolicy("violation")],
-        text(decisionProvider([privacy], "violation"), {
-          fixed: [privacy],
-        }),
-      ),
-    );
-
-    expect(feed.decisions).toMatchObject([
-      {
-        outcome: "reject",
         cause: "judgment",
         decidedBy: arrayContaining([
-          expect.objectContaining({ ruleId: contacts.id, from: "code" }),
-          expect.objectContaining({ ruleId: privacy.id, from: "fixed" }),
+          expect.objectContaining({ ruleId: reply.id, from: "fixed" }),
+          expect.objectContaining({ ruleId: wait.id, from: "fixed" }),
         ]),
-        checkedRuleIds: arrayContaining([contacts.id, privacy.id]),
       },
     ]);
   }));
 
 it("reports an admission no rule qualified as the default, deciding by no rule", () =>
   Effect.gen(function* () {
-    const feed = yield* decideIncoming(options([contactsPolicy("pass")]));
+    const feed = yield* decideIncoming(
+      options(text(decisionProvider(), { fixed: [privacy] })),
+    );
 
     expect(feed.decisions).toMatchObject([
       {
@@ -401,15 +334,14 @@ it("reports an admission no rule qualified as the default, deciding by no rule",
         disposition: "admitted",
         cause: "default",
         decidedBy: [],
-        checkedRuleIds: arrayContaining([contacts.id]),
+        checkedRuleIds: arrayContaining([privacy.id]),
       },
     ]);
   }));
 
 it("retains refused first-message peers after restart without an admitted conversation", () =>
   Effect.gen(function* () {
-    const reviser = contactsPolicy("violation");
-    const saved = yield* Effect.scoped(refuseFirstGroupMessage(reviser));
+    const saved = yield* Effect.scoped(refuseFirstGroupMessage());
     const recovered = yield* readRefusedDecisions(saved.directory);
     expect(recovered.decisions).toEqual(saved.decisions);
     expect(recovered.memberships).toEqual([]);
@@ -417,9 +349,7 @@ it("retains refused first-message peers after restart without an admitted conver
 
 it("reads saved decisions after restarting without a configured policy", () =>
   Effect.gen(function* () {
-    const saved = yield* Effect.scoped(
-      refuseFirstGroupMessage(contactsPolicy("violation")),
-    );
+    const saved = yield* Effect.scoped(refuseFirstGroupMessage());
     const retained = yield* withDaemonStore(
       saved.directory,
       Effect.fn(function* () {
@@ -443,7 +373,7 @@ it("keeps the deciding rules recorded before a later edit removes them", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
       const firewall = yield* makeFirewall(
-        options([], text(decisionProvider([privacy], "violation"), {})),
+        options(text(decisionProvider([privacy], "violation"), {})),
       );
       yield* firewall.updatePolicy({ add: [privacy] });
       const [checked] = yield* firewall.check([
@@ -471,7 +401,9 @@ it("keeps the deciding rules recorded before a later edit removes them", () =>
 it("reports publication withholding separately from an allowing assessment", () =>
   withDaemonStore(stateDirectory(), () =>
     Effect.gen(function* () {
-      const firewall = yield* makeFirewall(options([contactsPolicy("pass")]));
+      const firewall = yield* makeFirewall(
+        options(text(decisionProvider(), { fixed: [privacy] })),
+      );
       const checked = yield* firewall.check([
         yield* preparedMessage("incoming"),
       ]);
@@ -502,7 +434,7 @@ it("keeps one batch's captured policy when an edit activates between its checks"
           }),
       };
       const firewall = yield* makeFirewall({
-        ...options([], text(provider, { initial: [privacy] })),
+        ...options(text(provider, { initial: [privacy] })),
         maximumConcurrentChecks: 1,
       });
       const captured = yield* firewall.readPolicy();
@@ -556,12 +488,18 @@ function readRefusedDecisions(directory: string) {
   );
 }
 
-function refuseFirstGroupMessage(reviser: MessageMiddleware) {
+function refuseFirstGroupMessage() {
   return Effect.gen(function* () {
     const directory = stateDirectory();
     const feed = yield* withDaemonStore(directory, () =>
       Effect.gen(function* () {
-        const firewall = yield* makeFirewall(options([reviser]));
+        const firewall = yield* makeFirewall(
+          options(
+            text(decisionProvider([privacy], "violation"), {
+              fixed: [privacy],
+            }),
+          ),
+        );
         const [checked] = yield* firewall.check([
           yield* preparedMessage("outgoing"),
         ]);
@@ -577,12 +515,12 @@ function refuseFirstGroupMessage(reviser: MessageMiddleware) {
         direction: "outgoing",
         peer: bob,
         outcome: "reject",
-        cause: "code",
+        cause: "judgment",
         decidedBy: arrayContaining([
           expect.objectContaining({
-            ruleId: contacts.id,
-            from: "code",
-            advice: contacts.feedback.text,
+            ruleId: privacy.id,
+            from: "fixed",
+            advice: privacy.feedback.text,
           }),
         ]),
       },
