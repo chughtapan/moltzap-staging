@@ -231,7 +231,8 @@ function expectIncomingGatherWithheld({
         slot: "tue",
       }).pipe(Effect.flip),
     ).toMatchObject({ failure: { kind: "request-none" } });
-    expect(yield* nextItem(requester)).toMatchObject({
+    const result = yield* nextItem(requester);
+    expect(result, JSON.stringify(result)).toMatchObject({
       kind: "collectiveResult",
       operationId: withheld.operationId,
       outcomes: [
