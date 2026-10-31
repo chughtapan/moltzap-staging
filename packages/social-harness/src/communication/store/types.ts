@@ -27,6 +27,7 @@ export interface MessageIntent {
   readonly authorAgentId: string;
   readonly msgId: string;
   readonly canonicalIntent: Uint8Array;
+  readonly canonicalMessage: Uint8Array;
   readonly completedRecordHash?: string;
 }
 /** Atomic binding for a message in either retained or newly founded history. */

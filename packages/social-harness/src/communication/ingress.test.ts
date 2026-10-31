@@ -4,8 +4,10 @@ import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
   Context,
+  Data,
   Deferred,
   Effect,
+  Fiber,
   FiberSet,
   Layer,
   Queue,
@@ -16,8 +18,8 @@ import { expect } from "vitest";
 import { identifier } from "../__tests__/agent-card-fixtures.js";
 import {
   buildCertifiedFirstMessage,
-  storeCertifiedFirstMessage,
   type SigningIdentity,
+  storeCertifiedFirstMessage,
 } from "../__tests__/certified-history-fixtures.js";
 import { conversationIdentityFixture } from "../__tests__/conversation-fixtures.js";
 import {
@@ -33,19 +35,22 @@ import {
   type LiveSignedMessage,
   SignedMessage,
 } from "../identity/envelope/signed-message.js";
+import { AgentName } from "../identity/identifiers.js";
 import { AgentSigningAuthority } from "../identity/keys.js";
 import { saveLocalIdentity } from "../identity/local-store.js";
 import { localIdentityLayer } from "../identity/local.js";
 import { Registry } from "../identity/registry/index.js";
-import { Communication } from "./index.js";
+import { Communication, CommunicationError } from "./index.js";
 import {
   type Message,
   messageFromIntent,
   messageFromParticipants,
 } from "./message.js";
-import { DirectPacket, signOuterPacket, mintMsgId } from "./records/index.js";
+import { DirectPacket, mintMsgId, signOuterPacket } from "./records/index.js";
 import { Router } from "./router/index.js";
 import { communicationLive } from "./service/index.js";
+
+class ConsumerFailure extends Data.TaggedError("ConsumerFailure") {}
 
 interface Members {
   readonly local: SigningIdentity;
@@ -256,6 +261,7 @@ function deliversAfterRefusedBody(refused: RefusedEnvelope) {
   });
 }
 
+// eslint-disable-next-line agent-code-guard/no-example-only-tests -- Restart and rollback regressions require scoped SQL and Router fixtures.
 it.each<{ readonly body: string; readonly refused: RefusedEnvelope }>([
   {
     body: "a plaintext body",
@@ -312,7 +318,9 @@ it("accepts an immutable message while Router is unavailable and rolls acceptanc
     const conflict = yield* communication
       .send({ ...message, content: [{ type: "text", text: "different" }] })
       .pipe(Effect.flip);
-    expect(conflict.reason).toBe("message-conflict");
+    expect(conflict).toEqual(
+      new CommunicationError({ reason: "message-conflict" }),
+    );
     const rolledBack = { ...message, msgId: yield* mintMsgId() };
     yield* subject.sql
       .withTransaction(
@@ -327,7 +335,9 @@ it("accepts an immutable message while Router is unavailable and rolls acceptanc
         msgId: rolledBack.msgId,
       })
       .pipe(Effect.flip);
-    expect(missing.reason).toBe("unknown-message");
+    expect(missing).toEqual(
+      new CommunicationError({ reason: "unknown-message" }),
+    );
   }));
 
 it("returns the retained Message after certified history is reopened without Router", () =>
@@ -367,4 +377,91 @@ it("returns the retained Message after certified history is reopened without Rou
     );
     expect(yield* read).toEqual(expected);
     expect(yield* read).toEqual(expected);
+  }));
+
+it("retains a terminal preparation failure across reopen", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const reference = {
+      authorAgentId: subject.local.card.agentId,
+      msgId: yield* mintMsgId(),
+    };
+    const peer = {
+      ...agentViewOf(subject.remote.card),
+      agentName: AgentName.make("wrong-peer-name"),
+    };
+    const message = yield* messageFromParticipants(
+      agentViewOf(subject.local.card),
+      [peer],
+      {
+        msgId: reference.msgId,
+        content: [{ type: "text", text: "check the retained failure" }],
+      },
+    );
+    const attached = Router.of({
+      poll: ({ request }) =>
+        request.pollCursor === undefined
+          ? Effect.succeed(
+              emptyBatch(
+                subject.anchor.routerInstanceId,
+                subject.anchor.pollCursor,
+              ),
+            )
+          : Effect.never,
+      send: () => Effect.never,
+    });
+    const first = yield* Effect.scoped(
+      openCommunication(subject, attached).pipe(
+        Effect.flatMap(({ communication }) =>
+          communication
+            .send(message)
+            .pipe(
+              Effect.zipRight(communication.waitForMessage(reference)),
+              Effect.flip,
+            ),
+        ),
+      ),
+    ).pipe(Effect.timeout("3 seconds"));
+    expect(first).toEqual(
+      new CommunicationError({ reason: "membership-invalid" }),
+    );
+    const repeated = yield* Effect.scoped(
+      openCommunication(
+        subject,
+        Router.of({ poll: () => Effect.never, send: () => Effect.never }),
+      ).pipe(
+        Effect.flatMap(({ communication }) =>
+          communication.waitForMessage(reference).pipe(Effect.flip),
+        ),
+      ),
+    );
+    expect(repeated).toEqual(
+      new CommunicationError({ reason: "membership-invalid" }),
+    );
+  }));
+
+it("offers the same certified Message again after its consumer fails", () =>
+  Effect.gen(function* () {
+    const { subject, release, router } = yield* prepareIngress({
+      sealedAs: 31,
+      signer: ({ peer }) => peer,
+      signedAs: 31,
+    });
+    const { communication } = yield* openCommunication(subject, router);
+    const expectedFailure = new ConsumerFailure();
+    const failed = yield* communication
+      .consume(() => Effect.fail(expectedFailure))
+      .pipe(Effect.forkScoped);
+    yield* Deferred.succeed(release, undefined);
+    const failure = yield* Fiber.join(failed).pipe(Effect.flip);
+    expect(failure._tag).toBe(expectedFailure._tag);
+    const replayed = yield* Queue.unbounded<Message>();
+    yield* communication
+      .consume((message) => Queue.offer(replayed, message).pipe(Effect.asVoid))
+      .pipe(Effect.forkScoped);
+    const message = yield* Queue.take(replayed).pipe(
+      Effect.timeout("3 seconds"),
+    );
+    expect(message.author).toEqual(agentViewOf(subject.remote.card));
+    expect(message.recipients).toEqual([agentViewOf(subject.local.card)]);
   }));

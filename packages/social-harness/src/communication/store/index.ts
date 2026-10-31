@@ -49,11 +49,11 @@ export {
 } from "./queues/outbound.js";
 /** History pages remain anchored while later records are appended. */
 export {
+  consumeRecord,
   readStoredConversation as readConversation,
   readMemberships,
   readRecentConversation,
   readUnconsumedRecords,
-  consumeRecord,
   recoverStoredState as recover,
 } from "./reads.js";
 /** Record acceptance retains exact bytes and separately attributed evidence. */
@@ -68,8 +68,8 @@ export {
 /** Accepted message payloads and terminal outcomes share the caller's transaction. */
 export {
   acceptMessage,
-  readAcceptedMessage,
-  readUnpreparedMessages,
   failMessage,
   hasPendingMessages,
+  readAcceptedMessage,
+  readUnpreparedMessages,
 } from "./messages.js";

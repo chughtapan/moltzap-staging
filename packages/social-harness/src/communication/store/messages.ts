@@ -1,14 +1,9 @@
 /** @file Accepted messages own their immutable payload before protocol preparation. */
 
 import { SqlClient } from "@effect/sql";
-import { Effect, Schema } from "effect";
-import type { MessageReference } from "../message.js";
-import { Message } from "../message.js";
+import { Effect } from "effect";
 import { decodeCanonical } from "../../encoding/canonical-json.js";
-import {
-  sendFailureReasons,
-  type SendFailure,
-} from "../conversations/errors.js";
+import { Message, type MessageReference } from "../message.js";
 import {
   EndpointStoreError,
   readBytes,
@@ -16,6 +11,7 @@ import {
   readText,
   requireEqual,
   requireSameBytes,
+  requireText,
   storeOperation,
 } from "./database/index.js";
 import { readStoredIdentity } from "./rows/index.js";
@@ -56,7 +52,7 @@ export function acceptMessage(input: {
       readBytes(row, "canonical_message"),
       input.canonicalMessage,
     );
-  }).pipe(storeOperation);
+  }).pipe(storeOperation, Effect.withSpan("acceptMessage"));
 }
 
 /** The owning reader returns the retained Message and durable terminal outcome. */
@@ -68,7 +64,7 @@ export function readAcceptedMessage(reference: MessageReference) {
       [reference.authorAgentId, reference.msgId],
     );
     return row === undefined ? undefined : yield* readAcceptedRow(row);
-  }).pipe(storeOperation);
+  }).pipe(storeOperation, Effect.withSpan("readAcceptedMessage"));
 }
 
 /** Workers discover committed work even when an acceptance wake preceded its commit. */
@@ -83,19 +79,20 @@ export function readUnpreparedMessages() {
       readAcceptedRow,
       { concurrency: 1 },
     );
-  }).pipe(storeOperation);
+  }).pipe(storeOperation, Effect.withSpan("readUnpreparedMessages"));
 }
 
 /** Terminal preparation failures remain observable after the process restarts. */
-export function failMessage(reference: MessageReference, reason: SendFailure) {
+export function failMessage(reference: MessageReference, reason: string) {
   return Effect.gen(function* () {
+    requireText(reason);
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe(
       `UPDATE message_intents SET failure_reason=COALESCE(failure_reason,?)
        WHERE author_agent_id=? AND msg_id=? AND completed_record_hash IS NULL`,
       [reason, reference.authorAgentId, reference.msgId],
     );
-  }).pipe(storeOperation);
+  }).pipe(storeOperation, Effect.withSpan("failMessage"));
 }
 
 /** Pending status includes accepted messages whose membership is not prepared yet. */
@@ -107,7 +104,7 @@ export function hasPendingMessages(conversationId: string) {
       [conversationId],
     );
     return rows.length > 0;
-  }).pipe(storeOperation);
+  }).pipe(storeOperation, Effect.withSpan("hasPendingMessages"));
 }
 
 function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
@@ -122,12 +119,7 @@ function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
     return {
       message,
       completed: readOptionalText(row, "completed_record_hash") !== undefined,
-      failure:
-        failure === undefined
-          ? undefined
-          : yield* Schema.decodeUnknown(Schema.Literal(...sendFailureReasons))(
-              failure,
-            ),
+      failure,
     };
   }).pipe(storeOperation);
 }

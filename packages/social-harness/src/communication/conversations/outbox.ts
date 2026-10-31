@@ -2,7 +2,6 @@
 
 import type * as SqlClient from "@effect/sql/SqlClient";
 import { Effect, Queue, Schedule } from "effect";
-import type { StagedRecord } from "../store/index.js";
 import type {
   EndpointEngineInput,
   EngineConversation,
@@ -80,8 +79,8 @@ function bindOutbox(state: OutboxState): EngineOutbox {
           conversation.conversationId,
           record.recordHash,
         );
-        if (retained !== undefined) {
-          yield* push(state, [retained.envelopeId]);
+        if (retained !== undefined && retained.disposition !== "discarded") {
+          yield* push(state, [retained.outbound.envelopeId]);
           return;
         }
         const message = yield* sign(state, conversation.membership, {

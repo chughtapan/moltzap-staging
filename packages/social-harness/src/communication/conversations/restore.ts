@@ -43,8 +43,8 @@ import {
 } from "./engine-context.js";
 import {
   decodeStoredAnchor,
-  recordFromStore,
   readStoredMessageIntent,
+  recordFromStore,
   type StoredRowError,
   storedRowMatchesCore,
   verifyStoredMemberships,
@@ -106,7 +106,7 @@ export const recoverEngineState = (
     });
     const messageIntents = yield* Effect.forEach(
       recovery.messageIntents,
-      readStoredMessageIntent,
+      (stored) => readStoredMessageIntent(stored, verifiedMemberships),
       { concurrency: 1 },
     );
     const completedMessages = new Map(

@@ -26,7 +26,7 @@ const soleOuterSigner = {
       {
         patterns: [
           {
-            regex: "(^|/)records/(encoding/)?(index|codec)\\.js$",
+            regex: "(^|/)records/(index|encoding)\\.js$",
             importNames: ["signOuterPacket", "signOuterEvidence"],
             message:
               "Only communication/conversations/outbox.ts signs outer envelopes; queue the body through the engine outbox.",
@@ -38,14 +38,14 @@ const soleOuterSigner = {
 };
 
 /**
- * Keeps `communication/records/encoding/codec.ts` the one module that calls
+ * Keeps `communication/records/encoding.ts` the one module that calls
  * Identity's `SignedMessage.sign`, which it does for an outer envelope only
  * after sealing its body. The guard covers who signs, not what the outbox
  * enqueues: its port accepts any `SignedMessage`.
  */
 const sealingSigner = {
   files: ["src/**/*.ts"],
-  ignores: ["src/communication/records/encoding/codec.ts", ...testFiles],
+  ignores: ["src/communication/records/encoding.ts", ...testFiles],
   rules: {
     "no-restricted-properties": [
       "error",
@@ -53,7 +53,7 @@ const sealingSigner = {
         object: "SignedMessage",
         property: "sign",
         message:
-          "Only communication/records/encoding/codec.ts signs a SignedMessage, after sealing every outer body; queue the body through the engine outbox.",
+          "Only communication/records/encoding.ts signs a SignedMessage, after sealing every outer body; queue the body through the engine outbox.",
       },
     ],
   },

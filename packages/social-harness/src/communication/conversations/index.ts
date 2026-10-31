@@ -3,7 +3,9 @@
  */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Data, Deferred, Duration, Effect, Schema, type Scope } from "effect";
+import { Data, Deferred, Duration, Effect, type Scope } from "effect";
+import type { Message } from "../message.js";
+import type { DecodedOuterBody, MsgId, RecordHash } from "../records/index.js";
 import type {
   RouterDiscontinuityReason,
   RouterIngressDisposition,
@@ -21,12 +23,6 @@ import type {
 } from "./engine-context.js";
 import { AgentSigningAuthority } from "../../identity/keys.js";
 import { wireVersions } from "../../identity/wire-version.js";
-import { Message } from "../message.js";
-import {
-  type DecodedOuterBody,
-  type MsgId,
-  RecordHash,
-} from "../records/index.js";
 import * as Store from "../store/index.js";
 import {
   acceptEngineIngress,
@@ -34,9 +30,9 @@ import {
   resumeEngineFolds,
 } from "./certification/index.js";
 import { DeliveryAcknowledgeError, ListenError, SendError } from "./errors.js";
+import { readStoredHistory } from "./history/index.js";
 import { makeOutbox } from "./outbox.js";
 import { recoverEngineState } from "./restore.js";
-import { readStoredHistory } from "./history/index.js";
 import {
   acceptEngineIngressWithRecovery,
   installRecoveryBarrier,
@@ -549,4 +545,4 @@ function observeMessage(runtime: EngineRuntime, msgId: MsgId) {
 }
 
 /** Assessment context asks communication whether accepted outgoing work remains. */
-export { hasPendingMessages } from "../store/messages.js";
+export { hasPendingMessages } from "../store/index.js";

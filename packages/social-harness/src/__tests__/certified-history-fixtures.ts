@@ -15,6 +15,7 @@ import {
   protocolEvidence,
   stagedRecord,
 } from "../communication/conversations/history/index.js";
+import { Message, messageFromIntent } from "../communication/message.js";
 import {
   ActionCore,
   type ActionHash,
@@ -36,7 +37,6 @@ import {
   signEvidenceMessage,
   type VerifiedMembership,
 } from "../communication/records/index.js";
-import { Message, messageFromIntent } from "../communication/message.js";
 import { encodeCanonical } from "../encoding/canonical-json.js";
 import {
   AgentCard,
@@ -458,14 +458,15 @@ function bindLocalIntent(
     if (intent.authorAgentId !== local.agentId) {
       return;
     }
+    const canonicalMessage = yield* encodeCanonical(
+      Message,
+      yield* messageFromIntent(membership.members.map(agentViewOf), intent),
+    );
     yield* store.acceptMessage({
       authorAgentId: intent.authorAgentId,
       msgId: intent.msgId,
       conversationId: intent.conversationId,
-      canonicalMessage: yield* encodeCanonical(
-        Message,
-        yield* messageFromIntent(membership.members.map(agentViewOf), intent),
-      ),
+      canonicalMessage,
     });
     yield* store.bindMessageIntent({
       kind: "existing-conversation",
@@ -475,6 +476,7 @@ function bindLocalIntent(
         authorAgentId: intent.authorAgentId,
         msgId: intent.msgId,
         canonicalIntent: yield* encodeCanonical(MessageIntent, intent),
+        canonicalMessage,
       },
     });
   });

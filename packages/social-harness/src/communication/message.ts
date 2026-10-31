@@ -74,7 +74,7 @@ type Participants = Pick<Message, "author" | "recipients">;
 /** Captures the known author and recipients without reconstructing a member list. */
 export function messageFromParticipants(
   author: Message["author"],
-  recipients: readonly Message["author"][],
+  recipients: ReadonlyArray<Message["author"]>,
   intent: Pick<Message, "msgId" | "content">,
 ) {
   return Effect.try({

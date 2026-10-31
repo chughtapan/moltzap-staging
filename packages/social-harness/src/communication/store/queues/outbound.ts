@@ -201,7 +201,7 @@ export function discardOutbound(
         for (const outbound of retained) {
           if (outbound.disposition === "pending") {
             yield* database.unsafe<Readonly<Record<string, unknown>>>(
-              `UPDATE outbound_messages SET disposition = 'discarded', record_hash = NULL
+              `UPDATE outbound_messages SET disposition = 'discarded'
              WHERE envelope_id = ? AND disposition = 'pending'`,
               [outbound.outbound.envelopeId],
             );
@@ -238,6 +238,21 @@ export function readPendingOutbound(
     );
   }).pipe(storeOperation, Effect.withSpan("readPendingOutbound"));
 }
+
+/** The outbox itself owns the exact signed envelope for one staged record. */
+export function readRecordOutbound(conversationId: string, recordHash: string) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+      `SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
+       FROM outbound_messages WHERE conversation_id=? AND record_hash=?
+       ORDER BY disposition='discarded',outbound_sequence DESC LIMIT 1`,
+      [conversationId, recordHash],
+    );
+    return row === undefined ? undefined : readOutbound(row);
+  }).pipe(storeOperation, Effect.withSpan("readRecordOutbound"));
+}
+
 function requireOutbound(
   envelopeId: string,
 ): Effect.Effect<RetainedOutbound, EndpointStoreError, SqlClient.SqlClient> {
@@ -267,6 +282,7 @@ function findOutbound(
     return row === undefined ? undefined : readOutbound(row);
   }).pipe(storeOperation);
 }
+
 function readOutbound(
   row: Readonly<Record<string, unknown>>,
 ): RetainedOutbound {
@@ -357,17 +373,4 @@ function copyOutbound(outbound: StoredOutboundMessage): StoredOutboundMessage {
     ...outbound,
     canonicalSignedMessage: copyBytes(outbound.canonicalSignedMessage),
   });
-}
-
-/** The outbox itself owns the exact signed envelope for one staged record. */
-export function readRecordOutbound(conversationId: string, recordHash: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
-       FROM outbound_messages WHERE conversation_id=? AND record_hash=?`,
-      [conversationId, recordHash],
-    );
-    return row === undefined ? undefined : readOutbound(row).outbound;
-  }).pipe(storeOperation);
 }

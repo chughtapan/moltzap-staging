@@ -257,7 +257,7 @@ function bindMessageIntentInTransaction(
     }
     requireEqual(identity.agentId, intent.authorAgentId);
     const existing = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, membership_hash, canonical_intent
+      `SELECT conversation_id, membership_hash, canonical_intent, canonical_message
        FROM message_intents WHERE author_agent_id = ? AND msg_id = ?`,
       [intent.authorAgentId, intent.msgId],
     ))[0];
@@ -265,6 +265,10 @@ function bindMessageIntentInTransaction(
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireEqual(readText(existing, "conversation_id"), intent.conversationId);
+    requireSameBytes(
+      readBytes(existing, "canonical_message"),
+      intent.canonicalMessage,
+    );
     if (readOptionalText(existing, "membership_hash") !== undefined) {
       requireEqual(
         readText(existing, "membership_hash"),
@@ -778,7 +782,7 @@ function readConversationMessageIntents(
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
-                canonical_intent, completed_record_hash
+                canonical_intent, canonical_message, completed_record_hash
          FROM message_intents WHERE conversation_id = ? AND canonical_intent IS NOT NULL AND failure_reason IS NULL
          ORDER BY author_agent_id, msg_id`,
         [conversationId],
@@ -793,6 +797,7 @@ function readConversationMessageIntents(
           authorAgentId: readText(row, "author_agent_id"),
           msgId: readText(row, "msg_id"),
           canonicalIntent: readBytes(row, "canonical_intent"),
+          canonicalMessage: readBytes(row, "canonical_message"),
           ...(completedRecordHash === undefined ? {} : { completedRecordHash }),
         });
       }),

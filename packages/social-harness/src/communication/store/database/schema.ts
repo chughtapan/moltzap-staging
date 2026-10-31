@@ -161,9 +161,10 @@ const schemaSql = `
     disposition TEXT NOT NULL CHECK (
       disposition IN ('pending', 'accepted', 'discarded')
     ),
-    UNIQUE (conversation_id, record_hash),
     FOREIGN KEY (conversation_id, record_hash) REFERENCES staged_records(conversation_id, record_hash)
   ) STRICT;
+  CREATE UNIQUE INDEX outbound_current_record ON outbound_messages(conversation_id,record_hash)
+    WHERE record_hash IS NOT NULL AND disposition<>'discarded';
 `;
 /** Driver failures and invalid stored values stay inside the closed persistence boundary. */
 export const storeOperation = <A, E, R>(

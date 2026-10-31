@@ -4,12 +4,12 @@ import * as SqlClient from "@effect/sql/SqlClient";
 import { Effect } from "effect";
 import type {
   CertifiedRecord,
+  OutboundMessageInput,
   ProposalLock,
   ProtocolEvidence,
   StagedRecord,
-  StoreMutation,
-  OutboundMessageInput,
   StoredOutboundMessage,
+  StoreMutation,
 } from "./types.js";
 
 import {
@@ -65,15 +65,14 @@ export function stageRecordAndOutbound(
         record.conversationId,
         record.recordHash,
       );
-      return (
-        retained ??
-        (yield* enqueueOutboundInTransaction({
-          ...outbound,
-          recordHash: record.recordHash,
-        }))
-      );
+      return retained !== undefined && retained.disposition !== "discarded"
+        ? retained.outbound
+        : yield* enqueueOutboundInTransaction({
+            ...outbound,
+            recordHash: record.recordHash,
+          });
     }),
-  ).pipe(storeOperation);
+  ).pipe(storeOperation, Effect.withSpan("stageRecordAndOutbound"));
 }
 /**
  * Merges one stable evidence item without replacing a conflicting value.

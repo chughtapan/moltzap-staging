@@ -64,8 +64,6 @@ import {
 } from "./index.js";
 import { Content, type Content as ContentValue } from "./values.js";
 
-/* eslint-disable max-lines-per-function, sonarjs/max-lines-per-function -- Acceptance fixtures keep each complete cryptographic record and its assertions together. */
-
 const maximumIdentityBodyBytes = 262_144;
 const maximumIdentityRecipients = 128;
 
@@ -1145,5 +1143,3 @@ describe("Client protocol acceptance", () => {
     },
   );
 });
-
-/* eslint-enable max-lines-per-function, sonarjs/max-lines-per-function -- Restore repository defaults. */

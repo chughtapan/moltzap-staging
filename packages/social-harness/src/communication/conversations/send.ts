@@ -293,6 +293,11 @@ export const proposeIntent = (
           ).pipe(
             Effect.mapError(storeFailure),
             Effect.zipRight(Deferred.fail(localIntent.completion, error)),
+            Effect.tap(() =>
+              Effect.sync(() =>
+                runtime.intents.delete(localIntent.intent.msgId),
+              ),
+            ),
             Effect.asVoid,
           )
         : Effect.void,
@@ -593,6 +598,7 @@ interface PreparedIntent {
   readonly membership: VerifiedMembership;
   readonly intent: MessageIntent;
   readonly canonicalIntent: Uint8Array;
+  readonly canonicalMessage: Uint8Array;
 }
 
 /** Captured message identity survives preparation and every subsequent retry. */
@@ -616,13 +622,14 @@ export const acceptMessage = (
       second,
       ...rest,
     ]).pipe(Effect.mapError(representationFailure));
+    const canonicalMessage = yield* encodeCanonical(Message, message).pipe(
+      Effect.mapError(representationFailure),
+    );
     yield* Store.acceptMessage({
       authorAgentId: message.author.agentId,
       msgId: message.msgId,
       conversationId,
-      canonicalMessage: yield* encodeCanonical(Message, message).pipe(
-        Effect.mapError(representationFailure),
-      ),
+      canonicalMessage,
     }).pipe(Effect.mapError(storeFailure));
     const retained = runtime.intents.get(message.msgId);
     if (retained !== undefined) {
@@ -648,6 +655,7 @@ export const acceptMessage = (
       membership,
       intent,
       canonicalIntent,
+      canonicalMessage,
     });
     return { msgId: message.msgId, completion: activation.completion };
   }).pipe(Effect.withSpan("acceptMessage"));
@@ -685,6 +693,7 @@ function storedIntent(prepared: PreparedIntent): StoredMessageIntent {
     authorAgentId: prepared.intent.authorAgentId,
     msgId: prepared.intent.msgId,
     canonicalIntent: prepared.canonicalIntent,
+    canonicalMessage: prepared.canonicalMessage,
   };
 }
 

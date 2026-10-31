@@ -105,7 +105,7 @@ import {
   makeEndpointEngine,
 } from "../index.js";
 
-/* eslint-disable max-lines, max-lines-per-function, max-statements, sonarjs/max-lines-per-function -- The full protocol traces share one four-endpoint harness and keep controlled Router phases beside durable assertions. */
+/* eslint-disable max-lines, max-lines-per-function -- The full protocol traces share one four-endpoint harness and keep controlled Router phases beside durable assertions. */
 
 /** The Router-worker operations an engine consumes. */
 type EngineRouterPort = EndpointEngineInput["routerWorker"];
@@ -2135,7 +2135,7 @@ function concurrentFirstSends(firstVersion: string, secondVersion: string) {
   );
 }
 
-/* eslint-enable max-lines, max-lines-per-function, max-statements, sonarjs/max-lines-per-function -- Restore repository defaults. */
+/* eslint-enable max-lines, max-lines-per-function -- Restore repository defaults. */
 
 /**
  * Virtual time short of `ATTACH_BOUND`, so a send still waiting for the

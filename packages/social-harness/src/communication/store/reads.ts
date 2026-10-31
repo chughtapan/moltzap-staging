@@ -187,6 +187,43 @@ export function readRecentConversation(input: {
     };
   }).pipe(storeOperation, Effect.withSpan("readRecentConversation"));
 }
+
+/** Reads remote certified records in their durable local commit order until consumed. */
+export function readUnconsumedRecords() {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const records = yield* Effect.forEach(
+      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+        historySelect +
+          ` WHERE certified.consumed=0
+          AND staged.author_agent_id<>(SELECT agent_id FROM identity_binding WHERE singleton=1)
+          ORDER BY certified.rowid`,
+      ),
+      readCertifiedRecord,
+      { concurrency: 1 },
+    );
+    return {
+      records,
+      memberships: yield* readMemberships(),
+      anchors: yield* readAnchors(),
+    };
+  }).pipe(storeOperation, Effect.withSpan("readUnconsumedRecords"));
+}
+
+/** A successful handler retires only its exact certified record, retaining history. */
+export function consumeRecord(recordHash: string) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+      "UPDATE certified_records SET consumed=1 WHERE record_hash=? RETURNING record_hash",
+      [recordHash],
+    );
+    if (rows.length !== 1) {
+      return yield* new EndpointStoreError({ reason: "not-found" });
+    }
+  }).pipe(storeOperation, Effect.withSpan("consumeRecord"));
+}
+
 /** Protocol startup needs each retained membership, including conversations without a certified head. */
 export function readMemberships(
   conversationId?: string,
@@ -232,7 +269,7 @@ function readMessageIntents(
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
-                canonical_intent, completed_record_hash
+                canonical_intent, canonical_message, completed_record_hash
          FROM message_intents WHERE canonical_intent IS NOT NULL AND failure_reason IS NULL ${conversationId === undefined ? "" : "AND conversation_id = ?"} ORDER BY author_agent_id, msg_id`,
         [...(conversationId === undefined ? [] : [conversationId])],
       )).map((row) => {
@@ -246,6 +283,7 @@ function readMessageIntents(
           authorAgentId: readText(row, "author_agent_id"),
           msgId: readText(row, "msg_id"),
           canonicalIntent: readBytes(row, "canonical_intent"),
+          canonicalMessage: readBytes(row, "canonical_message"),
           ...(completedRecordHash === undefined ? {} : { completedRecordHash }),
         });
       }),
@@ -478,41 +516,5 @@ function historyPosition(
       });
     }
     return readInteger(row, "ordinal");
-  }).pipe(storeOperation);
-}
-
-/** Reads remote certified records in their durable local commit order until consumed. */
-export function readUnconsumedRecords() {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const records = yield* Effect.forEach(
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        historySelect +
-          ` WHERE certified.consumed=0
-          AND staged.author_agent_id<>(SELECT agent_id FROM identity_binding WHERE singleton=1)
-          ORDER BY certified.rowid`,
-      ),
-      readCertifiedRecord,
-      { concurrency: 1 },
-    );
-    return {
-      records,
-      memberships: yield* readMemberships(),
-      anchors: yield* readAnchors(),
-    };
-  }).pipe(storeOperation);
-}
-
-/** A successful handler retires only its exact certified record, retaining history. */
-export function consumeRecord(recordHash: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "UPDATE certified_records SET consumed=1 WHERE record_hash=? RETURNING record_hash",
-      [recordHash],
-    );
-    if (rows.length !== 1) {
-      return yield* new EndpointStoreError({ reason: "not-found" });
-    }
   }).pipe(storeOperation);
 }

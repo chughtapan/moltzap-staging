@@ -460,10 +460,10 @@ function retainsRecordDisseminationAcrossCrashWindows() {
       withDaemonStore(directory, (store) =>
         Effect.gen(function* () {
           expect(
-            yield* store.readRecordOutbound(
+            (yield* store.readRecordOutbound(
               record.conversationId,
               record.recordHash,
-            ),
+            ))?.outbound,
           ).toEqual(first);
           yield* store.discardOutbound([first]);
           const replacement = { ...first, envelopeId: "env_reanchored" };
@@ -773,6 +773,7 @@ function messageIntent(conversationId: string, msgId: string): MessageIntent {
     authorAgentId: LOCAL_AGENT_ID,
     msgId,
     canonicalIntent: bytes(`intent:${conversationId}:${msgId}`),
+    canonicalMessage: bytes("captured:" + msgId),
   };
 }
 function foundation(conversationId: string): ConversationFoundation {
@@ -791,6 +792,18 @@ function proposal(conversationId: string, actionHash: string): ProposalLock {
     canonicalActionCore: bytes(`action:${actionHash}`),
   };
 }
+
+function stageOutbound(record: StagedRecord): OutboundMessageInput {
+  return {
+    ...outboundMessage(
+      record.conversationId,
+      "env_" + record.recordHash,
+      "outer staged",
+    ),
+    recordHash: record.recordHash,
+  };
+}
+
 function outboundMessage(
   conversationId: string,
   envelopeId: string,
@@ -920,17 +933,6 @@ describe("endpoint empty-history Router restart", () => {
     refusesEmptyRestartAfterCertification,
   );
 });
-
-function stageOutbound(record: StagedRecord): OutboundMessageInput {
-  return {
-    ...outboundMessage(
-      record.conversationId,
-      "env_" + record.recordHash,
-      "outer staged",
-    ),
-    recordHash: record.recordHash,
-  };
-}
 function acceptIntent(store: TestStore, intent: MessageIntent) {
   return store.acceptMessage({
     ...intent,

@@ -13,6 +13,7 @@ import {
   Queue,
   Ref,
   Schedule,
+  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -20,7 +21,6 @@ import type {
   AgentSigningAuthority,
   Ed25519PublicKey,
 } from "../../identity/keys.js";
-import { isTerminalSendFailure, SendError } from "../conversations/errors.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
@@ -34,6 +34,11 @@ import {
 import { LocalIdentity } from "../../identity/local.js";
 import { Registry } from "../../identity/registry/index.js";
 import {
+  isTerminalSendFailure,
+  SendError,
+  sendFailureReasons,
+} from "../conversations/errors.js";
+import {
   type EndpointEngine,
   type EngineInitializationError,
   type EngineOutboundError,
@@ -42,17 +47,18 @@ import {
 } from "../conversations/index.js";
 import { Communication, CommunicationError } from "../index.js";
 import {
-  Message as MessageSchema,
   type Message,
-  type MessageReference,
   messageMembers,
+  type MessageReference,
+  Message as MessageSchema,
 } from "../message.js";
 import {
-  deriveConversationId,
   type DecodedOuterBody,
   decodeOuterBody,
+  deriveConversationId,
   type OuterBodyReader,
 } from "../records/index.js";
+import { compareAgentIds } from "../records/values.js";
 import {
   makeRouterWorker,
   Router,
@@ -62,7 +68,6 @@ import {
 } from "../router/index.js";
 import * as Store from "../store/index.js";
 import { listConversations, readHistory } from "./history.js";
-import { compareAgentIds } from "../records/values.js";
 
 /** Signing and Registry authority belong to the one configured local agent. */
 export interface CommunicationSettings {
@@ -237,9 +242,21 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
         return yield* new CommunicationError({ reason: "unknown-message" });
       }
       if (retained.failure !== undefined) {
-        return yield* sendFailure(new SendError({ reason: retained.failure }));
+        const reason = yield* Schema.decodeUnknown(
+          Schema.Literal(...sendFailureReasons),
+        )(retained.failure).pipe(
+          Effect.catchTag(
+            "ParseError",
+            () => new CommunicationError({ reason: "persistence-failed" }),
+          ),
+        );
+        return yield* sendFailure(new SendError({ reason }));
       }
       if (retained.completed) {
+        const engine = yield* Deferred.await(environment.ready);
+        yield* engine
+          .observeMessage(reference.msgId)
+          .pipe(Effect.mapError(sendFailure));
         return retained.message;
       }
       yield* Effect.sleep(Duration.millis(100));
@@ -248,31 +265,24 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
 }
 
 function prepareAcceptedMessages(environment: Environment) {
-  return Deferred.await(environment.ready).pipe(
-    Effect.flatMap((engine) =>
-      Store.readUnpreparedMessages().pipe(
-        Effect.flatMap((pending) =>
-          Effect.forEach(
-            pending,
-            ({ message }) =>
-              engine.prepareMessage(message).pipe(
-                Effect.catchTag("SendError", (error) => {
-                  return isTerminalSendFailure(error.reason)
-                    ? Store.failMessage(
-                        {
-                          authorAgentId: message.author.agentId,
-                          msgId: message.msgId,
-                        },
-                        error.reason,
-                      )
-                    : Effect.void;
-                }),
-              ),
-            { concurrency: 1, discard: true },
-          ),
+  return Effect.gen(function* () {
+    const engine = yield* Deferred.await(environment.ready);
+    for (const { message } of yield* Store.readUnpreparedMessages()) {
+      yield* engine.prepareMessage(message).pipe(
+        Effect.catchTag("SendError", (error) =>
+          isTerminalSendFailure(error.reason)
+            ? Store.failMessage(
+                {
+                  authorAgentId: message.author.agentId,
+                  msgId: message.msgId,
+                },
+                error.reason,
+              )
+            : Effect.void,
         ),
-      ),
-    ),
+      );
+    }
+  }).pipe(
     Effect.provideService(SqlClient.SqlClient, environment.sql),
     Effect.repeat(Schedule.spaced(Duration.millis(200))),
     Effect.zipRight(Effect.never),
