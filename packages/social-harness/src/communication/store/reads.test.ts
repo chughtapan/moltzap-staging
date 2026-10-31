@@ -106,10 +106,7 @@ function rejectsUnreadableCursor(store: TestStore) {
 }
 /** Records arrive through the same certified-record operation used during recovery. */
 function append(store: TestStore, position: number) {
-  return store.applyCertifiedRecord(historyRecord(position), {
-    recipientAgentId: identity.agentId,
-    canonicalMessage: bytes(`message ${position}`),
-  });
+  return store.applyCertifiedRecord(historyRecord(position));
 }
 
 /** Each immutable record has separate action and durability evidence. */
