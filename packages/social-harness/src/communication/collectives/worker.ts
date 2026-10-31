@@ -133,18 +133,24 @@ function resume(environment: Environment) {
     for (const saved of yield* Store.readCollectiveMessages()) {
       yield* Queue.offer(environment.observations, saved);
     }
-    for (const operation of yield* Store.readPendingRemoteCloses()) {
-      yield* finishRemote(environment, operation.operationId);
+    for (const operationId of yield* Store.readCollectiveOperationIds(
+      "remote",
+      "finalizing",
+    )) {
+      yield* finishRemote(environment, operationId);
     }
   });
 }
 
 function localDeadlines(environment: Environment) {
   return Effect.gen(function* () {
-    for (const operation of yield* Store.readLocalCollectingOperations()) {
+    for (const operationId of yield* Store.readCollectiveOperationIds(
+      "local",
+      "collecting",
+    )) {
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          const close = yield* finishLocal(environment, operation.operationId);
+          const close = yield* finishLocal(environment, operationId);
           if (close !== undefined) {
             yield* Queue.offer(environment.observations, close);
           }

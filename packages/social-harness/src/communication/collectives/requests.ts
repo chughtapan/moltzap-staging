@@ -114,14 +114,6 @@ function saveQuestion(environment: Environment, question: Question) {
     if (existing !== undefined) {
       return;
     }
-    for (const message of yield* requestMessages(question)) {
-      yield* saveMessage(environment, question.operationId, "request", message);
-    }
-  });
-}
-
-function requestMessages(question: Question) {
-  return Effect.gen(function* () {
     const content = yield* encodeCollectiveContent(
       {
         kind: "operation",
@@ -141,11 +133,10 @@ function requestMessages(question: Question) {
       question.op === "gather"
         ? question.recipients.map((recipient) => [recipient])
         : [question.recipients];
-    return yield* Effect.forEach(
-      audiences,
-      (recipients) => makeMessage(question.author, recipients, content),
-      { concurrency: 1 },
-    );
+    for (const recipients of audiences) {
+      const message = yield* makeMessage(question.author, recipients, content);
+      yield* saveMessage(environment, question.operationId, "request", message);
+    }
   });
 }
 
