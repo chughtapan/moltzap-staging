@@ -1,11 +1,7 @@
 /** @file Real daemons export their spans, and mark collectives and retries, over OTLP/HTTP protobuf. */
 
-import {
-  type InboundItem,
-  replyAddress,
-  SendError,
-} from "@moltzap/social-harness";
-import { Duration, Effect, Fiber } from "effect";
+import { type InboundItem, replyAddress } from "@moltzap/social-harness";
+import { Duration, Effect } from "effect";
 import { expect, it } from "vitest";
 import {
   acquireRouterHoldProxy,
@@ -36,10 +32,9 @@ import {
 const question = "Which day works for the review?";
 
 /**
- * Each test starts PGlite, the Registry, the Router and two or three
- * daemons; the marker trace also waits out one all_gather's 20 s request
- * wait, a proposal's next resend and a Router restart's recovery. Beside it
- * the waits are bounded by the receiver's own span-wait limit.
+ * Each test starts PGlite, the Registry, the Router and two or three daemons.
+ * The marker test also waits for a proposal retry and Router recovery.
+ * Each trace wait has the receiver's span-wait limit.
  */
 const TELEMETRY_TEST_TIMEOUT_MS = 300_000;
 
@@ -202,19 +197,21 @@ const markerBehavior = Effect.gen(function* () {
   });
   yield* scenario.proxy.hold;
   yield* Effect.addFinalizer(() => scenario.proxy.release);
-  const heldSend = yield* Effect.fork(
-    gatherFrom(scenario.requester, scenario.group, "all_gather").pipe(
-      Effect.flip,
-    ),
+  const accepted = yield* gatherFrom(
+    scenario.requester,
+    scenario.group,
+    "all_gather",
   );
   const pendingId = yield* expectProposalPending(scenario.receiver);
-  const pending = yield* Fiber.join(heldSend);
-  expect(pending).toStrictEqual(new SendError({ reason: "delivery-pending" }));
   expect(
     markers(yield* scenario.receiver.spans, "retry.settled", "id", pendingId),
   ).toEqual([]);
   yield* scenario.proxy.release;
   const request = yield* answerAllGather(scenario);
+  expect(accepted).toMatchObject({
+    kind: "collective",
+    operationId: request.message.content.operationId,
+  });
   yield* expectProposalCertifiedAndCollectiveClosed(
     scenario.receiver,
     pendingId,
