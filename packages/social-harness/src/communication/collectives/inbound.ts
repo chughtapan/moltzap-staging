@@ -11,7 +11,7 @@ import {
   CollectiveId,
   EpochMillis,
 } from "./contracts.js";
-import { FormModeSchema } from "./wire/index.js";
+import { FormModeSchema } from "./wire.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 

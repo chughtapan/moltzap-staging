@@ -2,12 +2,9 @@
 
 import { Effect, Either, Exit, Option, ParseResult, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import {
-  digest,
-  testAgentView,
-} from "../../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../../__tests__/collective-id-fixtures.js";
-import { Content } from "../../records/index.js";
+import { digest, testAgentView } from "../../__tests__/agent-card-fixtures.js";
+import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
+import { Content } from "../records/index.js";
 import {
   COLLECTIVE_DATA_KEY,
   CollectiveContentError,
@@ -18,7 +15,7 @@ import {
   FormModeSchema,
   mintCollectiveId,
   readCollectiveValue,
-} from "./index.js";
+} from "./wire.js";
 
 const collectiveId = collectiveOperationId(testAgentView("agent:bob").agentId);
 const answerReference = {

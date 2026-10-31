@@ -28,8 +28,6 @@ export { isSemanticStoreRejection } from "./types.js";
 export { decodeRuntimeValue, encodeRuntimeValue } from "./runtime-codec.js";
 /** Pending envelopes cannot be re-signed when their live window expires. */
 export { OutboxTooOldError } from "./database/values.js";
-/** Immutable collective ownership, existing message claims, and terminal delivery. */
-export type { StoredCollectiveOperation } from "./types.js";
 /** Protocol writes and reads use the caller's shared SQL environment. */
 export {
   applyCatchUpReanchor,
@@ -41,23 +39,6 @@ export {
   restartEmptyConversation,
   stageReanchor,
 } from "./anchors.js";
-/** Collective identities and accepted claims survive process interruption. */
-export {
-  completeCollectiveMessage,
-  completeCollectiveOperation,
-  finalizeCollectiveOperation,
-  putCollectiveMessage,
-  putCollectiveOperation,
-  readCollectiveAnswers,
-  readCollectiveMessages,
-  readCollectiveOperation,
-  readNextCollectiveResult,
-  readOpenCollectiveOperations,
-  readPendingCollectiveMessages,
-  recordCollectiveAnswer,
-  retireCollectiveOperation,
-  retireCollectiveResult,
-} from "./collectives.js";
 /** Accepted work, certified history and network retry obligations share SQL transactions. */
 export {
   beginOutbound,

@@ -12,7 +12,7 @@
 
 import { Effect } from "effect";
 import type { CollectiveMemberOutcome } from "./inbound.js";
-import type { FormField, FormModeSchema } from "./wire/index.js";
+import type { FormField, FormModeSchema } from "./wire.js";
 import { matchesFormat } from "./answer-formats.js";
 import {
   type AnswerContent,

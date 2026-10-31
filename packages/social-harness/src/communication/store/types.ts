@@ -170,33 +170,3 @@ export interface HistoryPage {
   readonly authoredRecordHashes: readonly string[];
   readonly continuation: string | null;
 }
-/** A collective owns its immutable request independently of protocol delivery. */
-export interface CollectiveOperationInput {
-  readonly operationId: string;
-  readonly creatorAgentId: string;
-  readonly origin: "local" | "remote";
-  readonly canonicalRequest: Uint8Array;
-  readonly deadlineAt: number;
-}
-/** Completion and result handoff remain recoverable under one retained identity. */
-export interface StoredCollectiveOperation extends CollectiveOperationInput {
-  readonly phase: "collecting" | "finalizing" | "completed";
-  readonly canonicalSelection?: Uint8Array;
-  readonly canonicalResult?: Uint8Array;
-  readonly canonicalSources?: Uint8Array;
-  readonly deliveryToken: DeliveryToken;
-  readonly delivered: boolean;
-}
-/** One role and destination always resubmit the same saved message. */
-export interface StoredCollectiveMessage {
-  readonly operationId: string;
-  readonly role: "request" | "response" | "close";
-  readonly destination: string;
-  readonly canonicalMessage: Uint8Array;
-}
-/** The collector's first saved answer is the authoritative deadline event. */
-export interface CollectiveAnswerReference {
-  readonly operationId: string;
-  readonly member: string;
-  readonly canonicalMessage: Uint8Array;
-}

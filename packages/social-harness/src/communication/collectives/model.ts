@@ -7,7 +7,7 @@ import { maximumMembers, wellFormedString } from "../records/values.js";
 import { DeliveryToken } from "../store/types.js";
 import { CollectiveId, EpochMillis } from "./contracts.js";
 import { InboundItem } from "./inbound.js";
-import { FormModeSchema } from "./wire/index.js";
+import { FormModeSchema } from "./wire.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with their decoded types. */
 
@@ -54,12 +54,3 @@ export const ResultDelivery = exactStruct({
 export type ResultDelivery = typeof ResultDelivery.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
-
-/** A requester freezes the sources and optional close before either is published. */
-export const frozenResult = exactStruct({
-  item: ResultDelivery.fields.item,
-  sources: ResultSources,
-  close: Schema.optionalWith(Message, { exact: true }),
-});
-/** Selected source snapshots remain identical through restart. */
-export type FrozenResult = typeof frozenResult.Type;
