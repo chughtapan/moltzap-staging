@@ -148,6 +148,18 @@ const unrelatedConversationId = Schema.decodeUnknownSync(ConversationId)(
 const unrelatedMembershipHash = Schema.decodeUnknownSync(MembershipHash)(
   digest("mbr_", 36),
 );
+/** A scripted Router drains explicitly; certification remains separately observable. */
+function prepareAndObserve(
+  harness: ProtocolHarness,
+  engine: EndpointEngine,
+  message: Message,
+) {
+  return prepareAcceptedMessage(harness, engine, message).pipe(
+    Effect.zipRight(engine.drainOutbound.pipe(Effect.orDie)),
+    Effect.zipRight(engine.observeMessage(message.msgId)),
+  );
+}
+
 /** The fixture accepts through storage before exercising protocol preparation. */
 function prepareAcceptedMessage(
   harness: ProtocolHarness,
@@ -174,18 +186,6 @@ function prepareAcceptedMessage(
       .pipe(Effect.orDie);
     yield* engine.prepareMessage({ message, canonicalMessage });
   });
-}
-
-/** A scripted Router drains explicitly; certification remains separately observable. */
-function prepareAndObserve(
-  harness: ProtocolHarness,
-  engine: EndpointEngine,
-  message: Message,
-) {
-  return prepareAcceptedMessage(harness, engine, message).pipe(
-    Effect.zipRight(engine.drainOutbound.pipe(Effect.orDie)),
-    Effect.zipRight(engine.observeMessage(message.msgId)),
-  );
 }
 
 function makeIdentities(
@@ -2094,7 +2094,7 @@ describe("fixed-message endpoint protocol", () => {
     TEST_TIMEOUT_MS,
   );
   it(
-    "returns the hash of the send's locally stored certified record",
+    "retains the hash of the locally certified record",
     sendReturnsTheStoredCertifiedRecordHash,
     TEST_TIMEOUT_MS,
   );
@@ -2104,7 +2104,7 @@ describe("fixed-message endpoint protocol", () => {
     TEST_TIMEOUT_MS,
   );
   it(
-    "resumes a captured message and refuses changed content under its identity",
+    "re-prepares an accepted message without certifying it twice",
     resumesCapturedMessage,
     TEST_TIMEOUT_MS,
   );
@@ -2341,15 +2341,15 @@ function attachmentWaitLeavesTheEngineGateFree(): Effect.Effect<
   });
 }
 
-describe("engine sends and Router-worker attachment", () => {
+describe("message preparation and Router-worker attachment", () => {
   itOnTestClock(
-    "holds a send issued before the worker attaches and completes it on attachment",
+    "prepares after worker attachment and observes certification",
     sendHeldUntilAttached,
     TEST_TIMEOUT_MS,
   );
 
   itOnTestClock(
-    "fails a send as network-unavailable once the attachment bound elapses",
+    "reports network-unavailable when a preparation attempt cannot attach",
     sendFailsAfterAttachBound,
     TEST_TIMEOUT_MS,
   );

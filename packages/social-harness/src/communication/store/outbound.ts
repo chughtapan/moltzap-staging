@@ -43,9 +43,10 @@ export function enqueueOutbound(
   EndpointStoreError,
   SqlClient.SqlClient
 > {
-  return Effect.gen(function* () {
-    return yield* transaction(enqueueOutboundInTransaction(message));
-  }).pipe(storeOperation, Effect.withSpan("enqueueOutbound"));
+  return transaction(enqueueOutboundInTransaction(message)).pipe(
+    storeOperation,
+    Effect.withSpan("enqueueOutbound"),
+  );
 }
 /**
  * Retains one validated envelope inside a caller-owned SQLite transaction.

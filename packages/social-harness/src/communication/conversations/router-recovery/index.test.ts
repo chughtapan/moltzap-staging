@@ -5757,7 +5757,7 @@ function prepareAndObserve(
   return Effect.gen(function* () {
     const members = messageMembers(message)
       .map((member) => member.agentId)
-      .sort();
+      .sort(compareAgentIds);
     const [first, second, ...rest] = members;
     if (first === undefined || second === undefined) {
       return yield* Effect.dieMessage(

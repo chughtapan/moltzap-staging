@@ -14,8 +14,8 @@ import type {
   AgentSigningAuthority,
   Ed25519PublicKey,
 } from "../../identity/keys.js";
-import type { Message } from "../message.js";
 import type { Registry } from "../../identity/registry/index.js";
+import type { Message } from "../message.js";
 import type {
   ActionCertifiedRecord,
   ActionCore,

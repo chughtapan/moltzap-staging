@@ -33,7 +33,6 @@ import {
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
-  type MsgId,
   type RecordHash,
   type VerifiedMembership,
   verifyMembershipDescriptor,
@@ -48,7 +47,7 @@ import {
   pendingRecoveryFence,
 } from "./router-recovery/index.js";
 
-// safer-arch-ignore no-fat-orchestrator: Immutable intent acceptance and protocol proposal share the engine gate and durable conversation binding.
+// safer-arch-ignore no-fat-orchestrator: Immutable intent binding and protocol proposal share the engine gate and durable conversation binding.
 
 /**
  * Fail a send whose intent bind did not complete. A store refusal is raised
@@ -587,7 +586,7 @@ interface PreparedIntent {
   readonly canonicalMessage: Uint8Array;
 }
 
-/** Prepares the retained payload without taking acceptance ownership again. */
+/** Uses the immutable payload retained at Communication acceptance. */
 export const prepareMessage = (
   runtime: EngineRuntime,
   accepted: AcceptedMessage,
@@ -704,16 +703,9 @@ function activateIntent(
 }
 
 /**
- * Propose a message whose intent `bindPreparedIntent` durably stored, or complete
- * it when it already certified. The intent is in the store and
- * `runtime.intents` before any proposal, so a failure here does not mean the
- * message was not sent: `rebasePendingIntents` proposes it again when the
- * conversation's head moves, and recovery proposes it after a restart. So
- * preparation succeeds after binding even if the initial proposal fails.
- * The retained intent and its completion latch remain owned by recovery.
- * @param runtime Engine whose conversation and outbox take the proposal.
- * @param prepared The stored intent with its canonical bytes.
- * @returns Completion once the bound intent has been activated.
+ * A bound intent remains recoverable when its initial proposal fails.
+ * Install its completion latch before proposing so certification and recovery
+ * observe the same message identity.
  */
 function activateBoundIntent(
   runtime: EngineRuntime,
