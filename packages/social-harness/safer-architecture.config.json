@@ -227,7 +227,7 @@
       "reason": "Ordered incoming admission started by daemon runtime composition"
     },
     {
-      "file": "communication/store/queues/outbound.ts",
+      "file": "communication/store/outbound.ts",
       "reason": "Outbox writes share the caller\u2019s SQL transaction with protocol state changes"
     },
     {

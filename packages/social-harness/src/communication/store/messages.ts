@@ -113,15 +113,14 @@ export function hasPendingMessages(conversationId: string) {
 
 function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
   return Effect.gen(function* () {
-    const message = yield* decodeCanonical(
-      Message,
-      readBytes(row, "canonical_message"),
-    );
+    const canonicalMessage = readBytes(row, "canonical_message");
+    const message = yield* decodeCanonical(Message, canonicalMessage);
     requireEqual(message.author.agentId, readText(row, "author_agent_id"));
     requireEqual(message.msgId, readText(row, "msg_id"));
     const failure = readOptionalText(row, "failure_reason");
     return {
       message,
+      canonicalMessage,
       completed: readOptionalText(row, "completed_record_hash") !== undefined,
       failure,
     };

@@ -3,7 +3,7 @@
  */
 
 import * as SqlClient from "@effect/sql/SqlClient";
-import { Data, Deferred, Duration, Effect, type Scope } from "effect";
+import { Data, Deferred, Effect, type Scope } from "effect";
 import type { Message } from "../message.js";
 import type { DecodedOuterBody, MsgId, RecordHash } from "../records/index.js";
 import type {
@@ -17,6 +17,7 @@ import type {
 } from "../router/index.js";
 import type { EndpointStoreError } from "../store/index.js";
 import type {
+  AcceptedMessage,
   EndpointEngineInput,
   EnginePhases,
   EngineRuntime,
@@ -41,16 +42,10 @@ import {
   recoverCertifiedHistory,
   recoveryHeadAdvanced,
 } from "./router-recovery/index.js";
-import {
-  acceptMessage,
-  type EngineSentMessage,
-  proposeIntent,
-} from "./send.js";
+import { prepareMessage, proposeIntent } from "./send.js";
 
 /** Private engine dependencies retained behind the daemon boundary. */
 export type { EndpointEngineInput } from "./engine-context.js";
-/** Certification results remain private to the communication implementation. */
-export type { EngineSentMessage } from "./send.js";
 /** The marker spans that bracket daemon work in flight, shared with the layers above. */
 export {
   exitOutcome,
@@ -95,17 +90,12 @@ interface EnginePendingMessage {
 /** Stable private engine capability consumed by daemon composition. */
 export interface EndpointEngine {
   /** Observe one durable local intent without rechecking, rebinding, or sending a replacement. */
-  readonly observeMessage: (
-    msgId: MsgId,
-  ) => Effect.Effect<EngineSentMessage, SendError>;
+  readonly observeMessage: (msgId: MsgId) => Effect.Effect<void, SendError>;
 
   /** Prepares accepted work without waiting for certification. */
-  readonly prepareMessage: (message: Message) => Effect.Effect<void, SendError>;
-
-  /** Accepts and certifies the caller's immutable message identity. */
-  readonly send: (
-    message: Message,
-  ) => Effect.Effect<EngineSentMessage, SendError>;
+  readonly prepareMessage: (
+    accepted: AcceptedMessage,
+  ) => Effect.Effect<void, SendError>;
   readonly readPendingMessages: () => Effect.Effect<
     readonly EnginePendingMessage[],
     ListenError
@@ -290,39 +280,6 @@ function resumeFoldFailure(): EngineInitializationError {
   return new EngineInitializationError({ reason: "persistence" });
 }
 
-/**
- * How long a local send's own drain may run before the send fails as
- * `delivery-pending`. With `ROUTER_ATTACH_TIMEOUT` it stays under the MCP
- * SDK's `DEFAULT_REQUEST_TIMEOUT_MSEC`.
- */
-const LOCAL_DRAIN_TIMEOUT = Duration.seconds(10);
-
-/** Accepted messages remain queued after the caller's bounded certification wait ends. */
-const finishAcceptedMessage = (
-  runtime: EngineRuntime,
-  prepared: Effect.Effect.Success<ReturnType<typeof acceptMessage>>,
-) =>
-  Effect.gen(function* () {
-    if (!(yield* Deferred.isDone(prepared.completion))) {
-      yield* runtime.outbox.drain.pipe(
-        Effect.timeout(LOCAL_DRAIN_TIMEOUT),
-        // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- Every drain failure, the timeout included, leaves the message queued and still delivered, as this function's JSDoc explains.
-        Effect.mapError(() => new SendError({ reason: "delivery-pending" })),
-      );
-    }
-    const recordHash = yield* Deferred.await(prepared.completion);
-    return { msgId: prepared.msgId, recordHash };
-  });
-
-const send = (
-  runtime: EngineRuntime,
-  message: Message,
-): Effect.Effect<EngineSentMessage, SendError, SqlClient.SqlClient> =>
-  acceptMessage(runtime, message).pipe(
-    Effect.flatMap((accepted) => finishAcceptedMessage(runtime, accepted)),
-    Effect.withSpan("EndpointEngine.send"),
-  );
-
 const readPendingMessages = (
   runtime: EngineRuntime,
 ): Effect.Effect<
@@ -481,9 +438,8 @@ const endpointEngine = (
   const provideSql = Effect.provideService(SqlClient.SqlClient, sql);
   return Object.freeze({
     observeMessage: (msgId: MsgId) => observeMessage(runtime, msgId),
-    prepareMessage: (message: Message) =>
-      acceptMessage(runtime, message).pipe(Effect.asVoid, provideSql),
-    send: (message: Message) => send(runtime, message).pipe(provideSql),
+    prepareMessage: (accepted: AcceptedMessage) =>
+      prepareMessage(runtime, accepted).pipe(provideSql),
     readPendingMessages: () => readPendingMessages(runtime).pipe(provideSql),
     acknowledgeMessage: (recordHash: RecordHash) =>
       acknowledgeMessage(recordHash).pipe(provideSql),
@@ -527,20 +483,18 @@ export const makeEndpointEngine = (
  * Observe the retained local intent without preparing or binding a replacement.
  * @param runtime The active engine whose completion latches retain local ownership.
  * @param msgId The already-bound local message to observe.
- * @returns The original message and its certificate, or its retained send failure.
+ * @returns Completion once the original message certifies, or its retained send failure.
  */
 function observeMessage(runtime: EngineRuntime, msgId: MsgId) {
   return Effect.suspend(() => {
     const complete = runtime.completedMessages.get(msgId);
     if (complete !== undefined) {
-      return Effect.succeed({ msgId, recordHash: complete });
+      return Effect.void;
     }
     const retained = runtime.intents.get(msgId);
     return retained === undefined
       ? Effect.fail(new SendError({ reason: "certification-unavailable" }))
-      : Deferred.await(retained.completion).pipe(
-          Effect.map((recordHash) => ({ msgId, recordHash })),
-        );
+      : Deferred.await(retained.completion).pipe(Effect.asVoid);
   });
 }
 

@@ -29,7 +29,7 @@ import {
 import {
   enqueueOutboundInTransaction,
   readRecordOutbound,
-} from "./queues/outbound.js";
+} from "./outbound.js";
 import {
   findProposalLock,
   findStagedReanchor,

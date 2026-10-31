@@ -65,7 +65,7 @@ import { SignedMessage } from "../../../identity/envelope/signed-message.js";
 import { Ed25519PublicKey } from "../../../identity/keys.js";
 import { saveLocalIdentity } from "../../../identity/local-store.js";
 import { WIRE_VERSION } from "../../../identity/wire-version.js";
-import { Message, messageFromIntent } from "../../message.js";
+import { Message, messageFromIntent, messageMembers } from "../../message.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
@@ -1912,7 +1912,9 @@ const completeRestartRecovery = () =>
     expect(resumedDurabilityEvidence).toBe(durabilityVoteKind);
 
     const sending = yield* Effect.fork(
-      fixture.engine.send(
+      prepareAndObserve(
+        fixture.store,
+        fixture.engine,
         yield* authoredMessage(fixture, [
           { type: "text", text: "normal traffic resumes" },
         ]),
@@ -1938,7 +1940,9 @@ const reproposesPendingMessageAfterRestart = () =>
     yield* fixture.engine.drainOutbound.pipe(Effect.orDie);
     yield* Ref.set(holdOutbound, true);
     const sending = yield* Effect.fork(
-      fixture.engine.send(
+      prepareAndObserve(
+        fixture.store,
+        fixture.engine,
         yield* authoredMessage(fixture, [
           { type: "text", text: "survive Router restart" },
         ]),
@@ -2021,7 +2025,9 @@ const recoverSameRouterInstance = (reason: RouterDiscontinuityReason) =>
   Effect.gen(function* () {
     const fixture = yield* makeFixture;
     const sending = yield* Effect.fork(
-      fixture.engine.send(
+      prepareAndObserve(
+        fixture.store,
+        fixture.engine,
         yield* authoredMessage(fixture, [
           { type: "text", text: "retain this proposal" },
         ]),
@@ -2537,7 +2543,9 @@ const recoverWhileNormalSendIsHeld = () =>
       };
     });
     const sending = yield* Effect.forkScoped(
-      fixture.engine.send(
+      prepareAndObserve(
+        fixture.store,
+        fixture.engine,
         yield* authoredMessage(fixture, [
           { type: "text", text: "retained during recovery" },
         ]),
@@ -3420,7 +3428,9 @@ const certifiesAtALockedHeadAfterReanchoring = (
     yield* Queue.takeAll(fixture.normalOutbound);
     const head = fixture.certifiedRecord.actionCertifiedRecord.recordHash;
     const sending = yield* Effect.fork(
-      fixture.engine.send(
+      prepareAndObserve(
+        fixture.store,
+        fixture.engine,
         yield* authoredMessage(fixture, [
           { type: "text", text: "certify after re-anchoring" },
         ]),
@@ -3517,7 +3527,7 @@ const certifiesAtALockedHeadAfterReanchoring = (
         recordHash,
       }),
     );
-    const sent = yield* Fiber.join(sending);
+    yield* Fiber.join(sending);
     const restarted = yield* Effect.exit(
       makeEndpointEngine(fixture.input).pipe(
         Effect.provideService(SqlClient.SqlClient, fixture.store.sql),
@@ -3547,7 +3557,10 @@ const certifiesAtALockedHeadAfterReanchoring = (
       anchorHash,
     });
     expect(reproposedOrdered).toBe(acceptedDisposition);
-    expect(sent.recordHash).toBe(recordHash);
+    expect(
+      (yield* fixture.store.run(testStore.recover())).positions[0]
+        ?.headRecordHash,
+    ).toBe(recordHash);
     expect(restarted).toMatchObject({ _tag: "Success" });
   });
 
@@ -5729,8 +5742,50 @@ const takeRetriedCatchUpRequest = (outbound: Queue.Queue<SignedMessage>) =>
     Effect.flatMap(decodeCatchUpRequest),
   );
 
-const forkSend = (engine: EndpointEngine, message: Message) =>
-  Effect.fork(engine.send(message));
+const forkSend = (
+  store: TestDatabase,
+  engine: EndpointEngine,
+  message: Message,
+) => Effect.fork(prepareAndObserve(store, engine, message));
+
+/** Each protocol trace starts with a durably accepted immutable Message. */
+function prepareAndObserve(
+  store: TestDatabase,
+  engine: EndpointEngine,
+  message: Message,
+) {
+  return Effect.gen(function* () {
+    const members = messageMembers(message)
+      .map((member) => member.agentId)
+      .sort();
+    const [first, second, ...rest] = members;
+    if (first === undefined || second === undefined) {
+      return yield* Effect.dieMessage(
+        "A fixture message needs two participants",
+      );
+    }
+    const canonicalMessage = yield* encodeCanonical(Message, message).pipe(
+      Effect.orDie,
+    );
+    yield* store
+      .run(
+        testStore.acceptMessage({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+          conversationId: yield* deriveConversationId([
+            first,
+            second,
+            ...rest,
+          ]).pipe(Effect.orDie),
+          canonicalMessage,
+        }),
+      )
+      .pipe(Effect.orDie);
+    yield* engine.prepareMessage({ message, canonicalMessage });
+    yield* engine.drainOutbound.pipe(Effect.orDie);
+    yield* engine.observeMessage(message.msgId);
+  });
+}
 
 /**
  * After a Router discontinuity the endpoint holds two conversations. The
@@ -5785,12 +5840,14 @@ const recoversOneConversationWhileAnotherWaitsOnASilentMember = () =>
     yield* n4Incomplete(fixture.remote);
     yield* n4Incomplete(fixture.remote);
     const directSend = yield* forkSend(
+      fixture.store,
       n4.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "held behind the silent member" },
       ]),
     );
     yield* forkSend(
+      fixture.store,
       n4.engine,
       yield* authoredMessage(
         fixture,
@@ -5977,6 +6034,7 @@ const rearmsCatchUpAfterRetriesRunOut = () =>
     yield* settle;
     const afterRecovery = yield* Queue.size(outbound);
     yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "recovered after the retries ran out" },
@@ -6019,6 +6077,7 @@ const proposesPendingMessagesOnlyOnceItsConversationRecovers = () =>
       Effect.flatMap((ingress) => n4.engine.acceptRouterIngress(ingress)),
     );
     yield* forkSend(
+      fixture.store,
       n4.engine,
       yield* authoredMessage(
         fixture,
@@ -6172,6 +6231,7 @@ const rearmsCatchUpOnTheNextRecoveryRun = () =>
       }),
     );
     yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "recovered on the next run" },
@@ -6214,6 +6274,7 @@ const rearmsCatchUpOnALocalSend = () =>
     );
 
     const sending = yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "sent into a paused conversation" },
@@ -6314,6 +6375,7 @@ const resendsAProposalAMemberDroppedWhileRecovering = () =>
     yield* retainCertifiedRecord(fixture);
     yield* reanchorUntilCompletionSend(fixture);
     const sending = yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "sent while the member recovers" },
@@ -6382,7 +6444,7 @@ const resendsAProposalAMemberDroppedWhileRecovering = () =>
     }).pipe(
       Effect.flatMap((ingress) => fixture.engine.acceptRouterIngress(ingress)),
     );
-    const sent = yield* Fiber.join(sending);
+    yield* Fiber.join(sending);
 
     expect(authorEvidence).toBe(actionSignatureKind);
     expect(resentBodies).toMatchObject([
@@ -6398,7 +6460,10 @@ const resendsAProposalAMemberDroppedWhileRecovering = () =>
       { kind: "direct", packet: first.proposal },
     ]);
     expect(resent[1]?.envelopeId).not.toBe(first.message.envelopeId);
-    expect(sent.recordHash).toBe(recordHash);
+    expect(
+      (yield* fixture.store.run(testStore.recover())).positions[0]
+        ?.headRecordHash,
+    ).toBe(recordHash);
   });
 
 /**
@@ -6411,6 +6476,7 @@ const preservesResendAttemptsWhileFenced = () =>
     const fixture = yield* makeFixture;
     yield* retainCertifiedRecord(fixture);
     const sending = yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "waiting through a long recovery" },
@@ -6505,6 +6571,7 @@ const recoversSeveralConversationsIndependently = () =>
       { concurrency: 1, discard: true },
     );
     const sending = yield* forkSend(
+      fixture.store,
       n4.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "wait for this conversation" },
@@ -6683,6 +6750,7 @@ const stageMessageAtTheAuthor = (
 ) =>
   Effect.gen(function* () {
     const sending = yield* forkSend(
+      fixture.store,
       fixture.engine,
       yield* authoredMessage(fixture, [
         { type: "text", text: "staged before the restart" },
@@ -6931,7 +6999,7 @@ const certifiesAMessageOneDirectMemberStagedBeforeTheRestart = () =>
     );
     const localPositions = yield* awaitReanchoredFrom(fixture.store, oldAnchor);
     const peerPositions = yield* awaitReanchoredFrom(peer.store, oldAnchor);
-    const sent = yield* Fiber.join(sending).pipe(Effect.orDie);
+    yield* Fiber.join(sending).pipe(Effect.orDie);
     const candidatesAtHead = (recovery: EndpointRecovery) =>
       recovery.stagedReanchors.filter(
         (candidate) => candidate.selectedRecordHash === head,
@@ -6939,7 +7007,10 @@ const certifiesAMessageOneDirectMemberStagedBeforeTheRestart = () =>
 
     expect(localPositions[0]?.headRecordHash).toBe(staged.recordHash);
     expect(peerPositions).toStrictEqual(localPositions);
-    expect(sent.recordHash).toBe(staged.recordHash);
+    expect(
+      (yield* fixture.store.run(testStore.recover())).positions[0]
+        ?.headRecordHash,
+    ).toBe(staged.recordHash);
     expect(
       candidatesAtHead(yield* fixture.store.run(testStore.recover())),
     ).toEqual([]);
@@ -7510,6 +7581,7 @@ const neverSettlesBehindASuccessorAfterAFeedGap = () =>
       routerInstanceId: oldRouterInstanceId,
     });
     const sending = yield* forkSend(
+      fixture.store,
       n4.engine,
       yield* authoredMessage(
         fixture,

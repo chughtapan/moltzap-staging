@@ -14,6 +14,7 @@ import type {
   AgentSigningAuthority,
   Ed25519PublicKey,
 } from "../../identity/keys.js";
+import type { Message } from "../message.js";
 import type { Registry } from "../../identity/registry/index.js";
 import type {
   ActionCertifiedRecord,
@@ -63,6 +64,12 @@ export interface EndpointEngineInput {
   readonly reportStorageFault: (
     error: EndpointStoreError,
   ) => Effect.Effect<void>;
+}
+
+/** Preparation uses the exact payload already retained by Communication. */
+export interface AcceptedMessage {
+  readonly message: Message;
+  readonly canonicalMessage: Uint8Array;
 }
 
 /** One locally authored immutable message intent awaiting certification. */

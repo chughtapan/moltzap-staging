@@ -9,18 +9,19 @@ import type {
   MessageIntent as StoredMessageIntent,
 } from "../store/index.js";
 import type {
+  AcceptedMessage,
   EngineConversation,
   EngineMessageIntent,
   EngineOutboxError,
   EngineRuntime,
 } from "./engine-context.js";
-import { encodeCanonical, sameBytes } from "../../encoding/canonical-json.js";
+import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
   AgentCard,
   agentViewOf,
   type VerifiedAgentCard,
 } from "../../identity/cards.js";
-import { Message, messageFromIntent, messageMembers } from "../message.js";
+import { type Message, messageMembers } from "../message.js";
 import {
   type ActionCore,
   type ActionHash,
@@ -48,12 +49,6 @@ import {
 } from "./router-recovery/index.js";
 
 // safer-arch-ignore no-fat-orchestrator: Immutable intent acceptance and protocol proposal share the engine gate and durable conversation binding.
-
-/** Certification records the caller's original message identity. */
-export interface EngineSentMessage {
-  readonly msgId: MsgId;
-  readonly recordHash: RecordHash;
-}
 
 /**
  * Fail a send whose intent bind did not complete. A store refusal is raised
@@ -585,15 +580,6 @@ const awaitRouterAttachment = (
     Effect.asVoid,
   );
 
-/**
- * One durably bound send: its minted identity and its completion latch, which
- * yields the hash of the message's locally stored certified record.
- */
-export interface AcceptedMessage {
-  readonly msgId: MsgId;
-  readonly completion: Deferred.Deferred<RecordHash, SendError>;
-}
-
 interface PreparedIntent {
   readonly membership: VerifiedMembership;
   readonly intent: MessageIntent;
@@ -601,41 +587,13 @@ interface PreparedIntent {
   readonly canonicalMessage: Uint8Array;
 }
 
-/** Captured message identity survives preparation and every subsequent retry. */
-export const acceptMessage = (
+/** Prepares the retained payload without taking acceptance ownership again. */
+export const prepareMessage = (
   runtime: EngineRuntime,
-  message: Message,
-): Effect.Effect<AcceptedMessage, SendError, SqlClient.SqlClient> =>
+  accepted: AcceptedMessage,
+): Effect.Effect<void, SendError, SqlClient.SqlClient> =>
   Effect.gen(function* () {
-    if (message.author.agentId !== runtime.input.localAgentCard.agentId) {
-      return yield* new SendError({ reason: "membership-invalid" });
-    }
-    const sorted = messageMembers(message)
-      .map((member) => member.agentId)
-      .sort(compareAgentIds);
-    const [first, second, ...rest] = sorted;
-    if (first === undefined || second === undefined) {
-      return yield* new SendError({ reason: "membership-invalid" });
-    }
-    const conversationId = yield* deriveConversationId([
-      first,
-      second,
-      ...rest,
-    ]).pipe(Effect.mapError(representationFailure));
-    const canonicalMessage = yield* encodeCanonical(Message, message).pipe(
-      Effect.mapError(representationFailure),
-    );
-    yield* Store.acceptMessage({
-      authorAgentId: message.author.agentId,
-      msgId: message.msgId,
-      conversationId,
-      canonicalMessage,
-    }).pipe(Effect.mapError(storeFailure));
-    const retained = runtime.intents.get(message.msgId);
-    if (retained !== undefined) {
-      yield* requireSameMessage(runtime, retained, message);
-      return { msgId: message.msgId, completion: retained.completion };
-    }
+    const { message, canonicalMessage } = accepted;
     yield* awaitRouterAttachment(runtime);
     const membership = yield* resolveMembership(runtime, message);
     const intent = yield* Schema.decodeUnknown(MessageIntentSchema)({
@@ -651,40 +609,13 @@ export const acceptMessage = (
       MessageIntentSchema,
       intent,
     ).pipe(Effect.mapError(representationFailure));
-    const activation = yield* activateIntent(runtime, {
+    yield* activateIntent(runtime, {
       membership,
       intent,
       canonicalIntent,
       canonicalMessage,
     });
-    return { msgId: message.msgId, completion: activation.completion };
-  }).pipe(Effect.withSpan("acceptMessage"));
-
-function requireSameMessage(
-  runtime: EngineRuntime,
-  retained: EngineMessageIntent,
-  message: Message,
-) {
-  return Effect.gen(function* () {
-    const membership = runtime.conversations.get(
-      retained.intent.conversationId,
-    )?.membership;
-    if (membership === undefined) {
-      return yield* representationFailure();
-    }
-    const original = yield* messageFromIntent(
-      membership.members.map(agentViewOf),
-      retained.intent,
-    ).pipe(Effect.mapError(representationFailure));
-    const bytes = yield* Effect.all([
-      encodeCanonical(Message, original),
-      encodeCanonical(Message, message),
-    ]).pipe(Effect.mapError(representationFailure));
-    if (!sameBytes(bytes[0], bytes[1])) {
-      return yield* new SendError({ reason: "message-conflict" });
-    }
-  });
-}
+  }).pipe(Effect.withSpan("prepareMessage"));
 
 function storedIntent(prepared: PreparedIntent): StoredMessageIntent {
   return {
@@ -737,59 +668,39 @@ function bindPreparedIntent(
   });
 }
 
-type IntentActivation =
-  | Readonly<{
-      kind: "ready";
-      completion: Deferred.Deferred<RecordHash, SendError>;
-    }>
-  | Readonly<{ kind: "waiting"; barrier: Deferred.Deferred<undefined> }>;
-
 function activateIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
-): Effect.Effect<
-  Exclude<IntentActivation, { kind: "waiting" }>,
-  SendError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<void, SendError, SqlClient.SqlClient> {
   return runtime.gate
     .withPermits(1)(
-      Effect.uninterruptible(activateIntentOnce(runtime, prepared)),
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const barrier = pendingRecoveryFence(
+            runtime,
+            prepared.intent.conversationId,
+          );
+          if (barrier !== undefined) {
+            return barrier;
+          }
+          yield* bindPreparedIntent(runtime, prepared);
+          yield* activateBoundIntent(runtime, prepared);
+          return undefined;
+        }),
+      ),
     )
     .pipe(
-      Effect.flatMap((activation) => {
-        switch (activation.kind) {
-          case "ready":
-            return Effect.succeed(activation);
-          case "waiting":
-            return runtime.phases
+      Effect.flatMap((barrier) =>
+        barrier === undefined
+          ? Effect.void
+          : runtime.phases
               .rearmCatchUp(runtime, prepared.intent.conversationId)
               .pipe(
-                Effect.zipRight(Deferred.await(activation.barrier)),
+                Effect.zipRight(Deferred.await(barrier)),
                 Effect.zipRight(activateIntent(runtime, prepared)),
-              );
-          default: {
-            const exhaustive: never = activation;
-            return exhaustive;
-          }
-        }
-      }),
+              ),
+      ),
     );
-}
-
-function activateIntentOnce(
-  runtime: EngineRuntime,
-  prepared: PreparedIntent,
-): Effect.Effect<IntentActivation, SendError, SqlClient.SqlClient> {
-  const { intent } = prepared;
-  return Effect.gen(function* () {
-    const barrier = pendingRecoveryFence(runtime, intent.conversationId);
-    if (barrier !== undefined) {
-      return { kind: "waiting", barrier } satisfies IntentActivation;
-    }
-    yield* bindPreparedIntent(runtime, prepared);
-    return yield* activateBoundIntent(runtime, prepared);
-  });
 }
 
 /**
@@ -798,16 +709,16 @@ function activateIntentOnce(
  * `runtime.intents` before any proposal, so a failure here does not mean the
  * message was not sent: `rebasePendingIntents` proposes it again when the
  * conversation's head moves, and recovery proposes it after a restart. So
- * the activation stays ready after any failure here, and its completion
- * latch fails the send as `delivery-pending`.
+ * preparation succeeds after binding even if the initial proposal fails.
+ * The retained intent and its completion latch remain owned by recovery.
  * @param runtime Engine whose conversation and outbox take the proposal.
  * @param prepared The stored intent with its canonical bytes.
- * @returns The ready activation and its completion latch.
+ * @returns Completion once the bound intent has been activated.
  */
 function activateBoundIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
-): Effect.Effect<IntentActivation, SendError, SqlClient.SqlClient> {
+): Effect.Effect<void, SendError, SqlClient.SqlClient> {
   const { canonicalIntent, intent } = prepared;
   return Effect.gen(function* () {
     const retained = runtime.intents.get(intent.msgId);
@@ -818,10 +729,7 @@ function activateBoundIntent(
       } else {
         yield* proposeIntent(runtime, retained);
       }
-      return {
-        kind: "ready",
-        completion: retained.completion,
-      } satisfies IntentActivation;
+      return;
     }
     const completion = yield* Deferred.make<RecordHash, SendError>();
     const localIntent: EngineMessageIntent = {
@@ -838,21 +746,5 @@ function activateBoundIntent(
     } else {
       yield* proposeIntent(runtime, localIntent);
     }
-    return { kind: "ready", completion } satisfies IntentActivation;
-  }).pipe(Effect.catchAll(() => pendingActivation()));
-}
-
-/**
- * A bound intent's activation after its proposal failed: still ready, with a
- * latch that fails as `delivery-pending`.
- */
-function pendingActivation(): Effect.Effect<IntentActivation> {
-  return Deferred.make<RecordHash, SendError>().pipe(
-    Effect.tap((completion) =>
-      Deferred.fail(completion, new SendError({ reason: "delivery-pending" })),
-    ),
-    Effect.map(
-      (completion): IntentActivation => ({ kind: "ready", completion }),
-    ),
-  );
+  }).pipe(Effect.catchAll(() => Effect.void));
 }

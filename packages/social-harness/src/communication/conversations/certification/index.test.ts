@@ -57,7 +57,7 @@ import {
   WIRE_VERSION,
   WireVersions,
 } from "../../../identity/wire-version.js";
-import { type Message, messageFromIntent } from "../../message.js";
+import { Message, messageFromIntent } from "../../message.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
@@ -75,7 +75,7 @@ import {
   type MembershipHash as MembershipHashValue,
   mintMsgId,
   RecordCore,
-  type RecordHash,
+  RecordHash,
   signEvidenceMessage,
   signOuterEvidence,
   signOuterPacket,
@@ -101,7 +101,6 @@ import {
   type EndpointEngineInput,
   EngineInitializationError,
   type EngineOutboundError,
-  type EngineSentMessage,
   makeEndpointEngine,
 } from "../index.js";
 
@@ -149,6 +148,46 @@ const unrelatedConversationId = Schema.decodeUnknownSync(ConversationId)(
 const unrelatedMembershipHash = Schema.decodeUnknownSync(MembershipHash)(
   digest("mbr_", 36),
 );
+/** The fixture accepts through storage before exercising protocol preparation. */
+function prepareAcceptedMessage(
+  harness: ProtocolHarness,
+  engine: EndpointEngine,
+  message: Message,
+) {
+  return Effect.gen(function* () {
+    const author = harness.identities.findIndex(
+      ({ card }) => card.agentId === message.author.agentId,
+    );
+    const store = yield* requireAt(harness.stores, author, "author store");
+    const canonicalMessage = yield* encodeCanonical(Message, message).pipe(
+      Effect.orDie,
+    );
+    yield* store
+      .run(
+        testStore.acceptMessage({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+          conversationId: harness.membership.descriptor.conversationId,
+          canonicalMessage,
+        }),
+      )
+      .pipe(Effect.orDie);
+    yield* engine.prepareMessage({ message, canonicalMessage });
+  });
+}
+
+/** A scripted Router drains explicitly; certification remains separately observable. */
+function prepareAndObserve(
+  harness: ProtocolHarness,
+  engine: EndpointEngine,
+  message: Message,
+) {
+  return prepareAcceptedMessage(harness, engine, message).pipe(
+    Effect.zipRight(engine.drainOutbound.pipe(Effect.orDie)),
+    Effect.zipRight(engine.observeMessage(message.msgId)),
+  );
+}
+
 function makeIdentities(
   registryKeys: RegistryKeyPair,
   endpointIndexes: readonly number[],
@@ -733,7 +772,7 @@ function pump(
 
 function certifyFirstMessageOf(
   harness: ProtocolHarness,
-  sending: Fiber.RuntimeFiber<EngineSentMessage, SendError>,
+  sending: Fiber.RuntimeFiber<void, SendError>,
 ): Effect.Effect<RecordHash> {
   return Effect.gen(function* () {
     const initial = yield* takeReadyBatch(harness);
@@ -750,8 +789,19 @@ function certifyFirstMessageOf(
     }
     yield* pump(harness, initial);
     expect(yield* certifiedRecordCounts(harness)).toEqual([1, 1, 1, 1]);
-    const sent = yield* Fiber.join(sending).pipe(Effect.orDie);
-    return sent.recordHash;
+    yield* Fiber.join(sending).pipe(Effect.orDie);
+    const authorStore = yield* requireAt(harness.stores, 0, "author store");
+    const retained = yield* authorStore
+      .run(testStore.recover())
+      .pipe(Effect.orDie);
+    const record = yield* requireAt(
+      retained.certifiedRecords,
+      0,
+      "certified record",
+    );
+    return yield* Schema.decodeUnknown(RecordHash)(record.recordHash).pipe(
+      Effect.orDie,
+    );
   });
 }
 
@@ -761,7 +811,11 @@ function certifyFirstMessage(
   return Effect.gen(function* () {
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "open group")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "open group"),
+      ),
     );
     return yield* certifyFirstMessageOf(harness, sending);
   });
@@ -867,7 +921,11 @@ function restartOverPersistedDurabilityVote(
     );
     const authorStore = yield* requireAt(harness.stores, 0, "endpoint store");
     const sending = yield* Effect.fork(
-      authorEngine.send(yield* sendInput(harness, "stage successor")),
+      prepareAndObserve(
+        harness,
+        authorEngine,
+        yield* sendInput(harness, "stage successor"),
+      ),
     );
     yield* harness.deliver(yield* takeReadyBatch(harness));
     yield* harness.drain();
@@ -950,7 +1008,11 @@ function adoptsAnActionCertificateOverItsOwnLock() {
     const laggingIdentity = yield* requireAt(harness.identities, 1, "identity");
     const laggingStore = yield* requireAt(harness.stores, 1, "endpoint store");
     const winning = yield* Effect.fork(
-      winnerAuthor.send(yield* sendInput(harness, "winner")),
+      prepareAndObserve(
+        harness,
+        winnerAuthor,
+        yield* sendInput(harness, "winner"),
+      ),
     );
     const winnerBatch = yield* takeReadyBatch(harness);
     const winnerActionHash = yield* requireAt(
@@ -964,7 +1026,11 @@ function adoptsAnActionCertificateOverItsOwnLock() {
       ),
     );
     const losing = yield* Effect.fork(
-      lagging.send(yield* sendInput(harness, "member 2 message", 1)),
+      prepareAndObserve(
+        harness,
+        lagging,
+        yield* sendInput(harness, "member 2 message", 1),
+      ),
     );
     const loserBatch = yield* takeReadyBatch(harness);
 
@@ -1080,11 +1146,19 @@ function adoptsACertifiedRecordOverItsOwnLock() {
     const laggingStore = yield* requireAt(harness.stores, 1, "endpoint store");
     const everyMemberButTheLagging = [0, 2, 3];
     const winning = yield* Effect.fork(
-      winnerAuthor.send(yield* sendInput(harness, "winner")),
+      prepareAndObserve(
+        harness,
+        winnerAuthor,
+        yield* sendInput(harness, "winner"),
+      ),
     );
     const winnerBatch = yield* takeReadyBatch(harness);
     const losing = yield* Effect.fork(
-      lagging.send(yield* sendInput(harness, "member 2 message", 1)),
+      prepareAndObserve(
+        harness,
+        lagging,
+        yield* sendInput(harness, "member 2 message", 1),
+      ),
     );
     const loserBatch = yield* takeReadyBatch(harness);
 
@@ -1166,7 +1240,7 @@ function certifyAMessageMember4Misses(harness: ProtocolHarness, text: string) {
     const authorIdentity = yield* requireAt(harness.identities, 0, "identity");
     const everyMemberButTheAbsent = [0, 1, 2];
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, text)),
+      prepareAndObserve(harness, author, yield* sendInput(harness, text)),
     );
     yield* harness.deliver(
       yield* takeReadyBatch(harness),
@@ -1237,7 +1311,11 @@ function refusesASecondCertificateOverAStagedAction() {
     );
     const stagingStore = yield* requireAt(harness.stores, 1, "endpoint store");
     yield* Effect.forkScoped(
-      firstEngine.send(yield* sendInput(harness, "staged message")),
+      prepareAndObserve(
+        harness,
+        firstEngine,
+        yield* sendInput(harness, "staged message"),
+      ),
     );
     const stagedBatch = yield* takeReadyBatch(harness);
     const stagedActionHash = yield* requireAt(
@@ -1251,7 +1329,11 @@ function refusesASecondCertificateOverAStagedAction() {
       ),
     );
     yield* Effect.forkScoped(
-      fourthEngine.send(yield* sendInput(harness, "second message", 3)),
+      prepareAndObserve(
+        harness,
+        fourthEngine,
+        yield* sendInput(harness, "second message", 3),
+      ),
     );
     const secondBatch = yield* takeReadyBatch(harness);
     const secondActionHash = yield* requireAt(
@@ -1340,7 +1422,11 @@ function certifiesFromActionCertifiedCopiesAfterMissingTheSignatures() {
     const returning = yield* requireAt(harness.engines, 1, "endpoint engine");
     const present = [0, 2, 3];
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "missed message")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "missed message"),
+      ),
     );
 
     yield* harness.deliver(yield* takeReadyBatch(harness), present);
@@ -1401,7 +1487,11 @@ function certifiesPastAVoteSealedAwayFromOneMember() {
       return yield* Effect.dieMessage("the harness lacks members");
     }
     const sendingFirst = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "first message")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "first message"),
+      ),
     );
     yield* harness.deliver(yield* takeReadyBatch(harness));
     yield* harness.drain();
@@ -1431,7 +1521,11 @@ function certifiesPastAVoteSealedAwayFromOneMember() {
     yield* Fiber.join(sendingFirst).pipe(Effect.orDie);
 
     const sendingSecond = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "second message")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "second message"),
+      ),
     );
     yield* harness.deliver(yield* takeReadyBatch(harness));
     yield* harness.drain();
@@ -1469,7 +1563,11 @@ function certifiesOrdinaryN4Message() {
     const authorStore = yield* requireAt(harness.stores, 0, "endpoint store");
 
     const sending = yield* Effect.fork(
-      authorEngine.send(yield* sendInput(harness, "ordinary message")),
+      prepareAndObserve(
+        harness,
+        authorEngine,
+        yield* sendInput(harness, "ordinary message"),
+      ),
     );
     const proposalBatch = yield* takeReadyBatch(harness);
     const proposals = yield* messagesOfKind(
@@ -1666,7 +1764,9 @@ function ordersCompetingProposalsBeforeActionVotes(input: {
     );
 
     const firstSending = yield* Effect.fork(
-      firstAuthor.send(
+      prepareAndObserve(
+        harness,
+        firstAuthor,
         yield* sendInput(harness, "first candidate", input.firstAuthorIndex),
       ),
     );
@@ -1674,7 +1774,9 @@ function ordersCompetingProposalsBeforeActionVotes(input: {
     const firstMessage = yield* requireAt(firstBatch, 1, "first proposal");
     const firstProposal = yield* decodeActionProposal(harness, firstMessage);
     const secondSending = yield* Effect.fork(
-      secondAuthor.send(
+      prepareAndObserve(
+        harness,
+        secondAuthor,
         yield* sendInput(harness, "second candidate", input.secondAuthorIndex),
       ),
     );
@@ -1742,22 +1844,19 @@ function ordersCompetingProposalsBeforeActionVotes(input: {
   });
 }
 
-/** A retained message resumes independently of the caller that first submitted it. */
+/** Re-preparing the same accepted Message retains one certified record. */
 function resumesCapturedMessage() {
   return Effect.gen(function* () {
     const harness = yield* makeProtocolHarness();
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const message = yield* sendInput(harness, "repeat intentionally");
-    const sending = yield* Effect.fork(author.send(message));
+    const sending = yield* Effect.fork(
+      prepareAndObserve(harness, author, message),
+    );
     yield* pump(harness, yield* takeReadyBatch(harness));
-    const original = yield* Fiber.join(sending).pipe(Effect.orDie);
-    expect(yield* author.send(message)).toEqual(original);
-    const content = yield* Schema.decodeUnknown(Content)([
-      { type: "text", text: "changed message" },
-    ]);
-    expect(
-      yield* author.send({ ...message, content }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "message-conflict" });
+    yield* Fiber.join(sending).pipe(Effect.orDie);
+    yield* prepareAndObserve(harness, author, message).pipe(Effect.orDie);
+    expect(yield* certifiedRecordCounts(harness)).toEqual([1, 1, 1, 1]);
   });
 }
 
@@ -1781,7 +1880,11 @@ function sealsEveryOuterBodyOfAMessage(memberCount: number) {
     const harness = yield* makeProtocolHarness({ memberCount });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "sealed message")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "sealed message"),
+      ),
     );
 
     const delivered = yield* pump(harness, yield* takeReadyBatch(harness));
@@ -1848,7 +1951,11 @@ function reappendedOuterMessagesYieldOneMessage() {
     const firstMessageHash = yield* certifyFirstMessage(harness);
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "appended twice")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "appended twice"),
+      ),
     );
     const proposalBatch = yield* takeReadyBatch(harness);
     yield* harness.deliver(proposalBatch);
@@ -1857,7 +1964,14 @@ function reappendedOuterMessagesYieldOneMessage() {
       ...proposalBatch,
       ...(yield* takeQueued(harness)),
     ]);
-    const sent = yield* Fiber.join(sending).pipe(Effect.orDie);
+    yield* Fiber.join(sending).pipe(Effect.orDie);
+    const authorStore = yield* requireAt(harness.stores, 0, "author store");
+    const sent = yield* authorStore.run(testStore.recover()).pipe(
+      Effect.orDie,
+      Effect.flatMap((state) =>
+        requireAt(state.certifiedRecords, 1, "second certified record"),
+      ),
+    );
 
     yield* pump(harness, transcript);
 
@@ -1884,7 +1998,11 @@ function messageTrafficMatchesTheSpec() {
     const predecessor = yield* certifyFirstMessage(harness);
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "counted message")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "counted message"),
+      ),
     );
     const messages = yield* pump(harness, yield* takeReadyBatch(harness));
     yield* Fiber.join(sending).pipe(Effect.orDie);
@@ -2085,10 +2203,16 @@ function concurrentFirstSends(firstVersion: string, secondVersion: string) {
     const first = yield* requireAt(harness.engines, 0, "first engine");
     const second = yield* requireAt(harness.engines, 1, "second engine");
     const input = yield* sendInput(harness, "concurrent first send");
-    const firstSend = yield* Effect.fork(first.send(input));
+    const firstSend = yield* Effect.fork(
+      prepareAndObserve(harness, first, input),
+    );
     const firstBatch = yield* takeReadyBatch(harness);
     const secondSend = yield* Effect.fork(
-      second.send(yield* sendInput(harness, "concurrent first send", 1)),
+      prepareAndObserve(
+        harness,
+        second,
+        yield* sendInput(harness, "concurrent first send", 1),
+      ),
     );
     const secondBatch = yield* takeReadyBatch(harness);
     const left = yield* requireAt(firstBatch, 0, "first FIRST_MESSAGE").pipe(
@@ -2137,18 +2261,6 @@ function concurrentFirstSends(firstVersion: string, secondVersion: string) {
 
 /* eslint-enable max-lines, max-lines-per-function -- Restore repository defaults. */
 
-/**
- * Virtual time short of `ATTACH_BOUND`, so a send still waiting for the
- * worker to attach is pending.
- */
-const WITHIN_ATTACH_BOUND = Duration.seconds(30);
-
-/**
- * The send's Router-attachment bound, after which it fails, mirroring the
- * private `send.ts → ROUTER_ATTACH_TIMEOUT`.
- */
-const ATTACH_BOUND = Duration.seconds(45);
-
 function sendHeldUntilAttached(): Effect.Effect<void, never, Scope.Scope> {
   return Effect.gen(function* () {
     const attached = yield* Deferred.make<RouterTailAnchor>();
@@ -2157,9 +2269,13 @@ function sendHeldUntilAttached(): Effect.Effect<void, never, Scope.Scope> {
     });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "open group")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "open group"),
+      ),
     );
-    yield* advanceClock(WITHIN_ATTACH_BOUND);
+    yield* advanceClock(Duration.seconds(1));
     expect(yield* Fiber.poll(sending)).toEqual(Option.none());
     expect(yield* Queue.size(harness.outbound)).toBe(0);
 
@@ -2168,19 +2284,20 @@ function sendHeldUntilAttached(): Effect.Effect<void, never, Scope.Scope> {
   });
 }
 
-/**
- * A send whose worker never attaches queues nothing, so it fails with
- * `network-unavailable` rather than `delivery-pending`.
- */
+/** An unavailable worker leaves the accepted Message unprepared for a later attempt. */
 function sendFailsAfterAttachBound(): Effect.Effect<void, never, Scope.Scope> {
   return Effect.gen(function* () {
     const harness = yield* makeProtocolHarness({ attachment: neverAttaches });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "never attached")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "never attached"),
+      ),
     );
 
-    yield* advanceClock(ATTACH_BOUND);
+    yield* advanceClock(Duration.minutes(5));
 
     expect(
       yield* Fiber.join(sending).pipe(Effect.flip, Effect.orDie),
@@ -2206,9 +2323,13 @@ function attachmentWaitLeavesTheEngineGateFree(): Effect.Effect<
     });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "open group")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "open group"),
+      ),
     );
-    yield* advanceClock(WITHIN_ATTACH_BOUND);
+    yield* advanceClock(Duration.seconds(1));
     expect(yield* Fiber.poll(sending)).toEqual(Option.none());
 
     const abandoning = yield* author
@@ -2367,12 +2488,11 @@ function transientTransmitFailureLeavesOutboundLoopAlive(
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const fatal = yield* Deferred.make<never, EngineOutboundError>();
     yield* superviseOutbound(author, fatal);
-    const sendResult = yield* author
-      .send(yield* sendInput(harness, "router restarts mid-drain"))
-      .pipe(Effect.flip, Effect.orDie);
-    expect(sendResult).toStrictEqual(
-      new SendError({ reason: "delivery-pending" }),
-    );
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "router restarts mid-drain"),
+    ).pipe(Effect.orDie);
     yield* advanceClock(OUTAGE_SPAN);
     yield* expectDrainedAlive(harness, attempts, fatal);
   });
@@ -2398,9 +2518,11 @@ function coldStartWithPendingOutboundLeavesOutboundLoopAlive(): Effect.Effect<
       authorSend: () => () => Effect.fail(new RouterWorkerUnavailableError()),
     });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
-    yield* author
-      .send(yield* sendInput(harness, "left pending before restart"))
-      .pipe(Effect.flip, Effect.orDie);
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "left pending before restart"),
+    ).pipe(Effect.orDie);
     const identity = yield* requireAt(harness.identities, 0, "identity");
     const store = yield* requireAt(harness.stores, 0, "endpoint store");
     const attached = yield* Deferred.make<RouterTailAnchor>();
@@ -2462,21 +2584,8 @@ function blackHolesFirstTransmit(
     );
 }
 
-/**
- * The local send's drain bound, after which it fails as `delivery-pending`,
- * mirroring the private `index.ts → LOCAL_DRAIN_TIMEOUT`.
- */
-const DRAIN_BOUND = Duration.seconds(10);
-
-/**
- * A black-holed transmit holds the local send's drain: the send is still
- * pending one second short of `DRAIN_BOUND` and fails as `delivery-pending`
- * one second past it. The background drain then delivers the envelope the
- * interrupted transmit left begun, exactly once however often the queue
- * drains afterwards. No member signs the proposal, so the author also resends
- * it meanwhile, each time in a new envelope.
- */
-function blackHoledTransmitBoundsTheSend(): Effect.Effect<
+/** An interrupted transmit leaves its exact begun envelope for the background loop. */
+function retriesAnInterruptedTransmit(): Effect.Effect<
   void,
   never,
   Scope.Scope
@@ -2491,23 +2600,19 @@ function blackHoledTransmitBoundsTheSend(): Effect.Effect<
     yield* Deferred.succeed(authorStore, store);
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
     const fatal = yield* Deferred.make<never, EngineOutboundError>();
-    const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "black-holed transmit")),
-    );
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "interrupted transmit"),
+    ).pipe(Effect.orDie);
+    const draining = yield* author.drainOutbound.pipe(Effect.fork);
     yield* untilLive(Ref.get(transmits).pipe(Effect.map((count) => count > 0)));
     const [held] = (yield* store.run(testStore.recover()).pipe(Effect.orDie))
       .outboundMessages;
     if (held === undefined) {
-      return yield* Effect.dieMessage(
-        "the black-holed envelope was not stored",
-      );
+      return yield* Effect.dieMessage("The begun envelope was not retained");
     }
-    yield* advanceClock(Duration.subtract(DRAIN_BOUND, Duration.seconds(1)));
-    expect(yield* Fiber.poll(sending)).toEqual(Option.none());
-    yield* advanceClock(Duration.seconds(2));
-    expect(
-      yield* Fiber.join(sending).pipe(Effect.flip, Effect.orDie),
-    ).toStrictEqual(new SendError({ reason: "delivery-pending" }));
+    yield* Fiber.interrupt(draining);
     yield* superviseOutbound(author, fatal);
     yield* advanceClock(Duration.seconds(1));
     yield* author.drainOutbound.pipe(Effect.orDie);
@@ -2593,7 +2698,11 @@ function concurrentDrainsSendEachOutboxOnce(): Effect.Effect<
     const fatal = yield* Deferred.make<never, EngineOutboundError>();
     yield* superviseOutbound(author, fatal);
     const sending = yield* Effect.fork(
-      author.send(yield* sendInput(harness, "drained twice at once")),
+      prepareAndObserve(
+        harness,
+        author,
+        yield* sendInput(harness, "drained twice at once"),
+      ),
     );
     yield* untilLive(
       Ref.get(transmits).pipe(Effect.map((count) => count >= 2)),
@@ -2677,12 +2786,7 @@ function detachesOnFirstTransmit(
   );
 }
 
-/**
- * What a host sees when the Router drops during its send: the send fails
- * promptly with `delivery-pending`, whose text says the message is queued,
- * the outbound loop stays up, and the durably queued envelope goes out and
- * certifies once the worker re-anchors.
- */
+/** The outbound loop retains accepted work across detachment and certifies after reattachment. */
 function localSendDuringOutage(): Effect.Effect<void, never, Scope.Scope> {
   return Effect.gen(function* () {
     const attached = yield* SubscriptionRef.make(true);
@@ -2692,11 +2796,13 @@ function localSendDuringOutage(): Effect.Effect<void, never, Scope.Scope> {
     const fatal = yield* Deferred.make<never, EngineOutboundError>();
     yield* superviseOutbound(author, fatal);
 
-    const failure = yield* author
-      .send(yield* sendInput(harness, "sent during outage"))
-      .pipe(Effect.flip, Effect.orDie);
-    expect(failure).toStrictEqual(
-      new SendError({ reason: "delivery-pending" }),
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "sent during outage"),
+    ).pipe(Effect.orDie);
+    yield* untilLive(
+      SubscriptionRef.get(attached).pipe(Effect.map((active) => !active)),
     );
     yield* advanceClock(OUTAGE_SPAN);
     expect(yield* Queue.size(harness.outbound)).toBe(0);
@@ -2712,7 +2818,7 @@ function localSendDuringOutage(): Effect.Effect<void, never, Scope.Scope> {
 
 describe("a local send during a Router outage", () => {
   itOnTestClock(
-    "fails at once saying the message is queued and delivers it after re-attachment",
+    "retains a message through an outage and certifies it after reattachment",
     localSendDuringOutage,
     TEST_TIMEOUT_MS,
   );
@@ -2722,8 +2828,8 @@ describe("a local send during a Router outage", () => {
     TEST_TIMEOUT_MS,
   );
   itOnTestClock(
-    "bounds a black-holed transmit and delivers its envelope exactly once",
-    blackHoledTransmitBoundsTheSend,
+    "retries the exact envelope after its first transmit is interrupted",
+    retriesAnInterruptedTransmit,
     TEST_TIMEOUT_MS,
   );
 });
@@ -2767,10 +2873,8 @@ const outboundPersistence: EngineOutboundError["reason"] = "persistence";
  * The author's worker fails every transmit with a persistence failure, which
  * no retry clears. The supervised outbound loop ends with an
  * `EngineOutboundError` naming persistence, so the host stops on a store
- * fault instead of retrying it, and the send, whose message stays queued for the
- * restarted daemon, fails as `delivery-pending`. Fails when a non-transient
- * worker failure is retried, which keeps the loop running, maps to another
- * outbound reason, or fails the send as not sent.
+ * fault instead of retrying it. The accepted Message remains in storage for
+ * restart. A non-transient failure must not leave the loop retrying indefinitely.
  * @returns The scenario, before its scope closes.
  */
 function persistenceFailureEndsTheOutboundLoop(): Effect.Effect<
@@ -2786,29 +2890,21 @@ function persistenceFailureEndsTheOutboundLoop(): Effect.Effect<
     const fatal = yield* Deferred.make<never, EngineOutboundError>();
     yield* superviseOutbound(author, fatal);
 
-    const failure = yield* author
-      .send(yield* sendInput(harness, "never transmitted"))
-      .pipe(Effect.flip, Effect.orDie);
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "never transmitted"),
+    ).pipe(Effect.orDie);
     const ended = yield* Deferred.await(fatal).pipe(Effect.flip);
 
-    expect(failure).toStrictEqual(
-      new SendError({ reason: "delivery-pending" }),
-    );
     expect(ended.reason, "the ended loop's EngineOutboundError reason").toBe(
       outboundPersistence,
     );
   });
 }
 
-/**
- * The author's worker fails every transmit because its recovery failed, which
- * stops the outbound loop and with it the daemon. The send's message stays
- * durably queued, and the daemon's recovery resumes it when it restarts, so
- * the send fails as `delivery-pending`. Fails when a fatal worker failure says
- * the message was not sent.
- * @returns The scenario, before its scope closes.
- */
-function failedRecoveryFailsASendAsDeliveryPending(): Effect.Effect<
+/** A fatal recovery error stops transmission while the accepted message stays retained. */
+function failedRecoveryEndsTheOutboundLoop(): Effect.Effect<
   void,
   never,
   Scope.Scope
@@ -2818,14 +2914,20 @@ function failedRecoveryFailsASendAsDeliveryPending(): Effect.Effect<
       authorSend: () => () => Effect.fail(new RouterWorkerRecoveryError()),
     });
     const author = yield* requireAt(harness.engines, 0, "endpoint engine");
-
-    const failure = yield* author
-      .send(yield* sendInput(harness, "recovery failed"))
-      .pipe(Effect.flip, Effect.orDie);
-
-    expect(failure).toStrictEqual(
-      new SendError({ reason: "delivery-pending" }),
-    );
+    const fatal = yield* Deferred.make<never, EngineOutboundError>();
+    yield* superviseOutbound(author, fatal);
+    yield* prepareAcceptedMessage(
+      harness,
+      author,
+      yield* sendInput(harness, "recovery failed"),
+    ).pipe(Effect.orDie);
+    const ended = yield* Deferred.await(fatal).pipe(Effect.flip);
+    const expectedReason: EngineOutboundError["reason"] = "network";
+    expect(ended.reason).toBe(expectedReason);
+    const store = yield* requireAt(harness.stores, 0, "endpoint store");
+    expect(
+      (yield* store.run(testStore.recover()).pipe(Effect.orDie)).messageIntents,
+    ).toHaveLength(1);
   });
 }
 
@@ -2836,8 +2938,8 @@ describe("engine faults while staging and sending", () => {
     TEST_TIMEOUT_MS,
   );
   itOnTestClock(
-    "fails a send as delivery-pending when the worker's recovery failed",
-    failedRecoveryFailsASendAsDeliveryPending,
+    "ends the outbound loop while retaining accepted work when recovery fails",
+    failedRecoveryEndsTheOutboundLoop,
     TEST_TIMEOUT_MS,
   );
 });

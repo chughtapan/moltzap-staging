@@ -46,7 +46,7 @@ export {
   discardOutbound,
   enqueueOutbound,
   readRecordOutbound,
-} from "./queues/outbound.js";
+} from "./outbound.js";
 /** History pages remain anchored while later records are appended. */
 export {
   consumeRecord,

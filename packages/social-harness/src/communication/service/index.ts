@@ -267,8 +267,9 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
 function prepareAcceptedMessages(environment: Environment) {
   return Effect.gen(function* () {
     const engine = yield* Deferred.await(environment.ready);
-    for (const { message } of yield* Store.readUnpreparedMessages()) {
-      yield* engine.prepareMessage(message).pipe(
+    for (const accepted of yield* Store.readUnpreparedMessages()) {
+      const { message } = accepted;
+      yield* engine.prepareMessage(accepted).pipe(
         Effect.catchTag("SendError", (error) =>
           isTerminalSendFailure(error.reason)
             ? Store.failMessage(

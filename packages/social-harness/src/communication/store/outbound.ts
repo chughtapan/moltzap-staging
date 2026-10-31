@@ -7,7 +7,7 @@ import type {
   OutboundMessageInput,
   StoredOutboundMessage,
   StoreMutation,
-} from "../types.js";
+} from "./types.js";
 
 import {
   copyBytes,
@@ -23,7 +23,7 @@ import {
   storeOperation,
   StoreSignal,
   transaction,
-} from "../database/index.js";
+} from "./database/index.js";
 type OutboundDisposition = "accepted" | "discarded" | "pending";
 interface RetainedOutbound {
   readonly outbound: StoredOutboundMessage;
@@ -44,7 +44,6 @@ export function enqueueOutbound(
   SqlClient.SqlClient
 > {
   return Effect.gen(function* () {
-    validateMessageInput(message);
     return yield* transaction(enqueueOutboundInTransaction(message));
   }).pipe(storeOperation, Effect.withSpan("enqueueOutbound"));
 }

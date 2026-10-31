@@ -21,7 +21,7 @@ import {
   StoreSignal,
   transaction,
 } from "./database/index.js";
-import { readPendingOutbound } from "./queues/outbound.js";
+import { readPendingOutbound } from "./outbound.js";
 import {
   readCertifiedRecord,
   readConversationPosition,
