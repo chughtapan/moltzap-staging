@@ -1299,4 +1299,4 @@ export const resumeEngineFolds = (
     )
     .pipe(Effect.withSpan("resumeEngineFolds"));
 
-/* eslint-enable max-lines */
+/* eslint-enable max-lines -- Restore repository defaults. */
