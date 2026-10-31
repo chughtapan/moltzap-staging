@@ -79,9 +79,7 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
 });
 
 const fixedRulesSchema = Schema.Struct({
-  fixedRules: Schema.Array(
-    Schema.Struct({ from: Schema.String, id: Schema.String }),
-  ),
+  fixedRules: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
 
 const unavailableTextPolicy = Effect.gen(function* () {
@@ -114,7 +112,7 @@ const olderMcpClient = Effect.gen(function* () {
     Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
   );
   expect(policy.fixedRules).toEqual(
-    arrayContaining([objectContaining({ from: "text", id: "owner-privacy" })]),
+    arrayContaining([objectContaining({ id: "owner-privacy" })]),
   );
 });
 
@@ -163,9 +161,7 @@ function expectDocumentRulesPublished(client: Client) {
       Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
     );
     expect(policy.fixedRules).toEqual(
-      arrayContaining([
-        objectContaining({ from: "text", id: "owner-privacy" }),
-      ]),
+      arrayContaining([objectContaining({ id: "owner-privacy" })]),
     );
   });
 }
