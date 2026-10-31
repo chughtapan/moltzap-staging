@@ -6,8 +6,8 @@ import { expect } from "vitest";
 import type { AnswerContent } from "../../communication/collectives/contracts.js";
 import type { CollectiveMemberOutcome } from "../../communication/collectives/inbound.js";
 import type {
-  DecisionRequest,
   DecisionProvider,
+  DecisionRequest,
 } from "../../firewall/check.js";
 import { digest } from "../../__tests__/agent-card-fixtures.js";
 import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";

@@ -65,14 +65,11 @@ export function decisionResponse(
     raw: "",
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => {
-        const selected =
-          question.purpose === "subject"
-            ? expectation === "required"
-              ? "relevant"
-              : "irrelevant"
-            : request.stage === "compliance"
-              ? compliance
-              : expectation;
+        let selected: string =
+          request.stage === "compliance" ? compliance : expectation;
+        if (question.purpose === "subject") {
+          selected = expectation === "required" ? "relevant" : "irrelevant";
+        }
         return [
           id,
           {

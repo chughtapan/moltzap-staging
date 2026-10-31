@@ -65,8 +65,8 @@ function encodeAgentCard(
   agentCard: VerifiedAgentCard,
 ): Effect.Effect<unknown, DaemonManagementError> {
   return Schema.encode(AgentCard)(agentCard).pipe(
-    Effect.mapError(
-      () => new DaemonManagementError({ reason: "incompatible-daemon" }),
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new DaemonManagementError({ reason: "incompatible-daemon" })),
     ),
   );
 }
