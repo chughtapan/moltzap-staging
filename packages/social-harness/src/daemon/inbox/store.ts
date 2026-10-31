@@ -84,17 +84,12 @@ export interface EventStore {
 export function createInboxTables() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    for (const statement of `
+    yield* sql.unsafe<Readonly<Record<string, unknown>>>(`
   CREATE TABLE runtime_events (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     canonical_state BLOB NOT NULL
   ) STRICT;
-`
-      .split(";")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0)) {
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(statement);
-    }
+`);
     yield* createIncomingTables();
   }).pipe(storeOperation, Effect.withSpan("createInboxTables"));
 }

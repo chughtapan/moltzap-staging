@@ -1,6 +1,6 @@
 /** @file Registration and saved identity status for the daemon's management interface. */
 
-import { type Context, Data, Effect, Option, Ref, Schema } from "effect";
+import { Data, Effect, Option, Ref, Schema } from "effect";
 import type {
   HarnessMcpOperations,
   ManagementRegisterResult,
@@ -11,7 +11,11 @@ import {
   agentViewOf,
   type VerifiedAgentCard,
 } from "../identity/cards.js";
-import { Identity, LocalIdentity } from "../identity/local.js";
+import {
+  Identity,
+  LocalIdentity,
+  type RegistrationError,
+} from "../identity/local.js";
 
 class DaemonManagementError extends Data.TaggedError("DaemonManagementError")<{
   readonly reason:
@@ -22,11 +26,6 @@ class DaemonManagementError extends Data.TaggedError("DaemonManagementError")<{
     | "persistence-failed";
 }> {}
 
-interface ManagementInput {
-  readonly identity: Context.Tag.Service<typeof Identity>;
-  readonly current: Context.Tag.Service<typeof LocalIdentity>;
-}
-
 /** Registration and status remain available while communication recovers. */
 export type DaemonManagementOperations = Pick<
   HarnessMcpOperations,
@@ -36,13 +35,25 @@ export type DaemonManagementOperations = Pick<
 /** Captures the identity service without retaining protocol or history dependencies. */
 export const makeDaemonManagementOperations = () =>
   Effect.gen(function* () {
-    const input: ManagementInput = {
-      identity: yield* Identity,
-      current: yield* LocalIdentity,
-    };
+    const identity = yield* Identity;
+    const current = yield* LocalIdentity;
     return {
-      readStatus: readStatusOperation(input.current),
-      register: registerOperation(input),
+      readStatus: () => Ref.get(current).pipe(Effect.flatMap(encodeStatus)),
+      register: (request) =>
+        Effect.gen(function* () {
+          yield* identity.register(request);
+          const card = yield* Ref.get(current);
+          if (Option.isNone(card)) {
+            return yield* new DaemonManagementError({
+              reason: "not-registered",
+            });
+          }
+          return {
+            kind: "registered" as const,
+            agentCard: yield* encodeAgentCard(card.value),
+            agent: agentViewOf(card.value),
+          };
+        }).pipe(Effect.catchTag("RegistrationError", registrationFailure)),
     } satisfies DaemonManagementOperations;
   }).pipe(Effect.withSpan("makeDaemonManagementOperations"));
 
@@ -71,68 +82,23 @@ function encodeAgentCard(
   );
 }
 
-function readActiveCard(
-  current: Context.Tag.Service<typeof LocalIdentity>,
-): Effect.Effect<VerifiedAgentCard, DaemonManagementError> {
-  return Ref.get(current).pipe(
-    Effect.flatMap((card) =>
-      Option.isSome(card)
-        ? Effect.succeed(card.value)
-        : Effect.fail(new DaemonManagementError({ reason: "not-registered" })),
-    ),
-  );
-}
-
-function readStatusOperation(
-  current: Context.Tag.Service<typeof LocalIdentity>,
-): DaemonManagementOperations["readStatus"] {
-  return () => Ref.get(current).pipe(Effect.flatMap(encodeStatus));
-}
-
 /** Wire adapters preserve Registry refusal outcomes while Identity owns the durable binding. */
-function registerOperation(
-  input: ManagementInput,
-): DaemonManagementOperations["register"] {
-  return (request) =>
-    input.identity.register(request).pipe(
-      Effect.flatMap(() => readActiveCard(input.current)),
-      Effect.flatMap((card) =>
-        encodeAgentCard(card).pipe(
-          Effect.map(
-            (agentCard): ManagementRegisterResult => ({
-              kind: "registered",
-              agentCard,
-              agent: agentViewOf(card),
-            }),
-          ),
-        ),
-      ),
-      Effect.catchTag("RegistrationError", (error) => {
-        switch (error.reason) {
-          case "name_taken":
-            return Effect.succeed<ManagementRegisterResult>({
-              kind: "name_taken",
-            });
-          case "key_already_registered":
-            return Effect.succeed<ManagementRegisterResult>({
-              kind: "key_already_registered",
-            });
-          case "idempotency_conflict":
-            return Effect.succeed<ManagementRegisterResult>({
-              kind: "idempotency_conflict",
-            });
-          case "admission-refused":
-          case "dependency-unavailable":
-          case "persistence-failed":
-          case "incompatible-daemon":
-            return Effect.fail(
-              new DaemonManagementError({ reason: error.reason }),
-            );
-          default: {
-            const exhaustive: never = error.reason;
-            return exhaustive;
-          }
-        }
-      }),
-    );
+function registrationFailure(
+  error: RegistrationError,
+): Effect.Effect<ManagementRegisterResult, DaemonManagementError> {
+  switch (error.reason) {
+    case "name_taken":
+    case "key_already_registered":
+    case "idempotency_conflict":
+      return Effect.succeed({ kind: error.reason });
+    case "admission-refused":
+    case "dependency-unavailable":
+    case "persistence-failed":
+    case "incompatible-daemon":
+      return new DaemonManagementError({ reason: error.reason });
+    default: {
+      const exhaustive: never = error.reason;
+      return exhaustive;
+    }
+  }
 }

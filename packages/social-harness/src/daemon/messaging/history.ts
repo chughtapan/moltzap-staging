@@ -215,9 +215,19 @@ function resultsPage(
       through: state.through,
       limit,
     }).pipe(Effect.catchTag("EndpointStoreError", storeFailure));
-    const results = yield* Effect.forEach(page.items, savedResult, {
-      concurrency: 1,
-    });
+    const results: HistoryRecord[] = [];
+    for (const view of page.items) {
+      const { item, guidance } = view;
+      if (item.kind !== "collectiveResult" && item.kind !== "operationFailed") {
+        return yield* new HostHistoryError({ reason: "history-gap" });
+      }
+      results.push({
+        kind: "result",
+        deliveryToken: view.deliveryToken,
+        item,
+        ...(guidance === undefined ? {} : { guidance }),
+      });
+    }
     return {
       kind: "page",
       records: [...records, ...results],
@@ -368,30 +378,36 @@ function historyRecords(
   messages: readonly Message[],
   views: readonly HistoryView[],
 ) {
-  const tokens = new Set<string>();
-  return Effect.forEach(
-    messages,
-    (message) => {
+  return Effect.gen(function* () {
+    const records: HistoryRecord[] = [];
+    const tokens = new Set<string>();
+    for (const message of messages) {
       if (message.author.agentId === me.agentId) {
-        return visibleSent(message).pipe(
-          Effect.map((visible): readonly HistoryRecord[] =>
-            visible ? [{ kind: "sent", message }] : [],
-          ),
-        );
+        if (yield* visibleSent(message)) {
+          records.push({ kind: "sent", message });
+        }
+        continue;
       }
       const view = views.find(
         (candidate) =>
           candidate.message.authorAgentId === message.author.agentId &&
           candidate.message.msgId === message.msgId,
       );
-      if (view === undefined || tokens.has(view.deliveryToken)) {
-        return Effect.succeed<readonly HistoryRecord[]>([]);
+      if (view !== undefined && !tokens.has(view.deliveryToken)) {
+        tokens.add(view.deliveryToken);
+        const { item, guidance } = view;
+        if (item.kind === "multicast" || item.kind === "collectiveRequest") {
+          records.push({
+            kind: "received",
+            message: view.message,
+            item,
+            ...(guidance === undefined ? {} : { guidance }),
+          });
+        }
       }
-      tokens.add(view.deliveryToken);
-      return Effect.succeed(receivedRecord(view));
-    },
-    { concurrency: 1 },
-  ).pipe(Effect.map((records) => records.flat()));
+    }
+    return records;
+  });
 }
 
 function visibleSent(message: Message) {
@@ -399,40 +415,6 @@ function visibleSent(message: Message) {
     Effect.map((value) => Option.isNone(value) || value.value.kind !== "close"),
     Effect.catchTag("CollectivePartInvalidError", () => Effect.succeed(false)),
   );
-}
-
-function receivedRecord(view: HistoryView) {
-  const { item, guidance } = view;
-  if (item.kind === "collectiveResult" || item.kind === "operationFailed") {
-    return [];
-  }
-  return [
-    {
-      kind: "received",
-      message: view.message,
-      item,
-      ...(guidance === undefined ? {} : { guidance }),
-    } satisfies HistoryRecord,
-  ];
-}
-
-function savedResult(
-  view: Effect.Effect.Success<
-    ReturnType<typeof readLocalResultPage>
-  >["items"][number],
-) {
-  return Effect.suspend(() => {
-    const { item, guidance } = view;
-    if (item.kind !== "collectiveResult" && item.kind !== "operationFailed") {
-      return Effect.fail(new HostHistoryError({ reason: "history-gap" }));
-    }
-    return Effect.succeed({
-      kind: "result",
-      deliveryToken: view.deliveryToken,
-      item,
-      ...(guidance === undefined ? {} : { guidance }),
-    } satisfies HistoryRecord);
-  });
 }
 
 function communicationFailure(error: CommunicationError): HostHistoryError {

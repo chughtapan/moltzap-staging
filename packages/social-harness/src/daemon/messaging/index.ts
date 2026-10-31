@@ -84,7 +84,6 @@ interface HostMessagingSettings {
 interface IncomingContext {
   readonly sql: SqlClient.SqlClient;
   readonly collectives: Context.Tag.Service<typeof Collectives>;
-  readonly changes: PubSub.PubSub<undefined>;
   readonly wake: Queue.Queue<undefined>;
 }
 
@@ -153,7 +152,7 @@ function receiveMessages(
     const environment = yield* firewallEnvironment(
       settings.registrySignerPublicKey,
     );
-    const incoming: IncomingContext = { sql, collectives, changes, wake };
+    const incoming: IncomingContext = { sql, collectives, wake };
     yield* supervise(
       workers,
       communication.consume((message) => receive(incoming, message)),
@@ -222,7 +221,7 @@ function receive(context: IncomingContext, message: Message) {
       conversation: replyAddress(message),
       canonicalItem: yield* encodeRuntimeValue(item.value),
     });
-    yield* announce(context);
+    yield* Queue.offer(context.wake, undefined);
   }).pipe(Effect.provideService(SqlClient.SqlClient, context.sql));
 }
 
@@ -239,12 +238,8 @@ function receiveResult(context: IncomingContext, result: ResultDelivery) {
       canonicalItem,
       canonicalSources: yield* encodeRuntimeValue(result.sources),
     });
-    yield* announce(context);
+    yield* Queue.offer(context.wake, undefined);
   }).pipe(Effect.provideService(SqlClient.SqlClient, context.sql));
-}
-
-function announce(context: IncomingContext) {
-  return Queue.offer(context.wake, undefined).pipe(Effect.asVoid);
 }
 
 function supervise<E, R>(

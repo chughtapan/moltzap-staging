@@ -26,14 +26,7 @@ import {
   type Message as SharedMessage,
   Message as SharedMessageSchema,
 } from "../../communication/message.js";
-import {
-  type Content,
-  deriveConversationId,
-} from "../../communication/records/index.js";
-import {
-  type AgentAddress,
-  agentAddressOf,
-} from "../../communication/records/values.js";
+import { deriveConversationId } from "../../communication/records/index.js";
 import { EndpointStoreError } from "../../communication/store/index.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import { compareAgentIds } from "../../encoding/identifier.js";
@@ -72,13 +65,6 @@ interface MessageProjection {
   readonly supported: boolean;
 }
 
-/** The text assessed for a shared message and its verified participants. */
-interface ProjectedHistoryMessage extends MessageProjection {
-  readonly sharedMessage: SharedMessage;
-  readonly cards: readonly AgentView[];
-  readonly author: AgentAddress;
-}
-
 /** One check's candidate, the evidence it is assessed against, and its attribution. */
 export interface MessageCheckInput {
   readonly direction: "incoming" | "outgoing";
@@ -95,11 +81,11 @@ export interface MessageCheckInput {
  * whose part does not decode, is projected as its raw content and is never
  * shown to the agent.
  */
-const messageProjection = Effect.fn("firewallMessageProjection")(function* (
+export const projectMessage = Effect.fn("firewallMessageProjection")(function* (
   shared: SharedMessage,
 ) {
   const projected = yield* readCollectiveValue(shared.content).pipe(
-    Effect.flatMap((part) => projectPart(shared, Option.getOrUndefined(part))),
+    Effect.map((part) => projectPart(shared, Option.getOrUndefined(part))),
     Effect.catchTag("CollectivePartInvalidError", () =>
       Effect.succeed<ProjectedText>({
         text: renderContent(shared.content),
@@ -123,18 +109,6 @@ const messageProjection = Effect.fn("firewallMessageProjection")(function* (
     supported: projected.supported,
   } satisfies MessageProjection;
 });
-
-/** Communication has already verified the message before local policy reads it. */
-export const projectHistoryMessage = Effect.fn("projectHistoryMessage")(
-  function* (entry: FirewallHistoryEntry) {
-    return {
-      ...(yield* messageProjection(entry.message)),
-      sharedMessage: entry.message,
-      cards: messageMembers(entry.message),
-      author: agentAddressOf(entry.message.author),
-    } satisfies ProjectedHistoryMessage;
-  },
-);
 
 /** Certified local sends are admitted evidence without granting host visibility to owner history. */
 const contextFrom = Effect.fn("firewallContext")(function* (
@@ -172,24 +146,6 @@ const contextFrom = Effect.fn("firewallContext")(function* (
   return { context, cards: [...cards.values()] };
 });
 
-/**
- * A message's own fields, without its class, so a projection can replace
- * some of them.
- * @param message The checked message.
- * @returns Its id, attribution, text and any operation.
- */
-export function messageFields(message: Message) {
-  return {
-    id: message.id,
-    sender: message.sender,
-    recipients: message.recipients,
-    text: message.text,
-    ...(message.operation === undefined
-      ? {}
-      : { operation: message.operation }),
-  };
-}
-
 /** A projected message's text and operation, before attribution. */
 interface ProjectedText {
   readonly text: string;
@@ -206,15 +162,15 @@ interface ProjectedText {
 function projectPart(
   message: SharedMessage,
   value?: CollectiveValue,
-): Effect.Effect<ProjectedText, EndpointStoreError> {
+): ProjectedText {
   if (value === undefined) {
-    return Effect.succeed({ text: textOf(message.content), supported: true });
+    return { text: renderContent(message.content), supported: true };
   }
   switch (value.kind) {
     case "operation":
       return projectRequest(message, value);
     case "response":
-      return Effect.succeed({
+      return {
         text: renderOutcome(
           value.action === "accept"
             ? { kind: "answered", content: value.content }
@@ -226,27 +182,17 @@ function projectPart(
           operationId: value.operationId,
         },
         supported: true,
-      });
+      };
     case "close":
-      return Effect.succeed({
+      return {
         text: renderContent(message.content),
         supported: false,
-      });
+      };
     default: {
       const exhaustive: never = value;
       return exhaustive;
     }
   }
-}
-
-/**
- * The text of content parts as a model reads it, or empty for none.
- * @param content The parts rendered for the model.
- * @returns The rendered text.
- */
-function textOf(content: ReadonlyArray<Content[number]>): string {
-  const [first, ...rest] = content;
-  return first === undefined ? "" : renderContent([first, ...rest]);
 }
 
 /** A request message's question, as the members it asks read it. */
@@ -256,20 +202,13 @@ function projectRequest(
     CollectiveValue,
     { readonly kind: "operation"; readonly op: "gather" | "all_gather" }
   >,
-): Effect.Effect<ProjectedText, EndpointStoreError> {
-  return Effect.succeed({
-    text: renderCollectiveRequestBody({
-      kind: "collectiveRequest",
-      message: {
-        ...message,
-        content: {
-          op: value.op,
-          operationId: value.operationId,
-          question: questionText(message.content),
-          requestedSchema: value.requestedSchema,
-          deadlineAt: value.deadlineAt,
-        },
-      },
+): ProjectedText {
+  return {
+    text: renderCollectiveQuestion({
+      author: message.author,
+      recipients: message.recipients,
+      text: questionText(message.content),
+      ...value,
     }),
     operation: {
       kind: "request",
@@ -278,7 +217,7 @@ function projectRequest(
       deadlineAt: value.deadlineAt,
     },
     supported: true,
-  });
+  };
 }
 
 function messageId(message: Pick<SharedMessage, "author" | "msgId">): string {
@@ -330,18 +269,18 @@ function decodeHistory(
         cards: [],
       } satisfies DecodedHistory;
     }
-    const decoded = yield* projectHistoryMessage(entry);
+    const decoded = yield* projectMessage(entry.message);
     const visible = entry.visible && decoded.supported;
     return {
       entry: {
-        ...messageFields(decoded.message),
+        ...decoded.message,
         visibility: visible ? "runtime" : "assessor",
         admission:
           visible || decoded.message.sender === localAgentId
             ? "admitted"
             : "withheld",
       },
-      cards: decoded.cards,
+      cards: messageMembers(entry.message),
     } satisfies DecodedHistory;
   }).pipe(Effect.withSpan("decodeFirewallHistory"));
 }
@@ -388,7 +327,7 @@ export const prepareOutgoingCheck = Effect.fn("prepareOutgoingCheck")(
         () => new EndpointStoreError({ reason: "invalid-input" }),
       ),
     );
-    const message = (yield* messageProjection(shared)).message;
+    const message = (yield* projectMessage(shared)).message;
     return yield* outgoingCheck(
       environment,
       shared,
@@ -489,7 +428,7 @@ export const prepareIncomingCheck = Effect.fn("prepareIncomingCheck")(
     }).pipe(Effect.provideService(SqlClient.SqlClient, environment.sql));
     const message: Message =
       item.kind === "multicast"
-        ? (yield* messageProjection(item.message)).message
+        ? (yield* projectMessage(item.message)).message
         : {
             id: messageId(item.message),
             sender: item.message.author.agentId,

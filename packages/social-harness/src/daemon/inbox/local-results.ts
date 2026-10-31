@@ -29,9 +29,8 @@ import { renderOutcome } from "../../host-protocol/render.js";
 import { readFirewallEvidenceSlices } from "./evidence.js";
 import {
   type FirewallEnvironment,
-  messageFields,
   prepareMessageCheck,
-  projectHistoryMessage,
+  projectMessage,
 } from "./firewall-context.js";
 
 type ResultItem = Extract<InboundItem, { readonly kind: "collectiveResult" }>;
@@ -202,16 +201,13 @@ function prepareSource(
   evidence: FirewallEvidence,
 ) {
   return Effect.gen(function* () {
-    const projected = yield* projectHistoryMessage({
-      message: source.message,
-      visible: false,
-    });
+    const projected = yield* projectMessage(source.message);
     return yield* prepareMessageCheck(environment, {
       direction: "incoming",
       canonicalCandidate: entry.canonicalItem,
       evidence,
       message: {
-        ...messageFields(projected.message),
+        ...projected.message,
         text: source.text,
       },
       cards: messageMembers(source.message),

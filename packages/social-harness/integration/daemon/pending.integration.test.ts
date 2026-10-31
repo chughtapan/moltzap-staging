@@ -19,7 +19,6 @@ import {
   transaction,
 } from "../../src/communication/store/database/index.js";
 import {
-  decodeRuntimeValue,
   DeliveryToken,
   encodeRuntimeValue,
 } from "../../src/communication/store/index.js";
@@ -89,12 +88,9 @@ it("keeps an already presented history view when another result withholds its so
       const item = yield* incoming;
       yield* retainItem(item);
       yield* markMessageVisibility(reference, false, laterToken);
-      expect(yield* readHistoryViews([reference])).toEqual([
-        {
-          message: reference,
-          deliveryToken,
-          canonicalItem: item.canonicalItem,
-        },
+      const views = yield* readHistoryViews([reference]);
+      expect(views.map((view) => view.item)).toEqual([
+        { kind: "multicast", message },
       ]);
     }),
   ));
@@ -165,12 +161,7 @@ it("retains a public invalid-answer result without granting visibility to the or
       yield* markMessageVisibility(reference, false, laterToken);
       const [view] = yield* readHistoryViews([reference]);
       expect(view?.deliveryToken).toBe(laterToken);
-      expect(
-        yield* decodeRuntimeValue(
-          InboundItem,
-          view?.canonicalItem ?? new Uint8Array(),
-        ),
-      ).toEqual(result);
+      expect(view?.item).toEqual(result);
       expect(yield* isMessageVisible(reference)).toBe(false);
     }),
   ));
