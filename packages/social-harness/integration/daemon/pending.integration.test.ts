@@ -89,8 +89,8 @@ it("keeps an already presented history view when another result withholds its so
       yield* retainItem(item);
       yield* markMessageVisibility(reference, false, laterToken);
       const views = yield* readHistoryViews([reference]);
-      expect(views.map((view) => view.item)).toEqual([
-        { kind: "multicast", message },
+      expect(views).toMatchObject([
+        { deliveryToken, item: { kind: "multicast", message } },
       ]);
     }),
   ));
