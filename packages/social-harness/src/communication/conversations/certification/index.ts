@@ -1,7 +1,6 @@
 /**
  * @file Selects ordered proposals, certifies records and resumes pending delivery.
  */
-/* eslint-disable max-lines -- Certification and certified-head updates share the same ordered fold transitions. */
 
 import type * as SqlClient from "@effect/sql/SqlClient";
 import { absurd, Effect } from "effect";
@@ -69,6 +68,8 @@ import {
   stagedRecord,
   storedCertifiedRecord,
 } from "../history/index.js";
+
+/* eslint-disable max-lines -- Certification and certified-head updates share the same ordered fold transitions. */
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();
 
@@ -1297,3 +1298,5 @@ export const resumeEngineFolds = (
       ),
     )
     .pipe(Effect.withSpan("resumeEngineFolds"));
+
+/* eslint-enable max-lines */
