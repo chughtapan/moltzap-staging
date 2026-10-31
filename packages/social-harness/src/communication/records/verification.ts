@@ -57,10 +57,6 @@ import { compareAgentIds } from "./values.js";
 
 /* eslint-disable jsdoc/require-jsdoc -- The package-private representation facade documents these closed verification operations. */
 
-const sortedDistinct = (agentIds: readonly AgentId[]): boolean => {
-  return isStrictlyAscending(agentIds, compareAgentIds);
-};
-
 export interface VerifiedMembership extends OuterMembership {
   readonly descriptor: MembershipDescriptorValue;
   readonly hash: MembershipHash;
@@ -89,7 +85,7 @@ export const verifyMembershipDescriptor = (
     if (
       first === undefined ||
       second === undefined ||
-      !sortedDistinct(agentIds) ||
+      !isStrictlyAscending(agentIds, compareAgentIds) ||
       agentNames.size !== verified.length
     ) {
       return yield* representationFailure();
@@ -265,7 +261,7 @@ const verifyEvidenceSet = <Kind extends EvidenceKind>(input: {
       { concurrency: "inherit" },
     );
     const signers = verified.map(({ statement }) => statement.signerAgentId);
-    if (!sortedDistinct(signers)) {
+    if (!isStrictlyAscending(signers, compareAgentIds)) {
       return yield* representationFailure();
     }
     const matchesKind = (

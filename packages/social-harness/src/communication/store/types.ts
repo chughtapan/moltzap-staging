@@ -168,6 +168,5 @@ export interface HistoryPage {
   readonly records: readonly CertifiedRecord[];
   readonly memberships: readonly StoredMembership[];
   readonly anchors: readonly StoredAnchor[];
-  readonly authoredRecordHashes: readonly string[];
   readonly continuation: string | null;
 }

@@ -90,10 +90,6 @@ const domainHash = <A, I, R, Hash>(input: {
     Effect.mapError(representationFailure),
   );
 
-const sortedDistinctAgentIds = (agentIds: readonly AgentId[]): boolean => {
-  return isStrictlyAscending(agentIds, compareAgentIds);
-};
-
 const decodeAgentIdBytes = (
   agentId: AgentId,
 ): Effect.Effect<Uint8Array, ClientRepresentationError> => {
@@ -106,7 +102,7 @@ const decodeAgentIdBytes = (
 export const deriveConversationId = (
   memberAgentIds: ConversationIdentityInput["memberAgentIds"],
 ): Effect.Effect<ConversationIdValue, ClientRepresentationError> => {
-  if (!sortedDistinctAgentIds(memberAgentIds)) {
+  if (!isStrictlyAscending(memberAgentIds, compareAgentIds)) {
     return Effect.fail(representationFailure());
   }
   const input: ConversationIdentityInput = {
@@ -206,16 +202,6 @@ export const deriveEvidenceEnvelopeId = (
     ).pipe(Effect.mapError(representationFailure));
   }).pipe(Effect.withSpan("deriveEvidenceEnvelopeId"));
 
-const decodeDirectPacket = (
-  bytes: Uint8Array,
-): Effect.Effect<DirectPacketValue, ClientRepresentationError> =>
-  decodeCanonical(DirectPacket, bytes);
-
-const decodeEvidenceMessage = (
-  bytes: Uint8Array,
-): Effect.Effect<SignedMessageValue, ClientRepresentationError> =>
-  decodeCanonical(SignedMessage, bytes);
-
 export type DecodedOuterBody =
   | Readonly<{ kind: "direct"; packet: DirectPacketValue }>
   | Readonly<{ kind: "evidence"; message: SignedMessageValue }>;
@@ -229,10 +215,10 @@ export interface OuterBodyReader {
 const decodePlaintext = (
   bytes: Uint8Array,
 ): Effect.Effect<DecodedOuterBody, ClientRepresentationError> =>
-  decodeDirectPacket(bytes).pipe(
+  decodeCanonical(DirectPacket, bytes).pipe(
     Effect.map((packet): DecodedOuterBody => ({ kind: "direct", packet })),
     Effect.catchTag("ClientRepresentationError", () =>
-      decodeEvidenceMessage(bytes).pipe(
+      decodeCanonical(SignedMessage, bytes).pipe(
         Effect.map(
           (message): DecodedOuterBody => ({ kind: "evidence", message }),
         ),
@@ -312,7 +298,7 @@ const signOuterBody = (input: {
       (member) => member.agentId,
     );
     if (
-      !sortedDistinctAgentIds(memberAgentIds) ||
+      !isStrictlyAscending(memberAgentIds, compareAgentIds) ||
       !memberAgentIds.includes(input.agentCard.agentId)
     ) {
       return yield* representationFailure();
