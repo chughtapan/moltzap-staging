@@ -7,6 +7,7 @@ import {
   McpServer,
   ProtocolError,
   ProtocolErrorCode,
+  type RegisteredTool,
   type StandardSchemaV1,
   type StandardSchemaWithJSON,
   type ToolAnnotations,
@@ -905,8 +906,9 @@ const handleToolCall = async (
 const installToolCallHandler = (
   server: McpServer,
   operations: ToolOperations,
+  registeredTools: ReadonlyMap<string, RegisteredTool>,
 ): void => {
-  server.server.setRequestHandler("tools/call", (request, context) => {
+  server.server.setRequestHandler("tools/call", async (request, context) => {
     const input = {
       name: request.params.name,
       toolArguments: request.params.arguments ?? {},
@@ -915,7 +917,10 @@ const installToolCallHandler = (
       requestScope: operations.requestScope,
       services: operations.services,
     };
-    return handleToolCall(input, operations);
+    return server.server.projectCallToolResult(
+      await handleToolCall(input, operations),
+      registeredTools.get(input.name)?.outputSchemaJson,
+    );
   });
 };
 const runtimeOperations = (
@@ -940,11 +945,15 @@ const makeServer = async (
 ) => {
   const capabilities = { tools: {}, events: {} };
   const server = new McpServer(options.implementation, { capabilities });
+  const registeredTools = new Map<string, RegisteredTool>();
   for (const name of await Effect.runPromise(currentTools(operations))) {
     const listing: ToolListing = toolListings[name];
-    server.registerTool(name, listing, () => toolResult({}));
+    registeredTools.set(
+      name,
+      server.registerTool(name, listing, () => toolResult({})),
+    );
   }
-  installToolCallHandler(server, operations);
+  installToolCallHandler(server, operations, registeredTools);
   operations.events.install(server.server);
   return server;
 };

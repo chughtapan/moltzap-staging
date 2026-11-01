@@ -51,8 +51,8 @@ export type ActionHash = typeof ActionHash.Type;
 export const RecordHash = canonicalIdentifier("RecordHash", "rch_");
 export type RecordHash = typeof RecordHash.Type;
 
-const encodedAgentCard = Schema.encodedSchema(AgentCard);
-const encodedSignedMessage = Schema.encodedSchema(SignedMessage);
+const encodedAgentCard = Schema.encodedBoundSchema(AgentCard);
+const encodedSignedMessage = Schema.encodedBoundSchema(SignedMessage);
 const MemberAgentIds = Schema.Tuple([AgentId, AgentId], AgentId).pipe(
   Schema.maxItems(maximumMembers),
 );

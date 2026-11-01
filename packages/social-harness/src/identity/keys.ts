@@ -7,6 +7,7 @@ import {
   Effect,
   Either,
   Encoding,
+  JSONSchema,
   Option,
   Redacted,
   Schema,
@@ -659,10 +660,18 @@ const jwsSignatureRepresentation = exactStruct({
   ),
 });
 
-/** Exact General JWS with one canonical Ed25519 signature and no extra members. */
+/**
+ * Exact General JWS with one canonical Ed25519 signature and no extra members.
+ * Its array schema also works with MCP clients that do not support prefixItems.
+ */
 export const generalJwsRepresentation = exactStruct({
   payload: canonicalBase64Url,
-  signatures: Schema.Tuple(jwsSignatureRepresentation),
+  signatures: Schema.Tuple(jwsSignatureRepresentation).annotations({
+    jsonSchema: JSONSchema.make(
+      Schema.Array(jwsSignatureRepresentation).pipe(Schema.itemsCount(1)),
+      { target: "jsonSchema2020-12" },
+    ),
+  }),
 });
 
 type SingleSignatureJwsRepresentation = typeof generalJwsRepresentation.Type;

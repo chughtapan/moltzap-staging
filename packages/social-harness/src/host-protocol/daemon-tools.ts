@@ -12,7 +12,7 @@ import { OperationId } from "../identity/registry/contract.js";
 import { localGuidanceSchema } from "./advice.js";
 import { InboundItem } from "./items.js";
 
-const encodedAgentCard = Schema.encodedSchema(AgentCard);
+const encodedAgentCard = Schema.encodedBoundSchema(AgentCard);
 
 const messageAddress = Schema.Union(AgentAddress, GroupAddress).annotations({
   identifier: "MessageAddress",

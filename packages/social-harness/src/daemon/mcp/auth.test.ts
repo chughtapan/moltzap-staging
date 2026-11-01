@@ -1,6 +1,11 @@
 /** @file Discovery and operations share one authenticated daemon connection. */
 
+import type { ClientOptions } from "@modelcontextprotocol/client";
 import { scopedLive as it } from "@effect/vitest";
+import {
+  Ajv,
+  AjvJsonSchemaValidator,
+} from "@modelcontextprotocol/client/validators/ajv";
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
@@ -8,6 +13,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { Effect, Schema } from "effect";
 import { describe, expect } from "vitest";
+import { digest } from "../../__tests__/agent-card-fixtures.js";
+import { makeFixture } from "../../__tests__/daemon-runtime-fixtures.js";
 import { openInboxFixture } from "../../__tests__/inbox-fixture.js";
 import {
   connectInProcessClient,
@@ -16,6 +23,9 @@ import {
   mcpTestHeaders,
 } from "../../__tests__/mcp-http-fixtures.js";
 import { stateDirectory } from "../../__tests__/store-schema-fixtures.js";
+import { SendResultSchema } from "../../host-protocol/send-result.js";
+import { AgentCard, agentViewOf } from "../../identity/cards.js";
+import { generalJwsRepresentation } from "../../identity/keys.js";
 import { Identity } from "../../identity/local.js";
 import {
   type HarnessMcpOperations,
@@ -42,14 +52,14 @@ const operations: HarnessMcpOperations = {
     Effect.succeed({ pendingCount: 0, newestSequence: 0 }),
   acknowledgeDelivery: unrelated,
 };
-const acquireHandler = (active = true) =>
+const acquireHandler = (active = true, selected = operations) =>
   Effect.gen(function* () {
     const store = yield* openInboxFixture(stateDirectory());
     const handler = yield* makeHarnessMcpHttpHandler({
       eventStore: store,
       credential: mcpTestCredential,
       implementation,
-      operations: operations,
+      operations: selected,
     }).pipe(Effect.provideService(Identity, mcpIdentity(active)));
     yield* Effect.addFinalizer(() =>
       Effect.tryPromise(() => handler.close()).pipe(Effect.orDie),
@@ -163,8 +173,109 @@ const supportsLegacyInitialization = () =>
     expect(status.structuredContent).toEqual({ kind: "unregistered" });
   });
 
+/** Matches clients whose validator uses draft-07 even when the catalog declares 2020-12. */
+const legacyValidator = () => {
+  const ajv = new Ajv({
+    strict: false,
+    validateFormats: true,
+    validateSchema: false,
+    allErrors: true,
+  });
+  return new AjvJsonSchemaValidator(ajv);
+};
+
+const sendResult = Schema.decodeUnknownSync(SendResultSchema)({
+  kind: "multicast",
+  msgId: digest("msg_", 8),
+  address: "agent:bob",
+});
+const resultClients = [
+  {
+    protocol: "2025-11-25 with draft-07 validation",
+    options: {
+      capabilities: {},
+      versionNegotiation: { mode: "legacy" },
+      supportedProtocolVersions: ["2025-11-25"],
+      jsonSchemaValidator: legacyValidator(),
+    } satisfies ClientOptions,
+    expectedSend: { result: sendResult },
+  },
+  {
+    protocol: "2026-07-28",
+    options: {
+      capabilities: {},
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+    } satisfies ClientOptions,
+    expectedSend: sendResult,
+  },
+];
+
+const supportsValidatedResults = ({
+  options,
+  expectedSend,
+}: (typeof resultClients)[number]) =>
+  Effect.gen(function* () {
+    const fixture = yield* makeFixture;
+    const status = {
+      kind: "active" as const,
+      agentCard: yield* Schema.encode(AgentCard)(fixture.localCard),
+      agent: agentViewOf(fixture.localCard),
+    };
+    const handler = yield* acquireHandler(true, {
+      ...operations,
+      readStatus: () => Effect.succeed(status),
+      send: () => Effect.succeed(sendResult),
+    });
+    const client = yield* connectInProcessClient(handler, options);
+    const catalog = yield* Effect.tryPromise(() => client.listTools());
+    const statusSchema = catalog.tools.find(
+      (tool) => tool.name === "status",
+    )?.outputSchema;
+    if (statusSchema === undefined) {
+      return yield* Effect.dieMessage(
+        "Status must advertise its result schema",
+      );
+    }
+    const validate = (
+      options.jsonSchemaValidator ?? new AjvJsonSchemaValidator()
+    ).getValidator(statusSchema);
+    const signed = yield* Schema.decodeUnknown(generalJwsRepresentation)(
+      status.agentCard,
+    );
+
+    expect(validate(status).valid).toBe(true);
+    expect(
+      validate({ ...status, agentCard: { ...signed, signatures: [] } }).valid,
+    ).toBe(false);
+    expect(
+      validate({
+        ...status,
+        agentCard: {
+          ...signed,
+          signatures: [signed.signatures[0], signed.signatures[0]],
+        },
+      }).valid,
+    ).toBe(false);
+
+    const active = yield* Effect.tryPromise(() =>
+      client.callTool({ name: "status", arguments: {} }),
+    );
+    expect(active.structuredContent).toEqual(status);
+    const sent = yield* Effect.tryPromise(() =>
+      client.callTool({
+        name: "send_message",
+        arguments: { input: { to: "agent:bob", text: "one message" } },
+      }),
+    );
+    expect(sent.structuredContent).toEqual(expectedSend);
+  });
+
 // @agent-code-guard/regression-only: discovery, tool calls and Events reject unauthenticated requests before dispatch.
 describe("daemon authentication", () => {
+  it.each(resultClients)(
+    "validates signed status and committed sends over $protocol",
+    supportsValidatedResults,
+  );
   it.each([
     { method: "tools/list", params: {} },
     { method: "tools/call", params: { name: "status", arguments: {} } },
