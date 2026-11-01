@@ -52,14 +52,14 @@
       },
       "test": {
         "executor": "nx:run-commands",
-        "options": {
-          "cwd": "plugins/muse",
-          "command": "vitest run"
-        },
         "dependsOn": [
           "build",
           "^build"
-        ]
+        ],
+        "options": {
+          "cwd": "plugins/muse",
+          "command": "vitest run"
+        }
       },
       "serve": {
         "executor": "nx:run-commands",

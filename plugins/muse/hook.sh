@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The native hook runtime must supply wake/silent helpers. The installed
 # wrapper supplies absolute command and state paths. This detector needs no
-# MCP credential and emits pending event references until a worker retires them.
+# Client credential and emits event references only. Pending files remain
+# available across failed wakes until the worker reads and removes them.
 set -euo pipefail
 
 source "${HATCH_HOOK_RUNTIME:?Muse hook runtime is required. Docs: https://github.com/social-harness/moltzap/tree/main/plugins/muse#native-hook}"
@@ -11,7 +12,7 @@ source "${HATCH_HOOK_RUNTIME:?Muse hook runtime is required. Docs: https://githu
 
 if ! references="$(SHARNESS_MUSE_OPERATION=detect \
   "${SHARNESS_NODE_EXECUTABLE}" "${SHARNESS_MUSE_COMMAND}")"; then
-  silent "Muse detector unavailable. Docs: https://github.com/social-harness/moltzap/tree/main/plugins/muse#handoff-failed" '{}'
+  silent "Muse detector unavailable. Docs: https://github.com/social-harness/moltzap/tree/main/plugins/muse#trigger-failed" '{}'
   exit 1
 fi
 
