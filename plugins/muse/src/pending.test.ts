@@ -133,50 +133,63 @@ function isolatesUnusableFiles() {
   );
 }
 
-function hookRetry() {
-  return inDirectory(({ fs, root, directory, receive }) =>
+function silentHook() {
+  return inDirectory((fixture) =>
     Effect.gen(function* () {
-      const runtime = join(root, "runtime.sh");
-      yield* fs.writeFileString(
-        runtime,
-        'wake() { printf \'%s\\n\' "$2"; return "${MUSE_TEST_WAKE_EXIT:-0}"; }\nsilent() { printf \'%s\\n\' "$2"; }\n',
-      );
-      const runHook = (exit = "0") =>
-        Command.make(
-          "bash",
-          fileURLToPath(new URL("../hook.sh", import.meta.url)),
-        ).pipe(
-          Command.env({
-            HATCH_HOOK_RUNTIME: runtime,
-            SHARNESS_MUSE_STATE_DIR: directory,
-            SHARNESS_NODE_EXECUTABLE: process.execPath,
-            SHARNESS_MUSE_COMMAND: fileURLToPath(
-              new URL("../dist/main.js", import.meta.url),
-            ),
-            MUSE_TEST_WAKE_EXIT: exit,
-            SHARNESS_MCP_TOKEN: "",
-          }),
-        );
-
+      const runHook = yield* makeHook(fixture);
       expect(
         yield* Schema.decode(Schema.parseJson(Schema.Unknown))(
           yield* runHook().pipe(Command.string),
         ),
       ).toEqual({});
-      yield* receive();
+    }),
+  );
+}
+
+function hookRetry() {
+  return inDirectory((fixture) =>
+    Effect.gen(function* () {
+      const runHook = yield* makeHook(fixture);
+      yield* fixture.receive();
       expect(yield* runHook("1").pipe(Command.exitCode)).toBe(1);
       const output = yield* runHook().pipe(Command.string);
 
       expect(
         yield* Schema.decode(Schema.parseJson(Schema.Unknown))(output),
       ).toEqual({
-        references: yield* detectMuseWork(directory),
+        references: yield* detectMuseWork(fixture.directory),
       });
       expect(
-        (yield* detectMuseWork(directory)).map((work) => work.eventId),
+        (yield* detectMuseWork(fixture.directory)).map((work) => work.eventId),
       ).toEqual([eventId]);
     }),
   );
+}
+
+function makeHook({ fs, root, directory }: Fixture) {
+  return Effect.gen(function* () {
+    const runtime = join(root, "runtime.sh");
+    yield* fs.writeFileString(
+      runtime,
+      'wake() { printf \'%s\\n\' "$2"; return "${MUSE_TEST_WAKE_EXIT:-0}"; }\nsilent() { printf \'%s\\n\' "$2"; }\n',
+    );
+    return (exit = "0") =>
+      Command.make(
+        "bash",
+        fileURLToPath(new URL("../hook.sh", import.meta.url)),
+      ).pipe(
+        Command.env({
+          HATCH_HOOK_RUNTIME: runtime,
+          SHARNESS_MUSE_STATE_DIR: directory,
+          SHARNESS_NODE_EXECUTABLE: process.execPath,
+          SHARNESS_MUSE_COMMAND: fileURLToPath(
+            new URL("../dist/main.js", import.meta.url),
+          ),
+          MUSE_TEST_WAKE_EXIT: exit,
+          SHARNESS_MCP_TOKEN: "",
+        }),
+      );
+  });
 }
 
 function inDirectory<A, E, R>(
@@ -214,8 +227,6 @@ describe("Muse pending triggers", () => {
     "returns usable work alongside corrupt and incomplete files",
     isolatesUnusableFiles,
   );
-  it(
-    "runs the built detector without credentials and retries a failed native wake",
-    hookRetry,
-  );
+  it("keeps an empty installed hook silent", silentHook);
+  it("retries a failed native wake without dropping pending work", hookRetry);
 });
