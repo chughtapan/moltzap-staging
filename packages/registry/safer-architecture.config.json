@@ -27,16 +27,12 @@
       "reason": "Condition-only Registry process composition for compatibility tests"
     },
     {
-      "file": "server.ts",
+      "file": "index.ts",
       "reason": "Private Registry process composition used by the operator executable and process fixtures"
     },
     {
       "file": "storage.ts",
       "reason": "Durable Registry storage capability and PostgreSQL implementation boundary"
-    },
-    {
-      "file": "schema.ts",
-      "reason": "Current PostgreSQL schema owned by Registry storage"
     }
   ],
   "maxFolderChildren": 24,

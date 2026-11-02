@@ -212,18 +212,11 @@ const decodeRepresentation = (
       protectedHeader,
       headerBytes,
     ).pipe(Effect.mapError(() => parseIssue(ast, representation)));
-    const publicKey = yield* Schema.decodeUnknown(AgentPublicKey)(
-      Object.freeze({
-        crv: decodedPayload.publicKey.crv,
-        kty: decodedPayload.publicKey.kty,
-        x: decodedPayload.publicKey.x,
-      }),
-    ).pipe(Effect.mapError(() => parseIssue(ast, representation)));
     const card = Object.freeze({
       agentId: decodedPayload.agentId,
       principalId: decodedPayload.principalId,
       agentName: decodedPayload.agentName,
-      publicKey,
+      publicKey: decodedPayload.publicKey,
       issuedAt: decodedPayload.issuedAt,
     });
     const retained = snapshotRepresentation(representation);

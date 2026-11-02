@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --conditions=sharness-internal
 import { Console, Layer } from "effect";
 import { runRouterMain } from "../dist/main.js";
-import { RouterServer } from "../dist/server.js";
+import { RouterServer } from "../dist/index.js";
 
 const program = process.argv.includes("--help")
   ? Console.log(RouterServer.help)

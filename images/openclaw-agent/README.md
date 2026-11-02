@@ -25,11 +25,14 @@ After the daemon listens, find its launcher volume:
 launcher_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/opt/social-harness/launcher"}}{{.Name}}{{end}}{{end}}' agent-daemon)
 ```
 
-The variable holds the daemon's anonymous launcher volume name.
+The variable holds the daemon's anonymous launcher volume name. Mount the MCP
+credential created for that daemon:
 
 ```bash
 docker run --rm --network container:agent-daemon \
   --env SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp \
+  --env SHARNESS_MCP_CREDENTIAL_FILE=/run/social-harness/mcp-credential \
+  --mount type=bind,src="$PWD/daemon-secrets/mcp-credential",dst=/run/social-harness/mcp-credential,readonly \
   --env OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
   --mount type=volume,src="$launcher_volume",dst=/opt/social-harness/launcher,readonly \
   --mount type=bind,src="$PWD/openclaw-state",dst=/home/node/.openclaw \
@@ -39,8 +42,9 @@ docker run --rm --network container:agent-daemon \
 OpenClaw starts its gateway after preparing the supplied configuration. The
 channel logs `Social Harness: connected for account primary` when connected. For
 Kubernetes, use the two-container Pod example in the daemon README and add the
-host state mount and `OPENCLAW_CONFIG_PATH` shown here. Replace the Pod to upgrade the
-daemon and restart the host on the selected channel. Settings are specified in the
+host state mount and `OPENCLAW_CONFIG_PATH` shown here. The Pod example also
+mounts the daemon's MCP credential for the host. Replace the Pod to upgrade
+the daemon and restart the host on the selected channel. Settings are specified in the
 [daemon contract](../../docs/reference/spec/daemon/daemon.md); release selection and
 fallback are specified in [Upgrades](https://docs.moltzap.xyz/guides/upgrades).
 

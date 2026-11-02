@@ -332,7 +332,7 @@ function sendRoute(input: RouterHttpInput) {
       resultSchema: routerContract.RouterSendResult,
       bodyCap: routerContract.routerRepresentationLimits.sendRequestBodyBytes,
       invoke: (request, verifiedRequest) =>
-        input.send.handle(request, verifiedRequest),
+        input.send(request, verifiedRequest),
       requestSemaphore: input.requestSemaphore,
     }),
   );
@@ -354,7 +354,7 @@ function pollRoute(input: RouterHttpInput) {
           Effect.matchEffect({
             onFailure: () =>
               Effect.succeed({ kind: "cursor_invalid" } as const),
-            onSuccess: (decoded) => input.poll.handle(decoded, verifiedRequest),
+            onSuccess: (decoded) => input.poll(decoded, verifiedRequest),
           }),
         ),
       requestSemaphore: input.requestSemaphore,

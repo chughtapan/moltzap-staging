@@ -25,13 +25,13 @@ import {
   deriveConversationId,
   hashAction,
   hashAnchor,
+  hashMembershipDescriptor,
   hashMessageIntent,
   InitialAnchorBody,
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
   type VerifiedMembership,
-  verifyMembershipDescriptor,
 } from "../records.js";
 import {
   bindMessageIntent,
@@ -130,21 +130,26 @@ const membershipFor = (
     if (stored !== undefined) {
       return stored.membership;
     }
-    const descriptor = yield* Schema.decodeUnknown(MembershipDescriptorSchema)({
+    const descriptor: typeof MembershipDescriptorSchema.Type = {
       sharnessVersion: AgentIdentityCard.wireVersion(cards[0]),
       kind: "membership_descriptor",
       conversationId,
-      members: yield* Effect.forEach(
-        cards,
-        (card) => Schema.encode(AgentIdentityCard)(card),
-        { concurrency: 1 },
-      ).pipe(Effect.catchTag("ParseError", representationFailure)),
-    }).pipe(Effect.mapError(representationFailure));
-    return yield* verifyMembershipDescriptor(
+      members: [
+        yield* Schema.encode(AgentIdentityCard)(cards[0]),
+        yield* Schema.encode(AgentIdentityCard)(cards[1]),
+        ...(yield* Effect.forEach(
+          cards.slice(2),
+          (card) => Schema.encode(AgentIdentityCard)(card),
+          { concurrency: 1 },
+        )),
+      ],
+    };
+    return {
       descriptor,
-      runtime.input.registrySignerPublicKey,
-    ).pipe(Effect.mapError(representationFailure));
-  });
+      hash: yield* hashMembershipDescriptor(descriptor),
+      members: cards,
+    };
+  }).pipe(Effect.mapError(representationFailure));
 
 function resolveMembership(runtime: EngineRuntime, message: Message) {
   return Effect.gen(function* () {

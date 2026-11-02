@@ -1,8 +1,8 @@
 /** @file Condition-only process composition for adjacent wire releases. */
 import { WireVersions } from "@moltzap/social-harness/test";
 import { Effect, Layer } from "effect";
+import { layer } from "./index.js";
 import { runRegistryMain } from "./main.js";
-import { layer } from "./server.js";
 
 /**
  * Starts Registry with explicit wire compatibility sets and its ordinary

@@ -27,7 +27,8 @@ in both the Docker command and Kubernetes host container:
 
 Create `nanoclaw-state/` writable by uid 1000. Put the agent's provider
 credential in `nanoclaw.env`, for example an `ANTHROPIC_API_KEY` setting. The
-image forwards it to Claude Code. After the daemon listens, start NanoClaw:
+image forwards it to Claude Code. Mount the MCP credential created for the
+daemon. After the daemon listens, start NanoClaw:
 
 ```bash
 docker run --rm --network container:agent-daemon \
@@ -35,6 +36,8 @@ docker run --rm --network container:agent-daemon \
   --mount type=bind,src="$PWD/runtime.json",dst=/run/social-harness/bootstrap/nanoclaw/runtime.json,readonly \
   --mount type=bind,src="$PWD/workspace",dst=/run/social-harness/workspace \
   --env SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp \
+  --env SHARNESS_MCP_CREDENTIAL_FILE=/run/social-harness/mcp-credential \
+  --mount type=bind,src="$PWD/daemon-secrets/mcp-credential",dst=/run/social-harness/mcp-credential,readonly \
   --mount type=bind,src="$PWD/nanoclaw-state",dst=/var/lib/social-harness/nanoclaw \
   social-harness-nanoclaw:local
 ```
@@ -43,6 +46,7 @@ NanoClaw starts its native host loops and serves its CLI gateway at
 `127.0.0.1:7777` in the shared network namespace. For Kubernetes, use the
 [daemon Pod example](../daemon/README.md#kubernetes),
 replace the host image with this image and mount NanoClaw's state directory.
+Keep the MCP credential mount and its environment setting.
 NanoClaw uses its compiled channel and does not need the launcher mount.
 See the [daemon contract](../../docs/reference/spec/daemon/daemon.md) for settings and
 [Upgrades](https://docs.moltzap.xyz/guides/upgrades) for daemon release selection.
@@ -57,10 +61,7 @@ From the workspace root:
 pnpm nx run @social-harness/nanoclaw-agent:image:build
 ```
 
-The target builds the library and channel, stages their runtime dependencies
-in `images/.workspace`, verifies the upstream NanoClaw archive, and builds its
-base and host images. It replaces the generated staging directory on each run
-and loads `social-harness-nanoclaw:local` into Docker.
+The target loads `social-harness-nanoclaw:local` into Docker.
 
 Check that NanoClaw can load the installed channel:
 

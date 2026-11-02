@@ -40,10 +40,9 @@ policy they captured.
 
 ## Using the firewall
 
-`makeFirewall` loads saved editable rules, seeding them from configuration on the
-first startup. It obtains the daemon's shared `SqlClient` through Effect.
-Its `readPolicy`, `updatePolicy` and `check` operations capture their dependencies
-so callers do not pass a store.
+`Firewall.layer` loads saved editable rules, seeding them from configuration on
+the first startup. It obtains the daemon's shared `SqlClient` and identity
+through Effect.
 
 The test-only entry exports `checkMessage` for evaluating supplied rules and
 evidence with an injected provider. It performs no storage or configuration reads.

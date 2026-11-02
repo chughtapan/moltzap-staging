@@ -54,19 +54,10 @@ export type HistoryExportRecord = typeof HistoryExportRecord.Type;
 
 const encodeLine = Schema.encode(Schema.parseJson(HistoryExportRecord));
 
-/**
- * Sink for the daemon's optional history export. Recording never fails and
- * never blocks the daemon on its own outcome: an export that stops is the
- * sink's business, recorded in the file.
- */
-export interface HistoryExportPort {
-  readonly record: (record: HistoryExportRecord) => Effect.Effect<void>;
-}
-
-/** The export in place when the operator configured none: records vanish. */
-export const noHistoryExport: HistoryExportPort = Object.freeze({
-  record: () => Effect.void,
-});
+/** Writes optional traffic history without failing message delivery. */
+export type HistoryExport = (
+  record: HistoryExportRecord,
+) => Effect.Effect<void>;
 
 /**
  * Append complete JSON lines before exposing incoming items or returning sends.
@@ -76,7 +67,7 @@ export const noHistoryExport: HistoryExportPort = Object.freeze({
  */
 export function makeHistoryExport(
   path: string,
-): Effect.Effect<HistoryExportPort, never, FileSystem.FileSystem> {
+): Effect.Effect<HistoryExport, never, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const gate = yield* Effect.makeSemaphore(1);
@@ -98,15 +89,11 @@ export function makeHistoryExport(
           at,
         }).pipe(Effect.ignore);
       });
-    return {
-      record: (record: HistoryExportRecord) =>
-        gate.withPermits(1)(
-          Effect.suspend(() =>
-            enabled
-              ? append(record).pipe(Effect.catchAll(disable))
-              : Effect.void,
-          ),
+    return (record: HistoryExportRecord) =>
+      gate.withPermits(1)(
+        Effect.suspend(() =>
+          enabled ? append(record).pipe(Effect.catchAll(disable)) : Effect.void,
         ),
-    };
+      );
   }).pipe(Effect.withSpan("makeHistoryExport"));
 }

@@ -13,14 +13,10 @@ import {
   agentIdentityCardSigning,
   httpErrors,
   registryContract,
+  wireVersions,
 } from "@moltzap/social-harness/internal";
 import { Clock, Data, Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
-import {
-  AgentIdentityCardIssuedAt,
-  issueAgentIdentityCard,
-} from "./issuance.js";
-import { createRegistrySchema } from "./schema.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const { InternalServerError, UnavailableError } = httpErrors;
@@ -33,6 +29,37 @@ export class RegistryStorageInitializationError extends Data.TaggedError(
 )<{
   readonly reason: "incompatible" | "signer-mismatch" | "unavailable";
 }> {}
+
+/** Created atomically with the format marker and signer binding in an empty namespace. */
+const createRegistrySchema = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(`
+    CREATE TABLE sharness_registry_metadata (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      signer_thumbprint text NOT NULL
+    );
+    CREATE TABLE sharness_registry_agents (
+      agent_id text PRIMARY KEY,
+      principal_id text NOT NULL,
+      agent_name text NOT NULL UNIQUE,
+      public_key_thumbprint text NOT NULL UNIQUE,
+      agent_card_bytes bytea NOT NULL
+    );
+    CREATE TABLE sharness_registry_operations (
+      public_key_thumbprint text NOT NULL,
+      operation_id text NOT NULL,
+      request_bytes bytea NOT NULL,
+      result_bytes bytea NOT NULL,
+      PRIMARY KEY (public_key_thumbprint, operation_id)
+    );
+    CREATE TABLE sharness_registry_nonces (
+      nonce text PRIMARY KEY,
+      expires_at bigint NOT NULL
+    );
+    CREATE INDEX sharness_registry_nonces_expiry
+      ON sharness_registry_nonces (expires_at);
+  `);
+}).pipe(Effect.withSpan("createRegistrySchema"));
 
 const LEDGER_TABLE = "sharness_registry_ledger_20261029_3";
 
@@ -296,7 +323,7 @@ const mintUnusedAgentId = (
   });
 
 const issueTime = (): Effect.Effect<
-  typeof AgentIdentityCardIssuedAt.Type,
+  typeof agentIdentityCardSigning.issuedAt.Type,
   InstanceType<typeof httpErrors.InternalServerError>
 > =>
   internalFailure(
@@ -306,7 +333,7 @@ const issueTime = (): Effect.Effect<
           .toISOString()
           .replace(".000Z", "Z"),
       ),
-      Effect.flatMap(Schema.decodeUnknown(AgentIdentityCardIssuedAt)),
+      Effect.flatMap(Schema.decodeUnknown(agentIdentityCardSigning.issuedAt)),
     ),
   );
 
@@ -532,14 +559,18 @@ const insertNewAgent = (
     const agentId = yield* mintUnusedAgentId(input.sql);
     const issuedAt = yield* issueTime();
     const agentCard = yield* internalFailure(
-      issueAgentIdentityCard({
-        agentId,
-        principalId: call.request.principalId,
-        agentName: call.request.agentName,
-        publicKey: call.request.publicKey,
-        issuedAt,
-        registrySigningAuthority: call.registrySigningAuthority,
-      }),
+      agentIdentityCardSigning.sign(
+        {
+          kind: "agentCard",
+          sharnessVersion: yield* wireVersions.emitted,
+          agentId,
+          principalId: call.request.principalId,
+          agentName: call.request.agentName,
+          publicKey: call.request.publicKey,
+          issuedAt,
+        },
+        call.registrySigningAuthority,
+      ),
     );
     const agentCardBytes = yield* internalFailure(
       registryContract.registryIdentityCardCodec.encode(agentCard),

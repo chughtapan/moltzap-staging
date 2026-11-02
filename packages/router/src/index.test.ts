@@ -1,5 +1,5 @@
 /** @file Public Router capability tests across HTTP success and typed failure paths. */
-import { it } from "@effect/vitest";
+import { it, live as startupIt } from "@effect/vitest";
 import {
   AgentId,
   AgentIdentityCard,
@@ -21,6 +21,7 @@ import {
 import canonicalize from "canonicalize";
 import {
   Brand,
+  ConfigError,
   ConfigProvider,
   Data,
   Effect,
@@ -37,11 +38,14 @@ import {
   type Server as NetServer,
 } from "node:net";
 import { describe, expect } from "vitest";
-import { RouterServer } from "../../server.js";
-import { loadRouterConfiguration } from "../configuration.js";
-import { makeRouterFeedAtOrder, maximumPrivateOrder } from "../feed.js";
-import { makePollWaiters } from "../poll-waiters.js";
-import { makeRouterSend } from "../send.js";
+import {
+  configurationMessage,
+  loadRouterConfiguration,
+} from "./configuration.js";
+import { makeRouterFeedAtOrder, maximumPrivateOrder } from "./feed.js";
+import { RouterServer } from "./index.js";
+import { makePollWaiters } from "./poll.js";
+import { makeRouterSend } from "./send.js";
 
 /* eslint sonarjs/no-empty-test-file: "off" -- Effect's scoped registrations are invisible to Sonar's direct Vitest-call detector. */
 /* eslint-disable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Each scenario observes the deep capability at its public or private call boundary. */
@@ -280,7 +284,7 @@ describe("send exhaustion behavior", () => {
           mode: "initial",
           signedMessage: Schema.encodeSync(SignedMessage)(finalMessage),
         } as const;
-        const accepted = yield* send.handle(
+        const accepted = yield* send(
           finalRequest,
           senderFixture.verifiedRequest,
         );
@@ -288,7 +292,7 @@ describe("send exhaustion behavior", () => {
         expect((yield* feed.snapshot).tailOrder).toBe(maximumPrivateOrder);
 
         expect(
-          yield* send.handle(
+          yield* send(
             {
               ...finalRequest,
               expectedRouterInstanceId: makeRouterInstanceId(2),
@@ -301,7 +305,7 @@ describe("send exhaustion behavior", () => {
           routerInstanceId,
         });
         expect(
-          yield* send.handle(
+          yield* send(
             {
               ...finalRequest,
               signedMessage: Schema.encodeSync(SignedMessage)(
@@ -317,10 +321,10 @@ describe("send exhaustion behavior", () => {
           ),
         ).toEqual({ kind: "message_invalid" });
         expect(
-          yield* send.handle(finalRequest, senderFixture.verifiedRequest),
+          yield* send(finalRequest, senderFixture.verifiedRequest),
         ).toEqual({ kind: "idempotency_conflict" });
         expect(
-          yield* send.handle(
+          yield* send(
             { ...finalRequest, mode: "retry" },
             senderFixture.verifiedRequest,
           ),
@@ -333,16 +337,14 @@ describe("send exhaustion behavior", () => {
           envelopeId: makeEnvelopeId(2),
           body: utf8Encoder.encode("past-final-position"),
         });
-        const exhausted = yield* send
-          .handle(
-            {
-              expectedRouterInstanceId: routerInstanceId,
-              mode: "initial",
-              signedMessage: Schema.encodeSync(SignedMessage)(nextMessage),
-            },
-            senderFixture.verifiedRequest,
-          )
-          .pipe(Effect.either);
+        const exhausted = yield* send(
+          {
+            expectedRouterInstanceId: routerInstanceId,
+            mode: "initial",
+            signedMessage: Schema.encodeSync(SignedMessage)(nextMessage),
+          },
+          senderFixture.verifiedRequest,
+        ).pipe(Effect.either);
         Either.match(exhausted, {
           onLeft: (error) => {
             expect(error).toBeInstanceOf(httpErrors.OverloadedError);
@@ -620,3 +622,37 @@ describe("configuration behavior", () => {
 });
 
 /* eslint-enable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after the process scenarios. */
+
+const registryOriginVariable = "SHARNESS_ROUTER_REGISTRY_ORIGIN";
+const rejectedValue =
+  "https://operator:private-password@registry.example/private";
+const environment = ConfigProvider.fromMap(
+  new Map([[registryOriginVariable, rejectedValue]]),
+);
+
+startupIt(
+  "removes configured values from startup error serialization and causes",
+  () =>
+    Effect.gen(function* () {
+      const error = yield* Layer.build(RouterServer.layer).pipe(
+        Effect.scoped,
+        Effect.withConfigProvider(environment),
+        Effect.flip,
+      );
+      expect(error).toBeInstanceOf(RouterServer.StartupError);
+      expect(error.message).toContain(registryOriginVariable);
+      expect(JSON.stringify(error.toJSON())).not.toContain(rejectedValue);
+      expect(String(error)).not.toContain(rejectedValue);
+      expect(error.cause).toBeUndefined();
+    }),
+);
+
+startupIt(
+  "replaces unrecognized decoder messages with a fixed diagnostic",
+  () =>
+    Effect.sync(() => {
+      expect(
+        configurationMessage(ConfigError.InvalidData([], rejectedValue)),
+      ).not.toContain(rejectedValue);
+    }),
+);

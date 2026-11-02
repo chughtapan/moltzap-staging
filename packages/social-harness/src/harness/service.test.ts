@@ -823,12 +823,10 @@ it("retains a draft's input while its caller changes the original object", () =>
     const release = yield* Deferred.make<undefined>();
     const exported: HistoryExportRecord[] = [];
     const runtime = yield* subject.open({
-      historyExport: {
-        record: (record) =>
-          Effect.sync(() => {
-            exported.push(record);
-          }),
-      },
+      historyExport: (record) =>
+        Effect.sync(() => {
+          exported.push(record);
+        }),
       policy: firewallOptions({
         decide: (request) =>
           Deferred.succeed(entered, undefined).pipe(
@@ -875,12 +873,10 @@ it.each(hiddenSends)(
       const runtime = yield* subject.open({
         hideGroups: true,
         hideCollectives: true,
-        historyExport: {
-          record: (record) =>
-            Effect.sync(() => {
-              exported.push(record);
-            }),
-        },
+        historyExport: (record) =>
+          Effect.sync(() => {
+            exported.push(record);
+          }),
       });
       expect(
         yield* runtime.harness.send(request).pipe(Effect.flip),

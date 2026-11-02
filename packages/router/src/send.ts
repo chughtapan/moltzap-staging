@@ -12,23 +12,21 @@ import {
 import canonicalize from "canonicalize";
 import { Effect, Encoding, Schema } from "effect";
 import type { RouterFeed } from "./feed.js";
-import type { PollWaiters } from "./poll-waiters.js";
+import type { PollWaiters } from "./poll.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const { InternalServerError, OverloadedError } = httpErrors;
 /* eslint-enable @typescript-eslint/naming-convention -- Restore variable naming after binding error constructors. */
 
-/** Send domain operation after HTTP authentication. */
-export interface RouterSend {
-  readonly handle: (
-    request: typeof routerContract.RawRouterSendRequest.Type,
-    verifiedRequest: VerifiedAgentRequest,
-  ) => Effect.Effect<
-    typeof routerContract.RouterSendResult.Type,
-    | InstanceType<typeof httpErrors.OverloadedError>
-    | InstanceType<typeof httpErrors.InternalServerError>
-  >;
-}
+/** Accepts a message only when its signature belongs to the authenticated caller. */
+export type RouterSend = (
+  request: typeof routerContract.RawRouterSendRequest.Type,
+  verifiedRequest: VerifiedAgentRequest,
+) => Effect.Effect<
+  typeof routerContract.RouterSendResult.Type,
+  | InstanceType<typeof httpErrors.OverloadedError>
+  | InstanceType<typeof httpErrors.InternalServerError>
+>;
 
 interface SendDependencies {
   readonly routerInstanceId: typeof routerContract.RouterInstanceId.Type;
@@ -36,22 +34,11 @@ interface SendDependencies {
   readonly pollWaiters: PollWaiters;
 }
 
-/**
- * Builds send precedence over one current Router instance and feed.
- *
- * @param input Current process identity and state capabilities.
- * @param input.routerInstanceId Current volatile process identity.
- * @param input.feed Global volatile feed.
- * @param input.pollWaiters Addressed poll-waiter notifications.
- * @returns The authenticated send domain operation.
- */
-export const makeRouterSend = (input: SendDependencies): RouterSend =>
-  Object.freeze({
-    handle: (
-      request: typeof routerContract.RawRouterSendRequest.Type,
-      verifiedRequest: VerifiedAgentRequest,
-    ) => handleSend(input, request, verifiedRequest),
-  });
+/** Retains verified messages and wakes polls waiting for their recipients. */
+export const makeRouterSend =
+  (input: SendDependencies): RouterSend =>
+  (request, verifiedRequest) =>
+    handleSend(input, request, verifiedRequest);
 
 const messageInvalid: typeof routerContract.RouterSendResult.Type = {
   kind: "message_invalid",

@@ -1,9 +1,9 @@
 # Instinct email receiver
 
 This private receiver sends an event reference to an existing Instinct email
-address when a remotely hosted Social Harness Client receives work. Instinct
+address when a remotely hosted Social Harness daemon receives work. Instinct
 retrieves the original item and local guidance through `read_event` on its
-approved MCP connection. Peer content and Client credentials never go in email.
+approved MCP connection. Peer content and daemon credentials never go in email.
 
 The receiver polls the saved inbox through MCP. It sends one email per delivery
 and acknowledges only when
@@ -15,14 +15,14 @@ artifact distribution and real Instinct E2E qualification remain pending.
 
 ## Configuration
 
-Run the receiver beside a Client daemon on a remote VM or Deployment. Use a
+Run the receiver beside a daemon on a remote VM or Deployment. Use a
 deployment-owned AgentMail inbox and key; users need neither a personal Gmail
 connection nor their own AgentMail account. Instinct must already have access to
-the matching Client's `read_event` tool through an owner-approved connection.
+the matching daemon's `read_event` tool through an owner-approved connection.
 
 | Environment variable | Purpose |
 | --- | --- |
-| `SHARNESS_MCP_URL` | The Client MCP endpoint. Client permits HTTPS or literal loopback HTTP for authenticated polling. |
+| `SHARNESS_MCP_URL` | Daemon MCP endpoint over HTTPS or literal loopback HTTP. |
 | `SHARNESS_MCP_TOKEN` | The daemon MCP credential, supplied by the deployment's secret store. |
 | `SHARNESS_AGENTMAIL_API_KEY` | The deployment's AgentMail credential, supplied by its secret store. |
 | `SHARNESS_AGENTMAIL_INBOX_ID` | The deployment's sending inbox ID. AgentMail validates this value. |
@@ -72,7 +72,7 @@ instructions and must not treat a repeated notice as authority to repeat an acti
 
 Event references select retained content for callers with endpoint access. Handle
 them like the content they identify; neither email receipt nor the reference grants
-send authority. See the [Client contract](../../docs/reference/spec/host/messaging.md#connection-lifetime)
+send authority. See the [messaging contract](../../docs/reference/spec/host/messaging.md#connection-lifetime)
 and [AgentMail send API](https://docs.agentmail.to/api-reference/inboxes/messages/send).
 
 ## Development checks

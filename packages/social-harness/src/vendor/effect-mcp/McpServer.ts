@@ -5,26 +5,25 @@
 import * as HttpApp from "@effect/platform/HttpApp";
 import * as HttpServerRequest from "@effect/platform/HttpServerRequest";
 import * as HttpServerResponse from "@effect/platform/HttpServerResponse";
-import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as StreamValues from "effect/Stream";
 import * as RpcMessageValues from "@effect/rpc/RpcMessage";
 import * as Headers from "@effect/platform/Headers";
-import type { RpcMessage } from "@effect/rpc";
-import * as RpcClient from "@effect/rpc/RpcClient";
-import type * as RpcGroup from "@effect/rpc/RpcGroup";
 import * as RpcServer from "@effect/rpc/RpcServer";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Mailbox from "effect/Mailbox";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Types from "effect/Types";
-import type { CallTool, ServerCapabilities } from "./McpSchema.js";
+import type {
+  CallTool,
+  ServerCapabilities,
+  SubscriptionFilter,
+} from "./McpSchema.js";
 import {
   CallToolResult,
   ClientRpcs,
@@ -39,9 +38,7 @@ import {
   ListToolsResult,
   McpServerClient,
   McpServerClientMiddleware,
-  ServerNotificationRpcs,
   Tool,
-  SubscriptionFilter,
 } from "./McpSchema.js";
 
 interface ToolRegistration {
@@ -59,12 +56,8 @@ interface ToolRegistration {
 export class McpServer extends Context.Tag("@effect/ai/McpServer")<
   McpServer,
   {
-    readonly notifications: RpcClient.RpcClient<
-      RpcGroup.Rpcs<typeof ServerNotificationRpcs>
-    >;
-    readonly notificationsMailbox: Mailbox.ReadonlyMailbox<
-      RpcMessage.Request<any>
-    >;
+    readonly toolsChanged: Effect.Effect<void>;
+    readonly toolChanges: Queue.Dequeue<undefined>;
     readonly listTools: Effect.Effect<
       ReadonlyArray<Tool>,
       never,
@@ -100,43 +93,14 @@ export class McpServer extends Context.Tag("@effect/ai/McpServer")<
   static readonly make = Effect.gen(function* () {
     const registrations = new Map<string, ToolRegistration>();
     const events: McpServer["Type"]["events"] = {};
-    const notificationsMailbox = yield* Mailbox.make<RpcMessage.Request<any>>();
-    const listChangedHandles = new Map<string, any>();
-    const notifications = yield* RpcClient.makeNoSerialization(
-      ServerNotificationRpcs,
-      {
-        spanPrefix: "McpServer/Notifications",
-        onFromClient(options): Effect.Effect<void> {
-          const message = options.message;
-          if (message._tag !== "Request") {
-            return Effect.void;
-          }
-          if (message.tag.includes("list_changed")) {
-            if (!listChangedHandles.has(message.tag)) {
-              listChangedHandles.set(
-                message.tag,
-                setTimeout(() => {
-                  notificationsMailbox.unsafeOffer(message);
-                  listChangedHandles.delete(message.tag);
-                }, 0),
-              );
-            }
-          } else {
-            notificationsMailbox.unsafeOffer(message);
-          }
-          return notifications.write({
-            clientId: 0,
-            requestId: message.id,
-            _tag: "Exit",
-            exit: Exit.void as any,
-          });
-        },
-      },
+    const toolChanges = yield* Queue.sliding<undefined>(1);
+    const toolsChanged = Queue.offer(toolChanges, undefined).pipe(
+      Effect.asVoid,
     );
 
     return McpServer.of({
-      notifications: notifications.client,
-      notificationsMailbox,
+      toolsChanged,
+      toolChanges,
       events,
       listTools: Effect.gen(function* () {
         const client = yield* McpServerClient;
@@ -154,7 +118,7 @@ export class McpServer extends Context.Tag("@effect/ai/McpServer")<
       addTool: (options) =>
         Effect.suspend(() => {
           registrations.set(options.tool.name, options);
-          return notifications.client["notifications/tools/list_changed"]({});
+          return toolsChanged;
         }),
       callTool: (request) =>
         Effect.gen(function* () {
@@ -328,28 +292,7 @@ type HttpRequestState = {
   readonly method: string;
   readonly protocolVersion: string;
   readonly filter?: typeof SubscriptionFilter.Type;
-  readonly result: Deferred.Deferred<unknown>;
   readonly notifications: Queue.Queue<unknown>;
-};
-
-const notificationSelected = (
-  filter: typeof SubscriptionFilter.Type | undefined,
-  method: string,
-  payload: any,
-): boolean => {
-  if (!filter) return false;
-  switch (method) {
-    case "notifications/tools/list_changed":
-      return filter.toolsListChanged === true;
-    case "notifications/prompts/list_changed":
-      return filter.promptsListChanged === true;
-    case "notifications/resources/list_changed":
-      return filter.resourcesListChanged === true;
-    case "notifications/resources/updated":
-      return filter.resourceSubscriptions?.includes(payload.uri) === true;
-    default:
-      return false;
-  }
 };
 
 const wireError = (error: unknown) => {
@@ -446,10 +389,7 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
                 Option.getOrUndefined(Cause.failureOption(response.exit.cause)),
               ),
             };
-        return Deferred.succeed(state.result, message).pipe(
-          Effect.zipRight(Queue.offer(state.notifications, message)),
-          Effect.asVoid,
-        );
+        return Queue.offer(state.notifications, message).pipe(Effect.asVoid);
       }),
   }).pipe(
     Effect.provide(handlers),
@@ -457,20 +397,19 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
   );
 
   const mcpServer = yield* McpServer;
-  yield* mcpServer.notificationsMailbox.take.pipe(
-    Effect.flatMap((request) =>
+  yield* Queue.take(mcpServer.toolChanges).pipe(
+    Effect.flatMap(() =>
       Effect.forEach(
         Array.from(states.values()).filter(
           (state) =>
             state.method === "events/stream" ||
-            notificationSelected(state.filter, request.tag, request.payload),
+            state.filter?.toolsListChanged === true,
         ),
         (state) =>
           Queue.offer(state.notifications, {
             jsonrpc: "2.0",
-            method: request.tag,
+            method: "notifications/tools/list_changed",
             params: {
-              ...request.payload,
               _meta: { "io.modelcontextprotocol/subscriptionId": state.id },
             },
           }),
@@ -586,7 +525,6 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
             ).notifications,
           }
         : {}),
-      result: yield* Deferred.make<unknown>(),
       notifications: yield* Queue.unbounded<unknown>(),
     };
     states.set(id, state);
@@ -607,7 +545,7 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
       envelope.method !== "events/stream" &&
       envelope.method !== "subscriptions/listen"
     ) {
-      const result = yield* Deferred.await(state.result);
+      const result = yield* Queue.take(state.notifications);
       return yield* HttpServerResponse.json(result, {
         headers: { "mcp-protocol-version": state.protocolVersion },
       }).pipe(Effect.orDie);

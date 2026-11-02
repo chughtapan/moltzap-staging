@@ -1,6 +1,6 @@
 /** @file The Router process layer exposes only its self-contained startup boundary. */
 import type { Layer, Types } from "effect";
-import type * as RouterServerPackage from "../../server.js";
+import type * as RouterServerPackage from "./index.js";
 type Expect<Value extends true> = Value;
 type RouterServerLayer = typeof RouterServerPackage.RouterServer.layer;
 type ServerLayerProvidesNothing = Expect<

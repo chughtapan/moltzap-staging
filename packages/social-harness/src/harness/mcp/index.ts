@@ -180,9 +180,7 @@ function installIdentityTools(
       definition: toolDefinitions.register,
       execute: (request) =>
         harness.register(request).pipe(
-          Effect.tap(() =>
-            server.notifications["notifications/tools/list_changed"]({}),
-          ),
+          Effect.tap(() => server.toolsChanged),
           Effect.flatMap((identityCard) =>
             Schema.encode(AgentIdentityCard)(identityCard).pipe(Effect.orDie),
           ),

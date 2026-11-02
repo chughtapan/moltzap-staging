@@ -16,11 +16,9 @@ import {
   encodeCollectiveContent,
   isReceivedRequest,
   Message,
-  messageFromParticipants,
   messageInterpretation,
   messageMembers,
   type MessageReference,
-  mintMsgId,
   outcomeOfResponse,
   type ReceivedRequest,
   type Request,
@@ -154,14 +152,16 @@ function ask(environment: Environment, request: Request) {
         );
         const audiences =
           request.op === "gather"
-            ? request.recipients.map((recipient) => [recipient])
+            ? request.recipients.map((recipient): Message["recipients"] => [
+                recipient,
+              ])
             : [request.recipients];
         for (const recipients of audiences) {
-          const message = yield* makeMessage(
-            request.author,
+          const message = yield* Message.create({
+            author: request.author,
             recipients,
             content,
-          );
+          });
           yield* saveMessage(
             environment,
             request.operationId,
@@ -812,38 +812,14 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
           () => new EndpointStoreError({ reason: "corrupt" }),
         ),
       );
-      const close = yield* makeMessage(
-        operation.request.author,
-        operation.request.recipients,
+      const close = yield* Message.create({
+        author: operation.request.author,
+        recipients: operation.request.recipients,
         content,
-      );
+      });
       yield* saveMessage(environment, operationId, "close", close);
     }),
   ).pipe(Effect.withSpan("finishLocal"));
-}
-
-/** Request and close identities are fixed before Communication accepts them. */
-function makeMessage(
-  author: AgentCard,
-  recipients: readonly AgentCard[],
-  content: Message["content"],
-) {
-  return Effect.gen(function* () {
-    return yield* messageFromParticipants(author, recipients, {
-      msgId: yield* mintMsgId().pipe(
-        Effect.catchTag(
-          "ClientRepresentationError",
-          () => new CommunicationError({ reason: "content-invalid" }),
-        ),
-      ),
-      content,
-    }).pipe(
-      Effect.catchTag(
-        "ParseError",
-        () => new CommunicationError({ reason: "content-invalid" }),
-      ),
-    );
-  }).pipe(Effect.withSpan("makeMessage"));
 }
 
 /** Acceptance and the collective claim use the same caller transaction. */

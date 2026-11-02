@@ -1,6 +1,5 @@
 /** @file Exact Ed25519 public keys, opaque private signing authority, and the single-signature General JWS that AgentIdentityCard and SignedMessage carry. */
 
-import type { LazyArg } from "effect/Function";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import {
   Data,
@@ -263,40 +262,17 @@ const publicKeyOperationFailure = (): Ed25519PublicKeyOperationError =>
   new Ed25519PublicKeyOperationError();
 
 /**
- * Calls each thunk and reads its key's `x` under one try, so a key, or a card,
- * request or authority holding one, that throws on read fails with
- * `Ed25519PublicKeyOperationError` instead of a defect. `crv` and `kty` are
- * fixed and `x` has one accepted spelling, so equal `x` means the same key.
- */
-export const sameEd25519PublicKey = (
-  left: LazyArg<AgentPublicKey>,
-  right: LazyArg<AgentPublicKey>,
-): Effect.Effect<boolean, Ed25519PublicKeyOperationError> =>
-  Effect.try({
-    try: () => left().x === right().x,
-    catch: publicKeyOperationFailure,
-  });
-
-/**
  * Most keys that each per-key cache below keeps: eight times
- * `signed-message.ts → MAXIMUM_RECIPIENTS`, so the keys of eight full
+ * `envelope.ts → MAXIMUM_RECIPIENTS`, so the keys of eight full
  * conversations stay cached. Each entry is one short string or one imported
  * public `CryptoKey`.
  */
 const PUBLIC_KEY_CACHE_ENTRIES = 1_024;
 
 /**
- * Derives a value from a public key once while the key stays among the
- * `PUBLIC_KEY_CACHE_ENTRIES` most recently used. Entries are keyed by `x`:
- * `crv` and `kty` are fixed and `x` has one accepted spelling, so `x`
- * determines the RFC 7638 canonical JWK the thumbprint hashes, and two keys
- * share an entry only when they are the same key. Keying by value keeps a hit
- * for every AgentIdentityCard decode, each of which makes a new key object. The entry
- * and its derivation share one read of `x`, so an entry holds its own key's
- * value even for an object whose members change between reads. A key whose
- * `x` cannot be read fails with `Ed25519PublicKeyOperationError`. A failed
- * derivation is not kept, and the caches hold key material, never a
- * verification outcome.
+ * Immutable keys share imported material by their canonical coordinate even
+ * when separate card decodes produce separate objects. Failed derivations and
+ * verification outcomes stay out of these bounded caches.
  */
 const cachedPerPublicKey = <A>(
   entries: BoundedCache<string, A>,
@@ -305,21 +281,16 @@ const cachedPerPublicKey = <A>(
     jwk: PublicKeyValue,
   ) => Effect.Effect<A, Ed25519PublicKeyOperationError>,
 ): Effect.Effect<A, Ed25519PublicKeyOperationError> =>
-  Effect.try({
-    try: (): PublicKeyValue =>
-      Object.freeze({ crv: "Ed25519", kty: "OKP", x: publicKey.x }),
-    catch: publicKeyOperationFailure,
-  }).pipe(
-    Effect.flatMap((jwk) =>
-      Option.match(entries.get(jwk.x), {
-        onNone: () =>
-          Effect.tap(derive(jwk), (derived) => {
-            entries.set(jwk.x, derived);
-          }),
-        onSome: (cached) => Effect.succeed(cached),
-      }),
-    ),
-  );
+  Effect.suspend(() => {
+    const coordinate = publicKey.x;
+    return Option.match(entries.get(coordinate), {
+      onNone: () =>
+        Effect.tap(derive(publicKey), (derived) => {
+          entries.set(coordinate, derived);
+        }),
+      onSome: (cached) => Effect.succeed(cached),
+    });
+  });
 
 const thumbprintUris = makeBoundedCache<string, string>(
   PUBLIC_KEY_CACHE_ENTRIES,
@@ -330,8 +301,7 @@ const thumbprintUris = makeBoundedCache<string, string>(
  *
  * @param publicKey Validated public key.
  * @returns The standard SHA-256 JWK thumbprint URI.
- * @failure Ed25519PublicKeyOperationError when the key's `x` cannot be read
- * or the JOSE implementation cannot derive the URI.
+ * @failure Ed25519PublicKeyOperationError when JOSE cannot derive the URI.
  */
 export const ed25519PublicKeyThumbprintUri = (
   publicKey: AgentPublicKey,

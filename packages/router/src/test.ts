@@ -1,8 +1,8 @@
 /** @file Condition-only process composition for adjacent wire releases. */
 import { WireVersions } from "@moltzap/social-harness/test";
 import { Effect, Layer } from "effect";
+import { RouterServer } from "./index.js";
 import { runRouterMain } from "./main.js";
-import { RouterServer } from "./server.js";
 
 /**
  * Starts a fixture process with explicit emitted, live and history versions

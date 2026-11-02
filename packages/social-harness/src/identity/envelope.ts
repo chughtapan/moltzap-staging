@@ -42,7 +42,6 @@ import {
   ed25519PublicKeyThumbprintUri,
   ed25519VerificationKey,
   generalJwsRepresentation,
-  sameEd25519PublicKey,
   SEALED_BODY_KEY_MANAGEMENT_ALGORITHM,
   snapshotRepresentation,
   x25519SealingKey,
@@ -387,11 +386,10 @@ const snapshotSignInput = (
 
 const prepareSigningMaterial = (input: SigningRecord) =>
   Effect.gen(function* () {
-    const sameKey = yield* sameEd25519PublicKey(
-      () => AgentSigningAuthority.publicKey(input.signingAuthority),
-      () => input.publicKey,
-    ).pipe(Effect.mapError(signingFailure));
-    if (!sameKey) {
+    if (
+      AgentSigningAuthority.publicKey(input.signingAuthority).x !==
+      input.publicKey.x
+    ) {
       return yield* new SignedMessageSigningError();
     }
     const recipients = yield* snapshotMessageRecipients(
@@ -991,11 +989,10 @@ const authorityCard = (
       try: () => cardMembers(input.identityCard),
       catch: openingFailure,
     });
-    const sameKey = yield* sameEd25519PublicKey(
-      () => AgentSigningAuthority.publicKey(input.signingAuthority),
-      () => card.publicKey,
-    ).pipe(Effect.mapError(openingFailure));
-    if (!sameKey) {
+    if (
+      AgentSigningAuthority.publicKey(input.signingAuthority).x !==
+      card.publicKey.x
+    ) {
       return yield* new SealedBodyOpeningError();
     }
     return card;

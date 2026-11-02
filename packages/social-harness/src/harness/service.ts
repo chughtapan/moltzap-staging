@@ -17,6 +17,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import type { HistoryExport } from "./message-log.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
@@ -72,7 +73,6 @@ import {
   type MessageAddress,
   type PendingItem,
 } from "./inbox.js";
-import { type HistoryExportPort, noHistoryExport } from "./message-log.js";
 
 /** Host input is resolved before a communication value is constructed. */
 export type { SendRequest } from "../host-protocol/messages.js";
@@ -211,7 +211,7 @@ export interface HarnessSettings<R> {
     identityCard: VerifiedAgentIdentityCard,
   ) => Layer.Layer<Communication, CommunicationError, R>;
   readonly maximumHistoryRecords?: number;
-  readonly historyExport?: HistoryExportPort;
+  readonly historyExport?: HistoryExport;
   readonly maximumConcurrentChecks?: number;
   readonly hideGroups?: boolean;
   readonly hideCollectives?: boolean;
@@ -236,7 +236,7 @@ function makeHarness<R>(
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity = settings.maximumConcurrentChecks ?? 4;
     const historyLimit = settings.maximumHistoryRecords ?? 256;
-    const historyExport = settings.historyExport ?? noHistoryExport;
+    const historyExport = settings.historyExport ?? (() => Effect.void);
     let activated = false;
     const activate = Effect.fn(function* (card: VerifiedAgentIdentityCard) {
       if (activated) {
@@ -459,7 +459,6 @@ function makeHarness<R>(
               inbox,
               communication,
               [value.author, ...value.recipients],
-              card.agentId,
               historyLimit,
             );
             const decision = yield* firewall
@@ -488,7 +487,7 @@ function makeHarness<R>(
               "kind" in value
                 ? value.operationId
                 : value.operation?.operationId;
-            yield* historyExport.record({
+            yield* historyExport({
               kind: "outbound",
               input: request,
               outcome: {
@@ -512,7 +511,7 @@ function makeHarness<R>(
             Effect.tapError((error) =>
               DateTime.now.pipe(
                 Effect.flatMap((at) =>
-                  historyExport.record({
+                  historyExport({
                     kind: "outbound",
                     input: request,
                     outcome: { kind: "failed", error: error.message },
@@ -726,7 +725,7 @@ function checkIncoming(
   entry: PendingItem,
   card: VerifiedAgentIdentityCard,
   limit: number,
-  historyExport: HistoryExportPort,
+  historyExport: HistoryExport,
 ) {
   return Effect.gen(function* () {
     const value = entry.incoming;
@@ -742,7 +741,6 @@ function checkIncoming(
         inbox,
         communication,
         [value.message.author, ...value.message.recipients],
-        card.agentId,
         limit,
         value.message,
       );
@@ -760,7 +758,6 @@ function checkIncoming(
             inbox,
             communication,
             [message.author, ...message.recipients],
-            card.agentId,
             limit,
             message,
           ).pipe(
@@ -783,7 +780,6 @@ function checkIncoming(
                 inbox,
                 communication,
                 [question.author, ...question.recipients],
-                card.agentId,
                 limit,
                 question,
               ),
@@ -801,7 +797,7 @@ function checkIncoming(
       ),
     );
     if (saved !== undefined) {
-      yield* historyExport.record({
+      yield* historyExport({
         kind: "inbound",
         item: saved.item,
         at: yield* DateTime.now,
@@ -814,7 +810,6 @@ function evidenceFor(
   inbox: Inbox,
   communication: CommunicationService,
   members: readonly AgentCard[],
-  localAgentId: AgentCard["agentId"],
   limit: number,
   before?: Message,
 ): Effect.Effect<FirewallEvidence, InboxError> {
@@ -866,11 +861,7 @@ function evidenceFor(
       recent.map((entry) => entry.message),
     );
     return {
-      history: history.map((entry) => ({
-        ...entry,
-        visibleToAgent:
-          entry.visibleToAgent || entry.message.author.agentId === localAgentId,
-      })),
+      history,
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
       gaps: [

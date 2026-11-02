@@ -24,11 +24,15 @@ import {
   makeRouterFeedAtOrder,
   maximumPrivateOrder,
   type RouterFeed,
-} from "../feed.js";
-import { routerHealthResponse } from "../http.js";
-import { generatePollCursorKey, makePollCursorCodec } from "../poll-cursor.js";
-import { makePollWaiters, type PollWaiters } from "../poll-waiters.js";
-import { makeRouterPoll } from "../poll.js";
+} from "./feed.js";
+import { routerHealthResponse } from "./http.js";
+import {
+  generatePollCursorKey,
+  makePollCursorCodec,
+  makePollWaiters,
+  makeRouterPoll,
+  type PollWaiters,
+} from "./poll.js";
 
 /* eslint-disable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Effect.gen scenarios keep each state transition and its observations together. */
 const utf8Encoder = new TextEncoder();
@@ -576,7 +580,7 @@ describe("global feed behavior", () => {
         expect(refused).toEqual({ kind: "overloaded" });
         expect((yield* feed.snapshot).tailOrder).toBe(maximumPrivateOrder);
 
-        const continued = yield* poll.handle(
+        const continued = yield* poll(
           { pollCursor: beforeFinalPosition },
           { callerAgentId: firstRecipient },
         );
@@ -584,10 +588,7 @@ describe("global feed behavior", () => {
         if (continued.kind === "batch") {
           expect(continued.signedMessages).toEqual([finalMessage]);
         }
-        const anchor = yield* poll.handle(
-          {},
-          { callerAgentId: firstRecipient },
-        );
+        const anchor = yield* poll({}, { callerAgentId: firstRecipient });
         expect(anchor.kind).toBe("batch");
         if (anchor.kind === "batch") {
           expect(anchor.signedMessages).toEqual([]);
@@ -684,10 +685,7 @@ describe("poll behavior", () => {
           body: "historical",
         });
         yield* acceptMessage(feed, historical);
-        const anchor = yield* poll.handle(
-          {},
-          { callerAgentId: firstRecipient },
-        );
+        const anchor = yield* poll({}, { callerAgentId: firstRecipient });
         expect(anchor.kind).toBe("batch");
         if (anchor.kind !== "batch") {
           return;
@@ -704,7 +702,7 @@ describe("poll behavior", () => {
           body: "live",
         });
         yield* acceptMessage(feed, live);
-        const delivered = yield* poll.handle(
+        const delivered = yield* poll(
           { pollCursor: anchor.pollCursor },
           { callerAgentId: firstRecipient },
         );
@@ -752,7 +750,7 @@ describe("poll behavior", () => {
         );
       }
       expect(
-        yield* poll.handle(
+        yield* poll(
           { pollCursor: beforeFeed },
           { callerAgentId: firstRecipient },
         ),
@@ -763,10 +761,7 @@ describe("poll behavior", () => {
         lastScannedOrder: 3n,
       });
       expect(
-        yield* poll.handle(
-          { pollCursor: future },
-          { callerAgentId: firstRecipient },
-        ),
+        yield* poll({ pollCursor: future }, { callerAgentId: firstRecipient }),
       ).toEqual({ kind: "cursor_invalid" });
     }),
   );
@@ -822,7 +817,7 @@ describe("poll behavior", () => {
           body: "first-unrelated",
         }),
       );
-      const advanced = yield* poll.handle(
+      const advanced = yield* poll(
         { pollCursor: beforeFeed },
         { callerAgentId: firstRecipient },
       );
@@ -835,7 +830,7 @@ describe("poll behavior", () => {
         ).toBe(2n);
       }
       expect(
-        yield* poll.handle(
+        yield* poll(
           { pollCursor: beforeFeed },
           { callerAgentId: firstRecipient },
         ),
@@ -884,7 +879,7 @@ describe("poll behavior", () => {
         yield* acceptMessage(feed, first);
         yield* acceptMessage(feed, second);
 
-        const firstBatch = yield* poll.handle(
+        const firstBatch = yield* poll(
           { pollCursor: anchor },
           { callerAgentId: firstRecipient },
         );
@@ -893,7 +888,7 @@ describe("poll behavior", () => {
           return;
         }
         expect(firstBatch.signedMessages).toEqual([first]);
-        const secondBatch = yield* poll.handle(
+        const secondBatch = yield* poll(
           { pollCursor: firstBatch.pollCursor },
           { callerAgentId: firstRecipient },
         );
@@ -942,7 +937,7 @@ describe("poll behavior", () => {
       });
       yield* acceptMessage(feed, unrelated);
       yield* acceptMessage(feed, addressed);
-      const batch = yield* poll.handle(
+      const batch = yield* poll(
         { pollCursor: anchor },
         { callerAgentId: firstRecipient },
       );

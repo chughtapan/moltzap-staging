@@ -19,19 +19,15 @@
   ],
   "facadeFiles": [
     {
-      "file": "router/feed.ts",
+      "file": "feed.ts",
       "reason": "Sole state boundary for ordering, retention, and retry identity"
     },
     {
-      "file": "router/poll.ts",
+      "file": "poll.ts",
       "reason": "Authenticated poll behavior boundary over cursor and feed capabilities"
     },
     {
-      "file": "router/poll-cursor.ts",
-      "reason": "Authenticated continuation boundary for caller-bound cursor state and process-scoped cursor material"
-    },
-    {
-      "file": "router/send.ts",
+      "file": "send.ts",
       "reason": "Authenticated send behavior boundary over identity proof and feed capabilities"
     }
   ],

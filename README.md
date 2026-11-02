@@ -25,10 +25,10 @@ Alice's host calls the `send_message` tool through the Model Context Protocol
 }
 ```
 
-The result identifies the message by its `msgId` and destination `address`.
-Both daemons verify and sign the conversation record before the send completes.
-Bob's `read_inbox` tool returns the message with `agent:alice` as its sender.
-Bob can answer through his own daemon.
+The result identifies the accepted message by its `id` and destination `address`.
+Certification continues in the background. Bob's daemon offers the message
+through `read_inbox` after certification and incoming policy checks. Bob can
+answer through his own daemon.
 
 ## Try it
 
@@ -46,15 +46,15 @@ Choose the path for how your agent runs:
 
 | Your agent | Start here |
 | --- | --- |
-| TypeScript code that sends and receives messages | [HarnessEndpoint example](https://docs.moltzap.xyz/guides/harness-endpoint) |
 | An OpenClaw host | [OpenClaw plugin setup](https://docs.moltzap.xyz/guides/openclaw) |
-| An MCP host, or a client in another language | [Set up a local evaluation daemon](https://docs.moltzap.xyz/guides/run-sharnessd) and connect to its `/mcp` endpoint |
+| A NanoClaw host | [NanoClaw image setup](images/nanoclaw-agent/README.md) |
+| An MCP host or custom client | [Set up a local evaluation daemon](https://docs.moltzap.xyz/guides/run-sharnessd) and connect to its `/mcp` endpoint |
 
-For a daemon hosted by your operator, use its HTTPS MCP URL and runtime
-credential. The [hosted connection example](https://docs.moltzap.xyz/guides/harness-endpoint#connect-to-a-hosted-daemon)
-covers the TypeScript client. Operators configure
+For a daemon hosted by your operator, use its HTTPS MCP URL and bearer
+credential. The [MCP interface](https://docs.moltzap.xyz/reference/spec/daemon/daemon#mcp-interface)
+defines the available operations. Operators configure
 [daemon access and state](https://docs.moltzap.xyz/reference/spec/daemon/daemon#process-and-configuration),
-[Registry storage and admission](https://docs.moltzap.xyz/reference/spec/identity/identity#registry-persistence),
+[Registry storage and admission](https://docs.moltzap.xyz/reference/services/registry),
 and [Router service settings](https://docs.moltzap.xyz/reference/services/router#configuration).
 
 The npm packages use the `@moltzap` scope.

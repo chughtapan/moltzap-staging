@@ -740,21 +740,6 @@ export class ReadResource extends Rpc.make("resources/read", {
 }) {}
 
 /**
- * An optional notification from the server to the client, informing it that the
- * list of resources it can read from has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 1.0.0
- * @category Resources
- */
-export class ResourceListChangedNotification extends Rpc.make(
-  "notifications/resources/list_changed",
-  {
-    payload: Schema.UndefinedOr(NotificationMeta),
-  },
-) {}
-
-/**
  * Sent from the client to request resources/updated notifications from the
  * server whenever a particular resource changes.
  *
@@ -792,23 +777,6 @@ export class Unsubscribe extends Rpc.make("resources/unsubscribe", {
     uri: Schema.String,
   },
 }) {}
-
-/**
- * @since 1.0.0
- * @category Resources
- */
-export class ResourceUpdatedNotification extends Rpc.make(
-  "notifications/resources/updated",
-  {
-    payload: {
-      ...NotificationMeta.fields,
-      /**
-       * The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.
-       */
-      uri: Schema.String,
-    },
-  },
-) {}
 
 // =============================================================================
 // Prompts
@@ -1052,21 +1020,6 @@ export class GetPrompt extends Rpc.make("prompts/get", {
   },
 }) {}
 
-/**
- * An optional notification from the server to the client, informing it that
- * the list of prompts it offers has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 1.0.0
- * @category Prompts
- */
-export class PromptListChangedNotification extends Rpc.make(
-  "notifications/prompts/list_changed",
-  {
-    payload: Schema.UndefinedOr(NotificationMeta),
-  },
-) {}
-
 // =============================================================================
 // Tools
 // =============================================================================
@@ -1231,21 +1184,6 @@ export class CallTool extends Rpc.make("tools/call", {
   }),
 }) {}
 
-/**
- * An optional notification from the server to the client, informing it that
- * the list of tools it offers has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 1.0.0
- * @category Tools
- */
-export class ToolListChangedNotification extends Rpc.make(
-  "notifications/tools/list_changed",
-  {
-    payload: Schema.UndefinedOr(NotificationMeta),
-  },
-) {}
-
 // =============================================================================
 // Logging
 // =============================================================================
@@ -1310,32 +1248,6 @@ export class SetLevel extends Rpc.make("logging/setLevel", {
   },
   error: McpError,
 }) {}
-
-/**
- * @since 1.0.0
- * @category Logging
- */
-export class LoggingMessageNotification extends Rpc.make(
-  "notifications/message",
-  {
-    payload: Schema.Struct({
-      ...NotificationMeta.fields,
-      /**
-       * The severity of this log message.
-       */
-      level: LoggingLevel,
-      /**
-       * An optional name of the logger issuing this message.
-       */
-      logger: Schema.optional(Schema.String),
-      /**
-       * The data to be logged, such as a string message or an object. Any JSON
-       * serializable type is allowed here.
-       */
-      data: Schema.Unknown,
-    }),
-  },
-) {}
 
 // =============================================================================
 // Autocomplete
@@ -1596,20 +1508,6 @@ export class ClientNotificationRpcs extends RpcGroup.make(
  */
 export class ClientRpcs extends ClientRequestRpcs.merge(
   ClientNotificationRpcs,
-) {}
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export class ServerNotificationRpcs extends RpcGroup.make(
-  CancelledNotification,
-  ProgressNotification,
-  LoggingMessageNotification,
-  ResourceUpdatedNotification,
-  ResourceListChangedNotification,
-  ToolListChangedNotification,
-  PromptListChangedNotification,
 ) {}
 
 /** Typed protocol failures carry only the adapter's deliberately published data. */

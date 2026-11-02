@@ -54,9 +54,7 @@ const envelopes = Object.freeze({
     body: '{"error":"overloaded"}',
   },
 });
-const WORKSPACE_ROOT = fileURLToPath(
-  new URL("../../../../../", import.meta.url),
-);
+const WORKSPACE_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 const ROUTER_BINARY = join(
   WORKSPACE_ROOT,

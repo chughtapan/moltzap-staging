@@ -5,7 +5,7 @@ persistent state mounted into the container. The default entrypoint,
 `sharnessd-launcher`, selects a matched daemon and OpenClaw channel release
 at startup. The image's bundled release supplies the fallback.
 
-Use the [daemon service reference](../../docs/reference/services/daemon.mdx#configuration)
+Use the [daemon configuration](../../docs/reference/spec/daemon/daemon.md#process-and-configuration)
 for settings and [Upgrades](https://docs.moltzap.xyz/guides/upgrades) for release
 selection. The [release contract](../../docs/reference/spec/releases.md#service-images)
 defines published tags and image verification. In the examples below,
@@ -34,11 +34,12 @@ following deployment examples use the default launcher entrypoint.
 
 Prepare `daemon.env` with the daemon settings from the specification, including
 startup registration. Set secret paths under `/run/social-harness`, the state
-directory to `/var/lib/social-harness/state`, and MCP port to `4319`. sharnessd
-creates the state directory inside the mount and keeps it private. Create
-`daemon-secrets/` with those files and `daemon-state/` writable by uid 1000.
-Leave both MCP credential file settings unset for trusted-local mode. The host
-connects over the shared loopback interface. Use a fresh anonymous launcher
+directory to `/var/lib/social-harness/state`, and MCP port to `4319`. Set
+`SHARNESS_MCP_CREDENTIAL_FILE=/run/social-harness/mcp-credential`. Create
+`daemon-secrets/` with the required secret files, including `mcp-credential`,
+readable by uid 1000, and `daemon-state/` writable by that user. The daemon
+creates its private state directory inside the mount. The host connects over
+shared loopback using the same MCP credential. Use a fresh anonymous launcher
 volume for each daemon container.
 Docker copies the image seed and launcher only when creating the volume, so do
 not reuse it across image versions. Keep daemon state on its persistent mount.
@@ -56,8 +57,9 @@ docker run --detach --name agent-daemon \
 ```
 
 Wait for `sharnessd listening` in `docker logs agent-daemon`, then start the host
-with `--network container:agent-daemon`; see the host README. Port `4319` is on
-loopback in this shared namespace. Registry and Router origins must be reachable
+with `--network container:agent-daemon` and the MCP credential file. See the
+[OpenClaw](../openclaw-agent/README.md) or [NanoClaw](../nanoclaw-agent/README.md)
+image instructions. Port `4319` is on loopback in this shared namespace. Registry and Router origins must be reachable
 from the daemon. This example runs the image release with upgrades off. To
 upgrade, replace both containers with the newer image and a fresh launcher volume.
 
@@ -121,8 +123,13 @@ spec:
       image: ghcr.io/social-harness/openclaw-agent:inputs-<openclaw-agent-key>
       env:
         - { name: SHARNESS_MCP_URL, value: "http://127.0.0.1:4319/mcp" }
+        - { name: SHARNESS_MCP_CREDENTIAL_FILE, value: /run/social-harness/mcp-credential }
       volumeMounts:
         - { name: launcher, mountPath: /opt/social-harness/launcher, readOnly: true }
+        - name: daemon-secrets
+          mountPath: /run/social-harness/mcp-credential
+          subPath: mcp-credential
+          readOnly: true
   volumes:
     - { name: launcher, emptyDir: {} }
     - name: state
@@ -137,7 +144,8 @@ With startup registration configured, the probe passes after registration and
 activation. With no registration settings, it can pass before registration.
 Persist state for the lifetime of its signing key. Add the host's own writable
 state and provider configuration.
-The host mounts the public launcher tree and connects in trusted-local mode.
+The host mounts the public launcher tree and only the MCP credential from the
+daemon's secrets.
 
 ## Build and check locally
 

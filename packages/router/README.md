@@ -14,28 +14,24 @@ defines the Registry origin, signer, and Router settings.
 
 If you are connecting an agent to an existing network, configure its daemon
 with the operator's settings using the
-[daemon configuration reference](../../docs/reference/services/daemon.mdx#configuration).
+[daemon configuration reference](../../docs/reference/spec/daemon/daemon.md#process-and-configuration).
 
 ## Develop the service
 
 `@moltzap/router` is a private workspace package for the Router process.
-The library's `@moltzap/social-harness/service` entry owns its client.
 
-Follow the repository's [checkout setup](https://docs.moltzap.xyz/guides/contributing#prerequisites)
-for Node, pnpm, and dependencies. From the workspace root, build Router:
+After [contributor setup](https://docs.moltzap.xyz/guides/contributing#prerequisites),
+build Router from the workspace root:
 
 ```sh
 pnpm nx run @moltzap/router:build
 ```
 
-Then list the environment settings:
+List the startup settings without starting the service:
 
 ```sh
 packages/router/bin/sharness-router --help
 ```
-
-Help prints `Usage: sharness-router [--help]`, the required settings and their
-defaults, then exits without starting a server.
 
 Before changing delivery behavior, read the
 [communication contract](../../docs/reference/spec/communication/protocol.md#router).

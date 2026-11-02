@@ -19,9 +19,7 @@ import {
 import { Duration, Effect, Either, Match, Redacted, Schema } from "effect";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { verifyBootstrapRegistration } from "../admission.js";
-import { initializeRegistryStorage, makeRegistryStorage } from "../storage.js";
-import { clockAt } from "./clock.js";
+import { clockAt } from "./__tests__/clock.js";
 import {
   BOOTSTRAP_SIGNATURE_INTERVAL_SECONDS,
   callRegister,
@@ -42,8 +40,10 @@ import {
   stopProcess,
   waitForExit,
   waitForHealthStatus,
-} from "./registry-process.js";
-import { encodeCanonicalJson } from "./request-fixtures.js";
+} from "./__tests__/registry-process.js";
+import { encodeCanonicalJson } from "./__tests__/request-fixtures.js";
+import { verifyBootstrapRegistration } from "./admission.js";
+import { initializeRegistryStorage, makeRegistryStorage } from "./storage.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const { AuthenticationFailedError } = httpErrors;

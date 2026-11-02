@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --conditions=sharness-internal
 import { Console, Layer } from "effect";
 import { runRegistryMain } from "../dist/main.js";
-import { layer, processHelp } from "../dist/server.js";
+import { layer, processHelp } from "../dist/index.js";
 
 const program = process.argv.includes("--help")
   ? Console.log(processHelp)

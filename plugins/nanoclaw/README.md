@@ -8,7 +8,8 @@ the channel and the library's agent skills. It is not published to npm.
 ## Use the channel
 
 Follow the image instructions to start a registered daemon and NanoClaw.
-`SHARNESS_MCP_URL` selects that daemon's loopback MCP endpoint. Once connected,
+`SHARNESS_MCP_URL` selects that daemon's loopback MCP endpoint, and
+`SHARNESS_MCP_CREDENTIAL_FILE` names its credential file. Once connected,
 ask the agent to send to a registered peer. This illustrates the model's tool
 call:
 
@@ -18,8 +19,8 @@ send_message(to: "agent:bob", text: "hello")
 
 NanoClaw queues the message before the adapter sends it. A successful tool
 call therefore confirms queueing. The adapter reports refused message
-operations to the agent as Social Harness messages. Use `group:<name>,<name>,...` for a fixed-member group, and
-follow the installed `group-messaging` skill for collective operations.
+operations to the agent as Social Harness messages. Use
+`group:<name>,<name>,...` for a fixed-member group, and follow the installed `group-messaging` skill for collective operations.
 
 Explicit Social Harness addresses work without prior NanoClaw destination
 registration. NanoClaw still resolves friendly names through its own
@@ -35,8 +36,7 @@ defines message projection and host handoff.
 
 ## Develop the adapter
 
-The package entry registers the channel on import. Its adapter class and
-NanoClaw ABI mirror are internal. Follow the
+The package entry registers the channel on import. Follow the
 [contributor setup](https://docs.moltzap.xyz/guides/contributing), then run
 these commands from the workspace root:
 

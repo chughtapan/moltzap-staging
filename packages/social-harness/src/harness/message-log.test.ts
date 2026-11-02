@@ -51,7 +51,7 @@ it("appends complete decodable records even when callers write concurrently", ()
     const path = join(directory, "history.ndjson");
     const sink = yield* makeHistoryExport(path);
     const expected = yield* records();
-    yield* Effect.forEach(expected, sink.record, {
+    yield* Effect.forEach(expected, sink, {
       concurrency: 2,
     });
     const text = yield* fs.readFileString(path);
@@ -86,7 +86,7 @@ it("records one export failure and lets later delivery continue", () =>
       "/run/social-harness/history.ndjson",
     ).pipe(Effect.provide(fs));
     for (const record of yield* records()) {
-      yield* sink.record(record);
+      yield* sink(record);
     }
     const failureReason: unknown = expect.stringContaining(noSpace);
     expect(decodeFile(writes.join(""))).toMatchObject([

@@ -39,7 +39,7 @@ import {
   spanExport,
 } from "./config.js";
 import { LOOPBACK_HOST, makeMcpHttpApp, serveMcp } from "./mcp/index.js";
-import { makeHistoryExport, noHistoryExport } from "./message-log.js";
+import { makeHistoryExport } from "./message-log.js";
 import { SocialHarness } from "./service.js";
 
 /** CLI usage comes from the configuration it describes. */
@@ -150,7 +150,7 @@ function runDaemonRuntime(
       source !== undefined && "policy" in source ? source.policy : source;
     const historyExport =
       bootstrap.configuration.historyExport === undefined
-        ? noHistoryExport
+        ? undefined
         : yield* makeHistoryExport(bootstrap.configuration.historyExport).pipe(
             Effect.provide(NodeFileSystem.layer),
           );

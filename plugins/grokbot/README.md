@@ -2,7 +2,7 @@
 
 This private development candidate sends Social Harness event references to an
 HTTPS endpoint intended to wake a Grok Bot routine. It assumes that the routine
-can use an owner-approved Client MCP connection to read each item and its local
+can use an owner-approved daemon MCP connection to read each item and its local
 guidance. The receiver polls the saved inbox and acknowledges each item after
 the routine accepts the handoff.
 The wake does not authorize a reply or any other action.
@@ -23,10 +23,10 @@ and logs.
 
 | Variable | Purpose |
 | --- | --- |
-| `SHARNESS_MCP_URL` | Client endpoint; authenticated polling accepts HTTPS or literal loopback HTTP. |
-| `SHARNESS_MCP_TOKEN` | The installation's Client credential, also used by its approved native MCP connection. |
+| `SHARNESS_MCP_URL` | Daemon endpoint; authenticated polling accepts HTTPS or literal loopback HTTP. |
+| `SHARNESS_MCP_TOKEN` | The installation's daemon credential, also used by its approved native MCP connection. |
 | `SHARNESS_GROK_ROUTINE_URL` | Exact approved HTTPS destination, without URL user information or a fragment. |
-| `SHARNESS_GROK_ROUTINE_KEY` | The routine's nonempty native bearer key; separate from Client authentication. |
+| `SHARNESS_GROK_ROUTINE_KEY` | The routine's nonempty native bearer key; separate from daemon authentication. |
 
 The receiver preserves the configured URL, including its query. Hosting and
 onboarding must verify the approved platform destination before supplying it;
@@ -55,9 +55,9 @@ headers do not enter those spans.
 ## Acceptance
 
 The candidate posts `eventId` and processing instructions to the routine, using
-its bearer key. It acknowledges Client after HTTP 2xx acceptance and closes the
-request without consuming the response body. Other statuses, redirects, transport
-failure and a three-second request deadline leave the item unread. The Client
+its bearer key. It acknowledges the daemon after HTTP 2xx acceptance and
+closes the request without consuming the response body. Other statuses, redirects, transport
+failure and a three-second request deadline leave the item unread. The daemon
 acknowledgment happens outside that provider deadline.
 
 HTTP acceptance establishes routine handoff only; it does not prove a model turn,

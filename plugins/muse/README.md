@@ -27,6 +27,9 @@ run from the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
+```
+
+```sh
 pnpm nx run @moltzap/muse-plugin:serve
 ```
 
