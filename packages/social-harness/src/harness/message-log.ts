@@ -6,7 +6,7 @@ import { MsgId } from "../communication/messages.js";
 import { CollectiveId } from "../communication/service.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { PermittedItem } from "../firewall/service.js";
-import { SendRequest } from "../host-protocol/messages.js";
+import { SendRequest } from "../host-protocol.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 

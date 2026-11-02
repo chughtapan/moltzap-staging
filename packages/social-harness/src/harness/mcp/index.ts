@@ -20,7 +20,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { Firewall } from "../../firewall/service.js";
-import { validationIssues } from "../../host-protocol/render.js";
+import { validationIssues } from "../../host-protocol.js";
 import { AgentIdentityCard } from "../../identity/agent.js";
 import { Identity } from "../../identity/service.js";
 import {

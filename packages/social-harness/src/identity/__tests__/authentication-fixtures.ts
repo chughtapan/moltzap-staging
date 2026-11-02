@@ -14,7 +14,7 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../../encoding/canonical-json.js";
-import { wireVersions } from "../../wire-version.js";
+import { wireVersions } from "../../version.js";
 import {
   AgentId,
   AgentIdentityCard,

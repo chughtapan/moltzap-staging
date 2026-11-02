@@ -36,7 +36,7 @@ import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION_PATTERN,
   WireVersions,
-} from "../wire-version.js";
+} from "../version.js";
 import {
   AgentId,
   type VerifiedAgentIdentityCard,

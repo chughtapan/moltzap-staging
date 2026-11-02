@@ -11,23 +11,21 @@ export {
 } from "./harness/mcp/contracts.js";
 /** Clients distinguish a refused send from an unknown outcome using this decoder. */
 export { decodeHarnessSendErrorData } from "./harness/mcp/contracts.js";
-/** Message text, destinations and collective options accepted by the daemon. */
-export { SendRequest } from "./host-protocol/messages.js";
-/** Native hosts can translate a text command through the same request grammar. */
-export { MessageTextError, parseMessageText } from "./host-protocol/render.js";
-/** Formats local advice separately from peer content. */
-export {
-  type GuidanceBodyOrigin,
-  renderLocalGuidance,
-} from "./host-protocol/render.js";
-/** Formats delivered messages and collective results for hosts. */
+/** Send requests, accepted-work receipts and agent-facing text for host integrations. */
 export {
   groupMembers,
+  type GuidanceBodyOrigin,
+  MessageTextError,
+  parseMessageText,
   renderCollectiveRequest,
   renderCollectiveResult,
   renderContent,
+  renderLocalGuidance,
   replyAddress,
-} from "./host-protocol/render.js";
+  SendRequest,
+  type SendResult,
+  SendResultSchema,
+} from "./host-protocol.js";
 /** Results and policy feedback that a host may show its agent. */
 export {
   CollectiveResult,
@@ -40,8 +38,6 @@ export {
 export { FirewallPolicyError } from "./firewall/rules.js";
 /** Guidance contains only the source text local policy permits the agent to read. */
 export type { CheckedGuidance } from "./firewall/check.js";
-/** Accepted sends have one receipt shape for messages, replies and questions. */
-export { type SendResult, SendResultSchema } from "./host-protocol/messages.js";
 /** Inbox items retain their content and token after acknowledgment. */
 export {
   DeliveryAcknowledgeError,
@@ -114,9 +110,7 @@ export {
   SignedMessage,
   type VerifiedSignedMessage,
 } from "./identity/envelope.js";
-/** Wire versions emitted and accepted by this release. */
-export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./wire-version.js";
-/** Package version reported by the daemon. */
-export { packageVersion } from "./release.js";
+/** Installed package version and the wire versions this release emits and accepts. */
+export { LIVE_WIRE_VERSIONS, packageVersion, WIRE_VERSION } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */
 export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";

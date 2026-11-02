@@ -17,7 +17,7 @@ import {
   type VerifiedAgentIdentityCard,
 } from "../identity/agent.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
-import { WIRE_VERSION } from "../wire-version.js";
+import { WIRE_VERSION } from "../version.js";
 
 /** A Registry signing key pair, as `generateKeyPairSync("ed25519")` returns. */
 export interface RegistryKeyPair {

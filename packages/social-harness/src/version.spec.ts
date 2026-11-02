@@ -3,7 +3,7 @@
 import { effect as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { expect } from "vitest";
-import { WIRE_VERSION, WireVersions } from "./wire-version.js";
+import { WIRE_VERSION, WireVersions } from "./version.js";
 
 const otherVersion = `${WIRE_VERSION}0`;
 

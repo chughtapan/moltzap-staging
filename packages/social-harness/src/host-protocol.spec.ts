@@ -1,25 +1,249 @@
-/** @file Hosts parse native sends and preserve attribution in model text. */
+/** @file Host requests select conversations and preserve attribution in agent text. */
 
-import { Either, Encoding, FastCheck as fc, Schema } from "effect";
-import { describe, expect, it } from "vitest";
-import type { CheckedGuidance } from "../firewall/check.js";
-import { digest, testAgentCard } from "../__tests__/agents.js";
-import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
+import { live as effectIt, it } from "@effect/vitest";
+import { Effect, Either, Encoding, FastCheck as fc, Schema } from "effect";
+import { describe, expect } from "vitest";
+import type { CheckedGuidance } from "./firewall/check.js";
+import { digest, testAgentCard } from "./__tests__/agents.js";
+import { collectiveOperationId } from "./communication/__tests__/request-ids.js";
 import {
   answerFieldsText,
   MAXIMUM_DEADLINE_SECONDS,
+  maximumMembers,
   MessageAddressInput,
-} from "../communication/messages.js";
-import { FirewallRefusal, PermittedItem } from "../firewall/service.js";
+} from "./communication/messages.js";
+import { FirewallRefusal, PermittedItem } from "./firewall/service.js";
+import { canonicalMessageAddress } from "./host-protocol.js";
 import {
   type MessageTextError,
   parseMessageText,
   renderCollectiveRequest,
-  renderCollectiveRequestBody,
   renderCollectiveResult,
   renderLocalGuidance,
-  renderOutcome,
-} from "./render.js";
+  SendRequest,
+} from "./index.js";
+
+const localAgentName = testAgentCard("agent:agent-1").agentName;
+
+effectIt.each([
+  { input: "agent:agent-2", expected: "agent:agent-2" },
+  { input: "group:agent-2", expected: "agent:agent-2" },
+  { input: "group:agent-1,agent-2", expected: "agent:agent-2" },
+  {
+    input: "group:agent-2,agent-10",
+    expected: "group:agent-1,agent-10,agent-2",
+  },
+])("canonicalizes $input as $expected", ({ input, expected }) =>
+  Effect.gen(function* () {
+    const to = yield* Schema.decodeUnknown(MessageAddressInput)(input);
+    expect((yield* canonicalMessageAddress(to, localAgentName)).address).toBe(
+      expected,
+    );
+  }),
+);
+
+const oversized = Array.from(
+  Array(maximumMembers).keys(),
+  (index) => `remote-${String(index)}`,
+).join(",");
+
+effectIt.each([
+  "agent:agent-1",
+  "group:agent-1",
+  "group:agent-2,agent-2",
+  `group:${oversized}`,
+])("refuses invalid membership in %s", (input) =>
+  Effect.gen(function* () {
+    const to = yield* Schema.decodeUnknown(MessageAddressInput)(input);
+    const rejected = yield* canonicalMessageAddress(to, localAgentName).pipe(
+      Effect.flip,
+    );
+    expect(rejected).toMatchObject({ reason: "membership-invalid" });
+  }),
+);
+
+const decodingFails = (
+  schema: Schema.Schema.AnyNoContext,
+  value: unknown,
+): boolean =>
+  Either.match(Schema.decodeUnknownEither(schema)(value), {
+    onLeft: () => true,
+    onRight: () => false,
+  });
+
+// @agent-code-guard/regression-only: SendRequest is a closed operation boundary with no host retry identity.
+describe("public send input", () => {
+  it("decodes a send without a collective operation", () => {
+    const input = { to: "agent:bob-agent", text: "Hello" };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("decodes an explicit multicast operation", () => {
+    const input = {
+      to: "agent:bob-agent",
+      text: "Hello",
+      collective: { op: "multicast" },
+    };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("decodes a collective operation that omits op", () => {
+    const input = { to: "agent:bob-agent", text: "Hello", collective: {} };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("rejects an operation this endpoint does not define", () => {
+    expect(
+      decodingFails(SendRequest, {
+        to: "agent:bob-agent",
+        text: "Hello",
+        collective: { op: "broadcast" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects unexpected fields", () => {
+    const input = { to: "agent:bob-agent", text: "Hello", extra: true };
+    expect(decodingFails(SendRequest, input)).toBe(true);
+  });
+});
+
+const collectiveId = collectiveOperationId(
+  testAgentCard("agent:alice").agentId,
+  3,
+);
+const slotSchema = {
+  type: "object",
+  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
+  required: ["slot"],
+};
+
+// @agent-code-guard/regression-only: gather inputs pin the collective send grammar.
+describe("public gather input", () => {
+  it("decodes a gather with a deadline in seconds and a schema", () => {
+    const input = {
+      to: "group:bob-agent,carol-agent",
+      text: "Which day?",
+      collective: { op: "gather", deadline: 300, requestedSchema: slotSchema },
+    };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("accepts a gather deadline of up to 30 days", () => {
+    const input = {
+      to: "agent:bob-agent",
+      text: "Which day?",
+      collective: {
+        op: "gather",
+        deadline: 2_592_000,
+        requestedSchema: slotSchema,
+      },
+    };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it.each([
+    { case: "zero", deadline: 0 },
+    { case: "fractional", deadline: 1.5 },
+    { case: "beyond 30 days", deadline: 2_592_001 },
+  ])("rejects a $case gather deadline", ({ deadline }) => {
+    expect(
+      decodingFails(SendRequest, {
+        to: "agent:bob-agent",
+        text: "Which day?",
+        collective: { op: "gather", deadline, requestedSchema: slotSchema },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a gather without a requested schema", () => {
+    expect(
+      decodingFails(SendRequest, {
+        to: "agent:bob-agent",
+        text: "Which day?",
+        collective: { op: "gather", deadline: 60 },
+      }),
+    ).toBe(true);
+  });
+});
+
+// @agent-code-guard/regression-only: all_gather inputs pin the group collective send grammar.
+describe("public all_gather input", () => {
+  it("decodes an all_gather with a deadline in seconds and a schema", () => {
+    const input = {
+      to: "group:bob-agent,carol-agent",
+      text: "Which day?",
+      collective: {
+        op: "all_gather",
+        deadline: 300,
+        requestedSchema: slotSchema,
+      },
+    };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("rejects an all_gather deadline beyond 30 days", () => {
+    expect(
+      decodingFails(SendRequest, {
+        to: "group:bob-agent,carol-agent",
+        text: "Which day?",
+        collective: {
+          op: "all_gather",
+          deadline: 2_592_001,
+          requestedSchema: slotSchema,
+        },
+      }),
+    ).toBe(true);
+  });
+});
+
+// @agent-code-guard/regression-only: response inputs pin how a member answers a collective request.
+describe("public collective response input", () => {
+  it("rejects a response that omits its request identity", () => {
+    const input = {
+      to: "agent:bob-agent",
+      collectiveResponse: { action: "accept", content: { slot: "mon" } },
+    };
+
+    expect(decodingFails(SendRequest, input)).toBe(true);
+  });
+
+  it("decodes a response that names the request it answers", () => {
+    const input = {
+      to: "agent:bob-agent",
+      collectiveResponse: { operationId: collectiveId, action: "decline" },
+    };
+
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
+  });
+
+  it("rejects a response without a conversation", () => {
+    expect(
+      decodingFails(SendRequest, {
+        collectiveResponse: { action: "decline" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects content on a decline", () => {
+    expect(
+      decodingFails(SendRequest, {
+        to: "agent:bob-agent",
+        collectiveResponse: {
+          operationId: collectiveId,
+          action: "decline",
+          content: { slot: "mon" },
+        },
+      }),
+    ).toBe(true);
+  });
+});
 
 const requestId = collectiveOperationId(testAgentCard("agent:bob").agentId);
 
@@ -29,14 +253,6 @@ const withheld = {
   checkId,
   reason: "rule-violation",
 } as const;
-
-function namesTheCheckThatWithheldAnAnswer() {
-  const line = renderOutcome(withheld);
-
-  expect(line).toContain(checkId);
-  expect(line).toContain(withheld.reason);
-  expect(line).not.toContain(renderOutcome({ kind: "declined" }));
-}
 
 function marksAWithheldQuestionInTheHeading() {
   const item = withheldResult();
@@ -48,8 +264,8 @@ function marksAWithheldQuestionInTheHeading() {
 
   expect(heading).toContain(checkId);
   expect(lines).toEqual([
-    `- agent:bob: ${renderOutcome(withheld)}`,
-    `- agent:carol: ${renderOutcome({ kind: "declined" })}`,
+    `- agent:bob: answer withheld: local policy held it (${withheld.reason}, check ${checkId})`,
+    "- agent:carol: declined",
   ]);
 }
 
@@ -84,9 +300,7 @@ function keepsPeerTextOnItsOwnLine() {
   const lines = renderCollectiveResult(item).split("\n");
 
   expect(lines).toHaveLength(1 + item.outcomes.length);
-  expect(lines.at(-1)).toBe(
-    `- agent:carol: ${renderOutcome({ kind: "declined" })}`,
-  );
+  expect(lines.at(-1)).toMatch(/^- agent:carol: declined$/u);
 }
 
 function withheldResult() {
@@ -105,10 +319,6 @@ function withheldResult() {
 }
 
 describe("withheld result text", () => {
-  it(
-    "names the check and reason that withheld an answer, and no answer text",
-    namesTheCheckThatWithheldAnAnswer,
-  );
   it(
     "marks a withheld question in the heading and keeps one line per member",
     marksAWithheldQuestionInTheHeading,
@@ -155,7 +365,11 @@ it("quotes a guided question and form while leaving endpoint answer instructions
   });
   const [quoted, answer, send] =
     rendered.split("Peer message (quoted content):\n")[1]?.split("\n") ?? [];
-  expect(JSON.parse(quoted ?? '""')).toBe(renderCollectiveRequestBody(item));
+  const body: unknown = JSON.parse(quoted ?? '""');
+  expect(body).toContain(item.message.operation.question);
+  expect(body).toContain(
+    JSON.stringify(item.message.operation.requestedSchema),
+  );
   const escapedDay = "\\u003cday\\u003e";
   expect(quoted).toContain(escapedDay);
   expect(answer).toContain(
@@ -375,11 +589,6 @@ it("renders settled registered advice without inventing an expectation", () => {
 const group = Schema.decodeUnknownSync(MessageAddressInput)(
   "group:alice,bob,carol",
 );
-const slotSchema = {
-  type: "object",
-  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
-  required: ["slot"],
-};
 const OPERATION_KEYS = ["gather", "all_gather", "action"];
 
 /** Texts that read as plain text, each for a different reason. */
@@ -463,15 +672,15 @@ const REFUSALS: ReadonlyArray<
   ],
 ];
 
-describe("message text", () => {
-  it("reads any text without an operation key as a multicast", readsPlainText);
+const withoutOperationKey = fc
+  .dictionary(fc.string(), fc.jsonValue())
+  .filter((value) => !OPERATION_KEYS.some((key) => Object.hasOwn(value, key)))
+  .map((value) => JSON.stringify(value));
+
+describe("parseMessageText", () => {
   it.each(PLAIN_TEXTS)("reads %j as a multicast of the whole text", (text) => {
     expect(parsed(text)).toEqual({ to: group, text });
   });
-  it(
-    "reads a gather or all_gather as its question, deadline and form",
-    readsQuestions,
-  );
   it("reads every answer action", readsAnswers);
   it.each(REFUSALS)(
     "refuses %j as a %s naming %s",
@@ -486,44 +695,37 @@ describe("message text", () => {
     "refuses plain text that is not well-formed Unicode",
     refusesIllFormedText,
   );
-});
-
-function readsPlainText() {
-  const withoutOperationKey = fc
-    .dictionary(fc.string(), fc.jsonValue())
-    .filter((value) => !OPERATION_KEYS.some((key) => Object.hasOwn(value, key)))
-    .map((value) => JSON.stringify(value));
-  fc.assert(
-    fc.property(fc.oneof(fc.string(), withoutOperationKey), (text) => {
+  it.prop(
+    "should read text without an operation key as a multicast",
+    [fc.oneof(fc.string(), withoutOperationKey)],
+    ([text]) => {
       fc.pre(!startsAnOperation(text));
       expect(parsed(text)).toEqual({ to: group, text });
-    }),
+    },
   );
-}
-
-function readsQuestions() {
-  fc.assert(
-    fc.property(
+  it.prop(
+    "should read a gather or all_gather as its question, deadline and form",
+    [
       fc.constantFrom("gather" as const, "all_gather" as const),
       fc.string(),
       fc.integer({ min: 1, max: MAXIMUM_DEADLINE_SECONDS }),
       fc.boolean(),
-      (op, question, deadline, padded) => {
-        const json = JSON.stringify({
-          [op]: question,
-          deadline,
-          requestedSchema: slotSchema,
-        });
+    ],
+    ([op, question, deadline, padded]) => {
+      const json = JSON.stringify({
+        [op]: question,
+        deadline,
+        requestedSchema: slotSchema,
+      });
 
-        expect(parsed(padded ? `\n  ${json}\n` : json)).toEqual({
-          to: group,
-          text: question,
-          collective: { op, deadline, requestedSchema: slotSchema },
-        });
-      },
-    ),
+      expect(parsed(padded ? `\n  ${json}\n` : json)).toEqual({
+        to: group,
+        text: question,
+        collective: { op, deadline, requestedSchema: slotSchema },
+      });
+    },
   );
-}
+});
 
 function readsAnswers() {
   expect(

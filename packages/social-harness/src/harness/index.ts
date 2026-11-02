@@ -26,8 +26,7 @@ import {
 import { Firewall, type FirewallOptions } from "../firewall/service.js";
 import { Registry } from "../identity/registry.js";
 import { Identity, type RegistrationError } from "../identity/service.js";
-import { packageVersion } from "../release.js";
-import { WIRE_VERSION } from "../wire-version.js";
+import { packageVersion, WIRE_VERSION } from "../version.js";
 import {
   type DaemonBootstrap,
   DaemonConfigurationError,

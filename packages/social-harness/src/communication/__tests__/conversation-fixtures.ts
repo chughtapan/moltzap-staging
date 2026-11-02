@@ -31,7 +31,7 @@ import {
   type SignedMessageVerificationError,
 } from "../../identity/envelope.js";
 import { AgentPublicKey } from "../../identity/keys.js";
-import { WIRE_VERSION } from "../../wire-version.js";
+import { WIRE_VERSION } from "../../version.js";
 import {
   type Content,
   messageFromIntent,

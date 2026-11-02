@@ -17,7 +17,7 @@ import {
   type VerifiedAgentIdentityCard,
 } from "../../identity/agent.js";
 import { SignedMessage } from "../../identity/envelope.js";
-import { WIRE_VERSION } from "../../wire-version.js";
+import { WIRE_VERSION } from "../../version.js";
 import { protocolEvidence, stagedRecord } from "../conversations/log.js";
 import { Message, messageFromIntent, mintMsgId } from "../messages.js";
 import {

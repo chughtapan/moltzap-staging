@@ -36,7 +36,7 @@ import {
   LocalGuidance,
   PermittedItem,
 } from "../../firewall/service.js";
-import { SendRequest, SendResultSchema } from "../../host-protocol/messages.js";
+import { SendRequest, SendResultSchema } from "../../host-protocol.js";
 import {
   AgentIdentityCard,
   AgentName,

@@ -19,8 +19,8 @@
       "reason": "Cryptographic key capabilities"
     },
     {
-      "file": "wire-version.ts",
-      "reason": "Wire compatibility policy"
+      "file": "version.ts",
+      "reason": "Package version and protocol compatibility"
     },
     {
       "file": "identity/service.ts",
@@ -87,16 +87,8 @@
       "reason": "Canonical MCP tool contracts"
     },
     {
-      "file": "host-protocol/messages.ts",
-      "reason": "Typed send requests"
-    },
-    {
-      "file": "host-protocol/render.ts",
-      "reason": "Host-independent content rendering"
-    },
-    {
-      "file": "release.ts",
-      "reason": "Release metadata"
+      "file": "host-protocol.ts",
+      "reason": "Host request grammar and agent text"
     },
     {
       "file": "tracing.ts",
@@ -189,7 +181,7 @@
       "name": "harness",
       "roots": [
         "src/harness",
-        "src/host-protocol",
+        "src/host-protocol.ts",
         "src/vendor"
       ],
       "entrypoints": [
@@ -197,21 +189,10 @@
         "src/harness/service.ts",
         "src/harness/inbox.ts",
         "src/harness/message-log.ts",
-        "src/host-protocol/render.ts",
-        "src/host-protocol/messages.ts",
+        "src/host-protocol.ts",
         "src/harness/mcp/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
-    },
-    {
-      "name": "release",
-      "roots": [
-        "src/release.ts"
-      ],
-      "entrypoints": [
-        "src/release.ts"
-      ],
-      "reason": "Release metadata"
     },
     {
       "name": "tracing",
@@ -224,14 +205,14 @@
       "reason": "Shared work progress observation"
     },
     {
-      "name": "wire-version",
+      "name": "version",
       "roots": [
-        "src/wire-version.ts"
+        "src/version.ts"
       ],
       "entrypoints": [
-        "src/wire-version.ts"
+        "src/version.ts"
       ],
-      "reason": "Shared protocol compatibility across services and layers"
+      "reason": "Package identity and shared protocol compatibility"
     },
     {
       "name": "launcher",

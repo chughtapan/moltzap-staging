@@ -49,7 +49,7 @@ import {
   canonicalMessageAddress,
   type SendRequest,
   type SendResult,
-} from "../host-protocol/messages.js";
+} from "../host-protocol.js";
 import {
   type AgentCard,
   agentCardOf,
@@ -75,7 +75,7 @@ import {
 } from "./inbox.js";
 
 /** Host input is resolved before a communication value is constructed. */
-export type { SendRequest } from "../host-protocol/messages.js";
+export type { SendRequest } from "../host-protocol.js";
 /** Start a live conversation-list traversal by omitting cursor. */
 export interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */

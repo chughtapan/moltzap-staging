@@ -1,8 +1,9 @@
-/** @file Native message parsing and model text preserve peer attribution and local instructions. */
+/** @file Parses host requests and formats messages for the agent. */
 
 import {
   Array,
   Data,
+  Effect,
   Either,
   Option,
   type ParseResult,
@@ -10,23 +11,118 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
-import type { ValidationIssue } from "../communication/errors.js";
-import type { Message, Request } from "../communication/service.js";
-import type { CheckedGuidance } from "../firewall/check.js";
-import type { LocalGuidance, PermittedItem } from "../firewall/service.js";
+import type { LocalGuidance, PermittedItem } from "./firewall/service.js";
+import { SendError, type ValidationIssue } from "./communication/errors.js";
 import {
+  AGENT_ADDRESS_PREFIX,
+  AgentAddress,
   agentAddressOf,
   type Content,
+  GROUP_ADDRESS_PREFIX,
   GroupAddress,
-  type MessageAddressInput,
-} from "../communication/messages.js";
-import { compareAscii } from "../encoding/identifier.js";
+  maximumMembers,
+  MessageAddressInput,
+  MsgId,
+  wellFormedString,
+} from "./communication/messages.js";
 import {
-  AnswerSendRequest,
+  AcceptResponse,
+  CollectiveId,
+  DeadlineSeconds,
+  DeclineResponse,
+  type Message,
+  type Request,
+  RequestedSchema,
+} from "./communication/service.js";
+import { exactStruct } from "./encoding/canonical-json.js";
+import { compareAscii } from "./encoding/identifier.js";
+import {
+  type CheckedGuidance,
+  checkedGuidanceSchema,
+} from "./firewall/check.js";
+import { MessageAddress } from "./harness/inbox.js";
+import { AgentName } from "./identity/agent.js";
+
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
+
+const multicast = exactStruct({
+  op: Schema.optionalWith(Schema.Literal("multicast"), { exact: true }),
+});
+const question = exactStruct({
+  op: Schema.Literal("gather", "all_gather"),
+  deadline: DeadlineSeconds,
+  requestedSchema: RequestedSchema,
+});
+const response = Schema.Union(AcceptResponse, DeclineResponse);
+
+const MessageSendRequest = exactStruct({
+  to: MessageAddressInput,
+  text: wellFormedString,
+  collective: Schema.optionalWith(multicast, { exact: true }),
+});
+const QuestionSendRequest = exactStruct({
+  to: MessageAddressInput,
+  text: wellFormedString,
+  collective: question,
+});
+const AnswerSendRequest = exactStruct({
+  to: MessageAddressInput,
+  collectiveResponse: response,
+});
+/** Host addresses are resolved by SocialHarness before communication preparation. */
+export const SendRequest = Schema.Union(
   MessageSendRequest,
   QuestionSendRequest,
-  type SendRequest,
-} from "./messages.js";
+  AnswerSendRequest,
+).annotations({ identifier: "SendRequest" });
+/** Question deadlines include policy assessment time.
+ * @useDeclaredType
+ */
+export type SendRequest = typeof SendRequest.Type;
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */
+
+/* eslint-disable @typescript-eslint/naming-convention -- Effect schemas share the public names of their derived value types. */
+
+/** Accepted ordinary messages, replies and questions share one receipt shape. */
+export const SendResultSchema = Schema.Struct({
+  id: Schema.Union(MsgId, CollectiveId),
+  address: MessageAddress,
+  guidance: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
+}).annotations({ identifier: "SendResult" });
+
+/** Accepted work continues independently of the caller's lifetime. */
+export type SendResult = typeof SendResultSchema.Type;
+
+/* eslint-enable @typescript-eslint/naming-convention -- Restore ordinary symbol naming. */
+
+/** A destination in canonical form, before any Registry lookup. */
+type CanonicalMessageAddress =
+  | {
+      readonly kind: "direct";
+      readonly address: AgentAddress;
+      readonly remoteName: AgentName;
+    }
+  | {
+      readonly kind: "group";
+      readonly address: GroupAddress;
+      readonly memberNames: readonly AgentName[];
+    };
+
+/**
+ * Canonicalizes a destination before Registry lookup. Groups include the local
+ * agent, reject duplicate names, and sort names in unsigned ASCII order.
+ * One peer becomes a direct address. Larger groups contain 3 to `maximumMembers`
+ * agents. Invalid names and membership return `invalid-address` or
+ * `membership-invalid`.
+ */
+export function canonicalMessageAddress(
+  to: MessageAddressInput,
+  localAgentName: AgentName,
+): Effect.Effect<CanonicalMessageAddress, SendError> {
+  return to.startsWith(AGENT_ADDRESS_PREFIX)
+    ? canonicalDirect(to, localAgentName)
+    : canonicalGroup(to, localAgentName);
+}
 
 type CollectiveRequestItem = Extract<
   PermittedItem,
@@ -70,7 +166,11 @@ export function renderCollectiveRequest(
   howToAnswer: string,
   guidance?: LocalGuidance,
 ): string {
-  const body = renderCollectiveRequestBody(item);
+  const body = renderCollectiveQuestion({
+    author: item.message.author,
+    recipients: item.message.recipients,
+    ...item.message.operation,
+  });
   const operationId = JSON.stringify(item.message.operation.operationId);
   const answerInstructions = [
     `Answer with: {"action":"accept","operationId":${operationId},"content":{...}} where content matches the form, or {"action":"decline","operationId":${operationId}}`,
@@ -83,20 +183,6 @@ export function renderCollectiveRequest(
     renderLocalGuidance(guidance, { text: body, origin: "peer" }),
     ...answerInstructions,
   ].join("\n");
-}
-
-/**
- * Renders the peer question, author, deadline and response form checked by the
- * firewall. Use {@link renderCollectiveRequest} to add the host's answer instructions.
- */
-export function renderCollectiveRequestBody(
-  item: CollectiveRequestItem,
-): string {
-  return renderCollectiveQuestion({
-    author: item.message.author,
-    recipients: item.message.recipients,
-    ...item.message.operation,
-  });
 }
 
 /**
@@ -129,32 +215,12 @@ export function replyAddress(message: Pick<Message, "author" | "recipients">) {
       );
 }
 
-/** Renders a member's outcome as the firewall checks it and the host displays it. */
-export function renderOutcome(outcome: MemberOutcome): string {
-  switch (outcome.kind) {
-    case "answered":
-      return `answered ${JSON.stringify(outcome.content)}`;
-    case "declined":
-      return "declined";
-    case "invalid":
-      return `answered outside the form (${outcome.reason})`;
-    case "no-answer":
-      return "no answer";
-    case "withheld":
-      return `answer withheld: ${renderWithheld(outcome)}`;
-    default: {
-      const exhaustive: never = outcome;
-      return exhaustive;
-    }
-  }
-}
-
 /** Attribution of the body quoted alongside local instructions. */
 export type GuidanceBodyOrigin = "peer" | "endpoint";
 
 /**
  * Renders registered local instructions separately from quoted content and its
- * peer or endpoint attribution. Composition identifiers stay out of model text.
+ * peer or endpoint attribution.
  */
 export function renderLocalGuidance(
   guidance: LocalGuidance,
@@ -233,23 +299,36 @@ const decodeJsonText = Schema.decodeUnknownOption(
   Schema.parseJson(Schema.Unknown),
 );
 
-const jsonObject = (text: string) =>
-  decodeJsonText(text).pipe(Option.filter(Predicate.isRecord));
-
 /**
  * Parses ordinary text or a structured question or answer. `to` identifies the
  * recipients, or the conversation containing the request an answer names.
  * Invalid operations return an error identifying each failing field.
  */
-export const parseMessageText = (
+export function parseMessageText(
   to: MessageAddressInput,
   text: string,
-): Either.Either<SendRequest, MessageTextError> =>
-  Option.match(jsonObject(text), {
-    onNone: () => sendInput("message", { to, text }),
-    onSome: (value) =>
-      statedOperation(to, value) ?? sendInput("message", { to, text }),
-  });
+): Either.Either<SendRequest, MessageTextError> {
+  const parsed = decodeJsonText(text);
+  if (Option.isSome(parsed) && Predicate.isRecord(parsed.value)) {
+    const value = parsed.value;
+    const op = COLLECTING_OPERATIONS.find((key) => Object.hasOwn(value, key));
+    if (op !== undefined) {
+      const { [op]: question, ...details } = value;
+      return decodeText(op, QuestionSendRequest, {
+        to,
+        text: question,
+        collective: { ...details, op },
+      });
+    }
+    if (Object.hasOwn(value, "action")) {
+      return decodeText("answer", AnswerSendRequest, {
+        to,
+        collectiveResponse: value,
+      });
+    }
+  }
+  return decodeText("message", MessageSendRequest, { to, text });
+}
 
 const MAXIMUM_VALIDATION_ISSUES = 20;
 
@@ -264,7 +343,99 @@ export function validationIssues(error: ParseResult.ParseError) {
   return issues;
 }
 
-/** Incoming and outgoing assessment use the same question text and form. */
+function invalidAddress(): SendError {
+  return new SendError({ reason: "invalid-address" });
+}
+
+function invalidMembership(detail: string): SendError {
+  return new SendError({ reason: "membership-invalid", detail });
+}
+
+function decodeAgentName(value: string): Effect.Effect<AgentName, SendError> {
+  return Schema.decodeUnknown(AgentName)(value).pipe(
+    Effect.mapError(invalidAddress),
+  );
+}
+
+function canonicalDirect(
+  to: MessageAddressInput,
+  localAgentName: AgentName,
+): Effect.Effect<CanonicalMessageAddress, SendError> {
+  return Effect.gen(function* () {
+    const remoteName = yield* decodeAgentName(
+      to.slice(AGENT_ADDRESS_PREFIX.length),
+    );
+    if (remoteName === localAgentName) {
+      return yield* invalidMembership("the address names only you");
+    }
+    const address = yield* Schema.decodeUnknown(AgentAddress)(to).pipe(
+      Effect.mapError(invalidAddress),
+    );
+    return { kind: "direct", address, remoteName };
+  });
+}
+
+function canonicalGroup(
+  to: MessageAddressInput,
+  localAgentName: AgentName,
+): Effect.Effect<CanonicalMessageAddress, SendError> {
+  return Effect.gen(function* () {
+    const explicitNames = yield* Effect.forEach(
+      to.slice(GROUP_ADDRESS_PREFIX.length).split(","),
+      decodeAgentName,
+      { concurrency: 1 },
+    );
+    if (new Set(explicitNames).size !== explicitNames.length) {
+      return yield* invalidMembership(
+        "the address names an agent more than once",
+      );
+    }
+    const memberNames = explicitNames.includes(localAgentName)
+      ? explicitNames.slice()
+      : [...explicitNames, localAgentName];
+    const others = memberNames.filter((name) => name !== localAgentName);
+    const [onlyOther] = others;
+    if (onlyOther === undefined) {
+      return yield* invalidMembership("the address names only you");
+    }
+    if (others.length === 1) {
+      const address = yield* Schema.decodeUnknown(AgentAddress)(
+        `${AGENT_ADDRESS_PREFIX}${onlyOther}`,
+      ).pipe(Effect.mapError(invalidAddress));
+      return { kind: "direct", address, remoteName: onlyOther };
+    }
+    if (memberNames.length > maximumMembers) {
+      return yield* invalidMembership(
+        `a group has at most ${String(maximumMembers)} members`,
+      );
+    }
+    const names = [...memberNames].sort(compareAscii);
+    const address = yield* Schema.decodeUnknown(GroupAddress)(
+      `${GROUP_ADDRESS_PREFIX}${names.join(",")}`,
+    ).pipe(Effect.mapError(invalidAddress));
+    return { kind: "group", address, memberNames: names };
+  });
+}
+
+function renderOutcome(outcome: MemberOutcome): string {
+  switch (outcome.kind) {
+    case "answered":
+      return `answered ${JSON.stringify(outcome.content)}`;
+    case "declined":
+      return "declined";
+    case "invalid":
+      return `answered outside the form (${outcome.reason})`;
+    case "no-answer":
+      return "no answer";
+    case "withheld":
+      return `answer withheld: ${renderWithheld(outcome)}`;
+    default: {
+      const exhaustive: never = outcome;
+      return exhaustive;
+    }
+  }
+}
+
 function renderCollectiveQuestion(
   question: Pick<
     Request,
@@ -321,41 +492,6 @@ function quoteForAgent(value: unknown): string {
   return JSON.stringify(value)
     .replaceAll("<", "\\u003c")
     .replaceAll(">", "\\u003e");
-}
-
-function statedOperation(
-  to: MessageAddressInput,
-  value: Readonly<Record<string, unknown>>,
-): Either.Either<SendRequest, MessageTextError> | undefined {
-  const op = COLLECTING_OPERATIONS.find((key) => Object.hasOwn(value, key));
-  if (op !== undefined) {
-    const { [op]: question, ...details } = value;
-    return sendInput(op, {
-      to,
-      text: question,
-      collective: { ...details, op },
-    });
-  }
-  return Object.hasOwn(value, "action")
-    ? sendInput("answer", { to, collectiveResponse: value })
-    : undefined;
-}
-
-function sendInput(
-  operation: StatedOperation,
-  value: unknown,
-): Either.Either<SendRequest, MessageTextError> {
-  switch (operation) {
-    case "message":
-      return decodeText(operation, MessageSendRequest, value);
-    case "answer":
-      return decodeText(operation, AnswerSendRequest, value);
-    case "gather":
-    case "all_gather":
-      return decodeText(operation, QuestionSendRequest, value);
-    default:
-      return operation satisfies never;
-  }
 }
 
 function decodeText<A, I>(

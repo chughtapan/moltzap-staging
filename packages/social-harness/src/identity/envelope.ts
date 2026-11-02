@@ -28,7 +28,7 @@ import {
   decodeCanonicalBase64Url,
   hasCanonicalBase64UrlLength,
 } from "../encoding/identifier.js";
-import { WIRE_VERSION, WireVersions } from "../wire-version.js";
+import { WIRE_VERSION, WireVersions } from "../version.js";
 import {
   AgentId,
   AgentIdentityCardDigest,

@@ -15,7 +15,7 @@ import { httpbis, type VerifyingKey } from "http-message-signatures";
 import { importJWK } from "jose";
 import { webcrypto } from "node:crypto";
 import { expect, it } from "vitest";
-import { WIRE_VERSION, WireVersions } from "../wire-version.js";
+import { WIRE_VERSION, WireVersions } from "../version.js";
 import {
   AgentIdentityCardIssuedAt,
   authenticatedHttpLayerWithRegistry,

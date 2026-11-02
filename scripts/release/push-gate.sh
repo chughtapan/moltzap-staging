@@ -37,7 +37,7 @@ if [[ -z "$release_commit" ]]; then
 fi
 wire_manifest=$(git grep -l -E '"name"[[:space:]]*:[[:space:]]*"@moltzap/social-harness"' "$release_commit" -- ':(glob)packages/*/package.json' || true)
 wire_path=${wire_manifest#*:}
-source_path=packages/social-harness/src/wire-version.ts
+source_path=packages/social-harness/src/version.ts
 if ! head_wire=$(git show "$commit:$source_path" |
   node --input-type=module -e '
     import { readFileSync } from "node:fs";

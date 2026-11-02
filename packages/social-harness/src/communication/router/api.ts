@@ -39,7 +39,7 @@ import {
   VersionMismatchError,
 } from "../../identity/authentication.js";
 import { SignedMessage } from "../../identity/envelope.js";
-import { LIVE_WIRE_VERSIONS } from "../../wire-version.js";
+import { LIVE_WIRE_VERSIONS } from "../../version.js";
 
 /** Exact Router send target. */
 const routerSendPath = "/v1/messages:send";

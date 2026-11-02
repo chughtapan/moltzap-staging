@@ -20,7 +20,7 @@ import {
   exactStruct,
 } from "../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
-import { WireVersions } from "../wire-version.js";
+import { WireVersions } from "../version.js";
 import {
   AgentId,
   AgentIdentityCard,

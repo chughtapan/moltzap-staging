@@ -1,6 +1,10 @@
-/** @file Emitted, live-admission, and retained-history wire compatibility sets. */
+/** @file Reports the package version and defines compatible protocol versions. */
 
 import { Context, Effect, Option, Schema } from "effect";
+import packageJson from "../package.json" with { type: "json" };
+
+/** Installed package version, independent of the versions admitted on the network. */
+export const packageVersion: string = packageJson.version;
 
 /** Calendar wire syntax shared by HTTP mismatch decoders and release admission. */
 export const WIRE_VERSION_PATTERN = /^\d{4}\.\d{3,4}\.\d+$/;

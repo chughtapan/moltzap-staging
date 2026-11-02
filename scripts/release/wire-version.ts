@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const WIRE_VERSION_SOURCE = "packages/social-harness/src/wire-version.ts";
+const WIRE_VERSION_SOURCE = "packages/social-harness/src/version.ts";
 
 const WIRE_VERSION_LITERAL =
   /export\s+const\s+WIRE_VERSION\s*=\s*["']([^"']*)["']/;

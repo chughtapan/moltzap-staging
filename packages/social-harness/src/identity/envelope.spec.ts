@@ -10,7 +10,7 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../encoding/canonical-json.js";
-import { WIRE_VERSION } from "../wire-version.js";
+import { WIRE_VERSION } from "../version.js";
 import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,

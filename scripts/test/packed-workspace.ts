@@ -10,7 +10,7 @@ import { Cause, Data, Effect, type ParseResult, Schema, Stream } from "effect";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { WIRE_VERSION } from "../../packages/social-harness/src/wire-version.ts";
+import { WIRE_VERSION } from "../../packages/social-harness/src/version.ts";
 import { recordPackedWireVersion } from "../release/content-hash.ts";
 import { workspacePackages } from "../repo/packages.ts";
 

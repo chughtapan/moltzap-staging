@@ -23,7 +23,7 @@ import type { RegistrationRequest } from "../identity/service.js";
 import { AgentName, PrincipalId } from "../identity/agent.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { RegistrationId } from "../identity/registry.js";
-import { packageVersion } from "../release.js";
+import { packageVersion } from "../version.js";
 
 /** Identifies the setting that prevents startup without exposing its value. */
 export type DaemonConfigurationFailure =
