@@ -6,14 +6,22 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { Clock, Context, Deferred, Duration, Effect, Fiber } from "effect";
+import {
+  Clock,
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  Encoding,
+  Fiber,
+} from "effect";
 import { createHmac } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Restart scenarios retain the same test directory across independent Effect scopes.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect } from "vitest";
-import { localGuidance } from "../../__tests__/message-policy-fixtures.js";
+import type { CheckedGuidance } from "../../firewall/check.js";
 import {
   decodeOccurrence,
   enqueue,
@@ -24,13 +32,39 @@ import {
   secret,
   token,
   url,
-} from "../../__tests__/webhook-fixtures.js";
+} from "../__tests__/webhook-fixtures.js";
+import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { maximumEventBytes } from "./contracts.js";
 import {
   isPublicWebhookAddress,
   sendWebhook,
   webhookHttpClientLayer,
 } from "./event-signing.js";
+
+/** The peer text and registered instruction travel separately through every runtime view. */
+function localGuidance(byte: number): CheckedGuidance {
+  const subject = digest("msg_", byte);
+  return {
+    checkId: `chk_${Encoding.encodeHex(new Uint8Array(32).fill(byte))}`,
+    subjects: [
+      {
+        id: subject,
+        sender: testAgentCard("agent:bob"),
+        recipients: [testAgentCard("agent:alice")],
+        text: "Can we meet?",
+      },
+    ],
+    instructions: [
+      {
+        ruleId: "respond",
+        expectation: "required",
+        subjects: [subject],
+        instruction:
+          "Answer the scheduling question without disclosing unrelated appointments.",
+      },
+    ],
+  };
+}
 
 const directories: string[] = [];
 afterAll(() => {

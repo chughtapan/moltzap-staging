@@ -9,15 +9,15 @@ import { packageEslintConfig } from "../../eslint.shared.js";
 const testFiles = ["src/**/*.test.ts", "src/**/__tests__/**"];
 
 /**
- * Keeps `communication/conversations/outbox.ts` the one production module that signs
+ * Keeps `communication/conversations/service.ts` the one production module that signs
  * an outer envelope, which it stores before the Router worker sends it.
- * `communication/records/` defines and re-exports the signers.
+ * `communication/records.ts` defines the signers.
  */
 const soleOuterSigner = {
   files: ["src/**/*.ts"],
   ignores: [
-    "src/communication/conversations/outbox.ts",
-    "src/communication/records/**",
+    "src/communication/conversations/service.ts",
+    "src/communication/records.ts",
     ...testFiles,
   ],
   rules: {
@@ -26,10 +26,10 @@ const soleOuterSigner = {
       {
         patterns: [
           {
-            regex: "(^|/)records/(index|encoding)\\.js$",
+            regex: "(^|/)records\\.js$",
             importNames: ["signOuterPacket", "signOuterEvidence"],
             message:
-              "Only communication/conversations/outbox.ts signs outer envelopes; queue the body through the engine outbox.",
+              "Only communication/conversations/service.ts signs outer envelopes; queue the body through the engine outbox.",
           },
         ],
       },
@@ -38,14 +38,14 @@ const soleOuterSigner = {
 };
 
 /**
- * Keeps `communication/records/encoding.ts` the one module that calls
+ * Keeps `communication/records.ts` the one module that calls
  * Identity's `SignedMessage.sign`, which it does for an outer envelope only
  * after sealing its body. The guard covers who signs, not what the outbox
  * enqueues: its port accepts any `SignedMessage`.
  */
 const sealingSigner = {
   files: ["src/**/*.ts"],
-  ignores: ["src/communication/records/encoding.ts", ...testFiles],
+  ignores: ["src/communication/records.ts", ...testFiles],
   rules: {
     "no-restricted-properties": [
       "error",
@@ -53,7 +53,7 @@ const sealingSigner = {
         object: "SignedMessage",
         property: "sign",
         message:
-          "Only communication/records/encoding.ts signs a SignedMessage, after sealing every outer body; queue the body through the engine outbox.",
+          "Only communication/records.ts signs a SignedMessage, after sealing every outer body; queue the body through the engine outbox.",
       },
     ],
   },
@@ -71,7 +71,12 @@ const messageCheckRules = {
 };
 
 export default [
-  { ignores: ["src/vendor/effect-mcp/**"] },
+  {
+    ignores: [
+      "src/vendor/effect-mcp/McpSchema.ts",
+      "src/vendor/effect-mcp/McpServer.ts",
+    ],
+  },
   ...packageEslintConfig({
     projects: ["./tsconfig.json", "./tsconfig.test.json"],
     tsconfigRootDir: import.meta.dirname,
@@ -79,6 +84,42 @@ export default [
   {
     ...guard.configs.integrationTests,
     files: ["integration/**/*.ts"],
+  },
+  {
+    files: [
+      "src/identity/authentication.ts",
+      "src/identity/authentication.test.ts",
+      "src/identity/envelope.sealing.test.ts",
+      "src/communication/conversations/certification.ts",
+      "src/identity/envelope.ts",
+      "src/communication/messages.ts",
+      "src/communication/records.ts",
+      "src/communication/service.ts",
+    ],
+    rules: {
+      "max-lines": [
+        "error",
+        { max: 2400, skipBlankLines: true, skipComments: true },
+      ],
+    },
+  },
+  {
+    files: ["src/communication/store.ts"],
+    rules: {
+      "max-lines": [
+        "error",
+        { max: 4200, skipBlankLines: true, skipComments: true },
+      ],
+    },
+  },
+  {
+    files: ["src/firewall/rules.test.ts"],
+    rules: {
+      "max-lines-per-function": [
+        "error",
+        { max: 500, skipBlankLines: true, skipComments: true },
+      ],
+    },
   },
   soleOuterSigner,
   sealingSigner,
@@ -106,12 +147,11 @@ export default [
     files: [
       "src/communication/conversations/reanchor.ts",
       "src/communication/conversations/recovery.ts",
-      "src/communication/router/connection.ts",
-      "src/communication/requests/service.ts",
-      "src/communication/records/acceptance.test.ts",
+      "src/communication/router/worker.ts",
+      "src/communication/requests.ts",
+      "src/communication/records.verification.test.ts",
       "src/harness/launcher/installation.ts",
-      "src/communication/store/conversations.ts",
-      "src/communication/store/database.ts",
+      "src/communication/conversations/log.ts",
     ],
     rules: {
       "max-lines": [

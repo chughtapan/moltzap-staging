@@ -5,7 +5,7 @@ export {
   httpErrors,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
-} from "./identity/http-signatures.js";
+} from "./identity/authentication.js";
 /** Registry issuance and history verification use the complete identity document. */
 export {
   type AgentIdentityCardClaims,

@@ -5,7 +5,7 @@ import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import {
   type SendError,
   sendFailureReasons,
-} from "../../communication/conversations/errors.js";
+} from "../../communication/errors.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
@@ -14,7 +14,7 @@ import {
   PaginatedRequest,
   PaginatedResult,
   type RequestError,
-} from "../../communication/index.js";
+} from "../../communication/service.js";
 import { exactStruct } from "../../encoding/canonical-json.js";
 import {
   compareAscii,
@@ -42,8 +42,8 @@ import {
   AgentName,
   PrincipalId,
 } from "../../identity/agent.js";
+import { RegistrationError } from "../../identity/identity.js";
 import { RegistrationId } from "../../identity/registry.js";
-import { RegistrationError } from "../../identity/service.js";
 import {
   DeliveryAcknowledgeError,
   DeliveryToken,

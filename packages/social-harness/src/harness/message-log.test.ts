@@ -6,9 +6,9 @@ import { scopedLive as it } from "@effect/vitest";
 import { DateTime, Effect, Schema } from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { testAgentView } from "../__tests__/agent-card-fixtures.js";
-import { Message } from "../communication/index.js";
-import { MessageAddressInput } from "../communication/records/values.js";
+import { testAgentCard } from "../__tests__/agents.js";
+import { MessageAddressInput } from "../communication/messages.js";
+import { Message } from "../communication/service.js";
 import { HistoryExportRecord, makeHistoryExport } from "./message-log.js";
 
 const at = DateTime.unsafeMake("2026-09-01T12:00:00.000Z");
@@ -19,8 +19,8 @@ const noSpace = "ENOSPC: no space left on device";
 
 function records() {
   return Message.create({
-    author: testAgentView("agent:bob"),
-    recipients: [testAgentView("agent:alice")],
+    author: testAgentCard("agent:bob"),
+    recipients: [testAgentCard("agent:alice")],
     content: [{ type: "text", text: "Hello" }],
   }).pipe(
     Effect.map((message): readonly HistoryExportRecord[] => [

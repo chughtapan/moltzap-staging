@@ -62,7 +62,7 @@ export {
   type ReadHistoryResult,
 } from "./harness/service.js";
 /** Registration failures are distinct from communication startup. */
-export { RegistrationError } from "./identity/service.js";
+export { RegistrationError } from "./identity/identity.js";
 /** Optional traffic export records admitted incoming content and completed sends. */
 export { HistoryExportRecord } from "./harness/message-log.js";
 /** Shared values carry message identity and decoded request/reply meaning. */
@@ -83,7 +83,7 @@ export {
   RequestError,
   RequestResult,
   ResultSources,
-} from "./communication/index.js";
+} from "./communication/service.js";
 /** Explicit host destinations are independent of transport routing. */
 export {
   AgentAddress,
@@ -93,9 +93,9 @@ export {
   JsonValue,
   MessageAddressInput,
   MsgId,
-} from "./communication/records/values.js";
+} from "./communication/messages.js";
 /** A send error classifies correction, retained work and uncertain acceptance. */
-export { SendError } from "./communication/conversations/errors.js";
+export { SendError } from "./communication/errors.js";
 /** Public identity and its complete signed document have distinct names. */
 export {
   AgentCard,
@@ -113,7 +113,7 @@ export {
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
-} from "./identity/envelope/signed-message.js";
+} from "./identity/envelope.js";
 /** Emission and compatibility use the installed release's wire policy. */
 export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
 /** Clients report the shipped core release without another version copy. */

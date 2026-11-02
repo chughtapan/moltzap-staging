@@ -23,7 +23,7 @@ import {
   type Request,
   RequestOperation,
   type ResultSources,
-} from "../communication/index.js";
+} from "../communication/service.js";
 import {
   canonicalBytes,
   decodeCanonical,
@@ -32,7 +32,7 @@ import {
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/canonical-json.js";
 import { AgentCard, agentCardOf } from "../identity/agent.js";
-import { Identity } from "../identity/service.js";
+import { Identity } from "../identity/identity.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
   type Message as AssessmentText,

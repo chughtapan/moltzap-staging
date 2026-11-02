@@ -4,23 +4,14 @@
  */
 
 import type { SqlClient } from "@effect/sql/SqlClient";
-
 import { Effect, Schema } from "effect";
-
 import type { AgentId } from "../../identity/agent.js";
-import type { EndpointRecovery, StagedRecord } from "../store/database.js";
-import type { EngineActionFold, EngineRuntime } from "./state.js";
-
+import type { EngineActionFold, EngineRuntime } from "./service.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
 } from "../../encoding/canonical-json.js";
-import { SignedMessage } from "../../identity/envelope/signed-message.js";
-import {
-  type DecodedOuterBody,
-  hashAnchor,
-  signEvidenceMessage,
-} from "../records/encoding.js";
+import { SignedMessage } from "../../identity/envelope.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,
@@ -31,25 +22,30 @@ import {
   type CertifiedRecord,
   type CompletedReanchor as CompletedReanchorValue,
   type ConversationId as ConversationIdValue,
+  type DecodedOuterBody,
+  hashAnchor,
+  memberCard,
+  quorumThreshold,
   type ReanchorBody,
   RecordHash,
   type RecordHash as RecordHashValue,
-} from "../records/schemas.js";
-import {
-  memberCard,
-  quorumThreshold,
+  signEvidenceMessage,
   type VerifiedMembership,
   verifyCatchUpIncomplete,
   verifyCatchUpPage,
   verifyOuterMessage,
-} from "../records/verification.js";
+} from "../records.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
-} from "../router/connection.js";
-import { recoverStoredState } from "../store/conversations.js";
+} from "../router/worker.js";
+import {
+  type EndpointRecovery,
+  recoverStoredState,
+  type StagedRecord,
+} from "../store.js";
 import {
   decodeStoredAnchor,
   durablePosition,
@@ -59,6 +55,8 @@ import {
   stagedSuccessor,
 } from "./log.js";
 import { applyCompletedReanchor } from "./reanchor.js";
+
+// safer-arch-ignore no-module-cycle: Protocol state imports from service are type-only; runtime dependencies point into the algorithms.
 
 /**
  * How a pending position becomes ready. With no entry, `q(n) − 1` other

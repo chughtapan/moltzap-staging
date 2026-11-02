@@ -2,8 +2,8 @@
 
 import { FileSystem } from "@effect/platform";
 import { DateTime, Effect, Schema } from "effect";
-import { CollectiveId } from "../communication/index.js";
-import { MsgId } from "../communication/records/values.js";
+import { MsgId } from "../communication/messages.js";
+import { CollectiveId } from "../communication/service.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { PermittedItem } from "../firewall/service.js";
 import { SendRequest } from "../host-protocol/messages.js";
