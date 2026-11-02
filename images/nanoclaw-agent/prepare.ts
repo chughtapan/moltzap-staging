@@ -78,8 +78,9 @@ function decodeManifest(text: string): {
 /** Shared source compiles under NanoClaw's unchanged src root and dist tree. */
 async function prepareTypescript(path: string) {
   const object: unknown = JSON.parse(await readFile(path, "utf8"));
-  if (!isObject(object))
+  if (!isObject(object)) {
     throw new Error("NanoClaw tsconfig.json is not an object");
+  }
   const options = isObject(object.compilerOptions)
     ? object.compilerOptions
     : {};

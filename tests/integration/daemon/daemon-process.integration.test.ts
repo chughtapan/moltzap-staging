@@ -45,6 +45,7 @@ import {
   awaitDaemonStartupFailure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
+  managedProcess,
   makeRegistrationRequest,
   type ProcessInfrastructure,
   ProcessTestError,
@@ -555,20 +556,22 @@ const refusesStaleOutbox = Effect.scoped(
     });
     yield* stopProcess(daemonProcess);
     const before = yield* markStoredOutboundPending(local.stateDirectory);
-    const failed = yield* awaitDaemonStartupFailure(local, {
-      executable: process.execPath,
-      args: [
+    const failed = yield* managedProcess(
+      process.execPath,
+      [
         "--conditions=sharness-test",
         "--input-type=module",
         "-e",
         retiredWindowDaemon,
       ],
-      cwd: dirname(fileURLToPath(import.meta.url)),
-    });
-    expect(failed.exitCode).not.toBe(0);
-    expect(failed.logs).toContain(outboxTooOldReason);
-    expect(failed.logs).toContain(outboxTooOldRemedy);
-    expect(failed.logs).toContain(resetReleaseDocsAnchor);
+      local.environment,
+      dirname(fileURLToPath(import.meta.url)),
+    );
+    yield* waitForExit(failed);
+    expect(failed.child.exitCode).not.toBe(0);
+    expect(failed.logs()).toContain(outboxTooOldReason);
+    expect(failed.logs()).toContain(outboxTooOldRemedy);
+    expect(failed.logs()).toContain(resetReleaseDocsAnchor);
     const after = yield* readStoredDatabase(local.stateDirectory);
     expect(after).toEqual(before);
   }),

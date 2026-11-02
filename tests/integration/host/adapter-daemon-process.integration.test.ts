@@ -560,7 +560,6 @@ function assertReceivedAllGather(context: AllGatherContext, requestId: string) {
     targetAddress,
     peerAgent,
     targetAgent,
-    group,
     turns,
   } = context;
   return Effect.gen(function* () {

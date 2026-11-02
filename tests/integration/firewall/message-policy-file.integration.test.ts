@@ -93,7 +93,7 @@ const unavailableTextPolicy = Effect.gen(function* () {
         direction: "outgoing",
         outcome: "hold",
         disposition: "withheld",
-        cause: "unavailable",
+        reason: "check-unavailable",
         decidedBy: [{ ruleId: "owner-privacy", from: "fixed" }],
       },
     ],

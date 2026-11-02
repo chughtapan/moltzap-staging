@@ -4,6 +4,7 @@ import {
   type Endpoint as NetworkEndpoint,
   startNetwork,
 } from "@moltzap/integration-tests/process-network";
+import { replyAddress } from "@moltzap/social-harness";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -47,16 +48,10 @@ const SLOT_SCHEMA = {
   required: ["slot"],
 };
 
-/** The parts of a network endpoint the cases use. */
-interface Endpoint
-  extends Pick<
-    NetworkEndpoint,
-    "address" | "mcp" | "agent" | "mcpCredentialFile"
-  > {
-  send(input: object): Promise<{ readonly operationId?: string }>;
-  next(count: number): Promise<readonly unknown[]>;
-  history(address: string): Promise<readonly unknown[]>;
-}
+/** Native image tests use the same public MCP fixture as other process consumers. */
+type Endpoint = NetworkEndpoint;
+type InboundItem = Awaited<ReturnType<Endpoint["next"]>>[number];
+type RequestItem = Extract<InboundItem, { readonly kind: "collectiveRequest" }>;
 
 /** A caller and the NanoClaw agent it talks to. */
 interface Pair {
@@ -174,17 +169,17 @@ async function assertRepliesRecorded(
   shared: string,
 ): Promise<undefined> {
   assert.deepEqual(await caller.history(target.address), [
-    multicastContent(INBOUND),
+    textContent(INBOUND),
     [{ type: "text", text: DIRECT_REPLY }],
   ]);
   assert.deepEqual(await target.history(caller.address), [
     [{ type: "text", text: INBOUND }],
-    multicastContent(DIRECT_REPLY),
+    textContent(DIRECT_REPLY),
   ]);
   for (const endpoint of [caller, target, peer]) {
     assert.deepEqual(await endpoint.history(shared), [
       endpoint === target
-        ? multicastContent(GROUP_REPLY)
+        ? textContent(GROUP_REPLY)
         : [{ type: "text", text: GROUP_REPLY }],
     ]);
   }
@@ -199,12 +194,12 @@ async function answersAndStartsGather({
     text: GATHER_QUESTION,
     collective: { op: "gather", deadline: 120, requestedSchema: SLOT_SCHEMA },
   });
-  const operationId = started.operationId ?? "";
+  const operationId = started.id;
   const received = caller.next(1);
   await runProbe(
     target,
     [
-      { to: caller.address, text: acceptText("tue") },
+      { to: caller.address, text: acceptText("tue", operationId) },
       { to: caller.address, text: gatherText("gather") },
     ],
     {
@@ -224,7 +219,6 @@ async function answersAndStartsGather({
       kind: "collectiveResult",
       op: "gather",
       operationId,
-      to: target.address,
       question: GATHER_QUESTION,
       closedAt: result.closedAt,
       closedBy: "settled",
@@ -236,20 +230,17 @@ async function answersAndStartsGather({
       ],
     },
   ]);
-  const request = asRecord((await caller.next(1))[0]);
+  const request = requireRequest((await caller.next(1))[0]);
   assertGatherRequest(request, target);
 }
 
-function assertGatherRequest(
-  request: Record<string, unknown>,
-  target: Endpoint,
-) {
+function assertGatherRequest(request: RequestItem, target: Endpoint) {
   assert.equal(request.kind, "collectiveRequest");
-  assert.equal(request.op, "gather");
-  assert.deepEqual(request.from, target.agent);
-  assert.equal(request.to, target.address);
-  assert.equal(request.question, GATHER_QUESTION);
-  assert.deepEqual(request.requestedSchema, SLOT_SCHEMA);
+  assert.equal(request.message.operation.op, "gather");
+  assert.deepEqual(request.message.author, target.agent);
+  assert.equal(replyAddress(request.message), target.address);
+  assert.equal(request.message.operation.question, GATHER_QUESTION);
+  assert.deepEqual(request.message.operation.requestedSchema, SLOT_SCHEMA);
 }
 
 /**
@@ -264,7 +255,7 @@ async function answersAndStartsAllGather(endpoints: Trio): Promise<undefined> {
   await runProbe(
     target,
     [
-      { to: group, text: acceptText("tue") },
+      { to: group, text: acceptText("tue", operationId) },
       { to: group, text: gatherText("all_gather") },
     ],
     {
@@ -295,11 +286,13 @@ async function startDeclinedAllGather(
       requestedSchema: SLOT_SCHEMA,
     },
   });
-  const operationId = started.operationId ?? "";
-  const peerRequest = asRecord((await peer.next(1))[0]);
-  assert.equal(peerRequest.kind, "collectiveRequest");
-  assert.equal(peerRequest.operationId, operationId);
-  await peer.send({ to: group, collectiveResponse: { action: "decline" } });
+  const operationId = started.id;
+  const peerRequest = requireRequest((await peer.next(1))[0]);
+  assert.equal(peerRequest.message.operation.operationId, operationId);
+  await peer.send({
+    to: group,
+    collectiveResponse: { action: "decline", operationId },
+  });
   return operationId;
 }
 
@@ -311,11 +304,11 @@ async function assertAllGatherAnswered(
   { caller, target, peer }: Trio,
   group: string,
   operationId: string,
-): Promise<Readonly<Record<string, unknown>>> {
-  const callerItems = (await caller.next(2)).map(asRecord);
-  const result = callerItems.find(({ kind }) => kind === "collectiveResult");
+): Promise<RequestItem> {
+  const callerItems = await caller.next(2);
+  const result = callerItems.find((item) => item.kind === "collectiveResult");
   const nanoClawRequest = callerItems.find(
-    ({ kind }) => kind === "collectiveRequest",
+    (item) => item.kind === "collectiveRequest",
   );
   assert.ok(result, "the caller received no all_gather result");
   assert.equal(typeof result.closedAt, "number");
@@ -324,7 +317,6 @@ async function assertAllGatherAnswered(
     kind: "collectiveResult",
     op: "all_gather",
     operationId,
-    to: group,
     question: GATHER_QUESTION,
     closedAt: result.closedAt,
     closedBy: "settled",
@@ -336,14 +328,16 @@ async function assertAllGatherAnswered(
       },
     ],
   });
-  const peerItems = (await peer.next(2)).map(asRecord);
+  const peerItems = await peer.next(2);
   assert.ok(
     peerItems.some((item) => isDeepStrictEqual(item, result)),
     "the peer did not receive the all_gather result",
   );
   assert.ok(
     peerItems.some(
-      ({ kind, to }) => kind === "collectiveRequest" && to === group,
+      (item) =>
+        item.kind === "collectiveRequest" &&
+        replyAddress(item.message) === group,
     ),
     "the peer did not receive NanoClaw's request",
   );
@@ -354,23 +348,30 @@ async function assertAllGatherAnswered(
 async function assertNanoClawAllGather(
   { caller, target, peer }: Trio,
   group: string,
-  request: Readonly<Record<string, unknown>>,
+  request: RequestItem,
 ): Promise<undefined> {
-  assert.equal(request.op, "all_gather");
-  assert.deepEqual(request.from, target.agent);
-  assert.equal(request.to, group);
+  assert.equal(request.message.operation.op, "all_gather");
+  assert.deepEqual(request.message.author, target.agent);
+  assert.equal(replyAddress(request.message), group);
+  const operationId = request.message.operation.operationId;
 
   await caller.send({
     to: group,
-    collectiveResponse: { action: "accept", content: { slot: "mon" } },
+    collectiveResponse: {
+      action: "accept",
+      operationId,
+      content: { slot: "mon" },
+    },
   });
-  await peer.send({ to: group, collectiveResponse: { action: "decline" } });
+  await peer.send({
+    to: group,
+    collectiveResponse: { action: "decline", operationId },
+  });
   const [received] = await caller.next(1);
   const result = asRecord(received);
   assert.equal(result.kind, "collectiveResult");
   assert.equal(result.op, "all_gather");
-  assert.equal(result.operationId, request.operationId);
-  assert.equal(result.to, group);
+  assert.equal(result.operationId, operationId);
   assert.equal(typeof result.closedAt, "number");
   assert.equal(result.closedBy, "settled");
   assert.deepEqual(result.outcomes, [
@@ -417,7 +418,7 @@ async function completesPendingSendOnce(
       retried: 0,
       endpointMessages: [PENDING_REPORT],
       posts: [
-        multicastContent(INBOUND),
+        textContent(INBOUND),
         [{ type: "text", text: PENDING_SEND }],
         [{ type: "text", text: FENCE }],
       ],
@@ -483,17 +484,9 @@ async function readHistory(
   }
 }
 
-/** The certified content of one multicast: its text, then its operation. */
-function multicastContent(text: string): readonly object[] {
-  return [
-    { type: "text", text },
-    {
-      type: "data",
-      value: {
-        "org.social-harness/collective": { kind: "operation", op: "multicast" },
-      },
-    },
-  ];
+/** Ordinary messages retain their text parts unchanged. */
+function textContent(text: string): readonly object[] {
+  return [{ type: "text", text }];
 }
 
 /** The group address of `members`, their names sorted. */
@@ -519,21 +512,27 @@ function gatherText(operation: "gather" | "all_gather"): string {
 }
 
 /** The text a model sends to answer with `slot`. */
-function acceptText(slot: string): string {
-  return JSON.stringify({ action: "accept", content: { slot } });
+function acceptText(slot: string, operationId: string): string {
+  return JSON.stringify({ action: "accept", operationId, content: { slot } });
 }
 
 /** The kind of an inbound item and its message's kind, address, sender and content. */
-function multicastSummary(item: unknown): Readonly<Record<string, unknown>> {
-  const { kind, message } = asRecord(item);
-  const fields = asRecord(message);
+function multicastSummary(
+  item: InboundItem,
+): Readonly<Record<string, unknown>> {
+  assert(item.kind === "multicast");
   return {
-    kind,
-    messageKind: fields.kind,
-    address: fields.address,
-    sender: fields.sender,
-    content: fields.content,
+    kind: item.kind,
+    messageKind: item.message.recipients.length === 1 ? "direct" : "group",
+    address: replyAddress(item.message),
+    sender: item.message.author,
+    content: item.message.content,
   };
+}
+
+function requireRequest(item?: InboundItem): RequestItem {
+  assert(item?.kind === "collectiveRequest", "expected a received request");
+  return item;
 }
 
 /**

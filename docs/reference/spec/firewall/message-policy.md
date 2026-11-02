@@ -343,21 +343,12 @@ rows identify authors. Daemon-generated failures have no assessment row. Retaine
 
 | Reason | Rules |
 | --- | --- |
-| Rule violation | Violated rules. |
-| Unavailable | Rules in checks that could not run, plus unavailable judgments. |
-| Unresolved evidence | Rules reporting unresolved evidence or conflicting response expectations. |
-| Admission | Uncertain rules, otherwise none. |
+| `rule-violation` | Violated rules. |
+| `check-unavailable` | Rules in checks that could not run, plus unavailable judgments. |
+| `unresolved-evidence` | Rules reporting unresolved evidence or conflicting response expectations. |
+| `eligible` | Uncertain rules, otherwise none. |
 
 Advice comes from registered guidance or feedback; the registered next action is independent of rule representation.
 Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
 active only through an authorized policy change.
 
-`reason` describes the first deciding rule:
-
-| Reason | Meaning |
-| --- | --- |
-| `judgment` | Settled model judgment. |
-| `uncertain` | Valid uncertain judgment admitted with advice. |
-| `unavailable` | Failed/invalid/budget-exceeded/unrunnable provider or check. |
-| `endpoint` | Hold without deciding rule, such as missing evidence or unavailable guidance. |
-| `default` | Admission without qualifying rule. |

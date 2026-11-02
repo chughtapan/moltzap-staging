@@ -273,6 +273,9 @@ importers:
       '@moltzap/integration-tests':
         specifier: workspace:*
         version: link:../../tests/integration
+      '@moltzap/social-harness':
+        specifier: workspace:*
+        version: link:../../packages/social-harness
       tsx:
         specifier: 'catalog:'
         version: 4.21.0

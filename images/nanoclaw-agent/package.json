@@ -91,6 +91,7 @@
   },
   "devDependencies": {
     "tsx": "catalog:",
-    "@moltzap/integration-tests": "workspace:*"
+    "@moltzap/integration-tests": "workspace:*",
+    "@moltzap/social-harness": "workspace:*"
   }
 }
