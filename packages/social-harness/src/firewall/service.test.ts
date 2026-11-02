@@ -16,7 +16,7 @@ import {
 import { join } from "node:path";
 import { expect } from "vitest";
 import type { DecisionProvider } from "./check.js";
-import { Message } from "../communication/message.js";
+import { Message } from "../communication/messages.js";
 import {
   type IdentityFixture,
   makeIdentityFixture,
@@ -29,8 +29,8 @@ import {
   AgentSigningAuthority,
   PrincipalId,
 } from "../identity/agent.js";
+import { Identity } from "../identity/identity.js";
 import { RegistrationId, Registry } from "../identity/registry.js";
-import { Identity } from "../identity/service.js";
 import {
   FirewallPolicyError,
   MAXIMUM_BEHAVIOR_BYTES,

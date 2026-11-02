@@ -10,8 +10,8 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
-import type { ValidationIssue } from "../communication/conversations/errors.js";
-import type { Message, Request } from "../communication/index.js";
+import type { ValidationIssue } from "../communication/errors.js";
+import type { Message, Request } from "../communication/service.js";
 import type { CheckedGuidance } from "../firewall/check.js";
 import type { LocalGuidance, PermittedItem } from "../firewall/service.js";
 import {
@@ -19,7 +19,7 @@ import {
   type Content,
   GroupAddress,
   type MessageAddressInput,
-} from "../communication/records/values.js";
+} from "../communication/messages.js";
 import { compareAscii } from "../encoding/identifier.js";
 import {
   AnswerSendRequest,

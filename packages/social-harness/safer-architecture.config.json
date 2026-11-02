@@ -23,7 +23,7 @@
       "reason": "Wire compatibility policy"
     },
     {
-      "file": "identity/service.ts",
+      "file": "identity/identity.ts",
       "reason": "Identity and registration service"
     },
     {
@@ -31,40 +31,20 @@
       "reason": "Request authentication service"
     },
     {
-      "file": "identity/http-signatures.ts",
-      "reason": "Authenticated request signatures"
-    },
-    {
       "file": "identity/registry.ts",
       "reason": "Registry service"
     },
     {
-      "file": "identity/envelope/signed-message.ts",
+      "file": "identity/envelope.ts",
       "reason": "Signed message envelopes"
     },
     {
-      "file": "identity/envelope/sealed-body.ts",
-      "reason": "Encrypted message bodies"
-    },
-    {
-      "file": "communication/index.ts",
+      "file": "communication/service.ts",
       "reason": "Message service and public semantic values"
     },
     {
-      "file": "communication/message.ts",
+      "file": "communication/messages.ts",
       "reason": "Immutable messages and participant references"
-    },
-    {
-      "file": "communication/service.ts",
-      "reason": "Message exchange and readable history"
-    },
-    {
-      "file": "communication/requests/index.ts",
-      "reason": "Requests and results"
-    },
-    {
-      "file": "communication/requests/contracts.ts",
-      "reason": "Request content grammar"
     },
     {
       "file": "communication/errors.ts",
@@ -73,14 +53,6 @@
     {
       "file": "communication/router/api.ts",
       "reason": "Opaque Router operations used by server composition"
-    },
-    {
-      "file": "communication/records/values.ts",
-      "reason": "Public message content and identifiers"
-    },
-    {
-      "file": "communication/conversations/errors.ts",
-      "reason": "Public send failures"
     },
     {
       "file": "firewall/service.ts",
@@ -129,6 +101,14 @@
     {
       "file": "tracing.ts",
       "reason": "Work progress instrumentation"
+    },
+    {
+      "file": "communication/records.ts",
+      "reason": "One private protocol record model owns its schemas, encoding and verification."
+    },
+    {
+      "file": "communication/store.ts",
+      "reason": "One private communication store owns SQL operations and row types."
     }
   ],
   "compositionRoots": [
@@ -173,13 +153,11 @@
       "entrypoints": [
         "src/identity/agent.ts",
         "src/identity/keys.ts",
-        "src/identity/service.ts",
+        "src/identity/identity.ts",
         "src/identity/wire-version.ts",
         "src/identity/authentication.ts",
-        "src/identity/http-signatures.ts",
         "src/identity/registry.ts",
-        "src/identity/envelope/signed-message.ts",
-        "src/identity/envelope/sealed-body.ts"
+        "src/identity/envelope.ts"
       ],
       "reason": "Identity, authentication and Registry services"
     },
@@ -189,9 +167,9 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/index.ts",
-        "src/communication/records/values.ts",
-        "src/communication/conversations/errors.ts",
+        "src/communication/service.ts",
+        "src/communication/messages.ts",
+        "src/communication/errors.ts",
         "src/communication/router/api.ts"
       ],
       "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
