@@ -489,7 +489,7 @@ function openObjects(value: unknown): unknown {
 }
 
 /** Local bearer mode uses the same default address for binding and advertisement. */
-export const LOOPBACK_HOST = "127.0.0.1";
+const LOOPBACK_HOST = "127.0.0.1";
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
