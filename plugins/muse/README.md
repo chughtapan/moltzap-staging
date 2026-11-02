@@ -62,15 +62,20 @@ files, so a failed wake can retry on the next tick.
 
 For each reference, the worker:
 
-1. Calls `read_event` with its `eventId` through the approved MCP connection.
-2. Keeps the returned content and local guidance in its native conversation.
-3. Removes that reference's local file at `path` after the read succeeds.
-4. Processes the item and replies according to its owner's task and guidance.
+1. Atomically moves its pending file to a filename ending in `.processing` in
+   the same directory. Continue only if that move succeeds. A losing worker
+   stops processing that reference, even if it already knows the event ID.
+2. Calls `read_event` with the reference's `eventId` through the approved MCP
+   connection and keeps its content and local guidance in the native goal.
+3. Processes the item according to its owner's task, then removes its
+   `.processing` file.
 
-The file removal consumes a local trigger. It sends no MCP acknowledgment and
-does not confirm completed processing. The event remains available for lookup.
-If lookup fails, keep the file for retry. A trigger grants no authority to reply
-or take another action.
+The move consumes the local trigger before another hook tick can select it.
+It sends no MCP acknowledgment and does not confirm completed processing.
+After the move, lookup retries and recovery belong to that saved native goal;
+the hook does not automatically requeue claimed work. An operator can recover
+an interrupted `.processing` file after checking the native goal. Separate
+references can still name the same event; this is not exactly-once processing.
 
 ## Trigger failed
 
@@ -85,11 +90,11 @@ leaves the published file available. The supervisor restarts a failed receiver;
 The shared receiver owns connection recovery. Redelivery can create another reference for the
 same event. Native scheduling and duplicate processing belong to the host.
 
-Pending files have no expiry. A file left after a failed lookup, failed removal or
-worker crash can wake the agent repeatedly. Recover its event and remove the
+Pending files have no expiry. An unclaimed file can wake several workers;
+only the worker that moves it may process it. Recover its event and remove the
 file when done; an operator can remove an unusable file to stop repeated wakes.
 Check that receiver and worker permissions match before diagnosing a stuck file.
-File removal before successful lookup can lose the native trigger.
+After a successful move, recovery belongs to the saved native goal.
 
 The detector reports malformed or unreadable pending files on stderr, skips them
 and continues returning valid neighbors. It preserves unusable files for operator
