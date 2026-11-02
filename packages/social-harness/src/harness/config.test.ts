@@ -77,7 +77,9 @@ it("loads process settings and keeps private credentials redacted", () =>
     expect(AgentSigningAuthority.publicKey(bootstrap.signingAuthority).x).toBe(
       "3rUJ92tIP0DE4ekmET1zme6SIWTp5G0KiF3ZjL-AoKg",
     );
-    expect(bootstrap.mcpCredential).toEqual(Redacted.make(mcpCredential));
+    expect(bootstrap.authentication.credential).toEqual(
+      Redacted.make(mcpCredential),
+    );
     expect(Redacted.value(yield* bootstrap.admissionCredential)).toBe(
       "bootstrap-token=",
     );

@@ -1,6 +1,7 @@
 /** @file MCP binds the harness services and owns its loopback HTTP listener. */
 
 import {
+  HttpBody,
   type HttpApp,
   HttpServerRequest,
   HttpServerResponse,
@@ -12,11 +13,10 @@ import {
   Effect,
   JSONSchema,
   Option,
-  Redacted,
   Schema,
+  Stream,
   type Scope,
 } from "effect";
-import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { Firewall } from "../../firewall/service.js";
@@ -37,11 +37,17 @@ import {
   toolDefinitions,
 } from "./contracts.js";
 import { installEvents, webhookHttpClientLayer } from "./events.js";
+import {
+  authenticationChallenge,
+  makeRequestAdmission,
+  type McpAuthentication,
+  protectedResourcePath,
+  protectedResourceResponse,
+} from "./authentication.js";
 
-interface ServerSettings {
-  readonly credential: Redacted.Redacted;
+type ServerSettings = McpAuthentication & {
   readonly implementation: { readonly name: string; readonly version: string };
-}
+};
 
 const reasonError = (error: { readonly reason: string }) =>
   new ProtocolError(
@@ -51,7 +57,6 @@ const reasonError = (error: { readonly reason: string }) =>
       : "Operation failed",
     { reason: error.reason },
   );
-const digest = (value: string) => createHash("sha256").update(value).digest();
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
@@ -82,7 +87,8 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
   );
-  return guardMcp(app, settings.credential);
+  const admit = yield* makeRequestAdmission(settings);
+  return guardMcp(app, settings, admit);
 });
 
 function safeLocalUrl(value: string): boolean {
@@ -354,20 +360,36 @@ function bind<A, I, B, J, E>(
 
 function guardMcp(
   app: HttpApp.Default<never, Scope.Scope>,
-  credential: Redacted.Redacted,
+  authentication: McpAuthentication,
+  admit: Effect.Effect.Success<ReturnType<typeof makeRequestAdmission>>,
 ) {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const host = request.headers.host;
     const origin = request.headers.origin;
-    if (
-      host === undefined ||
-      !safeLocalUrl(`http://${host}`) ||
-      (origin !== undefined && !safeLocalUrl(origin))
-    ) {
+    const oauth = authentication.oauth;
+    const allowedHost =
+      host !== undefined &&
+      (oauth === undefined
+        ? safeLocalUrl(`http://${host}`)
+        : host.toLowerCase() === oauth.resource.host.toLowerCase());
+    const allowedOrigin =
+      origin === undefined ||
+      (oauth === undefined
+        ? safeLocalUrl(origin)
+        : oauth.allowedOrigins.includes(origin));
+    if (!allowedHost || !allowedOrigin) {
       return HttpServerResponse.text("Forbidden", { status: 403 });
     }
-    if (new URL(request.url, "http://localhost").pathname !== "/mcp") {
+    const path = new URL(request.url, "http://localhost").pathname;
+    if (
+      oauth !== undefined &&
+      path === protectedResourcePath(oauth) &&
+      request.method === "GET"
+    ) {
+      return HttpServerResponse.fromWeb(protectedResourceResponse(oauth));
+    }
+    if (path !== "/mcp") {
       return HttpServerResponse.empty({ status: 404 });
     }
     if (request.method !== "POST") {
@@ -376,20 +398,34 @@ function guardMcp(
         headers: { allow: "POST" },
       });
     }
-    const authorization = request.headers.authorization;
-    if (
-      !authorization?.startsWith("Bearer ") ||
-      !timingSafeEqual(
-        digest(authorization.slice(7)),
-        digest(Redacted.value(credential)),
-      )
-    ) {
-      return HttpServerResponse.text("Unauthorized", {
-        status: 401,
-        headers: { "www-authenticate": "Bearer" },
-      });
-    }
-    return yield* app;
+    const authorityRequest = new Request(
+      oauth?.resource ?? "http://127.0.0.1/mcp",
+      { headers: request.headers },
+    );
+    return yield* admit(authorityRequest).pipe(
+      Effect.matchEffect({
+        onFailure: () =>
+          Effect.succeed(
+            HttpServerResponse.fromWeb(authenticationChallenge(authentication)),
+          ),
+        onSuccess: (expiresAt) =>
+          app.pipe(
+            Effect.map((response) => {
+              if (expiresAt === undefined || response.body._tag !== "Stream")
+                return response;
+              return HttpServerResponse.setBody(
+                response,
+                HttpBody.stream(
+                  response.body.stream.pipe(
+                    Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
+                  ),
+                  response.body.contentType,
+                ),
+              );
+            }),
+          ),
+      }),
+    );
   });
 }
 
@@ -429,10 +465,11 @@ export const LOOPBACK_HOST = "127.0.0.1";
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
   port: number,
   app: HttpApp.Default<never, Scope.Scope>,
+  host = LOOPBACK_HOST,
 ) {
   const listener = yield* Effect.sync(createServer);
   const server = yield* NodeHttpServer.make(() => listener, {
-    host: LOOPBACK_HOST,
+    host,
     port,
   });
   yield* Effect.addFinalizer(() =>

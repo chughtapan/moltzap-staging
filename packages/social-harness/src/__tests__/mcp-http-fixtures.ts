@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
 import { InboxError } from "../harness/inbox.js";
+import type { McpAuthentication } from "../harness/mcp/authentication.js";
 import { makeMcpHttpApp } from "../harness/mcp/index.js";
 import { SocialHarness } from "../harness/service.js";
 import { Identity } from "../identity/service.js";
@@ -41,6 +42,7 @@ const mcpTestHeaders = {
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly registered?: boolean;
+    readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
 ) {
@@ -88,7 +90,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const app = yield* makeMcpHttpApp({
-    credential: mcpTestCredential,
+    ...(options.authentication ?? { credential: mcpTestCredential }),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

@@ -38,7 +38,7 @@ import {
   readCredential,
   spanExport,
 } from "./config.js";
-import { LOOPBACK_HOST, makeMcpHttpApp, serveMcp } from "./mcp/index.js";
+import { makeMcpHttpApp, serveMcp } from "./mcp/index.js";
 import { makeHistoryExport, noHistoryExport } from "./message-log.js";
 import { SocialHarness } from "./service.js";
 
@@ -193,15 +193,15 @@ function runDaemonRuntime(
         }
         const app = yield* makeMcpHttpApp({
           implementation: { name: "sharnessd", version: packageVersion },
-          credential: bootstrap.mcpCredential,
-        });
-        yield* serveMcp(bootstrap.configuration.mcpPort, app).pipe(
+          ...bootstrap.authentication,
+        }).pipe(Effect.catchTag("AuthenticationRefused", () => Effect.fail(new DaemonStartupError({ phase: "listener" }))));
+        yield* serveMcp(bootstrap.configuration.mcpPort, app, bootstrap.configuration.mcpBindHost).pipe(
           Effect.catchTag("ServeError", () =>
             Effect.fail(new DaemonStartupError({ phase: "listener" })),
           ),
         );
         yield* Console.log(
-          `sharnessd listening on http://${LOOPBACK_HOST}:${bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+          `sharnessd listening on http://${bootstrap.configuration.mcpBindHost}:${bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
         );
         return yield* Effect.never;
       }),
