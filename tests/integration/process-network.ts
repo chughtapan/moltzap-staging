@@ -1,19 +1,18 @@
 /** @file Promise-native access to scoped process fixtures for node:test consumers. */
-import { inboxStream } from "./mcp-inbox.js";
-import {
-  acquireMcpConnection,
-  type McpConnection,
-  callTool,
-} from "../../plugins/shared/mcp.js";
 import {
   type AgentCard,
   AgentIdentityCard,
-  type PermittedItem,
   MessageAddressInput,
+  type PermittedItem,
   SendRequest,
   type SendResult,
 } from "@moltzap/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
+import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+} from "../../plugins/shared/mcp.js";
 import {
   acquireDaemonManagementClient,
   acquireProcessInfrastructure,
@@ -23,6 +22,7 @@ import {
   processTestError,
   type ProcessTestError,
 } from "./daemon/daemon-process-harness.ts";
+import { inboxStream } from "./mcp-inbox.js";
 import { historyMessage } from "./saved-history.js";
 
 /* eslint-disable agent-code-guard/async-keyword, agent-code-guard/promise-type -- node:test consumes promises at the fixture boundary. */

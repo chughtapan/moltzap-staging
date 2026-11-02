@@ -12,17 +12,11 @@ import {
   type RequestError,
 } from "../communication/index.js";
 import { AgentAddress, GroupAddress } from "../communication/records/values.js";
-import { exactParseOptions, exactStruct } from "../encoding/exact.js";
+import { exactStruct } from "../encoding/exact.js";
 import { LocalGuidance, PermittedItem } from "../firewall/service.js";
-import {
-  DeliveryToken,
-  InboxEntry,
-  InboxEvent,
-  InboxPage,
-} from "../harness/inbox.js";
+import { DeliveryToken, InboxEvent, InboxPage } from "../harness/inbox.js";
 import { type FirewallRefusal, firewallRefusalSchema } from "./advice.js";
 import { SendRequest } from "./send-request.js";
-import { type SendResult, SendResultSchema } from "./send-result.js";
 const savedItemSchema = Schema.typeSchema(PermittedItem);
 
 const itemEventDataSchema = Schema.Union(
@@ -73,7 +67,6 @@ export const harnessSendArgumentsSchema = exactStruct({
       "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
   }),
 });
-const harnessMessageReadyEventSchema = Schema.typeSchema(InboxEntry);
 
 /** One page request over the classified inbox. */
 export const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
@@ -117,18 +110,6 @@ const harnessSendErrorDataSchema = Schema.Union(
     detail: Schema.optionalWith(Schema.String, { exact: true }),
   }),
 );
-
-/** Decoded pagination request for the current classified inbox. */
-export type HarnessReadInboxRequest = typeof inboxRequestSchema.Type;
-/** Classified deliveries, bounded by the daemon's snapshot pagination. */
-export type HarnessReadInboxResult = typeof inboxResultSchema.Type;
-
-/** Decode a bounded inbox page received through the MCP transport. */
-export const decodeHarnessReadInboxResult =
-  Schema.decodeUnknown(inboxResultSchema);
-
-/** Validated semantic input of one send. */
-export type HarnessSendRequest = typeof harnessSendArgumentsSchema.Type;
 
 /**
  * Decoded error data of one refused `send_message` call.
@@ -182,24 +163,6 @@ export function sendErrorData(
   return { reason: error.reason, detail: error.detail };
 }
 
-/** Decoded result of one `send_message` operation. */
-export type HarnessSendResult = SendResult;
-
-/** One stable pending inbound item emitted by the daemon. */
-export type HarnessMessageReadyEvent =
-  typeof harnessMessageReadyEventSchema.Type;
-
-/**
- * Decode one exact pending-delivery notification payload.
- * @param value Untrusted notification parameters.
- * @returns The validated pending delivery.
- */
-export function decodeHarnessMessageReadyEvent(
-  value: unknown,
-): Effect.Effect<HarnessMessageReadyEvent, ParseResult.ParseError> {
-  return Schema.decodeUnknown(harnessMessageReadyEventSchema)(value);
-}
-
 /**
  * Decode the error data of one refused `send_message` call.
  * @param value Untrusted JSON-RPC error data.
@@ -218,24 +181,4 @@ export function decodeHarnessSendErrorData(
           : Effect.succeed(data),
     ),
   );
-}
-
-/**
- * Read a daemon's successful send result. Unknown extension fields are
- * ignored, while fields reserved for another result kind are rejected.
- */
-export function decodeHarnessSendResult(
-  value: unknown,
-): Effect.Effect<HarnessSendResult, ParseResult.ParseError> {
-  return Schema.decodeUnknown(SendResultSchema)(value);
-}
-
-/**
- * Enforce the daemon's complete result shape before publication. A rejected
- * result requires an uncertain outcome because the send may have taken effect.
- */
-export function checkHarnessSendResult(
-  value: unknown,
-): Effect.Effect<HarnessSendResult, ParseResult.ParseError> {
-  return Schema.decodeUnknown(SendResultSchema)(value, exactParseOptions);
 }

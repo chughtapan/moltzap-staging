@@ -10,7 +10,7 @@ import {
   type HarnessWebhookEvents,
   maximumEventBytes,
   type WebhookStatus,
-} from "../../host-protocol/index.js";
+} from "../../host-protocol/event-schemas.js";
 import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
 import { retryPending, retrySettled } from "../../tracing.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";

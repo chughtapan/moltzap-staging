@@ -36,19 +36,6 @@ export function renderContent(content: Content): string {
 }
 
 /**
- * A request message's question as every member's model reads it: its text
- * parts, one per line. The collective part is a data part, so it is never
- * among them.
- * @param content The request message's content.
- * @returns The text parts, joined by newlines.
- */
-export function questionText(content: Content): string {
-  return content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n");
-}
-
-/**
  * The agents a group address names, as `agent:` addresses, in its order; a
  * direct address names none. Hosts list them on a group turn.
  * @param address A canonical address an item carries.
@@ -111,29 +98,6 @@ export function renderCollectiveRequestBody(
   });
 }
 
-/** Incoming and outgoing assessment use the same question text and form. */
-export function renderCollectiveQuestion(
-  question: Pick<
-    Request,
-    | "author"
-    | "recipients"
-    | "question"
-    | "op"
-    | "deadlineAt"
-    | "requestedSchema"
-  >,
-): string {
-  const asked =
-    question.op === "all_gather"
-      ? `all_gather from agent:${question.author.agentName} to ${replyAddress(question)}`
-      : `gather from agent:${question.author.agentName}`;
-  return [
-    `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
-    `Question: ${question.question}`,
-    `Form: ${JSON.stringify(question.requestedSchema)}`,
-  ].join("\n");
-}
-
 /**
  * A gather's or all_gather's result: the question and one line per member.
  * The question is quoted as JSON, so a question a peer asked cannot add
@@ -165,6 +129,29 @@ export function replyAddress(message: Pick<Message, "author" | "recipients">) {
           .sort(compareAscii)
           .join(",")}`,
       );
+}
+
+/** Incoming and outgoing assessment use the same question text and form. */
+function renderCollectiveQuestion(
+  question: Pick<
+    Request,
+    | "author"
+    | "recipients"
+    | "question"
+    | "op"
+    | "deadlineAt"
+    | "requestedSchema"
+  >,
+): string {
+  const asked =
+    question.op === "all_gather"
+      ? `all_gather from agent:${question.author.agentName} to ${replyAddress(question)}`
+      : `gather from agent:${question.author.agentName}`;
+  return [
+    `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
+    `Question: ${question.question}`,
+    `Form: ${JSON.stringify(question.requestedSchema)}`,
+  ].join("\n");
 }
 
 /**

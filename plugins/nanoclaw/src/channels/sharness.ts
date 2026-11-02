@@ -5,6 +5,7 @@ import {
   groupMembers,
   type GuidanceBodyOrigin,
   MessageAddressInput,
+  packageVersion,
   parseMessageText,
   type PermittedItem,
   renderCollectiveRequest,
@@ -14,7 +15,6 @@ import {
   replyAddress,
   type RequestError,
   type SendError,
-  packageVersion,
 } from "@moltzap/social-harness";
 import {
   Config,

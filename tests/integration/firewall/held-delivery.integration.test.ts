@@ -1,15 +1,9 @@
 /** @file A real daemon recovers a delivery held after Router ordering. */
 
-import { inboxStream } from "../mcp-inbox.js";
-import {
-  acquireMcpConnection,
-  type McpConnection,
-  callTool,
-} from "../../../plugins/shared/mcp.js";
 import {
   AgentAddress,
-  type AgentName,
   type AgentCard,
+  type AgentName,
   type Content,
   type InboxEntry,
   type SendResult,
@@ -25,6 +19,11 @@ import {
 } from "effect";
 import { expect, it } from "vitest";
 import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+} from "../../../plugins/shared/mcp.js";
+import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
 } from "../communication/router-hold-proxy.js";
@@ -36,6 +35,7 @@ import {
   type FirewallMode,
   makeDaemonProcessFixture,
 } from "../daemon/daemon-process-harness.js";
+import { inboxStream } from "../mcp-inbox.js";
 import { registerFixture } from "../participants.js";
 import { processTrace } from "../process-trace.js";
 import { historyMessage } from "../saved-history.js";

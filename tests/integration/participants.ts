@@ -1,20 +1,19 @@
 /** @file Endpoints a collective-operation trace drives through real daemons. */
 
-import { inboxStream } from "./mcp-inbox.js";
-import {
-  acquireMcpConnection,
-  type McpConnection,
-  callTool,
-} from "../../plugins/shared/mcp.js";
 import {
   AgentAddress,
-  type AgentName,
   type AgentCard,
+  type AgentName,
   type InboxEntry,
   type PermittedItem,
   SendRequest,
 } from "@moltzap/social-harness";
 import { Duration, Effect, Queue, Schema, Stream } from "effect";
+import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+} from "../../plugins/shared/mcp.js";
 import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
@@ -24,8 +23,8 @@ import {
   type FirewallMode,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
-  processTestError,
 } from "./daemon/daemon-process-harness.js";
+import { inboxStream } from "./mcp-inbox.js";
 
 /** One endpoint and the items its subscription has delivered, in order. */
 export interface Participant {

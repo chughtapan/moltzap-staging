@@ -67,7 +67,7 @@ const unsubscribeSchema = Schema.Struct({
 /** Validated webhook subscription parameters before authorization and URL checks. */
 export type EventSubscribeInput = typeof subscribeSchema.Type;
 /** Exact subscription key supplied for eager webhook cleanup. */
-export type EventUnsubscribeInput = typeof unsubscribeSchema.Type;
+type EventUnsubscribeInput = typeof unsubscribeSchema.Type;
 /** Server grant for one webhook registration. */
 interface EventSubscriptionGrant {
   readonly id: string;
@@ -91,8 +91,6 @@ export interface HarnessWebhookEvents {
   readonly resume: Effect.Effect<void, ProtocolError>;
 }
 
-/** Native streaming uses the same event and replay grammar as callbacks. */
-export type EventStreamInput = typeof subscriptionSchema.Type;
 /** SDK boundary validation keeps schema constructors private. */
 export const eventStreamInput = subscriptionSchema;
 /** The event catalog has its own pagination grammar. */

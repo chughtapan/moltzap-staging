@@ -143,10 +143,6 @@
       "reason": "Canonical MCP tool contracts"
     },
     {
-      "file": "host-protocol/index.ts",
-      "reason": "Host value contracts"
-    },
-    {
       "file": "host-protocol/send-request.ts",
       "reason": "Typed send requests"
     },

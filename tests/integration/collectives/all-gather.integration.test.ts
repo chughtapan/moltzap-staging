@@ -1,7 +1,7 @@
 /** @file A requester and three members run all_gather operations through four real daemons. */
 
 import { SendError } from "@moltzap/social-harness";
-import { Effect } from "effect";
+import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
   acquireParticipants,
@@ -46,17 +46,13 @@ const allGather = (requester: Participant, to: string, deadline: number) =>
     collective: { op: "all_gather", deadline, requestedSchema: slotSchema },
   });
 
-/** The group's canonical spelling, its names in ASCII order, as requests and results carry it. */
+/** Canonical conversation address shared by every participant. */
 const group =
   "group:all-gather-member-a,all-gather-member-b,all-gather-member-c,all-gather-requester";
 
 /**
- * Each test starts PGlite, the Registry, the Router and four daemons, and the
- * silent member's test waits out a deadline of several measured message rounds.
- * Beside a second full Client suite (load average 30 to 42 on 8 cores) that
- * test has taken 113 to 127 seconds, most of it process startup. Apart from
- * that measured deadline, the limit is the only wall-clock bound these traces
- * set themselves.
+ * Each trace starts four daemons and their services. The silent-member
+ * trace also waits for a deadline measured from real message delivery.
  */
 const ALL_GATHER_TEST_TIMEOUT_MS = 300_000;
 
@@ -199,14 +195,15 @@ function answerAllGatherAndExpectSharedResult(
       to: group,
       collectiveResponse: { action: "decline", operationId },
     });
-    const requesterResult = yield* nextItem(requester);
+    const delivery = yield* Queue.take(requester.inbox);
+    expect(delivery.address).toBe(group);
+    const requesterResult = delivery.item;
     expect(requesterResult).toEqual({
       kind: "collectiveResult",
       op: "all_gather",
       operationId,
       closedAt: anyNumber,
       closedBy: "settled",
-      to: group,
       question,
       outcomes: [
         {

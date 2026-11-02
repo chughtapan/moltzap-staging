@@ -23,7 +23,7 @@ import {
   send,
 } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import { anyNumber, arrayContaining } from "../test-matchers.js";
+import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
 
 const requireAll = (participants: readonly Participant[], count: 3 | 4) =>
   participants.length === count
@@ -109,7 +109,7 @@ const acquireAllGatherScenario = Effect.gen(function* () {
     return yield* Effect.dieMessage("expected four participants");
   }
   const members = [guided, strictA, strictB];
-  /** The group's canonical spelling, its names in ASCII order, as results carry it. */
+  /** Canonical conversation address shared by every participant. */
   const group = groupAddress([guided, requester, strictA, strictB]);
   const deadline = yield* measuredDeadlineSeconds(
     groupRound(requester, members),
@@ -426,18 +426,23 @@ function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
       operationId: withheld.id,
       closedAt: anyNumber,
       closedBy: "deadline",
-      to: group,
       question: "[in] Which day works?",
       outcomes,
     };
     const hidden = {
       ...shown,
-      question: { kind: "withheld", reason: "rule-violation" },
+      question: {
+        kind: "withheld",
+        checkId: anyString,
+        reason: "rule-violation",
+      },
     };
-    expect(yield* nextItem(requester)).toEqual(shown);
+    const result = yield* Queue.take(requester.inbox);
+    expect(result.address).toBe(group);
+    expect(result.item).toEqual(shown);
     expect(yield* nextItem(guided)).toEqual(shown);
-    expect(yield* nextItem(scenario.strictA)).toMatchObject(hidden);
-    expect(yield* nextItem(scenario.strictB)).toMatchObject(hidden);
+    expect(yield* nextItem(scenario.strictA)).toEqual(hidden);
+    expect(yield* nextItem(scenario.strictB)).toEqual(hidden);
   });
 }
 
@@ -490,7 +495,11 @@ function expectAllGatherAnswerVisibility(
     };
     const withheldAnswer = {
       member: guided.agent,
-      outcome: { kind: "withheld", reason: "rule-violation" },
+      outcome: {
+        kind: "withheld",
+        checkId: anyString,
+        reason: "rule-violation",
+      },
     };
     const others = [
       {
@@ -505,10 +514,11 @@ function expectAllGatherAnswerVisibility(
       operationId,
       closedAt: anyNumber,
       closedBy: "settled",
-      to: group,
       question: "Which day works for the review?",
     };
-    expect(yield* nextItem(requester)).toMatchObject({
+    const delivery = yield* Queue.take(requester.inbox);
+    expect(delivery.address).toBe(group);
+    expect(delivery.item).toEqual({
       ...result,
       outcomes: [withheldAnswer, ...others],
     });
@@ -516,11 +526,11 @@ function expectAllGatherAnswerVisibility(
       ...result,
       outcomes: [guidedAnswer, ...others],
     });
-    expect(yield* nextItem(strictA)).toMatchObject({
+    expect(yield* nextItem(strictA)).toEqual({
       ...result,
       outcomes: [withheldAnswer, ...others],
     });
-    expect(yield* nextItem(strictB)).toMatchObject({
+    expect(yield* nextItem(strictB)).toEqual({
       ...result,
       outcomes: [withheldAnswer, ...others],
     });

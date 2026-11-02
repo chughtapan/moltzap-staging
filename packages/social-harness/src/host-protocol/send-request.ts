@@ -25,8 +25,6 @@ const question = exactStruct({
 });
 const response = Schema.Union(AcceptResponse, DeclineResponse);
 
-/** An explicit answer always names the request it answers. */
-export type CollectiveResponse = typeof response.Type;
 /** An ordinary message may explicitly select multicast. */
 export const MessageSendRequest = exactStruct({
   to: MessageAddressInput,
@@ -54,7 +52,4 @@ export const SendRequest = Schema.Union(
  * @useDeclaredType
  */
 export type SendRequest = typeof SendRequest.Type;
-/** Form grammar and bounded field diagnostics have one owning implementation. */
-export { AcceptResponse, DeadlineSeconds, DeclineResponse, RequestedSchema };
-
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */

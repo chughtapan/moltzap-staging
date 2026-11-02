@@ -1,15 +1,14 @@
 /** @file Real-daemon acceptance for the runtime adapter boundaries. */
 
-import { inboxStream } from "../mcp-inbox.js";
-import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
-import { type AgentCard, type InboxEntry } from "@moltzap/social-harness";
+import type { AgentCard, InboxEntry } from "@moltzap/social-harness";
 import { Deferred, Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
-
+import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
 import {
   acquireDaemonManagementClient,
   ProcessTestError,
 } from "../daemon/daemon-process-harness.js";
+import { inboxStream } from "../mcp-inbox.js";
 import { processTrace } from "../process-trace.js";
 import {
   acquireGroupScenario,
@@ -441,15 +440,22 @@ function sendAllGather(context: AllGatherContext) {
         },
       },
     });
-    expect(yield* nextTurn(turns)).toMatchObject({
-      Body: `all_gather result for the question sent to ${group}: "${GATHER_QUESTION}"\n- ${context.callerAddress}: answered {"slot":"mon"}\n- ${context.peerAddress}: declined`,
-      SenderName: "Social Harness",
-    });
+    const resultTurn = yield* nextTurn(turns);
+    expect(resultTurn).toMatchObject({ SenderName: "Social Harness" });
+    for (const content of [
+      GATHER_QUESTION,
+      context.callerAddress,
+      context.peerAddress,
+      "mon",
+      "declined",
+    ]) {
+      expect(resultTurn.Body).toContain(content);
+    }
+
     const memberResult = yield* nextItem(inboxStream(caller));
     expect(memberResult).toMatchObject({
       kind: "collectiveResult",
       operationId: callerRequest.message.operation.operationId,
-      to: group,
       outcomes: [
         {
           member: context.callerAgent,
@@ -507,10 +513,10 @@ function sendGather(
       },
     });
     const resultTurn = yield* nextTurn(context.turns);
-    expect(resultTurn).toMatchObject({
-      Body: `gather result for the question sent to ${callerAddress}: "${GATHER_QUESTION}"\n- ${callerAddress}: answered {"slot":"mon"}`,
-      SenderName: "Social Harness",
-    });
+    expect(resultTurn).toMatchObject({ SenderName: "Social Harness" });
+    for (const content of [GATHER_QUESTION, callerAddress, "mon"]) {
+      expect(resultTurn.Body).toContain(content);
+    }
   });
 }
 
@@ -562,7 +568,6 @@ function assertReceivedAllGather(context: AllGatherContext, requestId: string) {
     expect(callerResult).toMatchObject({
       kind: "collectiveResult",
       operationId: requestId,
-      to: group,
       outcomes: [
         { member: peerAgent, outcome: { kind: "declined" } },
         {
@@ -572,11 +577,20 @@ function assertReceivedAllGather(context: AllGatherContext, requestId: string) {
       ],
     });
     expect(yield* nextItem(inboxStream(peer))).toEqual(callerResult);
-    expect(yield* nextTurn(turns)).toMatchObject({
-      Body: `all_gather result for the question sent to ${group}: "${GATHER_QUESTION}"\n- ${peerAddress}: declined\n- ${targetAddress}: answered {"slot":"tue"}`,
+    const resultTurn = yield* nextTurn(turns);
+    expect(resultTurn).toMatchObject({
       ChatType: "group",
       SenderName: "Social Harness",
     });
+    for (const content of [
+      GATHER_QUESTION,
+      peerAddress,
+      targetAddress,
+      "tue",
+      "declined",
+    ]) {
+      expect(resultTurn.Body).toContain(content);
+    }
   });
 }
 

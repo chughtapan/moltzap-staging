@@ -28,7 +28,6 @@ import {
   replyAddress,
   type SendRequest,
   type SendResult,
-  packageVersion,
 } from "@moltzap/social-harness";
 import {
   Config,

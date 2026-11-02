@@ -7,10 +7,10 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
-  withFirewall,
-  type FirewallOptions,
   type DecisionProvider,
   type DecisionRequest,
+  type FirewallOptions,
+  withFirewall,
 } from "@moltzap/social-harness/service";
 import {
   ConfigProvider,

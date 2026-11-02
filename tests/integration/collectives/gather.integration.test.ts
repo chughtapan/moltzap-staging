@@ -1,7 +1,7 @@
 /** @file Three real daemons run gather operations end to end. */
 
-import { SendError } from "@moltzap/social-harness";
-import { Effect } from "effect";
+import { RequestError, SendError } from "@moltzap/social-harness";
+import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
   acquireParticipants,
@@ -49,12 +49,8 @@ const gather = (
   });
 
 /**
- * Each test starts PGlite, the Registry, the Router and three daemons, and the
- * silent member's test waits out a deadline of several measured message rounds.
- * Beside a second full Client suite (load average 31 to 49 on 8 cores) that
- * test has taken 176 to 188 seconds, most of it process startup. Apart from
- * that measured deadline, the limit is the only wall-clock bound these traces
- * set themselves.
+ * Each trace starts three daemons and their services. The silent-member
+ * trace also waits for a deadline measured from real message delivery.
  */
 const GATHER_TEST_TIMEOUT_MS = 240_000;
 
@@ -131,7 +127,7 @@ const allAnsweredBehavior = Effect.gen(function* () {
     participants.requester,
     started.id,
   );
-  yield* answerGatherAndExpectResult(participants, started.id);
+  yield* answerGatherAndExpectResult(participants, started.id, started.address);
 }).pipe(Effect.scoped);
 
 /**
@@ -201,18 +197,21 @@ function expectInvalidAnswerRefused(
         content: { slot: "sun" },
       },
     }).pipe(Effect.flip);
-    expect(invalid).toBeInstanceOf(SendError);
-    expect(invalid).toMatchObject({ reason: "content-invalid" });
-    expect(invalid).toHaveProperty(
-      "detail",
-      expect.stringContaining('field "slot"'),
-    );
+    expect(invalid).toBeInstanceOf(RequestError);
+    expect(invalid).toMatchObject({
+      operationId,
+      failure: {
+        kind: "answer-invalid",
+        fields: [{ field: "slot", reason: "invalid" }],
+      },
+    });
   });
 }
 
 function answerGatherAndExpectResult(
   { requester, first, second }: GatherParticipants,
   operationId: string,
+  address: string,
 ) {
   return Effect.gen(function* () {
     yield* send(first, {
@@ -227,13 +226,14 @@ function answerGatherAndExpectResult(
       to: requester.address,
       collectiveResponse: { action: "decline", operationId },
     });
-    expect(yield* nextItem(requester)).toEqual({
+    const result = yield* Queue.take(requester.inbox);
+    expect(result.address).toBe(address);
+    expect(result.item).toEqual({
       kind: "collectiveResult",
       op: "gather",
       operationId,
       closedAt: anyNumber,
       closedBy: "settled",
-      to: "group:gather-member-a,gather-member-b,gather-requester",
       question,
       outcomes: [
         {

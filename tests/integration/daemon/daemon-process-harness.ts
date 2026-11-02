@@ -10,19 +10,17 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
-  AgentName,
-  AgentSigningAuthority,
-  AgentPublicKey,
-  PermittedItem,
-  type MessageAddressInput,
   AgentIdentityCard,
+  AgentName,
+  AgentPublicKey,
+  AgentSigningAuthority,
+  type MessageAddressInput,
+  PermittedItem,
   toolDefinitions,
   type ToolRequest,
   type ToolResult,
 } from "@moltzap/social-harness";
-
 import { WireVersions } from "@moltzap/social-harness/test";
-
 import {
   Console,
   Data,

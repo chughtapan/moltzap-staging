@@ -14,10 +14,9 @@
 
 import { NodeRuntime } from "@effect/platform-node";
 import {
-  withFirewall,
-  type FirewallOptions,
   type DecisionProvider,
   type DecisionRequest,
+  withFirewall,
 } from "@moltzap/social-harness/service";
 import { Config, ConfigProvider, Effect, Layer, Schema } from "effect";
 

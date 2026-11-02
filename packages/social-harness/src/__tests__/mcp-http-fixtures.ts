@@ -32,7 +32,7 @@ export const mcpTestCredential = Redacted.make(
   "mcp-test-credential-0000000000000001",
 );
 /** Local requests use the same bearer as the server fixture. */
-export const mcpTestHeaders = {
+const mcpTestHeaders = {
   authorization: `Bearer ${Redacted.value(mcpTestCredential)}`,
   host: "127.0.0.1",
 };

@@ -4,8 +4,6 @@
  * network.
  */
 
-import { inboxStream } from "../mcp-inbox.js";
-import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import {
@@ -17,6 +15,7 @@ import { HISTORY_WIRE_VERSIONS } from "@moltzap/social-harness/test";
 import { Data, Effect, Fiber, Option, Schedule, Schema, Stream } from "effect";
 import { join, posix, resolve } from "node:path";
 import { expect, it, type TestContext } from "vitest";
+import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
 import {
   installPackedConsumer,
   PackGateError,
@@ -33,6 +32,7 @@ import {
   makeRegistrationRequest,
   ProcessTestError,
 } from "../daemon/daemon-process-harness.js";
+import { inboxStream } from "../mcp-inbox.js";
 
 // @agent-code-guard/regression-only: Regression cases exercise the reviewed release selection, reset boundary, missing metadata, and registry outage failures; the real process exchange checks interoperability.
 

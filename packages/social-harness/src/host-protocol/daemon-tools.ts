@@ -103,24 +103,3 @@ export const managementReadConversationResultSchema = Schema.Struct({
   records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 });
-
-/** Decoded local registration request. */
-export type ManagementRegisterRequest =
-  typeof managementRegisterRequestSchema.Type;
-/** Encoded Registry registration result crossing MCP. */
-export type ManagementRegisterResult =
-  typeof managementRegisterResultSchema.Type;
-/** Encoded daemon status crossing MCP. */
-export type ManagementStatusResult = typeof managementStatusResultSchema.Type;
-/** Decoded local conversation search request. */
-export type ManagementSearchConversationsRequest =
-  typeof managementSearchConversationsRequestSchema.Type;
-/** Encoded local conversation search result. */
-export type ManagementSearchConversationsResult =
-  typeof managementSearchConversationsResultSchema.Type;
-/** Decoded local certified-history request. */
-export type ManagementReadConversationRequest =
-  typeof managementReadConversationRequestSchema.Type;
-/** Saved peer views and guidance remain unchanged by later policy edits. */
-export type ManagementReadConversationResult =
-  typeof managementReadConversationResultSchema.Type;

@@ -418,6 +418,12 @@ function makeHarness<R>(
                           error.reason === "unknown-agent"
                             ? "unknown-agent"
                             : "network-unavailable",
+                        ...(error.reason === "unknown-agent" &&
+                        error.agentName !== undefined
+                          ? {
+                              detail: `No registered agent named agent:${error.agentName}.`,
+                            }
+                          : {}),
                       }),
                     ),
                   ),

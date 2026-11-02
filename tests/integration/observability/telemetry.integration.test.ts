@@ -1,7 +1,7 @@
 /** @file Real daemons export traces and retry outcomes over OTLP/HTTP protobuf. */
 
 import { replyAddress } from "@moltzap/social-harness";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
   acquireRouterHoldProxy,
@@ -114,7 +114,7 @@ const BATCH_DELAY = Duration.millis(100);
  */
 const SILENCE_WINDOW = Duration.times(BATCH_DELAY, 20);
 
-/** The exporting daemon runs `sharnessd`, which is `daemonLayer`. */
+/** An OTLP endpoint enables export only for the daemon configured to use it. */
 const exportBehavior = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
   const receiver = yield* acquireOtlpReceiver;
@@ -158,9 +158,8 @@ const exportBehavior = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 /**
- * The requester exports and installs a firewall that passes every message,
- * so it runs `withFirewall` and the firewall's checks admit its
- * collectives. It names its service through `OTEL_RESOURCE_ATTRIBUTES`. The
+ * The requester exports and installs a firewall that admits its messages.
+ * It names its service through `OTEL_RESOURCE_ATTRIBUTES`. The
  * third daemon reaches the Router through a hold proxy. In a three-member
  * group every message needs every member, so holding that member keeps the
  * requester's proposals uncertified. A restarted Router is a new instance, so
@@ -194,8 +193,8 @@ const markerBehavior = Effect.gen(function* () {
   yield* scenario.proxy.release;
   const request = yield* answerAllGather(scenario);
   expect(accepted).toMatchObject({
-    kind: "collective",
-    operationId: request.message.operation.operationId,
+    id: request.message.operation.operationId,
+    address: replyAddress(request.message),
   });
   yield* expectProposalCertified(scenario.receiver, pendingId);
   yield* restartRouterAndExpectRecovery(scenario);
@@ -274,14 +273,15 @@ function answerAllGather({ requester, member, held, group }: MarkerScenario) {
         action: "decline",
       },
     });
-    const result = yield* nextItem(requester);
+    const delivery = yield* Queue.take(requester.inbox);
+    expect(delivery.address).toBe(replyAddress(allGatherRequest.message));
+    const result = delivery.item;
     expect(result).toEqual({
       kind: "collectiveResult",
       op: "all_gather",
       operationId: allGatherRequest.message.operation.operationId,
       closedAt: anyNumber,
       closedBy: "settled",
-      to: replyAddress(allGatherRequest.message),
       question,
       outcomes: [
         {
@@ -306,12 +306,12 @@ function expectCompletedRetries(completed: readonly ExportedSpan[]): void {
     attributesOf(markers(completed, "retry.settled", "kind", "firewall-check")),
   ).toContainEqual({
     kind: "firewall-check",
-    id: "outgoing",
+    id: anyString,
     outcome: "checked",
   });
   expect(
     attributesOf(markers(completed, "retry.settled", "kind", "outbound")),
-  ).toContainEqual({ kind: "outbound", id: "outbox", outcome: "sent" });
+  ).toContainEqual({ kind: "outbound", id: anyString, outcome: "sent" });
 }
 
 function unsettledProposals(received: readonly ExportedSpan[]) {

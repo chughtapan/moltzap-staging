@@ -1,18 +1,11 @@
 /** @file Two real daemons certify, deliver, and recover multicast operations. */
 
-import { inboxStream } from "../mcp-inbox.js";
-import {
-  acquireMcpConnection,
-  type McpConnection,
-  callTool,
-} from "../../../plugins/shared/mcp.js";
 import { FileSystem } from "@effect/platform";
 import { ProtocolErrorCode } from "@modelcontextprotocol/client";
 import {
   AgentAddress,
-  AgentIdentityCard,
-  type AgentName,
   type AgentCard,
+  type AgentName,
   type Content,
   type InboxEntry,
   SendError,
@@ -26,6 +19,11 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+} from "../../../plugins/shared/mcp.js";
+import {
   agentNotAdmittedDiagnostic,
   agentNotAdmittedRemedy,
   agentResetDocsLink,
@@ -36,6 +34,7 @@ import {
   resetReleaseDocsAnchor,
   storageStartupPhase,
 } from "../expected-contracts.js";
+import { inboxStream } from "../mcp-inbox.js";
 import { processTrace } from "../process-trace.js";
 import { historyMessage } from "../saved-history.js";
 import { arrayContaining } from "../test-matchers.js";
@@ -526,7 +525,7 @@ function expectRegisteredRestartWithoutAdmission(
 const retiredWindowDaemon = `
   import { NodeRuntime } from "@effect/platform-node";
   import { WIRE_VERSION } from "@moltzap/social-harness"; import { WireVersions } from "@moltzap/social-harness/test";
-  import { Daemon } from "@moltzap/social-harness/service";
+  import { daemonLayer } from "@moltzap/social-harness/service";
   import { ConfigProvider, Effect, Layer } from "effect";
   Layer.launch(daemonLayer).pipe(
     Effect.provideService(WireVersions, { live: [], history: [WIRE_VERSION] }),

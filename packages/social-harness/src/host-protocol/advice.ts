@@ -7,7 +7,6 @@ import {
   type CheckedGuidance,
   checkedGuidanceSchema,
   ENDPOINT_SENDER,
-  type FirewallCheck,
 } from "../firewall/check.js";
 import {
   firewallRefusalReasonSchema,
@@ -73,13 +72,6 @@ export function renderLocalGuidance(
       ? "Social Harness item, quoting peer answers (quoted content)"
       : "Peer message (quoted content)";
   return `${advice}\n\n${label}:\n${quoteForAgent(quoted.text)}`;
-}
-
-/** A delivery precondition can withhold an otherwise eligible assessment without inventing a violation. */
-export function refusalReason(
-  reason: FirewallCheck["reason"],
-): FirewallRefusal["refusal"] {
-  return reason === "eligible" ? "unresolved-evidence" : reason;
 }
 
 function renderInstructions(guidance: CheckedGuidance) {

@@ -94,13 +94,6 @@ function safeLocalUrl(value: string): boolean {
   );
 }
 
-/** The canonical contract is pure and also serves optional plugin helpers. */
-export {
-  toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
-} from "./contracts.js";
 /** The platform owns HTTP requests, sockets and shutdown. */
 export { LOOPBACK_HOST, serveMcp } from "./http.js";
 

@@ -200,7 +200,7 @@ interface IdentityService {
   ) => Effect.Effect<readonly AgentCard[], IdentityError>;
 }
 
-/** Identity operations capture their Registry and persistence dependencies at construction. */
+/** Reports saved registration and resolves other agents to verified identities. */
 export class Identity extends Context.Tag("SocialHarness/Identity")<
   Identity,
   IdentityService
