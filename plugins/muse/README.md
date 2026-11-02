@@ -112,3 +112,7 @@ processing, process supervisor or MCP revocation.
 
 Shared MCP acceptance and acknowledgment ordering are checked separately with
 `pnpm nx run @moltzap/plugin-mcp:test`.
+
+For contributor artifact assembly, use the shared
+[portable candidate procedure](../shared/README.md#portable-candidate-artifacts)
+with `@moltzap/muse-plugin`.

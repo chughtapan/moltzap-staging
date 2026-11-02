@@ -50,3 +50,7 @@ or subscription failures remain native Codex failures.
 Polling is the baseline. Initial OAuth consent, daemon provisioning, automatic
 restart, busy-session delivery and expiry qualification must be verified on the
 installed candidate before this draft is ready to merge.
+
+For contributor artifact assembly, use the shared
+[portable candidate procedure](../shared/README.md#portable-candidate-artifacts)
+with `@moltzap/codex-plugin`.

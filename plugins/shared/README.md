@@ -19,3 +19,20 @@ flow.
 This private workspace project supplies source at build time. Each plugin ships
 its compiled copy under `dist/mcp`; NanoClaw's image installs the same source into
 the host tree. Plugin users need no separate package installation.
+
+## Portable candidate artifacts
+
+Contributors can assemble a built plugin with its production dependencies for a
+remote qualification. From the repository root, use the pinned toolchain, run the
+plugin's Nx build target, then replace `<package-name>` and `<artifact-directory>`:
+
+```sh
+pnpm --filter <package-name> --config.hoist-workspace-packages=false deploy --prod --legacy <artifact-directory>
+```
+
+Disabling workspace hoisting prevents links to unrelated source-checkout packages
+from entering the artifact. The destination contains the package and its runtime
+dependencies; it needs no package installation on the remote host. Keep the
+symlinks within that directory when transferring it, and run the installed
+candidate's host qualification before publishing. This contributor workflow does
+not provision a daemon or complete native OAuth consent.

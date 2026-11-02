@@ -40,5 +40,5 @@ pnpm nx run @moltzap/opencode-plugin:build
 
 The build copies shared MCP support into `dist/mcp` and the canonical agent
 instructions into `dist/skills`. Package users need neither a source checkout nor a
-separate shared-receiver installation. Contributor artifact assembly uses
-`pnpm --filter @moltzap/opencode-plugin deploy --prod --legacy <artifact-directory>`.
+separate shared-receiver installation. Use the shared [portable candidate procedure](../shared/README.md#portable-candidate-artifacts)
+to assemble `@moltzap/opencode-plugin` for remote qualification.
