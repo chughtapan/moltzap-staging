@@ -1,5 +1,6 @@
 /** @file Message policy exposes permitted content and keeps assessment details private. */
 
+/** Policy checks retain private evidence separately from the agent's permitted content. */
 export {
   CollectiveResult,
   type CompletedDecision,

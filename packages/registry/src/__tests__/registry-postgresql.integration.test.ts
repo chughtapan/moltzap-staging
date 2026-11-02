@@ -1,7 +1,5 @@
 /** @file PostgreSQL Registry persistence, restart, admission, and outage integration tests. */
 
-import { Registry } from "@moltzap/social-harness/service";
-
 import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpServerRequest } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
@@ -13,6 +11,7 @@ import {
   WIRE_VERSION,
 } from "@moltzap/social-harness";
 import { httpErrors, registryContract } from "@moltzap/social-harness/internal";
+import { Registry } from "@moltzap/social-harness/service";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,

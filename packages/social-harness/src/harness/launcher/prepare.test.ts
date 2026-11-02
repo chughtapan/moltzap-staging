@@ -14,10 +14,13 @@ import { NodeContext } from "@effect/platform-node";
 import { live as it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import { describe, expect } from "vitest";
-import type { LauncherConfiguration } from "./selection.js";
-import { readRecord, writeRecord } from "./installation.js";
-import { integrityOf } from "./integrity.js";
-import { prepare } from "./prepare.js";
+import {
+  integrityOf,
+  type LauncherConfiguration,
+  prepare,
+  readRecord,
+  writeRecord,
+} from "./installation.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- versions and keep reasons are the launcher contract under test. */
 

@@ -95,7 +95,7 @@ export function createFirewallTables(): Effect.Effect<
       Effect.forEach(
         schemaSql.split(";").filter((statement) => statement.trim().length > 0),
         (statement) => sql.unsafe(statement),
-        { discard: true },
+        { discard: true, concurrency: 1 },
       ),
     );
   }).pipe(
@@ -204,12 +204,14 @@ export function saveCheckDecision(
         const prior = yield* read(value.checkId);
         if (Option.isSome(prior)) {
           const saved = prior.value;
+          const sameEvidence =
+            sameBytes(saved.canonicalCandidate, value.canonicalCandidate) &&
+            sameBytes(saved.canonicalInput, value.canonicalInput) &&
+            sameBytes(saved.canonicalResult, value.canonicalResult);
           if (
             saved.direction !== value.direction ||
             saved.disposition !== applied ||
-            !sameBytes(saved.canonicalCandidate, value.canonicalCandidate) ||
-            !sameBytes(saved.canonicalInput, value.canonicalInput) ||
-            !sameBytes(saved.canonicalResult, value.canonicalResult)
+            !sameEvidence
           ) {
             return yield* persistenceFailure();
           }
@@ -242,22 +244,9 @@ export function readDecisions(request: {
         sql`SELECT check_id AS checkId, canonical_result AS canonicalResult, disposition, decided_at AS time FROM firewall_checks WHERE decided_at >= ${since} ORDER BY decided_at DESC, rowid DESC LIMIT 100`,
     });
     const rows = yield* read(request.since ?? 0);
-    const summaries = yield* Effect.forEach(rows, (row) =>
-      Effect.try({
-        try: () => decoder.decode(row.canonicalResult),
-        catch: persistenceFailure,
-      }).pipe(
-        Effect.flatMap(Schema.decodeUnknown(savedSummary)),
-        Effect.map(({ summaries }) =>
-          summaries.map((summary) => ({
-            ...summary,
-            checkId: row.checkId,
-            disposition: row.disposition,
-            time: row.time,
-          })),
-        ),
-      ),
-    );
+    const summaries = yield* Effect.forEach(rows, decodeDecisionSummaries, {
+      concurrency: 1,
+    });
     return {
       decisions: summaries.flat(),
       activations: yield* readFirewallActivations(request),
@@ -265,5 +254,22 @@ export function readDecisions(request: {
   }).pipe(
     Effect.mapError(persistenceFailure),
     Effect.withSpan("readDecisions"),
+  );
+}
+
+function decodeDecisionSummaries(row: typeof decisionRow.Type) {
+  return Effect.try({
+    try: () => decoder.decode(row.canonicalResult),
+    catch: persistenceFailure,
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknown(savedSummary)),
+    Effect.map(({ summaries }) =>
+      summaries.map((summary) => ({
+        ...summary,
+        checkId: row.checkId,
+        disposition: row.disposition,
+        time: row.time,
+      })),
+    ),
   );
 }

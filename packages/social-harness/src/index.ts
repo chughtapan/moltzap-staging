@@ -1,5 +1,5 @@
-// safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
 /** @file MCP contracts and the values clients use to send messages and read their saved inbox. */
+// safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
 
 /** A tool's schemas own its arguments, successful result and declared failures. */
 export {

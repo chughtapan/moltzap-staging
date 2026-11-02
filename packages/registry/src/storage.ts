@@ -3,10 +3,10 @@
 import type { SqlError } from "@effect/sql/SqlError";
 import { SqlClient } from "@effect/sql/SqlClient";
 import {
-  AgentIdentityCard,
   AgentId,
-  type AgentSigningAuthority,
+  AgentIdentityCard,
   type AgentPublicKey,
+  type AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {

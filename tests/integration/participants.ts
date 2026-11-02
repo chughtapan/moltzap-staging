@@ -1,14 +1,18 @@
 /** @file Endpoints a collective-operation trace drives through real daemons. */
 
+import { inboxStream } from "./mcp-inbox.js";
 import {
-  acquireHarnessEndpoint,
+  acquireMcpConnection,
+  type McpConnection,
+  callTool,
+} from "../../plugins/shared/mcp.js";
+import {
   AgentAddress,
   type AgentName,
   type AgentCard,
-  type HarnessEndpoint,
-  type InboundDelivery,
-  type InboundItem,
-  SendInput,
+  type InboxEntry,
+  type PermittedItem,
+  SendRequest,
 } from "@moltzap/social-harness";
 import { Duration, Effect, Queue, Schema, Stream } from "effect";
 import {
@@ -22,14 +26,13 @@ import {
   makeRegistrationRequest,
   processTestError,
 } from "./daemon/daemon-process-harness.js";
-import { registrationResultKind } from "./expected-contracts.js";
 
 /** One endpoint and the items its subscription has delivered, in order. */
 export interface Participant {
   readonly address: AgentAddress;
   readonly agent: AgentCard;
-  readonly endpoint: HarnessEndpoint;
-  readonly inbox: Queue.Queue<InboundDelivery>;
+  readonly endpoint: McpConnection;
+  readonly inbox: Queue.Queue<InboxEntry>;
 }
 
 /**
@@ -38,12 +41,12 @@ export interface Participant {
  */
 const joinParticipant = (fixture: DaemonProcessFixture, agent: AgentCard) =>
   Effect.gen(function* () {
-    const endpoint = yield* acquireHarnessEndpoint(fixture.endpoint, {
-      credential: fixture.mcpCredential,
-      receiveMode: "push",
-    });
-    const inbox = yield* Queue.unbounded<InboundDelivery>();
-    yield* endpoint.messages.pipe(
+    const endpoint = yield* acquireMcpConnection(
+      { endpoint: fixture.endpoint, credential: fixture.mcpCredential },
+      { name: "process-test", version: "test" },
+    );
+    const inbox = yield* Queue.unbounded<InboxEntry>();
+    yield* inboxStream(endpoint).pipe(
       Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
       Effect.forkScoped,
     );
@@ -60,13 +63,7 @@ export const registerFixture = (fixture: DaemonProcessFixture) =>
   Effect.scoped(
     acquireDaemonManagementClient(fixture).pipe(
       Effect.flatMap((management) =>
-        management.register(makeRegistrationRequest(fixture)).pipe(
-          Effect.filterOrFail(
-            (result) => result.kind === registrationResultKind,
-            (result) =>
-              processTestError(`fixture registration returned ${result.kind}`),
-          ),
-        ),
+        management.register(makeRegistrationRequest(fixture)),
       ),
     ),
   );
@@ -92,7 +89,11 @@ export const startParticipants = (fixtures: readonly DaemonProcessFixture[]) =>
       (fixture) =>
         registerFixture(fixture).pipe(
           Effect.flatMap((registered) =>
-            joinParticipant(fixture, registered.agent),
+            joinParticipant(fixture, {
+              agentId: registered.agentId,
+              agentName: registered.agentName,
+              principalId: registered.principalId,
+            }),
           ),
         ),
       { concurrency: 1 },
@@ -124,13 +125,15 @@ export const acquireParticipants = (
 /** Take the participant's next item and acknowledge its delivery. */
 export const nextItem = (participant: Participant) =>
   Queue.take(participant.inbox).pipe(
-    Effect.tap((delivery) => delivery.acknowledge),
-    Effect.map((delivery): InboundItem => delivery.item),
+    Effect.map((delivery): PermittedItem => delivery.item),
   );
 
 /** Sends `input`, decoded as a host's send input, from `participant`. */
 export const send = (participant: Participant, input: unknown) =>
-  participant.endpoint.send(Schema.decodeUnknownSync(SendInput)(input));
+  callTool(participant.endpoint.client, {
+    name: "send_message",
+    arguments: { input: Schema.decodeUnknownSync(SendRequest)(input) },
+  });
 
 /** The fixed-member group address of `participants`. */
 export const groupAddress = (participants: readonly Participant[]): string =>

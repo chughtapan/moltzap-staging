@@ -2,7 +2,7 @@
  * @file A real daemon process with a firewall installed, for the integration
  * traces that run collective operations under one.
  *
- * The daemon runs `Daemon.withFirewall` with a text policy and deterministic provider in
+ * The daemon runs `withFirewall` with a text policy and deterministic provider in
  * the mode `SHARNESS_TEST_FIREWALL_MODE` names, so a trace decides each check
  * by the text it sends: the policy rejects an incoming text that carries
  * `[in]` and an outgoing text that carries `[out]`, asks the agent to
@@ -14,7 +14,8 @@
 
 import { NodeRuntime } from "@effect/platform-node";
 import {
-  Daemon,
+  withFirewall,
+  type FirewallOptions,
   type DecisionProvider,
   type DecisionRequest,
 } from "@moltzap/social-harness/service";
@@ -93,7 +94,7 @@ const program = Config.literal(
 )("SHARNESS_TEST_FIREWALL_MODE").pipe(
   Effect.flatMap((mode) =>
     Layer.launch(
-      Daemon.withFirewall({
+      withFirewall({
         mode,
         settings: {
           timeoutMilliseconds: 10_000,

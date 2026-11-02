@@ -1,18 +1,22 @@
 /** @file Two real daemons certify, deliver, and recover multicast operations. */
 
+import { inboxStream } from "../mcp-inbox.js";
+import {
+  acquireMcpConnection,
+  type McpConnection,
+  callTool,
+} from "../../../plugins/shared/mcp.js";
 import { FileSystem } from "@effect/platform";
 import { ProtocolErrorCode } from "@modelcontextprotocol/client";
 import {
-  acquireHarnessEndpoint,
   AgentAddress,
   AgentIdentityCard,
   type AgentName,
   type AgentCard,
   type Content,
-  type HarnessEndpoint,
-  type InboundDelivery,
+  type InboxEntry,
   SendError,
-  type SendInput,
+  type SendRequest,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
 import { WireVersions } from "@moltzap/social-harness/test";
@@ -29,7 +33,6 @@ import {
   outboxTooOldReason,
   outboxTooOldRemedy,
   registeredDaemonStatus,
-  registrationResultKind,
   resetReleaseDocsAnchor,
   storageStartupPhase,
 } from "../expected-contracts.js";
@@ -61,29 +64,30 @@ const registerFixture = (fixture: DaemonProcessFixture) =>
       const management = yield* acquireDaemonManagementClient(fixture);
       expect(yield* management.status()).toEqual({ kind: "unregistered" });
 
-      const registered = yield* management
-        .register(makeRegistrationRequest(fixture))
-        .pipe(
-          Effect.filterOrFail(
-            (result) => result.kind === registrationResultKind,
-            (result) =>
-              new ProcessTestError({
-                message: `fixture registration returned ${result.kind}`,
-              }),
-          ),
-        );
-      const agentCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-        registered.agentCard,
+      const registered = yield* management.register(
+        makeRegistrationRequest(fixture),
       );
+      const agentCard = registered;
       expect(agentCard).toMatchObject({
         agentName: fixture.agentName,
       });
-      expect(registered.agent).toEqual({
+      expect({
+        agentId: registered.agentId,
+        agentName: registered.agentName,
+        principalId: registered.principalId,
+      }).toEqual({
         agentId: agentCard.agentId,
         agentName: agentCard.agentName,
         principalId: agentCard.principalId,
       });
-      return { ...fixture, agent: registered.agent };
+      return {
+        ...fixture,
+        agent: {
+          agentId: registered.agentId,
+          agentName: registered.agentName,
+          principalId: registered.principalId,
+        },
+      };
     }),
   );
 
@@ -96,16 +100,16 @@ const deliverDirect = (input: {
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const sender = yield* acquireHarnessEndpoint(input.from.endpoint, {
-        credential: input.from.mcpCredential,
-        receiveMode: "push",
-      });
-      const receiver = yield* acquireHarnessEndpoint(input.to.endpoint, {
-        credential: input.to.mcpCredential,
-        receiveMode: "push",
-      });
+      const sender = yield* acquireMcpConnection(
+        { endpoint: input.from.endpoint, credential: input.from.mcpCredential },
+        { name: "process-test", version: "test" },
+      );
+      const receiver = yield* acquireMcpConnection(
+        { endpoint: input.to.endpoint, credential: input.to.mcpCredential },
+        { name: "process-test", version: "test" },
+      );
       const delivery = yield* Effect.forkScoped(
-        nextDelivery(receiver.messages),
+        nextDelivery(inboxStream(receiver)),
       );
       yield* input.send(sender, {
         to: directAddress(input.to.agentName),
@@ -126,8 +130,11 @@ const deliverDirect = (input: {
 const beforeRestartText = "sent before the daemon restarts";
 
 /** Sends one message as a host does, failing on any send failure. */
-const certifiedSend = (endpoint: HarnessEndpoint, input: SendInput) =>
-  endpoint.send(input).pipe(Effect.asVoid);
+const certifiedSend = (endpoint: McpConnection, input: SendRequest) =>
+  callTool(endpoint.client, {
+    name: "send_message",
+    arguments: { input: input },
+  }).pipe(Effect.asVoid);
 
 const fromRestartedText = "sent by the restarted daemon";
 
@@ -343,9 +350,7 @@ const readDurableHistory = (
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       expect(yield* management.searchConversations()).toEqual({
-        kind: "page",
         addresses: [address],
-        hasMore: false,
       });
       const history = yield* management.readConversation(address);
       return history;
@@ -523,7 +528,7 @@ const retiredWindowDaemon = `
   import { WIRE_VERSION } from "@moltzap/social-harness"; import { WireVersions } from "@moltzap/social-harness/test";
   import { Daemon } from "@moltzap/social-harness/service";
   import { ConfigProvider, Effect, Layer } from "effect";
-  Layer.launch(Daemon.layer).pipe(
+  Layer.launch(daemonLayer).pipe(
     Effect.provideService(WireVersions, { live: [], history: [WIRE_VERSION] }),
     Effect.withConfigProvider(ConfigProvider.fromEnv()),
     NodeRuntime.runMain,
@@ -730,38 +735,52 @@ function exchangeInitialMessagesAndExpectDelivery(state: ProcessScenario) {
     Effect.gen(function* () {
       const { callerFixture, targetFixture, callerAddress, targetAddress } =
         state;
-      const caller = yield* acquireHarnessEndpoint(callerFixture.endpoint, {
-        credential: callerFixture.mcpCredential,
-        receiveMode: "push",
-      });
-      const target = yield* acquireHarnessEndpoint(targetFixture.endpoint, {
-        credential: targetFixture.mcpCredential,
-        receiveMode: "push",
-      });
+      const caller = yield* acquireMcpConnection(
+        {
+          endpoint: callerFixture.endpoint,
+          credential: callerFixture.mcpCredential,
+        },
+        { name: "process-test", version: "test" },
+      );
+      const target = yield* acquireMcpConnection(
+        {
+          endpoint: targetFixture.endpoint,
+          credential: targetFixture.mcpCredential,
+        },
+        { name: "process-test", version: "test" },
+      );
       const callerDelivery = yield* Effect.forkScoped(
-        nextDelivery(caller.messages),
+        nextDelivery(inboxStream(caller)),
       );
       const targetDelivery = yield* Effect.forkScoped(
-        nextDelivery(target.messages),
+        nextDelivery(inboxStream(target)),
       );
 
-      const sent = yield* caller.send({
-        to: targetAddress,
-        text: initialText,
+      const sent = yield* callTool(caller.client, {
+        name: "send_message",
+        arguments: {
+          input: {
+            to: targetAddress,
+            text: initialText,
+          },
+        },
       });
       const targetInbound = yield* Fiber.join(targetDelivery);
       expect(sent).toMatchObject({ address: targetAddress });
       expect(targetInbound.item).toMatchObject({
         kind: "multicast",
         message: {
-          msgId: sent.msgId,
+          msgId: sent.id,
           author: callerFixture.agent,
           recipients: [targetFixture.agent],
           content: [{ type: "text", text: initialText }],
         },
       });
 
-      yield* target.send({ to: callerAddress, text: responseText });
+      yield* callTool(target.client, {
+        name: "send_message",
+        arguments: { input: { to: callerAddress, text: responseText } },
+      });
       const callerInbound = yield* Fiber.join(callerDelivery);
       expect(callerInbound.item).toMatchObject({
         kind: "multicast",
@@ -787,7 +806,7 @@ function expectInitialHistoriesMatch(state: ProcessScenario) {
       targetFixture,
       callerAddress,
     );
-    expect(callerHistory.continuation).toBeNull();
+    expect(callerHistory.nextCursor).toBeUndefined();
     expect(callerHistory.records.map(({ kind }) => kind)).toEqual([
       "sent",
       "received",
@@ -795,7 +814,7 @@ function expectInitialHistoriesMatch(state: ProcessScenario) {
     expect(
       callerHistory.records.map((record) => historyMessage(record).content),
     ).toEqual([initialContent, [{ type: "text", text: responseText }]]);
-    expect(targetHistory.continuation).toBeNull();
+    expect(targetHistory.nextCursor).toBeUndefined();
     expect(targetHistory.records.map(({ kind }) => kind)).toEqual([
       "received",
       "sent",
@@ -842,15 +861,13 @@ function directAddress(agentName: AgentName): AgentAddress {
 }
 
 /** Accepts the next delivery before its owning subscription closes. */
-function nextDelivery<E>(stream: Stream.Stream<InboundDelivery, E>) {
-  return Stream.runHead(
-    stream.pipe(Stream.tap((delivery) => delivery.acknowledge)),
-  ).pipe(Effect.flatMap(requireDelivery));
+function nextDelivery<E>(stream: Stream.Stream<InboxEntry, E>) {
+  return Stream.runHead(stream).pipe(Effect.flatMap(requireDelivery));
 }
 
 function requireDelivery(
-  delivery: Option.Option<InboundDelivery>,
-): Effect.Effect<InboundDelivery, ProcessTestError> {
+  delivery: Option.Option<InboxEntry>,
+): Effect.Effect<InboxEntry, ProcessTestError> {
   return Option.match(delivery, {
     onNone: () =>
       Effect.fail(
@@ -872,8 +889,11 @@ function requireDelivery(
  * @param input The message.
  * @returns Completion once the message is certified or queued.
  */
-function sendOrQueue(endpoint: HarnessEndpoint, input: SendInput) {
-  return endpoint.send(input).pipe(
+function sendOrQueue(endpoint: McpConnection, input: SendRequest) {
+  return callTool(endpoint.client, {
+    name: "send_message",
+    arguments: { input: input },
+  }).pipe(
     Effect.asVoid,
     Effect.catchIf(
       (error) =>

@@ -14,12 +14,13 @@ import {
   type AgentCard,
   groupMembers,
   type GuidanceBodyOrigin,
-  type PermittedItem,
   type Message,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
   type MessageTextError,
+  packageVersion,
   parseMessageText,
+  type PermittedItem,
   renderCollectiveRequest,
   renderCollectiveResult,
   renderContent,
@@ -27,14 +28,8 @@ import {
   replyAddress,
   type SendRequest,
   type SendResult,
+  packageVersion,
 } from "@moltzap/social-harness";
-import { packageVersion } from "@moltzap/social-harness";
-import {
-  acquireMcpConnection,
-  callTool,
-  type McpConnection,
-  type InboxEntry,
-} from "#sharness-mcp/mcp";
 import {
   Config,
   ConfigError,
@@ -62,6 +57,12 @@ import {
   defineChannelMessageAdapter,
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
+import {
+  acquireMcpConnection,
+  callTool,
+  type InboxEntry,
+  type McpConnection,
+} from "#sharness-mcp/mcp";
 
 /** The sender OpenClaw records for a turn the endpoint itself emitted. */
 const ENDPOINT_SENDER_NAME = "Social Harness";

@@ -114,7 +114,7 @@ const BATCH_DELAY = Duration.millis(100);
  */
 const SILENCE_WINDOW = Duration.times(BATCH_DELAY, 20);
 
-/** The exporting daemon runs `sharnessd`, which is `Daemon.layer`. */
+/** The exporting daemon runs `sharnessd`, which is `daemonLayer`. */
 const exportBehavior = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
   const receiver = yield* acquireOtlpReceiver;
@@ -159,7 +159,7 @@ const exportBehavior = Effect.gen(function* () {
 
 /**
  * The requester exports and installs a firewall that passes every message,
- * so it runs `Daemon.withFirewall` and the firewall's checks admit its
+ * so it runs `withFirewall` and the firewall's checks admit its
  * collectives. It names its service through `OTEL_RESOURCE_ATTRIBUTES`. The
  * third daemon reaches the Router through a hold proxy. In a three-member
  * group every message needs every member, so holding that member keeps the
@@ -195,7 +195,7 @@ const markerBehavior = Effect.gen(function* () {
   const request = yield* answerAllGather(scenario);
   expect(accepted).toMatchObject({
     kind: "collective",
-    operationId: request.message.content.operationId,
+    operationId: request.message.operation.operationId,
   });
   yield* expectProposalCertified(scenario.receiver, pendingId);
   yield* restartRouterAndExpectRecovery(scenario);
@@ -225,7 +225,7 @@ function completeGather({ requester, member, held, group }: MarkerScenario) {
       to: requester.address,
       collectiveResponse: {
         action: "accept",
-        operationId: gatherRequest.message.content.operationId,
+        operationId: gatherRequest.message.operation.operationId,
         content: { slot: "mon" },
       },
     });
@@ -233,13 +233,13 @@ function completeGather({ requester, member, held, group }: MarkerScenario) {
       to: requester.address,
       collectiveResponse: {
         action: "decline",
-        operationId: gatherRequest.message.content.operationId,
+        operationId: gatherRequest.message.operation.operationId,
       },
     });
     expect(yield* nextItem(requester)).toMatchObject({
       kind: "collectiveResult",
       op: "gather",
-      operationId: gatherRequest.message.content.operationId,
+      operationId: gatherRequest.message.operation.operationId,
       closedBy: "settled",
       outcomes: [
         {
@@ -262,7 +262,7 @@ function answerAllGather({ requester, member, held, group }: MarkerScenario) {
     yield* send(member, {
       to: group,
       collectiveResponse: {
-        operationId: allGatherRequest.message.content.operationId,
+        operationId: allGatherRequest.message.operation.operationId,
         action: "accept",
         content: { slot: "tue" },
       },
@@ -270,7 +270,7 @@ function answerAllGather({ requester, member, held, group }: MarkerScenario) {
     yield* send(held, {
       to: group,
       collectiveResponse: {
-        operationId: allGatherRequest.message.content.operationId,
+        operationId: allGatherRequest.message.operation.operationId,
         action: "decline",
       },
     });
@@ -278,7 +278,7 @@ function answerAllGather({ requester, member, held, group }: MarkerScenario) {
     expect(result).toEqual({
       kind: "collectiveResult",
       op: "all_gather",
-      operationId: allGatherRequest.message.content.operationId,
+      operationId: allGatherRequest.message.operation.operationId,
       closedAt: anyNumber,
       closedBy: "settled",
       to: replyAddress(allGatherRequest.message),

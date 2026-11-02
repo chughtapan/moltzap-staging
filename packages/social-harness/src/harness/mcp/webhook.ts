@@ -2,18 +2,19 @@
 
 import { HttpClient } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
-import { type Clock, Effect, Schema, type Scope } from "effect";
+import { type Clock, Effect, Schema } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   callbackReasons,
   type EventSubscribeInput,
   type HarnessWebhookEvents,
+  maximumEventBytes,
   type WebhookStatus,
 } from "../../host-protocol/index.js";
 import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
 import { retryPending, retrySettled } from "../../tracing.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
-import { DeliveryToken } from "../inbox.js";
+import { DeliveryToken, type InboxEntry } from "../inbox.js";
 import { SocialHarness } from "../service.js";
 import {
   readWebhookChallenge,
@@ -23,7 +24,6 @@ import {
   type WebhookFailureReason,
   webhookUrl,
 } from "./event-signing.js";
-import { makeItemEvent } from "./inbox-event.js";
 
 const maximumRetryDelay = 5 * 60_000;
 const maximumLease = 24 * 60 * 60_000;
@@ -611,14 +611,15 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
 });
 
 /** Webhook receipt and retry state belongs to this optional MCP adapter. */
-const writeState = (runtime: Pick<WebhookRuntime, "sql">, state: State) =>
-  Schema.encode(Schema.parseJson(stateSchema))(state).pipe(
+function writeState(runtime: Pick<WebhookRuntime, "sql">, state: State) {
+  return Schema.encode(Schema.parseJson(stateSchema))(state).pipe(
     Effect.flatMap(
       (bytes) =>
         runtime.sql`INSERT INTO mcp_webhook_state (singleton, state) VALUES (1, ${bytes}) ON CONFLICT(singleton) DO UPDATE SET state = excluded.state`,
     ),
     Effect.asVoid,
   );
+}
 
 /** Preserves exact callback bytes and joins successful receipts to the inbox acknowledgment. */
 export const makeWebhookEvents = (gate: Effect.Semaphore) =>
@@ -655,3 +656,40 @@ export const makeWebhookEvents = (gate: Effect.Semaphore) =>
     Effect.mapError(persistenceFailure),
     Effect.withSpan("Mcp.makeWebhookEvents"),
   );
+
+/**
+ * Keeps the original item and separate local guidance together. An envelope
+ * exceeding the transport bound becomes a reference to the retained event;
+ * neither content nor guidance is truncated.
+ * @param entry The admitted, immutable inbox row.
+ * @param timestamp The occurrence's Unix time in milliseconds.
+ * @returns A bounded event whose identity remains stable across retries.
+ */
+function makeItemEvent(entry: InboxEntry, timestamp: number) {
+  const { address, item, guidance } = entry;
+  const event = {
+    eventId: entry.deliveryToken,
+    name: INBOX_ITEM_EVENT,
+    timestamp: new Date(timestamp).toISOString(),
+    cursor: null,
+    data: {
+      kind: "item",
+      address,
+      item,
+      ...(guidance === undefined ? {} : { guidance }),
+    },
+  } as const;
+  return Buffer.byteLength(JSON.stringify(event), "utf8") <= maximumEventBytes
+    ? event
+    : {
+        ...event,
+        data: {
+          kind: "reference" as const,
+          itemKind: item.kind,
+          bytes: Buffer.byteLength(
+            JSON.stringify({ address, item, guidance }),
+            "utf8",
+          ),
+        },
+      };
+}

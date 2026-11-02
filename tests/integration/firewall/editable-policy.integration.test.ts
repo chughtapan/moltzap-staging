@@ -7,7 +7,8 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
-  Daemon,
+  withFirewall,
+  type FirewallOptions,
   type DecisionProvider,
   type DecisionRequest,
 } from "@moltzap/social-harness/service";
@@ -54,7 +55,7 @@ const provider: DecisionProvider = {
   decide: (request) => Effect.succeed(answer(request)),
 };
 
-const options: Daemon.FirewallOptions = {
+const options: FirewallOptions = {
   mode: "enforcement",
   settings,
   facts: [],
@@ -321,10 +322,10 @@ function answer(request: DecisionRequest) {
 
 function start(
   fixture: DaemonProcessFixture,
-  policy: Daemon.FirewallOptions,
+  policy: FirewallOptions,
   extra: Readonly<Record<string, string>> = {},
 ) {
-  return Layer.launch(Daemon.withFirewall(policy)).pipe(
+  return Layer.launch(withFirewall(policy)).pipe(
     Effect.withConfigProvider(
       ConfigProvider.fromMap(
         new Map(Object.entries({ ...fixture.environment, ...extra })),

@@ -186,22 +186,24 @@ export interface RegistrationRequest {
 export type IdentityState =
   | Readonly<{ kind: "unregistered" }>
   | Readonly<{ kind: "registered"; identityCard: VerifiedAgentIdentityCard }>;
+/** Saved registration and verified identity resolution. */
+interface IdentityService {
+  /** Reports saved registration independently of communication startup. */
+  readonly me: () => Effect.Effect<IdentityState>;
+  /** Saves a Registry-verified identity before returning to its caller. */
+  readonly register: (
+    request: RegistrationRequest,
+  ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
+  /** Resolves names in input order and identifies the first name that fails. */
+  readonly resolve: (
+    names: readonly AgentName[],
+  ) => Effect.Effect<readonly AgentCard[], IdentityError>;
+}
 
 /** Identity operations capture their Registry and persistence dependencies at construction. */
 export class Identity extends Context.Tag("SocialHarness/Identity")<
   Identity,
-  {
-    /** Reports saved registration independently of communication startup. */
-    readonly me: () => Effect.Effect<IdentityState>;
-    /** Saves a Registry-verified identity before returning to its caller. */
-    readonly register: (
-      request: RegistrationRequest,
-    ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
-    /** Resolves names in input order and identifies the first name that fails. */
-    readonly resolve: (
-      names: readonly AgentName[],
-    ) => Effect.Effect<readonly AgentCard[], IdentityError>;
-  }
+  IdentityService
 >() {
   /** Captures Registry, retained keys and SQL once for the service lifetime. */
   static readonly layer = identityLayer;
@@ -340,14 +342,15 @@ function registerLocal(
       return yield* new RegistrationError({ reason: "incompatible-daemon" });
     }
     yield* saveIdentity(card).pipe(
-      Effect.mapError(
-        (error) =>
+      Effect.catchTag("IdentityError", (error) =>
+        Effect.fail(
           new RegistrationError({
             reason:
               error.reason === "persistence-failed"
                 ? "persistence-failed"
                 : "incompatible-daemon",
           }),
+        ),
       ),
       Effect.tap(() =>
         Ref.update(current, (saved) =>

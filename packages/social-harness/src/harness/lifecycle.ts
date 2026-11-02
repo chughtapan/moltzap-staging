@@ -1,4 +1,3 @@
-// safer-arch-ignore no-trivial-sink-file: Process supervision owns startup, serving and scope failure independently of configuration parsing.
 /** @file Starts the per-agent services and serves their MCP interface. */
 
 import { NodeFileSystem } from "@effect/platform-node";
@@ -13,6 +12,8 @@ import { packageVersion } from "../release.js";
 import { LOOPBACK_HOST, makeMcpHttpApp, serveMcp } from "./mcp/index.js";
 import { makeHistoryExport, noHistoryExport } from "./message-log.js";
 import { SocialHarness } from "./service.js";
+
+// safer-arch-ignore no-trivial-sink-file: Process supervision owns startup, serving and scope failure independently of configuration parsing.
 
 /** Startup exposes only closed local failure categories. */
 export class DaemonRuntimeError extends Data.TaggedError("DaemonRuntimeError")<{

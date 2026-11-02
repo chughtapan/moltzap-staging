@@ -22,7 +22,6 @@
 
 import { Data, Either, Option, Predicate, Schema } from "effect";
 import type { MessageAddressInput } from "../communication/records/values.js";
-import { exactStruct } from "../encoding/exact.js";
 import {
   AnswerSendRequest,
   MessageSendRequest,
@@ -118,6 +117,8 @@ function sendInput(
     case "gather":
     case "all_gather":
       return decodeText(operation, QuestionSendRequest, value);
+    default:
+      return operation satisfies never;
   }
 }
 
@@ -133,17 +134,25 @@ function decodeText<A, I>(
           operation,
           detail: validationIssues(error)
             .map(({ path, message }) => {
-              const [first, ...rest] = path;
-              const nativePath =
-                first === "collective" || first === "collectiveResponse"
-                  ? rest
-                  : first === "text" && operation !== "message"
-                    ? [operation]
-                    : path;
+              const nativePath = fieldPath(operation, path);
               return `${nativePath.join(".")}: ${message}`;
             })
             .join("; "),
         }),
     ),
   );
+}
+
+function fieldPath(
+  operation: StatedOperation,
+  path: ReadonlyArray<string | number>,
+) {
+  const [first, ...rest] = path;
+  if (first === "collective" || first === "collectiveResponse") {
+    return rest;
+  }
+  if (first === "text" && operation !== "message") {
+    return [operation];
+  }
+  return path;
 }

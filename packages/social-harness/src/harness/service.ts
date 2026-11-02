@@ -119,6 +119,60 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
 
 type CommunicationService = Context.Tag.Service<typeof Communication>;
 type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
+/** Sending, saved inbox and history operations for one agent. */
+interface SocialHarnessService {
+  /**
+   * Saves registration and starts communication in the background. Returns the
+   * saved identity without waiting for delivery recovery. Canceling the call
+   * does not undo a successful registration. Reuse the registration id on retry.
+   */
+  readonly register: (
+    request: RegistrationRequest,
+  ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
+  /**
+   * Checks the supplied content and accepts permitted work for delivery.
+   * The receipt identifies the accepted message or request and its canonical
+   * conversation address. Completion does not mean that a peer has read it.
+   * Each invocation creates fresh work. Retrying an uncertain send can duplicate it.
+   */
+  readonly send: (
+    request: SendRequest,
+  ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
+  /** Reads pending content without acknowledging it. */
+  readonly listInbox: (
+    request?: PaginatedRequest,
+  ) => Effect.Effect<InboxPage, InboxError>;
+  /** Saved content remains readable after acknowledgment and restart. */
+  readonly getInboxEvent: (
+    token: DeliveryToken,
+  ) => Effect.Effect<InboxEvent, InboxError>;
+  /** Repeating an acknowledgment is harmless and does not answer a request. */
+  readonly acknowledgeDelivery: (
+    token: DeliveryToken,
+  ) => Effect.Effect<void, DeliveryAcknowledgeError>;
+  /**
+   * Lists canonical addresses, with direct conversations before groups.
+   * Omit cursor to start and continue with nextCursor until it is absent.
+   * Listing is live. A new conversation before the cursor appears on a fresh traversal.
+   */
+  readonly listConversations: (
+    request?: ListConversationsRequest,
+  ) => Effect.Effect<ListConversationsResult, HistoryError>;
+  /**
+   * Reads sent messages and saved received content for a canonical address.
+   * Pages keep the first read's history boundary. Rule changes do not reassess
+   * saved content. Start a fresh traversal after reconnecting or restarting.
+   */
+  readonly readHistory: (
+    request: ReadHistoryRequest,
+  ) => Effect.Effect<ReadHistoryResult, HistoryError>;
+  /**
+   * Signals that the saved inbox changed. Each signal carries no content and
+   * may cover several arrivals. Read the inbox initially, after each signal
+   * and after reconnecting to recover notifications that were missed.
+   */
+  readonly inboxChanged: Stream.Stream<undefined>;
+}
 
 /**
  * Connects an agent host to its identity, communication and message policy.
@@ -139,36 +193,7 @@ type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
  */
 export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
-  {
-    /** Finishes when identity is saved. Delivery recovery continues independently. */
-    readonly register: (
-      request: RegistrationRequest,
-    ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
-    /** Every call creates fresh work. Do not repeat a send whose outcome is unknown. */
-    readonly send: (
-      request: SendRequest,
-    ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
-    /** Reads pending content without acknowledging it. */
-    readonly listInbox: (
-      request?: PaginatedRequest,
-    ) => Effect.Effect<InboxPage, InboxError>;
-    /** Saved content remains readable after acknowledgment and restart. */
-    readonly getInboxEvent: (
-      token: DeliveryToken,
-    ) => Effect.Effect<InboxEvent, InboxError>;
-    /** Repeating an acknowledgment is harmless and does not answer a request. */
-    readonly acknowledgeDelivery: (
-      token: DeliveryToken,
-    ) => Effect.Effect<void, DeliveryAcknowledgeError>;
-    readonly listConversations: (
-      request?: ListConversationsRequest,
-    ) => Effect.Effect<ListConversationsResult, HistoryError>;
-    readonly readHistory: (
-      request: ReadHistoryRequest,
-    ) => Effect.Effect<ReadHistoryResult, HistoryError>;
-    /** Read initially and after reconnecting. Signals may coalesce. */
-    readonly inboxChanged: Stream.Stream<undefined>;
-  }
+  SocialHarnessService
 >() {
   /** Shares one database and starts communication after registration is retained. */
   static layer<R>(settings: HarnessSettings<R>, workers: FiberSet.FiberSet) {
@@ -333,26 +358,6 @@ function makeHarness<R>(
               request.to,
               author.agentName,
             );
-            const recipients = yield* identity
-              .resolve(
-                destination.kind === "direct"
-                  ? [destination.remoteName]
-                  : destination.memberNames.filter(
-                      (name) => name !== author.agentName,
-                    ),
-              )
-              .pipe(
-                Effect.catchTag("IdentityError", (error) =>
-                  Effect.fail(
-                    new SendError({
-                      reason:
-                        error.reason === "unknown-agent"
-                          ? "unknown-agent"
-                          : "network-unavailable",
-                    }),
-                  ),
-                ),
-              );
             let value: Outgoing;
             if ("collectiveResponse" in request) {
               if (
@@ -373,14 +378,17 @@ function makeHarness<R>(
                 );
               const expected = [original.author, ...original.recipients]
                 .filter((member) => member.agentId !== author.agentId)
-                .map((member) => member.agentId)
+                .map((member) => member.agentName)
                 .sort(compareAscii);
+              const selectedNames =
+                destination.kind === "direct"
+                  ? [destination.remoteName]
+                  : destination.memberNames.filter(
+                      (name) => name !== author.agentName,
+                    );
               if (
                 expected.join(",") !==
-                recipients
-                  .map((member) => member.agentId)
-                  .sort(compareAscii)
-                  .join(",")
+                [...selectedNames].sort(compareAscii).join(",")
               ) {
                 return yield* new SendError({ reason: "invalid-address" });
               }
@@ -394,6 +402,26 @@ function makeHarness<R>(
                 ),
               );
             } else {
+              const recipients = yield* identity
+                .resolve(
+                  destination.kind === "direct"
+                    ? [destination.remoteName]
+                    : destination.memberNames.filter(
+                        (name) => name !== author.agentName,
+                      ),
+                )
+                .pipe(
+                  Effect.catchTag("IdentityError", (error) =>
+                    Effect.fail(
+                      new SendError({
+                        reason:
+                          error.reason === "unknown-agent"
+                            ? "unknown-agent"
+                            : "network-unavailable",
+                      }),
+                    ),
+                  ),
+                );
               const [first, ...rest] = recipients;
               if (first === undefined) {
                 return yield* new SendError({ reason: "membership-invalid" });

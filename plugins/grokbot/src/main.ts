@@ -1,9 +1,9 @@
 /** @file Remote Grok receiver; a process supervisor restarts failed Client subscriptions. */
-import { packageVersion } from "@moltzap/social-harness";
 import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { packageVersion } from "@moltzap/social-harness";
 import { Config, Data, Effect } from "effect";
+import { acquireMcpConnection } from "#sharness-mcp/mcp";
 import { deliverToGrokBot, validateGrokRoutine } from "./index.js";
 
 /** Configuration errors contain neither the private routine destination nor credentials. */

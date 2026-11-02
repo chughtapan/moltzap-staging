@@ -4,7 +4,29 @@ Copyright 2026 Tapan Chugh
 This product is licensed under the Apache License, Version 2.0; see LICENSE.
 
 Releases whose published manifests declare the MIT License remain under it.
-The source in this repository is original to the project; no third-party
-MIT-licensed source is relicensed.
+Third-party dependencies retain their own licenses. The vendored Effect MCP
+implementation in src/vendor/effect-mcp/McpServer.ts and McpSchema.ts derives
+from Effect revision 417e0faa80e471d77fc4a67452e68b09ae0ee861, with backports
+identified in src/vendor/effect-mcp/README.md. These files retain the MIT License:
 
-Third-party software is consumed as npm packages under their own licenses.
+MIT License
+
+Copyright (c) 2023 Effectful Technologies Inc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

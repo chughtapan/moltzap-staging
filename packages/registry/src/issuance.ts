@@ -1,11 +1,11 @@
 /** @file Registry-owned immutable AgentIdentityCard issuance. */
 
 import {
-  AgentIdentityCard,
   type AgentId,
+  AgentIdentityCard,
   type AgentName,
-  AgentSigningAuthority,
   type AgentPublicKey,
+  AgentSigningAuthority,
   type PrincipalId,
   type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";

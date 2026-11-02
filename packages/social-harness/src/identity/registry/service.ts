@@ -39,6 +39,50 @@ import {
   type RegistryRegisterResult,
 } from "./contract.js";
 
+/** Registry access failed before a verified result could be returned. */
+export class RegistryError extends Data.TaggedError("RegistryError")<{
+  readonly reason:
+    | "connection"
+    | "timeout"
+    | "invalid-response"
+    | "signing"
+    | "http-envelope"
+    | "admission-refused";
+}> {}
+/** Complete registration and identity lookup calls to a Registry service. */
+interface RegistryService {
+  readonly register: (
+    call: RegistryRegisterCall,
+  ) => Effect.Effect<RegistryRegisterResult, RegistryError>;
+  readonly lookup: (
+    request: RegistryLookupRequest,
+  ) => Effect.Effect<RegistryLookupResult, RegistryError>;
+}
+
+/** Registers an agent key and resolves identities through a pinned Registry. */
+export class Registry extends Context.Tag("SocialHarness/Registry")<
+  Registry,
+  RegistryService
+>() {
+  /** Submits a registration attempt with a fresh HTTP proof and its retained operation id. */
+  static readonly register = Effect.serviceFunctionEffect(
+    Registry,
+    (service) => service.register,
+  );
+  /** Resolves an immutable identity card; absence is a normal not_found result. */
+  static readonly lookup = Effect.serviceFunctionEffect(
+    Registry,
+    (service) => service.lookup,
+  );
+  /** Pins transport, deadline and Registry signing authority for this client. */
+  static readonly layer = (input: {
+    readonly origin: URL;
+    readonly registrySignerPublicKey: AgentPublicKey;
+    readonly requestTimeout: Duration.Duration;
+  }): Layer.Layer<Registry, never, HttpClient.HttpClient> =>
+    Layer.effect(Registry, makeRegistryService(input));
+}
+
 /**
  * Builds the service installed behind the public Registry capability.
  *
@@ -386,46 +430,4 @@ function makeLookup(
       }
       return Object.freeze({ kind: "found", identityCard: agentCard });
     }).pipe((effect) => withDeadline(effect, input.requestTimeout));
-}
-
-/** Registry access failed before a verified result could be returned. */
-export class RegistryError extends Data.TaggedError("RegistryError")<{
-  readonly reason:
-    | "connection"
-    | "timeout"
-    | "invalid-response"
-    | "signing"
-    | "http-envelope"
-    | "admission-refused";
-}> {}
-
-/** Registers an agent key and resolves identities through a pinned Registry. */
-export class Registry extends Context.Tag("SocialHarness/Registry")<
-  Registry,
-  {
-    readonly register: (
-      call: RegistryRegisterCall,
-    ) => Effect.Effect<RegistryRegisterResult, RegistryError>;
-    readonly lookup: (
-      request: RegistryLookupRequest,
-    ) => Effect.Effect<RegistryLookupResult, RegistryError>;
-  }
->() {
-  /** Submits a registration attempt with a fresh HTTP proof and its retained operation id. */
-  static readonly register = Effect.serviceFunctionEffect(
-    Registry,
-    (service) => service.register,
-  );
-  /** Resolves an immutable identity card; absence is a normal not_found result. */
-  static readonly lookup = Effect.serviceFunctionEffect(
-    Registry,
-    (service) => service.lookup,
-  );
-  /** Pins transport, deadline and Registry signing authority for this client. */
-  static readonly layer = (input: {
-    readonly origin: URL;
-    readonly registrySignerPublicKey: AgentPublicKey;
-    readonly requestTimeout: Duration.Duration;
-  }): Layer.Layer<Registry, never, HttpClient.HttpClient> =>
-    Layer.effect(Registry, makeRegistryService(input));
 }

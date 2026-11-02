@@ -1,5 +1,5 @@
 /** @file Optional MCP wake streams and durable signed webhook delivery use the saved inbox. */
-import { Effect, Schema, Stream } from "effect";
+import { type Context, Effect, Schema, Stream } from "effect";
 import { randomUUID } from "node:crypto";
 import {
   eventListInput,
@@ -24,7 +24,9 @@ import { makeWebhookEvents } from "./webhook.js";
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
   Schema.decodeUnknown(schema)(input).pipe(
-    Effect.mapError(() => new ProtocolError(-32602, "Invalid event arguments")),
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
+    ),
   );
 const requireEvent = (
   name: string,
@@ -48,33 +50,22 @@ const requireEvent = (
 };
 
 /** Registers the pinned Events draft in the protocol engine without an SDK callback runtime. */
-export const installEvents = Effect.fn("Mcp.installEvents")(function* () {
+export const installEvents = Effect.fn("installEvents")(function* () {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;
   const server = yield* McpServer;
   const webhook = yield* makeWebhookEvents(yield* Effect.makeSemaphore(1));
-  const registered = identity.me().pipe(
-    Effect.mapError(() => new ProtocolError(-32603, "Identity unavailable")),
-    Effect.flatMap((status) =>
-      status.kind === "registered"
-        ? Effect.void
-        : Effect.fail(new ProtocolError(-32012, "Endpoint is not registered")),
-    ),
-  );
-  const pendingCount = Effect.gen(function* () {
-    let total = 0;
-    let cursor: string | undefined;
-    do {
-      const page = yield* harness.listInbox(
-        cursor === undefined ? {} : { cursor },
-      );
-      total += page.items.length;
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-    return total;
-  }).pipe(
-    Effect.mapError(() => new ProtocolError(-32603, "Inbox unavailable")),
-  );
+  const registered = identity
+    .me()
+    .pipe(
+      Effect.flatMap((status) =>
+        status.kind === "registered"
+          ? Effect.void
+          : Effect.fail(
+              new ProtocolError(-32012, "Endpoint is not registered"),
+            ),
+      ),
+    );
   server.events.current = {
     list: (raw) =>
       decode(eventListInput, raw).pipe(
@@ -118,51 +109,7 @@ export const installEvents = Effect.fn("Mcp.installEvents")(function* () {
               ),
         ),
       ),
-    stream: (raw) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const input = yield* decode(eventStreamInput, raw);
-          yield* registered;
-          yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
-          const context = yield* McpServerClient;
-          const notify = context.notify;
-          if (notify === undefined) {
-            return yield* Effect.fail(
-              new ProtocolError(-32603, "Event stream unavailable"),
-            );
-          }
-          yield* notify("notifications/events/active", {
-            cursor: null,
-            truncated: false,
-          });
-          yield* Effect.sleep("20 seconds").pipe(
-            Effect.zipRight(
-              notify("notifications/events/heartbeat", { cursor: null }),
-            ),
-            Effect.forever,
-            Effect.forkScoped,
-          );
-          yield* Stream.concat(
-            Stream.make(undefined),
-            harness.inboxChanged,
-          ).pipe(
-            Stream.runForEach(() =>
-              pendingCount.pipe(
-                Effect.flatMap((count) =>
-                  notify("notifications/events/event", {
-                    eventId: `wake_${randomUUID()}`,
-                    name: INBOX_PENDING_EVENT,
-                    timestamp: new Date().toISOString(),
-                    data: { pendingCount: count },
-                    cursor: null,
-                  }),
-                ),
-              ),
-            ),
-          );
-          return {};
-        }),
-      ),
+    stream: (raw) => streamPending(harness, registered, raw),
     subscribe: (raw) =>
       Effect.gen(function* () {
         const input = yield* decode(eventSubscribeInput, raw);
@@ -197,7 +144,74 @@ export const installEvents = Effect.fn("Mcp.installEvents")(function* () {
     Effect.forkScoped,
   );
   return webhook satisfies HarnessWebhookEvents;
-});
+}, Effect.withSpan("installEvents"));
 
 /** Callback HTTP resources are scoped with the MCP server. */
 export { webhookHttpClientLayer } from "./event-signing.js";
+
+function pendingInbox(harness: Context.Tag.Service<typeof SocialHarness>) {
+  return Effect.gen(function* () {
+    let total = 0;
+    let cursor: string | undefined;
+    do {
+      const page = yield* harness.listInbox(
+        cursor === undefined ? {} : { cursor },
+      );
+      total += page.items.length;
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return total;
+  }).pipe(
+    Effect.catchTag("InboxError", () =>
+      Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
+    ),
+  );
+}
+
+function streamPending(
+  harness: Context.Tag.Service<typeof SocialHarness>,
+  registered: Effect.Effect<void, ProtocolError>,
+  raw: unknown,
+) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const input = yield* decode(eventStreamInput, raw);
+      yield* registered;
+      yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
+      const context = yield* McpServerClient;
+      const notify = context.notify;
+      if (notify === undefined) {
+        return yield* Effect.fail(
+          new ProtocolError(-32603, "Event stream unavailable"),
+        );
+      }
+      yield* notify("notifications/events/active", {
+        cursor: null,
+        truncated: false,
+      });
+      yield* Effect.sleep("20 seconds").pipe(
+        Effect.zipRight(
+          notify("notifications/events/heartbeat", { cursor: null }),
+        ),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+      yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
+        Stream.runForEach(() =>
+          pendingInbox(harness).pipe(
+            Effect.flatMap((count) =>
+              notify("notifications/events/event", {
+                eventId: `wake_${randomUUID()}`,
+                name: INBOX_PENDING_EVENT,
+                timestamp: new Date().toISOString(),
+                data: { pendingCount: count },
+                cursor: null,
+              }),
+            ),
+          ),
+        ),
+      );
+      return {};
+    }),
+  );
+}

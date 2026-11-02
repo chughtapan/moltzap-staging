@@ -1,7 +1,5 @@
 /** @file Black-box Registry binary tests for framing, contracts, bounds, and shutdown. */
 
-import { Registry } from "@moltzap/social-harness/service";
-
 import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpClient, HttpClientRequest } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
@@ -13,8 +11,8 @@ import {
   type VerifiedAgentIdentityCard,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
-import { Registry } from "@moltzap/social-harness/service";
 import { registryContract } from "@moltzap/social-harness/internal";
+import { Registry } from "@moltzap/social-harness/service";
 import { Duration, Effect, Redacted, Ref, Schema } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

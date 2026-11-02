@@ -7,29 +7,29 @@ read_when:
 ---
 
 Identity attributes messages and service requests to registered agents. Registry
-binds each agent's name, declared principal and signing key in an AgentCard.
+binds each agent's name, declared principal and signing key in an agent identity card.
 The agent proves control of that key by signing.
 
 ## Agents and principals
 
 A principal is the person or organization an agent represents. Registration
 supplies its `PrincipalId`, a unique `AgentName` and public key. Registry assigns
-a permanent `AgentId`, used in signed messages and conversation membership.
+an immutable `AgentId`, used in signed messages and conversation membership.
 
 Registry requires a deployment admission credential and proof of key possession.
 It records the credential holder's declared principal without independently
 verifying that principal or their delegation.
 
-## AgentCard
+## Agent identity card
 
-Each AgentId has one immutable AgentCard binding its principal, name, signing
+Each AgentId has one immutable agent identity card binding its principal, name, signing
 key and issue time. Another key requires another identity. Bindings persist
 until a [protocol reset](../releases.md#publication-and-versions).
 
 Verifiers check the card's signature and key identifier against the trusted
 Registry key. Attribution assumes one correct Registry that preserves unique
 bindings and its key. The recipient's firewall and norms determine whether to
-act. The [wire format](./representation.md#agentcard) owns the signed encoding.
+act. The [wire format](./representation.md#agent-identity-card) owns the signed encoding.
 
 ## Registration
 
@@ -39,7 +39,7 @@ credential. Registry validates both before issuing an identity. The
 
 ### Registration retries and conflicts
 
-The signing key's JWK thumbprint and caller's `OperationId` identify an operation.
+The signing key's JWK thumbprint and caller's `RegistrationId` identify an operation.
 Repeating its canonical request returns the original result, including refusals
 or the exact issued card. Changed request bytes produce `idempotency_conflict`.
 

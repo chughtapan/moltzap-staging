@@ -7,8 +7,16 @@ import {
   type ClientOptions,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { type Context, Effect, Redacted, Ref, Stream } from "effect";
+import {
+  type Context,
+  Effect,
+  Redacted,
+  Ref,
+  type Scope,
+  Stream,
+} from "effect";
 import { generateKeyPairSync } from "node:crypto";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { FirewallPolicyError } from "../firewall/rules/config.js";
 import { Firewall } from "../firewall/service.js";
@@ -101,7 +109,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
 
 /** The listener and every in-flight request belong to the calling scope. */
 export const loopbackMcpEndpoint = Effect.fn(function* (
-  app: HttpApp.Default<never, import("effect").Scope.Scope>,
+  app: HttpApp.Default<never, Scope.Scope>,
 ) {
   const server = yield* NodeHttpServer.make(createServer, {
     host: "127.0.0.1",
@@ -127,6 +135,7 @@ export const connectInProcessClient = (
       { name: "mcp-contract-test", version: "1" },
       options,
     );
+    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The caller supplies Scope and owns the client connection.
     yield* Effect.acquireRelease(
       Effect.tryPromise(() =>
         client.connect(
@@ -139,7 +148,7 @@ export const connectInProcessClient = (
       () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
     );
     return client;
-  });
+  }).pipe(Effect.withSpan("connectInProcessClient"));
 
 /** A request can vary IDs, metadata and cancellation without changing the application contract. */
 export function mcpRequest(

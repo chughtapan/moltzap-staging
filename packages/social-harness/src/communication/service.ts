@@ -146,34 +146,37 @@ export const Incoming = Schema.Union(
 );
 /** Complete incoming work precedes the local policy decision and readable projection. */
 export type Incoming = typeof Incoming.Type;
+/** Reliable messages, requests and retained conversation history. */
+interface CommunicationService {
+  readonly send: (
+    value: Outgoing,
+  ) => Effect.Effect<void, CommunicationError | RequestError>;
+  readonly getRequest: (
+    operationId: CollectiveId,
+  ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
+  readonly waitForMessage: (
+    reference: MessageReference,
+  ) => Effect.Effect<Message, CommunicationError>;
+  readonly consume: <E, R>(
+    handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
+  ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
+  readonly getConversation: (
+    names: readonly AgentName[],
+  ) => Effect.Effect<Conversation | undefined, CommunicationError>;
+  readonly listConversations: (
+    query?: ConversationQuery,
+  ) => Effect.Effect<ConversationPage, CommunicationError>;
+  readonly readHistory: (
+    query: HistoryQuery,
+  ) => Effect.Effect<HistoryPage, CommunicationError>;
+}
+
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
 
 /** Owns durable message delivery, request completion and verified history. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
-  {
-    readonly send: (
-      value: Outgoing,
-    ) => Effect.Effect<void, CommunicationError | RequestError>;
-    readonly getRequest: (
-      operationId: CollectiveId,
-    ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
-    readonly waitForMessage: (
-      reference: MessageReference,
-    ) => Effect.Effect<Message, CommunicationError>;
-    readonly consume: <E, R>(
-      handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
-    ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
-    readonly getConversation: (
-      names: readonly AgentName[],
-    ) => Effect.Effect<Conversation | undefined, CommunicationError>;
-    readonly listConversations: (
-      query?: ConversationQuery,
-    ) => Effect.Effect<ConversationPage, CommunicationError>;
-    readonly readHistory: (
-      query: HistoryQuery,
-    ) => Effect.Effect<HistoryPage, CommunicationError>;
-  }
+  CommunicationService
 >() {
   /** Resources and accepted background work belong to the layer's scope. */
   static layer(settings: CommunicationSettings) {

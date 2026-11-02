@@ -1,25 +1,25 @@
 /** @file Scoped MCP connections and tool calls shared by native host plugins. */
 import {
   Client,
+  type Implementation,
   ProtocolError,
-  SdkHttpError,
   SdkError,
   SdkErrorCode,
+  SdkHttpError,
   StreamableHTTPClientTransport,
-  type Implementation,
 } from "@modelcontextprotocol/client";
 import {
-  RequestError,
-  FirewallRefusal,
-  SendError,
   decodeHarnessSendErrorData,
+  DeliveryAcknowledgeError,
+  FirewallPolicyError,
+  FirewallRefusal,
+  HistoryError,
+  InboxError,
+  RegistrationError,
+  RequestError,
+  SendError,
   toolDefinitions,
   toolFailureSchemas,
-  InboxError,
-  DeliveryAcknowledgeError,
-  HistoryError,
-  RegistrationError,
-  FirewallPolicyError,
   type ToolName,
   type ToolRequest,
   type ToolResult,
@@ -30,10 +30,10 @@ import {
   Effect,
   Either,
   Fiber,
-  Ref,
-  Redacted,
-  Schema,
   type ParseResult,
+  Redacted,
+  Ref,
+  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -103,21 +103,20 @@ export interface McpConnection {
 
 /** TLS and literal loopback can carry the private bearer without redirects. */
 export function safeCredentialEndpoint(endpoint: URL): boolean {
-  return (
-    !endpoint.username &&
-    !endpoint.password &&
-    !endpoint.hash &&
-    (endpoint.protocol === "https:" ||
-      (endpoint.protocol === "http:" &&
-        (endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]")))
-  );
+  const privateAuthority =
+    !endpoint.username && !endpoint.password && !endpoint.hash;
+  const local =
+    endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
+  const secure =
+    endpoint.protocol === "https:" || (endpoint.protocol === "http:" && local);
+  return privateAuthority && secure;
 }
 
 /** The caller's scope owns both the client and every active reception. */
 export function acquireMcpConnection(
   settings: McpConnectionSettings,
   implementation: Implementation,
-) {
+): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
   const endpoint = new URL(settings.endpoint.href);
   return acquireConnection(
     { endpoint, credential: settings.credential },
@@ -125,100 +124,11 @@ export function acquireMcpConnection(
   );
 }
 
-const acquireConnection = Effect.fn("Mcp.acquireConnection")(function* (
-  settings: McpConnectionSettings,
-  implementation: Implementation,
-) {
-  const endpoint = settings.endpoint;
-  const credential = settings.credential;
-  if (!safeCredentialEndpoint(endpoint)) {
-    return yield* new McpConnectError({ reason: "transport-failed" });
-  }
-  const client = new Client(implementation, {
-    capabilities: {},
-    versionNegotiation: { mode: { pin: "2026-07-28" } },
-  });
-  yield* Effect.acquireRelease(
-    Effect.tryPromise({
-      try: (signal) =>
-        client.connect(
-          new StreamableHTTPClientTransport(endpoint, {
-            requestInit: {
-              headers: {
-                Authorization: `Bearer ${Redacted.value(credential)}`,
-              },
-              redirect: "error",
-            },
-          }),
-          { signal },
-        ),
-      catch: (cause) =>
-        new McpConnectError({
-          reason:
-            cause instanceof SdkError &&
-            cause.code === SdkErrorCode.EraNegotiationFailed
-              ? "incompatible-daemon"
-              : "transport-failed",
-        }),
-    }).pipe(
-      Effect.onError(() =>
-        Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-      ),
-    ),
-    () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-  );
-  const receiving = yield* Ref.make(false);
-  const scope = yield* Scope.Scope;
-  return {
-    client,
-    consumeInbox: <E, R>(
-      options: InboxOptions,
-      accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-    ) =>
-      Effect.acquireUseRelease(
-        Effect.forkIn(
-          Effect.interruptible(
-            Effect.scoped(
-              Effect.gen(function* () {
-                yield* Effect.acquireRelease(
-                  Ref.getAndSet(receiving, true).pipe(
-                    Effect.filterOrFail(
-                      (active) => !active,
-                      () =>
-                        new McpReceiveError({ reason: "already-listening" }),
-                    ),
-                  ),
-                  () => Ref.set(receiving, false),
-                );
-                const ready = options.onReady ?? Effect.void;
-                const wakeups: Stream.Stream<void, McpReceiveError> =
-                  options.receiveMode === "push"
-                    ? inboxWakeups(endpoint, credential, ready).pipe(
-                        Stream.as(undefined),
-                      )
-                    : Stream.concat(
-                        Stream.fromEffect(ready),
-                        Stream.tick(Duration.millis(250)),
-                      );
-                yield* wakeups.pipe(
-                  Stream.runForEach(() => consumePending(client, accept)),
-                );
-              }),
-            ),
-          ),
-          scope,
-        ),
-        Fiber.join,
-        Fiber.interrupt,
-      ),
-  } satisfies McpConnection;
-});
-
-/** Calls the named MCP tool once. An uncertain send never triggers a retry. */
 export function callTool<Name extends ToolName>(
   client: Client,
   request: ToolRequest & { readonly name: Name },
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
+/** Calls the named MCP tool once. An uncertain send never triggers a retry. */
 export function callTool(
   client: Client,
   request: ToolRequest,
@@ -247,6 +157,82 @@ export function callTool(
       );
     }),
   );
+}
+
+function acquireConnection(
+  settings: McpConnectionSettings,
+  implementation: Implementation,
+): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
+  return Effect.gen(function* () {
+    const endpoint = settings.endpoint;
+    const credential = settings.credential;
+    if (!safeCredentialEndpoint(endpoint)) {
+      return yield* new McpConnectError({ reason: "transport-failed" });
+    }
+    const client = new Client(implementation, {
+      capabilities: {},
+      versionNegotiation: { mode: { pin: "2026-07-28" } },
+    });
+    yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: (signal) =>
+          client.connect(
+            new StreamableHTTPClientTransport(endpoint, {
+              requestInit: {
+                headers: {
+                  Authorization: `Bearer ${Redacted.value(credential)}`,
+                },
+                redirect: "error",
+              },
+            }),
+            { signal },
+          ),
+        catch: (cause) =>
+          new McpConnectError({
+            reason:
+              cause instanceof SdkError &&
+              cause.code === SdkErrorCode.EraNegotiationFailed
+                ? "incompatible-daemon"
+                : "transport-failed",
+          }),
+      }).pipe(
+        Effect.onError(() =>
+          Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
+        ),
+      ),
+      () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
+    );
+    const receiving = yield* Ref.make(false);
+    const scope = yield* Scope.Scope;
+    return {
+      client,
+      consumeInbox: <E, R>(
+        options: InboxOptions,
+        accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+      ) => {
+        const ready = options.onReady ?? Effect.void;
+        const wakeups =
+          options.receiveMode === "push"
+            ? inboxWakeups(endpoint, credential, ready).pipe(
+                Stream.as(undefined),
+              )
+            : Stream.concat(
+                Stream.fromEffect(ready),
+                Stream.tick(Duration.millis(250)),
+              ).pipe(Stream.as(undefined));
+        return Effect.acquireUseRelease(
+          Effect.forkIn(
+            Effect.interruptible(
+              receiveInbox(client, receiving, wakeups, accept),
+            ),
+            scope,
+          ),
+          Fiber.join,
+          Fiber.interrupt,
+        );
+      },
+    } satisfies McpConnection;
+  }).pipe(Effect.withSpan("Mcp.acquireConnection"));
 }
 
 function decodeToolResult(
@@ -305,13 +291,10 @@ function sendFailure(
   cause: unknown,
 ): SendError | RequestError | FirewallRefusal {
   if (!ProtocolError.isInstance(cause)) {
-    const refused =
-      (SdkHttpError.isInstance(cause) &&
-        [400, 401, 403, 404, 405].includes(cause.status)) ||
-      (cause instanceof Error &&
-        cause.cause instanceof Error &&
-        "code" in cause.cause &&
-        cause.cause.code === "ECONNREFUSED");
+    const httpRefused =
+      SdkHttpError.isInstance(cause) &&
+      [400, 401, 403, 404, 405].includes(cause.status);
+    const refused = httpRefused || connectionRefused(cause);
     return new SendError({
       reason: refused ? "network-unavailable" : "outcome-unknown",
     });
@@ -322,14 +305,17 @@ function sendFailure(
   return Either.match(decoded, {
     onLeft: () => new SendError({ reason: "outcome-unknown" }),
     onRight: (data) => {
-      if ("refusal" in data) return new FirewallRefusal(data);
-      if ("failure" in data)
+      if ("refusal" in data) {
+        return new FirewallRefusal(data);
+      }
+      if ("failure" in data) {
         return new RequestError({
           failure: data.failure,
           ...(data.operationId === undefined
             ? {}
             : { operationId: data.operationId }),
         });
+      }
       return new SendError(data);
     },
   });
@@ -339,8 +325,9 @@ function managementFailure(
   name: ToolName,
   cause: unknown,
 ): DomainFailure | McpToolError {
-  if (!ProtocolError.isInstance(cause))
+  if (!ProtocolError.isInstance(cause)) {
     return new McpToolError({ tool: name, reason: "transport-failed" });
+  }
   const data = cause.data;
   function decode<A, I, E>(
     schema: Schema.Schema<A, I>,
@@ -397,8 +384,14 @@ function managementFailure(
         toolFailureSchemas.firewall_decisions,
         (data) => new FirewallPolicyError(data),
       );
-    default:
+    case "event_subscription_status":
+    case "revoke_event_subscription":
+    case "resume_event_subscription":
+    case "send_message":
+    case "status":
       return new McpToolError({ tool: name, reason: "tool-failed" });
+    default:
+      return name satisfies never;
   }
 }
 
@@ -413,9 +406,12 @@ function consumePending<E, R>(
         name: "read_inbox",
         arguments: cursor === undefined ? {} : { cursor },
       }).pipe(
-        Effect.mapError(
-          () => new McpReceiveError({ reason: "transport-failed" }),
-        ),
+        Effect.catchTags({
+          InboxError: () =>
+            Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
+          McpToolError: () =>
+            Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
+        }),
       );
       for (const entry of page.items) {
         yield* accept(entry);
@@ -423,9 +419,12 @@ function consumePending<E, R>(
           name: "acknowledge_delivery",
           arguments: { deliveryToken: entry.deliveryToken },
         }).pipe(
-          Effect.mapError(
-            () => new McpReceiveError({ reason: "transport-failed" }),
-          ),
+          Effect.catchTags({
+            DeliveryAcknowledgeError: () =>
+              Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
+            McpToolError: () =>
+              Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
+          }),
         );
       }
       cursor = page.nextCursor;
@@ -435,3 +434,34 @@ function consumePending<E, R>(
 
 /** Native reception owns transport errors independently of domain send failures. */
 export { McpReceiveError };
+
+function connectionRefused(cause: unknown): boolean {
+  if (!(cause instanceof Error) || !(cause.cause instanceof Error)) {
+    return false;
+  }
+  return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
+}
+
+function receiveInbox<E, R>(
+  client: Client,
+  receiving: Ref.Ref<boolean>,
+  wakeups: Stream.Stream<undefined, McpReceiveError>,
+  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      yield* Effect.acquireRelease(
+        Ref.getAndSet(receiving, true).pipe(
+          Effect.filterOrFail(
+            (active) => !active,
+            () => new McpReceiveError({ reason: "already-listening" }),
+          ),
+        ),
+        () => Ref.set(receiving, false),
+      );
+      yield* wakeups.pipe(
+        Stream.runForEach(() => consumePending(client, accept)),
+      );
+    }),
+  );
+}

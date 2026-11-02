@@ -2,7 +2,7 @@
 
 import { FastCheck as fc } from "effect";
 import { describe, expect, it } from "vitest";
-import { choose, compareVersions } from "./selection.js";
+import { choose, compareVersions } from "./installation.js";
 
 const recorded = {
   version: "2026.1021.1",

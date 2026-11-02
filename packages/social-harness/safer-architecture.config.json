@@ -211,18 +211,6 @@
     {
       "path": "src/harness/lifecycle.ts",
       "reason": "Scoped service and MCP composition"
-    },
-    {
-      "path": "src/communication/conversations/certification.ts",
-      "reason": "Owns complete certification workflows within Communication"
-    },
-    {
-      "path": "src/communication/conversations/protocol.ts",
-      "reason": "Composes conversation state and protocol transitions"
-    },
-    {
-      "path": "src/communication/requests/service.ts",
-      "reason": "Composes the private request lifecycle and workers"
     }
   ],
   "domains": [

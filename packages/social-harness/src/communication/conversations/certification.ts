@@ -82,6 +82,8 @@ import {
   makeActionFold,
 } from "./state.js";
 
+// safer-arch-ignore no-fat-orchestrator: One private operation owns the complete certification lifecycle inside Communication.
+
 /* eslint-disable max-lines -- Certification and certified-head updates share the same ordered fold transitions. */
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();

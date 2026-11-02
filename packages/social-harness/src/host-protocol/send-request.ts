@@ -1,17 +1,19 @@
 /** @file MCP's message, question and explicit-answer argument grammar. */
+
 import { Schema } from "effect";
-import { RequestedSchema } from "../communication/index.js";
-import {
-  MessageAddressInput,
-  wellFormedString,
-} from "../communication/records/values.js";
 import {
   AcceptResponse,
   DeadlineSeconds,
   DeclineResponse,
-  describeIssues,
-} from "../communication/requests/contracts.js";
+  RequestedSchema,
+} from "../communication/index.js";
+import {
+  MessageAddressInput,
+  wellFormedString,
+} from "../communication/records/values.js";
 import { exactStruct } from "../encoding/exact.js";
+
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
 
 const multicast = exactStruct({
   op: Schema.optionalWith(Schema.Literal("multicast"), { exact: true }),
@@ -48,13 +50,11 @@ export const SendRequest = Schema.Union(
   QuestionSendRequest,
   AnswerSendRequest,
 ).annotations({ identifier: "SendRequest" });
-/** Question deadlines include policy assessment time. */
+/** Question deadlines include policy assessment time.
+ * @useDeclaredType
+ */
 export type SendRequest = typeof SendRequest.Type;
 /** Form grammar and bounded field diagnostics have one owning implementation. */
-export {
-  AcceptResponse,
-  DeadlineSeconds,
-  DeclineResponse,
-  describeIssues,
-  RequestedSchema,
-};
+export { AcceptResponse, DeadlineSeconds, DeclineResponse, RequestedSchema };
+
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */

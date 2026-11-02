@@ -1,11 +1,16 @@
 /** @file Promise-native access to scoped process fixtures for node:test consumers. */
+import { inboxStream } from "./mcp-inbox.js";
 import {
-  acquireHarnessEndpoint,
+  acquireMcpConnection,
+  type McpConnection,
+  callTool,
+} from "../../plugins/shared/mcp.js";
+import {
   type AgentCard,
-  type HarnessEndpoint,
-  type InboundItem,
+  AgentIdentityCard,
+  type PermittedItem,
   MessageAddressInput,
-  SendInput,
+  SendRequest,
   type SendResult,
 } from "@moltzap/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
@@ -37,7 +42,7 @@ interface Daemon {
 export interface Endpoint extends Daemon {
   readonly agent: AgentCard;
   readonly send: (input: unknown) => Promise<SendResult>;
-  readonly next: (count: number) => Promise<readonly InboundItem[]>;
+  readonly next: (count: number) => Promise<readonly PermittedItem[]>;
   readonly history: (address: string) => Promise<readonly unknown[]>;
 }
 
@@ -117,10 +122,10 @@ async function networkEndpoint(
 ): Promise<Endpoint> {
   const harness = await runInScope(
     scope,
-    acquireHarnessEndpoint(fixture.endpoint, {
-      credential: fixture.mcpCredential,
-      receiveMode: "push",
-    }),
+    acquireMcpConnection(
+      { endpoint: fixture.endpoint, credential: fixture.mcpCredential },
+      { name: "process-test", version: "test" },
+    ),
   );
   const agent = await runInScope(scope, readAgent(fixture));
   return {
@@ -130,8 +135,13 @@ async function networkEndpoint(
     mcpCredentialFile: fixture.mcpCredentialFile,
     send: (input) =>
       Effect.runPromise(
-        Schema.decodeUnknown(SendInput)(input).pipe(
-          Effect.flatMap((decoded) => harness.send(decoded)),
+        Schema.decodeUnknown(SendRequest)(input).pipe(
+          Effect.flatMap((decoded) =>
+            callTool(harness.client, {
+              name: "send_message",
+              arguments: { input: decoded },
+            }),
+          ),
         ),
       ),
     next: (count) => Effect.runPromise(nextItems(harness, count)),
@@ -144,8 +154,16 @@ function readAgent(fixture: DaemonProcessFixture) {
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       const status = yield* management.status();
-      return status.kind === "active"
-        ? status.agent
+      return status.kind === "registered"
+        ? yield* Schema.decodeUnknown(AgentIdentityCard)(
+            status.identityCard,
+          ).pipe(
+            Effect.map(({ agentId, agentName, principalId }) => ({
+              agentId,
+              agentName,
+              principalId,
+            })),
+          )
         : yield* processTestError("started daemon is not registered");
     }),
   );
@@ -156,19 +174,13 @@ function readAgent(fixture: DaemonProcessFixture) {
  * acknowledging them before it closes, since a closed subscription's receipts
  * are stale.
  */
-function nextItems(harness: HarnessEndpoint, count: number) {
-  return harness.messages.pipe(
+function nextItems(harness: McpConnection, count: number) {
+  return inboxStream(harness).pipe(
     Stream.grouped(count),
-    Stream.tap((batch) =>
-      Effect.forEach(batch, ({ acknowledge }) => acknowledge, {
-        concurrency: 1,
-        discard: true,
-      }),
-    ),
     Stream.runHead,
     Effect.map(
       Option.match({
-        onNone: (): readonly InboundItem[] => [],
+        onNone: (): readonly PermittedItem[] => [],
         onSome: (batch) => Chunk.toReadonlyArray(batch).map(({ item }) => item),
       }),
     ),

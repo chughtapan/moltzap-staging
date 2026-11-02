@@ -15,6 +15,7 @@ const fixture = Effect.gen(function* () {
   return { directory, fs };
 });
 
+// @agent-code-guard/regression-only: Persistent handoff, stale acknowledgments and receiver shutdown exercise separate lifecycle cases.
 describe("Muse work queue", () => {
   it("keeps a published reference after the receiver scope closes", () =>
     Effect.gen(function* () {
@@ -28,8 +29,9 @@ describe("Muse work queue", () => {
       const first = yield* detectMuseWork(directory);
       expect(first).toHaveLength(1);
       const work = first[0];
-      if (work === undefined)
+      if (work === undefined) {
         return yield* Effect.dieMessage("Published work is missing");
+      }
       expect(work.eventId).toBe(deliveryToken);
       expect(yield* detectMuseWork(directory)).toEqual(first);
       yield* acceptMuseWork(directory, work.attempt, work.eventId);
@@ -43,8 +45,9 @@ describe("Muse work queue", () => {
       const wake = yield* makeMuseWakeup(directory);
       yield* wake({ deliveryToken });
       const [work] = yield* detectMuseWork(directory);
-      if (work === undefined)
+      if (work === undefined) {
         return yield* Effect.dieMessage("Published work is missing");
+      }
       expect(
         yield* acceptMuseWork(directory, work.attempt, "another-event").pipe(
           Effect.flip,

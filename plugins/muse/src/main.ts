@@ -1,10 +1,10 @@
 /** @file Remote Muse receiver and credential-free native detector/worker commands. */
-import { packageVersion } from "@moltzap/social-harness";
 import { FetchHttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { packageVersion } from "@moltzap/social-harness";
 import { Config, Console, Effect, Layer } from "effect";
 import { isAbsolute } from "node:path";
+import { acquireMcpConnection } from "#sharness-mcp/mcp";
 import { MuseWakeError } from "./errors.js";
 import { acceptMuseWork, detectMuseWork, makeMuseWakeup } from "./index.js";
 

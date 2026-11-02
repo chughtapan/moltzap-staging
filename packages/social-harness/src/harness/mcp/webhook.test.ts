@@ -8,6 +8,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { Clock, Context, Deferred, Duration, Effect, Fiber } from "effect";
 import { createHmac } from "node:crypto";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Restart scenarios retain the same test directory across independent Effect scopes.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

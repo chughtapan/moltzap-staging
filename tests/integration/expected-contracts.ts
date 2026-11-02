@@ -4,12 +4,12 @@
 export const registrationResultKind = "registered";
 
 /** The daemon status tool reports this kind when its persisted identity is active. */
-export const registeredDaemonStatus = "active";
+export const registeredDaemonStatus = "registered";
 
 /** Daemon startup reports this phase when its persisted state or identity row refuses this binary. */
 export const storageStartupPhase = "storage";
 
-/** Daemon.StartupError.phase reports this value when startup configuration is invalid. */
+/** DaemonStartupError.phase reports this value when startup configuration is invalid. */
 export const configurationStartupPhase = "configuration";
 
 /** Daemon startup reports this reason when retained outbound bytes have left the live window. */

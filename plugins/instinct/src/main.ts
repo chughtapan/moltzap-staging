@@ -1,9 +1,9 @@
 /** @file Remote Instinct receiver; the process supervisor owns restart policy. */
-import { packageVersion } from "@moltzap/social-harness";
 import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { packageVersion } from "@moltzap/social-harness";
 import { Config, Data, Effect } from "effect";
+import { acquireMcpConnection } from "#sharness-mcp/mcp";
 import { deliverToInstinct } from "./index.js";
 
 /** Configuration diagnostics must not include an invalid URL or secret value. */

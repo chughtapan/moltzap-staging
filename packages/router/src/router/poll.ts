@@ -3,9 +3,9 @@ import type { AgentId, LiveSignedMessage } from "@moltzap/social-harness";
 import { httpErrors, routerContract } from "@moltzap/social-harness/internal";
 import canonicalize from "canonicalize";
 import { Duration, Effect, Option, Schema } from "effect";
-import { entriesAfter, type FeedSnapshot, type RouterFeed } from "./feed.js";
 import type { PollCursorCodec } from "./poll-cursor.js";
 import type { PollWaiters } from "./poll-waiters.js";
+import { entriesAfter, type FeedSnapshot, type RouterFeed } from "./feed.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const { InternalServerError, OverloadedError } = httpErrors;

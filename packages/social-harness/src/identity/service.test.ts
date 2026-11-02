@@ -3,7 +3,7 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
-import { scopedLive } from "@effect/vitest";
+import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Encoding, Layer, Redacted } from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -42,7 +42,7 @@ function openIdentity(
   filename: string,
   fixture: IdentityFixture,
   registry: Context.Tag.Service<typeof Registry>,
-  admissionCredential = Effect.succeed(Redacted.make("test-admission")),
+  admissionCredential?: Effect.Effect<Redacted.Redacted>,
 ) {
   return Layer.build(
     Identity.layer({
@@ -50,7 +50,8 @@ function openIdentity(
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         fixture.registryAuthority,
       ),
-      admissionCredential,
+      admissionCredential:
+        admissionCredential ?? Effect.succeed(Redacted.make("test-admission")),
     }).pipe(
       Layer.provide(Layer.succeed(Registry, registry)),
       Layer.provide(SqliteClient.layer({ filename })),
@@ -58,7 +59,8 @@ function openIdentity(
   ).pipe(Effect.map((context) => Context.get(context, Identity)));
 }
 
-scopedLive("reopens saved registration without admission credentials", () =>
+// @agent-code-guard/regression-only: Real SQLite exercises saved registration, restart and closed refusal behavior.
+it("reopens saved registration without admission credentials", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const filesystem = yield* FileSystem.FileSystem;
@@ -97,10 +99,9 @@ scopedLive("reopens saved registration without admission credentials", () =>
         });
       }),
     );
-  }).pipe(Effect.provide(NodeContext.layer)),
-);
+  }).pipe(Effect.provide(NodeContext.layer)));
 
-scopedLive("keeps a refused registration unregistered", () =>
+it("keeps a refused registration unregistered", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const identity = yield* openIdentity(":memory:", fixture, {
@@ -111,10 +112,9 @@ scopedLive("keeps a refused registration unregistered", () =>
       yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
     ).toMatchObject({ reason: "name_taken" });
     expect(yield* identity.me()).toEqual({ kind: "unregistered" });
-  }),
-);
+  }));
 
-scopedLive("rejects a card belonging to another retained key", () =>
+it("rejects a card belonging to another retained key", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const other = yield* makeIdentityFixture;
@@ -127,10 +127,9 @@ scopedLive("rejects a card belonging to another retained key", () =>
       yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
     ).toMatchObject({ reason: "incompatible-daemon" });
     expect(yield* identity.me()).toEqual({ kind: "unregistered" });
-  }),
-);
+  }));
 
-scopedLive("projects admission refusal without assigning registration", () =>
+it("projects admission refusal without assigning registration", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const identity = yield* openIdentity(":memory:", fixture, {
@@ -141,32 +140,28 @@ scopedLive("projects admission refusal without assigning registration", () =>
       yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
     ).toMatchObject({ reason: "admission-refused" });
     expect(yield* identity.me()).toEqual({ kind: "unregistered" });
-  }),
-);
+  }));
 
-scopedLive(
-  "resolves cards in input order and identifies the first missing name",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      const missing = AgentName.make("missing-agent");
-      const identity = yield* openIdentity(":memory:", fixture, {
-        ...registryFor(fixture),
-        lookup: (request) =>
-          Effect.succeed(
-            "agentName" in request &&
-              request.agentName === fixture.identityCard.agentName
-              ? { kind: "found", identityCard: fixture.identityCard }
-              : { kind: "not_found" },
-          ),
-      });
-      expect(yield* identity.resolve([fixture.identityCard.agentName])).toEqual(
-        [agentCardOf(fixture.identityCard)],
-      );
-      expect(
-        yield* identity
-          .resolve([fixture.identityCard.agentName, missing])
-          .pipe(Effect.flip),
-      ).toMatchObject({ reason: "unknown-agent", agentName: missing });
-    }),
-);
+it("resolves cards in input order and identifies the first missing name", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    const missing = AgentName.make("missing-agent");
+    const identity = yield* openIdentity(":memory:", fixture, {
+      ...registryFor(fixture),
+      lookup: (request) =>
+        Effect.succeed(
+          "agentName" in request &&
+            request.agentName === fixture.identityCard.agentName
+            ? { kind: "found", identityCard: fixture.identityCard }
+            : { kind: "not_found" },
+        ),
+    });
+    expect(yield* identity.resolve([fixture.identityCard.agentName])).toEqual([
+      agentCardOf(fixture.identityCard),
+    ]);
+    expect(
+      yield* identity
+        .resolve([fixture.identityCard.agentName, missing])
+        .pipe(Effect.flip),
+    ).toMatchObject({ reason: "unknown-agent", agentName: missing });
+  }));

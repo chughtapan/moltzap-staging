@@ -8,7 +8,7 @@ surface. The channel id is `"sharness"`.
 
 This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
-or another adapter. It receives an MCP-backed `HarnessEndpoint`; it
+or another adapter. It uses the stock MCP client and the shared inbox receiver. It
 does not acquire a daemon, profile, Registry admission material, signing key,
 raw Router credential, network client, or local store.
 
@@ -52,7 +52,7 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   Processing and notification belong to the host. Its restricted durable
   ingress queue is not a prerequisite. Ambiguous handoff replay is deferred.
 - Discovery, search, history, status, registration, and proof inspection use
-  MCP rather than `HarnessEndpoint`.
+  the MCP catalog.
 - Keep host failures and Client failures typed at the boundary. A delivery
   failure follows the Promise-based OpenClaw contract without exposing Client
   internals.

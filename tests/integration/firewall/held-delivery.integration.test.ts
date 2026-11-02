@@ -1,13 +1,17 @@
 /** @file A real daemon recovers a delivery held after Router ordering. */
 
+import { inboxStream } from "../mcp-inbox.js";
 import {
-  acquireHarnessEndpoint,
+  acquireMcpConnection,
+  type McpConnection,
+  callTool,
+} from "../../../plugins/shared/mcp.js";
+import {
   AgentAddress,
   type AgentName,
   type AgentCard,
   type Content,
-  type HarnessEndpoint,
-  type InboundDelivery,
+  type InboxEntry,
   type SendResult,
 } from "@moltzap/social-harness";
 import {
@@ -60,16 +64,16 @@ const replyText = "reply after the held delivery is released";
 const followUpText = "follow-up in the recovered conversation";
 
 /** Collects the endpoint's single inbound subscription for the whole scope. */
-const collectDeliveries = <E>(messages: Stream.Stream<InboundDelivery, E>) =>
+const collectDeliveries = <E>(messages: Stream.Stream<InboxEntry, E>) =>
   Effect.gen(function* () {
-    const inbox = yield* Queue.unbounded<InboundDelivery>();
+    const inbox = yield* Queue.unbounded<InboxEntry>();
     yield* Effect.forkScoped(
       Stream.runForEach(messages, (delivery) => Queue.offer(inbox, delivery)),
     );
     return inbox;
   });
 
-const expectQuiet = (inbox: Queue.Queue<InboundDelivery>) =>
+const expectQuiet = (inbox: Queue.Queue<InboxEntry>) =>
   Effect.sleep(QUIET_WINDOW).pipe(
     Effect.zipRight(Queue.size(inbox)),
     Effect.tap((size) =>
@@ -107,10 +111,10 @@ interface HeldPair {
 
 interface HeldDelivery {
   readonly proxy: RouterHoldProxy;
-  readonly sender: HarnessEndpoint;
-  readonly target: HarnessEndpoint;
-  readonly senderInbox: Queue.Queue<InboundDelivery>;
-  readonly targetInbox: Queue.Queue<InboundDelivery>;
+  readonly sender: McpConnection;
+  readonly target: McpConnection;
+  readonly senderInbox: Queue.Queue<InboxEntry>;
+  readonly targetInbox: Queue.Queue<InboxEntry>;
   readonly senderAddress: AgentAddress;
   readonly targetAddress: AgentAddress;
   readonly senderAgent: AgentCard;
@@ -168,8 +172,16 @@ const heldDeliveryBehavior = (
     const target = yield* registerFixture(started.targetFixture);
     const pair = {
       ...started,
-      senderAgent: sender.agent,
-      targetAgent: target.agent,
+      senderAgent: {
+        agentId: sender.agentId,
+        agentName: sender.agentName,
+        principalId: sender.principalId,
+      },
+      targetAgent: {
+        agentId: target.agentId,
+        agentName: target.agentName,
+        principalId: target.principalId,
+      },
     };
     yield* Effect.scoped(
       waitForHeldDelivery(pair).pipe(
@@ -215,21 +227,30 @@ function waitForHeldDelivery(pair: HeldPair) {
       pair;
     const senderAddress = directAddress(senderFixture.agentName);
     const targetAddress = directAddress(targetFixture.agentName);
-    const sender = yield* acquireHarnessEndpoint(senderFixture.endpoint, {
-      credential: senderFixture.mcpCredential,
-      receiveMode: "push",
-    });
-    const target = yield* acquireHarnessEndpoint(targetFixture.endpoint, {
-      credential: targetFixture.mcpCredential,
-      receiveMode: "push",
-    });
-    const senderInbox = yield* collectDeliveries(sender.messages);
-    const targetInbox = yield* collectDeliveries(target.messages);
+    const sender = yield* acquireMcpConnection(
+      {
+        endpoint: senderFixture.endpoint,
+        credential: senderFixture.mcpCredential,
+      },
+      { name: "process-test", version: "test" },
+    );
+    const target = yield* acquireMcpConnection(
+      {
+        endpoint: targetFixture.endpoint,
+        credential: targetFixture.mcpCredential,
+      },
+      { name: "process-test", version: "test" },
+    );
+    const senderInbox = yield* collectDeliveries(inboxStream(sender));
+    const targetInbox = yield* collectDeliveries(inboxStream(target));
 
     yield* proxy.hold;
     yield* Effect.addFinalizer(() => proxy.release);
     const heldSend = yield* Effect.forkScoped(
-      sender.send({ to: targetAddress, text: heldText }),
+      callTool(sender.client, {
+        name: "send_message",
+        arguments: { input: { to: targetAddress, text: heldText } },
+      }),
     );
     yield* awaitParkedResponse(proxy.parkedResponses);
     yield* expectQuiet(targetInbox);
@@ -263,7 +284,7 @@ function releaseHeldDelivery(state: HeldDelivery) {
         content: [{ type: "text", text: heldText }],
       },
     });
-    yield* released.acknowledge;
+
     yield* Fiber.join(heldSend);
 
     return state;
@@ -273,7 +294,10 @@ function releaseHeldDelivery(state: HeldDelivery) {
 function replyToReleasedDelivery(state: HeldDelivery) {
   return Effect.gen(function* () {
     const { target, senderAddress, targetAgent, senderInbox } = state;
-    yield* target.send({ to: senderAddress, text: replyText });
+    yield* callTool(target.client, {
+      name: "send_message",
+      arguments: { input: { to: senderAddress, text: replyText } },
+    });
     const reply = yield* Queue.take(senderInbox);
     expect(reply.item).toMatchObject({
       kind: "multicast",
@@ -283,7 +307,6 @@ function replyToReleasedDelivery(state: HeldDelivery) {
         content: [{ type: "text", text: replyText }],
       },
     });
-    yield* reply.acknowledge;
 
     return state;
   });
@@ -299,7 +322,10 @@ function followUpHeldDelivery(state: HeldDelivery) {
       senderAgent,
       senderInbox,
     } = state;
-    yield* sender.send({ to: targetAddress, text: followUpText });
+    yield* callTool(sender.client, {
+      name: "send_message",
+      arguments: { input: { to: targetAddress, text: followUpText } },
+    });
     const followUp = yield* Queue.take(targetInbox);
     expect(followUp.item).toMatchObject({
       kind: "multicast",
@@ -309,7 +335,6 @@ function followUpHeldDelivery(state: HeldDelivery) {
         content: [{ type: "text", text: followUpText }],
       },
     });
-    yield* followUp.acknowledge;
 
     yield* expectQuiet(targetInbox);
     expect(yield* Queue.size(senderInbox)).toBe(0);
@@ -331,7 +356,7 @@ function readHeldHistory(pair: HeldPair) {
       yield* readHistory(senderFixture, targetAddress),
       yield* readHistory(targetFixture, senderAddress),
     ]) {
-      expect(history.continuation).toBeNull();
+      expect(history.nextCursor).toBeUndefined();
       expect(
         history.records.map((record) => historyMessage(record).content),
       ).toEqual(expectedContents);

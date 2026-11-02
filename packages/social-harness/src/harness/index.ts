@@ -50,7 +50,7 @@ export class DaemonStartupError extends Data.TaggedError("DaemonStartupError")<{
         break;
       case "admission-refused":
         remedy =
-          ". Supply the admission credential for this Registry. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#register-an-agent";
+          ". Supply the admission credential for this Registry. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#run-one-agent";
         break;
       case "outbox-too-old":
         remedy =
@@ -233,3 +233,6 @@ export {
 export { Registry, RegistryError } from "../identity/registry/index.js";
 /** Authentication supplies verified attribution before operation decoding. */
 export { Authentication } from "../identity/authentication/index.js";
+
+/** Trusted policy providers receive typed assessment requests at construction. */
+export type { DecisionProvider, DecisionRequest } from "../firewall/check.js";

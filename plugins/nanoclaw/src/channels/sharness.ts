@@ -1,28 +1,21 @@
 /** @file Projects the public Social Harness endpoint capability into NanoClaw. */
 import {
-  type RequestError,
   type DeliveryAcknowledgeError,
   type FirewallRefusal,
   groupMembers,
   type GuidanceBodyOrigin,
-  type PermittedItem,
   MessageAddressInput,
   parseMessageText,
+  type PermittedItem,
   renderCollectiveRequest,
   renderCollectiveResult,
   renderContent,
   renderLocalGuidance,
   replyAddress,
-  SendError,
+  type RequestError,
+  type SendError,
+  packageVersion,
 } from "@moltzap/social-harness";
-import { packageVersion } from "@moltzap/social-harness";
-import {
-  acquireMcpConnection,
-  callTool,
-  type McpConnection,
-  type InboxEntry,
-  type McpConnectError,
-} from "#sharness-mcp/mcp";
 import {
   Config,
   ConfigProvider,
@@ -39,6 +32,13 @@ import { absurd } from "effect/Function";
 import { randomUUID } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
+import {
+  acquireMcpConnection,
+  callTool,
+  type InboxEntry,
+  type McpConnectError,
+  type McpConnection,
+} from "#sharness-mcp/mcp";
 import type { ChannelSetup, InboundMessage } from "./adapter.js";
 import { registerChannelAdapter } from "./channel-registry.js";
 
@@ -213,10 +213,6 @@ const FINAL_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
   "content-invalid",
   ...POSTED_REFUSALS,
 ]);
-
-function isFinalRefusal(error: unknown): error is SendError {
-  return error instanceof SendError && FINAL_REFUSALS.has(error.reason);
-}
 
 /** The sender NanoClaw records for an item the endpoint itself emitted. */
 const ENDPOINT_SENDER = "Social Harness";
@@ -457,8 +453,12 @@ class HarnessChannelAdapter {
                 Effect.catchTag("FirewallRefusal", (error) =>
                   this.reportRefusedText(config, to, error.message),
                 ),
-                Effect.catchIf(isFinalRefusal, (error) =>
-                  this.reportFinalRefusal(config, to, error),
+                Effect.catchTag(
+                  "SendError",
+                  (error): Effect.Effect<void, ChannelError | SendError> =>
+                    FINAL_REFUSALS.has(error.reason)
+                      ? this.reportFinalRefusal(config, to, error)
+                      : Effect.fail(error),
                 ),
               ),
           }),

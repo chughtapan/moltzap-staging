@@ -1,4 +1,5 @@
 /** @file Public MCP clients exercise authentication, published contracts, failures and request cancellation. */
+
 import { scopedLive as it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Schema } from "effect";
 import { describe, expect } from "vitest";
@@ -10,6 +11,8 @@ import {
 } from "../../__tests__/mcp-http-fixtures.js";
 import { SendError } from "../../communication/conversations/errors.js";
 import { toolDefinitions } from "./contracts.js";
+
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
 
 const response = Schema.parseJson(
   Schema.Struct({
@@ -33,13 +36,14 @@ const send = {
   arguments: { input: { to: "agent:bob", text: "hello" } },
 };
 
+// @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
 describe("MCP authentication and discovery", () => {
   it.each([{ authorization: "" }, { authorization: "Bearer wrong" }])(
     "refuses an invalid bearer before invoking a service",
     (headers) =>
       Effect.gen(function* () {
         const fixture = yield* mcpFixture();
-        const reply = yield* Effect.promise(() =>
+        const reply = yield* Effect.tryPromise(() =>
           fixture.fetch(mcpRequest("tools/list", {}, { headers })),
         );
         expect(reply.status).toBe(401);
@@ -55,7 +59,7 @@ describe("MCP authentication and discovery", () => {
     Effect.gen(function* () {
       const fixture = yield* mcpFixture();
       expect(
-        (yield* Effect.promise(() =>
+        (yield* Effect.tryPromise(() =>
           fixture.fetch(mcpRequest("tools/list", {}, { headers })),
         )).status,
       ).toBe(403);
@@ -116,10 +120,11 @@ describe("MCP authentication and discovery", () => {
       const client = yield* connectInProcessClient((input, init) =>
         fixture.fetch(new Request(input, init)),
       );
-      const changed = yield* Deferred.make<void>();
+      const changed = yield* Deferred.make<undefined>();
       client.setNotificationHandler("notifications/tools/list_changed", () => {
         Effect.runFork(Deferred.succeed(changed, undefined));
       });
+      // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- scopedLive owns this listening request.
       const subscription = yield* Effect.acquireRelease(
         Effect.tryPromise(() => client.listen({ toolsListChanged: true })),
         (listening) =>
@@ -147,13 +152,14 @@ describe("MCP authentication and discovery", () => {
     }));
 });
 
+// @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
 describe("MCP tool contracts", () => {
   it.each(["a-string-id", 9_007_199_254_740_990])(
     "preserves request id %s",
     (id) =>
       Effect.gen(function* () {
         const fixture = yield* mcpFixture();
-        const reply = yield* Effect.promise(() =>
+        const reply = yield* Effect.tryPromise(() =>
           fixture.fetch(
             mcpRequest(
               "tools/call",
@@ -169,7 +175,7 @@ describe("MCP tool contracts", () => {
   it("reports argument paths without submitting invalid work", () =>
     Effect.gen(function* () {
       const fixture = yield* mcpFixture();
-      const reply = yield* Effect.promise(() =>
+      const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(
           mcpRequest("tools/call", {
             name: "read_event",
@@ -191,7 +197,7 @@ describe("MCP tool contracts", () => {
             Effect.fail(new SendError({ reason: "delivery-pending" })),
         },
       });
-      const reply = yield* Effect.promise(() =>
+      const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(mcpRequest("tools/call", send)),
       );
       expect((yield* json(reply)).error?.data).toEqual({
@@ -204,7 +210,7 @@ describe("MCP tool contracts", () => {
       const fixture = yield* mcpFixture({
         harness: { send: () => Effect.dieMessage("private-stack-detail") },
       });
-      const reply = yield* Effect.promise(() =>
+      const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(mcpRequest("tools/call", send)),
       );
       const error = (yield* json(reply)).error;
@@ -229,8 +235,8 @@ describe("MCP tool contracts", () => {
 
   it("interrupts only the aborted HTTP request", () =>
     Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const interrupted = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<undefined>();
+      const interrupted = yield* Deferred.make<undefined>();
       const fixture = yield* mcpFixture({
         harness: {
           listInbox: () =>
@@ -256,7 +262,7 @@ describe("MCP tool contracts", () => {
       abort.abort();
       yield* Deferred.await(interrupted);
       yield* Fiber.join(waiting);
-      const reply = yield* Effect.promise(() =>
+      const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(
           mcpRequest(
             "tools/call",
@@ -268,3 +274,5 @@ describe("MCP tool contracts", () => {
       expect((yield* json(reply)).error).toBeUndefined();
     }));
 });
+
+/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the default assertion policy. */

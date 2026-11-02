@@ -7,6 +7,7 @@ import {
   StreamableHTTPClientTransport,
   SUBSCRIPTION_ID_META_KEY,
 } from "@modelcontextprotocol/client";
+import { INBOX_PENDING_EVENT, packageVersion } from "@moltzap/social-harness";
 import {
   Data,
   Deferred,
@@ -18,8 +19,6 @@ import {
   Take,
 } from "effect";
 import { randomUUID } from "node:crypto";
-
-import { INBOX_PENDING_EVENT, packageVersion } from "@moltzap/social-harness";
 
 /** Reception failures contain no transport body, credentials or peer content. */
 export class McpReceiveError extends Data.TaggedError("McpReceiveError")<{

@@ -12,7 +12,7 @@ import {
   send,
 } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import { anyNumber, anyString } from "../test-matchers.js";
+import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
 
 /** The requester and the three members every all_gather trace starts. */
 const acquireFour = Effect.gen(function* () {
@@ -44,13 +44,7 @@ const allGather = (requester: Participant, to: string, deadline: number) =>
     to,
     text: question,
     collective: { op: "all_gather", deadline, requestedSchema: slotSchema },
-  }).pipe(
-    Effect.flatMap((result) =>
-      result.kind === "collective"
-        ? Effect.succeed(result)
-        : Effect.dieMessage("expected an all_gather operation"),
-    ),
-  );
+  });
 
 /** The group's canonical spelling, its names in ASCII order, as requests and results carry it. */
 const group =
@@ -120,18 +114,18 @@ function startAllGatherAndExpectRequests({
         msgId: anyString,
         author: requester.agent,
         recipients: [first.agent, second.agent, third.agent],
-        content: {
+        content: arrayContaining([{ type: "text", text: question }]),
+        operation: {
           op: "all_gather",
-          operationId: started.operationId,
-          question,
+          operationId: started.id,
           requestedSchema: slotSchema,
           deadlineAt: anyNumber,
         },
       },
     };
-    expect(yield* nextItem(first)).toEqual(request);
-    expect(yield* nextItem(second)).toEqual(request);
-    expect(yield* nextItem(third)).toEqual(request);
+    expect(yield* nextItem(first)).toMatchObject(request);
+    expect(yield* nextItem(second)).toMatchObject(request);
+    expect(yield* nextItem(third)).toMatchObject(request);
     return started;
   });
 }
@@ -140,10 +134,7 @@ const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireFour;
   yield* expectUnknownAllGatherMemberRefused(participants.requester);
   const started = yield* startAllGatherAndExpectRequests(participants);
-  yield* answerAllGatherAndExpectSharedResult(
-    participants,
-    started.operationId,
-  );
+  yield* answerAllGatherAndExpectSharedResult(participants, started.id);
 }).pipe(Effect.scoped);
 
 /**
@@ -163,10 +154,7 @@ const silentMemberBehavior = Effect.gen(function* () {
     concurrency: 3,
   });
   yield* Effect.all(
-    [
-      answer(first, started.operationId, "mon"),
-      answer(second, started.operationId, "mon"),
-    ],
+    [answer(first, started.id, "mon"), answer(second, started.id, "mon")],
     {
       concurrency: 2,
     },
@@ -176,7 +164,7 @@ const silentMemberBehavior = Effect.gen(function* () {
   expect(requesterResult).toMatchObject({
     kind: "collectiveResult",
     op: "all_gather",
-    operationId: started.operationId,
+    operationId: started.id,
     outcomes: [
       { member: first.agent, outcome: { kind: "answered" } },
       { member: second.agent, outcome: { kind: "answered" } },

@@ -17,13 +17,14 @@ export const makeMuseWakeup = Effect.fn("Muse.makeWakeup")(function* (
     return yield* new MuseWakeError({ reason: "invalid-configuration" });
   }
   const fs = yield* FileSystem.FileSystem;
-  yield* fs
-    .makeDirectory(directory, { recursive: true, mode: 0o700 })
-    .pipe(
-      Effect.mapError(
-        () => new MuseWakeError({ reason: "invalid-configuration" }),
-      ),
-    );
+  yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(
+    Effect.catchTags({
+      SystemError: () =>
+        Effect.fail(new MuseWakeError({ reason: "invalid-configuration" })),
+      BadArgument: () =>
+        Effect.fail(new MuseWakeError({ reason: "invalid-configuration" })),
+    }),
+  );
   return (entry: { readonly deliveryToken: string }) =>
     Effect.gen(function* () {
       const attempt = yield* Effect.sync(randomUUID);
@@ -38,6 +39,13 @@ export const makeMuseWakeup = Effect.fn("Muse.makeWakeup")(function* (
         ),
       );
     }).pipe(
-      Effect.mapError(() => new MuseWakeError({ reason: "transport-failed" })),
+      Effect.catchTags({
+        ParseError: () =>
+          Effect.fail(new MuseWakeError({ reason: "decode-failed" })),
+        SystemError: () =>
+          Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
+        BadArgument: () =>
+          Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
+      }),
     );
-});
+}, Effect.withSpan("makeMuseWakeup"));

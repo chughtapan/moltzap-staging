@@ -59,16 +59,17 @@ it.each([
         name: "negotiated-schema-test",
         version: "1",
       }).pipe(Effect.provideService(McpServer, server));
-      const fetch = HttpApp.toWebHandler(app);
+      const handleRequest = HttpApp.toWebHandler(app);
       const client = new Client(
         { name: "unmodified-client", version: "1" },
         options,
       );
+      // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- scopedLive owns the SDK connection.
       yield* Effect.acquireRelease(
         Effect.tryPromise(() =>
           client.connect(
             new StreamableHTTPClientTransport(new URL("http://127.0.0.1/mcp"), {
-              fetch: (input, init) => fetch(new Request(input, init)),
+              fetch: (input, init) => handleRequest(new Request(input, init)),
             }),
           ),
         ),
@@ -81,13 +82,14 @@ it.each([
       );
       expect(response.structuredContent).toEqual(expected);
       if (era === "modern") {
-        const changed = yield* Deferred.make<void>();
+        const changed = yield* Deferred.make<undefined>();
         client.setNotificationHandler(
           "notifications/tools/list_changed",
           () => {
             Effect.runFork(Deferred.succeed(changed, undefined));
           },
         );
+        // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- scopedLive owns the listening request.
         const subscription = yield* Effect.acquireRelease(
           Effect.tryPromise(() => client.listen({ toolsListChanged: true })),
           (listening) =>
@@ -97,9 +99,10 @@ it.each([
         yield* server.notifications["notifications/tools/list_changed"]({});
         yield* Deferred.await(changed).pipe(Effect.timeout("2 seconds"));
         yield* Effect.tryPromise(() => subscription.close());
-        expect(yield* Effect.tryPromise(() => subscription.closed)).toBe(
-          "local",
-        );
+
+        const reason = yield* Effect.tryPromise(() => subscription.closed);
+        // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The SDK reports this reason when a client closes its subscription.
+        expect(reason).toBe("local");
       }
     }),
 );

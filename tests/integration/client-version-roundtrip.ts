@@ -8,10 +8,10 @@ import {
   PrincipalId,
 } from "@moltzap/social-harness";
 import {
-  RegistrationId,
   Registry,
+  registryContract,
   Router,
-} from "@moltzap/social-harness/service";
+} from "@moltzap/social-harness/internal";
 import { WireVersions } from "@moltzap/social-harness/test";
 import { Duration, Effect, Layer, Redacted, Schema, type Scope } from "effect";
 import { generateKeyPairSync } from "node:crypto";
@@ -50,7 +50,7 @@ const registerVersionMismatchAgent = (
     );
     const registered = yield* Registry.register({
       request: {
-        operationId: Schema.decodeUnknownSync(RegistrationId)(
+        operationId: Schema.decodeUnknownSync(registryContract.RegistrationId)(
           "opn_AAAAAAAAAAAAAAAAAAAAAA",
         ),
         principalId: Schema.decodeUnknownSync(PrincipalId)(
@@ -75,7 +75,7 @@ const registerVersionMismatchAgent = (
         `registration returned ${registered.kind}`,
       );
     }
-    return { signingAuthority, agentCard: registered.agentCard };
+    return { signingAuthority, identityCard: registered.identityCard };
   });
 
 /** A signed out-of-window request preserves the real Router encoder's live set. */
@@ -84,13 +84,11 @@ const assertRouterVersionMismatch = (
   admissionCredential: Redacted.Redacted,
 ) =>
   Effect.gen(function* () {
-    const { signingAuthority, agentCard } = yield* registerVersionMismatchAgent(
-      infrastructure,
-      admissionCredential,
-    );
+    const { signingAuthority, identityCard } =
+      yield* registerVersionMismatchAgent(infrastructure, admissionCredential);
     const error = yield* Router.poll({
       request: {},
-      callerAgentId: agentCard.agentId,
+      callerAgentId: identityCard.agentId,
       signingAuthority,
     }).pipe(
       Effect.provide(
@@ -109,7 +107,7 @@ const assertRouterVersionMismatch = (
     });
   });
 
-/** A public out-of-window read preserves the real Registry encoder's live set. */
+/** The Registry client classifies a version refusal as a closed HTTP failure. */
 const assertRegistryVersionMismatch = (
   infrastructure: RegistryInfrastructure,
 ) =>
@@ -128,8 +126,8 @@ const assertRegistryVersionMismatch = (
       Effect.flip,
     );
     expect(error).toMatchObject({
-      _tag: "VersionMismatchError",
-      supported: LIVE_WIRE_VERSIONS,
+      _tag: "RegistryError",
+      reason: "http-envelope",
     });
   });
 
@@ -151,7 +149,7 @@ export const testVersionMismatchRoundTrips = (
 ) => {
   const scenarios = [
     {
-      name: "Router",
+      name: "returns the live versions from the real Router through the public client",
       check: setups.router.pipe(
         Effect.flatMap((infrastructure) =>
           assertRouterVersionMismatch(infrastructure, admissionCredential),
@@ -159,7 +157,7 @@ export const testVersionMismatchRoundTrips = (
       ),
     },
     {
-      name: "Registry",
+      name: "reports a Registry version refusal through the closed public client error",
       check: setups.registry.pipe(
         Effect.flatMap(assertRegistryVersionMismatch),
       ),
@@ -167,7 +165,7 @@ export const testVersionMismatchRoundTrips = (
   ];
   for (const { name, check } of scenarios) {
     it(
-      `returns the live versions from the real ${name} through the public client`,
+      name,
       processTrace(
         check.pipe(
           Effect.scoped,

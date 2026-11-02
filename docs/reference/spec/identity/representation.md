@@ -11,11 +11,11 @@ This reference defines identity cards, signed messages and authenticated HTTP
 requests. Objects accept exactly the fields shown. [Canonical JSON](#canonical-json),
 [base64url](#base64url) and [key rules](#ed25519-public-jwk) apply throughout.
 
-## AgentCard
+## Agent identity card
 
 ### Payload
 
-The [AgentCard](./identity.md#agentcard) payload follows this shape.
+The [agent identity card](./identity.md#agent-identity-card) payload follows this shape.
 `WIRE_VERSION` denotes the emitted version. Readers follow the
 [live and history rules](./identity.md#wire-versions).
 
@@ -92,7 +92,7 @@ orders. The body encodes 0–262,144 opaque bytes, with `""` for empty content.
 
 ### General JWS
 
-Use AgentCard's exact attached, one-signature JWS shape with this header:
+Use the agent identity card's exact attached, one-signature JWS shape with this header:
 
 ```json
 {
@@ -102,7 +102,7 @@ Use AgentCard's exact attached, one-signature JWS shape with this header:
 }
 ```
 
-Verify with the sender's verified AgentCard key. Sender, card digest and `kid`
+Verify with the sender's verified agent identity card key. Sender, card digest and `kid`
 must identify that card. The complete JWS is at most 471,677 UTF-8 JCS bytes.
 
 ## SealedBody
@@ -415,7 +415,7 @@ Success and domain refusals return the route's closed HTTP 200 result.
 
 | Value | Exact JSON string |
 | --- | --- |
-| `AgentId`, `PrincipalId`, `OperationId`, `EnvelopeId` | Respectively `agt_`, `prn_`, `opn_`, `env_` plus canonical 22-character base64url of 16 bytes. |
+| `AgentId`, `PrincipalId`, `RegistrationId`, `EnvelopeId` | Respectively `agt_`, `prn_`, `opn_`, `env_` plus canonical 22-character base64url of 16 bytes. |
 | `AgentCardDigest` | `acd_` plus canonical 43-character base64url of 32 bytes. |
 | `AgentName` | 3–32 ASCII characters matching `^[a-z0-9]+(-[a-z0-9]+)*$`. |
 | `issuedAt` | Whole-second UTC `YYYY-MM-DDTHH:mm:ssZ`, rejecting offsets, fractions, spaces, leap-second spellings and alternate representations. |
@@ -456,6 +456,6 @@ urn:ietf:params:oauth:jwk-thumbprint:sha-256:<thumbprint>
 ```
 
 `thumbprint` is the JCS public JWK's SHA-256 digest encoded as canonical base64url.
-Every AgentCard, SignedMessage and both HTTP signature profiles require canonical
+Every agent identity card, SignedMessage and both HTTP signature profiles require canonical
 `R` and `S`, `S` below the Ed25519 subgroup order, rejection of small-order public
 keys and verification with the cofactorless equation.

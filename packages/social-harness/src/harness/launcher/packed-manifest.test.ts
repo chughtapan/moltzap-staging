@@ -4,7 +4,7 @@ import { effect as it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { gzipSync } from "node:zlib";
 import { describe, expect } from "vitest";
-import { readPackedManifest } from "./packed-manifest.js";
+import { readPackedManifest } from "./installation.js";
 
 /** A gzipped ustar archive holding `files`, as `npm pack` lays one out. */
 const tarball = (files: Readonly<Record<string, string>>): Uint8Array => {

@@ -585,7 +585,9 @@ function capturePrepared(
                     message: input.message,
                   },
                 }),
-            context: { ...input.context, facts: configuration.facts },
+            context: Object.assign({}, input.context, {
+              facts: configuration.facts,
+            }),
           },
           agents: input.agents,
         }),

@@ -109,6 +109,7 @@ export default [
       "src/communication/router/connection.ts",
       "src/communication/requests/service.ts",
       "src/communication/records/acceptance.test.ts",
+      "src/harness/launcher/installation.ts",
     ],
     rules: {
       "max-lines": [

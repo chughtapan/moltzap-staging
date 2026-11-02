@@ -28,8 +28,9 @@ describe("send receipts", () => {
       address,
     });
     expect(
-      Either.isLeft(
+      Either.match(
         Effect.runSync(checkHarnessSendResult(result).pipe(Effect.either)),
+        { onLeft: () => true, onRight: () => false },
       ),
     ).toBe(true);
   });

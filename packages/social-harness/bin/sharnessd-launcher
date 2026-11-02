@@ -2,7 +2,7 @@
 import { FetchHttpClient } from "@effect/platform";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Console, Effect, Layer } from "effect";
-import { main } from "../dist/daemon/launcher/index.js";
+import { main } from "../dist/harness/launcher/index.js";
 
 main(process.argv.slice(2)).pipe(
   Effect.catchAll((error) =>

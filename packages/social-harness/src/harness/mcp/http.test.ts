@@ -1,8 +1,14 @@
 /** @file Listener startup reports conflicts and shutdown closes active streaming connections. */
-import { HttpServerResponse } from "@effect/platform";
-import { NodeHttpServer } from "@effect/platform-node";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+  HttpServerResponse,
+} from "@effect/platform";
+import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, Exit, Scope, Stream } from "effect";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { expect } from "vitest";
 import { serveMcp } from "./http.js";
@@ -40,19 +46,16 @@ it("closes an active event stream with the listener's scope", () =>
       ),
     );
     yield* serveMcp(port, app).pipe(Effect.provideService(Scope.Scope, scope));
-    const abort = new AbortController();
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        abort.abort();
-      }),
-    );
     const url = `http://127.0.0.1:${port}`;
-    const response = yield* Effect.tryPromise(() =>
-      fetch(url, { signal: abort.signal }),
+    yield* HttpClient.get(url).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.provide(NodeHttpClient.layer),
     );
-    expect(response.status).toBe(200);
     yield* Scope.close(scope, Exit.void).pipe(Effect.timeout("2 seconds"));
     expect(
-      (yield* Effect.tryPromise(() => fetch(url)).pipe(Effect.either))._tag,
-    ).toBe("Left");
+      yield* HttpClient.get(url).pipe(
+        Effect.provide(NodeHttpClient.layer),
+        Effect.flip,
+      ),
+    ).toBeInstanceOf(HttpClientError.RequestError);
   }));

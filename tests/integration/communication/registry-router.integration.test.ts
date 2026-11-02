@@ -14,17 +14,12 @@ import {
   type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {
-  RegistrationId,
   Registry,
-  type RegistryLookupRequest,
-  type RegistryRegisterRequest,
+  registryContract,
   Router,
-  type RouterPollRequest,
-  type RouterPollResult,
-  type RouterSendRequest,
-  type RouterSendResult,
-} from "@moltzap/social-harness/service";
-import { Authentication } from "@moltzap/social-harness/test";
+  type routerContract,
+} from "@moltzap/social-harness/internal";
+import { signAgentRequest } from "@moltzap/social-harness/test";
 import { Effect, Encoding, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -77,7 +72,7 @@ const UNAVAILABLE_BODY = '{"error":"unavailable"}';
 const BATCH_BODY_FRAGMENT = '"kind":"batch"';
 interface RegisteredAgent {
   readonly signingAuthority: AgentSigningAuthorityValue;
-  readonly agentCard: VerifiedAgentIdentityCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
 }
 
 interface RegisteredAgents {
@@ -92,6 +87,14 @@ interface Infrastructure extends RegistryInfrastructure {
   readonly routerOrigin: URL;
   readonly routerPort: number;
 }
+
+type RegistryLookupRequest = typeof registryContract.RegistryLookupRequest.Type;
+type RegistryRegisterRequest =
+  typeof registryContract.RegistryRegisterRequest.Type;
+type RouterPollRequest = typeof routerContract.RouterPollRequest.Type;
+type RouterPollResult = typeof routerContract.RouterPollResult.Type;
+type RouterSendRequest = typeof routerContract.RouterSendRequest.Type;
+type RouterSendResult = typeof routerContract.RouterSendResult.Type;
 
 type BatchResult = Extract<RouterPollResult, { readonly kind: "batch" }>;
 type AcceptedResult = Extract<RouterSendResult, { readonly kind: "accepted" }>;
@@ -124,7 +127,9 @@ const randomIdentifierPayload = (): string =>
   randomBytes(16).toString("base64url");
 
 const makeOperationId = () =>
-  Schema.decodeUnknownSync(RegistrationId)(`opn_${randomIdentifierPayload()}`);
+  Schema.decodeUnknownSync(registryContract.RegistrationId)(
+    `opn_${randomIdentifierPayload()}`,
+  );
 
 const makePrincipalId = () =>
   Schema.decodeUnknownSync(PrincipalId)(`prn_${randomIdentifierPayload()}`);
@@ -138,9 +143,9 @@ const signAuthenticatedRequest = (
   agent: RegisteredAgent,
   encodedRequest: unknown,
 ) =>
-  Authentication.signAgentRequest({
+  signAgentRequest({
     httpRequest: HttpClientRequest.post(new URL(path, origin)),
-    callerAgentId: agent.agentCard.agentId,
+    callerAgentId: agent.identityCard.agentId,
     encodedRequest,
     signingAuthority: agent.signingAuthority,
   });
@@ -210,7 +215,7 @@ const registerAgent = (name: string, runRegistry: RegistryRunner) =>
     }
     return {
       signingAuthority,
-      agentCard: result.agentCard,
+      identityCard: result.identityCard,
     } satisfies RegisteredAgent;
   });
 
@@ -230,8 +235,8 @@ const requireAccepted = (result: RouterSendResult): AcceptedResult => {
   return result;
 };
 
-const encodeAgentCard = (agentCard: VerifiedAgentIdentityCard) =>
-  Schema.encode(AgentIdentityCard)(agentCard);
+const encodeAgentCard = (identityCard: VerifiedAgentIdentityCard) =>
+  Schema.encode(AgentIdentityCard)(identityCard);
 
 const encodeSignedMessage = (signedMessage: SignedMessageValue) =>
   Schema.encode(SignedMessage)(signedMessage);
@@ -351,7 +356,7 @@ const assertAgentLookups = (
     (registeredAgent) =>
       Effect.gen(function* () {
         const request = {
-          agentId: registeredAgent.agentCard.agentId,
+          agentId: registeredAgent.identityCard.agentId,
         } satisfies RegistryLookupRequest;
         const lookup = yield* runRegistry(Registry.lookup(request));
         expect(lookup.kind).toBe(FOUND_KIND);
@@ -362,8 +367,8 @@ const assertAgentLookups = (
         }
         const [actual, expected] = yield* Effect.all(
           [
-            encodeAgentCard(lookup.agentCard),
-            encodeAgentCard(registeredAgent.agentCard),
+            encodeAgentCard(lookup.identityCard),
+            encodeAgentCard(registeredAgent.identityCard),
           ] as const,
           { concurrency: 2 },
         );
@@ -378,7 +383,7 @@ const anchorFeeds = (agents: RegisteredAgents, runRouter: RouterRunner) =>
       runRouter(
         Router.poll({
           request: {} satisfies RouterPollRequest,
-          callerAgentId: agent.agentCard.agentId,
+          callerAgentId: agent.identityCard.agentId,
           signingAuthority: agent.signingAuthority,
         }),
       ).pipe(Effect.map(requireBatch));
@@ -437,11 +442,11 @@ const signMessage = (
   agents: RegisteredAgents,
 ): Effect.Effect<LiveSignedMessage, unknown> =>
   SignedMessage.sign({
-    agentCard: agents.sender.agentCard,
+    identityCard: agents.sender.identityCard,
     signingAuthority: agents.sender.signingAuthority,
     recipientAgentIds: new Set([
-      agents.firstRecipient.agentCard.agentId,
-      agents.secondRecipient.agentCard.agentId,
+      agents.firstRecipient.identityCard.agentId,
+      agents.secondRecipient.identityCard.agentId,
     ]),
     envelopeId: makeEnvelopeId(),
     body: new TextEncoder().encode("opaque-registry-router-e2e"),
@@ -503,7 +508,7 @@ const sendInitial = (
       yield* runRouter(
         Router.send({
           request: initialRequest,
-          callerAgentId: sender.agentCard.agentId,
+          callerAgentId: sender.identityCard.agentId,
           signingAuthority: sender.signingAuthority,
         }),
       ),
@@ -524,7 +529,7 @@ const pollDeliveries = (
     runRouter(
       Router.poll({
         request: { pollCursor } satisfies RouterPollRequest,
-        callerAgentId: agent.agentCard.agentId,
+        callerAgentId: agent.identityCard.agentId,
         signingAuthority: agent.signingAuthority,
       }),
     ).pipe(Effect.map(requireBatch));
@@ -556,11 +561,11 @@ const assertExactDeliveries = (
       [
         SignedMessage.verify({
           signedMessage: firstMessage,
-          agentCard: agents.sender.agentCard,
+          identityCard: agents.sender.identityCard,
         }),
         SignedMessage.verify({
           signedMessage: secondMessage,
-          agentCard: agents.sender.agentCard,
+          identityCard: agents.sender.identityCard,
         }),
       ] as const,
       { concurrency: 2 },
@@ -606,7 +611,7 @@ const sendAndReceive = (
     const retry = yield* runRouter(
       Router.send({
         request: { ...initialRequest, mode: "retry" },
-        callerAgentId: agents.sender.agentCard.agentId,
+        callerAgentId: agents.sender.identityCard.agentId,
         signingAuthority: agents.sender.signingAuthority,
       }),
     );
@@ -627,7 +632,7 @@ const assertRestartFence = (
     const fencedSend = yield* runRouter(
       Router.send({
         request: sentMessage.initialRequest,
-        callerAgentId: sender.agentCard.agentId,
+        callerAgentId: sender.identityCard.agentId,
         signingAuthority: sender.signingAuthority,
       }),
     );
@@ -657,7 +662,7 @@ const assertRetryIndexReset = (
           expectedRouterInstanceId: currentRouterInstanceId,
           mode: "retry",
         },
-        callerAgentId: sender.agentCard.agentId,
+        callerAgentId: sender.identityCard.agentId,
         signingAuthority: sender.signingAuthority,
       }),
     );
@@ -735,7 +740,7 @@ const assertCursorInvalidation = (
         request: {
           pollCursor: sentMessage.firstRecipientDelivery.pollCursor,
         },
-        callerAgentId: firstRecipient.agentCard.agentId,
+        callerAgentId: firstRecipient.identityCard.agentId,
         signingAuthority: firstRecipient.signingAuthority,
       }),
     );
@@ -744,7 +749,7 @@ const assertCursorInvalidation = (
       yield* runRouter(
         Router.poll({
           request: {},
-          callerAgentId: firstRecipient.agentCard.agentId,
+          callerAgentId: firstRecipient.identityCard.agentId,
           signingAuthority: firstRecipient.signingAuthority,
         }),
       ),
@@ -766,7 +771,7 @@ const assertCachedCallerSurvivesRegistryOutage = (
       yield* runRouter(
         Router.poll({
           request: {},
-          callerAgentId: agents.sender.agentCard.agentId,
+          callerAgentId: agents.sender.identityCard.agentId,
           signingAuthority: agents.sender.signingAuthority,
         }),
       ),
@@ -927,16 +932,8 @@ const concurrentRegistration = Effect.gen(function* () {
         const registered = yield* management.register(
           makeRegistrationRequest(fixture),
         );
-        expect(registered.kind).toBe(REGISTERED_KIND);
-        if (registered.kind !== REGISTERED_KIND) {
-          return yield* Effect.fail(
-            processTestError(`registration returned ${registered.kind}`),
-          );
-        }
-        const agentCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-          registered.agentCard,
-        );
-        expect(agentCard.agentName).toBe(fixture.agentName);
+        const identityCard = registered;
+        expect(identityCard.agentName).toBe(fixture.agentName);
         const privateKey = yield* fileSystem.readFileString(
           fixture.agentPrivateKeyFile,
         );
@@ -944,7 +941,7 @@ const concurrentRegistration = Effect.gen(function* () {
         const result = yield* runRouter(
           Router.poll({
             request: {},
-            callerAgentId: agentCard.agentId,
+            callerAgentId: identityCard.agentId,
             signingAuthority,
           }),
         );

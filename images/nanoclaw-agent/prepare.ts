@@ -75,10 +75,6 @@ function decodeManifest(text: string): {
   return { object: parsed, scripts: parsed.scripts };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Shared source compiles under NanoClaw's unchanged src root and dist tree. */
 async function prepareTypescript(path: string) {
   const object: unknown = JSON.parse(await readFile(path, "utf8"));
@@ -92,4 +88,8 @@ async function prepareTypescript(path: string) {
   options.paths = paths;
   object.compilerOptions = options;
   await writeFile(path, `${JSON.stringify(object, null, 2)}\n`);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

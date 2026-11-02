@@ -47,8 +47,9 @@ describe("MCP inbox values", () => {
     { items: [{ deliveryToken, item }] },
   ])("requires the complete saved entry: %j", (value) => {
     expect(
-      Either.isLeft(
+      Either.match(
         Effect.runSync(decodeHarnessReadInboxResult(value).pipe(Effect.either)),
+        { onLeft: () => true, onRight: () => false },
       ),
     ).toBe(true);
   });
@@ -76,8 +77,9 @@ describe("MCP send failures", () => {
     { reason: "collective-failed" },
   ])("requires a complete domain refusal: %j", (value) => {
     expect(
-      Either.isLeft(
+      Either.match(
         Effect.runSync(decodeHarnessSendErrorData(value).pipe(Effect.either)),
+        { onLeft: () => true, onRight: () => false },
       ),
     ).toBe(true);
   });

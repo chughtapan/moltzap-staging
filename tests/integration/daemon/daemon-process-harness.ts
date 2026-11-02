@@ -13,19 +13,16 @@ import {
   AgentName,
   AgentSigningAuthority,
   AgentPublicKey,
-  InboundItem,
+  PermittedItem,
   type MessageAddressInput,
-  PrincipalId,
+  AgentIdentityCard,
+  toolDefinitions,
+  type ToolRequest,
+  type ToolResult,
 } from "@moltzap/social-harness";
-import { RegistrationId } from "@moltzap/social-harness/service";
-import {
-  managementReadConversationResultSchema,
-  type managementRegisterRequestSchema,
-  managementRegisterResultSchema,
-  managementSearchConversationsResultSchema,
-  managementStatusResultSchema,
-  WireVersions,
-} from "@moltzap/social-harness/test";
+
+import { WireVersions } from "@moltzap/social-harness/test";
+
 import {
   Console,
   Data,
@@ -45,17 +42,15 @@ import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type ManagementRegisterRequest = typeof managementRegisterRequestSchema.Type;
+type ManagementRegisterRequest = ToolRequest<"register">["arguments"];
 
-type ManagementRegisterResult = typeof managementRegisterResultSchema.Type;
+type ManagementRegisterResult = AgentIdentityCard;
 
-type ManagementStatusResult = typeof managementStatusResultSchema.Type;
+type ManagementStatusResult = ToolResult<"status">;
 
-type ManagementSearchConversationsResult =
-  typeof managementSearchConversationsResultSchema.Type;
+type ManagementSearchConversationsResult = ToolResult<"search_conversations">;
 
-type ManagementReadConversationResult =
-  typeof managementReadConversationResultSchema.Type;
+type ManagementReadConversationResult = ToolResult<"read_conversation">;
 
 /** Every child composition receives an explicit emitted version and acceptance sets. */
 interface ProcessWireVersions {
@@ -134,7 +129,7 @@ export interface DaemonManagementClient {
   ) => Effect.Effect<ManagementReadConversationResult, ProcessTestError>;
   readonly readEvent: (
     eventId: string,
-  ) => Effect.Effect<InboundItem, ProcessTestError>;
+  ) => Effect.Effect<PermittedItem, ProcessTestError>;
   readonly callExpectingProtocolError: (
     name: string,
     toolArguments: Readonly<Record<string, unknown>>,
@@ -800,11 +795,12 @@ const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
 /** Creates exact one-shot bootstrap fields for a fixture's configured identity. */
 export const makeRegistrationRequest = (
   fixture: DaemonProcessFixture,
-): ManagementRegisterRequest => ({
-  operationId: Schema.decodeUnknownSync(RegistrationId)(makeIdentifier("opn_")),
-  principalId: Schema.decodeUnknownSync(PrincipalId)(makeIdentifier("prn_")),
-  agentName: fixture.agentName,
-});
+): ManagementRegisterRequest =>
+  Schema.decodeUnknownSync(toolDefinitions.register.input)({
+    operationId: makeIdentifier("opn_"),
+    principalId: makeIdentifier("prn_"),
+    agentName: fixture.agentName,
+  });
 
 const callAndDecode = <A, I>(input: {
   readonly client: Client;
@@ -975,35 +971,35 @@ function managementOperations(client: Client): DaemonManagementClient {
         client,
         name: "read_event",
         arguments: { eventId },
-        schema: Schema.Struct({ item: InboundItem }),
+        schema: Schema.Struct({ item: PermittedItem }),
       }).pipe(Effect.map(({ item }) => item)),
     register: (request) =>
       callAndDecode({
         client,
         name: "register",
         arguments: { ...request },
-        schema: managementRegisterResultSchema,
+        schema: AgentIdentityCard,
       }),
     status: () =>
       callAndDecode({
         client,
         name: "status",
         arguments: {},
-        schema: managementStatusResultSchema,
+        schema: toolDefinitions.status.output,
       }),
     searchConversations: () =>
       callAndDecode({
         client,
         name: "search_conversations",
         arguments: {},
-        schema: managementSearchConversationsResultSchema,
+        schema: toolDefinitions.search_conversations.output,
       }),
     readConversation: (address) =>
       callAndDecode({
         client,
         name: "read_conversation",
         arguments: { address },
-        schema: managementReadConversationResultSchema,
+        schema: toolDefinitions.read_conversation.output,
       }),
     callExpectingProtocolError: (name, toolArguments) =>
       callExpectingProtocolError(client, name, toolArguments),
@@ -1023,7 +1019,7 @@ function launchCommand(
   } else if (service === "RouterServer") {
     script = `import { startRouter } from "@moltzap/router/test"; startRouter(${JSON.stringify(versions satisfies Parameters<typeof startRouter>[0])});`;
   } else {
-    script = serviceScript(service, versions);
+    script = serviceScript(versions);
   }
   return [
     process.execPath,
@@ -1038,15 +1034,12 @@ function launchCommand(
 }
 
 /** Daemon compositions select their test wire policy before process startup. */
-function serviceScript(
-  service: "Daemon",
-  versions: ProcessWireVersions,
-): string {
+function serviceScript(versions: ProcessWireVersions): string {
   return `import { NodeRuntime } from "@effect/platform-node";
 import { WireVersions } from "@moltzap/social-harness/test";
-import { ${service} } from "@moltzap/social-harness/service";
+import { daemonLayer } from "@moltzap/social-harness/service";
 import { ConfigProvider, Effect, Layer } from "effect";
-Layer.launch(${service}.layer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
+Layer.launch(daemonLayer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
 }
 
 function startPglite(port: number) {

@@ -67,11 +67,11 @@ export const managementRegisterRequestSchema = exactStruct({
   }),
 });
 
-/** Registry domain outcomes returned by daemon registration. */
-
+/** The signed identity document returned after successful registration. */
 export const managementRegisterResultSchema = encodedAgentCard;
 
 /** Saved identity is visible while communication activation proceeds. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The catalog and clients share this owning wire schema.
 export const managementStatusResultSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("unregistered") }),
   Schema.Struct({
@@ -98,6 +98,7 @@ export const managementReadConversationRequestSchema = exactStruct({
 });
 
 /** Saved messages and results at the traversal's fixed history boundaries. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The catalog and clients share this owning wire schema.
 export const managementReadConversationResultSchema = Schema.Struct({
   records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,

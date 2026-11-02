@@ -9,7 +9,7 @@
     "tsBuildInfoFile": "./tsconfig.test.tsbuildinfo",
     "allowImportingTsExtensions": true,
     "customConditions": [
-      "sharness-test"
+      "sharness-test", "sharness-internal"
     ]
   },
   "include": [

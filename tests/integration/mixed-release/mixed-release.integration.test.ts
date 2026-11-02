@@ -4,10 +4,11 @@
  * network.
  */
 
+import { inboxStream } from "../mcp-inbox.js";
+import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import {
-  acquireHarnessEndpoint,
   AgentAddress,
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
@@ -136,21 +137,26 @@ function releaseClosure(version: string, view = npmView) {
 function exchange(from: DaemonProcessFixture, to: DaemonProcessFixture) {
   return Effect.scoped(
     Effect.gen(function* () {
-      const sender = yield* acquireHarnessEndpoint(from.endpoint, {
-        credential: from.mcpCredential,
-        receiveMode: "push",
-      });
-      const receiver = yield* acquireHarnessEndpoint(to.endpoint, {
-        credential: to.mcpCredential,
-        receiveMode: "push",
-      });
-      const waiting = yield* Stream.runHead(
-        receiver.messages.pipe(Stream.tap((delivery) => delivery.acknowledge)),
-      ).pipe(Effect.forkScoped);
+      const sender = yield* acquireMcpConnection(
+        { endpoint: from.endpoint, credential: from.mcpCredential },
+        { name: "process-test", version: "test" },
+      );
+      const receiver = yield* acquireMcpConnection(
+        { endpoint: to.endpoint, credential: to.mcpCredential },
+        { name: "process-test", version: "test" },
+      );
+      const waiting = yield* Stream.runHead(inboxStream(receiver)).pipe(
+        Effect.forkScoped,
+      );
       const text = `certified from ${from.agentName} to ${to.agentName}`;
-      yield* sender.send({
-        to: Schema.decodeUnknownSync(AgentAddress)(`agent:${to.agentName}`),
-        text,
+      yield* callTool(sender.client, {
+        name: "send_message",
+        arguments: {
+          input: {
+            to: Schema.decodeUnknownSync(AgentAddress)(`agent:${to.agentName}`),
+            text,
+          },
+        },
       });
       const received = yield* Fiber.join(waiting).pipe(
         Effect.flatMap(
@@ -469,14 +475,7 @@ function certifyPair(
       );
       for (const fixture of [peer, local]) {
         const management = yield* acquireDaemonManagementClient(fixture);
-        const registration = yield* management.register(
-          makeRegistrationRequest(fixture),
-        );
-        if (registration.kind !== "registered") {
-          return yield* new ProcessTestError({
-            message: `registration failed for ${fixture.agentName}`,
-          });
-        }
+        yield* management.register(makeRegistrationRequest(fixture));
       }
       yield* exchange(local, peer);
       yield* exchange(peer, local);

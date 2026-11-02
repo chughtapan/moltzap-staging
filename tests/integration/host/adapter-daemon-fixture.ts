@@ -6,8 +6,8 @@ import {
   type AgentCard,
   type Content,
   GroupAddress,
-  type InboundDelivery,
-  type InboundItem,
+  type InboxEntry,
+  type PermittedItem,
 } from "@moltzap/social-harness";
 import {
   Deferred,
@@ -29,7 +29,6 @@ import {
   makeRegistrationRequest,
   ProcessTestError,
 } from "../daemon/daemon-process-harness.js";
-import { registrationResultKind } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
@@ -682,17 +681,15 @@ export function nextTurn(turns: Queue.Queue<OpenClawInboundContext>) {
 }
 
 /** Acknowledges delivery after reading the next harness item. */
-export function nextItem<E>(stream: Stream.Stream<InboundDelivery, E>) {
+export function nextItem<E>(stream: Stream.Stream<InboxEntry, E>) {
   return nextDelivery(stream).pipe(
-    Effect.map((delivery): InboundItem => delivery.item),
+    Effect.map((delivery): PermittedItem => delivery.item),
   );
 }
 
 /** Accepts one delivery while its subscription is live, before the fixture deadline. */
-export function nextDelivery<E>(stream: Stream.Stream<InboundDelivery, E>) {
-  return Stream.runHead(
-    stream.pipe(Stream.tap((delivery) => delivery.acknowledge)),
-  ).pipe(
+export function nextDelivery<E>(stream: Stream.Stream<InboxEntry, E>) {
+  return Stream.runHead(stream).pipe(
     Effect.timeoutFail({
       duration: DELIVERY_TIMEOUT,
       onTimeout: () =>
@@ -713,7 +710,7 @@ export function nextDelivery<E>(stream: Stream.Stream<InboundDelivery, E>) {
 }
 
 /** Fails the scenario when an expected collective request has another item kind. */
-export function requireRequest(item: InboundItem) {
+export function requireRequest(item: PermittedItem) {
   return item.kind === "collectiveRequest"
     ? Effect.succeed(item)
     : Effect.fail(
@@ -752,18 +749,17 @@ function registerFixture(fixture: DaemonProcessFixture) {
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       expect(yield* management.status()).toEqual({ kind: "unregistered" });
-      const registered = yield* management
-        .register(makeRegistrationRequest(fixture))
-        .pipe(
-          Effect.filterOrFail(
-            (result) => result.kind === registrationResultKind,
-            (result) =>
-              new ProcessTestError({
-                message: `fixture registration returned ${result.kind}`,
-              }),
-          ),
-        );
-      return { ...fixture, agent: registered.agent };
+      const registered = yield* management.register(
+        makeRegistrationRequest(fixture),
+      );
+      return {
+        ...fixture,
+        agent: {
+          agentId: registered.agentId,
+          agentName: registered.agentName,
+          principalId: registered.principalId,
+        },
+      };
     }),
   );
 }
@@ -778,12 +774,10 @@ function assertFixtureHistory(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       expect(yield* management.searchConversations()).toEqual({
-        kind: "page",
         addresses: [peerAddress],
-        hasMore: false,
       });
       const history = yield* management.readConversation(peerAddress);
-      expect(history.continuation).toBeNull();
+      expect(history.nextCursor).toBeUndefined();
       expect(history.records).toHaveLength(1 + replies.length);
       expect(
         history.records.map((record) => historyMessage(record).content),

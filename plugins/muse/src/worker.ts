@@ -16,10 +16,14 @@ export const detectMuseWork = Effect.fn("Muse.detectWork")(function* (
         ? Effect.succeed([])
         : Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
     ),
-    Effect.mapError(() => new MuseWakeError({ reason: "transport-failed" })),
+    Effect.catchTag("BadArgument", () =>
+      Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
+    ),
   );
   const references = yield* Effect.forEach(
-    names.filter(Schema.is(Schema.UUID)).sort(),
+    names
+      .filter(Schema.is(Schema.UUID))
+      .sort((left, right) => left.localeCompare(right)),
     (attempt) => readWork(fs, join(directory, attempt)),
     { concurrency: 1 },
   );
@@ -33,18 +37,25 @@ export const acceptMuseWork = Effect.fn("Muse.acceptWork")(function* (
   eventId: string,
 ) {
   yield* Schema.decodeUnknown(Schema.UUID)(attempt).pipe(
-    Effect.mapError(() => new MuseWakeError({ reason: "refused" })),
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new MuseWakeError({ reason: "refused" })),
+    ),
   );
   const fs = yield* FileSystem.FileSystem;
   const path = join(directory, attempt);
   const work = yield* readWork(fs, path);
-  if (work === undefined) return;
+  if (work === undefined) {
+    return;
+  }
   if (work.attempt !== attempt || work.eventId !== eventId) {
     return yield* new MuseWakeError({ reason: "refused" });
   }
-  yield* fs
-    .remove(path, { recursive: true, force: true })
-    .pipe(
-      Effect.mapError(() => new MuseWakeError({ reason: "transport-failed" })),
-    );
+  yield* fs.remove(path, { recursive: true, force: true }).pipe(
+    Effect.catchTags({
+      SystemError: () =>
+        Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
+      BadArgument: () =>
+        Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
+    }),
+  );
 });

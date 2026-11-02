@@ -66,6 +66,8 @@ import {
   type StoredCollectiveOperation,
 } from "./store.js";
 
+// safer-arch-ignore no-fat-orchestrator: Request lifecycle and its workers share one private owner inside Communication.
+
 type IncomingItem =
   | { readonly kind: "message"; readonly message: Message }
   | { readonly kind: "request"; readonly message: ReceivedRequest };

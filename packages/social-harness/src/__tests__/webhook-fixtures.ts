@@ -137,7 +137,7 @@ export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
 ) {
-  const gate = Effect.unsafeMakeSemaphore(1);
+  const gate = yield* Effect.makeSemaphore(1);
   let status = 200;
   let challengeValid = true;
   let onEvent = Effect.void;
@@ -178,7 +178,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
 
 /** A SQL-backed service fixture exercises webhook transactions without reading harness-owned tables. */
 export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
-  directory?: string,
+  directory: string,
 ) {
   const database = yield* openTestDatabase(directory);
   const sql = database.sql;
@@ -210,17 +210,29 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
         rows[0] === undefined
           ? Effect.fail(new InboxError({ reason: "unknown-event" }))
           : Schema.decodeUnknown(payload)(rows[0].payload).pipe(
-              Effect.mapError(
-                () => new InboxError({ reason: "persistence-failed" }),
+              Effect.catchTag("ParseError", () =>
+                Effect.fail(new InboxError({ reason: "persistence-failed" })),
               ),
             ),
       ),
-      Effect.mapError(() => new InboxError({ reason: "unknown-event" })),
+      Effect.catchTag("SqlError", () =>
+        Effect.fail(new InboxError({ reason: "persistence-failed" })),
+      ),
     );
   const acknowledgeDelivery = (deliveryToken: DeliveryToken) =>
     sql`UPDATE callback_fixture SET acknowledged=1 WHERE token=${deliveryToken}`.pipe(
       Effect.asVoid,
       Effect.orDie,
+    );
+  const decodeRow = (row: {
+    readonly token: string;
+    readonly payload: string;
+  }) =>
+    Schema.decodeUnknown(payload)(row.payload).pipe(
+      Effect.map((event) => ({
+        ...event,
+        deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(row.token),
+      })),
     );
   const harness = SocialHarness.of({
     register: () => Effect.dieMessage("Unexpected registration"),
@@ -231,16 +243,7 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
         readonly payload: string;
       }>`SELECT token,payload FROM callback_fixture WHERE acknowledged=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
         Effect.flatMap((rows) =>
-          Effect.forEach(rows.slice(0, 50), (row) =>
-            Schema.decodeUnknown(payload)(row.payload).pipe(
-              Effect.map((event) => ({
-                ...event,
-                deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(
-                  row.token,
-                ),
-              })),
-            ),
-          ),
+          Effect.forEach(rows.slice(0, 50), decodeRow, { concurrency: 1 }),
         ),
         Effect.map((items) => ({
           items,
@@ -248,7 +251,12 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
             ? { nextCursor: items.at(-1)?.deliveryToken }
             : {}),
         })),
-        Effect.mapError(() => new InboxError({ reason: "persistence-failed" })),
+        Effect.catchTags({
+          SqlError: () =>
+            Effect.fail(new InboxError({ reason: "persistence-failed" })),
+          ParseError: () =>
+            Effect.fail(new InboxError({ reason: "persistence-failed" })),
+        }),
       ),
     getInboxEvent,
     acknowledgeDelivery,

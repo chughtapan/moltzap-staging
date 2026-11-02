@@ -10,6 +10,7 @@ import {
   Message,
   type MessageReference,
   type Outgoing,
+  ReceivedRequest,
   type Request,
   RequestOperation,
   type ResultSources,
@@ -118,26 +119,13 @@ export const CollectiveResult = exactStruct({
 /** @useDeclaredType */
 export type CollectiveResult = typeof CollectiveResult.Type;
 
-const requestMessage = Message.pipe(
-  Schema.filter(
-    (
-      message,
-    ): message is Message & {
-      readonly operation: Extract<
-        NonNullable<Message["operation"]>,
-        { readonly kind: "request" }
-      >;
-    } => message.operation?.kind === "request",
-  ),
-);
-
 /** The exact content local policy permits the agent to receive. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
 export const PermittedItem = Schema.Union(
   exactStruct({ kind: Schema.Literal("multicast"), message: Message }),
   exactStruct({
     kind: Schema.Literal("collectiveRequest"),
-    message: requestMessage,
+    message: ReceivedRequest,
   }),
   CollectiveResult,
   exactStruct({
@@ -192,29 +180,31 @@ export type IncomingDecision = {
     }
   | { readonly kind: "withheld" }
 );
+/** Message assessment, policy edits and saved decision summaries. */
+interface FirewallService {
+  /** Save returned decisions before returning refusal or submitting allowed work. */
+  readonly checkOutgoing: (
+    value: Outgoing,
+    evidence: FirewallEvidence,
+  ) => Effect.Effect<OutgoingDecision, CheckInputError>;
+  /** A result uses one policy while each peer source retains its preceding context. */
+  readonly checkIncoming: (
+    value: Incoming,
+    evidence?: FirewallEvidence | ResultEvidence,
+  ) => Effect.Effect<IncomingDecision, CheckInputError>;
+  /** Joins the current SQL transaction. Repeating a completed save has no effect. */
+  readonly saveDecisions: (
+    decisions: readonly CompletedDecision[],
+  ) => Effect.Effect<void, FirewallPolicyError>;
+  readonly readPolicy: RuleEngine["readPolicy"];
+  readonly updatePolicy: RuleEngine["updatePolicy"];
+  readonly readDecisions: RuleEngine["readDecisions"];
+}
 
 /** One local policy owns assessment, advice, disclosure and completed decisions. */
 export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   Firewall,
-  {
-    /** Save returned decisions before returning refusal or submitting allowed work. */
-    readonly checkOutgoing: (
-      value: Outgoing,
-      evidence: FirewallEvidence,
-    ) => Effect.Effect<OutgoingDecision, CheckInputError>;
-    /** A result uses one policy while each peer source retains its preceding context. */
-    readonly checkIncoming: (
-      value: Incoming,
-      evidence?: FirewallEvidence | ResultEvidence,
-    ) => Effect.Effect<IncomingDecision, CheckInputError>;
-    /** Joins the current SQL transaction. Repeating a completed save has no effect. */
-    readonly saveDecisions: (
-      decisions: readonly CompletedDecision[],
-    ) => Effect.Effect<void, FirewallPolicyError>;
-    readonly readPolicy: RuleEngine["readPolicy"];
-    readonly updatePolicy: RuleEngine["updatePolicy"];
-    readonly readDecisions: RuleEngine["readDecisions"];
-  }
+  FirewallService
 >() {
   /** Policy resources are fixed for this scope. Registration supplies immutable local attribution. */
   static readonly layer = (source?: FirewallOptions | LoadedMessagePolicy) =>

@@ -23,13 +23,7 @@ import {
 } from "../../keys.js";
 import { RegistryError } from "../../registry/index.js";
 import { WIRE_VERSION, WireVersions } from "../../wire-version.js";
-import {
-  AuthenticationFailedError,
-  contentDigest,
-  UnavailableError,
-  verifyHttpRequestSignature,
-  VersionMismatchError,
-} from "../proof.js";
+import { contentDigest, verifyHttpRequestSignature } from "../proof.js";
 import { AuthenticationError } from "../service.js";
 import {
   type IdentityFixture,
@@ -648,7 +642,7 @@ it.each([
       identityCard: VerifiedAgentIdentityCard,
     ): RegistryLookupResult => ({
       kind: "found",
-      identityCard: Object.freeze({ ...identityCard }),
+      identityCard: Object.freeze(Object.assign({}, identityCard)),
     }),
   },
   {

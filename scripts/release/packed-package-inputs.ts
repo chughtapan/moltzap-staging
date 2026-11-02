@@ -5,8 +5,33 @@ import {
   readJson,
   type Tree,
   under,
+  workspaceRoots,
 } from "./image-input-tree.ts";
 import { asStrings, sourceGlobs } from "./typescript-config.ts";
+
+/** Runtime siblings bind packed assets; copied build-only roots bind their compiled sources. */
+export function includedCopy(
+  tree: Tree,
+  file: string,
+  roots: readonly string[],
+  buildOnly: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  const own = workspaceRoots(tree).get(tree.service ?? "");
+  const sibling = roots.find(
+    (root) => root !== "." && root !== own && file.startsWith(`${root}/`),
+  );
+  if (sibling === undefined) {
+    return true;
+  }
+  const compiled = buildOnly.get(sibling);
+  if (compiled !== undefined) {
+    return compiled.has(file);
+  }
+  const relative = path.posix.relative(sibling, file);
+  return (
+    !/^(?:src|bin)\//u.test(relative) && packedFile(tree, sibling, relative)
+  );
+}
 
 /**
  * Whether pnpm packs a source file of a workspace package.

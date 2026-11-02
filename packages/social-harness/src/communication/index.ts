@@ -15,12 +15,12 @@ export { MessageReference } from "./records/values.js";
 export { RequestedSchema } from "./requests/answers.js";
 /** Request outcomes retain the original operation identity and deadline. */
 export {
-  AnswerContent,
   AcceptResponse,
-  DeclineResponse,
-  DeadlineSeconds,
-  decodeCollectiveFailure,
+  AnswerContent,
   CollectiveId,
+  DeadlineSeconds,
+  DeclineResponse,
+  decodeCollectiveFailure,
   EpochMillis,
   RequestError,
   RequestOperation,

@@ -2,6 +2,7 @@
 import type { HttpApp } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { Effect, type Scope } from "effect";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 
 /** The listener and advertised MCP URL use the same literal loopback address. */

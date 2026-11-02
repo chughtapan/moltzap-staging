@@ -201,7 +201,7 @@ const makeRegisteredSenderFixture = () =>
     });
     const parsedCard =
       yield* Schema.decodeUnknown(AgentIdentityCard)(representation);
-    const agentCard = yield* AgentIdentityCard.verify({
+    const identityCard = yield* AgentIdentityCard.verify({
       identityCard: parsedCard,
       registrySignerPublicKey,
     });
@@ -210,7 +210,7 @@ const makeRegisteredSenderFixture = () =>
       verifiedRequest: Brand.nominal<VerifiedAgentRequest>()(
         Object.freeze({
           callerAgentId: sender,
-          agentCard,
+          identityCard,
           request: Object.freeze({}),
         }),
       ),

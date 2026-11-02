@@ -8,8 +8,8 @@ import {
   PrincipalId,
   type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
-import { Registry } from "@moltzap/social-harness/service";
 import { registryContract } from "@moltzap/social-harness/internal";
+import { Registry } from "@moltzap/social-harness/service";
 import {
   Clock,
   Data,

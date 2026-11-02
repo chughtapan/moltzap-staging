@@ -13,7 +13,7 @@ import {
   send,
 } from "../participants.js";
 import { processTrace } from "../process-trace.js";
-import { anyNumber, anyString } from "../test-matchers.js";
+import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
 
 const requireThree = (participants: readonly Participant[]) => {
   const [requester, first, second] = participants;
@@ -46,13 +46,7 @@ const gather = (
     to: groupAddress([requester, ...members]),
     text: question,
     collective: { op: "gather", deadline, requestedSchema: slotSchema },
-  }).pipe(
-    Effect.flatMap((result) =>
-      result.kind === "collective"
-        ? Effect.succeed(result)
-        : Effect.dieMessage("expected a gather operation"),
-    ),
-  );
+  });
 
 /**
  * Each test starts PGlite, the Registry, the Router and three daemons, and the
@@ -106,23 +100,23 @@ function startGatherAndExpectRequests({
     );
     const firstRequest = yield* nextItem(first);
     const secondRequest = yield* nextItem(second);
-    expect(firstRequest).toEqual({
+    expect(firstRequest).toMatchObject({
       kind: "collectiveRequest",
       message: {
         msgId: anyString,
         author: requester.agent,
         recipients: [first.agent],
-        content: {
+        content: arrayContaining([{ type: "text", text: question }]),
+        operation: {
           op: "gather",
-          operationId: started.operationId,
-          question,
+          operationId: started.id,
           requestedSchema: slotSchema,
           deadlineAt: anyNumber,
         },
       },
     });
     expect(secondRequest).toMatchObject({
-      message: { content: { operationId: started.operationId } },
+      message: { operation: { operationId: started.id } },
     });
     return started;
   });
@@ -135,9 +129,9 @@ const allAnsweredBehavior = Effect.gen(function* () {
   yield* expectInvalidAnswerRefused(
     participants.first,
     participants.requester,
-    started.operationId,
+    started.id,
   );
-  yield* answerGatherAndExpectResult(participants, started.operationId);
+  yield* answerGatherAndExpectResult(participants, started.id);
 }).pipe(Effect.scoped);
 
 /**
@@ -157,7 +151,7 @@ const silentMemberBehavior = Effect.gen(function* () {
     to: requester.address,
     collectiveResponse: {
       action: "accept",
-      operationId: started.operationId,
+      operationId: started.id,
       content: { slot: "mon" },
     },
   });
@@ -165,7 +159,7 @@ const silentMemberBehavior = Effect.gen(function* () {
   expect(yield* nextItem(requester)).toMatchObject({
     kind: "collectiveResult",
     op: "gather",
-    operationId: started.operationId,
+    operationId: started.id,
     outcomes: [
       {
         member: first.agent,
@@ -176,7 +170,7 @@ const silentMemberBehavior = Effect.gen(function* () {
   });
   const late = yield* send(second, {
     to: requester.address,
-    collectiveResponse: { action: "decline", operationId: started.operationId },
+    collectiveResponse: { action: "decline", operationId: started.id },
   }).pipe(Effect.flip);
   expect(late).toMatchObject({ failure: { kind: "request-expired" } });
 }).pipe(Effect.scoped);

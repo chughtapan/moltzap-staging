@@ -166,6 +166,7 @@ export function packInto(
 /**
  * Add launcher metadata to a local Client archive without mutating the checkout.
  * The package manager owns file selection and workspace pins; only the extracted manifest changes.
+ * Archive creation excludes macOS file metadata so package contents remain portable.
  */
 export function recordPackedWireVersion(
   archive: string,
@@ -191,9 +192,11 @@ export function recordPackedWireVersion(
       manifestPath,
       `${JSON.stringify({ ...manifest, sharnessWireVersion: version }, null, 2)}\n`,
     );
-    return run("tar", ["-czf", archive, "-C", scratch, "package"], {
-      cwd: scratch,
-    });
+    return run(
+      "env",
+      ["COPYFILE_DISABLE=1", "tar", "-czf", archive, "-C", scratch, "package"],
+      { cwd: scratch },
+    );
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

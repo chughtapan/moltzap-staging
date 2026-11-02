@@ -8,6 +8,7 @@ import {
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Cause, Data, Effect, type ParseResult, Schema, Stream } from "effect";
 import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { WIRE_VERSION } from "../../packages/social-harness/src/identity/wire-version.ts";
 import { recordPackedWireVersion } from "../release/content-hash.ts";
@@ -452,7 +453,7 @@ function nonEmptyLines(text: string): readonly string[] {
 function writeConsumerProject(
   consumerRoot: string,
   input: ConsumerInput,
-): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
+): Effect.Effect<void, GateError, FileSystem.FileSystem> {
   const devDependencies = input.devDependencies ?? {};
   const localPackages = Object.fromEntries(
     Object.entries(input.archives).map(([packageName, archive]) => [
@@ -480,9 +481,13 @@ function writeConsumerProject(
   ].join("\n");
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const { packageManager } = yield* readJsonFile(
+      fileURLToPath(new URL("../../package.json", import.meta.url)),
+      Schema.Struct({ packageManager: Schema.String }),
+    );
     yield* fs.writeFileString(
       join(consumerRoot, "package.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
+      `${JSON.stringify({ ...manifest, packageManager }, null, 2)}\n`,
     );
     yield* fs.writeFileString(
       join(consumerRoot, "pnpm-workspace.yaml"),

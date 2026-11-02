@@ -21,19 +21,25 @@ import {
   RequestOperation,
 } from "./requests/contracts.js";
 
+// safer-arch-ignore no-module-cycle: Request form parsing imports only the result type from its owner; runtime imports have no cycle.
+
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with the values they decode. */
 
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
 export const PaginatedRequest = exactStruct({
   cursor: Schema.optional(Schema.String),
 });
-/** Selection arguments remain unchanged between pages. */
+/** Selection arguments remain unchanged between pages.
+ * @useDeclaredType
+ */
 export type PaginatedRequest = typeof PaginatedRequest.Type;
 /** Absence of nextCursor marks the end of an operation's named collection. */
 export const PaginatedResult = exactStruct({
   nextCursor: Schema.optional(Schema.String),
 });
-/** Cursors confer no access and remain private to their operation. */
+/** Cursors confer no access and remain private to their operation.
+ * @useDeclaredType
+ */
 export type PaginatedResult = typeof PaginatedResult.Type;
 
 /** Recipients exclude the author and appear once each in agent-name order. */

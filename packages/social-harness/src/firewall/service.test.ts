@@ -4,7 +4,7 @@ import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { SqliteClient } from "@effect/sql-sqlite-node";
-import { scopedLive } from "@effect/vitest";
+import { scopedLive as it } from "@effect/vitest";
 import {
   type Context,
   Duration,
@@ -44,12 +44,14 @@ import {
   type FirewallOptions,
 } from "./service.js";
 
-const privacy: TextRule = {
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed policy failures and dispositions are the public contract under test. */
+
+const privacy = {
   id: "privacy",
   applies: "both",
   text: "Do not reveal the owner's private records.",
   feedback: { nextAction: "stop", text: "Keep private records private." },
-};
+} satisfies TextRule;
 const evidence: FirewallEvidence = {
   history: [],
   earlierHistoryOmitted: false,
@@ -86,48 +88,14 @@ const judgments: DecisionProvider = {
     }),
 };
 
-function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
-  return {
-    mode: "enforcement",
-    facts: [],
-    settings: {
-      timeoutMilliseconds: 10_000,
-      maximumInputBytes: 1_000_000,
-      maximumResultBytes: 100_000,
-    },
-    text: {
-      fixedRules: [],
-      initialRules,
-      provider: judgments,
-      settings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 60_000,
-        timeoutMilliseconds: 5_000,
-      },
-    },
-  };
-}
-
-function peer(name: string, byte: number): AgentCard {
-  return AgentCard.make({
-    agentId: AgentId.make(
-      `agt_${Encoding.encodeBase64Url(new Uint8Array(16).fill(byte))}`,
-    ),
-    principalId: PrincipalId.make(
-      `prn_${Encoding.encodeBase64Url(new Uint8Array(16).fill(byte))}`,
-    ),
-    agentName: AgentName.make(name),
-  });
-}
-
 function withFirewall<A, E, R>(
   filename: string,
   fixture: IdentityFixture,
-  options: FirewallOptions | undefined,
   use: (
     firewall: Context.Tag.Service<typeof Firewall>,
     self: AgentCard,
   ) => Effect.Effect<A, E, R>,
+  layer: ReturnType<typeof Firewall.layer>,
 ) {
   const identity = Identity.layer({
     signingAuthority: fixture.signingAuthority,
@@ -150,7 +118,7 @@ function withFirewall<A, E, R>(
       ),
     ),
   );
-  const services = Firewall.layer(options).pipe(
+  const services = layer.pipe(
     Layer.provideMerge(identity),
     Layer.provideMerge(SqliteClient.layer({ filename })),
   );
@@ -179,132 +147,137 @@ function outgoing(self: AgentCard) {
   });
 }
 
-scopedLive(
-  "reads a refused message's saved policy and advice after restart without configuration",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      const filesystem = yield* FileSystem.FileSystem;
-      const directory = yield* filesystem.makeTempDirectoryScoped({
-        prefix: "sharness-decisions-",
-      });
-      const filename = join(directory, "harness.sqlite3");
-      const saved = yield* withFirewall(
-        filename,
-        fixture,
-        policy([privacy]),
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            expect(decision.kind).toBe("refused");
-            yield* firewall.saveDecisions(decision.decisions);
-            return (yield* firewall.readDecisions({})).decisions;
-          }),
-      );
-      expect(saved).toMatchObject([
-        {
-          reason: "rule-violation",
-          disposition: "withheld",
-          peer: peer("bob", 2),
-          decidedBy: [
-            {
-              ruleId: privacy.id,
-              from: "editable",
-              advice: privacy.feedback?.text,
-            },
-          ],
-        },
-        { peer: peer("carol", 3) },
-      ]);
-      const reopened = yield* withFirewall(
-        filename,
-        fixture,
-        undefined,
-        (firewall) =>
-          Effect.gen(function* () {
-            expect(
-              yield* firewall.readPolicy().pipe(Effect.flip),
-            ).toMatchObject({ reason: "not-configured" });
-            return (yield* firewall.readDecisions({})).decisions;
-          }),
-      );
-      expect(reopened).toEqual(saved);
-      expect(JSON.stringify(reopened)).not.toContain(privateProviderResponse);
-    }).pipe(Effect.provide(NodeContext.layer)),
-);
+function peer(name: string, byte: number): AgentCard {
+  return AgentCard.make({
+    agentId: AgentId.make(
+      `agt_${Encoding.encodeBase64Url(new Uint8Array(16).fill(byte))}`,
+    ),
+    principalId: PrincipalId.make(
+      `prn_${Encoding.encodeBase64Url(new Uint8Array(16).fill(byte))}`,
+    ),
+    agentName: AgentName.make(name),
+  });
+}
 
-scopedLive(
-  "keeps the original summary and save time when a completed decision is saved twice",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      yield* withFirewall(
-        ":memory:",
-        fixture,
-        policy([privacy]),
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            yield* firewall.saveDecisions(decision.decisions);
-            const before = yield* firewall.readDecisions({});
-            yield* Effect.sleep(Duration.millis(5));
-            yield* firewall.saveDecisions(decision.decisions);
-            expect(yield* firewall.readDecisions({})).toEqual(before);
-          }),
-      );
-    }),
-);
+// @agent-code-guard/regression-only: Public policy operations exercise real SQLite edits, retained evidence and transaction rollback.
+it("reads a refused message's saved policy and advice after restart without configuration", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({
+      prefix: "sharness-decisions-",
+    });
+    const filename = join(directory, "harness.sqlite3");
+    const saved = yield* withFirewall(
+      filename,
+      fixture,
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const decision = yield* firewall.checkOutgoing(
+            yield* outgoing(self),
+            evidence,
+          );
+          expect(decision.kind).toBe("refused");
+          yield* firewall.saveDecisions(decision.decisions);
+          return (yield* firewall.readDecisions({})).decisions;
+        }),
+      Firewall.layer(policy([privacy])),
+    );
+    expect(saved).toMatchObject([
+      {
+        reason: "rule-violation",
+        disposition: "withheld",
+        peer: peer("bob", 2),
+        decidedBy: [
+          {
+            ruleId: privacy.id,
+            from: "editable",
+            advice: privacy.feedback?.text,
+          },
+        ],
+      },
+      { peer: peer("carol", 3) },
+    ]);
+    const reopened = yield* withFirewall(
+      filename,
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          expect(yield* firewall.readPolicy().pipe(Effect.flip)).toMatchObject({
+            reason: "not-configured",
+          });
+          return (yield* firewall.readDecisions({})).decisions;
+        }),
+      Firewall.layer(),
+    );
+    expect(reopened).toEqual(saved);
+    expect(JSON.stringify(reopened)).not.toContain(privateProviderResponse);
+  }).pipe(Effect.provide(NodeContext.layer)));
 
-scopedLive(
-  "rolls back a completed decision with the enclosing handoff transaction",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      yield* withFirewall(
-        ":memory:",
-        fixture,
-        policy([privacy]),
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const sql = yield* SqlClient.SqlClient;
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            const aborted = yield* sql
-              .withTransaction(
-                firewall
-                  .saveDecisions(decision.decisions)
-                  .pipe(
-                    Effect.zipRight(
-                      Effect.fail(new Error("handoff was not saved")),
+it("keeps the original summary and save time when a completed decision is saved twice", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    yield* withFirewall(
+      ":memory:",
+      fixture,
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const decision = yield* firewall.checkOutgoing(
+            yield* outgoing(self),
+            evidence,
+          );
+          yield* firewall.saveDecisions(decision.decisions);
+          const before = yield* firewall.readDecisions({});
+          yield* Effect.sleep(Duration.millis(5));
+          yield* firewall.saveDecisions(decision.decisions);
+          expect(yield* firewall.readDecisions({})).toEqual(before);
+        }),
+      Firewall.layer(policy([privacy])),
+    );
+  }));
+
+it("rolls back a completed decision with the enclosing handoff transaction", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    yield* withFirewall(
+      ":memory:",
+      fixture,
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const decision = yield* firewall.checkOutgoing(
+            yield* outgoing(self),
+            evidence,
+          );
+          const aborted = yield* sql
+            .withTransaction(
+              firewall
+                .saveDecisions(decision.decisions)
+                .pipe(
+                  Effect.zipRight(
+                    Effect.fail(
+                      new FirewallPolicyError({ reason: "persistence-failed" }),
                     ),
                   ),
-              )
-              .pipe(Effect.either);
-            expect(aborted._tag).toBe("Left");
-            expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
-            yield* firewall.saveDecisions(decision.decisions);
-            expect((yield* firewall.readDecisions({})).decisions).toHaveLength(
-              2,
-            );
-          }),
-      );
-    }),
-);
+                ),
+            )
+            .pipe(Effect.either);
+          expect(aborted._tag).toBe("Left");
+          expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
+          yield* firewall.saveDecisions(decision.decisions);
+          expect((yield* firewall.readDecisions({})).decisions).toHaveLength(2);
+        }),
+      Firewall.layer(policy([privacy])),
+    );
+  }));
 
-scopedLive(
-  "retains activation metadata and historical advice after a rule is removed",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      yield* withFirewall(":memory:", fixture, policy(), (firewall, self) =>
+it("retains activation metadata and historical advice after a rule is removed", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    yield* withFirewall(
+      ":memory:",
+      fixture,
+      (firewall, self) =>
         Effect.gen(function* () {
           const installed = yield* firewall.updatePolicy({ add: [privacy] });
           const activated = yield* firewall.readDecisions({});
@@ -330,15 +303,15 @@ scopedLive(
             { addedRuleIds: [privacy.id], removedRuleIds: [] },
           ]);
         }),
-      );
-    }),
-);
+      Firewall.layer(policy()),
+    );
+  }));
 
-const initial: TextRule = {
+const initial = {
   id: "brief",
   applies: "both",
   text: "Keep replies brief.",
-};
+} satisfies TextRule;
 const sharedBehavior = `---
 name: booking
 description: How members book a meeting.
@@ -390,10 +363,12 @@ const refusedEdits: ReadonlyArray<{
   },
   {
     edit: {
-      add: Array.from({ length: MAXIMUM_EDITABLE_RULES }, (_, index) => ({
-        ...initial,
-        id: `extra-${index}`,
-      })),
+      add: [...Array.from({ length: MAXIMUM_EDITABLE_RULES }).keys()].map(
+        (index) => ({
+          ...initial,
+          id: `extra-${index}`,
+        }),
+      ),
     },
     refusal: { reason: "invalid-rule", problem: "editable-limit" },
   },
@@ -447,7 +422,29 @@ function editablePolicy(): FirewallOptions {
   };
 }
 
-scopedLive("preserves the policy when the host refuses an update", () =>
+function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
+  return {
+    mode: "enforcement",
+    facts: [],
+    settings: {
+      timeoutMilliseconds: 10_000,
+      maximumInputBytes: 1_000_000,
+      maximumResultBytes: 100_000,
+    },
+    text: {
+      fixedRules: [],
+      initialRules,
+      provider: judgments,
+      settings: {
+        minimumProbability: 0.5,
+        maximumRequestBytes: 60_000,
+        timeoutMilliseconds: 5_000,
+      },
+    },
+  };
+}
+
+it("preserves the policy when the host refuses an update", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const configuration: FirewallOptions = {
@@ -455,129 +452,137 @@ scopedLive("preserves the policy when the host refuses an update", () =>
       approvePolicyUpdate: () =>
         Effect.fail(new FirewallPolicyError({ reason: "approval-refused" })),
     };
-    yield* withFirewall(":memory:", fixture, configuration, (firewall) =>
-      Effect.gen(function* () {
-        const before = yield* firewall.readPolicy();
-        const error = yield* firewall
-          .updatePolicy({ remove: [initial.id] })
-          .pipe(Effect.flip);
-        expect(error.reason).toBe("approval-refused");
-        expect(yield* firewall.readPolicy()).toEqual(before);
-        expect((yield* firewall.readDecisions({})).activations).toEqual([]);
-      }),
+    yield* withFirewall(
+      ":memory:",
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          const before = yield* firewall.readPolicy();
+          const error = yield* firewall
+            .updatePolicy({ remove: [initial.id] })
+            .pipe(Effect.flip);
+          expect(error.reason).toBe("approval-refused");
+          expect(yield* firewall.readPolicy()).toEqual(before);
+          expect((yield* firewall.readDecisions({})).activations).toEqual([]);
+        }),
+      Firewall.layer(configuration),
     );
-  }),
-);
+  }));
 
-scopedLive.each(refusedEdits)(
+it.each(refusedEdits)(
   "refuses an invalid edit and preserves active policy: $refusal",
   ({ edit, refusal }) =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
-      yield* withFirewall(":memory:", fixture, editablePolicy(), (firewall) =>
-        Effect.gen(function* () {
-          const before = yield* firewall.readPolicy();
-          expect(
-            yield* firewall.updatePolicy(edit).pipe(Effect.flip),
-          ).toMatchObject(refusal);
-          expect(yield* firewall.readPolicy()).toEqual(before);
-          expect((yield* firewall.readDecisions({})).activations).toEqual([]);
-        }),
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall) =>
+          Effect.gen(function* () {
+            const before = yield* firewall.readPolicy();
+            expect(
+              yield* firewall.updatePolicy(edit).pipe(Effect.flip),
+            ).toMatchObject(refusal);
+            expect(yield* firewall.readPolicy()).toEqual(before);
+            expect((yield* firewall.readDecisions({})).activations).toEqual([]);
+          }),
+        Firewall.layer(editablePolicy()),
       );
     }),
 );
 
-scopedLive("installs shared behavior as an editable rule", () =>
+it("installs shared behavior as an editable rule", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
-    yield* withFirewall(":memory:", fixture, editablePolicy(), (firewall) =>
-      Effect.gen(function* () {
-        yield* firewall.updatePolicy({ add: [{ behavior: sharedBehavior }] });
-        expect((yield* firewall.readPolicy()).rules).toContainEqual({
-          id: "booking",
-          applies: "both",
-          text: "Each member holds a slot before confirming it.",
-          guidance: "Hold a slot before confirming it.",
-          feedback: { text: "Hold the slot first.", nextAction: "revise" },
-        });
-      }),
+    yield* withFirewall(
+      ":memory:",
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          yield* firewall.updatePolicy({ add: [{ behavior: sharedBehavior }] });
+          expect((yield* firewall.readPolicy()).rules).toContainEqual({
+            id: "booking",
+            applies: "both",
+            text: "Each member holds a slot before confirming it.",
+            guidance: "Hold a slot before confirming it.",
+            feedback: { text: "Hold the slot first.", nextAction: "revise" },
+          });
+        }),
+      Firewall.layer(editablePolicy()),
     );
-  }),
-);
+  }));
 
-scopedLive(
-  "preserves an atomic rule replacement when startup seeds change",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      const filesystem = yield* FileSystem.FileSystem;
-      const directory = yield* filesystem.makeTempDirectoryScoped({
-        prefix: "sharness-policy-",
-      });
-      const filename = join(directory, "harness.sqlite3");
-      const replacement = { ...initial, text: "Ask before booking a meeting." };
-      const activated = yield* withFirewall(
-        filename,
-        fixture,
-        policy([initial]),
-        (firewall) =>
-          firewall.updatePolicy({ remove: [initial.id], add: [replacement] }),
-      );
-      yield* withFirewall(
-        filename,
-        fixture,
-        policy([{ ...initial, id: "new-seed" }]),
-        (firewall) =>
-          Effect.gen(function* () {
-            const current = yield* firewall.readPolicy();
-            expect(current.rules).toEqual([replacement]);
-            expect(current.activeRevision).toBe(activated.activeRevision);
-            expect(
-              (yield* firewall.readDecisions({})).activations,
-            ).toMatchObject([
-              { addedRuleIds: [initial.id], removedRuleIds: [initial.id] },
-            ]);
-          }),
-      );
-    }).pipe(Effect.provide(NodeContext.layer)),
-);
+it("preserves an atomic rule replacement when startup seeds change", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({
+      prefix: "sharness-policy-",
+    });
+    const filename = join(directory, "harness.sqlite3");
+    const replacement = { ...initial, text: "Ask before booking a meeting." };
+    const activated = yield* withFirewall(
+      filename,
+      fixture,
+      (firewall) =>
+        firewall.updatePolicy({ remove: [initial.id], add: [replacement] }),
+      Firewall.layer(policy([initial])),
+    );
+    yield* withFirewall(
+      filename,
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          const current = yield* firewall.readPolicy();
+          expect(current.rules).toEqual([replacement]);
+          expect(current.activeRevision).toBe(activated.activeRevision);
+          expect((yield* firewall.readDecisions({})).activations).toMatchObject(
+            [{ addedRuleIds: [initial.id], removedRuleIds: [initial.id] }],
+          );
+        }),
+      Firewall.layer(policy([{ ...initial, id: "new-seed" }])),
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
 
-scopedLive(
-  "rejects a policy that cannot fit a model request without replacing saved rules",
-  () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      const filesystem = yield* FileSystem.FileSystem;
-      const directory = yield* filesystem.makeTempDirectoryScoped({
-        prefix: "sharness-policy-budget-",
-      });
-      const filename = join(directory, "harness.sqlite3");
-      const before = yield* withFirewall(
-        filename,
-        fixture,
-        policy([privacy]),
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const installed = yield* firewall.readPolicy();
-            const rejected = yield* firewall
-              .updatePolicy({
-                add: [{ ...initial, text: "n".repeat(100_000) }],
-              })
-              .pipe(Effect.flip);
-            expect(rejected.reason).toBe("build-failed");
-            expect(yield* firewall.readPolicy()).toEqual(installed);
-            expect(
-              (yield* firewall.checkOutgoing(yield* outgoing(self), evidence))
-                .kind,
-            ).toBe("refused");
-            return installed;
-          }),
-      );
-      yield* withFirewall(filename, fixture, policy([initial]), (firewall) =>
+it("rejects a policy that cannot fit a model request without replacing saved rules", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({
+      prefix: "sharness-policy-budget-",
+    });
+    const filename = join(directory, "harness.sqlite3");
+    const before = yield* withFirewall(
+      filename,
+      fixture,
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const installed = yield* firewall.readPolicy();
+          const rejected = yield* firewall
+            .updatePolicy({
+              add: [{ ...initial, text: "n".repeat(100_000) }],
+            })
+            .pipe(Effect.flip);
+          expect(rejected.reason).toBe("build-failed");
+          expect(yield* firewall.readPolicy()).toEqual(installed);
+          expect(
+            (yield* firewall.checkOutgoing(yield* outgoing(self), evidence))
+              .kind,
+          ).toBe("refused");
+          return installed;
+        }),
+      Firewall.layer(policy([privacy])),
+    );
+    yield* withFirewall(
+      filename,
+      fixture,
+      (firewall) =>
         Effect.gen(function* () {
           expect(yield* firewall.readPolicy()).toEqual(before);
           expect((yield* firewall.readDecisions({})).activations).toEqual([]);
         }),
-      );
-    }).pipe(Effect.provide(NodeContext.layer)),
-);
+      Firewall.layer(policy([initial])),
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after policy contract assertions. */

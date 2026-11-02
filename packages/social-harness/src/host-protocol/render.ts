@@ -21,18 +21,6 @@ type CollectiveResultItem = Extract<
 >;
 type MemberOutcome = CollectiveResultItem["outcomes"][number]["outcome"];
 
-/** Direct replies reach the author; group replies keep the complete participant set. */
-export function replyAddress(message: Pick<Message, "author" | "recipients">) {
-  return message.recipients.length === 1
-    ? agentAddressOf(message.author)
-    : GroupAddress.make(
-        `group:${[message.author, ...message.recipients]
-          .map((member) => member.agentName)
-          .sort(compareAscii)
-          .join(",")}`,
-      );
-}
-
 /**
  * A message's content as the text a model reads: each text part as written,
  * each data part as JSON, one part per line.
@@ -165,6 +153,18 @@ export function renderCollectiveResult(item: CollectiveResultItem): string {
         `- agent:${member.agentName}: ${renderOutcome(outcome)}`,
     ),
   ].join("\n");
+}
+
+/** Direct replies reach the author; group replies keep the complete participant set. */
+export function replyAddress(message: Pick<Message, "author" | "recipients">) {
+  return message.recipients.length === 1
+    ? agentAddressOf(message.author)
+    : GroupAddress.make(
+        `group:${[message.author, ...message.recipients]
+          .map((member) => member.agentName)
+          .sort(compareAscii)
+          .join(",")}`,
+      );
 }
 
 /**

@@ -62,7 +62,7 @@ stack.
 ### L1 Unforgeable, Verifiable Identities
 
 2. **Identity means identity only.** Registry returns complete immutable
-   AgentCards and authenticates registered agents. An AgentCard binds AgentId,
+   agent identity cards and authenticates registered agents. An agent identity card binds AgentId,
    PrincipalId, immutable AgentName, and a verification key. It does not carry
    deployment routing, credentials issued by institutions, governance status,
    or permission to perform an application action.
@@ -182,7 +182,7 @@ stack.
 ### Trust, safety, and progress
 
 - Registry is correct and non-equivocating when it enforces uniqueness and
-  attests immutable AgentCards. A malicious or equivocating Registry is
+  attests immutable agent identity cards. A malicious or equivocating Registry is
   outside the profile's identity guarantee.
 - Router is correct and non-equivocating. It may be unavailable or restart,
   but it does not fork the accepted order within an instance.

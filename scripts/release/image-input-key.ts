@@ -36,7 +36,11 @@ import {
   type ModuleReader,
   runtimeModule,
 } from "./module-graph.ts";
-import { compiledSources, packedFile } from "./packed-package-inputs.ts";
+import {
+  compiledSources,
+  includedCopy,
+  packedFile,
+} from "./packed-package-inputs.ts";
 import { readsManifestVersion } from "./runtime-version-reads.ts";
 import { compilerLayout, configInputs } from "./typescript-config.ts";
 /** Typed refusal shared by image key callers. */
@@ -257,6 +261,7 @@ function builtInputs(
     { ...tree, service: name },
     [...new Set([...directories, ...installed])],
     copied,
+    directories,
   ).filter((file) => ![...own, ...modules, ...image].includes(file));
   const entries = [...own, ...modules, ...image, ...tooling].map((file) =>
     committedEntry(tree, file, unhashed),
@@ -481,8 +486,18 @@ function buildInputs(
   tree: Tree,
   roots: readonly string[],
   copied: readonly string[],
+  runtimeRoots: readonly string[],
 ): string[] {
   const buildTree: Tree = { ...tree, commandCwds: new Map() };
+  const buildOnly = new Map<string, ReadonlySet<string>>();
+  for (const root of roots) {
+    if (
+      !runtimeRoots.includes(root) &&
+      copied.some((file) => file.startsWith(`${root}/`))
+    ) {
+      buildOnly.set(root, new Set(compiledSources(buildTree, root)));
+    }
+  }
   const fixed = [
     "package.json",
     ".npmrc",
@@ -495,7 +510,9 @@ function buildInputs(
   const files = new Set([
     "pnpm-workspace.yaml",
     ...fixed,
-    ...copied.filter((input) => includedCopy(buildTree, input, roots)),
+    ...copied.filter((input) =>
+      includedCopy(buildTree, input, roots, buildOnly),
+    ),
   ]);
   const pending = [
     ...fixed,
@@ -517,25 +534,6 @@ function buildInputs(
     pending.push(...namedInputs(buildTree, file));
   }
   return [...files];
-}
-
-/** Copied siblings bind only packed non-source content; executable inputs are discovered separately. */
-function includedCopy(
-  tree: Tree,
-  file: string,
-  roots: readonly string[],
-): boolean {
-  const own = workspaceRoots(tree).get(tree.service ?? "");
-  const sibling = roots.find(
-    (root) => root !== "." && root !== own && file.startsWith(`${root}/`),
-  );
-  if (sibling === undefined) {
-    return true;
-  }
-  const relative = path.posix.relative(sibling, file);
-  return (
-    !/^(?:src|bin)\//u.test(relative) && packedFile(tree, sibling, relative)
-  );
 }
 
 function buildCommandFiles(tree: Tree, root: string): string[] {

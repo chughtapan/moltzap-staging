@@ -1,5 +1,5 @@
-// safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
 /** @file Verified application history and live participant pages hide protocol positions. */
+// safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Option, Schema } from "effect";

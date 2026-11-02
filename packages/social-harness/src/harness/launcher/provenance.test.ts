@@ -3,8 +3,7 @@
 import { effect as it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { describe, expect } from "vitest";
-import { launcherError } from "./errors.js";
-import { signedByReleaseIdentity } from "./provenance.js";
+import { launcherError, signedByReleaseIdentity } from "./installation.js";
 
 const identity = (repository: string): string =>
   `https://github.com/${repository}/.github/workflows/publish.yml@refs/heads/main`;

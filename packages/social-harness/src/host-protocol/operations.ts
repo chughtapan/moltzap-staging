@@ -5,13 +5,13 @@ import {
   type SendError,
   sendFailureReasons,
 } from "../communication/conversations/errors.js";
-import { PaginatedRequest, PaginatedResult } from "../communication/index.js";
-import { AgentAddress, GroupAddress } from "../communication/records/values.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
+  PaginatedRequest,
   type RequestError,
-} from "../communication/requests/contracts.js";
+} from "../communication/index.js";
+import { AgentAddress, GroupAddress } from "../communication/records/values.js";
 import { exactParseOptions, exactStruct } from "../encoding/exact.js";
 import { LocalGuidance, PermittedItem } from "../firewall/service.js";
 import {
@@ -56,7 +56,6 @@ export const readEventRequestSchema = exactStruct({
   }),
 });
 /** The original classified payload, including after its handoff. */
-
 export const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
 /** A delivery acknowledgment names the delivery it retires. */
@@ -79,7 +78,6 @@ const harnessMessageReadyEventSchema = Schema.typeSchema(InboxEntry);
 /** One page request over the classified inbox. */
 export const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
 /** One page of classified deliveries and the cursor after it. */
-
 export const inboxResultSchema = Schema.typeSchema(InboxPage);
 /** Validation diagnostics remain decodable as a send refusal at the runtime edge. */
 const invocationValidationErrorSchema = Schema.Struct({

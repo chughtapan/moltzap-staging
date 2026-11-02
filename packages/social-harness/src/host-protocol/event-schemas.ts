@@ -15,6 +15,7 @@ export const callbackReasons = [
   "challenge_failed",
 ] as const;
 /** Owner-visible diagnostics omit callback addresses and signing authority. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The catalog and clients share this owning wire schema.
 export const webhookStatusSchema = Schema.Struct({
   mode: Schema.Literal("none", "webhook"),
   id: Schema.optional(Schema.String),
