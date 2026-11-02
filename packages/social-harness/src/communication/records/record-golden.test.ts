@@ -7,30 +7,32 @@
 import { live as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import { describe, expect } from "vitest";
+
 import {
   decodeCanonical,
   encodeCanonical,
 } from "../../encoding/canonical-json.js";
-import { Ed25519PublicKey } from "../../identity/keys.js";
+import { AgentPublicKey } from "../../identity/keys.js";
+import { hashAction, hashRecord } from "./encoding.js";
+import golden from "./record-golden.json" with { type: "json" };
 import {
   ActionCertifiedRecord,
   CertifiedRecord,
   DirectPacket,
-  hashAction,
-  hashRecord,
   MembershipDescriptor,
+} from "./schemas.js";
+import {
   verifyActionCertifiedRecord,
   verifyCertifiedRecord,
   verifyMembershipDescriptor,
-} from "./index.js";
-import golden from "./record-golden.json" with { type: "json" };
+} from "./verification.js";
 
 const utf8 = new TextEncoder();
 
 /** Each fixture holds the Registry key and membership needed to verify it offline. */
 function membershipOf(form: (typeof golden.forms)[number]) {
   return Effect.gen(function* () {
-    const key = yield* Schema.decodeUnknown(Ed25519PublicKey)(
+    const key = yield* Schema.decodeUnknown(AgentPublicKey)(
       form.registrySignerPublicKey,
     );
     const descriptor = yield* Schema.decodeUnknown(MembershipDescriptor)(

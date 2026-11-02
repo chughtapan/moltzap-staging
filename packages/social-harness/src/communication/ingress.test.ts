@@ -1,6 +1,6 @@
 /** @file Invalid outer bodies cannot displace a later certified message delivered to a consumer. */
 
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import {
   Context,
@@ -8,7 +8,6 @@ import {
   Deferred,
   Effect,
   Fiber,
-  FiberSet,
   Layer,
   Option,
   Queue,
@@ -18,6 +17,7 @@ import {
 import { expect } from "vitest";
 import { identifier } from "../__tests__/agent-card-fixtures.js";
 import {
+  appendCertifiedMessage,
   buildCertifiedFirstMessage,
   type SigningIdentity,
   storeCertifiedFirstMessage,
@@ -30,28 +30,36 @@ import {
   pollCursor,
 } from "../__tests__/router-worker-fixtures.js";
 import { encodeCanonical } from "../encoding/canonical-json.js";
-import { agentViewOf, type VerifiedAgentCard } from "../identity/cards.js";
+import {
+  agentCardOf,
+  AgentName,
+  type VerifiedAgentIdentityCard,
+} from "../identity/agent.js";
 import { SealedBody } from "../identity/envelope/sealed-body.js";
 import {
   EnvelopeId,
   type LiveSignedMessage,
   SignedMessage,
 } from "../identity/envelope/signed-message.js";
-import { AgentName } from "../identity/identifiers.js";
-import { AgentSigningAuthority } from "../identity/keys.js";
-import { saveLocalIdentity } from "../identity/local-store.js";
-import { localIdentityLayer } from "../identity/local.js";
-import { RegistryConnectionError } from "../identity/registry/contract.js";
-import { Registry } from "../identity/registry/index.js";
-import { Communication, CommunicationError } from "./index.js";
+import { Registry, RegistryError } from "../identity/registry/index.js";
+import {
+  Answer,
+  Communication,
+  CommunicationError,
+  type Conversation,
+  type ReceivedRequest,
+  Request,
+  RequestedSchema,
+} from "./index.js";
 import {
   type Message,
   messageFromIntent,
   messageFromParticipants,
 } from "./message.js";
-import { DirectPacket, mintMsgId, signOuterPacket } from "./records/index.js";
-import { Router } from "./router/index.js";
-import { communicationLive } from "./service/index.js";
+import { mintMsgId, signOuterPacket } from "./records/encoding.js";
+import { DirectPacket } from "./records/schemas.js";
+import { encodeCollectiveContent } from "./requests/answers.js";
+import { Router } from "./router/api.js";
 
 class ConsumerFailure extends Data.TaggedError("ConsumerFailure") {}
 
@@ -62,7 +70,9 @@ interface Members {
 }
 
 interface RefusedEnvelope {
-  readonly sealedTo?: (members: Members) => readonly VerifiedAgentCard[];
+  readonly sealedTo?: (
+    members: Members,
+  ) => readonly VerifiedAgentIdentityCard[];
   readonly sealedAs: number;
   readonly signer: (members: Members) => SigningIdentity;
   readonly signedAs: number;
@@ -83,12 +93,12 @@ function refusedEnvelope(
         ? plaintext
         : yield* SealedBody.seal({
             senderAgentId: members.peer.card.agentId,
-            recipientAgentCards: refused.sealedTo(members),
+            recipientIdentityCards: refused.sealedTo(members),
             envelopeId: envelopeId(refused.sealedAs),
             plaintext,
           });
     return yield* SignedMessage.sign({
-      agentCard: signer.card,
+      identityCard: signer.card,
       signingAuthority: signer.authority,
       recipientAgentIds: new Set([
         members.local.card.agentId,
@@ -161,7 +171,7 @@ function prepareIngress(refused: RefusedEnvelope) {
     const validEnvelope = yield* signOuterPacket({
       packet: accepted,
       membership: subject.membership,
-      agentCard: subject.remote.card,
+      identityCard: subject.remote.card,
       signingAuthority: subject.remote.authority,
     });
     const release = yield* Deferred.make<undefined>();
@@ -187,31 +197,19 @@ function openCommunication(
   registry?: Context.Tag.Service<typeof Registry>,
 ) {
   return Effect.gen(function* () {
-    yield* subject.run(saveLocalIdentity(subject.local.card));
     const dependencies = Layer.mergeAll(
-      Layer.succeed(SqlClient.SqlClient, subject.sql),
+      Layer.succeed(SqlClient, subject.sql),
       Layer.succeed(Registry, registry ?? registryFor(subject)),
       Layer.succeed(Router, router),
     );
-    const identity = localIdentityLayer({
-      signingAuthority: subject.local.authority,
-      registrySignerPublicKey: subject.signer,
-      agentPublicKey: AgentSigningAuthority.publicKey(subject.local.authority),
-      admissionCredential: Effect.dieMessage(
-        "The consumer is already registered",
-      ),
-    }).pipe(Layer.provideMerge(dependencies));
-    const workers = yield* FiberSet.make<never>();
     const context = yield* Layer.build(
-      communicationLive(
-        {
-          signingAuthority: subject.local.authority,
-          registrySignerPublicKey: subject.signer,
-        },
-        workers,
-      ).pipe(Layer.provideMerge(identity)),
+      Communication.layer({
+        identityCard: subject.local.card,
+        signingAuthority: subject.local.authority,
+        registrySignerPublicKey: subject.signer,
+      }).pipe(Layer.provide(dependencies)),
     );
-    return { communication: Context.get(context, Communication), workers };
+    return { communication: Context.get(context, Communication) };
   });
 }
 
@@ -231,7 +229,7 @@ function registryFor(subject: Subject) {
       return Effect.succeed(
         card === undefined
           ? { kind: "not_found" as const }
-          : { kind: "found" as const, agentCard: card },
+          : { kind: "found" as const, identityCard: card },
       );
     },
   });
@@ -241,23 +239,21 @@ function deliversAfterRefusedBody(refused: RefusedEnvelope) {
   return Effect.gen(function* () {
     const { subject, accepted, release, router } =
       yield* prepareIngress(refused);
-    const { communication, workers } = yield* openCommunication(
-      subject,
-      router,
-    );
+    const { communication } = yield* openCommunication(subject, router);
     const received = yield* Queue.unbounded<Message>();
     yield* communication
-      .consume((message) => Queue.offer(received, message).pipe(Effect.asVoid))
+      .consume((incoming) =>
+        incoming.kind === "message"
+          ? Queue.offer(received, incoming.message).pipe(Effect.asVoid)
+          : Effect.void,
+      )
       .pipe(Effect.forkScoped);
     yield* Deferred.succeed(release, undefined);
     const message = yield* Queue.take(received).pipe(
-      Effect.raceFirst(
-        FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
-      ),
       Effect.timeout("10 seconds"),
     );
     const expected = yield* messageFromIntent(
-      [agentViewOf(subject.local.card), agentViewOf(subject.remote.card)],
+      [agentCardOf(subject.local.card), agentCardOf(subject.remote.card)],
       accepted.actionCertifiedRecord.recordCore.action.messageIntent,
     );
     expect(message).toEqual(expected);
@@ -309,15 +305,46 @@ it("retains offline messages across cancelled waits and rolls acceptance back wi
       Router.of({ poll: () => Effect.never, send: () => Effect.never }),
     );
     const message = yield* messageFromParticipants(
-      agentViewOf(subject.local.card),
-      [agentViewOf(subject.remote.card)],
+      agentCardOf(subject.local.card),
+      [agentCardOf(subject.remote.card)],
       {
         msgId: yield* mintMsgId(),
         content: [{ type: "text", text: "accepted offline" }],
       },
     );
+    const members: Conversation = [
+      agentCardOf(subject.local.card),
+      agentCardOf(subject.remote.card),
+    ];
+    expect(
+      yield* communication.readHistory({ members, order: "newest", limit: 10 }),
+    ).toEqual({
+      entries: [],
+      earlierMessagesOmitted: false,
+      pendingOutgoing: false,
+    });
     yield* communication.send(message).pipe(Effect.timeout("1 second"));
     yield* communication.send(message);
+    expect(
+      yield* communication.readHistory({ members, order: "newest", limit: 10 }),
+    ).toEqual({
+      entries: [],
+      earlierMessagesOmitted: false,
+      pendingOutgoing: true,
+    });
+    expect(
+      yield* communication
+        .readHistory({
+          members,
+          order: "newest",
+          limit: 10,
+          beforeMessage: {
+            authorAgentId: message.author.agentId,
+            msgId: message.msgId,
+          },
+        })
+        .pipe(Effect.flip),
+    ).toMatchObject({ reason: "history-gap" });
     const conflict = yield* communication
       .send({ ...message, content: [{ type: "text", text: "different" }] })
       .pipe(Effect.flip);
@@ -350,12 +377,6 @@ it("retains offline messages across cancelled waits and rolls acceptance back wi
         .waitForMessage(reference)
         .pipe(Effect.timeoutOption("150 millis")),
     ).toEqual(Option.none());
-    const pending = yield* subject.run(
-      subject.store.readAcceptedMessage(reference),
-    );
-    expect(pending?.message).toEqual(message);
-    expect(pending?.completed).toBe(false);
-    expect(pending?.failure).toBeUndefined();
   }));
 
 it("returns the retained Message after certified history is reopened without Router", () =>
@@ -376,7 +397,7 @@ it("returns the retained Message after certified history is reopened without Rou
       ),
     );
     const expected = yield* messageFromIntent(
-      subject.membership.members.map(agentViewOf),
+      subject.membership.members.map(agentCardOf),
       record.actionCertifiedRecord.recordCore.action.messageIntent,
     );
     const offline = Router.of({
@@ -405,11 +426,11 @@ it("retains a terminal preparation failure across reopen", () =>
       msgId: yield* mintMsgId(),
     };
     const peer = {
-      ...agentViewOf(subject.remote.card),
+      ...agentCardOf(subject.remote.card),
       agentName: AgentName.make("wrong-peer-name"),
     };
     const message = yield* messageFromParticipants(
-      agentViewOf(subject.local.card),
+      agentCardOf(subject.local.card),
       [peer],
       {
         msgId: reference.msgId,
@@ -475,13 +496,17 @@ it("offers the same certified Message again after its consumer fails", () =>
     expect(failure._tag).toBe(expectedFailure._tag);
     const replayed = yield* Queue.unbounded<Message>();
     yield* communication
-      .consume((message) => Queue.offer(replayed, message).pipe(Effect.asVoid))
+      .consume((incoming) =>
+        incoming.kind === "message"
+          ? Queue.offer(replayed, incoming.message).pipe(Effect.asVoid)
+          : Effect.void,
+      )
       .pipe(Effect.forkScoped);
     const message = yield* Queue.take(replayed).pipe(
       Effect.timeout("3 seconds"),
     );
-    expect(message.author).toEqual(agentViewOf(subject.remote.card));
-    expect(message.recipients).toEqual([agentViewOf(subject.local.card)]);
+    expect(message.author).toEqual(agentCardOf(subject.remote.card));
+    expect(message.recipients).toEqual([agentCardOf(subject.local.card)]);
   }));
 
 it("keeps accepted messages in order when the first preparation temporarily cannot reach Registry", () =>
@@ -495,7 +520,7 @@ it("keeps accepted messages in order when the first preparation temporarily cann
         Ref.getAndSet(failLookup, false).pipe(
           Effect.flatMap((fail) =>
             fail
-              ? Effect.fail(new RegistryConnectionError())
+              ? Effect.fail(new RegistryError({ reason: "connection" }))
               : available.lookup(request),
           ),
         ),
@@ -531,8 +556,8 @@ it("keeps accepted messages in order when the first preparation temporarily cann
       registry,
     );
     const first = yield* messageFromParticipants(
-      agentViewOf(subject.local.card),
-      [agentViewOf(subject.remote.card)],
+      agentCardOf(subject.local.card),
+      [agentCardOf(subject.remote.card)],
       {
         msgId: yield* mintMsgId(),
         content: [{ type: "text", text: "request" }],
@@ -551,4 +576,195 @@ it("keeps accepted messages in order when the first preparation temporarily cann
     expect(
       yield* Deferred.await(firstProposal).pipe(Effect.timeout("3 seconds")),
     ).toBe(first.msgId);
+  }));
+
+it(
+  "pages a fixed history head and excludes the candidate from a preceding window",
+  () =>
+    Effect.gen(function* () {
+      const subject = yield* conversationIdentityFixture;
+      let record = yield* buildCertifiedFirstMessage(
+        subject.local,
+        subject.remote,
+        subject.membership,
+        subject.anchor.routerInstanceId,
+      );
+      yield* subject.run(
+        storeCertifiedFirstMessage(
+          subject.store,
+          subject.local.card,
+          subject.membership,
+          record,
+        ),
+      );
+      const endpoint = {
+        store: subject.store,
+        local: subject.local,
+        remote: subject.remote,
+        membership: subject.membership,
+      };
+      for (let index = 1; index < 53; index += 1) {
+        record = yield* subject.run(
+          appendCertifiedMessage(endpoint, record, `message ${index}`),
+        );
+      }
+      const { communication } = yield* openCommunication(
+        subject,
+        Router.of({ poll: () => Effect.never, send: () => Effect.never }),
+      );
+      const members = [
+        agentCardOf(subject.local.card),
+        agentCardOf(subject.remote.card),
+      ] satisfies Conversation;
+      expect((yield* communication.listConversations()).conversations).toEqual([
+        members,
+      ]);
+      expect(
+        yield* communication.getConversation([
+          members[1].agentName,
+          members[0].agentName,
+        ]),
+      ).toEqual(members);
+      expect(
+        yield* communication.getConversation([
+          members[0].agentName,
+          subject.third.card.agentName,
+        ]),
+      ).toBeUndefined();
+      const first = yield* communication.readHistory({ members });
+      expect(first.entries).toHaveLength(50);
+      if (first.nextCursor === undefined) {
+        return yield* Effect.dieMessage("history omitted its continuation");
+      }
+      yield* subject.run(
+        appendCertifiedMessage(endpoint, record, "later message"),
+      );
+      const second = yield* communication.readHistory({
+        members,
+        cursor: first.nextCursor,
+      });
+      expect(second.entries.map((entry) => entry.message.content)).toEqual(
+        [50, 51, 52].map((index) => [
+          { type: "text", text: `message ${index}` },
+        ]),
+      );
+      expect(second.nextCursor).toBeUndefined();
+      const candidate = first.entries.at(-1)?.message;
+      if (candidate === undefined) {
+        return yield* Effect.dieMessage("missing boundary message");
+      }
+      const preceding = yield* communication.readHistory({
+        members,
+        order: "newest",
+        limit: 2,
+        beforeMessage: {
+          authorAgentId: candidate.author.agentId,
+          msgId: candidate.msgId,
+        },
+      });
+      expect(preceding.entries.map((entry) => entry.message.content)).toEqual(
+        [47, 48].map((index) => [{ type: "text", text: `message ${index}` }]),
+      );
+      expect(preceding.earlierMessagesOmitted).toBe(true);
+      expect(
+        yield* communication
+          .listConversations({ cursor: first.nextCursor })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "invalid-cursor" });
+      expect(
+        yield* communication
+          .readHistory({
+            members: [members[0], agentCardOf(subject.third.card)],
+            cursor: first.nextCursor,
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({ reason: "invalid-cursor" });
+    }),
+  20_000,
+);
+
+it("claims one answer when the reply is submitted as an ordinary Message", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const record = yield* buildCertifiedFirstMessage(
+      subject.local,
+      subject.remote,
+      subject.membership,
+      subject.anchor.routerInstanceId,
+    );
+    yield* subject.run(
+      storeCertifiedFirstMessage(
+        subject.store,
+        subject.local.card,
+        subject.membership,
+        record,
+      ),
+    );
+    const request = yield* Request.create({
+      author: agentCardOf(subject.remote.card),
+      recipients: [agentCardOf(subject.local.card)],
+      question: "Which day?",
+      op: "gather",
+      deadline: 30,
+      requestedSchema: Schema.decodeUnknownSync(RequestedSchema)({
+        type: "object",
+        properties: { day: { type: "string" } },
+        required: ["day"],
+      }),
+    });
+    yield* subject.run(
+      appendCertifiedMessage(
+        {
+          store: subject.store,
+          local: subject.local,
+          remote: subject.remote,
+          membership: subject.membership,
+        },
+        record,
+        yield* encodeCollectiveContent(
+          {
+            kind: "operation",
+            op: request.op,
+            operationId: request.operationId,
+            requestedSchema: request.requestedSchema,
+            deadlineAt: request.deadlineAt,
+          },
+          request.question,
+        ),
+      ),
+    );
+    const { communication } = yield* openCommunication(
+      subject,
+      Router.of({ poll: () => Effect.never, send: () => Effect.never }),
+    );
+    const received = yield* Queue.unbounded<ReceivedRequest>();
+    yield* communication
+      .consume((incoming) =>
+        incoming.kind === "request"
+          ? Queue.offer(received, incoming.message).pipe(Effect.asVoid)
+          : Effect.void,
+      )
+      .pipe(Effect.forkScoped);
+    const captured = yield* Queue.take(received);
+    expect(yield* communication.getRequest(request.operationId)).toEqual(
+      captured,
+    );
+    const first = yield* Answer.create({
+      author: agentCardOf(subject.local.card),
+      request: captured,
+      response: { action: "accept", content: { day: "monday" } },
+    });
+    yield* communication.send(first);
+    yield* communication.send(first);
+    const second = yield* Answer.create({
+      author: agentCardOf(subject.local.card),
+      request: captured,
+      response: { action: "decline" },
+    });
+    expect(yield* communication.send(second).pipe(Effect.flip)).toMatchObject({
+      failure: { kind: "request-answered" },
+    });
+    expect(
+      yield* communication.getRequest(request.operationId).pipe(Effect.flip),
+    ).toMatchObject({ failure: { kind: "request-answered" } });
   }));

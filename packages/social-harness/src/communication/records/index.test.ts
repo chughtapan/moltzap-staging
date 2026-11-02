@@ -15,27 +15,28 @@ import {
   decodeCanonical,
   encodeCanonical,
 } from "../../encoding/canonical-json.js";
+import { AgentId } from "../../identity/agent.js";
 import { SealedBody } from "../../identity/envelope/sealed-body.js";
 import {
   EnvelopeId,
   SignedMessage,
 } from "../../identity/envelope/signed-message.js";
-import { AgentId } from "../../identity/identifiers.js";
 import { WIRE_VERSION } from "../../identity/wire-version.js";
+import {
+  decodeOuterBody,
+  deriveConversationId,
+  deriveEvidenceEnvelopeId,
+  mintMsgId,
+  signOuterPacket,
+} from "./encoding.js";
 import {
   ActionHash,
   ActionSignatureStatement,
   CatchUpRequest,
-  Content,
   ConversationId,
-  decodeOuterBody,
-  deriveConversationId,
-  deriveEvidenceEnvelopeId,
-  maximumContentBytes,
   MembershipHash,
-  mintMsgId,
-  signOuterPacket,
-} from "./index.js";
+} from "./schemas.js";
+import { Content, maximumContentBytes } from "./values.js";
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();
@@ -175,7 +176,7 @@ const makeMember = (byte: number, registryKeys: RegistryKeyPair) =>
       authority,
       registryKeys,
     });
-    return { agentCard: card, signingAuthority: authority };
+    return { identityCard: card, signingAuthority: authority };
   });
 
 const opensSealedBodiesOnlyForMembers = () =>
@@ -187,7 +188,7 @@ const opensSealedBodiesOnlyForMembers = () =>
 
     const sealed = yield* signOuterPacket({
       packet: catchUpRequest,
-      membership: { members: [sender.agentCard, receiver.agentCard] },
+      membership: { members: [sender.identityCard, receiver.identityCard] },
       ...sender,
     });
 
@@ -212,11 +213,11 @@ const refusesPlaintextOuterBody = () =>
     const receiver = yield* makeMember(2, registryKeys);
 
     const plaintext = yield* SignedMessage.sign({
-      agentCard: sender.agentCard,
+      identityCard: sender.identityCard,
       signingAuthority: sender.signingAuthority,
       recipientAgentIds: new Set([
-        sender.agentCard.agentId,
-        receiver.agentCard.agentId,
+        sender.identityCard.agentId,
+        receiver.identityCard.agentId,
       ]),
       envelopeId: Schema.decodeUnknownSync(EnvelopeId)(
         identifier("env_", 16, 6),
@@ -238,18 +239,18 @@ const refusesSealedBodyHoldingNoClientValue = () =>
       identifier("env_", 16, 7),
     );
     const sealed = yield* SealedBody.seal({
-      senderAgentId: sender.agentCard.agentId,
-      recipientAgentCards: [sender.agentCard, receiver.agentCard],
+      senderAgentId: sender.identityCard.agentId,
+      recipientIdentityCards: [sender.identityCard, receiver.identityCard],
       envelopeId,
       plaintext: utf8Encoder.encode("{}"),
     });
 
     const message = yield* SignedMessage.sign({
-      agentCard: sender.agentCard,
+      identityCard: sender.identityCard,
       signingAuthority: sender.signingAuthority,
       recipientAgentIds: new Set([
-        sender.agentCard.agentId,
-        receiver.agentCard.agentId,
+        sender.identityCard.agentId,
+        receiver.identityCard.agentId,
       ]),
       envelopeId,
       body: sealed,

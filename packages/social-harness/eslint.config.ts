@@ -71,6 +71,7 @@ const messageCheckRules = {
 };
 
 export default [
+  { ignores: ["src/vendor/effect-mcp/**"] },
   ...packageEslintConfig({
     projects: ["./tsconfig.json", "./tsconfig.test.json"],
     tsconfigRootDir: import.meta.dirname,
@@ -82,4 +83,38 @@ export default [
   soleOuterSigner,
   sealingSigner,
   messageCheckRules,
+  {
+    files: [
+      "src/harness/service.ts",
+      "src/harness/inbox.ts",
+      "src/firewall/service.ts",
+    ],
+    rules: {
+      "max-lines-per-function": [
+        "error",
+        { max: 600, skipBlankLines: true, skipComments: true },
+      ],
+      complexity: ["error", { max: 32 }],
+      "sonarjs/cognitive-complexity": ["error", 35],
+      "max-depth": ["error", 4],
+      "sonarjs/nested-control-flow": ["error", { maximumNestingLevel: 4 }],
+      "sonarjs/no-nested-functions": ["error", { threshold: 6 }],
+      "max-params": ["error", 7],
+    },
+  },
+  {
+    files: [
+      "src/communication/conversations/reanchor.ts",
+      "src/communication/conversations/recovery.ts",
+      "src/communication/router/connection.ts",
+      "src/communication/requests/service.ts",
+      "src/communication/records/acceptance.test.ts",
+    ],
+    rules: {
+      "max-lines": [
+        "error",
+        { max: 1500, skipBlankLines: true, skipComments: true },
+      ],
+    },
+  },
 ];

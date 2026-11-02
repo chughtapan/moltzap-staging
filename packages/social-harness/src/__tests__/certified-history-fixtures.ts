@@ -3,52 +3,55 @@
  * keeps, and the corrupt reads of those rows stored-history tests start from.
  */
 
-import type { SqlClient } from "@effect/sql";
+import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
+
+import type { VerifiedMembership } from "../communication/records/verification.js";
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
-} from "../communication/store/index.js";
+} from "../communication/store/types.js";
 import type { AgentSigningAuthority } from "../identity/keys.js";
-import type { TestStore } from "./store-schema-fixtures.js";
+import type { ProtocolStore as TestStore } from "./communication-test-database.js";
+
 import {
   protocolEvidence,
   stagedRecord,
-} from "../communication/conversations/history/index.js";
+} from "../communication/conversations/log.js";
 import { Message, messageFromIntent } from "../communication/message.js";
+import {
+  hashAction,
+  hashAnchor,
+  hashMessageIntent,
+  hashRecord,
+  mintMsgId,
+  signEvidenceMessage,
+} from "../communication/records/encoding.js";
 import {
   ActionCore,
   type ActionHash,
   type CertifiedRecord,
   type EvidenceStatement,
   type FirstMessageActionCore,
-  hashAction,
-  hashAnchor,
-  hashMessageIntent,
-  hashRecord,
   type InitialAnchorBody,
   InitialAnchorBody as InitialAnchorBodySchema,
   MembershipDescriptor,
   type MessageActionCore,
   MessageIntent,
-  mintMsgId,
   type RecordCore,
   type RecordHash,
-  signEvidenceMessage,
-  type VerifiedMembership,
-} from "../communication/records/index.js";
+} from "../communication/records/schemas.js";
 import { encodeCanonical } from "../encoding/canonical-json.js";
 import {
-  AgentCard,
-  agentViewOf,
-  type VerifiedAgentCard,
-} from "../identity/cards.js";
+  agentCardOf,
+  type VerifiedAgentIdentityCard,
+} from "../identity/agent.js";
 import { SignedMessage } from "../identity/envelope/signed-message.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
 
 /** One member's verified card and the authority that signs as it. */
 export interface SigningIdentity {
-  readonly card: VerifiedAgentCard;
+  readonly card: VerifiedAgentIdentityCard;
   readonly authority: AgentSigningAuthority;
 }
 
@@ -121,15 +124,12 @@ export const buildCertifiedFirstMessage = (
  */
 export const storeCertifiedFirstMessage = (
   store: TestStore,
-  local: VerifiedAgentCard,
+  local: VerifiedAgentIdentityCard,
   membership: VerifiedMembership,
   record: CertifiedRecord,
-): Effect.Effect<void, never, SqlClient.SqlClient> =>
+): Effect.Effect<void, never, SqlClient> =>
   Effect.gen(function* () {
-    yield* store.bindIdentity({
-      agentId: local.agentId,
-      canonicalAgentCard: yield* encodeCanonical(AgentCard, local),
-    });
+    yield* store.initializeCommunication(local);
     yield* lockFirstMessage(store, membership, record);
     yield* bindLocalIntent(store, local, membership, record);
     yield* store.applyCertifiedRecord(yield* storedRecordRow(record));
@@ -152,7 +152,7 @@ export function appendCertifiedMessage(
   previous: CertifiedRecord,
   text: string | MessageIntent["content"],
   authoredLocally = false,
-): Effect.Effect<CertifiedRecord, never, SqlClient.SqlClient> {
+): Effect.Effect<CertifiedRecord, never, SqlClient> {
   return Effect.gen(function* () {
     const messageIntent: MessageIntent = {
       ...previous.actionCertifiedRecord.recordCore.action.messageIntent,
@@ -178,7 +178,7 @@ export function signEvidence(
 ) {
   return signEvidenceMessage({
     statement,
-    agentCard: identity.card,
+    identityCard: identity.card,
     signingAuthority: identity.authority,
   }).pipe(Effect.flatMap((message) => Schema.encode(SignedMessage)(message)));
 }
@@ -188,7 +188,7 @@ function appendCertifiedIntent(
   endpoint: HistoryEndpoint,
   previous: CertifiedRecord,
   intent: MessageIntent,
-): Effect.Effect<CertifiedRecord, never, SqlClient.SqlClient> {
+): Effect.Effect<CertifiedRecord, never, SqlClient> {
   return Effect.gen(function* () {
     const record = yield* buildCertifiedMessage(endpoint, previous, intent);
     yield* storeCertifiedMessage(
@@ -449,7 +449,7 @@ function evidenceRows(
 /** Locally certified messages must first have an immutable intent, as the engine requires. */
 function bindLocalIntent(
   store: TestStore,
-  local: VerifiedAgentCard,
+  local: VerifiedAgentIdentityCard,
   membership: VerifiedMembership,
   record: CertifiedRecord,
 ) {
@@ -460,7 +460,7 @@ function bindLocalIntent(
     }
     const canonicalMessage = yield* encodeCanonical(
       Message,
-      yield* messageFromIntent(membership.members.map(agentViewOf), intent),
+      yield* messageFromIntent(membership.members.map(agentCardOf), intent),
     );
     yield* store.acceptMessage({
       authorAgentId: intent.authorAgentId,

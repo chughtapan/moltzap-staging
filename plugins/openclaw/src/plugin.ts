@@ -11,13 +11,10 @@ import type { ChannelInboundTurnPlan } from "openclaw/plugin-sdk/channel-inbound
 import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import {
-  acquireHarnessEndpoint,
-  type AgentView,
+  type AgentCard,
   groupMembers,
   type GuidanceBodyOrigin,
-  type HarnessEndpoint,
-  type InboundDelivery,
-  type InboundItem,
+  type PermittedItem,
   type Message,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
@@ -28,9 +25,16 @@ import {
   renderContent,
   renderLocalGuidance,
   replyAddress,
-  type SendInput,
+  type SendRequest,
   type SendResult,
 } from "@moltzap/social-harness";
+import { packageVersion } from "@moltzap/social-harness";
+import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+  type InboxEntry,
+} from "#sharness-mcp/mcp";
 import {
   Config,
   ConfigError,
@@ -39,7 +43,6 @@ import {
   Option,
   Redacted,
   Schema,
-  Stream,
 } from "effect";
 import { absurd } from "effect/Function";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
@@ -136,7 +139,7 @@ interface ResolvedMessageTarget {
  */
 interface ConnectedAccount {
   readonly accountId: string;
-  readonly endpoint: HarnessEndpoint;
+  readonly endpoint: McpConnection;
   readonly log?: ChannelLogSink;
 }
 
@@ -532,17 +535,17 @@ function acquireAccountEndpoint() {
             "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#mcp-credential-file",
         }),
     });
-    return yield* acquireHarnessEndpoint(endpoint, {
-      credential: Redacted.make(credential),
-      receiveMode: "push",
-    });
+    return yield* acquireMcpConnection(
+      { endpoint, credential: Redacted.make(credential) },
+      { name: "sharness-openclaw", version: packageVersion },
+    );
   });
 }
 
 function runAccountConnection(
   ctx: ChannelGatewayContext<Account>,
   runtime: OpenClawAccountRuntime,
-  endpoint: HarnessEndpoint,
+  endpoint: McpConnection,
   connectedAccount: ConnectedAccountState,
 ) {
   return Effect.sync(() => {
@@ -591,13 +594,11 @@ function runAccountConnection(
 function consumeInboundMessages(
   ctx: ChannelGatewayContext<Account>,
   runtime: OpenClawAccountRuntime,
-  endpoint: HarnessEndpoint,
+  endpoint: McpConnection,
 ) {
   return Effect.raceFirst(
-    endpoint.messages.pipe(
-      Stream.runForEach((delivery) =>
-        handleInboundDelivery(ctx, runtime, delivery),
-      ),
+    endpoint.consumeInbox({ receiveMode: "push" }, (delivery) =>
+      handleInboxEntry(ctx, runtime, delivery),
     ),
     Effect.tryPromise({
       try: () => waitUntilAbort(ctx.abortSignal),
@@ -626,12 +627,16 @@ function reportConnected(
   });
 }
 
-function handleInboundDelivery(
+function handleInboxEntry(
   ctx: ChannelGatewayContext<Account>,
   runtime: OpenClawAccountRuntime,
-  delivery: InboundDelivery,
+  delivery: InboxEntry,
 ) {
-  const projected = inboundItemTurn(delivery.item, delivery.eventId);
+  const projected = inboundItemTurn(
+    delivery.item,
+    delivery.deliveryToken,
+    delivery.address,
+  );
   const guidance = delivery.guidance;
   const turn: HostTurn =
     guidance === undefined
@@ -654,7 +659,6 @@ function handleInboundDelivery(
         };
   return logInbound(ctx, turn).pipe(
     Effect.zipRight(runOpenClawTurn(ctx, runtime, turn)),
-    Effect.zipRight(delivery.acknowledge),
   );
 }
 
@@ -667,7 +671,11 @@ function handleInboundDelivery(
  * @param item The item the endpoint delivered.
  * @returns The turn OpenClaw runs.
  */
-function inboundItemTurn(item: InboundItem, eventId: string): HostTurn {
+function inboundItemTurn(
+  item: PermittedItem,
+  eventId: string,
+  address: MessageAddressInputValue,
+): HostTurn {
   switch (item.kind) {
     case "multicast":
       return multicastTurn(item.message, eventId);
@@ -685,9 +693,9 @@ function inboundItemTurn(item: InboundItem, eventId: string): HostTurn {
         ),
       );
     case "collectiveResult":
-      return endpointTurn(eventId, item.to, renderCollectiveResult(item));
+      return endpointTurn(eventId, address, renderCollectiveResult(item));
     case "operationFailed":
-      return endpointTurn(eventId, item.to, item.error);
+      return endpointTurn(eventId, address, item.error);
     default:
       return absurd(item);
   }
@@ -741,7 +749,7 @@ function addressedTurn(
     : { ...author, kind: "group", address, members, body };
 }
 
-function agentSender(agent: AgentView): TurnSender {
+function agentSender(agent: AgentCard): TurnSender {
   return { id: `agent:${agent.agentName}`, name: agent.agentName };
 }
 
@@ -937,7 +945,7 @@ function withholdFinalText(
 function removeConnectedEndpoint(
   connectedAccount: ConnectedAccountState,
   accountId: string,
-  active: HarnessEndpoint,
+  active: McpConnection,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (
@@ -977,7 +985,7 @@ function sendText(
   origin: OutboundOrigin,
   params: TextSend,
 ) {
-  return readSendInput(params).pipe(
+  return readSendRequest(params).pipe(
     Effect.tapError((error) =>
       logOutboundFailure(
         connectedAccount,
@@ -987,7 +995,12 @@ function sendText(
     ),
     Effect.flatMap((input) =>
       requireEndpoint(connectedAccount, params).pipe(
-        Effect.flatMap((endpoint) => endpoint.send(input)),
+        Effect.flatMap((connection) =>
+          callTool(connection.client, {
+            name: "send_message",
+            arguments: { input },
+          }),
+        ),
         Effect.tapBoth({
           onFailure: (error) =>
             logOutboundFailure(
@@ -998,7 +1011,7 @@ function sendText(
           onSuccess: (result) =>
             logOutbound(
               connectedAccount,
-              `${outboundLogPrefix(origin, params, outboundOperation(input))} operationId=${result.operationId ?? "-"} msgId=${result.msgId ?? "-"} chars=${textLength(params)}: ${textPreview(params)}`,
+              `${outboundLogPrefix(origin, params, outboundOperation(input))} id=${result.id} chars=${textLength(params)}: ${textPreview(params)}`,
             ),
         }),
         Effect.map((result) => ({ input, result })),
@@ -1007,7 +1020,7 @@ function sendText(
   );
 }
 
-function outboundOperation(input: SendInput): OutboundOperation {
+function outboundOperation(input: SendRequest): OutboundOperation {
   if ("collectiveResponse" in input) {
     return "answer";
   }
@@ -1061,7 +1074,7 @@ function logOutbound(
 function requireEndpoint(
   connectedAccount: ConnectedAccountState,
   params: TextSend,
-): Effect.Effect<HarnessEndpoint, OpenClawOutboundError> {
+): Effect.Effect<McpConnection, OpenClawOutboundError> {
   const endpoint = connectedEndpoint(connectedAccount, params.accountId);
   return endpoint === undefined
     ? Effect.fail(
@@ -1074,11 +1087,11 @@ function requireEndpoint(
  * Validate OpenClaw's optional target and text fields before handing them to
  * the shared message-text parser.
  */
-function readSendInput({
+function readSendRequest({
   to,
   text,
 }: TextSend): Effect.Effect<
-  SendInput,
+  SendRequest,
   OpenClawOutboundError | MessageTextError
 > {
   if (!isMessageAddressInput(to)) {
@@ -1102,7 +1115,7 @@ function readSendInput({
  * @returns The send result OpenClaw records.
  */
 function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {
-  const messageId = result.msgId ?? result.operationId;
+  const messageId = result.id;
   return {
     ...(messageId === undefined ? {} : { messageId }),
     receipt: createMessageReceiptFromOutboundResults({
@@ -1123,7 +1136,7 @@ function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {
 function connectedEndpoint(
   connectedAccount: ConnectedAccountState,
   accountId?: string | null,
-): HarnessEndpoint | undefined {
+): McpConnection | undefined {
   const active = connectedAccount.current;
   if (active === undefined) {
     return undefined;

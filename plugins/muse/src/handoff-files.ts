@@ -9,10 +9,9 @@ import { MuseWakeError } from "./errors.js";
 const museWork = Schema.Struct({
   attempt: Schema.UUID,
   eventId: Schema.NonEmptyString,
-  expiresAt: Schema.Number.pipe(Schema.int(), Schema.positive()),
 });
 
-/** Only the owning receiver's live attempt can observe a matching worker confirmation. */
+/** The detector passes the saved lookup identity to a native worker. */
 export type MuseWork = typeof museWork.Type;
 
 /** Publication is atomic so the detector cannot observe a partially written reference. */
@@ -53,24 +52,5 @@ export function readOptionalFile(fs: FileSystem.FileSystem, path: string) {
       BadArgument: () =>
         Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
     }),
-  );
-}
-
-/** Exclusive creation lets overlapping native detector invocations emit one wake per attempt. */
-export function createMarker(
-  fs: FileSystem.FileSystem,
-  path: string,
-  bytes: string,
-) {
-  return fs.writeFileString(path, bytes, { flag: "wx", mode: 0o600 }).pipe(
-    Effect.as(true),
-    Effect.catchTag("SystemError", (error) =>
-      error.reason === "AlreadyExists" || error.reason === "NotFound"
-        ? Effect.succeed(false)
-        : Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
-    ),
-    Effect.catchTag("BadArgument", () =>
-      Effect.fail(new MuseWakeError({ reason: "transport-failed" })),
-    ),
   );
 }

@@ -1,4 +1,4 @@
-/** @file Provider acceptance and receipt authority through a hermetic HTTP server. */
+/** @file Provider acceptance and handoff completion through a hermetic HTTP server. */
 import {
   FetchHttpClient,
   HttpServerRequest,
@@ -19,7 +19,7 @@ import { describe, expect } from "vitest";
 import { localProvider } from "./__tests__/provider.js";
 import { deliverToInstinct } from "./index.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses, provider fields and receipt counts are acceptance contracts. */
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses, provider fields and completion counts are acceptance contracts. */
 
 const sender = {
   apiKey: Redacted.make("test-agentmail-key"),
@@ -71,8 +71,10 @@ function waitsForAcceptance() {
         );
       }),
     );
-    const receipts = yield* Ref.make(0);
-    const pending = yield* deliver(provider, receipts).pipe(Effect.forkScoped);
+    const completions = yield* Ref.make(0);
+    const pending = yield* deliver(provider, completions).pipe(
+      Effect.forkScoped,
+    );
     const request = yield* Deferred.await(requested);
     const email = yield* Schema.decodeUnknown(emailSchema)(request.body);
     expect(request.method).toBe("POST");
@@ -90,10 +92,10 @@ function waitsForAcceptance() {
     );
     expect(request.body).not.toContain(Redacted.value(sender.apiKey));
     expect(request.body).toContain("does not authorize a reply");
-    expect(yield* Ref.get(receipts)).toBe(0);
+    expect(yield* Ref.get(completions)).toBe(0);
     yield* Deferred.succeed(accepted, undefined);
     yield* Fiber.join(pending);
-    expect(yield* Ref.get(receipts)).toBe(1);
+    expect(yield* Ref.get(completions)).toBe(1);
   });
 }
 
@@ -104,14 +106,14 @@ function refusesStatus(status: number) {
         HttpServerResponse.text(Redacted.value(sender.apiKey), { status }),
       ),
     );
-    const receipts = yield* Ref.make(0);
-    const failure = yield* deliver(provider, receipts).pipe(Effect.flip);
+    const completions = yield* Ref.make(0);
+    const failure = yield* deliver(provider, completions).pipe(Effect.flip);
     expect(failure).toMatchObject({
       _tag: "InstinctWakeError",
       reason: "refused",
     });
     expect(String(failure)).not.toContain(Redacted.value(sender.apiKey));
-    expect(yield* Ref.get(receipts)).toBe(0);
+    expect(yield* Ref.get(completions)).toBe(0);
     expect(provider.destinations).toHaveLength(1);
     expect(provider.signals).toHaveLength(1);
     expect(provider.signals.every((signal) => signal.aborted)).toBe(true);
@@ -124,12 +126,14 @@ function refusesBody(
 ) {
   return Effect.gen(function* () {
     const provider = yield* localProvider(Effect.succeed(body));
-    const receipts = yield* Ref.make(0);
-    expect(yield* deliver(provider, receipts).pipe(Effect.flip)).toMatchObject({
+    const completions = yield* Ref.make(0);
+    expect(
+      yield* deliver(provider, completions).pipe(Effect.flip),
+    ).toMatchObject({
       _tag: "InstinctWakeError",
       reason,
     });
-    expect(yield* Ref.get(receipts)).toBe(0);
+    expect(yield* Ref.get(completions)).toBe(0);
     expect(provider.destinations).toHaveLength(1);
   });
 }
@@ -147,13 +151,15 @@ function refusesRedirects() {
         ),
       ),
     );
-    const receipts = yield* Ref.make(0);
-    expect(yield* deliver(provider, receipts).pipe(Effect.flip)).toMatchObject({
+    const completions = yield* Ref.make(0);
+    expect(
+      yield* deliver(provider, completions).pipe(Effect.flip),
+    ).toMatchObject({
       _tag: "InstinctWakeError",
       reason: "transport",
     });
     expect(yield* Ref.get(calls)).toBe(1);
-    expect(yield* Ref.get(receipts)).toBe(0);
+    expect(yield* Ref.get(completions)).toBe(0);
   });
 }
 
@@ -168,42 +174,39 @@ function carriesReference(reference: string) {
         );
       }),
     );
-    const receipts = yield* Ref.make(0);
-    yield* deliver(provider, receipts, reference);
+    const completions = yield* Ref.make(0);
+    yield* deliver(provider, completions, reference);
     const request = yield* Deferred.await(requested);
     const email = yield* Schema.decodeUnknown(emailSchema)(request.body);
     expect(email.text).toContain(
       `read_event with eventId ${JSON.stringify(reference)}`,
     );
-    expect(yield* Ref.get(receipts)).toBe(1);
+    expect(yield* Ref.get(completions)).toBe(1);
   });
 }
 
 function deliver(
   provider: { readonly fetch: typeof globalThis.fetch },
-  receipts: Ref.Ref<number>,
+  completions: Ref.Ref<number>,
   reference = eventId,
 ) {
   return deliverToInstinct(sender, {
-    eventId: reference,
-    acknowledge: Ref.update(receipts, (count) => count + 1),
+    deliveryToken: reference,
   }).pipe(
+    Effect.tap(() => Ref.update(completions, (count) => count + 1)),
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(FetchHttpClient.Fetch, provider.fetch),
   );
 }
 
 describe("Instinct email handoff", () => {
-  it(
-    "posts a reference and acknowledges the accepted message",
-    waitsForAcceptance,
-  );
+  it("posts a reference and waits for provider acceptance", waitsForAcceptance);
   it.each([401, 429, 503])(
     "leaves refused HTTP %i work unread without retrying",
     refusesStatus,
   );
   it.each(["not json", "{}", '{"message_id":""}', '{"thread_id":"unused"}'])(
-    "rejects incomplete acceptance %s without acknowledging",
+    "rejects incomplete acceptance %s without accepting the handoff",
     (body) => refusesBody(HttpServerResponse.text(body), "invalid-response"),
   );
   it("refuses redirects before forwarding credentials", refusesRedirects);
@@ -229,7 +232,7 @@ describe("Instinct response bounds", () => {
       ),
       "response-too-large",
     ));
-  it("rejects invalid UTF-8 without acknowledging", () =>
+  it("rejects invalid UTF-8 without accepting the handoff", () =>
     refusesBody(
       HttpServerResponse.uint8Array(
         Buffer.concat([

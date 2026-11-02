@@ -4,6 +4,7 @@ import { live as it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect } from "vitest";
+
 import {
   identifier,
   issueTestCard,
@@ -13,16 +14,31 @@ import {
   ClientRepresentationError,
   encodeCanonical,
 } from "../../encoding/canonical-json.js";
-import { AgentCard, type VerifiedAgentCard } from "../../identity/cards.js";
+import {
+  AgentIdentityCard,
+  AgentName,
+  type VerifiedAgentIdentityCard,
+} from "../../identity/agent.js";
 import { SealedBody } from "../../identity/envelope/sealed-body.js";
 import { SignedMessage } from "../../identity/envelope/signed-message.js";
-import { AgentName } from "../../identity/identifiers.js";
 import {
+  AgentPublicKey,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
-  Ed25519PublicKey,
 } from "../../identity/keys.js";
 import { WIRE_VERSION, WireVersions } from "../../identity/wire-version.js";
-import { RouterInstanceId } from "../router/api/contract.js";
+import { RouterInstanceId } from "../router/api.js";
+import {
+  deriveConversationId,
+  deriveEvidenceEnvelopeId,
+  hashAction,
+  hashAnchor,
+  hashMessageIntent,
+  hashRecord,
+  mintMsgId,
+  signEvidenceMessage,
+  signOuterEvidence,
+  signOuterPacket,
+} from "./encoding.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -32,26 +48,22 @@ import {
   type CatchUpRequest,
   type CertifiedRecord,
   type CompletedReanchor,
-  deriveConversationId,
-  deriveEvidenceEnvelopeId,
   DirectPacket,
   EvidenceStatement,
-  hashAction,
-  hashAnchor,
-  hashMessageIntent,
-  hashRecord,
   type InitialAnchorBody,
-  maximumContentBytes,
-  maximumMembers,
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
-  mintMsgId,
-  quorumThreshold,
   type ReanchorBody,
   RecordCore as RecordCoreSchema,
-  signEvidenceMessage,
-  signOuterEvidence,
-  signOuterPacket,
+} from "./schemas.js";
+import {
+  Content,
+  type Content as ContentValue,
+  maximumContentBytes,
+  maximumMembers,
+} from "./values.js";
+import {
+  quorumThreshold,
   type VerifiedMembership,
   verifyActionCertifiedRecord,
   verifyActionProposal,
@@ -61,14 +73,13 @@ import {
   verifyDeliveredEvidence,
   verifyMembershipDescriptor,
   verifyStableEvidence,
-} from "./index.js";
-import { Content, type Content as ContentValue } from "./values.js";
+} from "./verification.js";
 
 const maximumIdentityBodyBytes = 262_144;
 const maximumIdentityRecipients = 128;
 
 interface IdentityFixture {
-  readonly card: VerifiedAgentCard;
+  readonly card: VerifiedAgentIdentityCard;
   readonly authority: AgentSigningAuthorityValue;
 }
 
@@ -121,9 +132,9 @@ function at<Value>(values: readonly Value[], index: number): Value {
 const makeProtocolFixture = (memberCount: number) =>
   Effect.gen(function* () {
     const registryKeys = generateKeyPairSync("ed25519");
-    const registrySignerPublicKey = yield* Schema.decodeUnknown(
-      Ed25519PublicKey,
-    )(registryKeys.publicKey.export({ format: "jwk" }));
+    const registrySignerPublicKey = yield* Schema.decodeUnknown(AgentPublicKey)(
+      registryKeys.publicKey.export({ format: "jwk" }),
+    );
     const identities = yield* Effect.forEach(
       Array.from(Array(memberCount).keys(), (index) => index + 1),
       (byte) =>
@@ -141,7 +152,7 @@ const makeProtocolFixture = (memberCount: number) =>
     );
     const encodedCards = yield* Effect.forEach(
       identities,
-      ({ card }) => Schema.encode(AgentCard)(card),
+      ({ card }) => Schema.encode(AgentIdentityCard)(card),
       { concurrency: 1 },
     );
     const memberAgentIds = asAtLeastTwo(
@@ -178,7 +189,7 @@ const signActionEvidence = (fixture: ProtocolFixture, actionHash: ActionHash) =>
           signerAgentId: card.agentId,
           actionHash,
         },
-        agentCard: card,
+        identityCard: card,
         signingAuthority: authority,
       }),
     { concurrency: 1 },
@@ -200,7 +211,7 @@ const signDurabilityEvidence = (
           membershipHash: fixture.membership.hash,
           recordHash,
         },
-        agentCard: card,
+        identityCard: card,
         signingAuthority: authority,
       }),
     { concurrency: 1 },
@@ -377,7 +388,7 @@ const voteReanchor = (fixture: ProtocolFixture, selected: RecordFixture) =>
             anchorHash,
             reanchor,
           },
-          agentCard: card,
+          identityCard: card,
           signingAuthority: authority,
         }),
       { concurrency: 1 },
@@ -720,7 +731,7 @@ const verifiesReanchorCatchUpBindings = () =>
         itemHash: completed.anchorHash,
         hasMore: false,
       },
-      agentCard: responder.card,
+      identityCard: responder.card,
       signingAuthority: responder.authority,
     });
     const page: CatchUpPage = {
@@ -785,7 +796,7 @@ const catchesUpFirstMessageFirst = () =>
           itemHash: item.actionCertifiedRecord.recordHash,
           hasMore: false,
         },
-        agentCard: responder.card,
+        identityCard: responder.card,
         signingAuthority: responder.authority,
       }).pipe(
         Effect.flatMap((attestation) =>
@@ -886,7 +897,7 @@ const buildMaximumArtifact = Effect.gen(function* () {
       itemHash: message.actionCertifiedRecord.recordHash,
       hasMore: false,
     },
-    agentCard: responder.card,
+    identityCard: responder.card,
     signingAuthority: responder.authority,
   });
   const page: CatchUpPage = {
@@ -931,7 +942,7 @@ const verifiesHistoryOnlyCatchUpItem = () =>
     const outer = yield* signOuterPacket({
       packet: page,
       membership: fixture.membership,
-      agentCard: responder.card,
+      identityCard: responder.card,
       signingAuthority: responder.authority,
     });
     const encodedOuter = yield* Schema.encode(SignedMessage)(outer);
@@ -965,7 +976,7 @@ const sealsMaximumPageInsideIdentityLimits = () =>
     const outer = yield* signOuterPacket({
       packet: page,
       membership: fixture.membership,
-      agentCard: responder.card,
+      identityCard: responder.card,
       signingAuthority: responder.authority,
     });
 
@@ -1001,7 +1012,7 @@ const relaysMaximumAttestationInsideIdentityLimits = () =>
     const relayedEvidence = yield* signOuterEvidence({
       evidence: attestation,
       membership: fixture.membership,
-      agentCard: responder.card,
+      identityCard: responder.card,
       signingAuthority: responder.authority,
     });
 
@@ -1042,7 +1053,7 @@ const rejectsSubstitutedEvidenceStatements = () =>
       hasMore: false,
     };
     const evidence = yield* SignedMessage.sign({
-      agentCard: signer.card,
+      identityCard: signer.card,
       signingAuthority: signer.authority,
       recipientAgentIds: new Set([signer.card.agentId]),
       envelopeId: yield* deriveEvidenceEnvelopeId(statement),
@@ -1065,7 +1076,7 @@ const rejectsSubstitutedEvidenceStatements = () =>
     const outer = yield* signOuterEvidence({
       evidence,
       membership: fixture.membership,
-      agentCard: signer.card,
+      identityCard: signer.card,
       signingAuthority: signer.authority,
     });
     yield* expectRepresentationFailure(
@@ -1078,7 +1089,7 @@ const rejectsSubstitutedEvidenceStatements = () =>
     );
     const matching = yield* signEvidenceMessage({
       statement,
-      agentCard: signer.card,
+      identityCard: signer.card,
       signingAuthority: signer.authority,
     });
     const verified = yield* verifyStableEvidence({

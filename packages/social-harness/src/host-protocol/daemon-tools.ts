@@ -1,18 +1,26 @@
 /** @file Private MCP schemas for daemon management and history reads: exact requests, and results a reader decodes additively. */
 
 import { Schema } from "effect";
-import { Message, MessageReference } from "../communication/message.js";
-import { AgentAddress, GroupAddress } from "../communication/records/index.js";
-import { DeliveryToken } from "../communication/store/types.js";
-import { exactParseOptions, exactStruct } from "../encoding/exact.js";
+import {
+  Message,
+  MessageReference,
+  PaginatedRequest,
+  PaginatedResult,
+} from "../communication/index.js";
+import { AgentAddress, GroupAddress } from "../communication/records/values.js";
+import { exactStruct } from "../encoding/exact.js";
 import { compareAscii, isStrictlyAscending } from "../encoding/identifier.js";
-import { AgentCard, AgentView } from "../identity/cards.js";
-import { AgentName, PrincipalId } from "../identity/identifiers.js";
-import { OperationId } from "../identity/registry/contract.js";
-import { localGuidanceSchema } from "./advice.js";
-import { InboundItem } from "./items.js";
+import { LocalGuidance, PermittedItem } from "../firewall/service.js";
+import { DeliveryToken } from "../harness/inbox.js";
+import {
+  AgentIdentityCard,
+  AgentName,
+  PrincipalId,
+} from "../identity/agent.js";
+import { RegistrationId } from "../identity/registry/contract.js";
+const savedItemSchema = Schema.typeSchema(PermittedItem);
 
-const encodedAgentCard = Schema.encodedSchema(AgentCard);
+const encodedAgentCard = Schema.encodedBoundSchema(AgentIdentityCard);
 
 const messageAddress = Schema.Union(AgentAddress, GroupAddress).annotations({
   identifier: "MessageAddress",
@@ -22,30 +30,30 @@ function addressesAreOrdered(addresses: readonly string[]): boolean {
   return isStrictlyAscending(addresses, compareAscii);
 }
 
-const historyContinuation = Schema.NonEmptyString;
-
 const historyRecord = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
-    message: Message,
+    message: Schema.typeSchema(Message),
   }),
   Schema.Struct({
     kind: Schema.Literal("received"),
+    address: messageAddress,
     message: MessageReference,
-    item: InboundItem,
-    guidance: Schema.optionalWith(localGuidanceSchema, { exact: true }),
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
   Schema.Struct({
     kind: Schema.Literal("result"),
+    address: messageAddress,
     deliveryToken: DeliveryToken,
-    item: InboundItem,
-    guidance: Schema.optionalWith(localGuidanceSchema, { exact: true }),
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );
 
 /** Closed local registration input; configured secrets are never tool fields. */
 export const managementRegisterRequestSchema = exactStruct({
-  operationId: Schema.propertySignature(OperationId).annotations({
+  operationId: Schema.propertySignature(RegistrationId).annotations({
     description:
       "Registration retry identity (opn_ plus canonical base64url for 16 bytes); reuse it for the same registration attempt.",
   }),
@@ -60,71 +68,39 @@ export const managementRegisterRequestSchema = exactStruct({
 });
 
 /** Registry domain outcomes returned by daemon registration. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects this result to JSON Schema; readers decode it additively with this schema.
-export const managementRegisterResultSchema = Schema.Union(
-  Schema.Struct({
-    kind: Schema.Literal("registered"),
-    agentCard: encodedAgentCard,
-    agent: AgentView,
-  }),
-  Schema.Struct({ kind: Schema.Literal("name_taken") }),
-  Schema.Struct({ kind: Schema.Literal("key_already_registered") }),
-  Schema.Struct({ kind: Schema.Literal("idempotency_conflict") }),
-);
 
-/** The daemon lifecycle visible to the loopback operator. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects this result to JSON Schema; readers decode it additively with this schema.
+export const managementRegisterResultSchema = encodedAgentCard;
+
+/** Saved identity is visible while communication activation proceeds. */
 export const managementStatusResultSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("unregistered") }),
   Schema.Struct({
-    kind: Schema.Literal("active"),
-    agentCard: encodedAgentCard,
-    agent: AgentView,
+    kind: Schema.Literal("registered"),
+    identityCard: encodedAgentCard,
   }),
 );
 
 /** Canonically ordered local-conversation page selector. */
 export const managementSearchConversationsRequestSchema = exactStruct({
-  afterAddress: Schema.optional(messageAddress).annotations({
-    description:
-      "Exclusive canonical address cursor from the previous page; omit to start at the first local conversation.",
-  }),
+  ...PaginatedRequest.fields,
 });
 
-/** Canonically ordered local-conversation address page. */
+/** At most fifty canonical addresses and an opaque position for the next page. */
 export const managementSearchConversationsResultSchema = Schema.Struct({
-  kind: Schema.Literal("page"),
   addresses: Schema.Array(messageAddress).pipe(Schema.maxItems(50)),
-  hasMore: Schema.Boolean,
-}).pipe(
-  Schema.filter(
-    (page) =>
-      addressesAreOrdered(page.addresses) &&
-      (!page.hasMore || page.addresses.length > 0),
-  ),
-);
+  ...PaginatedResult.fields,
+}).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
-/** Starts a fixed-head history read or resumes its saved position. */
-export const managementReadConversationRequestSchema = Schema.Union(
-  exactStruct({
-    address: Schema.propertySignature(messageAddress).annotations({
-      description: "Conversation address returned by search_conversations.",
-    }),
-  }),
-  exactStruct({
-    continuation: Schema.propertySignature(historyContinuation).annotations({
-      description:
-        "Continuation from the previous history page; reusable while that history is retained, including after restart.",
-    }),
-  }),
-).annotations({ parseOptions: exactParseOptions });
+/** Keeps one conversation address while following its opaque history cursor. */
+export const managementReadConversationRequestSchema = exactStruct({
+  address: messageAddress,
+  ...PaginatedRequest.fields,
+});
 
-/** Saved permitted messages and locally authored content for one conversation. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects this result to JSON Schema; readers decode it additively with this schema.
+/** Saved messages and results at the traversal's fixed history boundaries. */
 export const managementReadConversationResultSchema = Schema.Struct({
-  kind: Schema.Literal("page"),
   records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
-  continuation: Schema.NullOr(historyContinuation),
+  ...PaginatedResult.fields,
 });
 
 /** Decoded local registration request. */

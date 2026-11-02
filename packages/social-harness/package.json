@@ -33,8 +33,8 @@
       "import": "./dist/index.js"
     },
     "./service": {
-      "types": "./dist/daemon/index.d.ts",
-      "import": "./dist/daemon/index.js"
+      "types": "./dist/harness/index.d.ts",
+      "import": "./dist/harness/index.js"
     },
     "./test": {
       "sharness-test": {
@@ -134,7 +134,9 @@
     "structured-headers": "catalog:",
     "yaml": "catalog:",
     "@effect/sql": "catalog:",
-    "@effect/sql-sqlite-node": "catalog:"
+    "@effect/sql-sqlite-node": "catalog:",
+    "@effect/rpc": "catalog:",
+    "find-my-way-ts": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -5,17 +5,17 @@
 
 import { Effect, Encoding, Redacted, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
-import type { VerifiedAgentCard } from "../../cards.js";
 import {
-  AgentCardIssuedAt,
+  AgentIdentityCardIssuedAt,
   makeVerifiedCard,
 } from "../../__tests__/agent-card-fixtures.js";
-import { AgentId, AgentName, PrincipalId } from "../../identifiers.js";
 import {
-  AgentSigningAuthority,
-  type AgentSigningAuthority as AgentSigningAuthorityValue,
-  type Ed25519PublicKey,
-} from "../../keys.js";
+  AgentId,
+  AgentName,
+  PrincipalId,
+  type VerifiedAgentIdentityCard,
+} from "../../agent.js";
+import { type AgentPublicKey, AgentSigningAuthority } from "../../keys.js";
 import { SealedBody } from "../sealed-body.js";
 import {
   EnvelopeId,
@@ -25,7 +25,7 @@ import {
 
 /**
  * Building fixtures dominates these tests: every group member costs an
- * Ed25519 key, two PKCS#8 imports, and an issued AgentCard, and the largest
+ * Ed25519 key, two PKCS#8 imports, and an issued AgentIdentityCard, and the largest
  * groups have 129 members and seal about 256 KB to 128 recipients. Loaded CI
  * hosts need more than the default five seconds.
  */
@@ -37,10 +37,10 @@ export const FIXTURE_CONCURRENCY = 8;
 /** A short text plaintext that the tests seal unless they need other bytes. */
 export const plaintext = new TextEncoder().encode("sealed outer body");
 
-/** A registered agent: its verified AgentCard and its signing authority. */
+/** A registered agent: its verified AgentIdentityCard and its signing authority. */
 export interface Member {
-  readonly agentCard: VerifiedAgentCard;
-  readonly authority: AgentSigningAuthorityValue;
+  readonly identityCard: VerifiedAgentIdentityCard;
+  readonly authority: AgentSigningAuthority;
 }
 
 const identifier = (prefix: string, byte: number): string =>
@@ -57,7 +57,7 @@ const makeAuthority = () =>
   );
 
 /**
- * Issues an AgentCard whose identifiers all repeat `byte`, so two cards with
+ * Issues an AgentIdentityCard whose identifiers all repeat `byte`, so two cards with
  * the same byte share an AgentId.
  *
  * @param registrySigningAuthority Registry that signs the card.
@@ -66,9 +66,9 @@ const makeAuthority = () =>
  * @returns The verified card.
  */
 export const issueCard = (
-  registrySigningAuthority: AgentSigningAuthorityValue,
+  registrySigningAuthority: AgentSigningAuthority,
   byte: number,
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ) =>
   makeVerifiedCard({
     agentId: Schema.decodeUnknownSync(AgentId)(identifier("agt_", byte)),
@@ -77,28 +77,28 @@ export const issueCard = (
     ),
     agentName: Schema.decodeUnknownSync(AgentName)(`member-${byte}`),
     publicKey,
-    issuedAt: Schema.decodeUnknownSync(AgentCardIssuedAt)(
+    issuedAt: Schema.decodeUnknownSync(AgentIdentityCardIssuedAt)(
       "2026-10-05T12:00:00Z",
     ),
     registrySigningAuthority,
   });
 
 /**
- * Generates a fresh authority and has the Registry issue its AgentCard, with
+ * Generates a fresh authority and has the Registry issue its AgentIdentityCard, with
  * `byte` repeated through the card's identifiers.
  */
 export const makeMember = (
-  registrySigningAuthority: AgentSigningAuthorityValue,
+  registrySigningAuthority: AgentSigningAuthority,
   byte: number,
 ) =>
   Effect.gen(function* () {
     const authority = yield* makeAuthority();
-    const agentCard = yield* issueCard(
+    const identityCard = yield* issueCard(
       registrySigningAuthority,
       byte,
       AgentSigningAuthority.publicKey(authority),
     );
-    const member: Member = { agentCard, authority };
+    const member: Member = { identityCard, authority };
     return member;
   }).pipe(Effect.withSpan("makeMember"));
 
@@ -153,8 +153,8 @@ export const sealFrom = (
   envelopeIdByte = 1,
 ) =>
   SealedBody.seal({
-    senderAgentId: sender.agentCard.agentId,
-    recipientAgentCards: recipients.map((member) => member.agentCard),
+    senderAgentId: sender.identityCard.agentId,
+    recipientIdentityCards: recipients.map((member) => member.identityCard),
     envelopeId: envelopeIdOf(envelopeIdByte),
     plaintext: bytes,
   });
@@ -175,10 +175,10 @@ export const signBody = (
   envelopeIdByte = 1,
 ) =>
   SignedMessage.sign({
-    agentCard: signer.agentCard,
+    identityCard: signer.identityCard,
     signingAuthority: signer.authority,
     recipientAgentIds: new Set(
-      recipients.map((member) => member.agentCard.agentId),
+      recipients.map((member) => member.identityCard.agentId),
     ),
     envelopeId: envelopeIdOf(envelopeIdByte),
     body,
@@ -193,7 +193,7 @@ export const signBody = (
  */
 export const openAs = (member: Member, signedMessage: VerifiedSignedMessage) =>
   SealedBody.open({
-    agentCard: member.agentCard,
+    identityCard: member.identityCard,
     signingAuthority: member.authority,
     signedMessage,
   });

@@ -180,7 +180,7 @@ export function clientManifest(): string {
     },
     exports: {
       ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
-      "./service": { import: "./dist/daemon/run.js" },
+      "./service": { import: "./dist/harness/run.js" },
       "./test": { "sharness-test": { import: "./dist/test.js" } },
       "./internal": {
         "sharness-internal": {
@@ -236,7 +236,7 @@ function fixtureFiles(
     "packages/social-harness/src/only-sync.ts": "export {};",
     "packages/social-harness/src/only-default.ts": "export {};",
     "packages/social-harness/src/test.ts": "export const testOnly = 1;\n",
-    "packages/social-harness/src/daemon/run.ts": "export const daemon = 1;\n",
+    "packages/social-harness/src/harness/run.ts": "export const daemon = 1;\n",
   };
 }
 

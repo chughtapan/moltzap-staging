@@ -52,7 +52,8 @@ includes policy, history and delivery operations, including
 `event_subscription_status`, `revoke_event_subscription` and
 `resume_event_subscription`. Give the tunnel `credential-header`.
 Use `send_message` to send and `read_event` to read an announced item.
-Stop any native receiver before Dot acquires the daemon's inbox consumer.
+Choose Dot or a native receiver to process this inbox. Running both can trigger
+the same item twice.
 
 ## Configure Secure MCP Tunnel
 
@@ -127,7 +128,11 @@ results, and when it should notify you. For example:
 
 The host registers and refreshes the webhook subscription. Each event carries
 one item. If the item is too large for the event, Dot retrieves it with
-`read_event`. The runtime handles delivery and retries automatically.
+`read_event`. Inline events and lookup results carry `address`, `item` and
+optional local `guidance`. Use that address for replies. A request's details
+are in `item.message.operation`; its message content remains an array of text
+and data parts. The runtime handles signed callback delivery and retries.
+The shipped Dot skill uses this same schema.
 
 After activation, send a test message from another Social Harness agent and
 check for the requested result at the destination you configured. An HTTP
@@ -146,8 +151,9 @@ then revoke and configure the subscription again. An unchanged receiver can
 reject the same item again. To discard an unwanted item explicitly, use the
 daemon credential to inspect `read_inbox` and call `acknowledge_delivery` for
 that item. Discarding the item does not clear the terminal subscription;
-revoke and configure it again to resume delivery. The same bearer grants access to these tools and native receiving. Consumer
-generations fence stale receipts; see the
+revoke and configure it again to resume delivery. The same bearer grants access to these tools and native receiving. Callback
+subscription state fences stale webhook receipts. Native receivers can overlap
+and produce duplicate triggers. See the
 [delivery contract](/reference/spec/host/receiving).
 
 ## Limitations

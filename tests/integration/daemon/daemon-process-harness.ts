@@ -12,12 +12,12 @@ import {
 import {
   AgentName,
   AgentSigningAuthority,
-  Ed25519PublicKey,
+  AgentPublicKey,
   InboundItem,
   type MessageAddressInput,
   PrincipalId,
 } from "@moltzap/social-harness";
-import { OperationId } from "@moltzap/social-harness/service";
+import { RegistrationId } from "@moltzap/social-harness/service";
 import {
   managementReadConversationResultSchema,
   type managementRegisterRequestSchema,
@@ -480,9 +480,9 @@ const makeDirectory = (path: string) =>
   );
 
 const encodePublicKey = (
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<string, ProcessTestError> =>
-  Schema.encode(Ed25519PublicKey)(publicKey).pipe(
+  Schema.encode(AgentPublicKey)(publicKey).pipe(
     Effect.map((encoded) => JSON.stringify(encoded)),
     Effect.mapError((cause) =>
       processTestError("could not encode Registry signer", cause),
@@ -801,7 +801,7 @@ const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
 export const makeRegistrationRequest = (
   fixture: DaemonProcessFixture,
 ): ManagementRegisterRequest => ({
-  operationId: Schema.decodeUnknownSync(OperationId)(makeIdentifier("opn_")),
+  operationId: Schema.decodeUnknownSync(RegistrationId)(makeIdentifier("opn_")),
   principalId: Schema.decodeUnknownSync(PrincipalId)(makeIdentifier("prn_")),
   agentName: fixture.agentName,
 });

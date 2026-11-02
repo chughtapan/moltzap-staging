@@ -10,7 +10,7 @@ import {
   GroupAddress,
   MessageAddressInput,
   MsgId,
-  SendInput,
+  SendRequest,
 } from "./index.js";
 
 const canonicalGroup32 = `group:${Array.from(
@@ -126,12 +126,12 @@ describe("public content", () => {
   });
 });
 
-// @agent-code-guard/regression-only: SendInput is a closed operation boundary with no host retry identity.
+// @agent-code-guard/regression-only: SendRequest is a closed operation boundary with no host retry identity.
 describe("public send input", () => {
   it("decodes a send without a collective operation", () => {
     const input = { to: "agent:bob-agent", text: "Hello" };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("decodes an explicit multicast operation", () => {
@@ -141,18 +141,18 @@ describe("public send input", () => {
       collective: { op: "multicast" },
     };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("decodes a collective operation that omits op", () => {
     const input = { to: "agent:bob-agent", text: "Hello", collective: {} };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("rejects an operation this endpoint does not define", () => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         to: "agent:bob-agent",
         text: "Hello",
         collective: { op: "broadcast" },
@@ -181,7 +181,7 @@ describe("public send input", () => {
       },
     },
   ])("rejects an operation with $case", ({ input }) => {
-    expect(decodingFails(SendInput, input)).toBe(true);
+    expect(decodingFails(SendRequest, input)).toBe(true);
   });
 });
 
@@ -204,7 +204,7 @@ describe("public gather input", () => {
       collective: { op: "gather", deadline: 300, requestedSchema: slotSchema },
     };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("accepts a gather deadline of up to 30 days", () => {
@@ -218,7 +218,7 @@ describe("public gather input", () => {
       },
     };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it.each([
@@ -227,7 +227,7 @@ describe("public gather input", () => {
     { case: "beyond 30 days", deadline: 2_592_001 },
   ])("rejects a $case gather deadline", ({ deadline }) => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         to: "agent:bob-agent",
         text: "Which day?",
         collective: { op: "gather", deadline, requestedSchema: slotSchema },
@@ -237,7 +237,7 @@ describe("public gather input", () => {
 
   it("rejects a gather without a requested schema", () => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         to: "agent:bob-agent",
         text: "Which day?",
         collective: { op: "gather", deadline: 60 },
@@ -259,12 +259,12 @@ describe("public all_gather input", () => {
       },
     };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("rejects an all_gather deadline beyond 30 days", () => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         to: "group:bob-agent,carol-agent",
         text: "Which day?",
         collective: {
@@ -285,7 +285,7 @@ describe("public collective response input", () => {
       collectiveResponse: { action: "accept", content: { slot: "mon" } },
     };
 
-    expect(decodingFails(SendInput, input)).toBe(true);
+    expect(decodingFails(SendRequest, input)).toBe(true);
   });
 
   it("decodes a response that names the request it answers", () => {
@@ -294,12 +294,12 @@ describe("public collective response input", () => {
       collectiveResponse: { operationId: collectiveId, action: "decline" },
     };
 
-    expect(Schema.decodeUnknownSync(SendInput)(input)).toEqual(input);
+    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
   it("rejects a response without a conversation", () => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         collectiveResponse: { action: "decline" },
       }),
     ).toBe(true);
@@ -307,7 +307,7 @@ describe("public collective response input", () => {
 
   it("rejects content on a decline", () => {
     expect(
-      decodingFails(SendInput, {
+      decodingFails(SendRequest, {
         to: "agent:bob-agent",
         collectiveResponse: {
           operationId: collectiveId,

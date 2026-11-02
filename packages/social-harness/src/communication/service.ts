@@ -1,0 +1,700 @@
+/** @file Registration activates one scoped communication engine and its supervised Router workers. */
+
+import { SqlClient } from "@effect/sql/SqlClient";
+import {
+  Context,
+  Deferred,
+  Duration,
+  Effect,
+  FiberSet,
+  Layer,
+  Option,
+  type ParseResult,
+  Queue,
+  Schedule,
+  Schema,
+  Scope,
+} from "effect";
+import { randomBytes } from "node:crypto";
+import type {
+  AgentPublicKey,
+  AgentSigningAuthority,
+} from "../identity/keys.js";
+import type { CollectiveId, RequestError } from "./requests/contracts.js";
+import {
+  type ClientRepresentationError,
+  encodeCanonical,
+  sameBytes,
+} from "../encoding/canonical-json.js";
+import { exactStruct } from "../encoding/exact.js";
+import {
+  agentCardOf,
+  AgentIdentityCard,
+  type AgentName,
+  type VerifiedAgentIdentityCard,
+} from "../identity/agent.js";
+import { Registry } from "../identity/registry/index.js";
+import {
+  isTerminalSendFailure,
+  SendError,
+  sendFailureReasons,
+} from "./conversations/errors.js";
+import { verifyStoredMembership } from "./conversations/log.js";
+import {
+  type EndpointEngine,
+  type EngineInitializationError,
+  type EngineOutboundError,
+  makeEndpointEngine,
+} from "./conversations/protocol.js";
+import { CommunicationError } from "./errors.js";
+import { getConversation, listConversations, readHistory } from "./history.js";
+import {
+  Message,
+  messageInterpretation,
+  messageMembers,
+  type PaginatedRequest,
+  type PaginatedResult,
+} from "./message.js";
+import {
+  type DecodedOuterBody,
+  decodeOuterBody,
+  deriveConversationId,
+  type OuterBodyReader,
+} from "./records/encoding.js";
+import { compareAgentIds, type MessageReference } from "./records/values.js";
+import {
+  ReceivedRequest,
+  Request,
+  RequestResult,
+  ResultSources,
+} from "./requests/index.js";
+import { makeRequests } from "./requests/service.js";
+import { Router } from "./router/api.js";
+import {
+  makeRouterWorker,
+  type RouterWorker,
+  type RouterWorkerInput,
+  RouterWorkerPayloadInvalidError,
+} from "./router/connection.js";
+import {
+  type EndpointStoreError,
+  initializeCommunication,
+} from "./store/database.js";
+import {
+  failMessage,
+  readAcceptedMessage,
+  readUnpreparedMessages,
+  acceptMessage as storedAcceptMessage,
+} from "./store/messages.js";
+import { readMemberships } from "./store/reads.js";
+
+/** All conversation members, in ascending agent-name order. */
+export type Conversation = readonly [
+  Message["author"],
+  Message["author"],
+  ...Array<Message["author"]>,
+];
+/** Omit cursor to begin a live participant traversal. */
+export interface ConversationQuery extends PaginatedRequest {}
+/** A missing nextCursor ends the live traversal. */
+export interface ConversationPage extends PaginatedResult {
+  readonly conversations: readonly Conversation[];
+}
+/** Selects a paged forward traversal or one bounded recent window. */
+export type HistoryQuery =
+  | (PaginatedRequest & {
+      readonly members: Conversation;
+      readonly order?: "oldest";
+      readonly afterMessage?: MessageReference;
+    })
+  | {
+      readonly members: Conversation;
+      readonly order: "newest";
+      readonly limit: number;
+      readonly beforeMessage?: MessageReference;
+    };
+/** Messages retain conversation order and count only their encoded value bytes. */
+export interface HistoryPage extends PaginatedResult {
+  readonly entries: ReadonlyArray<{
+    readonly message: Message;
+    readonly messageBytes: number;
+  }>;
+  readonly earlierMessagesOmitted: boolean;
+  readonly pendingOutgoing: boolean;
+}
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Named Effect schemas and their decoded values share one public contract. */
+/** Encodes the fixed semantic work that Communication accepts. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
+export const Outgoing = Schema.Union(Message, Request);
+/** Final outgoing work is fixed before policy assessment. */
+export type Outgoing = typeof Outgoing.Type;
+/** The one handoff grammar preserves Message encoding at storage boundaries. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
+export const Incoming = Schema.Union(
+  exactStruct({ kind: Schema.Literal("message"), message: Message }),
+  exactStruct({ kind: Schema.Literal("request"), message: ReceivedRequest }),
+  exactStruct({
+    kind: Schema.Literal("result"),
+    result: RequestResult,
+    sources: ResultSources,
+  }),
+  exactStruct({
+    kind: Schema.Literal("request-failed"),
+    request: Request,
+    error: Schema.String,
+  }),
+);
+/** Complete incoming work precedes the local policy decision and readable projection. */
+export type Incoming = typeof Incoming.Type;
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
+
+/** Owns durable message delivery, request completion and verified history. */
+export class Communication extends Context.Tag("SocialHarness/Communication")<
+  Communication,
+  {
+    readonly send: (
+      value: Outgoing,
+    ) => Effect.Effect<void, CommunicationError | RequestError>;
+    readonly getRequest: (
+      operationId: CollectiveId,
+    ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
+    readonly waitForMessage: (
+      reference: MessageReference,
+    ) => Effect.Effect<Message, CommunicationError>;
+    readonly consume: <E, R>(
+      handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
+    ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
+    readonly getConversation: (
+      names: readonly AgentName[],
+    ) => Effect.Effect<Conversation | undefined, CommunicationError>;
+    readonly listConversations: (
+      query?: ConversationQuery,
+    ) => Effect.Effect<ConversationPage, CommunicationError>;
+    readonly readHistory: (
+      query: HistoryQuery,
+    ) => Effect.Effect<HistoryPage, CommunicationError>;
+  }
+>() {
+  /** Resources and accepted background work belong to the layer's scope. */
+  static layer(settings: CommunicationSettings) {
+    return Layer.scoped(Communication, makeCommunicationLayer(settings));
+  }
+}
+
+/** Signing and Registry authority belong to the one configured local agent. */
+export interface CommunicationSettings {
+  readonly identityCard: VerifiedAgentIdentityCard;
+  readonly maximumHistoryRecords?: number;
+  readonly signingAuthority: AgentSigningAuthority;
+  readonly registrySignerPublicKey: AgentPublicKey;
+}
+
+interface Environment {
+  readonly settings: CommunicationSettings;
+  readonly sql: SqlClient;
+  readonly registry: Context.Tag.Service<typeof Registry>;
+  readonly router: Context.Tag.Service<typeof Router>;
+  readonly session: string;
+  readonly failure: Deferred.Deferred<never, CommunicationError>;
+  readonly scope: Scope.Scope;
+  readonly ready: Deferred.Deferred<EndpointEngine>;
+  readonly wake: Queue.Queue<undefined>;
+  readonly consumer: Effect.Semaphore;
+  readonly faults: Deferred.Deferred<never, EndpointStoreError>;
+}
+
+/** Construction captures one registered identity and owns all worker resources. */
+function makeCommunicationLayer(settings: CommunicationSettings) {
+  return Effect.gen(function* () {
+    yield* initializeCommunication(settings.identityCard).pipe(
+      Effect.catchTag(
+        "EndpointStoreError",
+        () => new CommunicationError({ reason: "persistence-failed" }),
+      ),
+    );
+    const workers = yield* FiberSet.make<never, CommunicationError>();
+    const environment: Environment = {
+      settings,
+      sql: yield* SqlClient,
+      registry: yield* Registry,
+      router: yield* Router,
+      scope: yield* Scope.Scope,
+      ready: yield* Deferred.make<EndpointEngine>(),
+      wake: yield* Queue.sliding<undefined>(1),
+      faults: yield* Deferred.make<never, EndpointStoreError>(),
+      failure: yield* Deferred.make<never, CommunicationError>(),
+      consumer: yield* Effect.makeSemaphore(1),
+      session: randomBytes(16).toString("base64url"),
+    };
+    yield* acquireCommunication(environment, settings.identityCard, workers);
+    const provideSql = Effect.provideService(SqlClient, environment.sql);
+    const requests = yield* makeRequests({
+      self: agentCardOf(settings.identityCard),
+      acceptMessage: (message) =>
+        acceptMessage(environment, message).pipe(provideSql),
+      waitForMessage: (reference) =>
+        waitForMessage(environment, reference).pipe(provideSql),
+    });
+    yield* supervise(workers, Deferred.await(environment.faults), environment);
+    yield* supervise(
+      workers,
+      prepareAcceptedMessages(environment),
+      environment,
+    );
+    const capture = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        provideSql,
+        Effect.raceFirst(Deferred.await(environment.failure)),
+      );
+    return {
+      send: (value) => capture(acceptOutgoing(environment, requests, value)),
+      getRequest: (operationId) => capture(requests.getRequest(operationId)),
+      waitForMessage: (reference) =>
+        capture(waitForMessage(environment, reference)),
+      consume: (handle) =>
+        environment.consumer.withPermits(1)(
+          capture(consumeIncoming(environment, requests, handle)).pipe(
+            Effect.raceFirst(requests.failed),
+          ),
+        ),
+      getConversation: (names) =>
+        capture(
+          getConversation(
+            names,
+            settings.identityCard,
+            settings.registrySignerPublicKey,
+          ),
+        ),
+      listConversations: (query = {}) =>
+        capture(
+          listConversations(
+            query,
+            settings.identityCard,
+            settings.registrySignerPublicKey,
+            environment.session,
+          ),
+        ),
+      readHistory: (query) =>
+        capture(
+          readHistory(query, {
+            local: settings.identityCard,
+            signer: settings.registrySignerPublicKey,
+            session: environment.session,
+            maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
+          }),
+        ),
+    } satisfies Context.Tag.Service<typeof Communication>;
+  }).pipe(
+    Effect.mapError(workerFailure),
+    Effect.withSpan("Communication.layer"),
+  );
+}
+
+type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
+
+function acceptOutgoing(
+  environment: Environment,
+  requests: Requests,
+  value: Outgoing,
+) {
+  if ("kind" in value) {
+    return requests.accept(value);
+  }
+  return Effect.gen(function* () {
+    const decoded = yield* messageInterpretation(value).pipe(
+      Effect.catchTag("CollectivePartInvalidError", () =>
+        Effect.succeed(Option.none()),
+      ),
+    );
+    return yield* Option.isSome(decoded) && decoded.value.kind === "response"
+      ? requests.answer({ ...value, operation: decoded.value })
+      : acceptMessage(environment, value);
+  });
+}
+
+function consumeIncoming<E, R>(
+  environment: Environment,
+  requests: Requests,
+  handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
+): Effect.Effect<never, CommunicationError | RequestError | E, R | SqlClient> {
+  return Effect.gen(function* () {
+    const engine = yield* Deferred.await(environment.ready);
+    while (true) {
+      const pending = yield* engine
+        .readPendingMessages()
+        .pipe(
+          Effect.catchTag(
+            "ListenError",
+            () => new CommunicationError({ reason: "persistence-failed" }),
+          ),
+        );
+      for (const delivery of pending) {
+        const classified = yield* requests.receive(delivery.message);
+        if (Option.isSome(classified)) {
+          const item = classified.value;
+          yield* handle(item);
+        }
+        yield* engine
+          .acknowledgeMessage(delivery.recordHash)
+          .pipe(
+            Effect.catchTag(
+              "DeliveryAcknowledgeError",
+              () => new CommunicationError({ reason: "persistence-failed" }),
+            ),
+          );
+      }
+      while (
+        yield* requests
+          .deliverNextResult((delivery) =>
+            delivery.item.kind === "result"
+              ? handle({ ...delivery.item, sources: delivery.sources })
+              : handle(delivery.item),
+          )
+          .pipe(
+            Effect.catchTag(
+              "EndpointStoreError",
+              () => new CommunicationError({ reason: "persistence-failed" }),
+            ),
+          )
+      ) {
+        continue;
+      }
+      yield* Queue.take(environment.wake).pipe(
+        Effect.timeoutOption("100 millis"),
+      );
+    }
+  });
+}
+
+function registeredCard(environment: Environment) {
+  return Effect.succeed(environment.settings.identityCard);
+}
+
+function acceptMessage(environment: Environment, message: Message) {
+  return Effect.gen(function* () {
+    const local = agentCardOf(yield* registeredCard(environment));
+    if (
+      message.author.agentId !== local.agentId ||
+      message.author.agentName !== local.agentName ||
+      message.author.principalId !== local.principalId
+    ) {
+      return yield* new CommunicationError({ reason: "membership-invalid" });
+    }
+    const ids = messageMembers(message)
+      .map((member) => member.agentId)
+      .sort(compareAgentIds);
+    const [first, second, ...rest] = ids;
+    if (first === undefined || second === undefined) {
+      return yield* new CommunicationError({ reason: "membership-invalid" });
+    }
+    const conversationId = yield* deriveConversationId([
+      first,
+      second,
+      ...rest,
+    ]);
+    yield* storedAcceptMessage({
+      authorAgentId: message.author.agentId,
+      msgId: message.msgId,
+      conversationId,
+      canonicalMessage: yield* encodeCanonical(Message, message),
+    });
+  }).pipe(
+    Effect.catchTag(
+      "ClientRepresentationError",
+      () => new CommunicationError({ reason: "content-invalid" }),
+    ),
+    Effect.catchTag(
+      "EndpointStoreError",
+      (error) =>
+        new CommunicationError({
+          reason:
+            error.reason === "conflict"
+              ? "message-conflict"
+              : "persistence-failed",
+        }),
+    ),
+  );
+}
+
+function waitForMessage(environment: Environment, reference: MessageReference) {
+  return Effect.gen(function* () {
+    const card = yield* registeredCard(environment);
+    if (reference.authorAgentId !== card.agentId) {
+      return yield* new CommunicationError({ reason: "unknown-message" });
+    }
+    while (true) {
+      const retained = yield* readAcceptedMessage(reference).pipe(
+        Effect.catchTag(
+          "EndpointStoreError",
+          () => new CommunicationError({ reason: "persistence-failed" }),
+        ),
+      );
+      if (retained === undefined) {
+        return yield* new CommunicationError({ reason: "unknown-message" });
+      }
+      if (retained.failure !== undefined) {
+        const reason = yield* Schema.decodeUnknown(
+          Schema.Literal(...sendFailureReasons),
+        )(retained.failure).pipe(
+          Effect.catchTag(
+            "ParseError",
+            () => new CommunicationError({ reason: "persistence-failed" }),
+          ),
+        );
+        return yield* sendFailure(new SendError({ reason }));
+      }
+      if (retained.completed) {
+        yield* Deferred.await(environment.ready);
+        return retained.message;
+      }
+      yield* Effect.sleep(Duration.millis(100));
+    }
+  });
+}
+
+function prepareAcceptedMessages(environment: Environment) {
+  return Effect.gen(function* () {
+    const engine = yield* Deferred.await(environment.ready);
+    for (const accepted of yield* readUnpreparedMessages()) {
+      const { message } = accepted;
+      yield* engine.prepareMessage(accepted).pipe(
+        Effect.catchTag("SendError", (error) =>
+          isTerminalSendFailure(error.reason)
+            ? failMessage(
+                {
+                  authorAgentId: message.author.agentId,
+                  msgId: message.msgId,
+                },
+                error.reason,
+              )
+            : Effect.void,
+        ),
+      );
+    }
+  }).pipe(
+    Effect.provideService(SqlClient, environment.sql),
+    Effect.repeat(Schedule.spaced(Duration.millis(200))),
+    Effect.zipRight(Effect.never),
+  );
+}
+
+function sendFailure(error: SendError) {
+  switch (error.reason) {
+    case "delivery-pending":
+      return new CommunicationError({ reason: "certification-unavailable" });
+    case "invalid-address":
+    case "unknown-agent":
+    case "not-registered":
+      return new CommunicationError({ reason: "membership-invalid" });
+    case "content-invalid":
+    case "membership-invalid":
+    case "version-mismatch":
+    case "certification-unavailable":
+    case "persistence-failed":
+    case "network-unavailable":
+    case "outcome-unknown":
+    case "message-conflict":
+      return new CommunicationError({ reason: error.reason });
+    default:
+      return error.reason satisfies never;
+  }
+}
+
+function acquireCommunication(
+  environment: Environment,
+  card: VerifiedAgentIdentityCard,
+  workers: FiberSet.FiberSet<never, CommunicationError>,
+) {
+  return Effect.gen(function* () {
+    const engineReady = yield* Deferred.make<EndpointEngine>();
+    const pending = Queue.offer(environment.wake, undefined).pipe(
+      Effect.asVoid,
+    );
+    const worker = yield* makeRouterWorker({
+      callerAgentId: card.agentId,
+      callerAgentCard: card,
+      signingAuthority: environment.settings.signingAuthority,
+      pinnedSenderCards: yield* pinnedSenderCards(environment, card),
+      callbacks: workerCallbacks(
+        {
+          identityCard: card,
+          signingAuthority: environment.settings.signingAuthority,
+        },
+        Deferred.await(engineReady),
+        pending,
+      ),
+    }).pipe(
+      Effect.provideService(SqlClient, environment.sql),
+      Effect.provideService(Registry, environment.registry),
+      Effect.provideService(Router, environment.router),
+    );
+    const engine = yield* makeEndpointEngine({
+      localAgentCard: card,
+      signingAuthority: environment.settings.signingAuthority,
+      registrySignerPublicKey: environment.settings.registrySignerPublicKey,
+      registry: environment.registry,
+      routerWorker: worker,
+      reportStorageFault: (error) =>
+        Deferred.fail(environment.faults, error).pipe(Effect.asVoid),
+    }).pipe(
+      Effect.provideService(SqlClient, environment.sql),
+      Scope.extend(environment.scope),
+    );
+    yield* Deferred.succeed(engineReady, engine);
+    yield* Deferred.succeed(environment.ready, engine);
+    yield* supervise(workers, worker.run, environment);
+    yield* supervise(workers, engine.runOutbound, environment);
+    yield* pending;
+  }).pipe(Scope.extend(environment.scope));
+}
+
+function workerCallbacks(
+  reader: OuterBodyReader,
+  engine: Effect.Effect<EndpointEngine>,
+  wake: Effect.Effect<void>,
+): RouterWorkerInput<DecodedOuterBody>["callbacks"] {
+  return {
+    pinSenderCard: () => engine.pipe(Effect.asVoid),
+    decodePayload: (message) =>
+      decodeOuterBody({ ...reader, message }).pipe(
+        Effect.catchTag(
+          "ClientRepresentationError",
+          () => new RouterWorkerPayloadInvalidError(),
+        ),
+      ),
+    acceptPayload: (ingress) =>
+      engine.pipe(
+        Effect.flatMap((active) => active.acceptRouterIngress(ingress)),
+        Effect.tap(() => wake),
+      ),
+    abandonVolatileFolds: (reason) =>
+      engine.pipe(
+        Effect.flatMap((active) => active.abandonVolatileFolds(reason)),
+      ),
+    recoverCertifiedHistory: (recovery) =>
+      engine.pipe(
+        Effect.flatMap((active) => active.recoverCertifiedHistory(recovery)),
+        Effect.tap(() => wake),
+      ),
+    reattached: () =>
+      engine.pipe(Effect.flatMap((active) => active.rearmCatchUp)),
+  };
+}
+
+function pinnedSenderCards(
+  environment: Environment,
+  local: VerifiedAgentIdentityCard,
+) {
+  return Effect.gen(function* () {
+    const memberships = yield* readMemberships().pipe(
+      Effect.provideService(SqlClient, environment.sql),
+    );
+    const cards = new Map([[local.agentId, local]]);
+    for (const stored of memberships) {
+      const membership = yield* verifyStoredMembership(
+        stored,
+        environment.settings.registrySignerPublicKey,
+      );
+      yield* Effect.forEach(
+        membership.members,
+        (card) => retainPinnedCard(cards, card),
+        { concurrency: 1, discard: true },
+      );
+    }
+    return [...cards.values()];
+  });
+}
+
+function retainPinnedCard(
+  cards: Map<VerifiedAgentIdentityCard["agentId"], VerifiedAgentIdentityCard>,
+  card: VerifiedAgentIdentityCard,
+) {
+  return Effect.gen(function* () {
+    const existing = cards.get(card.agentId);
+    if (existing !== undefined) {
+      const bytes = yield* Effect.all([
+        encodeCanonical(AgentIdentityCard, existing),
+        encodeCanonical(AgentIdentityCard, card),
+      ]);
+      if (!sameBytes(bytes[0], bytes[1])) {
+        return yield* new CommunicationError({ reason: "membership-invalid" });
+      }
+    }
+    cards.set(card.agentId, card);
+  });
+}
+
+type WorkerFailure =
+  | EngineInitializationError
+  | EngineOutboundError
+  | Effect.Effect.Error<RouterWorker["run"]>
+  | EndpointStoreError
+  | ClientRepresentationError
+  | ParseResult.ParseError
+  | CommunicationError;
+
+const workerFailureReasons = {
+  CommunicationError: "persistence-failed",
+  EndpointStoreError: "persistence-failed",
+  ClientRepresentationError: "persistence-failed",
+  ParseError: "persistence-failed",
+  RouterWorkerAuthenticationError: "network-unavailable",
+  RouterWorkerPersistenceError: "persistence-failed",
+  RouterWorkerTransportError: "network-unavailable",
+  RouterWorkerProtocolError: "persistence-failed",
+  RouterWorkerRecoveryError: "network-unavailable",
+  RouterWorkerDiscontinuityError: "network-unavailable",
+  RouterWorkerUnavailableError: "network-unavailable",
+} as const;
+
+function supervise(
+  workers: FiberSet.FiberSet<never, CommunicationError>,
+  worker: Effect.Effect<never, WorkerFailure>,
+  environment: Environment,
+) {
+  return Effect.forkScoped(
+    Effect.interruptible(
+      worker.pipe(
+        Effect.mapError(workerFailure),
+        Effect.tapError((error) => Deferred.fail(environment.failure, error)),
+      ),
+    ),
+  ).pipe(
+    Effect.flatMap((fiber) => FiberSet.add(workers, fiber)),
+    Effect.asVoid,
+  );
+}
+
+const initializationFailureReasons = {
+  identity: "persistence-failed",
+  persistence: "persistence-failed",
+  representation: "persistence-failed",
+  "outbox-too-old": "outbox-too-old",
+} as const satisfies Readonly<
+  Record<EngineInitializationError["reason"], CommunicationError["reason"]>
+>;
+
+function workerFailure(error: WorkerFailure): CommunicationError {
+  if (error._tag === "EngineInitializationError") {
+    return new CommunicationError({
+      reason: initializationFailureReasons[error.reason],
+    });
+  }
+  if (error._tag === "EngineOutboundError") {
+    return new CommunicationError({
+      reason:
+        error.reason === "network"
+          ? "network-unavailable"
+          : "persistence-failed",
+    });
+  }
+  if (error._tag === "RouterWorkerRejectedError") {
+    return new CommunicationError({
+      reason:
+        error.reason === "authentication"
+          ? "agent-not-admitted"
+          : "network-unavailable",
+    });
+  }
+  return new CommunicationError({ reason: workerFailureReasons[error._tag] });
+}

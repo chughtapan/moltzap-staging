@@ -1,21 +1,23 @@
 /** @file Verified agents and real SQL for conversation engine tests. */
-import { SqlClient } from "@effect/sql";
+
+import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
-
+import type { Content, MsgId } from "../communication/records/values.js";
 import { messageFromIntent } from "../communication/message.js";
 import {
-  type Content,
   deriveConversationId,
-  MembershipDescriptor,
   mintMsgId,
-  type MsgId,
-  verifyMembershipDescriptor,
-} from "../communication/records/index.js";
-import { RouterInstanceId } from "../communication/router/api/contract.js";
-import { encodeCanonical } from "../encoding/canonical-json.js";
-import { AgentCard, type AgentView, agentViewOf } from "../identity/cards.js";
-import { Ed25519PublicKey } from "../identity/keys.js";
+} from "../communication/records/encoding.js";
+import { MembershipDescriptor } from "../communication/records/schemas.js";
+import { verifyMembershipDescriptor } from "../communication/records/verification.js";
+import { RouterInstanceId } from "../communication/router/api.js";
+import {
+  type AgentCard,
+  agentCardOf,
+  AgentIdentityCard,
+} from "../identity/agent.js";
+import { AgentPublicKey } from "../identity/keys.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
 import {
   identifier,
@@ -28,7 +30,6 @@ import {
 } from "./certified-history-fixtures.js";
 import { openTestDatabase } from "./communication-test-database.js";
 import { pollCursor } from "./router-worker-fixtures.js";
-import { stateDirectory } from "./store-schema-fixtures.js";
 
 const anchor = {
   routerInstanceId: Schema.decodeUnknownSync(RouterInstanceId)(
@@ -43,18 +44,12 @@ export const conversationIdentityFixture = Effect.gen(function* () {
   const local = yield* signingIdentity(1, "alice", registryKeys);
   const remote = yield* signingIdentity(2, "bob", registryKeys);
   const third = yield* signingIdentity(3, "carol", registryKeys);
-  const signer = yield* Schema.decodeUnknown(Ed25519PublicKey)(
+  const signer = yield* Schema.decodeUnknown(AgentPublicKey)(
     registryKeys.publicKey.export({ format: "jwk" }),
   );
   const membership = yield* directMembership([local.card, remote.card], signer);
-  const directory = stateDirectory();
-  const { sql, run, store } = yield* openTestDatabase(directory);
-  yield* run(
-    store.bindIdentity({
-      agentId: local.card.agentId,
-      canonicalAgentCard: yield* encodeCanonical(AgentCard, local.card),
-    }),
-  );
+  const { sql, run, store, directory } = yield* openTestDatabase();
+  yield* run(store.initializeCommunication(local.card));
   return {
     local,
     remote,
@@ -78,15 +73,15 @@ export function authoredMessage(
   subject: Pick<Fixture, "local" | "remote">,
   content: Content,
   options: {
-    readonly recipients?: readonly AgentView[];
+    readonly recipients?: readonly AgentCard[];
     readonly msgId?: MsgId;
   } = {},
 ) {
   return Effect.gen(function* () {
     return yield* messageFromIntent(
       [
-        agentViewOf(subject.local.card),
-        ...(options.recipients ?? [agentViewOf(subject.remote.card)]),
+        agentCardOf(subject.local.card),
+        ...(options.recipients ?? [agentCardOf(subject.remote.card)]),
       ],
       {
         authorAgentId: subject.local.card.agentId,
@@ -113,7 +108,7 @@ export function seedIncoming(
     yield* storeCertifiedFirstMessage(store, local.card, membership, record);
     return record;
   }).pipe(
-    Effect.provideService(SqlClient.SqlClient, subject.sql),
+    Effect.provideService(SqlClient, subject.sql),
     Effect.withSpan("seedIncoming"),
   );
 }
@@ -135,8 +130,8 @@ function signingIdentity(
 
 /** The verified membership of the direct conversation between two cards. */
 function directMembership(
-  cards: readonly [AgentCard, AgentCard],
-  signer: Ed25519PublicKey,
+  cards: readonly [AgentIdentityCard, AgentIdentityCard],
+  signer: AgentPublicKey,
 ) {
   return Effect.gen(function* () {
     const descriptor = yield* Schema.decodeUnknown(MembershipDescriptor)({
@@ -147,8 +142,8 @@ function directMembership(
         cards[1].agentId,
       ]),
       members: [
-        yield* Schema.encode(AgentCard)(cards[0]),
-        yield* Schema.encode(AgentCard)(cards[1]),
+        yield* Schema.encode(AgentIdentityCard)(cards[0]),
+        yield* Schema.encode(AgentIdentityCard)(cards[1]),
       ],
     });
     return yield* verifyMembershipDescriptor(descriptor, signer);

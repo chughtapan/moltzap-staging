@@ -8,12 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect } from "vitest";
-import { readCredential } from "../daemon/credentials.js";
+import { readCredential } from "../harness/config.js";
 import {
   decodeMessagePolicy,
   loadMessagePolicy,
   type PolicyConfiguration,
-} from "./config.js";
+} from "./rules/config.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exact environment names and closed reasons are the configuration contract under test. */
 

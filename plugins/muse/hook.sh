@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # The native hook runtime must supply wake/silent helpers. The installed
 # wrapper supplies absolute command and state paths. This detector needs no
-# Client credential and emits event references only. One receiver waits on one
-# delivery; an array also permits an old attempt to overlap its replacement.
+# MCP credential and emits pending event references until a worker retires them.
 set -euo pipefail
 
 source "${HATCH_HOOK_RUNTIME:?Muse hook runtime is required. Docs: https://github.com/social-harness/moltzap/tree/main/plugins/muse#native-hook}"

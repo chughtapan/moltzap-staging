@@ -7,11 +7,7 @@
  */
 
 import type { Effect, Redacted, Types } from "effect";
-import type {
-  AgentSigningAuthority,
-  AgentSigningAuthority as AgentSigningAuthorityValue,
-  Ed25519PublicKey,
-} from "../../index.js";
+import type { AgentPublicKey, AgentSigningAuthority } from "../agent.js";
 import type { InvalidAgentPrivateKeyError } from "../keys.js";
 
 type Expect<Value extends true> = Value;
@@ -22,10 +18,7 @@ type InputIsRedacted = Expect<
   Types.Equals<Parameters<FromPkcs8>[0], Redacted.Redacted>
 >;
 type ImportSuccessIsAuthority = Expect<
-  Types.Equals<
-    Effect.Effect.Success<FromPkcs8Result>,
-    AgentSigningAuthorityValue
-  >
+  Types.Equals<Effect.Effect.Success<FromPkcs8Result>, AgentSigningAuthority>
 >;
 type ImportFailureIsExact = Expect<
   Types.Equals<
@@ -39,14 +32,14 @@ type ImportNeedsNoContext = Expect<
 type PublicKeyIsTotal = Expect<
   Types.Equals<
     ReturnType<typeof AgentSigningAuthority.publicKey>,
-    Ed25519PublicKey
+    AgentPublicKey
   >
 >;
 type PublicCapabilityIsExact = Expect<
   Types.Equals<keyof typeof AgentSigningAuthority, "fromPkcs8" | "publicKey">
 >;
 type AuthorityHasNoStringMembers = Expect<
-  Types.Equals<Extract<keyof AgentSigningAuthorityValue, string>, never>
+  Types.Equals<Extract<keyof AgentSigningAuthority, string>, never>
 >;
 
 /** Compile-time evidence for the signing authority's public contract. */

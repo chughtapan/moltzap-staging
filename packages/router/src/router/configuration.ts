@@ -1,6 +1,6 @@
 /** @file Router process configuration, validation, defaults, and operator feedback. */
 
-import { Ed25519PublicKey, SignedMessage } from "@moltzap/social-harness";
+import { AgentPublicKey, SignedMessage } from "@moltzap/social-harness";
 import { routerContract } from "@moltzap/social-harness/internal";
 import { Config, type ConfigError, Effect, Match, Schema } from "effect";
 
@@ -58,7 +58,7 @@ const registryOriginText = Schema.String.pipe(
 const registryOrigin = registryOriginText.pipe(Schema.compose(Schema.URL));
 const compactPublicKeyJson = Schema.String.pipe(
   Schema.pattern(/^\{"crv":"Ed25519","kty":"OKP","x":"[A-Za-z0-9_-]{43}"\}$/),
-  Schema.compose(Schema.parseJson(Ed25519PublicKey)),
+  Schema.compose(Schema.parseJson(AgentPublicKey)),
 );
 
 const configurationFields = {
@@ -104,7 +104,7 @@ const configurationFields = {
     processInteger,
     100_000,
   ),
-  agentCardCacheCapacity: setting(
+  identityCardCacheCapacity: setting(
     "SHARNESS_ROUTER_AGENT_CARD_CACHE_CAPACITY",
     processInteger,
     10_000,

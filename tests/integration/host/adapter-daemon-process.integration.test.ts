@@ -2,7 +2,7 @@
 
 import {
   acquireHarnessEndpoint,
-  type AgentView,
+  type AgentCard,
   type InboundDelivery,
 } from "@moltzap/social-harness";
 import { Deferred, Effect, Exit, Fiber, Queue } from "effect";
@@ -70,9 +70,9 @@ interface AllGatherContext {
   readonly callerAddress: ReturnType<typeof directAddress>;
   readonly peerAddress: ReturnType<typeof directAddress>;
   readonly targetAddress: ReturnType<typeof directAddress>;
-  readonly callerAgent: AgentView;
-  readonly peerAgent: AgentView;
-  readonly targetAgent: AgentView;
+  readonly callerAgent: AgentCard;
+  readonly peerAgent: AgentCard;
+  readonly targetAgent: AgentCard;
   readonly group: ReturnType<typeof groupAddress>;
   readonly turns: Queue.Queue<OpenClawInboundContext>;
   readonly messageTool: ReturnType<typeof makeMessageTool>;
@@ -475,8 +475,8 @@ function sendGather(
 
 function assertReply(
   returned: InboundDelivery,
-  targetAgent: AgentView,
-  callerAgent: AgentView,
+  targetAgent: AgentCard,
+  callerAgent: AgentCard,
 ): void {
   expect(returned.item).toMatchObject({
     kind: "multicast",
@@ -665,7 +665,7 @@ function exerciseOpenClawSends({
   readonly caller: AllGatherContext["caller"];
   readonly callerAddress: ReturnType<typeof directAddress>;
   readonly targetAddress: ReturnType<typeof directAddress>;
-  readonly targetAgent: AgentView;
+  readonly targetAgent: AgentCard;
   readonly logLines: readonly string[];
 }) {
   return Effect.gen(function* () {

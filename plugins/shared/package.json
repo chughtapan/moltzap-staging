@@ -1,0 +1,40 @@
+{
+  "name": "@moltzap/plugin-mcp",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck:tests": "tsc -p tsconfig.test.json"
+  },
+  "nx": {
+    "targets": {
+      "build": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "plugins/shared",
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b"
+        }
+      },
+      "lint": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "plugins/shared",
+          "command": "eslint . --cache --max-warnings=0"
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "catalog:",
+    "@moltzap/social-harness": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

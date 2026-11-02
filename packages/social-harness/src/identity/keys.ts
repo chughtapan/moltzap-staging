@@ -1,4 +1,4 @@
-/** @file Exact Ed25519 public keys, opaque private signing authority, and the single-signature General JWS that AgentCard and SignedMessage carry. */
+/** @file Exact Ed25519 public keys, opaque private signing authority, and the single-signature General JWS that AgentIdentityCard and SignedMessage carry. */
 
 import type { LazyArg } from "effect/Function";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -218,7 +218,7 @@ const publicKeyRepresentation = Schema.Struct({
 
 /** Exact immutable Ed25519 public JWK. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas use the public model's type name so callers import one vocabulary term.
-export const Ed25519PublicKey = Schema.transform(
+export const AgentPublicKey = Schema.transform(
   publicKeyRepresentation,
   publicKeyValueSchema,
   {
@@ -236,9 +236,9 @@ export const Ed25519PublicKey = Schema.transform(
     }),
   },
 ).pipe(
-  Schema.brand("Ed25519PublicKey"),
+  Schema.brand("AgentPublicKey"),
   Schema.annotations({
-    identifier: "Ed25519PublicKey",
+    identifier: "AgentPublicKey",
     description: "Exact immutable Ed25519 public JWK",
     parseOptions: {
       exact: true,
@@ -249,7 +249,7 @@ export const Ed25519PublicKey = Schema.transform(
 
 /** Validated immutable Ed25519 public JWK. */
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- Effect's same-named Schema and inferred type form one public boundary model.
-export type Ed25519PublicKey = typeof Ed25519PublicKey.Type;
+export type AgentPublicKey = typeof AgentPublicKey.Type;
 
 /**
  * Reports failure to read a key, to derive its standard thumbprint URI or
@@ -269,8 +269,8 @@ const publicKeyOperationFailure = (): Ed25519PublicKeyOperationError =>
  * fixed and `x` has one accepted spelling, so equal `x` means the same key.
  */
 export const sameEd25519PublicKey = (
-  left: LazyArg<Ed25519PublicKey>,
-  right: LazyArg<Ed25519PublicKey>,
+  left: LazyArg<AgentPublicKey>,
+  right: LazyArg<AgentPublicKey>,
 ): Effect.Effect<boolean, Ed25519PublicKeyOperationError> =>
   Effect.try({
     try: () => left().x === right().x,
@@ -291,7 +291,7 @@ const PUBLIC_KEY_CACHE_ENTRIES = 1_024;
  * `crv` and `kty` are fixed and `x` has one accepted spelling, so `x`
  * determines the RFC 7638 canonical JWK the thumbprint hashes, and two keys
  * share an entry only when they are the same key. Keying by value keeps a hit
- * for every AgentCard decode, each of which makes a new key object. The entry
+ * for every AgentIdentityCard decode, each of which makes a new key object. The entry
  * and its derivation share one read of `x`, so an entry holds its own key's
  * value even for an object whose members change between reads. A key whose
  * `x` cannot be read fails with `Ed25519PublicKeyOperationError`. A failed
@@ -300,7 +300,7 @@ const PUBLIC_KEY_CACHE_ENTRIES = 1_024;
  */
 const cachedPerPublicKey = <A>(
   entries: BoundedCache<string, A>,
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
   derive: (
     jwk: PublicKeyValue,
   ) => Effect.Effect<A, Ed25519PublicKeyOperationError>,
@@ -334,7 +334,7 @@ const thumbprintUris = makeBoundedCache<string, string>(
  * or the JOSE implementation cannot derive the URI.
  */
 export const ed25519PublicKeyThumbprintUri = (
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<string, Ed25519PublicKeyOperationError> =>
   cachedPerPublicKey(thumbprintUris, publicKey, (jwk) =>
     Effect.tryPromise({
@@ -358,7 +358,7 @@ const verificationKeys = makeBoundedCache<string, CryptoKey>(
 
 /** Imports a validated Ed25519 public key to verify signatures under it. */
 export const ed25519VerificationKey = (
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<CryptoKey, Ed25519PublicKeyOperationError> =>
   cachedPerPublicKey(verificationKeys, publicKey, (jwk) =>
     importPublicJwk(jwk, "Ed25519"),
@@ -382,7 +382,7 @@ interface X25519PublicJwk {
  * The Ed25519 public-key Schema admits canonical encodings that are not curve
  * points, and the map fails for those.
  *
- * @param publicKey Validated Ed25519 public key, such as an AgentCard key.
+ * @param publicKey Validated Ed25519 public key, such as an AgentIdentityCard key.
  * @returns The X25519 public JWK.
  */
 export const x25519PublicJwk = (
@@ -407,7 +407,7 @@ const sealingKeys = makeBoundedCache<string, CryptoKey>(
 
 /** Imports the `x25519PublicJwk` image of a validated key to seal bodies to. */
 export const x25519SealingKey = (
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<CryptoKey, Ed25519PublicKeyOperationError> =>
   cachedPerPublicKey(sealingKeys, publicKey, (jwk) =>
     Effect.flatMap(x25519PublicJwk(jwk), (agreementKey) =>
@@ -437,7 +437,7 @@ export class InvalidAgentPrivateKeyError extends Data.TaggedError(
 type AuthorityState = Readonly<{
   privateKey: CryptoKey;
   openingKey: CryptoKey;
-  publicKey: Ed25519PublicKey;
+  publicKey: AgentPublicKey;
 }>;
 
 const authorityState = new WeakMap<AgentSigningAuthority, AuthorityState>();
@@ -509,7 +509,7 @@ const zeroAfter = <A, E>(
  */
 const importFromSeed = (
   seed: Uint8Array,
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<CryptoKey, InvalidAgentPrivateKeyError> =>
   Effect.gen(function* () {
     const agreementPublicKey = yield* Either.mapLeft(
@@ -541,7 +541,7 @@ const importFromSeed = (
  */
 const importOpeningKey = (
   exportedKey: JWK,
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<CryptoKey, InvalidAgentPrivateKeyError> =>
   Effect.gen(function* () {
     if (exportedKey.d === undefined) {
@@ -579,7 +579,7 @@ const fromPkcs8 = (
       try: () => exportJWK(extractableKey),
       catch: invalidPrivateKey,
     });
-    const publicKey = yield* Schema.decodeUnknown(Ed25519PublicKey)(
+    const publicKey = yield* Schema.decodeUnknown(AgentPublicKey)(
       {
         crv: exportedKey.crv,
         kty: exportedKey.kty,
@@ -605,7 +605,7 @@ const fromPkcs8 = (
     return authority;
   });
 
-const publicKey = (authority: AgentSigningAuthority): Ed25519PublicKey =>
+const publicKey = (authority: AgentSigningAuthority): AgentPublicKey =>
   getAuthorityState(authority).publicKey;
 
 /**

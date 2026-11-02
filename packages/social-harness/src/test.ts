@@ -1,23 +1,20 @@
-/**
- * @file Condition-only process-test composition surface: management fixture schemas, the WireVersions override, and the request-signing capability and history window process tests compose with.
- */
+/** @file Condition-only offline evaluation and process-test configuration. */
 
-/** Injectable release policy is available only with the test condition. */
-export { WireVersions } from "./identity/wire-version.js";
-
-/** Management fixtures share the schemas used by the public daemon protocol. */
+/** Process tests supply the same compatibility policy as production services. */
 export {
-  managementReadConversationResultSchema,
-  managementRegisterRequestSchema,
-  managementRegisterResultSchema,
-  managementSearchConversationsResultSchema,
-  managementStatusResultSchema,
-} from "./host-protocol/index.js";
-
-/** Process tests sign registered requests through the production capability. */
-export { AuthenticatedHttp } from "./identity/request-authentication.js";
-/** Mixed-release process tests compose the installed history compatibility window. */
-export { HISTORY_WIRE_VERSIONS } from "./identity/wire-version.js";
-
-/** Offline evaluation for tests without a running daemon or database. */
-export { checkMessage } from "./firewall/check.js";
+  HISTORY_WIRE_VERSIONS,
+  WireVersions,
+} from "./identity/wire-version.js";
+/** Test processes create signed HTTP attempts with production signing authority. */
+export { signAgentRequest } from "./identity/authentication/proof.js";
+/** Offline model evaluation remains independent of storage and daemon startup. */
+export {
+  CheckInputError,
+  checkMessage,
+  type DecisionProvider,
+  DecisionProviderError,
+  type DecisionRequest,
+  type DecisionResponse,
+  type Message,
+  type MessageContext,
+} from "./firewall/check.js";

@@ -3,11 +3,15 @@
 import { Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { AgentCardDigest } from "../cards.js";
+import {
+  AgentId,
+  AgentIdentityCardDigest,
+  AgentName,
+  PrincipalId,
+} from "../agent.js";
 import { EnvelopeId } from "../envelope/signed-message.js";
-import { AgentId, AgentName, PrincipalId } from "../identifiers.js";
-import { OperationId } from "../registry/contract.js";
-import { AgentCardIssuedAt } from "./agent-card-fixtures.js";
+import { RegistrationId } from "../registry/contract.js";
+import { AgentIdentityCardIssuedAt } from "./agent-card-fixtures.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
 const DIGEST_BYTE_LENGTH = 32;
@@ -49,7 +53,7 @@ const identifierRoundTrips: ReadonlyArray<
   [
     "opn_",
     (encoded) => {
-      expectCanonicalRoundTrip(OperationId, encoded);
+      expectCanonicalRoundTrip(RegistrationId, encoded);
     },
   ],
   [
@@ -94,7 +98,7 @@ describe("canonical identifiers", () => {
   });
 });
 
-describe("AgentCardDigest", () => {
+describe("AgentIdentityCardDigest", () => {
   it("round-trips every canonical digest spelling", () => {
     fc.assert(
       fc.property(
@@ -104,7 +108,7 @@ describe("AgentCardDigest", () => {
         }),
         (bytes) => {
           const encoded = `acd_${Buffer.from(bytes).toString("base64url")}`;
-          expectCanonicalRoundTrip(AgentCardDigest, encoded);
+          expectCanonicalRoundTrip(AgentIdentityCardDigest, encoded);
         },
       ),
     );
@@ -116,7 +120,7 @@ describe("AgentCardDigest", () => {
     { reason: "padding", value: `acd_${"A".repeat(43)}=` },
     { reason: "nonzero trailing bits", value: `acd_${"A".repeat(42)}B` },
   ])("rejects a noncanonical digest with $reason", ({ value }) => {
-    expect(decodeSucceeds(AgentCardDigest, value)).toBe(false);
+    expect(decodeSucceeds(AgentIdentityCardDigest, value)).toBe(false);
   });
 });
 
@@ -144,11 +148,11 @@ describe("AgentName", () => {
   });
 });
 
-describe("AgentCardIssuedAt", () => {
+describe("AgentIdentityCardIssuedAt", () => {
   it.each(["2026-07-30T17:42:05Z", "2000-02-29T00:00:00Z"])(
     "round-trips the whole-second UTC time %s",
     (value) => {
-      expectCanonicalRoundTrip(AgentCardIssuedAt, value);
+      expectCanonicalRoundTrip(AgentIdentityCardIssuedAt, value);
     },
   );
 
@@ -161,6 +165,6 @@ describe("AgentCardIssuedAt", () => {
     { reason: "lowercase UTC marker", value: "2026-07-30T17:42:05z" },
     { reason: "invalid calendar day", value: "2026-02-29T17:42:05Z" },
   ])("rejects $reason", ({ value }) => {
-    expect(decodeSucceeds(AgentCardIssuedAt, value)).toBe(false);
+    expect(decodeSucceeds(AgentIdentityCardIssuedAt, value)).toBe(false);
   });
 });

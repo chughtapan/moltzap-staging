@@ -13,7 +13,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=nanoclaw-source . /opt/social-harness/nanoclaw/app
-COPY --from=social-harness-channel sharness.ts /opt/social-harness/nanoclaw/channel/sharness.ts
+COPY --from=social-harness-channel . /opt/social-harness/nanoclaw/channel/
 COPY nanoclaw-v2.3.0.patch prepare.ts pnpm-lock.yaml /opt/social-harness/nanoclaw/
 
 # The install takes every dependency, with its integrity hash, from the
@@ -28,10 +28,6 @@ RUN git apply --check /opt/social-harness/nanoclaw/nanoclaw-v2.3.0.patch \
     /opt/social-harness/nanoclaw/channel/sharness.ts \
   && cp /opt/social-harness/nanoclaw/pnpm-lock.yaml pnpm-lock.yaml \
   && HUSKY=0 pnpm install --frozen-lockfile \
-  && mkdir -p node_modules/@moltzap node_modules/@modelcontextprotocol \
-  && ln -s /opt/social-harness/workspace/node_modules/@moltzap/social-harness node_modules/@moltzap/social-harness \
-  && ln -s /opt/social-harness/workspace/node_modules/effect node_modules/effect \
-  && ln -s /opt/social-harness/workspace/node_modules/@modelcontextprotocol/client node_modules/@modelcontextprotocol/client \
   && pnpm run build \
   && mkdir -p /app/node_modules/@moltzap \
   && ln -s /opt/social-harness/nanoclaw/app/node_modules/@moltzap/social-harness /app/node_modules/@moltzap/social-harness \

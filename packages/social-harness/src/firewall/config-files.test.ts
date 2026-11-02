@@ -13,8 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { readCredential } from "../daemon/credentials.js";
-import { loadMessagePolicy, MAXIMUM_BEHAVIOR_BYTES } from "./config.js";
+import { readCredential } from "../harness/config.js";
+import { loadMessagePolicy, MAXIMUM_BEHAVIOR_BYTES } from "./rules/config.js";
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0)) {

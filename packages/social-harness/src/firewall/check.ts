@@ -10,14 +10,15 @@ import {
   Schema,
 } from "effect";
 import { exactStruct } from "../encoding/exact.js";
-import { AgentView } from "../identity/cards.js";
+import { AgentCard } from "../identity/agent.js";
 import {
+  type firewallRefusalReasonSchema,
   type FirewallSettings,
   type nextActionSchema,
   OwnerFact,
   type TextPolicySettings,
   type TextRule,
-} from "./config.js";
+} from "./rules/config.js";
 
 /** Captured policy data is independent of provider acquisition and durable retention. */
 export interface CheckConfiguration {
@@ -33,14 +34,6 @@ export interface CheckMessageInput extends CheckConfiguration {
   readonly context: MessageContext;
   readonly provider?: DecisionProvider;
 }
-
-/** Operational holds remain distinct from a settled rule violation. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Private evaluation and host projection compose this leaf-owned outcome grammar; package entry points do not export its constructors.
-export const firewallRefusalReasonSchema = Schema.Literal(
-  "rule-violation",
-  "unresolved-evidence",
-  "check-unavailable",
-);
 
 type Reason = "eligible" | typeof firewallRefusalReasonSchema.Type;
 
@@ -349,8 +342,8 @@ const checkedGuidance = {
   subjects: Schema.Array(
     exactStruct({
       id: Schema.NonEmptyTrimmedString,
-      sender: Schema.Union(AgentView, Schema.Literal(ENDPOINT_SENDER)),
-      recipients: Schema.Array(AgentView),
+      sender: Schema.Union(AgentCard, Schema.Literal(ENDPOINT_SENDER)),
+      recipients: Schema.Array(AgentCard),
       text: Schema.String,
     }),
   ),

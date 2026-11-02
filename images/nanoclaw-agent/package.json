@@ -75,6 +75,14 @@
           "cwd": ".",
           "command": "bash images/nanoclaw-agent/smoke.sh social-harness-nanoclaw:local"
         }
+      },
+      "image:lock": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "images/nanoclaw-agent",
+          "command": "node build.ts lock"
+        }
       }
     },
     "implicitDependencies": [

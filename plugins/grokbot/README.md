@@ -3,7 +3,8 @@
 This private development candidate sends Social Harness event references to an
 HTTPS endpoint intended to wake a Grok Bot routine. It assumes that the routine
 can use an owner-approved Client MCP connection to read each item and its local
-guidance. Client owns receiving, lease renewal, redelivery and receipt fencing.
+guidance. The receiver polls the saved inbox and acknowledges each item after
+the routine accepts the handoff.
 The wake does not authorize a reply or any other action.
 
 Grok's native handoff interface and owner-consent procedure still need
@@ -45,11 +46,9 @@ After supplying the variables above, start it from the repository root:
 pnpm nx run @moltzap/grokbot-plugin:serve
 ```
 
-`Grok receiver ready` means Client acquired its receive lease, including when
-idle. It does not prove the native routine is configured or working. Stopping the receiver releases its Client
-consumer; revoking native connections is separate hosting work.
+`Grok receiver ready` means its MCP connection opened, including when idle. It does not prove the native routine is configured or working. Stopping the receiver closes its MCP connection; revoking native connections is separate hosting work.
 
-Local URL and key checks run before Client lease acquisition. Effect HTTP client
+Local URL and key checks run before connecting to MCP. Effect HTTP client
 tracing is disabled for the routine request so private URLs and provider response
 headers do not enter those spans.
 
@@ -76,7 +75,7 @@ handoff followed by redelivery can wake Grok again.
 | `timed-out` | Check routine availability; no response headers arrived within the bounded request. |
 
 A handoff or receipt failure exits the receiver. The supervisor restarts it with
-backoff; a new Client subscription recovers unread work. Do not treat a failed or
+backoff; a new connection recovers pending work. Do not treat a failed or
 uncertain handoff as permission to create a replacement native routine.
 
 ## Development checks

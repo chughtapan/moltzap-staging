@@ -4,14 +4,15 @@
  */
 
 import type { Types } from "effect";
+
 import type {
   LiveSignedMessage,
   SignedMessage,
   VerifiedSignedMessage,
 } from "../../identity/envelope/signed-message.js";
-import type { verifyOuterMessage } from "../records/index.js";
-import type { RouterSendRequest } from "./api/contract.js";
-import type { RouterWorkerIngress } from "./index.js";
+import type { verifyOuterMessage } from "../records/verification.js";
+import type { RouterSendRequest } from "./api.js";
+import type { RouterWorkerIngress } from "./connection.js";
 
 type Expect<Value extends true> = Value;
 

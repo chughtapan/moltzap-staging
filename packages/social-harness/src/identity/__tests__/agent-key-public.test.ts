@@ -8,7 +8,7 @@ import { calculateJwkThumbprintUri, exportJWK } from "jose";
 import { generateKeyPairSync, sign as signWithPrivateKey } from "node:crypto";
 import { describe, expect } from "vitest";
 import {
-  Ed25519PublicKey,
+  AgentPublicKey,
   ed25519PublicKeyThumbprintUri,
   ed25519VerificationKey,
   hasCanonicalEd25519SignatureEncoding,
@@ -100,20 +100,20 @@ const invalidPublicKeys = [
 ] as const;
 
 const decodeSucceeds = (value: unknown): boolean =>
-  Either.match(Schema.decodeUnknownEither(Ed25519PublicKey)(value), {
+  Either.match(Schema.decodeUnknownEither(AgentPublicKey)(value), {
     onLeft: () => false,
     onRight: () => true,
   });
 
 const encodeSucceeds = (value: unknown): boolean =>
-  Either.match(Schema.encodeUnknownEither(Ed25519PublicKey)(value), {
+  Either.match(Schema.encodeUnknownEither(AgentPublicKey)(value), {
     onLeft: () => false,
     onRight: () => true,
   });
 
 /** A distinct on-curve, prime-order Ed25519 public key for each index. */
 const indexedPublicKey = (index: number) =>
-  Schema.decodeUnknownSync(Ed25519PublicKey)({
+  Schema.decodeUnknownSync(AgentPublicKey)({
     crv: "Ed25519",
     kty: "OKP",
     x: Buffer.from(
@@ -121,7 +121,7 @@ const indexedPublicKey = (index: number) =>
     ).toString("base64url"),
   });
 
-describe("Ed25519PublicKey thumbprints", () => {
+describe("AgentPublicKey thumbprints", () => {
   it.effect("derives each key's own thumbprint after another key's", () =>
     Effect.gen(function* () {
       const first = indexedPublicKey(0);
@@ -141,10 +141,10 @@ describe("Ed25519PublicKey thumbprints", () => {
   it.effect("matches the RFC thumbprint URI", () =>
     Effect.gen(function* () {
       const publicKey =
-        yield* Schema.decodeUnknown(Ed25519PublicKey)(validPublicKey);
+        yield* Schema.decodeUnknown(AgentPublicKey)(validPublicKey);
       const thumbprint = yield* ed25519PublicKeyThumbprintUri(publicKey);
       expect(thumbprint).toBe(RFC_THUMBPRINT_URI);
-      expect(Schema.encodeSync(Ed25519PublicKey)(publicKey)).toEqual(
+      expect(Schema.encodeSync(AgentPublicKey)(publicKey)).toEqual(
         validPublicKey,
       );
     }),
@@ -168,8 +168,8 @@ it.effect("stores each import under the key it was imported from", () =>
         return reads.shift() ?? stored.x;
       },
     });
-    // eslint-disable-next-line agent-code-guard/require-assertion-rationale -- The getter object models a caller that bypasses the Ed25519PublicKey Schema.
-    yield* ed25519VerificationKey(shifting as Ed25519PublicKey);
+    // eslint-disable-next-line agent-code-guard/require-assertion-rationale -- The getter object models a caller that bypasses the AgentPublicKey Schema.
+    yield* ed25519VerificationKey(shifting as AgentPublicKey);
 
     const imported = yield* ed25519VerificationKey(stored);
     const exported = yield* Effect.tryPromise({
@@ -180,7 +180,7 @@ it.effect("stores each import under the key it was imported from", () =>
   }),
 );
 
-describe("Ed25519PublicKey representation", () => {
+describe("AgentPublicKey representation", () => {
   it("round-trips generated Ed25519 public keys", () => {
     for (let index = 0; index < 16; index += 1) {
       const { publicKey } = generateKeyPairSync("ed25519");
@@ -190,9 +190,8 @@ describe("Ed25519PublicKey representation", () => {
         kty: "OKP" as const,
         x: exported.x,
       };
-      const decoded =
-        Schema.decodeUnknownSync(Ed25519PublicKey)(representation);
-      expect(Schema.encodeSync(Ed25519PublicKey)(decoded)).toEqual(
+      const decoded = Schema.decodeUnknownSync(AgentPublicKey)(representation);
+      expect(Schema.encodeSync(AgentPublicKey)(decoded)).toEqual(
         representation,
       );
     }
@@ -200,7 +199,7 @@ describe("Ed25519PublicKey representation", () => {
 
   it("returns an immutable snapshot", () => {
     const source = { ...validPublicKey };
-    const publicKey = Schema.decodeUnknownSync(Ed25519PublicKey)(source);
+    const publicKey = Schema.decodeUnknownSync(AgentPublicKey)(source);
     source.x = "A".repeat(43);
 
     expect(Object.isFrozen(publicKey)).toBe(true);
@@ -209,7 +208,7 @@ describe("Ed25519PublicKey representation", () => {
   });
 });
 
-describe("Ed25519PublicKey rejection", () => {
+describe("AgentPublicKey rejection", () => {
   it.each(invalidPublicKeys)("rejects $description", ({ representation }) => {
     expect(decodeSucceeds(representation)).toBe(false);
   });

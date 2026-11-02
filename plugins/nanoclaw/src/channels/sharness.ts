@@ -1,15 +1,11 @@
 /** @file Projects the public Social Harness endpoint capability into NanoClaw. */
 import {
-  acquireHarnessEndpoint,
-  type CollectiveError,
-  type ConnectError,
+  type RequestError,
   type DeliveryAcknowledgeError,
-  type FirewallSendError,
+  type FirewallRefusal,
   groupMembers,
   type GuidanceBodyOrigin,
-  type HarnessEndpoint,
-  type InboundDelivery,
-  type InboundItem,
+  type PermittedItem,
   MessageAddressInput,
   parseMessageText,
   renderCollectiveRequest,
@@ -19,6 +15,14 @@ import {
   replyAddress,
   SendError,
 } from "@moltzap/social-harness";
+import { packageVersion } from "@moltzap/social-harness";
+import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+  type InboxEntry,
+  type McpConnectError,
+} from "#sharness-mcp/mcp";
 import {
   Config,
   ConfigProvider,
@@ -30,7 +34,6 @@ import {
   Redacted,
   Schema,
   Scope,
-  Stream,
 } from "effect";
 import { absurd } from "effect/Function";
 import { randomUUID } from "node:crypto";
@@ -82,7 +85,7 @@ const channelEnv = Config.all({
 });
 
 interface Activation {
-  readonly endpoint: HarnessEndpoint;
+  readonly endpoint: McpConnection;
   readonly finished: Deferred.Deferred<undefined>;
   readonly scope: Scope.CloseableScope;
   readonly stopSignal: Deferred.Deferred<undefined>;
@@ -304,7 +307,7 @@ class HarnessChannelAdapter {
 
   private start(
     config: ChannelSetup,
-  ): Effect.Effect<void, ConnectError | ChannelError> {
+  ): Effect.Effect<void, McpConnectError | ChannelError> {
     const current = this.activation;
     if (current?.state === "active") {
       this.setupConfig = config;
@@ -330,14 +333,15 @@ class HarnessChannelAdapter {
         };
         this.setupConfig = config;
         this.activation = activation;
-        yield* endpoint.messages.pipe(
-          Stream.onDone(() => this.beginStopping(activation)),
-          Stream.onError(() => this.beginStopping(activation)),
-          Stream.runForEach((delivery) => this.handleDelivery(delivery)),
-          Effect.raceFirst(Deferred.await(activation.stopSignal)),
-          Effect.ensuring(this.finishActivation(activation)),
-          Effect.forkDaemon,
-        );
+        yield* endpoint
+          .consumeInbox({ receiveMode: "push" }, (delivery) =>
+            this.handleDelivery(delivery),
+          )
+          .pipe(
+            Effect.raceFirst(Deferred.await(activation.stopSignal)),
+            Effect.ensuring(this.finishActivation(activation)),
+            Effect.forkDaemon,
+          );
       }.bind(this),
     ).pipe(Effect.asVoid);
   }
@@ -379,7 +383,7 @@ class HarnessChannelAdapter {
 
   private acquireEndpoint(
     scope: Scope.CloseableScope,
-  ): Effect.Effect<HarnessEndpoint, ConnectError | ChannelError> {
+  ): Effect.Effect<McpConnection, McpConnectError | ChannelError> {
     return Effect.try({
       try: () => new URL(this.mcpEndpoint),
       catch: () =>
@@ -409,10 +413,10 @@ class HarnessChannelAdapter {
                   "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#mcp-credential-file",
               }),
           });
-          return yield* acquireHarnessEndpoint(endpoint, {
-            credential: Redacted.make(credential),
-            receiveMode: "push",
-          });
+          return yield* acquireMcpConnection(
+            { endpoint, credential: Redacted.make(credential) },
+            { name: "sharness-nanoclaw", version: packageVersion },
+          );
         }),
       ),
       Scope.extend(scope),
@@ -424,7 +428,7 @@ class HarnessChannelAdapter {
     message: OutboundMessage,
   ): Effect.Effect<
     void,
-    ChannelError | SendError | CollectiveError | FirewallSendError
+    ChannelError | SendError | RequestError | FirewallRefusal
   > {
     const activation = this.activation;
     const config = this.setupConfig;
@@ -442,12 +446,15 @@ class HarnessChannelAdapter {
             onFailure: (error) =>
               this.reportRefusedText(config, to, error.message),
             onSuccess: (input) =>
-              activation.endpoint.send(input).pipe(
+              callTool(activation.endpoint.client, {
+                name: "send_message",
+                arguments: { input },
+              }).pipe(
                 Effect.asVoid,
-                Effect.catchTag("CollectiveError", (error) =>
+                Effect.catchTag("RequestError", (error) =>
                   this.reportRefusedText(config, to, error.message),
                 ),
-                Effect.catchTag("FirewallSendError", (error) =>
+                Effect.catchTag("FirewallRefusal", (error) =>
                   this.reportRefusedText(config, to, error.message),
                 ),
                 Effect.catchIf(isFinalRefusal, (error) =>
@@ -514,13 +521,17 @@ class HarnessChannelAdapter {
   }
 
   private handleDelivery(
-    delivery: InboundDelivery,
+    delivery: InboxEntry,
   ): Effect.Effect<void, ChannelError | DeliveryAcknowledgeError> {
     const config = this.setupConfig;
     if (config === null) {
       return Effect.void;
     }
-    const projected = projectItem(delivery.item, delivery.eventId);
+    const projected = projectItem(
+      delivery.item,
+      delivery.deliveryToken,
+      delivery.address,
+    );
     let text = projected.text;
     if (delivery.guidance !== undefined) {
       text =
@@ -542,7 +553,7 @@ class HarnessChannelAdapter {
         ...projected,
         text,
       }),
-    ).pipe(Effect.zipRight(delivery.acknowledge));
+    );
   }
 
   /**
@@ -597,7 +608,11 @@ class HarnessChannelAdapter {
 }
 
 /** Each item keeps its canonical attribution and conversation before guidance is added. */
-function projectItem(item: InboundItem, eventId: string): ProjectedItem {
+function projectItem(
+  item: PermittedItem,
+  eventId: string,
+  address: MessageAddressInput,
+): ProjectedItem {
   switch (item.kind) {
     case "multicast":
       return {
@@ -622,7 +637,7 @@ function projectItem(item: InboundItem, eventId: string): ProjectedItem {
       return {
         origin: "endpoint",
         id: eventId,
-        address: item.to,
+        address,
         sender: ENDPOINT_SENDER,
         text: renderCollectiveResult(item),
       };
@@ -630,7 +645,7 @@ function projectItem(item: InboundItem, eventId: string): ProjectedItem {
       return {
         origin: "endpoint",
         id: eventId,
-        address: item.to,
+        address,
         sender: ENDPOINT_SENDER,
         text: item.error,
       };

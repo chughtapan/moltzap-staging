@@ -21,19 +21,19 @@ import { describe, expect, it } from "vitest";
 import {
   AgentId,
   type AgentId as AgentIdValue,
-} from "../../../identity/identifiers.js";
+} from "../../../identity/agent.js";
+import { AgentSigningError } from "../../../identity/authentication/proof.js";
 import {
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
 } from "../../../identity/keys.js";
-import { AgentSigningError } from "../../../identity/signing/http-signature.js";
-import { Router } from "../api/client.js";
 import {
   type PollCursor as PollCursorValue,
+  Router,
   RouterConnectionError,
   RouterInvalidResponseError,
   RouterRequestTimeoutError,
-} from "../api/contract.js";
+} from "../api.js";
 
 /* eslint-disable max-lines-per-function, agent-code-guard/no-hardcoded-assertion-literals -- Each scenario observes the deep capability at its public or private call boundary. */
 const utf8Encoder = new TextEncoder();

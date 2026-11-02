@@ -18,7 +18,7 @@ const throwOnRead = (): never => {
   throw new Error("unreadable");
 };
 
-it.each(["AgentCard", "SignedMessage"] as const)(
+it.each(["AgentIdentityCard", "SignedMessage"] as const)(
   "refuses to open when the %s cannot be read",
   (unreadable) =>
     Effect.runPromise(
@@ -37,11 +37,11 @@ it.each(["AgentCard", "SignedMessage"] as const)(
         const throwing = { get: throwOnRead };
 
         const outcome = yield* (
-          unreadable === "AgentCard"
+          unreadable === "AgentIdentityCard"
             ? openAs(
                 {
                   ...group.peer,
-                  agentCard: new Proxy(group.peer.agentCard, throwing),
+                  identityCard: new Proxy(group.peer.identityCard, throwing),
                 },
                 signedMessage,
               )
@@ -55,11 +55,11 @@ it.each(["AgentCard", "SignedMessage"] as const)(
     ),
 );
 
-it("refuses to seal to an AgentCard that cannot be read", () =>
+it("refuses to seal to an AgentIdentityCard that cannot be read", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const group = yield* makeGroup(2);
-      const agentCard = new Proxy(group.peer.agentCard, {
+      const identityCard = new Proxy(group.peer.identityCard, {
         get: () => {
           throw new Error("unreadable card");
         },
@@ -67,7 +67,7 @@ it("refuses to seal to an AgentCard that cannot be read", () =>
 
       const outcome = yield* sealFrom(
         group.sender,
-        [group.sender, { ...group.peer, agentCard }],
+        [group.sender, { ...group.peer, identityCard }],
         plaintext,
       ).pipe(Effect.either);
 

@@ -1,7 +1,7 @@
 /** @file Registry-owned bootstrap admission before durable registration. */
 
 import type { HttpServerRequest } from "@effect/platform";
-import { Ed25519PublicKey } from "@moltzap/social-harness";
+import { AgentPublicKey } from "@moltzap/social-harness";
 import {
   httpErrors,
   registryContract,
@@ -124,10 +124,10 @@ function requireAdmissionCredential(
 function authenticatePublicKey(
   candidate: typeof registrationPublicKeyRepresentation.Type,
 ): Effect.Effect<
-  Ed25519PublicKey,
+  AgentPublicKey,
   InstanceType<typeof httpErrors.AuthenticationFailedError>
 > {
-  return Schema.decodeUnknown(Ed25519PublicKey)(candidate).pipe(
+  return Schema.decodeUnknown(AgentPublicKey)(candidate).pipe(
     // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- A syntactically valid but cryptographically unusable verification key is an authentication failure.
     Effect.mapError(() => new AuthenticationFailedError()),
   );

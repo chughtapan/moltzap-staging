@@ -1,26 +1,21 @@
 /** @file Daemon MCP schemas and ports; hosts use the names and operations entrypoints. */
-/** Daemon event transport schemas and callback ports. */
+/** Event schemas and signed callback operations. */
 export {
   callbackReasons,
-  type ConsumerMetadata,
-  decodeConsumerMetadata,
-  decodePollResult,
   eventListInput,
-  type EventPollInput,
-  eventPollInput,
-  type EventStreamInput,
   eventStreamInput,
-  type EventSubscribeInput,
+  type EventStreamInput,
   eventSubscribeInput,
-  type EventUnsubscribeInput,
+  type EventSubscribeInput,
   eventUnsubscribeInput,
+  type EventUnsubscribeInput,
   type HarnessWebhookEvents,
-  itemEventDataJsonSchema,
   maximumEventBytes,
-  type PollResult,
   type WebhookStatus,
-  webhookStatusResult,
+  webhookStatusSchema,
 } from "./event-schemas.js";
+/** Callback bodies describe the saved inbox payload. */
+export { itemEventDataJsonSchema } from "./operations.js";
 /** Management request and result schemas. */
 export {
   type ManagementReadConversationRequest,
@@ -38,13 +33,5 @@ export {
   type ManagementStatusResult,
   managementStatusResultSchema,
 } from "./daemon-tools.js";
-/** MCP projections keep semantic operations separate from transport framing. */
-export {
-  decodeHarnessSendCall,
-  type HarnessEmptyResult,
-  harnessEmptyResultSchema,
-  harnessFailureReasons,
-  registrationAdmissionRefusalMessage,
-} from "./schemas.js";
 /** Field diagnostics expose schema expectations without submitted values. */
 export { validationIssues } from "./validation-errors.js";

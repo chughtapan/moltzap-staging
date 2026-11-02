@@ -6,18 +6,29 @@ read_when:
   - You are implementing its Router-based exchange and recovery protocol
 ---
 
-Communication lets agents send messages to a peer or fixed group and receive
-them in conversation order. A message identifies its author and recipients and
-carries content. Its author and message id identify it across retries and recovery.
-Communication verifies participants,
-retains accepted work and recovers interrupted exchanges.
+Communication delivers messages between agents and collects replies to questions.
+Callers supply a message's author, recipients and content, or a
+[request](./collectives.md) with a question, response form and deadline.
+Communication retains accepted work, verifies exchanges and recovers interrupted
+conversations.
 
-Submitting a message durably accepts its immutable payload and identity. The
-command returns after acceptance, while preparation, certification and delivery
-continue in the background. Waiting for that identity returns its retained Message
-once certified, or its retained terminal failure. Accepted work survives restart
-and can wait for Router attachment or recovery. The Router-based protocol below
-owns ordering, certification and recovery.
+A Message carries its author's AgentCard, the recipients' AgentCards, a message
+id and content. Each AgentCard identifies an agent by its id, name and principal.
+The author and message id identify the same message across retries and recovery.
+Communication derives request and reply meaning from the content when it
+constructs a Message. This metadata leaves the signed content unchanged.
+
+Submitting a message or request durably accepts its fixed identity and content
+before returning. Preparation, certification, delivery and reply collection
+continue in the background, including after cancellation or restart. Repeating
+the same submission is idempotent. Reusing its identity with different content
+fails. Waiting for an accepted message returns its retained Message after
+certification or reports its terminal failure. Cancelling that wait preserves
+the accepted work.
+
+Callers receive messages, requests, complete request results and request failures
+through one handoff. Personal policy determines what the agent may read or send.
+The protocol below establishes ordering, certification and recovery.
 
 ## Message flow
 
@@ -217,10 +228,43 @@ stop later traffic.
 
 ## Messages supplied to callers
 
-Communication supplies each conversation's verified Messages in order and fills
-missing messages during catch-up. A Message remains available until its handler
-succeeds. Failure or interruption can repeat delivery, including after restart.
-Authors receive no self-copy.
+Communication supplies verified messages in conversation order and fills gaps
+through catch-up. It recognizes requests and replies from their message content,
+completes requests and supplies their selected source messages with each result.
+Results contain one outcome per requested peer before local policy controls
+disclosure. An operation that fails instead supplies the original request and
+its failure.
+
+One consumer handles messages, requests, results and failures. A handoff remains
+pending until its handler succeeds. Failure or interruption leaves unfinished
+work available for another attempt, including after restart. Authors receive no
+self-copy. Request closes and malformed reserved content remain in the protocol
+log and produce no application message.
+
+## Reading conversations
+
+Retained conversation membership and completed messages remain readable without
+Registry or Router. A conversation identifies its complete participant set.
+Callers can find it by those names in any order. Direct conversations sort by
+the remote agent's name, followed by groups sorted by their member-name tuple.
+Listing includes conversations with completed messages authored locally or by
+peers. It returns at most 50 conversations per page and reflects additions as
+it runs.
+
+History returns completed application messages in conversation order. A recent
+window can be empty while outgoing work awaits completion. An oldest-first traversal fixes its final message on the first page and returns at
+most 50 messages per page. It may start after a specified message. A recent
+window returns a bounded number of messages before a specified message, or up
+to the current head when that boundary is omitted. The specified message and
+all later messages are excluded from a preceding window. An unknown boundary
+fails the read.
+
+Paged requests accept an opaque `cursor` and return `nextCursor` when more
+remain. Continue with the same selection arguments and stop when `nextCursor`
+is absent. A cursor belongs to its operation and service lifetime. Invalid or
+mismatched cursors fail with `invalid-cursor`. Recent windows have no cursor.
+Byte counts cover encoded Message values and exclude derived operation
+metadata. History also reports whether accepted outgoing work remains pending.
 
 ## Transport retries
 
@@ -256,8 +300,7 @@ retained metadata, including every signature. Corruption prevents startup or
 fails the read and cannot form a reply. Storage changes preserve logical
 records, hashes and evidence.
 
-Communication preserves its accepted work and retained evidence across restart.
-Related protocol changes commit together.
+Retained evidence survives restart. Related protocol changes commit together.
 
 ## Router
 

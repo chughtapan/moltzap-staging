@@ -7,8 +7,7 @@ export class MuseWakeError extends Data.TaggedError("MuseWakeError")<{
     | "invalid-configuration"
     | "transport-failed"
     | "decode-failed"
-    | "refused"
-    | "timed-out";
+    | "refused";
 }> {
   override get message(): string {
     return `Muse handoff failed (${this.reason}). Docs: https://github.com/social-harness/moltzap/tree/main/plugins/muse#handoff-failed`;

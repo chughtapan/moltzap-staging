@@ -1,10 +1,12 @@
 /** @file A scripted Router transmit over an endpoint store's durable outbox. */
 
 import { type Duration, Effect, Queue } from "effect";
-import type { TestDatabase } from "./communication-test-database.js";
 import { decodeCanonical } from "../encoding/canonical-json.js";
 import { SignedMessage } from "../identity/envelope/signed-message.js";
-import { testStore } from "./store-schema-fixtures.js";
+import {
+  protocolStore,
+  type TestDatabase,
+} from "./communication-test-database.js";
 
 /**
  * Transmit one outbox row the way the Router worker does: begin it, complete
@@ -23,7 +25,7 @@ export function forwardStoredOutbound(
   transit?: Duration.DurationInput,
 ): Effect.Effect<void> {
   return store.run(
-    testStore.beginOutbound(envelopeId).pipe(
+    protocolStore.beginOutbound(envelopeId).pipe(
       Effect.flatMap((attempt) => {
         switch (attempt.kind) {
           case "inactive":
@@ -37,7 +39,7 @@ export function forwardStoredOutbound(
                 transit === undefined ? Effect.void : Effect.sleep(transit),
               ),
               Effect.flatMap((message) =>
-                testStore
+                protocolStore
                   .completeOutbound(attempt.outbound)
                   .pipe(Effect.zipRight(Queue.offer(outbound, message))),
               ),

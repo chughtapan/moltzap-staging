@@ -1,129 +1,183 @@
-/** @file Connects tests to an MCP handler, over the daemon's loopback HTTP server or in process. */
-
+/** @file MCP tests substitute service behavior while exercising the real protocol and HTTP boundary. */
+import { HttpApp } from "@effect/platform";
+import { NodeHttpServer } from "@effect/platform-node";
+import { SqlClient } from "@effect/sql";
 import {
   Client,
   type ClientOptions,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  CLIENT_CAPABILITIES_META_KEY,
-  CLIENT_INFO_META_KEY,
-  type McpHttpHandler,
-  PROTOCOL_VERSION_META_KEY,
-} from "@modelcontextprotocol/server";
-import { Effect, Redacted, type Scope } from "effect";
-import { acquireHarnessMcpHttpServer } from "../daemon/mcp/http.js";
-import { Identity } from "../identity/local.js";
-import { testAgentView } from "./agent-card-fixtures.js";
+import { type Context, Effect, Redacted, Ref, Stream } from "effect";
+import { generateKeyPairSync } from "node:crypto";
+import { createServer } from "node:http";
+import { FirewallPolicyError } from "../firewall/rules/config.js";
+import { Firewall } from "../firewall/service.js";
+import { InboxError } from "../harness/inbox.js";
+import { makeMcpHttpApp } from "../harness/mcp/index.js";
+import { SocialHarness } from "../harness/service.js";
+import { Identity } from "../identity/service.js";
+import { issueTestCard, makeTestAuthority } from "./agent-card-fixtures.js";
+import { openTestDatabase } from "./communication-test-database.js";
 
-/** MCP discovery tests vary registration without invoking the Registry. */
-export function mcpIdentity(registered = true) {
-  return Identity.of({
-    me: () =>
-      registered
-        ? Effect.succeed({
-            kind: "registered",
-            agent: testAgentView("agent:alice"),
-          })
-        : Effect.succeed({ kind: "unregistered" }),
-    register: () =>
-      Effect.dieMessage("Registration is outside this MCP fixture"),
-    resolve: () => Effect.dieMessage("Resolution is outside this MCP fixture"),
-  });
-}
-
-/** Authenticated MCP fixtures use the same opaque token on both ends. */
+/** The credential has no authority beyond this process. */
 export const mcpTestCredential = Redacted.make(
   "mcp-test-credential-0000000000000001",
 );
-/** Request headers for the shared authenticated MCP fixtures. */
+/** Local requests use the same bearer as the server fixture. */
 export const mcpTestHeaders = {
-  Authorization: `Bearer ${Redacted.value(mcpTestCredential)}`,
+  authorization: `Bearer ${Redacted.value(mcpTestCredential)}`,
+  host: "127.0.0.1",
 };
 
-/**
- * Serve `handler` on an ephemeral loopback port and return the server's `/mcp`
- * URL. The listener and the handler close with the caller's scope.
- */
-export function loopbackMcpEndpoint(
-  handler: McpHttpHandler,
-): Effect.Effect<URL, Error, Scope.Scope> {
-  return acquireHarnessMcpHttpServer({ port: 0, handler }).pipe(
-    Effect.flatMap((server) => {
-      const address = server.address();
-      return address === null || typeof address === "string"
-        ? Effect.dieMessage("Expected a TCP listener")
-        : Effect.succeed(new URL(`http://127.0.0.1:${address.port}/mcp`));
-    }),
+/** Overrides are semantic service operations, without an adapter operation bag. */
+export const mcpFixture = Effect.fn("mcpFixture")(function* (
+  options: {
+    readonly registered?: boolean;
+    readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
+  } = {},
+) {
+  const database = yield* openTestDatabase();
+  const authority = yield* makeTestAuthority();
+  const card = yield* issueTestCard({
+    byte: 1,
+    name: "alice",
+    authority,
+    registryKeys: generateKeyPairSync("ed25519"),
+  });
+  const registered = yield* Ref.make(options.registered ?? true);
+  const register = () => Ref.set(registered, true).pipe(Effect.as(card));
+  const identity = Identity.of({
+    me: () =>
+      Ref.get(registered).pipe(
+        Effect.map((active) =>
+          active
+            ? { kind: "registered" as const, identityCard: card }
+            : { kind: "unregistered" as const },
+        ),
+      ),
+    register,
+    resolve: () => Effect.dieMessage("Unexpected identity resolution"),
+  });
+  const harness = SocialHarness.of({
+    register,
+    send: () => Effect.dieMessage("Unexpected send"),
+    listInbox: () => Effect.succeed({ items: [] }),
+    getInboxEvent: () =>
+      Effect.fail(new InboxError({ reason: "unknown-event" })),
+    acknowledgeDelivery: () => Effect.void,
+    listConversations: () => Effect.succeed({ addresses: [] }),
+    readHistory: () => Effect.succeed({ records: [] }),
+    inboxChanged: Stream.never,
+    ...options.harness,
+  });
+  const unused = () => Effect.dieMessage("Unexpected firewall assessment");
+  const firewall = Firewall.of({
+    checkIncoming: unused,
+    checkOutgoing: unused,
+    saveDecisions: unused,
+    readPolicy: () =>
+      Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
+    updatePolicy: unused,
+    readDecisions: unused,
+  });
+  const app = yield* makeMcpHttpApp({
+    credential: mcpTestCredential,
+    implementation: { name: "mcp-contract-test", version: "1" },
+  }).pipe(
+    Effect.provideService(SocialHarness, harness),
+    Effect.provideService(Identity, identity),
+    Effect.provideService(Firewall, firewall),
+    Effect.provideService(SqlClient.SqlClient, database.sql),
   );
-}
+  return {
+    app,
+    fetch: HttpApp.toWebHandler(app),
+    harness,
+    identity,
+    card,
+    database,
+  };
+});
 
-/**
- * A client with `options` connected to `handler` without a listener: each
- * request goes straight to the handler's `fetch`, carrying `headers`. A
- * refused connection fails with the SDK's error, and the client closes with
- * the caller's scope.
- */
-export function connectInProcessClient(
-  handler: McpHttpHandler,
-  options: ClientOptions,
-  headers: Readonly<Record<string, string>> = mcpTestHeaders,
-): Effect.Effect<Client, unknown, Scope.Scope> {
-  // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The returned effect requires Scope, so the caller's scope releases the client.
-  return Effect.acquireRelease(
-    Effect.suspend(() => {
-      const client = new Client(
-        { name: "in-process-test-client", version: "1" },
-        options,
-      );
-      const transport = new StreamableHTTPClientTransport(
-        new URL("http://127.0.0.1/mcp"),
-        {
-          fetch: (url, init) => handler.fetch(new Request(url, init)),
-          requestInit: { headers },
-        },
-      );
-      return Effect.tryPromise({
-        try: () => client.connect(transport),
-        catch: (cause) => cause,
-      }).pipe(Effect.as(client));
-    }),
-    (client) => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-  );
-}
+/** The listener and every in-flight request belong to the calling scope. */
+export const loopbackMcpEndpoint = Effect.fn(function* (
+  app: HttpApp.Default<never, import("effect").Scope.Scope>,
+) {
+  const server = yield* NodeHttpServer.make(createServer, {
+    host: "127.0.0.1",
+    port: 0,
+  });
+  yield* server.serve(app);
+  if (server.address._tag !== "TcpAddress") {
+    return yield* Effect.dieMessage("Expected TCP listener");
+  }
+  return new URL(`http://127.0.0.1:${server.address.port}/mcp`);
+});
 
-/** Builds one authenticated modern MCP tool request without a client connection. */
-export function makeToolCallRequest(input: {
-  readonly id: string;
-  readonly name: string;
-  readonly toolArguments: Readonly<Record<string, unknown>>;
-  readonly metadata?: Readonly<Record<string, unknown>>;
-  readonly signal?: AbortSignal;
-}): Request {
+/** A stock client connects through HTTP encoding and closes with the test scope. */
+export const connectInProcessClient = (
+  fetch: typeof globalThis.fetch,
+  options: ClientOptions = {
+    capabilities: {},
+    versionNegotiation: { mode: { pin: "2026-07-28" } },
+  },
+) =>
+  Effect.gen(function* () {
+    const client = new Client(
+      { name: "mcp-contract-test", version: "1" },
+      options,
+    );
+    yield* Effect.acquireRelease(
+      Effect.tryPromise(() =>
+        client.connect(
+          new StreamableHTTPClientTransport(new URL("http://127.0.0.1/mcp"), {
+            fetch,
+            requestInit: { headers: mcpTestHeaders },
+          }),
+        ),
+      ),
+      () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
+    );
+    return client;
+  });
+
+/** A request can vary IDs, metadata and cancellation without changing the application contract. */
+export function mcpRequest(
+  method: string,
+  params: Readonly<Record<string, unknown>> = {},
+  options: {
+    readonly id?: string | number;
+    readonly headers?: Readonly<Record<string, string>>;
+    readonly signal?: AbortSignal;
+    readonly version?: string;
+  } = {},
+) {
+  const version = options.version ?? "2026-07-28";
   return new Request("http://127.0.0.1/mcp", {
     method: "POST",
     headers: {
       ...mcpTestHeaders,
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
-      "mcp-method": "tools/call",
-      "mcp-name": input.name,
+      "mcp-protocol-version": version,
+      ...options.headers,
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
-      id: input.id,
-      method: "tools/call",
+      id: options.id ?? 1,
+      method,
       params: {
-        name: input.name,
-        arguments: input.toolArguments,
+        ...params,
         _meta: {
-          ...input.metadata,
-          [PROTOCOL_VERSION_META_KEY]: "2026-07-28",
-          [CLIENT_INFO_META_KEY]: { name: "daemon-test-client", version: "1" },
-          [CLIENT_CAPABILITIES_META_KEY]: {},
+          "io.modelcontextprotocol/protocolVersion": version,
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientInfo": {
+            name: "mcp-contract-test",
+            version: "1",
+          },
         },
       },
     }),
-    signal: input.signal,
+    signal: options.signal,
   });
 }

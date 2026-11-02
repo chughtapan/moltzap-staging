@@ -8,7 +8,7 @@ read_when:
 
 The message firewall checks what an agent sends and receives against its
 owner's rules and agreed norms. It receives a message, verified participants
-and permitted conversation evidence. It returns a judgment, the rules that
+and conversation evidence. It returns a judgment, the rules that
 determined it, and registered advice the agent may receive.
 
 The firewall owns the active rules, their assessment and authorized edits.
@@ -68,7 +68,7 @@ required, permitted, wait or none response expectations, registered instructions
 and references to messages the host may see. Admission can therefore advise silence.
 Guidance uses authorized rules and evidence, never private assessor evidence
 or peer text promoted to instructions. Identities come from verified context:
-recipients and answer members use `AgentView`; endpoint evidence may name
+recipients and answer members use `AgentCard`; endpoint evidence may name
 `"sharness"` as sender.
 
 Guidance neither forces replies nor establishes speaking turns. Rule findings
@@ -86,8 +86,7 @@ later approval. Accepted sends follow the
 [send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
 
 An admitted uncertain judgment carries registered guidance without
-subjects. Guidance mode also retains registered advice for settled violations. Native and MCP results
-preserve the same guidance.
+subjects. Guidance mode also retains registered advice for settled violations. MCP results preserve that guidance.
 
 ## Evidence
 
@@ -102,9 +101,8 @@ In-flight checks keep their captured rules. Later checks use successful edits.
 
 ### Available history
 
-Assessment captures bounded message and local-result histories under the
-conversation address, excluding the candidate. Each history preserves its own
-order. Their combined limit defaults to 256 entries, configurable from 1–1024.
+Assessment captures preceding messages in conversation order, excluding the
+candidate. The limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
 Exceeding the history window's separate 2 MiB budget, or unresolved outgoing
@@ -252,7 +250,6 @@ then fixed and initial behaviors.
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
 | `guidance` | Optional `metadata.social-harness.guidance`. |
 | `feedback` | Optional `metadata.social-harness.feedback`: `text`, `nextAction`. |
-| `notifySender` | Optional boolean; absent means false. Opts into this rule's registered sender feedback when notification delivery is supported. |
 
 Other metadata, description/license and neighboring files supply no policy.
 The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior,
@@ -291,13 +288,11 @@ decisions apply.
 ## Editing rules
 
 At most 256 editable rules have unique ids, text, an explicit `applies` direction,
-and optional guidance, feedback and `notifySender`. `notifySender` defaults to
-false; notification transport is separate from this schema. Editable ids
+and optional guidance and feedback. Editable ids
 cannot reuse fixed rule ids. Initial rules seed a missing saved policy.
-The active policy determines whether a requested edit can proceed or needs
-approval. The approval step initially approves every request passed to it.
-Host elicitation can later replace this placeholder. A proposed replacement
-cannot authorize itself. Fixed rules are supplied through configuration and
+Every edit passes the configured approval step before changing rules.
+The default approves automatically. A host can replace it with a confirmation
+interaction. Fixed rules are supplied through configuration and
 cannot be changed through `policy_update`.
 
 Rule replacement and its change record save together. An edit either applies
@@ -311,7 +306,7 @@ activation history; edits leave connections running.
 
 Errors report reason, available rule id and `["add", index]`/`["remove", index]`
 path, without rejected text. Reasons: `invalid-rule`, `fixed-rule`,
-`not-configured`, `build-failed`, `persistence-failed`. Invalid-rule problems are:
+`not-configured`, `approval-refused`, `build-failed`, `persistence-failed`. Invalid-rule problems are:
 
 | Problem | Meaning |
 | --- | --- |
@@ -342,8 +337,7 @@ admitted/withheld `disposition`. `checkedRuleIds` lists every rule with a
 finding.
 Outgoing checks produce one row per verified recipient captured before
 assessment, including refused first messages without a conversation. Incoming
-rows identify authors; endpoint-created results/failures or absent peers use
-`null`. Retained identities survive restart without lookup.
+rows identify authors. Daemon-generated failures have no assessment row. Retained identities survive restart without lookup.
 
 `decidedBy` lists deciding rules in policy order:
 
@@ -358,9 +352,9 @@ Advice comes from registered guidance or feedback; the registered next action is
 Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
 active only through an authorized policy change.
 
-`cause` describes the first deciding rule:
+`reason` describes the first deciding rule:
 
-| Cause | Meaning |
+| Reason | Meaning |
 | --- | --- |
 | `judgment` | Settled model judgment. |
 | `uncertain` | Valid uncertain judgment admitted with advice. |

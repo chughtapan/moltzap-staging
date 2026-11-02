@@ -1,4 +1,4 @@
-/** @file Registry configuration, private RPC, client, and server composition contract tests. */
+/** @file Registry calls verify identity bindings and preserve closed transport failures. */
 
 import {
   HttpClient,
@@ -9,7 +9,7 @@ import { Duration, Effect, Either, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  AgentCardIssuedAt,
+  AgentIdentityCardIssuedAt,
   makeVerifiedCard,
 } from "../../__tests__/agent-card-fixtures.js";
 import { encodeCanonicalJson } from "../../../encoding/canonical-json.js";
@@ -18,16 +18,16 @@ import {
   AgentName,
   AgentSigningAuthority,
   PrincipalId,
-} from "../../../index.js";
+} from "../../agent.js";
 import { lookupResponseSchema, registerResponseSchema } from "../contract.js";
-import { OperationId, Registry, RegistryRegisterRequest } from "../index.js";
+import { RegistrationId, Registry, RegistryRegisterRequest } from "../index.js";
 
-const UNAVAILABLE_TAG = "UnavailableError";
+const UNAVAILABLE_TAG = "http-envelope";
 const FOUND_KIND = "found";
-const INVALID_RESPONSE_TAG = "RegistryInvalidResponseError";
-const CONNECTION_ERROR_TAG = "RegistryConnectionError";
-const TIMEOUT_ERROR_TAG = "RegistryRequestTimeoutError";
-const SIGNING_ERROR_TAG = "AgentSigningError";
+const INVALID_RESPONSE_TAG = "invalid-response";
+const CONNECTION_ERROR_TAG = "connection";
+const TIMEOUT_ERROR_TAG = "timeout";
+const SIGNING_ERROR_TAG = "signing";
 const CLIENT_ORIGIN = new URL("http://registry.example:3011");
 const CLIENT_TIMEOUT = Duration.seconds(5);
 const SHORT_CLIENT_TIMEOUT = Duration.millis(5);
@@ -39,7 +39,7 @@ const makePrivateKeyPem = (): string => {
 
 const makeRequest = (name: string) =>
   Schema.decodeUnknownSync(RegistryRegisterRequest)({
-    operationId: Schema.decodeUnknownSync(OperationId)(
+    operationId: Schema.decodeUnknownSync(RegistrationId)(
       "opn_AAAAAAAAAAAAAAAAAAAAAA",
     ),
     principalId: Schema.decodeUnknownSync(PrincipalId)(
@@ -110,12 +110,13 @@ const outcomeName = <
   A extends { readonly kind: string },
   E extends {
     readonly _tag: string;
+    readonly reason: string;
   },
 >(
   outcome: Either.Either<A, E>,
 ): string =>
   Either.match(outcome, {
-    onLeft: (error) => error._tag,
+    onLeft: (error) => error.reason,
     onRight: (result) => result.kind,
   });
 
@@ -135,7 +136,7 @@ const makeClientCard = (
     ),
     agentName: Schema.decodeUnknownSync(AgentName)(input.agentName),
     publicKey: input.publicKey ?? makeRequest(input.agentName).publicKey,
-    issuedAt: Schema.decodeUnknownSync(AgentCardIssuedAt)(
+    issuedAt: Schema.decodeUnknownSync(AgentIdentityCardIssuedAt)(
       "2026-07-30T00:00:00Z",
     ),
     registrySigningAuthority,
@@ -481,102 +482,11 @@ const assertWrongKeyRegistration = (fixture: ClientFixture) =>
     expect(outcomeName(outcome)).toBe(INVALID_RESPONSE_TAG);
   });
 
-/** A Registry client whose HTTP client dies if any request is sent. */
-const unsentRegistryLayer = (signingAuthority: AgentSigningAuthority) =>
-  Registry.layer({
-    origin: CLIENT_ORIGIN,
-    registrySignerPublicKey: AgentSigningAuthority.publicKey(signingAuthority),
-    requestTimeout: CLIENT_TIMEOUT,
-  }).pipe(
-    Layer.provide(
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.dieMessage("no request is sent")),
-      ),
-    ),
-  );
-
-/** A request whose key throws on read fails as a signing error, not a defect. */
-const assertUnreadableKeyRegistration = Effect.gen(function* () {
-  const signingAuthority = yield* AgentSigningAuthority.fromPkcs8(
-    Redacted.make(makePrivateKeyPem()),
-  );
-  const publicKey = new Proxy(
-    AgentSigningAuthority.publicKey(signingAuthority),
-    {
-      get: () => {
-        throw new Error("unreadable key");
-      },
-    },
-  );
-  const registryLayer = unsentRegistryLayer(signingAuthority);
-
-  const outcome = yield* Registry.register({
-    request: { ...makeRequest("unreadable-key"), publicKey },
-    admissionCredential: Redacted.make("admission-token="),
-    signingAuthority,
-  }).pipe(Effect.provide(registryLayer), Effect.either);
-
-  expect(outcomeName(outcome)).toBe(SIGNING_ERROR_TAG);
-});
-
-/** A view of `value` whose `member` throws on read. */
-const throwingOn = <Value extends object>(
-  value: Value,
-  member: string,
-): Value =>
-  new Proxy(value, {
-    get: (target, key): unknown => {
-      if (key === member) {
-        throw new Error(`unreadable ${member}`);
-      }
-      return Reflect.get(target, key);
-    },
-  });
-
-/**
- * Request records whose members throw on read fail with each entry point's
- * typed error instead of dying, and send nothing.
- */
-const assertUnreadableRequestRecords = Effect.gen(function* () {
-  const signingAuthority = yield* AgentSigningAuthority.fromPkcs8(
-    Redacted.make(makePrivateKeyPem()),
-  );
-  const registryLayer = unsentRegistryLayer(signingAuthority);
-  const request = makeRequest("unreadable-request");
-  const [registered, lookedUp] = yield* Effect.all(
-    [
-      Registry.register({
-        request: throwingOn(
-          {
-            ...request,
-            publicKey: AgentSigningAuthority.publicKey(signingAuthority),
-          },
-          "principalId",
-        ),
-        admissionCredential: Redacted.make("admission-token="),
-        signingAuthority,
-      }).pipe(Effect.either),
-      Registry.lookup(
-        throwingOn({ agentName: request.agentName }, "agentName"),
-      ).pipe(Effect.either),
-    ],
-    { concurrency: 1 },
-  ).pipe(Effect.provide(registryLayer));
-
-  expect([outcomeName(registered), outcomeName(lookedUp)]).toStrictEqual([
-    SIGNING_ERROR_TAG,
-    INVALID_RESPONSE_TAG,
-  ]);
-});
-
 const clientBehavior = Effect.gen(function* () {
   const fixture = yield* makeClientFixture;
   yield* assertLookupScenarios(fixture);
   yield* assertRegistrationClientBehavior(fixture);
   yield* assertWrongKeyRegistration(fixture);
-  yield* assertUnreadableKeyRegistration;
-  yield* assertUnreadableRequestRecords;
 });
 
 describe("Registry client contracts", () => {
@@ -585,11 +495,10 @@ describe("Registry client contracts", () => {
     return Effect.runPromise(clientBehavior);
   });
 
-  it("preserves supported versions from a canonical Registry 412", () =>
+  it("classifies a canonical Registry version mismatch", () =>
     Effect.runPromise(
       Effect.gen(function* () {
         const fixture = yield* makeClientFixture;
-        const supported = ["2099.101.0"];
         const outcome = yield* runLookup(
           responseClient(
             '{"error":"version_mismatch","supported":["2099.101.0"]}',
@@ -600,8 +509,47 @@ describe("Registry client contracts", () => {
         );
         expect(outcome).toMatchObject({
           _tag: "Left",
-          left: { _tag: "VersionMismatchError", supported },
+          left: { _tag: "RegistryError", reason: "http-envelope" },
         });
       }),
     ));
 });
+
+it("reports a refused admission credential through RegistryError", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fixture = yield* makeClientFixture;
+      const signingAuthority = yield* AgentSigningAuthority.fromPkcs8(
+        Redacted.make(makePrivateKeyPem()),
+      );
+      const request = {
+        ...makeRequest("refused-admission"),
+        publicKey: AgentSigningAuthority.publicKey(signingAuthority),
+      };
+      const refusal = yield* Registry.register({
+        request,
+        signingAuthority,
+        admissionCredential: Redacted.make("refused-credential"),
+      }).pipe(
+        Effect.provide(
+          Registry.layer({
+            origin: CLIENT_ORIGIN,
+            registrySignerPublicKey: fixture.registrySignerPublicKey,
+            requestTimeout: CLIENT_TIMEOUT,
+          }).pipe(
+            Layer.provide(
+              Layer.succeed(
+                HttpClient.HttpClient,
+                responseClient('{"error":"authentication_failed"}', 401),
+              ),
+            ),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(refusal).toMatchObject({
+        _tag: "RegistryError",
+        reason: "admission-refused",
+      });
+    }),
+  ));

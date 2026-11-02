@@ -1,7 +1,7 @@
 /** @file Promise-native access to scoped process fixtures for node:test consumers. */
 import {
   acquireHarnessEndpoint,
-  type AgentView,
+  type AgentCard,
   type HarnessEndpoint,
   type InboundItem,
   MessageAddressInput,
@@ -35,7 +35,7 @@ interface Daemon {
  * shares the daemon receives every delivery the test does not ask for.
  */
 export interface Endpoint extends Daemon {
-  readonly agent: AgentView;
+  readonly agent: AgentCard;
   readonly send: (input: unknown) => Promise<SendResult>;
   readonly next: (count: number) => Promise<readonly InboundItem[]>;
   readonly history: (address: string) => Promise<readonly unknown[]>;

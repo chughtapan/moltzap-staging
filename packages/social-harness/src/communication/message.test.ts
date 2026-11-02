@@ -1,15 +1,17 @@
 /** @file Messages preserve author-scoped identity and distinct participants through reconstruction. */
 
 import { effect as it } from "@effect/vitest";
-import { Effect, Exit, Schema } from "effect";
+import { Effect, Exit, JSONSchema, Schema } from "effect";
 import { expect } from "vitest";
 import { digest, testAgentView } from "../__tests__/agent-card-fixtures.js";
+import { Answer, Incoming, Request, RequestedSchema } from "./index.js";
 import {
   Message,
   messageFromIntent,
   messageFromParticipants,
 } from "./message.js";
 import { MsgId } from "./records/values.js";
+import { encodeCollectiveContent } from "./requests/answers.js";
 
 const alice = testAgentView("alice");
 const bob = testAgentView("bob");
@@ -64,4 +66,59 @@ it("captures nested content independently of the caller's objects", () =>
     expect(message.content).toEqual([
       { type: "data", value: { times: ["monday"] } },
     ]);
+  }));
+
+it("captures a request and an answer while keeping decoded operation metadata out of stored message bytes", () =>
+  Effect.gen(function* () {
+    const request = yield* Request.create({
+      author: alice,
+      recipients: [bob, carol],
+      op: "all_gather",
+      question: "Which day works?",
+      deadline: 30,
+      requestedSchema: Schema.decodeUnknownSync(RequestedSchema)({
+        type: "object",
+        properties: { day: { type: "string" } },
+        required: ["day"],
+      }),
+    });
+    const question = yield* Message.create({
+      author: request.author,
+      recipients: request.recipients,
+      content: yield* encodeCollectiveContent(
+        {
+          kind: "operation",
+          op: request.op,
+          operationId: request.operationId,
+          deadlineAt: request.deadlineAt,
+          requestedSchema: request.requestedSchema,
+        },
+        request.question,
+      ),
+    });
+    if (question.operation?.kind !== "request") {
+      return yield* Effect.dieMessage("question did not decode");
+    }
+    const answer = yield* Answer.create({
+      author: bob,
+      request: { ...question, operation: question.operation },
+      response: { action: "accept", content: { day: "monday" } },
+    });
+    expect(answer.recipients).toEqual([alice, carol]);
+    expect(answer.operation).toMatchObject({
+      kind: "response",
+      operationId: request.operationId,
+      content: { day: "monday" },
+    });
+    const incoming: Incoming = { kind: "message", message: answer };
+    const stored = yield* Schema.encode(Incoming)(incoming);
+    expect(stored).toMatchObject({ kind: "message", message: { author: bob } });
+    if (stored.kind !== "message") {
+      return yield* Effect.dieMessage("stored handoff changed kind");
+    }
+    expect(stored.message).not.toHaveProperty("operation");
+    expect(yield* Schema.decodeUnknown(Incoming)(stored)).toEqual(incoming);
+    expect(JSONSchema.make(Schema.typeSchema(Incoming))).toHaveProperty(
+      "anyOf",
+    );
   }));

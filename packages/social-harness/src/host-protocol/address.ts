@@ -11,7 +11,7 @@ import {
   type MessageAddressInput,
 } from "../communication/records/values.js";
 import { compareAscii } from "../encoding/identifier.js";
-import { AgentName } from "../identity/identifiers.js";
+import { AgentName } from "../identity/agent.js";
 
 /** A destination in canonical form, before any Registry lookup. */
 export type CanonicalMessageAddress =

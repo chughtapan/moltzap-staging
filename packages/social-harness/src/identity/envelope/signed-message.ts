@@ -21,17 +21,15 @@ import {
   decodeCanonicalBase64Url,
 } from "../../encoding/identifier.js";
 import {
-  AgentCardDigest,
-  type AgentCardDigest as AgentCardDigestValue,
-  digestAgentCard,
-  type VerifiedAgentCard,
-} from "../cards.js";
-import { AgentId, type AgentId as AgentIdValue } from "../identifiers.js";
+  AgentId,
+  AgentIdentityCardDigest,
+  digestAgentIdentityCard,
+  type VerifiedAgentIdentityCard,
+} from "../agent.js";
 import {
+  type AgentPublicKey,
   AgentSigningAuthority,
-  type AgentSigningAuthority as AgentSigningAuthorityValue,
   agentSigningPrivateKey,
-  type Ed25519PublicKey,
   ed25519PublicKeyThumbprintUri,
   ed25519VerificationKey,
   generalJwsRepresentation,
@@ -101,7 +99,7 @@ const protectedHeader = exactStruct({
 });
 
 const recipientsAreCanonical = (
-  recipientAgentIds: readonly AgentIdValue[],
+  recipientAgentIds: readonly AgentId[],
 ): boolean => {
   for (let index = 1; index < recipientAgentIds.length; index += 1) {
     const previous = recipientAgentIds[index - 1];
@@ -133,7 +131,7 @@ const payload = exactStruct({
   kind: Schema.Literal("signedMessage"),
   sharnessVersion: WireVersions.history,
   senderAgentId: AgentId,
-  agentCardDigest: AgentCardDigest,
+  agentCardDigest: AgentIdentityCardDigest,
   recipientAgentIds,
   envelopeId: EnvelopeId,
   body: opaqueBody,
@@ -141,9 +139,9 @@ const payload = exactStruct({
 
 /** Immutable attributed-message fields exposed to Router consumers. */
 export interface SignedMessage {
-  readonly senderAgentId: AgentIdValue;
-  readonly agentCardDigest: AgentCardDigestValue;
-  readonly recipientAgentIds: readonly AgentIdValue[];
+  readonly senderAgentId: AgentId;
+  readonly agentCardDigest: AgentIdentityCardDigest;
+  readonly recipientAgentIds: readonly AgentId[];
   readonly envelopeId: EnvelopeId;
   readonly body: Uint8Array;
 }
@@ -282,7 +280,7 @@ export class SignedMessageSigningError extends Data.TaggedError(
   "SignedMessageSigningError",
 ) {}
 
-/** A SignedMessage does not bind to the supplied verified AgentCard. */
+/** A SignedMessage does not bind to the supplied verified AgentIdentityCard. */
 export class SignedMessageVerificationError extends Data.TaggedError(
   "SignedMessageVerificationError",
 ) {}
@@ -306,14 +304,14 @@ const verificationFailure = (): SignedMessageVerificationError =>
 
 /** @inline */
 interface SignInput {
-  readonly agentCard: VerifiedAgentCard;
-  readonly signingAuthority: AgentSigningAuthorityValue;
-  readonly recipientAgentIds: ReadonlySet<AgentIdValue>;
+  readonly identityCard: VerifiedAgentIdentityCard;
+  readonly signingAuthority: AgentSigningAuthority;
+  readonly recipientAgentIds: ReadonlySet<AgentId>;
   readonly envelopeId: EnvelopeId;
   readonly body: Uint8Array;
 }
 
-const snapshotRecipients = (recipientAgentIds: ReadonlySet<AgentIdValue>) =>
+const snapshotRecipients = (recipientAgentIds: ReadonlySet<AgentId>) =>
   Effect.gen(function* () {
     const recipients = yield* Effect.try({
       try: () => Array.from(recipientAgentIds),
@@ -344,8 +342,8 @@ const snapshotBody = (candidate: Uint8Array) =>
 
 /** Captured caller input keeps later signing steps independent of mutable getters. */
 interface SigningRecord extends SignInput {
-  readonly senderAgentId: AgentIdValue;
-  readonly publicKey: Ed25519PublicKey;
+  readonly senderAgentId: AgentId;
+  readonly publicKey: AgentPublicKey;
 }
 
 /**
@@ -358,20 +356,20 @@ const snapshotSignInput = (
   Effect.try({
     try: () => {
       const {
-        agentCard,
+        identityCard,
         signingAuthority,
         recipientAgentIds,
         envelopeId,
         body,
       } = input;
       return {
-        agentCard,
+        identityCard,
         signingAuthority,
         recipientAgentIds,
         envelopeId,
         body,
-        senderAgentId: agentCard.agentId,
-        publicKey: agentCard.publicKey,
+        senderAgentId: identityCard.agentId,
+        publicKey: identityCard.publicKey,
       };
     },
     catch: signingFailure,
@@ -388,9 +386,9 @@ const prepareSigningMaterial = (input: SigningRecord) =>
     }
     const recipients = yield* snapshotRecipients(input.recipientAgentIds);
     const body = yield* snapshotBody(input.body);
-    const agentCardDigest = yield* digestAgentCard(input.agentCard).pipe(
-      Effect.mapError(signingFailure),
-    );
+    const agentCardDigest = yield* digestAgentIdentityCard(
+      input.identityCard,
+    ).pipe(Effect.mapError(signingFailure));
     const kid = yield* ed25519PublicKeyThumbprintUri(input.publicKey).pipe(
       Effect.mapError(signingFailure),
     );
@@ -436,13 +434,13 @@ const sign = (
 /** @inline */
 interface VerifyInput {
   readonly signedMessage: SignedMessage;
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
 }
 
 /** Checks the message's one Ed25519 signature against `publicKey`. */
 const verifySignature = (
   state: SignedMessageState,
-  publicKey: Ed25519PublicKey,
+  publicKey: AgentPublicKey,
 ): Effect.Effect<void, SignedMessageVerificationError> =>
   Effect.gen(function* () {
     const key = yield* ed25519VerificationKey(publicKey).pipe(
@@ -476,12 +474,12 @@ const verifySignature = (
 const snapshotVerifyInput = (input: VerifyInput) =>
   Effect.try({
     try: () => {
-      const { signedMessage, agentCard } = input;
+      const { signedMessage, identityCard } = input;
       return {
         signedMessage,
-        agentCard,
-        senderAgentId: agentCard.agentId,
-        publicKey: agentCard.publicKey,
+        identityCard,
+        senderAgentId: identityCard.agentId,
+        publicKey: identityCard.publicKey,
       };
     },
     catch: verificationFailure,
@@ -500,13 +498,13 @@ function verify(
   input: VerifyInput,
 ): Effect.Effect<VerifiedSignedMessage, SignedMessageVerificationError> {
   return Effect.gen(function* () {
-    const { signedMessage, agentCard, senderAgentId, publicKey } =
+    const { signedMessage, identityCard, senderAgentId, publicKey } =
       yield* snapshotVerifyInput(input);
     const state = messageState.get(signedMessage);
     if (state === undefined) {
       return yield* new SignedMessageVerificationError();
     }
-    const expectedDigest = yield* digestAgentCard(agentCard).pipe(
+    const expectedDigest = yield* digestAgentIdentityCard(identityCard).pipe(
       Effect.mapError(verificationFailure),
     );
     const expectedKid = yield* ed25519PublicKeyThumbprintUri(publicKey).pipe(

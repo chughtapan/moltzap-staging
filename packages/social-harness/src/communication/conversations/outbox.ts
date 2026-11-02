@@ -1,33 +1,36 @@
 /** @file Queues signed conversation messages and sends them through the Router across retries. */
 
-import type * as SqlClient from "@effect/sql/SqlClient";
+import type { SqlClient } from "@effect/sql/SqlClient";
+
 import { Effect, Queue, Schedule } from "effect";
+import type { ConversationId } from "../records/schemas.js";
+import type { VerifiedMembership } from "../records/verification.js";
 import type {
   EndpointEngineInput,
   EngineConversation,
   EngineOutbox,
   EngineOutboxError,
-} from "./engine-context.js";
+} from "./state.js";
+
 import {
   type ClientRepresentationError,
   encodeCanonical,
 } from "../../encoding/canonical-json.js";
 import { SignedMessage } from "../../identity/envelope/signed-message.js";
+import { exitOutcome, markRetries } from "../../tracing.js";
 import {
-  type ConversationId,
   type DecodedOuterBody,
   signOuterEvidence,
   signOuterPacket,
-  type VerifiedMembership,
-} from "../records/index.js";
+} from "../records/encoding.js";
 import {
   describeRouterWorkerFailure,
   isTransientRouterWorkerError,
   routerWorkerReconnectSchedule,
   type RouterWorkerSendError,
-} from "../router/index.js";
-import * as Store from "../store/index.js";
-import { exitOutcome, markRetries } from "./retry-markers.js";
+} from "../router/connection.js";
+import { enqueueOutbound, readRecordOutbound } from "../store/outbound.js";
+import { stageRecordAndOutbound } from "../store/records.js";
 
 /**
  * The outbox's mutable state. `queued` holds outbox identities in durable
@@ -75,7 +78,7 @@ function bindOutbox(state: OutboxState): EngineOutbox {
       queueBody(state, conversation, { kind: "evidence", message: evidence }),
     stageRecord: (conversation, packet, record) =>
       Effect.gen(function* () {
-        const retained = yield* Store.readRecordOutbound(
+        const retained = yield* readRecordOutbound(
           conversation.conversationId,
           record.recordHash,
         );
@@ -91,7 +94,7 @@ function bindOutbox(state: OutboxState): EngineOutbox {
           SignedMessage,
           message,
         );
-        const outbound = yield* Store.stageRecordAndOutbound(record, {
+        const outbound = yield* stageRecordAndOutbound(record, {
           conversationId: conversation.conversationId,
           envelopeId: message.envelopeId,
           wireVersion: SignedMessage.wireVersion(message),
@@ -115,7 +118,7 @@ function queueBody(
   state: OutboxState,
   conversation: EngineConversation,
   body: DecodedOuterBody,
-): Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient> {
+): Effect.Effect<void, EngineOutboxError, SqlClient> {
   return sign(state, conversation.membership, body).pipe(
     Effect.flatMap((message) =>
       enqueueSigned(state, conversation.conversationId, message),
@@ -130,7 +133,7 @@ function sign(
 ): Effect.Effect<SignedMessage, ClientRepresentationError> {
   const signer = {
     membership,
-    agentCard: state.input.localAgentCard,
+    identityCard: state.input.localAgentCard,
     signingAuthority: state.input.signingAuthority,
   };
   return body.kind === "direct"
@@ -142,7 +145,7 @@ function enqueueSigned(
   state: OutboxState,
   conversationId: ConversationId,
   message: SignedMessage,
-): Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient> {
+): Effect.Effect<void, EngineOutboxError, SqlClient> {
   return encodeCanonical(SignedMessage, message).pipe(
     Effect.flatMap((canonicalSignedMessage) => {
       const input = {
@@ -151,7 +154,7 @@ function enqueueSigned(
         wireVersion: SignedMessage.wireVersion(message),
         canonicalSignedMessage,
       };
-      return Store.enqueueOutbound(input);
+      return enqueueOutbound(input);
     }),
     Effect.flatMap((outbound) => push(state, [outbound.envelopeId])),
   );

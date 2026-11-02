@@ -12,8 +12,6 @@ export interface BoundedCache<K, V> {
   readonly get: (key: K) => Option.Option<V>;
   /** Stores `value` as the most recently used entry for `key`. */
   readonly set: (key: K, value: V) => void;
-  /** The number of entries held, never more than the capacity. */
-  readonly size: () => number;
 }
 
 /**
@@ -45,6 +43,5 @@ export const makeBoundedCache = <K, V>(
         }
       }
     },
-    size: (): number => entries.size,
   });
 };

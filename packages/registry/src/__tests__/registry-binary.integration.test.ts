@@ -1,17 +1,20 @@
 /** @file Black-box Registry binary tests for framing, contracts, bounds, and shutdown. */
 
+import { Registry } from "@moltzap/social-harness/service";
+
 import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpClient, HttpClientRequest } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import {
-  AgentCard,
+  AgentIdentityCard,
   AgentName,
   AgentSigningAuthority,
-  type VerifiedAgentCard,
+  type VerifiedAgentIdentityCard,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
-import { Registry, registryContract } from "@moltzap/social-harness/internal";
+import { Registry } from "@moltzap/social-harness/service";
+import { registryContract } from "@moltzap/social-harness/internal";
 import { Duration, Effect, Redacted, Ref, Schema } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,14 +106,14 @@ const expectStartupFailure = (process: RunningProcess) =>
   });
 
 const expectExactCard = (
-  actual: VerifiedAgentCard,
-  expected: VerifiedAgentCard,
+  actual: VerifiedAgentIdentityCard,
+  expected: VerifiedAgentIdentityCard,
 ) =>
   Effect.gen(function* () {
     const [actualEncoded, expectedEncoded] = yield* Effect.all(
       [
-        Schema.encode(AgentCard)(actual),
-        Schema.encode(AgentCard)(expected),
+        Schema.encode(AgentIdentityCard)(actual),
+        Schema.encode(AgentIdentityCard)(expected),
       ] as const,
       { concurrency: 2 },
     );
@@ -125,7 +128,7 @@ const assertRegistrationPrecedence = (
     const repeated = yield* callRegister(runRegistry, first);
     expect(repeated.kind).toBe(REGISTERED_KIND);
     if (repeated.kind === REGISTERED_KIND) {
-      yield* expectExactCard(repeated.agentCard, first.agentCard);
+      yield* expectExactCard(repeated.identityCard, first.identityCard);
     }
 
     const changedRequest = {
@@ -172,7 +175,11 @@ const assertWrongAdmission = (runRegistry: RegistryRunner) =>
       "wrong-admission-credential",
     ).pipe(
       Effect.as(false),
-      Effect.catchTag("AuthenticationFailedError", () => Effect.succeed(true)),
+      Effect.catchTag("RegistryError", (error) =>
+        error.reason === "admission-refused"
+          ? Effect.succeed(true)
+          : Effect.fail(error),
+      ),
     );
     expect(rejected).toBe(true);
     expect(
@@ -191,7 +198,7 @@ const assertLookup = (
     const lookup = yield* runRegistry(Registry.lookup(selector));
     expect(lookup.kind).toBe(FOUND_KIND);
     if (lookup.kind === FOUND_KIND) {
-      yield* expectExactCard(lookup.agentCard, agent.agentCard);
+      yield* expectExactCard(lookup.identityCard, agent.identityCard);
     }
   });
 
@@ -576,7 +583,10 @@ const assertConcurrentIdempotency = (runRegistry: RegistryRunner) =>
       repeated[0].kind === REGISTERED_KIND &&
       repeated[1].kind === REGISTERED_KIND
     ) {
-      yield* expectExactCard(repeated[0].agentCard, repeated[1].agentCard);
+      yield* expectExactCard(
+        repeated[0].identityCard,
+        repeated[1].identityCard,
+      );
     }
   });
 
@@ -667,12 +677,12 @@ const exerciseFirstRun = (
     );
     yield* assertLookup(
       third,
-      { agentId: third.agentCard.agentId },
+      { agentId: third.identityCard.agentId },
       runRegistry,
     );
     yield* assertLookup(
       fourth,
-      { agentId: fourth.agentCard.agentId },
+      { agentId: fourth.identityCard.agentId },
       runRegistry,
     );
     yield* assertPublicAuthenticationFraming(origin);
@@ -712,16 +722,16 @@ const exerciseRestart = (input: {
       input.registrySignerPublicKey,
     );
     const lookup = yield* runRegistry(
-      Registry.lookup({ agentId: input.first.agentCard.agentId }),
+      Registry.lookup({ agentId: input.first.identityCard.agentId }),
     );
     expect(lookup.kind).toBe(FOUND_KIND);
     if (lookup.kind === FOUND_KIND) {
-      yield* expectExactCard(lookup.agentCard, input.first.agentCard);
+      yield* expectExactCard(lookup.identityCard, input.first.identityCard);
     }
     const repeated = yield* callRegister(runRegistry, input.first);
     expect(repeated.kind).toBe(REGISTERED_KIND);
     if (repeated.kind === REGISTERED_KIND) {
-      yield* expectExactCard(repeated.agentCard, input.first.agentCard);
+      yield* expectExactCard(repeated.identityCard, input.first.identityCard);
     }
     yield* stopProcess(registry);
   });
@@ -954,11 +964,11 @@ it(
           infrastructure.origin,
         );
         const lookup = yield* run(
-          Registry.lookup({ agentId: registered.agentCard.agentId }),
+          Registry.lookup({ agentId: registered.identityCard.agentId }),
         );
         expect(lookup.kind).toBe(FOUND_KIND);
         if (lookup.kind === FOUND_KIND) {
-          yield* expectExactCard(lookup.agentCard, registered.agentCard);
+          yield* expectExactCard(lookup.identityCard, registered.identityCard);
         }
         expect(
           yield* sql`SELECT DISTINCT schemaname FROM pg_catalog.pg_tables WHERE schemaname IN ('public', 'Registry', 'registry') ORDER BY schemaname`,

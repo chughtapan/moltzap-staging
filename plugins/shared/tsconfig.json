@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
+    "rootDir": "."
+  },
+  "include": [
+    "mcp.ts",
+    "inbox.ts"
+  ],
+  "exclude": [
+    "*.test.ts",
+    "dist"
+  ],
+  "references": [
+    {
+      "path": "../../packages/social-harness"
+    }
+  ]
+}

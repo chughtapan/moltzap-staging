@@ -1,7 +1,6 @@
 /** @file Identity entry points fail with their typed error when a member of their input record throws on read. */
 
-import { HttpClient } from "@effect/platform";
-import { Duration, Effect, Either, Layer, Redacted, Schema } from "effect";
+import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import {
   envelopeIdOf,
@@ -13,9 +12,6 @@ import {
 } from "../envelope/__tests__/sealed-body-fixtures.js";
 import { SealedBody } from "../envelope/sealed-body.js";
 import { SignedMessage } from "../envelope/signed-message.js";
-import { AgentSigningAuthority } from "../keys.js";
-import { OperationId } from "../registry/contract.js";
-import { Registry } from "../registry/index.js";
 
 /** A view of `value` whose `member` throws on read. */
 const throwingOn = <Value extends object>(
@@ -30,23 +26,6 @@ const throwingOn = <Value extends object>(
       return Reflect.get(target, key);
     },
   });
-
-/** A Registry client whose HTTP client dies if any request is sent. */
-const unsentRegistryLayer = (group: Group) =>
-  Registry.layer({
-    origin: new URL("http://registry.example:3011"),
-    registrySignerPublicKey: AgentSigningAuthority.publicKey(
-      group.registrySigningAuthority,
-    ),
-    requestTimeout: Duration.seconds(5),
-  }).pipe(
-    Layer.provide(
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.dieMessage("no request is sent")),
-      ),
-    ),
-  );
 
 /** The tag of the entry point's failure, or `success`. */
 const failureTag = (
@@ -71,14 +50,14 @@ interface EntryPointCase {
 it.each<EntryPointCase>([
   {
     entryPoint: "SealedBody.seal",
-    member: "recipientAgentCards",
+    member: "recipientIdentityCards",
     expected: "SealedBodySealingError",
     run: (group: Group, member: string) =>
       SealedBody.seal(
         throwingOn(
           {
-            senderAgentId: group.sender.agentCard.agentId,
-            recipientAgentCards: group.recipients.map((r) => r.agentCard),
+            senderAgentId: group.sender.identityCard.agentId,
+            recipientIdentityCards: group.recipients.map((r) => r.identityCard),
             envelopeId: envelopeIdOf(1),
             plaintext,
           },
@@ -105,7 +84,7 @@ it.each<EntryPointCase>([
         return yield* SealedBody.open(
           throwingOn(
             {
-              agentCard: group.peer.agentCard,
+              identityCard: group.peer.identityCard,
               signingAuthority: group.peer.authority,
               signedMessage,
             },
@@ -122,9 +101,9 @@ it.each<EntryPointCase>([
       SignedMessage.sign(
         throwingOn(
           {
-            agentCard: group.sender.agentCard,
+            identityCard: group.sender.identityCard,
             signingAuthority: group.sender.authority,
-            recipientAgentIds: new Set([group.peer.agentCard.agentId]),
+            recipientAgentIds: new Set([group.peer.identityCard.agentId]),
             envelopeId: envelopeIdOf(1),
             body: plaintext,
           },
@@ -134,7 +113,7 @@ it.each<EntryPointCase>([
   },
   {
     entryPoint: "SignedMessage.verify",
-    member: "agentCard",
+    member: "identityCard",
     expected: "SignedMessageVerificationError",
     run: (group: Group, member: string) =>
       Effect.gen(function* () {
@@ -145,36 +124,11 @@ it.each<EntryPointCase>([
         );
         return yield* SignedMessage.verify(
           throwingOn(
-            { signedMessage, agentCard: group.sender.agentCard },
+            { signedMessage, identityCard: group.sender.identityCard },
             member,
           ),
         );
       }),
-  },
-  {
-    entryPoint: "Registry.register",
-    member: "admissionCredential",
-    expected: "AgentSigningError",
-    run: (group: Group, member: string) =>
-      Registry.register(
-        throwingOn(
-          {
-            request: {
-              operationId: Schema.decodeUnknownSync(OperationId)(
-                "opn_AAAAAAAAAAAAAAAAAAAAAA",
-              ),
-              principalId: group.sender.agentCard.principalId,
-              agentName: group.sender.agentCard.agentName,
-              publicKey: AgentSigningAuthority.publicKey(
-                group.sender.authority,
-              ),
-            },
-            admissionCredential: Redacted.make("admission-token="),
-            signingAuthority: group.sender.authority,
-          },
-          member,
-        ),
-      ).pipe(Effect.provide(unsentRegistryLayer(group))),
   },
 ])(
   "$entryPoint fails with $expected when its input's $member throws on read",

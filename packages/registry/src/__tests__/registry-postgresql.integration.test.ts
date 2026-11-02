@@ -1,20 +1,18 @@
 /** @file PostgreSQL Registry persistence, restart, admission, and outage integration tests. */
 
+import { Registry } from "@moltzap/social-harness/service";
+
 import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpServerRequest } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import {
-  AgentCard,
+  AgentIdentityCard,
   AgentSigningAuthority,
-  type VerifiedAgentCard,
+  type VerifiedAgentIdentityCard,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
-import {
-  httpErrors,
-  Registry,
-  registryContract,
-} from "@moltzap/social-harness/internal";
+import { httpErrors, registryContract } from "@moltzap/social-harness/internal";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
@@ -137,13 +135,13 @@ const issuedCard = (
   );
 
 const expectExactCard = (
-  actual: VerifiedAgentCard,
-  expected: VerifiedAgentCard,
+  actual: VerifiedAgentIdentityCard,
+  expected: VerifiedAgentIdentityCard,
 ) =>
   Effect.all(
     [
-      Schema.encode(AgentCard)(actual),
-      Schema.encode(AgentCard)(expected),
+      Schema.encode(AgentIdentityCard)(actual),
+      Schema.encode(AgentIdentityCard)(expected),
     ] as const,
     { concurrency: 2 },
   ).pipe(
@@ -179,9 +177,12 @@ const realPostgreSqlBehavior = Effect.gen(function* () {
   const lookup = yield* makeRegistryRunner(
     restartOrigin,
     setup.registrySignerPublicKey,
-  )(Registry.lookup({ agentId: registered.agentCard.agentId }));
+  )(Registry.lookup({ agentId: registered.identityCard.agentId }));
   expect(lookup.kind).toBe(FOUND_KIND);
-  yield* expectExactCard(yield* issuedCard(lookup), registered.agentCard);
+  if (lookup.kind !== "found") {
+    return yield* processTestError("registered identity was not found");
+  }
+  yield* expectExactCard(lookup.identityCard, registered.identityCard);
 
   yield* stopPostgreSql(setup.container);
   const unhealthy = yield* waitForHealthStatus({

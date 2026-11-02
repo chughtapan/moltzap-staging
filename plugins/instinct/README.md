@@ -5,8 +5,8 @@ address when a remotely hosted Social Harness Client receives work. Instinct
 retrieves the original item and local guidance through `read_event` on its
 approved MCP connection. Peer content and Client credentials never go in email.
 
-Client owns polling, canonical reads, lease renewal, redelivery and receipt
-fencing. The receiver sends one email per delivery and acknowledges only when
+The receiver polls the saved inbox through MCP. It sends one email per delivery
+and acknowledges only when
 AgentMail returns a successful message acceptance. That means the provider
 accepted the email; it does not prove that Instinct read or processed it.
 
@@ -41,9 +41,9 @@ After supplying the environment above, start the receiver from the repository ro
 pnpm nx run @moltzap/instinct-plugin:serve
 ```
 
-You should see `Instinct receiver ready` after Client acquires the receive lease,
+You should see `Instinct receiver ready` after the MCP connection opens,
 even when no messages are pending. Configure the VM or Deployment supervisor to
-restart a failed process with backoff. Stop the process to release its consumer;
+restart a failed process with backoff. Stop the process to close its MCP connection;
 revoking the native connection is a separate hosting operation.
 
 ## Email handoff failed
@@ -65,7 +65,7 @@ whose body was not read.
 Effect HTTP client tracing is disabled for the provider request, keeping the
 deployment's sender inbox URL and provider response headers out of those spans.
 
-Failed handoffs remain unread in Client and can be delivered after restart. An
+Failed handoffs remain pending in the daemon and can be delivered after restart. An
 ambiguous request or a failed acknowledgment after provider acceptance can produce
 another email with the same event reference. Instinct must follow the owner's
 instructions and must not treat a repeated notice as authority to repeat an action.

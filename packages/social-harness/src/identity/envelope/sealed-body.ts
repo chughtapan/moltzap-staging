@@ -5,7 +5,6 @@
 
 import { Data, Effect, Either, Encoding, Option, Schema } from "effect";
 import { generalDecrypt, GeneralEncrypt } from "jose";
-import type { VerifiedAgentCard } from "../cards.js";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
@@ -16,7 +15,7 @@ import {
   decodeCanonicalBase64Url,
   hasCanonicalBase64UrlLength,
 } from "../../encoding/identifier.js";
-import { AgentId, type AgentId as AgentIdValue } from "../identifiers.js";
+import { AgentId, type VerifiedAgentIdentityCard } from "../agent.js";
 import {
   agentOpeningPrivateKey,
   AgentSigningAuthority,
@@ -110,7 +109,7 @@ const protectedHeaderJson = Schema.parseJson(protectedHeader);
 const protectedHeaderMembers = (
   commitment: string,
   envelopeId: EnvelopeId,
-  senderAgentId: AgentIdValue,
+  senderAgentId: AgentId,
 ) => ({
   alg: SEALED_BODY_KEY_MANAGEMENT_ALGORITHM,
   enc: CONTENT_ENCRYPTION_ALGORITHM,
@@ -197,8 +196,8 @@ const openingFailure = (): SealedBodyOpeningError =>
   new SealedBodyOpeningError();
 
 interface SealInput {
-  readonly senderAgentId: AgentIdValue;
-  readonly recipientAgentCards: readonly VerifiedAgentCard[];
+  readonly senderAgentId: AgentId;
+  readonly recipientIdentityCards: readonly VerifiedAgentIdentityCard[];
   readonly envelopeId: EnvelopeId;
   readonly plaintext: Uint8Array;
 }
@@ -208,23 +207,24 @@ const isRecipientCount = (recipientCount: number): boolean =>
   recipientCount >= 1 &&
   recipientCount <= MAXIMUM_RECIPIENTS;
 
-type CardMembers = Pick<VerifiedAgentCard, "agentId" | "publicKey">;
+type CardMembers = Pick<VerifiedAgentIdentityCard, "agentId" | "publicKey">;
 
 /**
  * Copies the members sealing and opening read. Callers run it under a try, so
  * a card that throws on read fails with the caller's typed error.
  */
-const cardMembers = (card: VerifiedAgentCard): CardMembers => ({
+const cardMembers = (card: VerifiedAgentIdentityCard): CardMembers => ({
   agentId: card.agentId,
   publicKey: card.publicKey,
 });
 
 const snapshotRecipients = (
-  recipientAgentCards: readonly VerifiedAgentCard[],
+  recipientIdentityCards: readonly VerifiedAgentIdentityCard[],
 ): Effect.Effect<readonly CardMembers[], SealedBodySealingError> =>
   Effect.gen(function* () {
     const recipients = yield* Effect.try({
-      try: () => Array.from(recipientAgentCards, (card) => cardMembers(card)),
+      try: () =>
+        Array.from(recipientIdentityCards, (card) => cardMembers(card)),
       catch: sealingFailure,
     });
     const distinctAgentIds = new Set(
@@ -242,7 +242,7 @@ const snapshotRecipients = (
   });
 
 /**
- * Encrypts one plaintext to every recipient's AgentCard key, binds the sender
+ * Encrypts one plaintext to every recipient's AgentIdentityCard key, binds the sender
  * AgentId and the outer EnvelopeId in the protected header, and commits the
  * header to the salted plaintext.
  *
@@ -269,10 +269,10 @@ const snapshotSealInput = (
 ): Effect.Effect<SealInput, SealedBodySealingError> =>
   Effect.try({
     try: () => {
-      const { recipientAgentCards, senderAgentId, envelopeId, plaintext } =
+      const { recipientIdentityCards, senderAgentId, envelopeId, plaintext } =
         input;
       return {
-        recipientAgentCards,
+        recipientIdentityCards,
         senderAgentId,
         envelopeId,
         plaintext: new Uint8Array(plaintext),
@@ -286,7 +286,9 @@ const seal = (
 ): Effect.Effect<Uint8Array, SealedBodySealingError> =>
   Effect.gen(function* () {
     const sealing = yield* snapshotSealInput(input);
-    const recipients = yield* snapshotRecipients(sealing.recipientAgentCards);
+    const recipients = yield* snapshotRecipients(
+      sealing.recipientIdentityCards,
+    );
     const saltedPlaintext = yield* Effect.try({
       try: () => {
         const bytes = new Uint8Array(SALT_BYTES + sealing.plaintext.byteLength);
@@ -394,8 +396,8 @@ type RecipientEntry = SealedBodyRepresentation["recipients"][number];
 const localRecipientEntry = (
   representation: SealedBodyRepresentation,
   header: ProtectedHeader,
-  recipientAgentIds: readonly AgentIdValue[],
-  agentId: AgentIdValue,
+  recipientAgentIds: readonly AgentId[],
+  agentId: AgentId,
 ): Effect.Effect<RecipientEntry, SealedBodyOpeningError> => {
   const { recipients } = representation;
   const single = recipients.length === 1;
@@ -413,7 +415,7 @@ const localRecipientEntry = (
 };
 
 interface OpenInput {
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
   readonly signedMessage: VerifiedSignedMessage;
 }
@@ -428,7 +430,7 @@ const authorityCard = (
 ): Effect.Effect<CardMembers, SealedBodyOpeningError> =>
   Effect.gen(function* () {
     const card = yield* Effect.try({
-      try: () => cardMembers(input.agentCard),
+      try: () => cardMembers(input.identityCard),
       catch: openingFailure,
     });
     const sameKey = yield* sameEd25519PublicKey(
@@ -450,8 +452,8 @@ const snapshotOpenInput = (
 ): Effect.Effect<OpenInput, SealedBodyOpeningError> =>
   Effect.try({
     try: () => {
-      const { agentCard, signingAuthority, signedMessage } = input;
-      return { agentCard, signingAuthority, signedMessage };
+      const { identityCard, signingAuthority, signedMessage } = input;
+      return { identityCard, signingAuthority, signedMessage };
     },
     catch: openingFailure,
   });
@@ -460,7 +462,7 @@ const snapshotOpenInput = (
  * Decrypts a verified SignedMessage body sealed to the local agent.
  *
  * It first refuses a SignedMessage this package did not parse, so a view whose
- * member reads throw fails as an opening error, and an AgentCard whose key is
+ * member reads throw fails as an opening error, and an AgentIdentityCard whose key is
  * not the authority's Ed25519 key.
  * A successful unwrap cannot prove that pairing: a sender may wrap any entry
  * to any key, and an Ed25519 key and its negation share one X25519 key.
@@ -475,7 +477,7 @@ const snapshotOpenInput = (
  * bytes open only inside a SignedMessage from the sender and EnvelopeId they
  * were sealed for.
  *
- * @param input The local agent's AgentCard and authority, and the verified
+ * @param input The local agent's AgentIdentityCard and authority, and the verified
  * SignedMessage.
  * @returns The sealed plaintext.
  */

@@ -1,23 +1,37 @@
 /** @file The text a host's model reads for a delivered message, question or result, the same on every host. */
 
-import type { Question } from "../communication/collectives/model.js";
-import type {
-  Content,
-  MessageAddressInput,
+import type { Message, Request } from "../communication/index.js";
+import type { PermittedItem } from "../firewall/service.js";
+import {
+  agentAddressOf,
+  type Content,
+  GroupAddress,
+  type MessageAddressInput,
 } from "../communication/records/values.js";
-import type { InboundItem } from "./items.js";
-import { replyAddress } from "../communication/message.js";
+import { compareAscii } from "../encoding/identifier.js";
 import { type LocalGuidance, renderLocalGuidance } from "./advice.js";
 
 type CollectiveRequestItem = Extract<
-  InboundItem,
+  PermittedItem,
   { readonly kind: "collectiveRequest" }
 >;
 type CollectiveResultItem = Extract<
-  InboundItem,
+  PermittedItem,
   { readonly kind: "collectiveResult" }
 >;
 type MemberOutcome = CollectiveResultItem["outcomes"][number]["outcome"];
+
+/** Direct replies reach the author; group replies keep the complete participant set. */
+export function replyAddress(message: Pick<Message, "author" | "recipients">) {
+  return message.recipients.length === 1
+    ? agentAddressOf(message.author)
+    : GroupAddress.make(
+        `group:${[message.author, ...message.recipients]
+          .map((member) => member.agentName)
+          .sort(compareAscii)
+          .join(",")}`,
+      );
+}
 
 /**
  * A message's content as the text a model reads: each text part as written,
@@ -78,7 +92,7 @@ export function renderCollectiveRequest(
   guidance?: LocalGuidance,
 ): string {
   const body = renderCollectiveRequestBody(item);
-  const operationId = JSON.stringify(item.message.content.operationId);
+  const operationId = JSON.stringify(item.message.operation.operationId);
   const answerInstructions = [
     `Answer with: {"action":"accept","operationId":${operationId},"content":{...}} where content matches the form, or {"action":"decline","operationId":${operationId}}`,
     howToAnswer,
@@ -105,16 +119,20 @@ export function renderCollectiveRequestBody(
   return renderCollectiveQuestion({
     author: item.message.author,
     recipients: item.message.recipients,
-    text: item.message.content.question,
-    ...item.message.content,
+    ...item.message.operation,
   });
 }
 
 /** Incoming and outgoing assessment use the same question text and form. */
 export function renderCollectiveQuestion(
   question: Pick<
-    Question,
-    "author" | "recipients" | "text" | "op" | "deadlineAt" | "requestedSchema"
+    Request,
+    | "author"
+    | "recipients"
+    | "question"
+    | "op"
+    | "deadlineAt"
+    | "requestedSchema"
   >,
 ): string {
   const asked =
@@ -123,7 +141,7 @@ export function renderCollectiveQuestion(
       : `gather from agent:${question.author.agentName}`;
   return [
     `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
-    `Question: ${question.text}`,
+    `Question: ${question.question}`,
     `Form: ${JSON.stringify(question.requestedSchema)}`,
   ].join("\n");
 }
@@ -141,7 +159,7 @@ export function renderCollectiveResult(item: CollectiveResultItem): string {
       ? JSON.stringify(item.question)
       : `(withheld: ${renderWithheld(item.question)})`;
   return [
-    `${item.op} result for the question sent to ${item.to}: ${question}`,
+    `${item.op} result: ${question}`,
     ...item.outcomes.map(
       ({ member, outcome }) =>
         `- agent:${member.agentName}: ${renderOutcome(outcome)}`,

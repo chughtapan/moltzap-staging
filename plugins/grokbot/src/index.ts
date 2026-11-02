@@ -1,5 +1,4 @@
 /** @file Candidate HTTPS wake adapter; Client owns receive and recovery. */
-import type { InboundDelivery } from "@moltzap/social-harness";
 import {
   FetchHttpClient,
   HttpClient,
@@ -47,9 +46,9 @@ export const validateGrokRoutine = Effect.fn("Grok.validateRoutine")(function* (
  */
 export const deliverToGrokBot = Effect.fn("Grok.deliver")(function* (
   routine: GrokRoutine,
-  delivery: Pick<InboundDelivery, "eventId" | "acknowledge">,
+  delivery: { readonly deliveryToken: string },
 ) {
-  yield* invokeRoutine(routine, delivery.eventId).pipe(
+  yield* invokeRoutine(routine, delivery.deliveryToken).pipe(
     Effect.scoped,
     Effect.timeoutFail({
       duration: "3 seconds",
@@ -57,7 +56,6 @@ export const deliverToGrokBot = Effect.fn("Grok.deliver")(function* (
     }),
     Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
   );
-  yield* delivery.acknowledge;
 });
 
 function invokeRoutine(routine: GrokRoutine, eventId: string) {

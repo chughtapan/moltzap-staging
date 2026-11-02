@@ -37,11 +37,11 @@ import {
 import { RouterInstanceId } from "../packages/social-harness/dist/communication/router/api/index.js";
 import { encodeCanonical } from "../packages/social-harness/dist/encoding/canonical-json.js";
 import {
-  AgentCard,
+  AgentIdentityCard,
   AgentId,
   AgentName,
   AgentSigningAuthority,
-  Ed25519PublicKey,
+  AgentPublicKey,
   PrincipalId,
   SignedMessage,
   WIRE_VERSION,
@@ -118,7 +118,7 @@ function deterministicFixture(memberCount: number) {
       ]),
       members: yield* Effect.forEach(
         identities,
-        ({ card }) => Schema.encode(AgentCard)(card),
+        ({ card }) => Schema.encode(AgentIdentityCard)(card),
         { concurrency: 1 },
       ),
     });
@@ -126,7 +126,7 @@ function deterministicFixture(memberCount: number) {
       identities,
       descriptor,
       membershipHash: yield* hashMembershipDescriptor(descriptor),
-      registrySignerPublicKey: yield* Schema.encode(Ed25519PublicKey)(
+      registrySignerPublicKey: yield* Schema.encode(AgentPublicKey)(
         AgentSigningAuthority.publicKey(registry),
       ),
     };

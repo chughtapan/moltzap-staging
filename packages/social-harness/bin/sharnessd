@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { NodeRuntime } from "@effect/platform-node";
 import { ConfigProvider, Console, Effect, Layer } from "effect";
-import { Daemon } from "../dist/daemon/index.js";
+import { daemonHelp, daemonLayer } from "../dist/harness/index.js";
 
 const program = process.argv.includes("--help")
-  ? Console.log(Daemon.help)
-  : Layer.launch(Daemon.layer);
+  ? Console.log(daemonHelp)
+  : Layer.launch(daemonLayer);
 
 program.pipe(
   Effect.catchAll((error) =>

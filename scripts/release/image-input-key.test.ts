@@ -113,7 +113,7 @@ const changes = [
   ],
   [
     "daemon-only source",
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     "export const daemon = 2;",
     false,
     false,
@@ -445,7 +445,7 @@ await test("runtime version gate names only reached modules consuming manifest v
   );
   write(
     repo,
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     'import manifest from "../../package.json"; console.log(manifest.version);',
   );
   write(
@@ -833,7 +833,7 @@ for (const [label, header, bin] of [
     ]);
     write(
       repo,
-      "packages/social-harness/src/daemon/run.ts",
+      "packages/social-harness/src/harness/run.ts",
       "export const changed = true;",
     );
     commit(repo);

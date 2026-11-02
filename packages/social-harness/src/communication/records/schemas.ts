@@ -3,11 +3,10 @@
 import { Schema } from "effect";
 import { exactStruct } from "../../encoding/exact.js";
 import { isCanonicalIdentifier } from "../../encoding/identifier.js";
-import { AgentCard } from "../../identity/cards.js";
+import { AgentId, AgentIdentityCard } from "../../identity/agent.js";
 import { SignedMessage } from "../../identity/envelope/signed-message.js";
-import { AgentId } from "../../identity/identifiers.js";
 import { wireVersions } from "../../identity/wire-version.js";
-import { RouterInstanceId } from "../router/api/contract.js";
+import { RouterInstanceId } from "../router/api.js";
 import { Content, maximumMembers, MsgId } from "./values.js";
 
 /* eslint-disable jsdoc/require-jsdoc -- These package-private Schema names are the exact closed protocol vocabulary. */
@@ -51,7 +50,7 @@ export type ActionHash = typeof ActionHash.Type;
 export const RecordHash = canonicalIdentifier("RecordHash", "rch_");
 export type RecordHash = typeof RecordHash.Type;
 
-const encodedAgentCard = Schema.encodedSchema(AgentCard);
+const encodedAgentCard = Schema.encodedSchema(AgentIdentityCard);
 const encodedSignedMessage = Schema.encodedSchema(SignedMessage);
 const MemberAgentIds = Schema.Tuple([AgentId, AgentId], AgentId).pipe(
   Schema.maxItems(maximumMembers),

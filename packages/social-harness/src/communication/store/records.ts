@@ -1,6 +1,6 @@
 /** @file Atomic record-core, evidence, certification, and delivery transitions. */
 
-import * as SqlClient from "@effect/sql/SqlClient";
+import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
 import type {
   CertifiedRecord,
@@ -25,7 +25,7 @@ import {
   storeOperation,
   StoreSignal,
   transaction,
-} from "./database/index.js";
+} from "./database.js";
 import {
   enqueueOutboundInTransaction,
   readRecordOutbound,
@@ -40,16 +40,12 @@ import {
   readStoredPosition,
   releaseProposalLock,
   requireSameRecord,
-} from "./rows/index.js";
+} from "./rows.js";
 /** A record and its exact signed dissemination envelope commit before a durability vote. */
 export function stageRecordAndOutbound(
   record: StagedRecord,
   outbound: OutboundMessageInput,
-): Effect.Effect<
-  StoredOutboundMessage,
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
   return transaction(
     Effect.gen(function* () {
       validateStagedRecord(record);
@@ -82,7 +78,7 @@ export function stageRecordAndOutbound(
  */
 export function mergeEvidence(
   evidence: ProtocolEvidence,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateEvidence(evidence);
     return yield* transaction(
@@ -120,7 +116,7 @@ export function mergeEvidence(
 export function supersedeProposalLock(
   lock: ProposalLock,
   certificate: readonly ProtocolEvidence[],
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCertificateEvidence(certificate, {
       conversationId: lock.conversationId,
@@ -157,7 +153,7 @@ export function supersedeProposalLock(
  */
 export function promoteRecord(
   record: CertifiedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
     return yield* transaction(promoteRecordInTransaction(record));
@@ -177,7 +173,7 @@ export function promoteRecord(
  */
 export function applyCertifiedRecord(
   record: CertifiedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
     return yield* transaction(
@@ -198,9 +194,9 @@ export function applyCertifiedRecord(
  */
 function stageRecordInTransaction(
   record: StagedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const existing = yield* findStagedRecord(
       record.conversationId,
       record.recordHash,
@@ -233,7 +229,7 @@ function stageRecordInTransaction(
 }
 function promoteRecordInTransaction(
   record: CertifiedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const staged = yield* findStagedRecord(
       record.conversationId,
@@ -257,7 +253,7 @@ function promoteRecordInTransaction(
 }
 function mergeCertifiedEvidence(
   record: CertifiedRecord,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     let mutation: StoreMutation = "existing";
     for (const evidence of [
@@ -273,9 +269,9 @@ function mergeCertifiedEvidence(
 }
 function mergeEvidenceInTransaction(
   evidence: ProtocolEvidence,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     yield* requireEvidenceSubject(evidence);
     const existing = yield* findEvidence(evidence);
     if (existing !== undefined) {
@@ -300,7 +296,7 @@ function mergeEvidenceInTransaction(
 }
 function requireRecordPosition(
   record: StagedRecord,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const position = yield* readStoredPosition(record.conversationId);
     requireEqual(position.membershipHash, record.membershipHash);
@@ -317,13 +313,9 @@ function requireRecordPosition(
 }
 function findEvidence(
   evidence: ProtocolEvidence,
-): Effect.Effect<
-  Uint8Array | undefined,
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<Uint8Array | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `SELECT canonical_evidence FROM protocol_evidence
        WHERE conversation_id = ? AND evidence_kind = ?
@@ -340,7 +332,7 @@ function findEvidence(
 }
 function requireEvidenceSubject(
   evidence: ProtocolEvidence,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     yield* requireMembership(evidence.conversationId);
     if (evidence.kind === "action") {
@@ -368,7 +360,7 @@ function requireEvidenceSubject(
 }
 function requireLocalEvidenceLock(
   evidence: ProtocolEvidence,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const identity = yield* readStoredIdentity();
     if (identity === undefined || evidence.evidenceKey !== identity.agentId) {
@@ -387,7 +379,7 @@ function requireLocalEvidenceLock(
 }
 function requireLocalDurabilityEvidenceLock(
   evidence: ProtocolEvidence,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const record = yield* findStagedRecord(
       evidence.conversationId,
@@ -421,9 +413,9 @@ function requireLocalDurabilityEvidenceLock(
  */
 function requireNoReanchorAwayFrom(
   record: StagedRecord,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const left = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `SELECT 1 AS staged FROM reanchors
        WHERE conversation_id = ? AND previous_anchor_hash = ? LIMIT 1`,
@@ -436,9 +428,9 @@ function requireNoReanchorAwayFrom(
 }
 function hasProposalAction(
   evidence: ProtocolEvidence,
-): Effect.Effect<boolean, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT 1 AS retained FROM proposal_locks
@@ -450,9 +442,9 @@ function hasProposalAction(
 }
 function hasStagedAction(
   lock: ProposalLock,
-): Effect.Effect<boolean, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT 1 AS staged FROM staged_records
@@ -464,9 +456,9 @@ function hasStagedAction(
 }
 function hasActionSubject(
   evidence: ProtocolEvidence,
-): Effect.Effect<boolean, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT 1 AS retained FROM proposal_locks
@@ -488,9 +480,9 @@ function hasActionSubject(
 function insertCertifiedRecord(
   record: CertifiedRecord,
   ordinal: number,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `INSERT INTO certified_records (conversation_id, record_hash, ordinal)
        VALUES (?, ?, ?)`,
@@ -505,9 +497,9 @@ function insertCertifiedRecord(
 }
 function completeLocalMessageIntent(
   record: CertifiedRecord,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const identity = yield* readStoredIdentity();
     if (identity === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
@@ -538,9 +530,9 @@ function completeLocalMessageIntent(
 }
 function requireMembership(
   conversationId: string,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     if (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         "SELECT 1 AS retained FROM memberships WHERE conversation_id = ?",
@@ -554,9 +546,9 @@ function requireMembership(
 function hasCertifiedRecord(
   conversationId: string,
   recordHash: string,
-): Effect.Effect<boolean, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT 1 AS retained FROM certified_records

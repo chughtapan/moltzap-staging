@@ -2,19 +2,21 @@
 
 import { type Context, Effect, Encoding, Layer, Ref, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
-import type { VerifiedAgentCard } from "../identity/cards.js";
-import type { AgentId as AgentIdValue } from "../identity/identifiers.js";
+import type {
+  AgentId as AgentIdValue,
+  VerifiedAgentIdentityCard,
+} from "../identity/agent.js";
 import type { AgentSigningAuthority as AgentSigningAuthorityValue } from "../identity/keys.js";
 import type { RegistryLookupResult } from "../identity/registry/contract.js";
-import { Router } from "../communication/router/api/client.js";
 import {
   PollCursor,
+  Router,
   type RouterConnectionError,
   RouterInstanceId,
   type RouterPollResult,
   type RouterSendRequest,
   type RouterSendResult,
-} from "../communication/router/api/contract.js";
+} from "../communication/router/api.js";
 import {
   EnvelopeId,
   type LiveSignedMessage,
@@ -53,7 +55,7 @@ interface ScriptedRouter {
 }
 
 interface SignMessageInput {
-  readonly card: VerifiedAgentCard;
+  readonly card: VerifiedAgentIdentityCard;
   readonly authority: AgentSigningAuthorityValue;
   readonly recipient: AgentIdValue;
   readonly id: number;
@@ -68,7 +70,7 @@ interface ScriptedRouterInput {
 
 /** Identity material used by one Router worker test endpoint. */
 export interface Fixture {
-  readonly localCard: VerifiedAgentCard;
+  readonly localCard: VerifiedAgentIdentityCard;
   readonly localAuthority: AgentSigningAuthorityValue;
 }
 
@@ -131,7 +133,7 @@ export const signMessage = (
   input: SignMessageInput,
 ): Effect.Effect<LiveSignedMessage> =>
   SignedMessage.sign({
-    agentCard: input.card,
+    identityCard: input.card,
     signingAuthority: input.authority,
     recipientAgentIds: new Set([input.recipient]),
     envelopeId: envelopeId(input.id),
@@ -200,7 +202,7 @@ export const makeScriptedRouter = (input: ScriptedRouterInput) =>
  * @param cards Cards available to Registry lookup.
  * @returns Registry test layer.
  */
-export const registryLayer = (cards: readonly VerifiedAgentCard[]) =>
+export const registryLayer = (cards: readonly VerifiedAgentIdentityCard[]) =>
   Layer.succeed(Registry, {
     lookup: (request): Effect.Effect<RegistryLookupResult> => {
       const found = cards.find((card) =>
@@ -211,7 +213,7 @@ export const registryLayer = (cards: readonly VerifiedAgentCard[]) =>
       return Effect.succeed(
         found === undefined
           ? { kind: "not_found" as const }
-          : { kind: "found" as const, agentCard: found },
+          : { kind: "found" as const, identityCard: found },
       );
     },
     register: () => Effect.succeed({ kind: "idempotency_conflict" }),

@@ -3,7 +3,7 @@
 import openClawPlugin from "@moltzap/openclaw-channel";
 import {
   AgentAddress,
-  type AgentView,
+  type AgentCard,
   type Content,
   GroupAddress,
   type InboundDelivery,
@@ -33,7 +33,7 @@ import { registrationResultKind } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
-  readonly agent: AgentView;
+  readonly agent: AgentCard;
 }
 
 interface Scenario {

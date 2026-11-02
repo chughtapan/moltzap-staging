@@ -42,13 +42,14 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "plugins/openclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts"
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts && node ../../scripts/build/copy-plugin-mcp.ts"
         },
         "inputs": [
           "production",
           "^production",
           "{workspaceRoot}/scripts/build/clean-dist.ts",
-          "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts"
+          "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts",
+          "{workspaceRoot}/scripts/build/copy-plugin-mcp.ts"
         ]
       },
       "lint": {
@@ -86,7 +87,8 @@
   },
   "dependencies": {
     "@moltzap/social-harness": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@modelcontextprotocol/client": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
@@ -95,7 +97,8 @@
     "eslint": "catalog:",
     "openclaw": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@moltzap/plugin-mcp": "workspace:*"
   },
   "peerDependencies": {
     "openclaw": ">=2026.10.3"
@@ -111,5 +114,11 @@
     ]
   },
   "sharnessContentHash": "sha256:5194bfead70de0f027bd8d53f7a8513fcafb482547055365015fd31fd57af375",
-  "sharnessHostCodeHash": "sha256:328fca7b189ced5f1c64910ec7d9ee701131ae60bb8f7861ffeb04f82f658b21"
+  "sharnessHostCodeHash": "sha256:328fca7b189ced5f1c64910ec7d9ee701131ae60bb8f7861ffeb04f82f658b21",
+  "imports": {
+    "#sharness-mcp/*": {
+      "types": "./dist/mcp/*.d.ts",
+      "default": "./dist/mcp/*.js"
+    }
+  }
 }

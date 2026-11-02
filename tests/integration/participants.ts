@@ -4,7 +4,7 @@ import {
   acquireHarnessEndpoint,
   AgentAddress,
   type AgentName,
-  type AgentView,
+  type AgentCard,
   type HarnessEndpoint,
   type InboundDelivery,
   type InboundItem,
@@ -27,7 +27,7 @@ import { registrationResultKind } from "./expected-contracts.js";
 /** One endpoint and the items its subscription has delivered, in order. */
 export interface Participant {
   readonly address: AgentAddress;
-  readonly agent: AgentView;
+  readonly agent: AgentCard;
   readonly endpoint: HarnessEndpoint;
   readonly inbox: Queue.Queue<InboundDelivery>;
 }
@@ -36,7 +36,7 @@ export interface Participant {
  * Acquires the endpoint of `fixture`'s running daemon and queues every
  * delivery its subscription receives.
  */
-const joinParticipant = (fixture: DaemonProcessFixture, agent: AgentView) =>
+const joinParticipant = (fixture: DaemonProcessFixture, agent: AgentCard) =>
   Effect.gen(function* () {
     const endpoint = yield* acquireHarnessEndpoint(fixture.endpoint, {
       credential: fixture.mcpCredential,

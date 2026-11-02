@@ -5,9 +5,9 @@ import { ProtocolErrorCode } from "@modelcontextprotocol/client";
 import {
   acquireHarnessEndpoint,
   AgentAddress,
-  AgentCard,
+  AgentIdentityCard,
   type AgentName,
-  type AgentView,
+  type AgentCard,
   type Content,
   type HarnessEndpoint,
   type InboundDelivery,
@@ -52,7 +52,7 @@ import {
 } from "./daemon-process-harness.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
-  readonly agent: AgentView;
+  readonly agent: AgentCard;
 }
 
 const registerFixture = (fixture: DaemonProcessFixture) =>
@@ -72,7 +72,7 @@ const registerFixture = (fixture: DaemonProcessFixture) =>
               }),
           ),
         );
-      const agentCard = yield* Schema.decodeUnknown(AgentCard)(
+      const agentCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
         registered.agentCard,
       );
       expect(agentCard).toMatchObject({

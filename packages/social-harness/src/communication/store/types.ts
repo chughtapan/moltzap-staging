@@ -1,7 +1,6 @@
 /** @file Private typed contract for endpoint persistence operations. */
 
-import type { IdentityBinding } from "../../identity/local-store.js";
-import type { EndpointStoreError } from "./database/values.js";
+import type { EndpointStoreError } from "./database.js";
 import { canonicalIdentifier } from "../../encoding/identifier.js";
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The private Effect Schema and decoded nominal value intentionally share one domain name. */
 /** Stable opaque identity for one durable inbound delivery. */
@@ -151,7 +150,7 @@ export interface ConversationPosition {
 }
 /** Complete private state recovered after opening the endpoint database. */
 export interface EndpointRecovery {
-  readonly identity?: IdentityBinding;
+  readonly identity?: { readonly agentId: string };
   readonly messageIntents: readonly MessageIntent[];
   readonly memberships: readonly StoredMembership[];
   readonly anchors: readonly StoredAnchor[];

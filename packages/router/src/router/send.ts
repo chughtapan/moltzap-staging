@@ -119,7 +119,7 @@ const handleDecodedMessage = (
   }
   return SignedMessage.verify({
     signedMessage,
-    agentCard: verifiedRequest.agentCard,
+    identityCard: verifiedRequest.identityCard,
   }).pipe(
     Effect.matchEffect({
       onFailure: () => Effect.succeed(messageInvalid),

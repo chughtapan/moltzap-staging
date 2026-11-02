@@ -1,8 +1,7 @@
 /** @file Cryptographic and cross-field verification for Client protocol values. */
 
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../identity/identifiers.js";
-import type { Ed25519PublicKey } from "../../identity/keys.js";
+import type { AgentPublicKey } from "../../identity/keys.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -13,7 +12,11 @@ import {
 } from "../../encoding/canonical-json.js";
 import { exactParseOptions } from "../../encoding/exact.js";
 import { isStrictlyAscending } from "../../encoding/identifier.js";
-import { AgentCard, type VerifiedAgentCard } from "../../identity/cards.js";
+import {
+  type AgentId,
+  AgentIdentityCard,
+  type VerifiedAgentIdentityCard,
+} from "../../identity/agent.js";
 import {
   type LiveSignedMessage,
   SignedMessage,
@@ -64,15 +67,21 @@ export interface VerifiedMembership extends OuterMembership {
 
 export const verifyMembershipDescriptor = (
   descriptor: MembershipDescriptorValue,
-  registrySignerPublicKey: Ed25519PublicKey,
+  registrySignerPublicKey: AgentPublicKey,
 ): Effect.Effect<VerifiedMembership, ClientRepresentationError> =>
   Effect.gen(function* () {
     const verified = yield* Effect.forEach(
       descriptor.members,
       (representation) =>
-        Schema.decodeUnknown(AgentCard)(representation, exactParseOptions).pipe(
+        Schema.decodeUnknown(AgentIdentityCard)(
+          representation,
+          exactParseOptions,
+        ).pipe(
           Effect.flatMap((agentCard) =>
-            AgentCard.verify({ agentCard, registrySignerPublicKey }),
+            AgentIdentityCard.verify({
+              identityCard: agentCard,
+              registrySignerPublicKey,
+            }),
           ),
           Effect.mapError(representationFailure),
         ),
@@ -114,7 +123,7 @@ export const verifyMembershipDescriptor = (
 export const memberCard = (
   membership: VerifiedMembership,
   agentId: AgentId,
-): VerifiedAgentCard | undefined =>
+): VerifiedAgentIdentityCard | undefined =>
   membership.members.find((card) => card.agentId === agentId);
 
 export const verifyOuterMessage = (input: {
@@ -138,7 +147,7 @@ export const verifyOuterMessage = (input: {
     }
     const verified = yield* SignedMessage.verify({
       signedMessage: input.message,
-      agentCard: card,
+      identityCard: card,
     }).pipe(Effect.mapError(representationFailure));
     return verified;
   }).pipe(Effect.withSpan("verifyOuterMessage"));
@@ -173,7 +182,7 @@ export const verifyStableEvidence = (input: {
     }
     const verifiedMessage = yield* SignedMessage.verify({
       signedMessage: message,
-      agentCard: card,
+      identityCard: card,
     }).pipe(Effect.mapError(representationFailure));
     const statement =
       input.statement ??

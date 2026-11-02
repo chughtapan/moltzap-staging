@@ -11,7 +11,7 @@ import {
   AgentCardIssuedAt as agentCardIssuedAt,
   issueAgentCard,
 } from "../packages/registry/dist/issuance.js";
-import { AgentCard } from "../packages/social-harness/dist/identity/cards.js";
+import { AgentIdentityCard } from "../packages/social-harness/dist/identity/agent.js";
 import {
   EnvelopeId,
   SignedMessage,
@@ -20,10 +20,10 @@ import {
   AgentId,
   AgentName,
   PrincipalId,
-} from "../packages/social-harness/dist/identity/identifiers.js";
+} from "../packages/social-harness/dist/identity/agent.js";
 import {
   AgentSigningAuthority,
-  Ed25519PublicKey,
+  AgentPublicKey,
 } from "../packages/social-harness/dist/identity/keys.js";
 import { WireVersions } from "../packages/social-harness/dist/identity/wire-version.js";
 
@@ -67,10 +67,10 @@ const generate = Effect.gen(function* () {
   return {
     provenance:
       "Synthetic signed retained-version fixture using fictional 2099.101.0; not captured from a published release. Regenerate: pnpm nx run workspace:generate-wire-golden.",
-    registryKey: yield* Schema.encode(Ed25519PublicKey)(
+    registryKey: yield* Schema.encode(AgentPublicKey)(
       AgentSigningAuthority.publicKey(registryAuthority),
     ),
-    card: yield* Schema.encode(AgentCard)(agentCard),
+    card: yield* Schema.encode(AgentIdentityCard)(agentCard),
     message: yield* Schema.encode(SignedMessage)(message),
   };
 }).pipe(

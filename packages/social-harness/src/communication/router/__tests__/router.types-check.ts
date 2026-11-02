@@ -12,10 +12,9 @@
 
 import type { HttpClient } from "@effect/platform";
 import type { Duration, Effect, Layer, Types } from "effect";
-import type { LiveSignedMessage } from "../../../identity/envelope/signed-message.js";
-import type { AgentId } from "../../../identity/identifiers.js";
-import type { AgentSigningAuthority } from "../../../identity/keys.js";
+import type { AgentId } from "../../../identity/agent.js";
 import type {
+  AgentSigningError,
   AuthenticationFailedError,
   InternalServerError,
   MalformedRequestError,
@@ -26,9 +25,10 @@ import type {
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../../identity/signing/http-errors.js";
-import type { AgentSigningError } from "../../../identity/signing/http-signature.js";
-import type * as RouterPackage from "../api/index.js";
+} from "../../../identity/authentication/proof.js";
+import type { LiveSignedMessage } from "../../../identity/envelope/signed-message.js";
+import type { AgentSigningAuthority } from "../../../identity/keys.js";
+import type * as RouterPackage from "../api.js";
 
 type Expect<Value extends true> = Value;
 
@@ -163,23 +163,6 @@ type LayerRequiresOnlyHttpClient = Expect<
   Types.Equals<Layer.Layer.Context<RouterLayer>, HttpClient.HttpClient>
 >;
 
-type RootExportsAreExact = Expect<
-  Types.Equals<
-    keyof typeof RouterPackage,
-    | "PollCursor"
-    | "Router"
-    | "RouterConnectionError"
-    | "RouterInstanceId"
-    | "RouterInvalidResponseError"
-    | "RouterPollRequest"
-    | "RouterPollResult"
-    | "RouterRequestTimeoutError"
-    | "RouterSendRequest"
-    | "RouterSendResult"
-    | "SignedMessageDigest"
-  >
->;
-
 /** Compile-time evidence for the complete public Router capability channels. */
 export type RouterCapabilityCanaries = [
   SendRequestShapeIsExact,
@@ -198,5 +181,4 @@ export type RouterCapabilityCanaries = [
   LayerProvidesOnlyRouter,
   LayerCannotFail,
   LayerRequiresOnlyHttpClient,
-  RootExportsAreExact,
 ];

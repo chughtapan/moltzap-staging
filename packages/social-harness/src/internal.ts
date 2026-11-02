@@ -1,24 +1,31 @@
-/**
- * @file Condition-only service capabilities for bootstrap and registered-request verification, card signing, Registry and Router contracts and clients, and wire compatibility.
- * @internal
- */
+/** @file Condition-only network service contracts and identity verification capabilities. */
 
-/** Bootstrap admission retains its typed signature proof. */
+/** Bootstrap verification returns the retained proof accepted by Registry. */
 export {
+  httpErrors,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
-} from "./identity/signing/http-signature.js";
-/** Registry issuance and Router fixtures name card verification failures and digests. */
+} from "./identity/authentication/proof.js";
+/** Registry issuance and history verification use the complete identity document. */
 export {
-  AgentCardDigest,
-  type AgentCardVerificationError,
-} from "./identity/cards.js";
-/** Registry issuance retains private signing authority outside host code. */
+  type AgentIdentityCardClaims,
+  AgentIdentityCardDigest,
+  agentIdentityCardSigning,
+  AgentIdentityCardVerificationError,
+} from "./identity/agent.js";
+/** Registered HTTP requests expose verified attribution before operation decoding. */
 export {
-  type AgentCardClaims,
-  agentCardSigning,
-} from "./identity/card-signing.js";
-/** Services compose the installed wire compatibility policy. */
+  Authentication,
+  AuthenticationError,
+  type VerifiedAgentRequest,
+} from "./identity/authentication/service.js";
+/** Service construction uses the same Registry client as local identity. */
+export { Registry } from "./identity/registry/index.js";
+/** Router operations and their exact wire contract belong to Communication. */
+export { Router, routerContract } from "./communication/router/api.js";
+/** Registry HTTP and storage adapters share their owning wire contract. */
+export { registryContract } from "./identity/registry/contract.js";
+/** Service processes apply the installed compatibility policy. */
 export {
   HISTORY_WIRE_VERSIONS,
   LIVE_WIRE_VERSIONS,
@@ -26,18 +33,3 @@ export {
   type WireVersion,
   wireVersions,
 } from "./identity/wire-version.js";
-/** Registered HTTP authentication retains its opaque verified proof. */
-export {
-  AuthenticatedHttp,
-  type VerifiedAgentRequest,
-} from "./identity/request-authentication.js";
-/** Service adapters construct and decode closed HTTP envelope failures. */
-export { httpErrors } from "./identity/signing/http-errors.js";
-/** Service compositions share the daemon's Registry client tag. */
-export { Registry } from "./identity/registry/index.js";
-/** Service compositions share the daemon's Router client tag. */
-export { Router } from "./communication/router/api/client.js";
-/** Registry HTTP and storage adapters share one exact wire contract. */
-export { registryContract } from "./identity/registry/contract.js";
-/** Router HTTP, feed and cursor adapters share one exact wire contract. */
-export { routerContract } from "./communication/router/api/contract.js";

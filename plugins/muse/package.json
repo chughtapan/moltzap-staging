@@ -6,11 +6,13 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@moltzap/social-harness": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@modelcontextprotocol/client": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@moltzap/plugin-mcp": "workspace:*"
   },
   "nx": {
     "targets": {
@@ -18,12 +20,13 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "plugins/muse",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b"
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-plugin-mcp.ts"
         },
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts"
+          "{workspaceRoot}/scripts/build/clean-dist.ts",
+          "{workspaceRoot}/scripts/build/copy-plugin-mcp.ts"
         ]
       },
       "lint": {
@@ -52,7 +55,11 @@
         "options": {
           "cwd": "plugins/muse",
           "command": "vitest run"
-        }
+        },
+        "dependsOn": [
+          "build",
+          "^build"
+        ]
       },
       "serve": {
         "executor": "nx:run-commands",
@@ -65,6 +72,12 @@
           "command": "node dist/main.js"
         }
       }
+    }
+  },
+  "imports": {
+    "#sharness-mcp/*": {
+      "types": "./dist/mcp/*.d.ts",
+      "default": "./dist/mcp/*.js"
     }
   }
 }

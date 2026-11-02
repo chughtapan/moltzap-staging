@@ -1,17 +1,7 @@
 /** @file Shared schema and ports for the experimental MCP Events edge. */
 
-import type { ProtocolError } from "@modelcontextprotocol/server";
 import { type Effect, Schema } from "effect";
-import { requestSchema, resultSchema } from "./catalog-schemas.js";
-/** Daemon event delivery uses the same host-safe wire values as polling receivers. */
-export {
-  type ConsumerMetadata,
-  decodeConsumerMetadata,
-  decodePollResult,
-  itemEventDataJsonSchema,
-  type PollResult,
-} from "./operations.js";
-
+import type { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
 export const maximumEventBytes = 256 * 1024;
 
@@ -25,8 +15,8 @@ export const callbackReasons = [
   "challenge_failed",
 ] as const;
 /** Owner-visible diagnostics omit callback addresses and signing authority. */
-const webhookStatusSchema = Schema.Struct({
-  mode: Schema.Literal("none", "push", "poll", "webhook"),
+export const webhookStatusSchema = Schema.Struct({
+  mode: Schema.Literal("none", "webhook"),
   id: Schema.optional(Schema.String),
   refreshBefore: Schema.optional(Schema.String),
   pendingCount: Schema.optional(Schema.NonNegativeInt),
@@ -39,9 +29,6 @@ const webhookStatusSchema = Schema.Struct({
 /** Secret-free diagnostics shared with the MCP tool. */
 export type WebhookStatus = typeof webhookStatusSchema.Type;
 
-/** The result schema of the secret-free event status tool. */
-export const webhookStatusResult = resultSchema(webhookStatusSchema);
-
 const emptyArguments = Schema.Record({
   key: Schema.String,
   value: Schema.Never,
@@ -53,16 +40,6 @@ const subscriptionSchema = Schema.Struct({
   cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
   maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
 });
-const pollSchema = Schema.Struct({
-  ...subscriptionSchema.fields,
-  _meta: Schema.optional(
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-  maxEvents: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), {
-    exact: true,
-  }),
-});
-
 /** Catalog pagination uses its own cursor rather than event replay state. */
 const listSchema = Schema.Struct({
   cursor: Schema.optionalWith(Schema.String, { exact: true }),
@@ -116,14 +93,10 @@ export interface HarnessWebhookEvents {
 /** Native streaming uses the same event and replay grammar as callbacks. */
 export type EventStreamInput = typeof subscriptionSchema.Type;
 /** SDK boundary validation keeps schema constructors private. */
-export const eventStreamInput = requestSchema(subscriptionSchema);
-/** Polling adds a bounded occurrence count to the shared replay grammar. */
-export type EventPollInput = typeof pollSchema.Type;
-/** The official SDK validates poll requests before acquiring a consumer. */
-export const eventPollInput = requestSchema(pollSchema);
+export const eventStreamInput = subscriptionSchema;
 /** The event catalog has its own pagination grammar. */
-export const eventListInput = requestSchema(listSchema);
+export const eventListInput = listSchema;
 /** Callback registration includes the signing authority and lease request. */
-export const eventSubscribeInput = requestSchema(subscribeSchema);
+export const eventSubscribeInput = subscribeSchema;
 /** Cleanup uses only the subscription's public key fields. */
-export const eventUnsubscribeInput = requestSchema(unsubscribeSchema);
+export const eventUnsubscribeInput = unsubscribeSchema;

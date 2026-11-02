@@ -7,10 +7,9 @@ import { createPrivateKey, createPublicKey, type KeyObject } from "node:crypto";
 import { expect, it } from "vitest";
 import {
   agentOpeningPrivateKey,
+  AgentPublicKey,
   AgentSigningAuthority,
-  type AgentSigningAuthority as AgentSigningAuthorityValue,
   agentSigningPrivateKey,
-  Ed25519PublicKey,
   InvalidAgentPrivateKeyError,
   x25519PublicJwk,
 } from "../keys.js";
@@ -73,7 +72,7 @@ const pemFromSeed = (seed: Uint8Array): string =>
  * @param authority Authority whose opening key is read.
  * @returns The X25519 public key as lowercase hex.
  */
-const openingPublicKeyHex = (authority: AgentSigningAuthorityValue) =>
+const openingPublicKeyHex = (authority: AgentSigningAuthority) =>
   Effect.gen(function* () {
     const basePoint = yield* Effect.tryPromise({
       try: () =>
@@ -183,7 +182,7 @@ MCowBQYDK2VwAyEA${PRIVATE_SENTINEL}
  * @param publicKey Validated Ed25519 public key.
  * @returns The X25519 public key as lowercase hex.
  */
-const cardImageHex = (publicKey: Ed25519PublicKey) =>
+const cardImageHex = (publicKey: AgentPublicKey) =>
   Buffer.from(
     Encoding.decodeBase64Url(
       Either.getOrThrow(x25519PublicJwk(publicKey)).x,
@@ -191,7 +190,7 @@ const cardImageHex = (publicKey: Ed25519PublicKey) =>
   ).toString("hex");
 
 it("maps the RFC 7748 edwards25519 base point to the curve25519 base point", () => {
-  const edwardsBasePoint = Schema.decodeUnknownSync(Ed25519PublicKey)({
+  const edwardsBasePoint = Schema.decodeUnknownSync(AgentPublicKey)({
     crv: "Ed25519",
     kty: "OKP",
     x: Encoding.encodeBase64Url(Buffer.from(`58${"66".repeat(31)}`, "hex")),
@@ -220,7 +219,7 @@ it.each([
       "f1814f0e8ff1043d8a44d25babff3cedcae6c22c3edaa48f857ae70de2baae50",
   },
 ])(
-  "derives the $vector X25519 opening key and its AgentCard image",
+  "derives the $vector X25519 opening key and its AgentIdentityCard image",
   ({ seed, x25519PublicKey }) =>
     Effect.runPromise(
       Effect.gen(function* () {
@@ -235,7 +234,7 @@ it.each([
     ),
 );
 
-it("derives a non-extractable opening key that matches the AgentCard key's X25519 image", () =>
+it("derives a non-extractable opening key that matches the AgentIdentityCard key's X25519 image", () =>
   fc.assert(
     fc.asyncProperty(fc.uint8Array({ minLength: 32, maxLength: 32 }), (seed) =>
       Effect.runPromise(

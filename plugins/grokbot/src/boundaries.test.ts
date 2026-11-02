@@ -1,15 +1,7 @@
-/** @file Native HTTP metadata stays private and the Client receipt owns its own lifetime. */
+/** @file Native HTTP metadata stays private in tracing. */
 import { FetchHttpClient, HttpServerResponse } from "@effect/platform";
-import { scopedLive as it, scoped as withClock } from "@effect/vitest";
-import {
-  Deferred,
-  Effect,
-  Fiber,
-  Option,
-  Redacted,
-  TestClock,
-  Tracer,
-} from "effect";
+import { scopedLive as it } from "@effect/vitest";
+import { Effect, Redacted, Tracer } from "effect";
 import { describe, expect } from "vitest";
 import { localProvider } from "./__tests__/provider.js";
 import { deliverToGrokBot } from "./index.js";
@@ -50,8 +42,7 @@ function keepsHttpMetadataPrivate() {
     );
     const { tracer, spans } = yield* collectTracing();
     yield* deliverToGrokBot(routine, {
-      eventId,
-      acknowledge: Effect.void,
+      deliveryToken: eventId,
     }).pipe(
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, provider.fetch),
@@ -68,38 +59,9 @@ function keepsHttpMetadataPrivate() {
   });
 }
 
-function separatesReceiptLifetime() {
-  return Effect.gen(function* () {
-    const provider = yield* localProvider(
-      Effect.succeed(HttpServerResponse.empty()),
-    );
-    const started = yield* Deferred.make<boolean>();
-    const finish = yield* Deferred.make<undefined>();
-    const waiting = yield* deliverToGrokBot(routine, {
-      eventId,
-      acknowledge: Effect.suspend(() =>
-        Deferred.succeed(started, provider.signals[0]?.aborted === true),
-      ).pipe(Effect.zipRight(Deferred.await(finish))),
-    }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, provider.fetch),
-      Effect.forkScoped,
-    );
-    expect(yield* Deferred.await(started)).toBe(true);
-    yield* TestClock.adjust("4 seconds");
-    expect(Option.isNone(yield* Fiber.poll(waiting))).toBe(true);
-    yield* Deferred.succeed(finish, undefined);
-    yield* Fiber.join(waiting);
-  });
-}
-
 describe("Grok handoff boundaries", () => {
   it(
     "keeps private HTTP metadata out of exported spans",
     keepsHttpMetadataPrivate,
-  );
-  withClock(
-    "closes HTTP before a Client receipt that outlives the provider deadline",
-    separatesReceiptLifetime,
   );
 });

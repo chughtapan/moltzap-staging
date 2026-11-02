@@ -25,7 +25,7 @@ import {
   decodeMessagePolicy,
   type TextPolicySettings,
   type TextRule,
-} from "./config.js";
+} from "./rules/config.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed judgments, stages and next actions are the public contract under test. */
 const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";

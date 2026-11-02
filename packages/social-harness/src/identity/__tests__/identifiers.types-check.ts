@@ -6,13 +6,13 @@
 
 import type {
   AgentId,
+  AgentIdentityCardDigest,
   AgentName,
-  EnvelopeId,
   PrincipalId,
-} from "../../index.js";
-import type { AgentCardDigest } from "../cards.js";
-import type { OperationId } from "../registry/index.js";
-import type { AgentCardIssuedAt } from "./agent-card-fixtures.js";
+} from "../agent.js";
+import type { EnvelopeId } from "../envelope/signed-message.js";
+import type { RegistrationId } from "../registry/index.js";
+import type { AgentIdentityCardIssuedAt } from "./agent-card-fixtures.js";
 
 /**
  * True when a value of either type is assignable to the other, that is, when
@@ -30,51 +30,61 @@ type IdentityValue =
   | AgentId
   | PrincipalId
   | AgentName
-  | OperationId
+  | RegistrationId
   | EnvelopeId
-  | AgentCardDigest
-  | AgentCardIssuedAt;
+  | AgentIdentityCardDigest
+  | AgentIdentityCardIssuedAt;
 
 type RawStringsCannotConstructValues = ExpectFalse<
   string extends IdentityValue ? true : false
 >;
 
 type AgentAndPrincipalDiffer = ExpectFalse<Crosses<AgentId, PrincipalId>>;
-type AgentAndOperationDiffer = ExpectFalse<Crosses<AgentId, OperationId>>;
+type AgentAndOperationDiffer = ExpectFalse<Crosses<AgentId, RegistrationId>>;
 type AgentAndEnvelopeDiffer = ExpectFalse<Crosses<AgentId, EnvelopeId>>;
-type AgentAndCardDigestDiffer = ExpectFalse<Crosses<AgentId, AgentCardDigest>>;
+type AgentAndCardDigestDiffer = ExpectFalse<
+  Crosses<AgentId, AgentIdentityCardDigest>
+>;
 type AgentAndNameDiffer = ExpectFalse<Crosses<AgentId, AgentName>>;
 type PrincipalAndNameDiffer = ExpectFalse<Crosses<PrincipalId, AgentName>>;
 type PrincipalAndOperationDiffer = ExpectFalse<
-  Crosses<PrincipalId, OperationId>
+  Crosses<PrincipalId, RegistrationId>
 >;
 type PrincipalAndEnvelopeDiffer = ExpectFalse<Crosses<PrincipalId, EnvelopeId>>;
 type PrincipalAndCardDigestDiffer = ExpectFalse<
-  Crosses<PrincipalId, AgentCardDigest>
+  Crosses<PrincipalId, AgentIdentityCardDigest>
 >;
-type NameAndOperationDiffer = ExpectFalse<Crosses<AgentName, OperationId>>;
+type NameAndOperationDiffer = ExpectFalse<Crosses<AgentName, RegistrationId>>;
 type NameAndEnvelopeDiffer = ExpectFalse<Crosses<AgentName, EnvelopeId>>;
-type NameAndCardDigestDiffer = ExpectFalse<Crosses<AgentName, AgentCardDigest>>;
-type OperationAndEnvelopeDiffer = ExpectFalse<Crosses<OperationId, EnvelopeId>>;
+type NameAndCardDigestDiffer = ExpectFalse<
+  Crosses<AgentName, AgentIdentityCardDigest>
+>;
+type OperationAndEnvelopeDiffer = ExpectFalse<
+  Crosses<RegistrationId, EnvelopeId>
+>;
 type OperationAndCardDigestDiffer = ExpectFalse<
-  Crosses<OperationId, AgentCardDigest>
+  Crosses<RegistrationId, AgentIdentityCardDigest>
 >;
 type EnvelopeAndCardDigestDiffer = ExpectFalse<
-  Crosses<EnvelopeId, AgentCardDigest>
+  Crosses<EnvelopeId, AgentIdentityCardDigest>
 >;
-type IssuedAtAndAgentDiffer = ExpectFalse<Crosses<AgentCardIssuedAt, AgentId>>;
+type IssuedAtAndAgentDiffer = ExpectFalse<
+  Crosses<AgentIdentityCardIssuedAt, AgentId>
+>;
 type IssuedAtAndPrincipalDiffer = ExpectFalse<
-  Crosses<AgentCardIssuedAt, PrincipalId>
+  Crosses<AgentIdentityCardIssuedAt, PrincipalId>
 >;
-type IssuedAtAndNameDiffer = ExpectFalse<Crosses<AgentCardIssuedAt, AgentName>>;
+type IssuedAtAndNameDiffer = ExpectFalse<
+  Crosses<AgentIdentityCardIssuedAt, AgentName>
+>;
 type IssuedAtAndOperationDiffer = ExpectFalse<
-  Crosses<AgentCardIssuedAt, OperationId>
+  Crosses<AgentIdentityCardIssuedAt, RegistrationId>
 >;
 type IssuedAtAndEnvelopeDiffer = ExpectFalse<
-  Crosses<AgentCardIssuedAt, EnvelopeId>
+  Crosses<AgentIdentityCardIssuedAt, EnvelopeId>
 >;
 type IssuedAtAndCardDigestDiffer = ExpectFalse<
-  Crosses<AgentCardIssuedAt, AgentCardDigest>
+  Crosses<AgentIdentityCardIssuedAt, AgentIdentityCardDigest>
 >;
 type RefinedValuesRemainStrings = Expect<
   IdentityValue extends string ? true : false

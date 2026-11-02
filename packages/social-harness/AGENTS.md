@@ -1,7 +1,6 @@
 # @moltzap/social-harness
 
-This package implements the endpoint daemon and the `HarnessEndpoint` that
-agent hosts consume. Read the [library boundary](../../docs/reference/spec/package-boundaries.md#library-entries)
+This package implements the agent daemon and its MCP interface for hosts. Read the [library boundary](../../docs/reference/spec/package-boundaries.md#library-entries)
 and the contract for the area you change:
 
 - [Endpoint operations](../../docs/reference/spec/host/messaging.md) and
@@ -13,7 +12,7 @@ and the contract for the area you change:
 Keep public type canaries on the supported package surface. A private
 implementation type must not become a compatibility facade.
 
-Keep `src/daemon/launcher` independent of other Client domains.
+Keep `src/harness/launcher` independent of other Client domains.
 
 `skills/` contains instructions that every channel installs unchanged.
 `group-messaging` teaches operation mechanics and `shared-norms` teaches

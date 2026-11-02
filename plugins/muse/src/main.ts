@@ -1,8 +1,9 @@
 /** @file Remote Muse receiver and credential-free native detector/worker commands. */
+import { packageVersion } from "@moltzap/social-harness";
 import { FetchHttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
-import { acquireHarnessEndpoint } from "@moltzap/social-harness";
-import { Config, Console, Effect, Layer, Stream } from "effect";
+import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { Config, Console, Effect, Layer } from "effect";
 import { isAbsolute } from "node:path";
 import { MuseWakeError } from "./errors.js";
 import { acceptMuseWork, detectMuseWork, makeMuseWakeup } from "./index.js";
@@ -53,11 +54,14 @@ function receive(directory: string) {
       credential: mcpCredential,
     });
     const wake = yield* makeMuseWakeup(directory);
-    const endpoint = yield* acquireHarnessEndpoint(config.endpoint, {
-      credential: config.credential,
-      onReady: Effect.logInfo("Muse receiver ready"),
+    const connection = yield* acquireMcpConnection(config, {
+      name: "sharness-muse",
+      version: packageVersion,
     });
-    yield* endpoint.messages.pipe(Stream.runForEach(wake));
+    yield* connection.consumeInbox(
+      { onReady: Effect.logInfo("Muse receiver ready") },
+      wake,
+    );
   });
 }
 

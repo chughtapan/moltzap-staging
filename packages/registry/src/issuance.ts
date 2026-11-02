@@ -1,48 +1,51 @@
-/** @file Registry-owned immutable AgentCard issuance. */
+/** @file Registry-owned immutable AgentIdentityCard issuance. */
 
 import {
-  AgentCard,
-  type AgentId as AgentIdValue,
-  type AgentName as AgentNameValue,
+  AgentIdentityCard,
+  type AgentId,
+  type AgentName,
   AgentSigningAuthority,
-  type Ed25519PublicKey as Ed25519PublicKeyValue,
-  type PrincipalId as PrincipalIdValue,
-  type VerifiedAgentCard,
+  type AgentPublicKey,
+  type PrincipalId,
+  type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {
-  agentCardSigning,
-  type AgentCardVerificationError,
+  agentIdentityCardSigning,
+  type AgentIdentityCardVerificationError,
   wireVersions,
 } from "@moltzap/social-harness/internal";
 import { Effect } from "effect";
 
-/** Whole-second UTC issuance evidence carried by an AgentCard. */
+/** Whole-second UTC issuance evidence carried by an AgentIdentityCard. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the package-owned domain name they decode.
-export const AgentCardIssuedAt = agentCardSigning.issuedAt;
-/** Validated nominal value decoded by AgentCardIssuedAt. */
+export const AgentIdentityCardIssuedAt = agentIdentityCardSigning.issuedAt;
+/** Validated nominal value decoded by AgentIdentityCardIssuedAt. */
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one package boundary model.
-export type AgentCardIssuedAt = typeof AgentCardIssuedAt.Type;
+export type AgentIdentityCardIssuedAt = typeof AgentIdentityCardIssuedAt.Type;
 
-interface IssueAgentCardInput {
-  readonly agentId: AgentIdValue;
-  readonly principalId: PrincipalIdValue;
-  readonly agentName: AgentNameValue;
-  readonly publicKey: Ed25519PublicKeyValue;
-  readonly issuedAt: AgentCardIssuedAt;
+interface IssueAgentIdentityCardInput {
+  readonly agentId: AgentId;
+  readonly principalId: PrincipalId;
+  readonly agentName: AgentName;
+  readonly publicKey: AgentPublicKey;
+  readonly issuedAt: AgentIdentityCardIssuedAt;
   readonly registrySigningAuthority: AgentSigningAuthority;
 }
 
 /**
- * Issues one exact AgentCard for Registry storage.
+ * Issues one exact AgentIdentityCard for Registry storage.
  *
  * @param input Complete identity fields and Registry signing authority.
- * @returns A Registry-verified immutable AgentCard.
+ * @returns A Registry-verified immutable AgentIdentityCard.
  */
-export const issueAgentCard = (
-  input: IssueAgentCardInput,
-): Effect.Effect<VerifiedAgentCard, AgentCardVerificationError> =>
+export const issueAgentIdentityCard = (
+  input: IssueAgentIdentityCardInput,
+): Effect.Effect<
+  VerifiedAgentIdentityCard,
+  AgentIdentityCardVerificationError
+> =>
   Effect.gen(function* () {
-    const card = yield* agentCardSigning.sign(
+    const card = yield* agentIdentityCardSigning.sign(
       {
         kind: "agentCard",
         sharnessVersion: yield* wireVersions.emitted,
@@ -54,10 +57,10 @@ export const issueAgentCard = (
       },
       input.registrySigningAuthority,
     );
-    return yield* AgentCard.verify({
-      agentCard: card,
+    return yield* AgentIdentityCard.verify({
+      identityCard: card,
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         input.registrySigningAuthority,
       ),
     });
-  }).pipe(Effect.withSpan("issueAgentCard"));
+  }).pipe(Effect.withSpan("issueAgentIdentityCard"));

@@ -7,14 +7,10 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../../encoding/canonical-json.js";
-import {
-  AgentCard,
-  Ed25519PublicKey,
-  SignedMessage,
-  WIRE_VERSION,
-} from "../../index.js";
+import { AgentIdentityCard, AgentPublicKey } from "../agent.js";
 import golden from "../envelope/__tests__/wire-golden.json" with { type: "json" };
-import { WireVersions } from "../wire-version.js";
+import { SignedMessage } from "../envelope/signed-message.js";
+import { WIRE_VERSION, WireVersions } from "../wire-version.js";
 
 /** Reproduce the fixed signed bytes with pnpm nx run workspace:generate-wire-golden. */
 const retainedVersion = "2099.101.0";
@@ -41,7 +37,7 @@ it.each([
           moltzapVersion: sharnessVersion,
         });
         const decode = Schema.decodeUnknown(
-          Schema.Union(AgentCard, SignedMessage),
+          Schema.Union(AgentIdentityCard, SignedMessage),
         );
         expect(yield* decode(representation).pipe(Effect.isSuccess)).toBe(true);
         expect(
@@ -69,10 +65,12 @@ it.each([
 it("verifies golden card and signed bytes without changing their representation", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const agentCard = yield* Schema.decodeUnknown(AgentCard)(golden.card);
-      const verifiedCard = yield* AgentCard.verify({
-        agentCard,
-        registrySignerPublicKey: Schema.decodeUnknownSync(Ed25519PublicKey)(
+      const agentCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+        golden.card,
+      );
+      const verifiedCard = yield* AgentIdentityCard.verify({
+        identityCard: agentCard,
+        registrySignerPublicKey: Schema.decodeUnknownSync(AgentPublicKey)(
           golden.registryKey,
         ),
       });
@@ -81,12 +79,12 @@ it("verifies golden card and signed bytes without changing their representation"
       );
       yield* SignedMessage.verify({
         signedMessage: message,
-        agentCard: verifiedCard,
+        identityCard: verifiedCard,
       });
       expect(yield* Schema.encode(SignedMessage)(message)).toEqual(
         golden.message,
       );
-      expect(yield* Schema.encode(AgentCard)(verifiedCard)).toEqual(
+      expect(yield* Schema.encode(AgentIdentityCard)(verifiedCard)).toEqual(
         golden.card,
       );
       expect(

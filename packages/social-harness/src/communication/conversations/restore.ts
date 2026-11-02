@@ -1,12 +1,13 @@
 /** @file Restores the conversation engine from verified local history when the daemon starts. */
 
 import { Effect, type ParseResult, Schema } from "effect";
+
+import type { OutboxTooOldError } from "../store/database.js";
 import type {
   EndpointRecovery,
-  OutboxTooOldError,
   ProtocolEvidence,
   StoredOutboundMessage,
-} from "../store/index.js";
+} from "../store/types.js";
 import { decodeCanonical } from "../../encoding/canonical-json.js";
 import {
   SignedMessage,
@@ -26,21 +27,15 @@ import {
   RecordHash,
   type RecordHash as RecordHashValue,
   type RouterAnchor,
+} from "../records/schemas.js";
+import {
   type VerifiedEvidence,
   type VerifiedMembership,
   verifyActionCore,
   verifyRecordCore,
   verifyStableEvidence,
-} from "../records/index.js";
-import { RouterWorkerPersistenceError } from "../router/index.js";
-import {
-  type EndpointEngineInput,
-  type EngineActionFold,
-  type EngineConversation,
-  evidenceMatchesFold,
-  type EvidenceRoute,
-  makeActionFold,
-} from "./engine-context.js";
+} from "../records/verification.js";
+import { RouterWorkerPersistenceError } from "../router/connection.js";
 import {
   decodeStoredAnchor,
   readStoredMessageIntent,
@@ -49,7 +44,15 @@ import {
   storedRowMatchesCore,
   verifyStoredMemberships,
   verifyStoredOutbounds,
-} from "./history/index.js";
+} from "./log.js";
+import {
+  type EndpointEngineInput,
+  type EngineActionFold,
+  type EngineConversation,
+  evidenceMatchesFold,
+  type EvidenceRoute,
+  makeActionFold,
+} from "./state.js";
 
 /** Complete process-local projections recovered before protocol work resumes. */
 interface RecoveredEngineState {

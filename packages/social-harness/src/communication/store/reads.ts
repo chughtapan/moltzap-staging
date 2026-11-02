@@ -1,6 +1,6 @@
 /** @file Recovery and fixed-head reads over certified conversation history. */
 
-import * as SqlClient from "@effect/sql/SqlClient";
+import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
 import type {
   CertifiedRecord,
@@ -20,7 +20,7 @@ import {
   storeOperation,
   StoreSignal,
   transaction,
-} from "./database/index.js";
+} from "./database.js";
 import { readPendingOutbound } from "./outbound.js";
 import {
   readCertifiedRecord,
@@ -30,7 +30,7 @@ import {
   readRecoveredReanchor,
   readStagedRecord,
   readStoredIdentity,
-} from "./rows/index.js";
+} from "./rows.js";
 const HISTORY_PAGE_SIZE = 50;
 const historySelect = `
   SELECT certified.rowid AS sequence, staged.conversation_id, staged.record_hash,
@@ -60,9 +60,9 @@ const decodeCursor = Schema.decodeUnknown(Schema.parseJson(historyCursor), {
  */
 export function recoverStoredState(
   conversationId?: string,
-): Effect.Effect<EndpointRecovery, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<EndpointRecovery, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const identity = yield* readStoredIdentity();
     return Object.freeze({
       ...(identity === undefined ? {} : { identity }),
@@ -101,28 +101,31 @@ export function readStoredConversation(
     | Readonly<{
         conversationId: string;
         afterRecordHash?: string;
+        maximumRecords?: number;
       }>
     | Readonly<{
         continuation: string;
+        maximumRecords?: number;
       }>,
-): Effect.Effect<HistoryPage, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<HistoryPage, EndpointStoreError, SqlClient> {
   return transaction(
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
+      const sql = yield* SqlClient;
       const { conversationId, after, through, throughRecordHash } =
         yield* resolveHistoryWindow(request);
+      const maximumRecords = request.maximumRecords ?? HISTORY_PAGE_SIZE;
       const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
         historySelect +
           " WHERE certified.conversation_id=? AND certified.ordinal>? AND certified.ordinal<=? ORDER BY certified.ordinal LIMIT ?",
-        [conversationId, after, through, HISTORY_PAGE_SIZE + 1],
+        [conversationId, after, through, maximumRecords + 1],
       );
-      const selected = rows.slice(0, HISTORY_PAGE_SIZE);
+      const selected = rows.slice(0, maximumRecords);
       const records = yield* Effect.forEach(selected, readCertifiedRecord, {
         concurrency: 1,
       });
       const last = selected.at(-1);
       const continuation =
-        rows.length > HISTORY_PAGE_SIZE && last !== undefined
+        rows.length > maximumRecords && last !== undefined
           ? Buffer.from(
               encodeCursor({
                 conversationId,
@@ -149,11 +152,13 @@ export function readRecentConversation(input: {
   readonly candidateRecordHash?: string;
 }) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       historySelect +
-        " WHERE certified.conversation_id=? AND certified.record_hash<>? ORDER BY certified.ordinal DESC LIMIT ?",
+        " WHERE certified.conversation_id=? AND (? = '' OR certified.ordinal < (SELECT ordinal FROM certified_records WHERE conversation_id=? AND record_hash=?)) ORDER BY certified.ordinal DESC LIMIT ?",
       [
+        input.conversationId,
+        input.candidateRecordHash ?? "",
         input.conversationId,
         input.candidateRecordHash ?? "",
         input.maximumRecords + 1,
@@ -190,12 +195,12 @@ export function readRecentConversation(input: {
 /** Reads remote certified records in their durable local commit order until consumed. */
 export function readUnconsumedRecords() {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const records = yield* Effect.forEach(
       yield* sql.unsafe<Readonly<Record<string, unknown>>>(
         historySelect +
           ` WHERE certified.consumed=0
-          AND staged.author_agent_id<>(SELECT agent_id FROM identity_binding WHERE singleton=1)
+          AND staged.author_agent_id<>(SELECT agent_id FROM communication_metadata WHERE singleton=1)
           ORDER BY certified.rowid`,
       ),
       readCertifiedRecord,
@@ -212,7 +217,7 @@ export function readUnconsumedRecords() {
 /** A successful handler retires only its exact certified record, retaining history. */
 export function consumeRecord(recordHash: string) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       "UPDATE certified_records SET consumed=1 WHERE record_hash=? RETURNING record_hash",
       [recordHash],
@@ -226,13 +231,9 @@ export function consumeRecord(recordHash: string) {
 /** Protocol startup needs each retained membership, including conversations without a certified head. */
 export function readMemberships(
   conversationId?: string,
-): Effect.Effect<
-  readonly StoredMembership[],
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<readonly StoredMembership[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, canonical_membership
@@ -244,7 +245,7 @@ export function readMemberships(
 }
 function readPositions(conversationId?: string) {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, current_anchor_hash,
@@ -258,13 +259,9 @@ function readPositions(conversationId?: string) {
 }
 function readMessageIntents(
   conversationId?: string,
-): Effect.Effect<
-  readonly MessageIntent[],
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<readonly MessageIntent[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
@@ -301,16 +298,12 @@ function readMembership(
 function readAnchors(
   conversationId?: string,
   anchorHashes?: readonly string[],
-): Effect.Effect<
-  readonly StoredAnchor[],
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<readonly StoredAnchor[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     if (anchorHashes?.length === 0) {
       return Object.freeze([]);
     }
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, anchor_hash, previous_anchor_hash,
@@ -345,7 +338,7 @@ function readAnchors(
 
 function readEvidence(conversationId?: string) {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, evidence_kind, subject_id,
@@ -360,13 +353,9 @@ function readEvidence(conversationId?: string) {
 }
 function readAllCertifiedRecords(
   conversationId?: string,
-): Effect.Effect<
-  readonly CertifiedRecord[],
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<readonly CertifiedRecord[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       yield* Effect.forEach(
         yield* database.unsafe<Readonly<Record<string, unknown>>>(
@@ -383,7 +372,7 @@ function readAllCertifiedRecords(
 }
 function readReanchors(conversationId?: string) {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, anchor_hash, previous_anchor_hash,
@@ -400,7 +389,7 @@ function resolveHistoryWindow(
   request: Parameters<typeof readStoredConversation>[0],
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const selected = yield* resolveHistoryRequest(request);
     const conversationId = selected.conversationId;
     if (conversationId.length === 0) {
@@ -480,7 +469,7 @@ function historyPosition(
   continuation: boolean,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       "SELECT ordinal FROM certified_records WHERE conversation_id=? AND record_hash=?",
       [conversationId, recordHash],

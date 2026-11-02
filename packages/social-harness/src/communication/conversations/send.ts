@@ -1,50 +1,53 @@
 /** @file Address resolution, immutable intent binding, and proposal creation. */
 
-import type * as SqlClient from "@effect/sql/SqlClient";
+import type { SqlClient } from "@effect/sql/SqlClient";
 import { Deferred, Duration, Effect, Exit, Schedule, Schema } from "effect";
-import type { RouterWorkerUnavailableError } from "../router/index.js";
+
+import type { RouterWorkerUnavailableError } from "../router/connection.js";
+import type { EndpointStoreError } from "../store/database.js";
 import type {
   ConversationFoundation,
-  EndpointStoreError,
   MessageIntent as StoredMessageIntent,
-} from "../store/index.js";
+} from "../store/types.js";
 import type {
   AcceptedMessage,
   EngineConversation,
   EngineMessageIntent,
   EngineOutboxError,
   EngineRuntime,
-} from "./engine-context.js";
+} from "./state.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
-  AgentCard,
-  agentViewOf,
-  type VerifiedAgentCard,
-} from "../../identity/cards.js";
+  agentCardOf,
+  AgentIdentityCard,
+  type VerifiedAgentIdentityCard,
+} from "../../identity/agent.js";
+import { markRetries, type RetryOutcome } from "../../tracing.js";
 import { type Message, messageMembers } from "../message.js";
 import {
-  type ActionCore,
-  type ActionHash,
   deriveConversationId,
   hashAction,
   hashAnchor,
   hashMessageIntent,
+} from "../records/encoding.js";
+import {
+  type ActionCore,
+  type ActionHash,
   InitialAnchorBody,
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
+} from "../records/schemas.js";
+import { compareAgentIds } from "../records/values.js";
+import {
   type VerifiedMembership,
   verifyMembershipDescriptor,
-} from "../records/index.js";
-import { compareAgentIds } from "../records/values.js";
-import * as Store from "../store/index.js";
+} from "../records/verification.js";
+import { bindMessageIntent } from "../store/anchors.js";
+import { failMessage } from "../store/messages.js";
 import { isTerminalSendFailure, SendError } from "./errors.js";
-import { anchorHashAtHead } from "./history/index.js";
-import { markRetries, type RetryOutcome } from "./retry-markers.js";
-import {
-  catchUpRetrySchedule,
-  pendingRecoveryFence,
-} from "./router-recovery/index.js";
+import { anchorHashAtHead } from "./log.js";
+import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
 
 // safer-arch-ignore no-fat-orchestrator: Immutable intent binding and protocol proposal share the engine gate and durable conversation binding.
 
@@ -108,9 +111,9 @@ const ROUTER_ATTACH_TIMEOUT = Duration.seconds(45);
 
 const conversationIdOf = (
   cards: readonly [
-    VerifiedAgentCard,
-    VerifiedAgentCard,
-    ...VerifiedAgentCard[],
+    VerifiedAgentIdentityCard,
+    VerifiedAgentIdentityCard,
+    ...VerifiedAgentIdentityCard[],
   ],
 ) =>
   deriveConversationId([
@@ -122,9 +125,9 @@ const conversationIdOf = (
 const membershipFor = (
   runtime: EngineRuntime,
   cards: readonly [
-    VerifiedAgentCard,
-    VerifiedAgentCard,
-    ...VerifiedAgentCard[],
+    VerifiedAgentIdentityCard,
+    VerifiedAgentIdentityCard,
+    ...VerifiedAgentIdentityCard[],
   ],
 ) =>
   Effect.gen(function* () {
@@ -134,12 +137,12 @@ const membershipFor = (
       return stored.membership;
     }
     const descriptor = yield* Schema.decodeUnknown(MembershipDescriptorSchema)({
-      sharnessVersion: AgentCard.wireVersion(cards[0]),
+      sharnessVersion: AgentIdentityCard.wireVersion(cards[0]),
       kind: "membership_descriptor",
       conversationId,
       members: yield* Effect.forEach(
         cards,
-        (card) => Schema.encode(AgentCard)(card),
+        (card) => Schema.encode(AgentIdentityCard)(card),
         { concurrency: 1 },
       ).pipe(Effect.catchTag("ParseError", representationFailure)),
     }).pipe(Effect.mapError(representationFailure));
@@ -180,7 +183,7 @@ function resolveMemberCard(runtime: EngineRuntime, member: Message["author"]) {
           Effect.mapError(registryFailure),
           Effect.flatMap((result) =>
             result.kind === "found"
-              ? Effect.succeed(result.agentCard)
+              ? Effect.succeed(result.identityCard)
               : Effect.fail(new SendError({ reason: "unknown-agent" })),
           ),
         )
@@ -188,7 +191,7 @@ function resolveMemberCard(runtime: EngineRuntime, member: Message["author"]) {
   return resolved.pipe(
     Effect.filterOrFail(
       (card) => {
-        const view = agentViewOf(card);
+        const view = agentCardOf(card);
         return (
           view.agentId === member.agentId &&
           view.agentName === member.agentName &&
@@ -207,7 +210,7 @@ function registryFailure() {
 const proposalAction = (
   conversation: EngineConversation,
   intent: MessageIntent,
-): Effect.Effect<ActionCore, SendError, SqlClient.SqlClient> =>
+): Effect.Effect<ActionCore, SendError, SqlClient> =>
   Effect.gen(function* () {
     const messageIntentHash = yield* hashMessageIntent(intent).pipe(
       Effect.mapError(representationFailure),
@@ -252,7 +255,7 @@ const proposalAction = (
 export const proposeIntent = (
   runtime: EngineRuntime,
   localIntent: EngineMessageIntent,
-): Effect.Effect<ActionHash, SendError, SqlClient.SqlClient> =>
+): Effect.Effect<ActionHash, SendError, SqlClient> =>
   Effect.gen(function* () {
     const conversation = runtime.conversations.get(
       localIntent.intent.conversationId,
@@ -277,7 +280,7 @@ export const proposeIntent = (
   }).pipe(
     Effect.tapError((error) =>
       isTerminalSendFailure(error.reason)
-        ? Store.failMessage(
+        ? failMessage(
             {
               authorAgentId: localIntent.intent.authorAgentId,
               msgId: localIntent.intent.msgId,
@@ -327,7 +330,7 @@ const proposalResendSchedule = catchUpRetrySchedule.pipe(
 function queueLocalProposal(
   runtime: EngineRuntime,
   proposal: LocalProposal,
-): Effect.Effect<void, SendError, SqlClient.SqlClient> {
+): Effect.Effect<void, SendError, SqlClient> {
   return Effect.gen(function* () {
     yield* Effect.uninterruptible(
       queueProposal(runtime, proposal).pipe(
@@ -401,7 +404,7 @@ function resendOutcome(
 function queueProposal(
   runtime: EngineRuntime,
   proposal: LocalProposal,
-): Effect.Effect<void, EngineOutboxError, SqlClient.SqlClient> {
+): Effect.Effect<void, EngineOutboxError, SqlClient> {
   const head = proposal.conversation.head;
   const queueHead =
     head === undefined
@@ -434,7 +437,7 @@ function queueProposal(
 function resendProposal(
   runtime: EngineRuntime,
   proposal: LocalProposal,
-): Effect.Effect<boolean, never, SqlClient.SqlClient> {
+): Effect.Effect<boolean, never, SqlClient> {
   const { action } = proposal;
   return runtime.gate
     .withPermits(1)(
@@ -442,7 +445,7 @@ function resendProposal(
         (): Effect.Effect<
           boolean | Deferred.Deferred<undefined>,
           never,
-          SqlClient.SqlClient
+          SqlClient
         > => {
           const conversation = runtime.conversations.get(action.conversationId);
           if (
@@ -588,7 +591,7 @@ interface PreparedIntent {
 export const prepareMessage = (
   runtime: EngineRuntime,
   accepted: AcceptedMessage,
-): Effect.Effect<void, SendError, SqlClient.SqlClient> =>
+): Effect.Effect<void, SendError, SqlClient> =>
   Effect.gen(function* () {
     const { message, canonicalMessage } = accepted;
     yield* awaitRouterAttachment(runtime);
@@ -628,7 +631,7 @@ function storedIntent(prepared: PreparedIntent): StoredMessageIntent {
 function bindPreparedIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
-): Effect.Effect<void, SendError, SqlClient.SqlClient> {
+): Effect.Effect<void, SendError, SqlClient> {
   return Effect.gen(function* () {
     const intent = storedIntent(prepared);
     const retained = runtime.conversations.get(prepared.intent.conversationId);
@@ -636,7 +639,7 @@ function bindPreparedIntent(
       if (retained.membership.hash !== prepared.membership.hash) {
         return yield* new SendError({ reason: "certification-unavailable" });
       }
-      return yield* Store.bindMessageIntent({
+      return yield* bindMessageIntent({
         kind: "existing-conversation",
         intent,
       }).pipe(
@@ -647,7 +650,7 @@ function bindPreparedIntent(
       );
     }
     const created = yield* createConversation(runtime, prepared.membership);
-    yield* Store.bindMessageIntent({
+    yield* bindMessageIntent({
       kind: "new-conversation",
       foundation: created.foundation,
       intent,
@@ -666,7 +669,7 @@ function bindPreparedIntent(
 function activateIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
-): Effect.Effect<void, SendError, SqlClient.SqlClient> {
+): Effect.Effect<void, SendError, SqlClient> {
   return runtime.gate
     .withPermits(1)(
       Effect.uninterruptible(
@@ -705,7 +708,7 @@ function activateIntent(
 function activateBoundIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
-): Effect.Effect<void, SendError, SqlClient.SqlClient> {
+): Effect.Effect<void, SendError, SqlClient> {
   const { canonicalIntent, intent } = prepared;
   return Effect.gen(function* () {
     if (runtime.completedMessages.has(intent.msgId)) {

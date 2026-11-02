@@ -1,9 +1,10 @@
 /** @file Accepted messages own their immutable payload before protocol preparation. */
 
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
+import type { MessageReference } from "../records/values.js";
 import { decodeCanonical } from "../../encoding/canonical-json.js";
-import { Message, type MessageReference } from "../message.js";
+import { Message } from "../message.js";
 import {
   EndpointStoreError,
   readBytes,
@@ -13,8 +14,8 @@ import {
   requireSameBytes,
   requireText,
   storeOperation,
-} from "./database/index.js";
-import { readStoredIdentity } from "./rows/index.js";
+} from "./database.js";
+import { readStoredIdentity } from "./rows.js";
 
 /** Acceptance stays in the caller's SQL transaction and performs no network work. */
 export function acceptMessage(input: {
@@ -24,7 +25,7 @@ export function acceptMessage(input: {
   readonly canonicalMessage: Uint8Array;
 }) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const identity = yield* readStoredIdentity();
     if (identity === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
@@ -58,7 +59,7 @@ export function acceptMessage(input: {
 /** The owning reader returns the retained Message and durable terminal outcome. */
 export function readAcceptedMessage(reference: MessageReference) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       "SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason FROM message_intents WHERE author_agent_id=? AND msg_id=?",
       [reference.authorAgentId, reference.msgId],
@@ -70,7 +71,7 @@ export function readAcceptedMessage(reference: MessageReference) {
 /** Each conversation prepares its earliest accepted message before offering the next. */
 export function readUnpreparedMessages() {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     return yield* Effect.forEach(
       yield* sql.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason
@@ -90,7 +91,7 @@ export function readUnpreparedMessages() {
 export function failMessage(reference: MessageReference, reason: string) {
   return Effect.gen(function* () {
     requireText(reason);
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     yield* sql.unsafe(
       `UPDATE message_intents SET failure_reason=COALESCE(failure_reason,?)
        WHERE author_agent_id=? AND msg_id=? AND completed_record_hash IS NULL`,
@@ -102,7 +103,7 @@ export function failMessage(reference: MessageReference, reason: string) {
 /** Pending status includes accepted messages whose membership is not prepared yet. */
 export function hasPendingMessages(conversationId: string) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const rows = yield* sql.unsafe(
       "SELECT 1 FROM message_intents WHERE conversation_id=? AND completed_record_hash IS NULL AND failure_reason IS NULL LIMIT 1",
       [conversationId],

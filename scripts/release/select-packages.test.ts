@@ -76,8 +76,8 @@ const CLIENT_MANIFEST = {
   exports: {
     ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
     "./service": {
-      types: "./dist/daemon/index.d.ts",
-      import: "./dist/daemon/index.js",
+      types: "./dist/harness/index.d.ts",
+      import: "./dist/harness/index.js",
     },
   },
   bin: { sharnessd: "./bin/sharnessd" },
@@ -414,7 +414,7 @@ function hostPackages(): HostPackages {
         'export { endpoint as acquireHarnessEndpoint } from "./endpoint.js";\n',
       "dist/endpoint.js": "export const endpoint = 1;\n",
       "dist/daemon/index.js": "export const daemon = 1;\n",
-      "bin/sharnessd": 'import "../dist/daemon/index.js";\n',
+      "bin/sharnessd": 'import "../dist/harness/index.js";\n',
     }),
   };
 }
@@ -471,7 +471,7 @@ await test("the host hash leaves sharness-internal subpaths inactive", () => {
       ...CLIENT_MANIFEST,
       exports: {
         ...CLIENT_MANIFEST.exports,
-        "./internal": { "sharness-internal": "./dist/daemon/index.js" },
+        "./internal": { "sharness-internal": "./dist/harness/index.js" },
       },
     }),
   );
@@ -494,7 +494,7 @@ await test("the host hash respects a blocked first matching Node condition", () 
     path.join(packages.client, "package.json"),
     JSON.stringify({
       ...CLIENT_MANIFEST,
-      exports: { ".": { node: null, default: "./dist/daemon/index.js" } },
+      exports: { ".": { node: null, default: "./dist/harness/index.js" } },
     }),
   );
   const before = hostHash(packages);

@@ -12,11 +12,11 @@ import {
   generateKeyPair,
 } from "jose";
 import { expect, it } from "vitest";
-import type { VerifiedAgentCard } from "../../cards.js";
+import type { VerifiedAgentIdentityCard } from "../../agent.js";
 import { encodeCanonicalJson } from "../../../encoding/canonical-json.js";
 import {
   agentOpeningPrivateKey,
-  Ed25519PublicKey,
+  AgentPublicKey,
   x25519PublicJwk,
 } from "../../keys.js";
 import {
@@ -137,7 +137,7 @@ const honestHeaderText = (commitment: string, sender: Member) =>
     enc: "A256GCM",
     [COMMITMENT_HEADER]: commitment,
     [ENVELOPE_ID_HEADER]: envelopeIdOf(1),
-    [SENDER_HEADER]: sender.agentCard.agentId,
+    [SENDER_HEADER]: sender.identityCard.agentId,
   });
 
 /**
@@ -173,7 +173,7 @@ const sealWithSharedEphemeralKey = (sender: Member, peer: Member) =>
             enc: "A256GCM",
             [COMMITMENT_HEADER]: commitment,
             [ENVELOPE_ID_HEADER]: envelopeIdOf(1),
-            [SENDER_HEADER]: sender.agentCard.agentId,
+            [SENDER_HEADER]: sender.identityCard.agentId,
             epk: {
               x: ephemeralPublicKey.x,
               crv: ephemeralPublicKey.crv,
@@ -181,11 +181,11 @@ const sealWithSharedEphemeralKey = (sender: Member, peer: Member) =>
             },
           })
           .addRecipient(
-            Either.getOrThrow(x25519PublicJwk(sender.agentCard.publicKey)),
+            Either.getOrThrow(x25519PublicJwk(sender.identityCard.publicKey)),
           )
           .setKeyManagementParameters(sharedEphemeralKey)
           .addRecipient(
-            Either.getOrThrow(x25519PublicJwk(peer.agentCard.publicKey)),
+            Either.getOrThrow(x25519PublicJwk(peer.identityCard.publicKey)),
           )
           .setKeyManagementParameters(sharedEphemeralKey)
           .encrypt(),
@@ -204,17 +204,20 @@ const sealWithSharedEphemeralKey = (sender: Member, peer: Member) =>
  * as a recipient does.
  *
  * @param signedMessage Message as the sender produced it.
- * @param senderCard Sender's verified AgentCard.
+ * @param senderCard Sender's verified AgentIdentityCard.
  * @returns The message as a recipient verifies it.
  */
 const receive = (
   signedMessage: VerifiedSignedMessage,
-  senderCard: VerifiedAgentCard,
+  senderCard: VerifiedAgentIdentityCard,
 ) =>
   Schema.encode(SignedMessage)(signedMessage).pipe(
     Effect.flatMap(Schema.decodeUnknown(SignedMessage)),
     Effect.flatMap((decoded) =>
-      SignedMessage.verify({ signedMessage: decoded, agentCard: senderCard }),
+      SignedMessage.verify({
+        signedMessage: decoded,
+        identityCard: senderCard,
+      }),
     ),
   );
 
@@ -546,7 +549,7 @@ it("refuses a body whose protected-header sender was rewritten to the re-signing
         ...body,
         protected: writeProtectedHeader({
           ...readProtectedHeader(body),
-          [SENDER_HEADER]: group.peer.agentCard.agentId,
+          [SENDER_HEADER]: group.peer.identityCard.agentId,
         }),
       });
       const signedMessage = yield* signBody(
@@ -658,7 +661,7 @@ it("refuses a body with fewer entries than SignedMessage recipients", () =>
     }),
   ));
 
-it("refuses to open with an AgentCard that does not belong to the authority", () =>
+it("refuses to open with an AgentIdentityCard that does not belong to the authority", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const group = yield* makeGroup(3);
@@ -670,7 +673,7 @@ it("refuses to open with an AgentCard that does not belong to the authority", ()
       );
 
       const outcome = yield* SealedBody.open({
-        agentCard: group.peer.agentCard,
+        identityCard: group.peer.identityCard,
         signingAuthority: group.sender.authority,
         signedMessage,
       }).pipe(Effect.either);
@@ -683,7 +686,7 @@ it("refuses to open with an AgentCard that does not belong to the authority", ()
  * The foreign card names an entry that decrypts under the supplied authority.
  * Opening must compare the card and authority keys independently of unwrapping.
  */
-it("refuses a foreign AgentCard whose entry the sender wrapped to the opening authority", () =>
+it("refuses a foreign AgentIdentityCard whose entry the sender wrapped to the opening authority", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const group = yield* makeGroup(2);
@@ -694,7 +697,7 @@ it("refuses a foreign AgentCard whose entry the sender wrapped to the opening au
       const sealed = yield* sealManually({
         protectedHeaderText: honestHeaderText(commitment, group.sender),
         saltedPlaintext,
-        recipients: [group.sender.agentCard, group.sender.agentCard],
+        recipients: [group.sender.identityCard, group.sender.identityCard],
       });
       const signedMessage = yield* signBody(
         group.sender,
@@ -703,7 +706,7 @@ it("refuses a foreign AgentCard whose entry the sender wrapped to the opening au
       );
 
       const outcome = yield* SealedBody.open({
-        agentCard: group.peer.agentCard,
+        identityCard: group.peer.identityCard,
         signingAuthority: group.sender.authority,
         signedMessage,
       }).pipe(Effect.either);
@@ -835,14 +838,14 @@ const sealWithProtectedMembers = (
             enc: "A256GCM",
             [COMMITMENT_HEADER]: commitment,
             [ENVELOPE_ID_HEADER]: envelopeIdOf(1),
-            [SENDER_HEADER]: sender.agentCard.agentId,
+            [SENDER_HEADER]: sender.identityCard.agentId,
             ...addedMembers,
           })
           .addRecipient(
-            Either.getOrThrow(x25519PublicJwk(sender.agentCard.publicKey)),
+            Either.getOrThrow(x25519PublicJwk(sender.identityCard.publicKey)),
           )
           .addRecipient(
-            Either.getOrThrow(x25519PublicJwk(peer.agentCard.publicKey)),
+            Either.getOrThrow(x25519PublicJwk(peer.identityCard.publicKey)),
           )
           .encrypt(),
       catch: () => new Error("hand sealing failed"),
@@ -933,7 +936,7 @@ it.each<HeaderSpellingCase>([
         alg: "ECDH-ES+A256KW",
         [COMMITMENT_HEADER]: commitment,
         [ENVELOPE_ID_HEADER]: envelopeIdOf(1),
-        [SENDER_HEADER]: group.sender.agentCard.agentId,
+        [SENDER_HEADER]: group.sender.identityCard.agentId,
       }),
     expected: Either.left(new SealedBodyOpeningError()),
   },
@@ -950,7 +953,7 @@ it.each<HeaderSpellingCase>([
   {
     spelling: "a repeated sender member",
     headerText: (commitment, group) =>
-      `${honestHeaderText(commitment, group.peer).slice(0, -1)},${JSON.stringify(SENDER_HEADER)}:${JSON.stringify(group.sender.agentCard.agentId)}}`,
+      `${honestHeaderText(commitment, group.peer).slice(0, -1)},${JSON.stringify(SENDER_HEADER)}:${JSON.stringify(group.sender.identityCard.agentId)}}`,
     expected: Either.left(new SealedBodyOpeningError()),
   },
   {
@@ -985,7 +988,7 @@ it.each<HeaderSpellingCase>([
         const sealed = yield* sealManually({
           protectedHeaderText: headerText(commitment, group),
           saltedPlaintext,
-          recipients: group.recipients.map((member) => member.agentCard),
+          recipients: group.recipients.map((member) => member.identityCard),
         });
         const signedMessage = yield* signBody(
           group.sender,
@@ -1070,7 +1073,7 @@ it.each<CommitmentCase>([
         const sealed = yield* sealManually({
           protectedHeaderText: honestHeaderText(commitment, group.sender),
           saltedPlaintext,
-          recipients: group.recipients.map((member) => member.agentCard),
+          recipients: group.recipients.map((member) => member.identityCard),
         });
         const signedMessage = yield* signBody(
           group.sender,
@@ -1100,7 +1103,7 @@ it("refuses a two-key body whose entries wrap different content keys over one co
       const { commitment } = yield* commitTo(freshSalt(), plaintext);
       const sealed = yield* sealTwoKeyCollision({
         protectedHeaderText: honestHeaderText(commitment, group.sender),
-        recipients: [group.sender.agentCard, group.peer.agentCard],
+        recipients: [group.sender.identityCard, group.peer.identityCard],
         ciphertextBytes: 64,
       });
       const signedMessage = yield* signBody(
@@ -1170,7 +1173,10 @@ it.each<OuterEnvelopeIdCase>([
           sealed,
           outerEnvelopeIdByte,
         );
-        const received = yield* receive(signedMessage, group.sender.agentCard);
+        const received = yield* receive(
+          signedMessage,
+          group.sender.identityCard,
+        );
 
         const outcome = yield* openAs(group.peer, received).pipe(Effect.either);
 
@@ -1214,14 +1220,14 @@ it(
   KEY_AGREEMENT_HEAVY_TIMEOUT_MS,
 );
 
-it("refuses to seal to an AgentCard key that is not an Ed25519 curve point", () =>
+it("refuses to seal to an AgentIdentityCard key that is not an Ed25519 curve point", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const group = yield* makeGroup(1);
       const offCurveCard = yield* issueCard(
         group.registrySigningAuthority,
         9,
-        Schema.decodeUnknownSync(Ed25519PublicKey)({
+        Schema.decodeUnknownSync(AgentPublicKey)({
           crv: "Ed25519",
           kty: "OKP",
           x: "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -1229,8 +1235,8 @@ it("refuses to seal to an AgentCard key that is not an Ed25519 curve point", () 
       );
 
       const outcome = yield* SealedBody.seal({
-        senderAgentId: group.sender.agentCard.agentId,
-        recipientAgentCards: [group.sender.agentCard, offCurveCard],
+        senderAgentId: group.sender.identityCard.agentId,
+        recipientIdentityCards: [group.sender.identityCard, offCurveCard],
         envelopeId: envelopeIdOf(1),
         plaintext,
       }).pipe(Effect.either);

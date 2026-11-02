@@ -7,7 +7,11 @@ import {
   LIVE_WIRE_VERSIONS,
   PrincipalId,
 } from "@moltzap/social-harness";
-import { OperationId, Registry, Router } from "@moltzap/social-harness/service";
+import {
+  RegistrationId,
+  Registry,
+  Router,
+} from "@moltzap/social-harness/service";
 import { WireVersions } from "@moltzap/social-harness/test";
 import { Duration, Effect, Layer, Redacted, Schema, type Scope } from "effect";
 import { generateKeyPairSync } from "node:crypto";
@@ -46,7 +50,7 @@ const registerVersionMismatchAgent = (
     );
     const registered = yield* Registry.register({
       request: {
-        operationId: Schema.decodeUnknownSync(OperationId)(
+        operationId: Schema.decodeUnknownSync(RegistrationId)(
           "opn_AAAAAAAAAAAAAAAAAAAAAA",
         ),
         principalId: Schema.decodeUnknownSync(PrincipalId)(

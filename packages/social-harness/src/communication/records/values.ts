@@ -9,11 +9,7 @@ import {
   isCanonicalIdentifier,
   isStrictlyAscending,
 } from "../../encoding/identifier.js";
-import {
-  AGENT_NAME_RULE,
-  type AgentId,
-  AgentName,
-} from "../../identity/identifiers.js";
+import { AGENT_NAME_RULE, AgentId, AgentName } from "../../identity/agent.js";
 import { WIRE_VERSION } from "../../identity/wire-version.js";
 
 /** Order validated agent identities by their decoded identifier bytes. */
@@ -54,6 +50,17 @@ export const MsgId = Schema.String.pipe(
  * @useDeclaredType
  */
 export type MsgId = typeof MsgId.Type;
+
+/** The author and its message id identify the same message through retries and recovery. */
+export const MessageReference = exactStruct({
+  authorAgentId: AgentId,
+  msgId: MsgId,
+});
+/**
+ * An author's message id identifies the same message through delivery and restart.
+ * @useDeclaredType
+ */
+export type MessageReference = typeof MessageReference.Type;
 
 /** A string without lone surrogates, so it survives canonical JSON. */
 export const wellFormedString = Schema.String.pipe(

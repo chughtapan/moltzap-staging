@@ -1,24 +1,25 @@
 /** @file Immutable card fixtures signed through the Identity capability. */
 
 import { Effect } from "effect";
-import type { AgentCardVerificationError } from "../cards.js";
 import {
-  AgentCard,
+  AgentIdentityCard,
+  type AgentIdentityCardClaims,
+  agentIdentityCardSigning,
+  type AgentIdentityCardVerificationError,
   AgentSigningAuthority,
-  type VerifiedAgentCard,
-} from "../../index.js";
-import { type AgentCardClaims, agentCardSigning } from "../card-signing.js";
+  type VerifiedAgentIdentityCard,
+} from "../agent.js";
 import { wireVersions } from "../wire-version.js";
 
-/** Whole-second UTC issuance evidence carried by an AgentCard. */
+/** Whole-second UTC issuance evidence carried by an AgentIdentityCard. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the package-owned domain name they decode.
-export const AgentCardIssuedAt = agentCardSigning.issuedAt;
-/** Validated nominal value decoded by AgentCardIssuedAt. */
+export const AgentIdentityCardIssuedAt = agentIdentityCardSigning.issuedAt;
+/** Validated nominal value decoded by AgentIdentityCardIssuedAt. */
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one package boundary model.
-export type AgentCardIssuedAt = typeof AgentCardIssuedAt.Type;
+export type AgentIdentityCardIssuedAt = typeof AgentIdentityCardIssuedAt.Type;
 
 interface CardFixtureInput
-  extends Omit<AgentCardClaims, "kind" | "sharnessVersion"> {
+  extends Omit<AgentIdentityCardClaims, "kind" | "sharnessVersion"> {
   readonly registrySigningAuthority: AgentSigningAuthority;
 }
 
@@ -26,14 +27,17 @@ interface CardFixtureInput
  * Signs and verifies immutable card claims for Identity fixtures.
  *
  * @param input Complete identity fields and Registry signing authority.
- * @returns A Registry-verified immutable AgentCard.
+ * @returns A Registry-verified immutable AgentIdentityCard.
  */
 export const makeVerifiedCard = (
   input: CardFixtureInput,
-): Effect.Effect<VerifiedAgentCard, AgentCardVerificationError> =>
+): Effect.Effect<
+  VerifiedAgentIdentityCard,
+  AgentIdentityCardVerificationError
+> =>
   Effect.gen(function* () {
     const { registrySigningAuthority, ...claims } = input;
-    const card = yield* agentCardSigning.sign(
+    const card = yield* agentIdentityCardSigning.sign(
       {
         kind: "agentCard",
         sharnessVersion: yield* wireVersions.emitted,
@@ -41,8 +45,8 @@ export const makeVerifiedCard = (
       },
       registrySigningAuthority,
     );
-    return yield* AgentCard.verify({
-      agentCard: card,
+    return yield* AgentIdentityCard.verify({
+      identityCard: card,
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         registrySigningAuthority,
       ),

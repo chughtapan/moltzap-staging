@@ -1,4 +1,4 @@
-/** @file Native routine HTTP acceptance and Client receipt ownership through localhost HTTP. */
+/** @file Native routine HTTP acceptance and handoff completion through localhost HTTP. */
 import {
   FetchHttpClient,
   type HttpApp,
@@ -20,7 +20,7 @@ import { describe, expect } from "vitest";
 import { localProvider } from "./__tests__/provider.js";
 import { deliverToGrokBot } from "./index.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses, provider fields and receipt counts are acceptance contracts. */
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses, provider fields and completion counts are acceptance contracts. */
 
 const routine = {
   url: new URL(
@@ -63,7 +63,7 @@ function acceptsStatus(status: number, reference = eventId) {
       reference,
     );
     expect(result.outcome).toMatchObject({ _tag: "Right" });
-    expect(result.receipts).toBe(1);
+    expect(result.completions).toBe(1);
     expect(result.provider.destinations).toEqual([routine.url.href]);
     expect(result.provider.signals).toHaveLength(1);
     expect(result.provider.signals[0]?.aborted).toBe(true);
@@ -93,7 +93,7 @@ function ignoresResponseBody() {
     );
     const result = yield* submit(Effect.succeed(response));
     expect(result.outcome).toMatchObject({ _tag: "Right" });
-    expect(result.receipts).toBe(1);
+    expect(result.completions).toBe(1);
     expect(result.provider.signals[0]?.aborted).toBe(true);
   });
 }
@@ -109,7 +109,7 @@ function refusesStatus(status: number) {
       _tag: "Left",
       left: { reason: "refused" },
     });
-    expect(result.receipts).toBe(0);
+    expect(result.completions).toBe(0);
     expect(result.provider.destinations).toHaveLength(1);
     expect(result.provider.signals[0]?.aborted).toBe(true);
     expect(result.errorText).not.toContain("private provider response");
@@ -135,7 +135,7 @@ function refusesRedirect() {
       _tag: "Left",
       left: { reason: "transport" },
     });
-    expect(result.receipts).toBe(0);
+    expect(result.completions).toBe(0);
     expect(result.provider.signals[0]?.aborted).toBe(true);
   });
 }
@@ -151,7 +151,7 @@ function refusesConfiguration(settings: typeof routine) {
       left: { reason: "invalid-configuration" },
     });
     expect(result.provider.destinations).toEqual([]);
-    expect(result.receipts).toBe(0);
+    expect(result.completions).toBe(0);
     expect(result.errorText).not.toContain(settings.url.href);
   });
 }
@@ -163,7 +163,7 @@ function boundsResponseHeaders() {
       _tag: "Left",
       left: { reason: "timed-out" },
     });
-    expect(result.receipts).toBe(0);
+    expect(result.completions).toBe(0);
     expect(result.provider.destinations).toHaveLength(1);
     expect(result.provider.signals[0]?.aborted).toBe(true);
   });
@@ -176,18 +176,18 @@ function submit<E>(
 ) {
   return Effect.gen(function* () {
     const provider = yield* localProvider(application);
-    const receipts = yield* Ref.make(0);
+    const completions = yield* Ref.make(0);
     const outcome = yield* deliverToGrokBot(settings, {
-      eventId: reference,
-      acknowledge: Ref.update(receipts, (count) => count + 1),
+      deliveryToken: reference,
     }).pipe(
+      Effect.tap(() => Ref.update(completions, (count) => count + 1)),
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, provider.fetch),
       Effect.either,
     );
     return {
       outcome,
-      receipts: yield* Ref.get(receipts),
+      completions: yield* Ref.get(completions),
       provider,
       errorText: Either.match(outcome, {
         onLeft: (error) => String(error),
@@ -199,7 +199,7 @@ function submit<E>(
 
 describe("Grok routine acceptance", () => {
   it.each([200, 202, 204])(
-    "acknowledges HTTP %i acceptance and closes the request",
+    "returns after HTTP %i acceptance and closes the request",
     (status) => acceptsStatus(status),
   );
   it(
@@ -218,13 +218,13 @@ describe("Grok routine acceptance", () => {
   );
 });
 
-// @agent-code-guard/regression-only: cases distinguish refusal, redirect and timeout receipt boundaries, each with a different transport trigger.
+// @agent-code-guard/regression-only: cases distinguish refusal, redirect and timeout handoff boundaries, each with a different transport trigger.
 describe("Grok routine failures", () => {
   it.each([401, 429, 503])(
     "leaves HTTP %i unread without retry or response leakage",
     refusesStatus,
   );
-  it("refuses redirects without acknowledging", refusesRedirect);
+  it("refuses redirects without accepting the handoff", refusesRedirect);
   it(
     "bounds missing response headers and closes the request",
     boundsResponseHeaders,

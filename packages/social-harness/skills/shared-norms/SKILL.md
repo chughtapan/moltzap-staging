@@ -52,7 +52,7 @@ Decline a norm you cannot apply:
 - its `metadata.social-harness.applies` is missing or is not `incoming`,
   `outgoing` or `both`;
 - it has no `description`, or its `metadata.social-harness` holds a key other
-  than `applies`, `guidance`, `feedback` and `notifySender`;
+  than `applies`, `guidance` and `feedback`;
 - `policy_update` reports that its `name` conflicts with an existing or fixed rule.
 
 ## Answering

@@ -1,6 +1,6 @@
 /** @file Durable exact-envelope ownership across Router retries and restart. */
 
-import * as SqlClient from "@effect/sql/SqlClient";
+import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
 import type {
   OutboundAttempt,
@@ -23,7 +23,7 @@ import {
   storeOperation,
   StoreSignal,
   transaction,
-} from "./database/index.js";
+} from "./database.js";
 type OutboundDisposition = "accepted" | "discarded" | "pending";
 interface RetainedOutbound {
   readonly outbound: StoredOutboundMessage;
@@ -38,11 +38,7 @@ interface RetainedOutbound {
  */
 export function enqueueOutbound(
   message: OutboundMessageInput,
-): Effect.Effect<
-  StoredOutboundMessage,
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
   return transaction(enqueueOutboundInTransaction(message)).pipe(
     storeOperation,
     Effect.withSpan("enqueueOutbound"),
@@ -56,13 +52,9 @@ export function enqueueOutbound(
  */
 export function enqueueOutboundInTransaction(
   message: OutboundMessageInput,
-): Effect.Effect<
-  StoredOutboundMessage,
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     validateMessageInput(message);
     yield* requireConversation(message.conversationId);
     const existing = yield* findOutbound(message.envelopeId);
@@ -99,9 +91,9 @@ export function enqueueOutboundInTransaction(
  */
 export function beginOutbound(
   envelopeId: string,
-): Effect.Effect<OutboundAttempt, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<OutboundAttempt, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     requireText(envelopeId);
     return yield* transaction(
       Effect.gen(function* () {
@@ -134,9 +126,9 @@ export function beginOutbound(
  */
 export function completeOutbound(
   outbound: StoredOutboundMessage,
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     validateMessageInput(outbound);
     return yield* transaction(
       Effect.gen(function* () {
@@ -171,9 +163,9 @@ export function completeOutbound(
  */
 export function discardOutbound(
   outbounds: readonly StoredOutboundMessage[],
-): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const distinctIds = new Set<string>();
     for (const outbound of outbounds) {
       validateMessageInput(outbound);
@@ -221,10 +213,10 @@ export function readPendingOutbound(
 ): Effect.Effect<
   readonly StoredOutboundMessage[],
   EndpointStoreError,
-  SqlClient.SqlClient
+  SqlClient
 > {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     return Object.freeze(
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT conversation_id, envelope_id,
@@ -240,7 +232,7 @@ export function readPendingOutbound(
 /** The outbox itself owns the exact signed envelope for one staged record. */
 export function readRecordOutbound(conversationId: string, recordHash: string) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
+    const sql = yield* SqlClient;
     const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
       `SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
        FROM outbound_messages WHERE conversation_id=? AND record_hash=?
@@ -253,7 +245,7 @@ export function readRecordOutbound(conversationId: string, recordHash: string) {
 
 function requireOutbound(
   envelopeId: string,
-): Effect.Effect<RetainedOutbound, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<RetainedOutbound, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const retained = yield* findOutbound(envelopeId);
     if (retained === undefined) {
@@ -264,13 +256,9 @@ function requireOutbound(
 }
 function findOutbound(
   envelopeId: string,
-): Effect.Effect<
-  RetainedOutbound | undefined,
-  EndpointStoreError,
-  SqlClient.SqlClient
-> {
+): Effect.Effect<RetainedOutbound | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
       `SELECT conversation_id, envelope_id,
               canonical_signed_message, wire_version, record_hash, attempted, disposition
@@ -316,9 +304,9 @@ function readDisposition(
 }
 function requireConversation(
   conversationId: string,
-): Effect.Effect<void, EndpointStoreError, SqlClient.SqlClient> {
+): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const database = yield* SqlClient.SqlClient;
+    const database = yield* SqlClient;
     if (
       (yield* database.unsafe<Readonly<Record<string, unknown>>>(
         `SELECT 1 AS retained FROM conversation_state

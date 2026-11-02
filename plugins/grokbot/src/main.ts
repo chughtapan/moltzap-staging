@@ -1,8 +1,9 @@
 /** @file Remote Grok receiver; a process supervisor restarts failed Client subscriptions. */
+import { packageVersion } from "@moltzap/social-harness";
 import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
-import { acquireHarnessEndpoint } from "@moltzap/social-harness";
-import { Config, Data, Effect, Stream } from "effect";
+import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { Config, Data, Effect } from "effect";
 import { deliverToGrokBot, validateGrokRoutine } from "./index.js";
 
 /** Configuration errors contain neither the private routine destination nor credentials. */
@@ -32,12 +33,13 @@ const program = Effect.gen(function* () {
     url: config.url,
     key: config.key,
   });
-  const endpoint = yield* acquireHarnessEndpoint(config.endpoint, {
-    credential: config.credential,
-    onReady: Effect.logInfo("Grok receiver ready"),
-  });
-  yield* endpoint.messages.pipe(
-    Stream.runForEach((delivery) => deliverToGrokBot(routine, delivery)),
+  const connection = yield* acquireMcpConnection(
+    { endpoint: config.endpoint, credential: config.credential },
+    { name: "sharness-grokbot", version: packageVersion },
+  );
+  yield* connection.consumeInbox(
+    { onReady: Effect.logInfo("Grok receiver ready") },
+    (entry) => deliverToGrokBot(routine, entry),
   );
 });
 

@@ -3,27 +3,29 @@
 import type { SqlError } from "@effect/sql/SqlError";
 import { SqlClient } from "@effect/sql/SqlClient";
 import {
-  AgentCard,
+  AgentIdentityCard,
   AgentId,
-  type AgentId as AgentIdValue,
   type AgentSigningAuthority,
-  type Ed25519PublicKey,
-  type VerifiedAgentCard,
+  type AgentPublicKey,
+  type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {
-  agentCardSigning,
+  agentIdentityCardSigning,
   httpErrors,
   registryContract,
 } from "@moltzap/social-harness/internal";
 import { Clock, Data, Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
-import { AgentCardIssuedAt, issueAgentCard } from "./issuance.js";
+import {
+  AgentIdentityCardIssuedAt,
+  issueAgentIdentityCard,
+} from "./issuance.js";
 import { createRegistrySchema } from "./schema.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const { InternalServerError, UnavailableError } = httpErrors;
 /* eslint-enable @typescript-eslint/naming-convention -- Restore variable naming after binding error constructors. */
-const ed25519PublicKeyThumbprintUri = agentCardSigning.publicKeyId;
+const ed25519PublicKeyThumbprintUri = agentIdentityCardSigning.publicKeyId;
 
 /** Storage initialization failed before the Registry became ready. */
 export class RegistryStorageInitializationError extends Data.TaggedError(
@@ -39,7 +41,7 @@ type StorageError =
   | InstanceType<typeof httpErrors.InternalServerError>;
 type StorageInput = Readonly<{
   sql: SqlClient;
-  registrySignerPublicKey: Ed25519PublicKey;
+  registrySignerPublicKey: AgentPublicKey;
   operationTimeoutMilliseconds: number;
 }>;
 type RegisterInput = Readonly<{
@@ -85,7 +87,7 @@ export interface RegistryStorage {
  */
 export function initializeRegistryStorage(input: {
   readonly sql: SqlClient;
-  readonly registrySignerPublicKey: Ed25519PublicKey;
+  readonly registrySignerPublicKey: AgentPublicKey;
 }): Effect.Effect<void, RegistryStorageInitializationError> {
   return runStorageInitialization(input).pipe(
     Effect.mapError((error) =>
@@ -206,19 +208,20 @@ const withStorageDeadline = <A>(
 
 const decodeStoredCard = (
   bytes: Uint8Array,
-  registrySignerPublicKey: Ed25519PublicKey,
+  registrySignerPublicKey: AgentPublicKey,
 ): Effect.Effect<
-  VerifiedAgentCard,
+  VerifiedAgentIdentityCard,
   InstanceType<typeof httpErrors.InternalServerError>
 > =>
   internalFailure(
-    registryContract.registryAgentCardCodec
-      .decode(bytes)
-      .pipe(
-        Effect.flatMap((agentCard) =>
-          AgentCard.verify({ agentCard, registrySignerPublicKey }),
-        ),
+    registryContract.registryIdentityCardCodec.decode(bytes).pipe(
+      Effect.flatMap((agentCard) =>
+        AgentIdentityCard.verify({
+          identityCard: agentCard,
+          registrySignerPublicKey,
+        }),
       ),
+    ),
   );
 
 const encodeResult = (
@@ -233,7 +236,7 @@ const encodeResult = (
 
 const decodeResult = (
   bytes: Uint8Array,
-  registrySignerPublicKey: Ed25519PublicKey,
+  registrySignerPublicKey: AgentPublicKey,
 ): Effect.Effect<
   typeof registryContract.registerResultSchema.Type,
   InstanceType<typeof httpErrors.InternalServerError>
@@ -245,8 +248,8 @@ const decodeResult = (
       if (result.kind !== "registered") {
         return Object.freeze({ kind: result.kind });
       }
-      const agentCard = yield* AgentCard.verify({
-        agentCard: result.agentCard,
+      const agentCard = yield* AgentIdentityCard.verify({
+        identityCard: result.agentCard,
         registrySignerPublicKey,
       });
       return Object.freeze({ kind: "registered", agentCard });
@@ -254,7 +257,7 @@ const decodeResult = (
   );
 
 const mintAgentId = (): Effect.Effect<
-  AgentIdValue,
+  AgentId,
   InstanceType<typeof httpErrors.InternalServerError>
 > =>
   internalFailure(
@@ -274,7 +277,7 @@ const retainedCount = (
 const mintUnusedAgentId = (
   sql: SqlClient,
 ): Effect.Effect<
-  AgentIdValue,
+  AgentId,
   SqlError | InstanceType<typeof httpErrors.InternalServerError>
 > =>
   Effect.gen(function* () {
@@ -293,7 +296,7 @@ const mintUnusedAgentId = (
   });
 
 const issueTime = (): Effect.Effect<
-  typeof AgentCardIssuedAt.Type,
+  typeof AgentIdentityCardIssuedAt.Type,
   InstanceType<typeof httpErrors.InternalServerError>
 > =>
   internalFailure(
@@ -303,7 +306,7 @@ const issueTime = (): Effect.Effect<
           .toISOString()
           .replace(".000Z", "Z"),
       ),
-      Effect.flatMap(Schema.decodeUnknown(AgentCardIssuedAt)),
+      Effect.flatMap(Schema.decodeUnknown(AgentIdentityCardIssuedAt)),
     ),
   );
 
@@ -385,7 +388,7 @@ const bindStorageMetadata = (input: {
 /** Only an empty namespace can initialize; an existing namespace must carry the current format. */
 function runStorageInitialization(input: {
   readonly sql: SqlClient;
-  readonly registrySignerPublicKey: Ed25519PublicKey;
+  readonly registrySignerPublicKey: AgentPublicKey;
 }) {
   return Effect.gen(function* () {
     const rows = yield* input.sql`
@@ -529,7 +532,7 @@ const insertNewAgent = (
     const agentId = yield* mintUnusedAgentId(input.sql);
     const issuedAt = yield* issueTime();
     const agentCard = yield* internalFailure(
-      issueAgentCard({
+      issueAgentIdentityCard({
         agentId,
         principalId: call.request.principalId,
         agentName: call.request.agentName,
@@ -539,7 +542,7 @@ const insertNewAgent = (
       }),
     );
     const agentCardBytes = yield* internalFailure(
-      registryContract.registryAgentCardCodec.encode(agentCard),
+      registryContract.registryIdentityCardCodec.encode(agentCard),
     );
     yield* input.sql`
       INSERT INTO sharness_registry_agents

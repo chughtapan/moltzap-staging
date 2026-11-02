@@ -6,7 +6,8 @@ import {
 } from "@effect/platform";
 import { NodeHttpServerRequest } from "@effect/platform-node";
 import {
-  AuthenticatedHttp,
+  Authentication,
+  type AuthenticationError,
   httpErrors,
   routerContract,
   type VerifiedAgentRequest,
@@ -19,6 +20,9 @@ import type { RouterSend } from "./send.js";
 
 /* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
 const {
+  AuthenticationFailedError,
+  VersionMismatchError,
+  UnavailableError,
   InternalServerError,
   MalformedRequestError,
   MethodNotAllowedError,
@@ -279,10 +283,10 @@ const runAdmittedDomainRequest = <
 ) =>
   Effect.gen(function* () {
     const bodyBytes = yield* readBoundedBody(httpRequest, input.bodyCap);
-    const verifiedRequest = yield* AuthenticatedHttp.verifyAgentRequest({
-      httpRequest,
-      bodyBytes,
-    });
+    const authentication = yield* Authentication;
+    const verifiedRequest = yield* authentication
+      .verifyRequest({ request: httpRequest, body: bodyBytes })
+      .pipe(Effect.mapError(authenticationFailure));
     const request = yield* Schema.decodeUnknown(input.outerRequestSchema)(
       verifiedRequest.request,
       {
@@ -394,4 +398,22 @@ function fallbackRoute() {
       }),
     ),
   );
+}
+
+/** HTTP alone projects authentication failures into the Router wire contract. */
+function authenticationFailure(error: AuthenticationError) {
+  switch (error.reason) {
+    case "malformed":
+      return new MalformedRequestError();
+    case "authentication-failed":
+      return new AuthenticationFailedError();
+    case "version-mismatch":
+      return new VersionMismatchError();
+    case "overloaded":
+      return new OverloadedError();
+    case "unavailable":
+      return new UnavailableError();
+    default:
+      return error.reason satisfies never;
+  }
 }

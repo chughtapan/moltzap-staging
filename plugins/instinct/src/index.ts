@@ -1,5 +1,4 @@
 /** @file Instinct's email acceptance boundary; Client owns receive and recovery. */
-import type { InboundDelivery } from "@moltzap/social-harness";
 import {
   FetchHttpClient,
   HttpClient,
@@ -42,9 +41,9 @@ const acceptance = Schema.parseJson(
  */
 export const deliverToInstinct = Effect.fn("Instinct.deliver")(function* (
   sender: InstinctSender,
-  delivery: Pick<InboundDelivery, "eventId" | "acknowledge">,
+  delivery: { readonly deliveryToken: string },
 ) {
-  yield* sendWakeup(sender, delivery.eventId).pipe(
+  yield* sendWakeup(sender, delivery.deliveryToken).pipe(
     Effect.scoped,
     Effect.timeoutFail({
       duration: "3 seconds",
@@ -52,7 +51,6 @@ export const deliverToInstinct = Effect.fn("Instinct.deliver")(function* (
     }),
     Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
   );
-  yield* delivery.acknowledge;
 });
 
 function sendWakeup(sender: InstinctSender, eventId: string) {

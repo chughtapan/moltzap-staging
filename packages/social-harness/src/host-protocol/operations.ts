@@ -1,36 +1,36 @@
 /** @file The values harness operations take, return and persist: sends, inbox pages, events and acknowledgments. */
 
 import { Effect, JSONSchema, type ParseResult, Schema } from "effect";
-import type { SendError } from "../communication/conversations/errors.js";
 import {
-  type CollectiveError,
+  type SendError,
+  sendFailureReasons,
+} from "../communication/conversations/errors.js";
+import { PaginatedRequest, PaginatedResult } from "../communication/index.js";
+import { AgentAddress, GroupAddress } from "../communication/records/values.js";
+import {
   CollectiveId,
   decodeCollectiveFailure,
-  SendInput,
-} from "../communication/collectives/contracts.js";
-import { DeliveryToken } from "../communication/store/types.js";
+  type RequestError,
+} from "../communication/requests/contracts.js";
 import { exactParseOptions, exactStruct } from "../encoding/exact.js";
+import { LocalGuidance, PermittedItem } from "../firewall/service.js";
 import {
-  firewallRefusalSchema,
-  type FirewallSendError,
-  localGuidanceSchema,
-} from "./advice.js";
-import { InboundItem } from "./items.js";
-import { HARNESS_CONSUMER_META_KEY, INBOX_ITEM_EVENT } from "./names.js";
+  DeliveryToken,
+  InboxEntry,
+  InboxEvent,
+  InboxPage,
+} from "../harness/inbox.js";
+import { type FirewallRefusal, firewallRefusalSchema } from "./advice.js";
+import { SendRequest } from "./send-request.js";
 import { type SendResult, SendResultSchema } from "./send-result.js";
+const savedItemSchema = Schema.typeSchema(PermittedItem);
 
-const consumerMetadataSchema = exactStruct({
-  generation: Schema.UUID,
-  release: Schema.optionalWith(Schema.Boolean, { exact: true }),
-});
-const metadataSchema = Schema.Struct({
-  [HARNESS_CONSUMER_META_KEY]: Schema.optional(consumerMetadataSchema),
-});
 const itemEventDataSchema = Schema.Union(
   exactStruct({
     kind: Schema.Literal("item"),
-    item: InboundItem,
-    guidance: Schema.optionalWith(localGuidanceSchema, { exact: true }),
+    address: Schema.Union(AgentAddress, GroupAddress),
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
   exactStruct({
     kind: Schema.Literal("reference"),
@@ -43,40 +43,10 @@ const itemEventDataSchema = Schema.Union(
     bytes: Schema.NonNegativeInt,
   }),
 );
-const itemEventSchema = Schema.Struct({
-  eventId: Schema.encodedBoundSchema(DeliveryToken),
-  name: Schema.Literal(INBOX_ITEM_EVENT),
-  timestamp: Schema.String,
-  data: itemEventDataSchema,
-  cursor: Schema.optional(Schema.Null),
-});
-const pollResultSchema = Schema.Struct({
-  events: Schema.Array(itemEventSchema),
-  cursor: Schema.String,
-  truncated: Schema.Boolean,
-  hasMore: Schema.Boolean,
-  nextPollMs: Schema.NonNegativeInt,
-  _meta: Schema.Struct(
-    { [HARNESS_CONSUMER_META_KEY]: consumerMetadataSchema },
-    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-});
-
-/** Receipt binding distinguishes consumer lifetimes; bearer authentication is still required. */
-export type ConsumerMetadata = typeof consumerMetadataSchema.Type;
-/** Native polling carries a required consumer binding beside open SDK metadata. */
-export type PollResult = typeof pollResultSchema.Type;
-/** Classified payload has the same inline/reference union in each delivery mode. */
+/** Callback data uses the same saved payload returned by read_event. */
 export const itemEventDataJsonSchema = JSONSchema.make(itemEventDataSchema, {
   target: "jsonSchema2020-12",
 });
-/** Validates only Social Harness metadata, leaving SDK bookkeeping open. */
-export const decodeConsumerMetadata = (metadata: unknown) =>
-  Schema.decodeUnknown(metadataSchema)(metadata ?? {}).pipe(
-    Effect.map((value) => value[HARNESS_CONSUMER_META_KEY]),
-  );
-/** Native hosts validate polling results without loading the daemon SDK. */
-export const decodePollResult = Schema.decodeUnknown(pollResultSchema);
 
 /** Read-only content lookup never acknowledges or retries delivery. */
 export const readEventRequestSchema = exactStruct({
@@ -86,11 +56,8 @@ export const readEventRequestSchema = exactStruct({
   }),
 });
 /** The original classified payload, including after its handoff. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects the event-read result to JSON Schema; hosts decode it through this file's boundary functions.
-export const readEventResultSchema = Schema.Struct({
-  item: InboundItem,
-  guidance: Schema.optionalWith(localGuidanceSchema, { exact: true }),
-});
+
+export const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
 /** A delivery acknowledgment names the delivery it retires. */
 export const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
@@ -102,33 +69,18 @@ export const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
 
 /** The model-visible arguments of one send. */
 export const harnessSendArgumentsSchema = exactStruct({
-  input: Schema.propertySignature(SendInput).annotations({
+  input: Schema.propertySignature(SendRequest).annotations({
     description:
       "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
   }),
 });
-const harnessMessageReadyEventSchema = Schema.Struct({
-  deliveryToken: DeliveryToken,
-  item: InboundItem,
-  guidance: Schema.optionalWith(localGuidanceSchema, { exact: true }),
-});
+const harnessMessageReadyEventSchema = Schema.typeSchema(InboxEntry);
 
 /** One page request over the classified inbox. */
-export const inboxRequestSchema = exactStruct({
-  cursor: Schema.optionalWith(
-    Schema.String.annotations({
-      description:
-        "Opaque nextCursor from the previous inbox page; omit for the first page.",
-    }),
-    { exact: true },
-  ),
-});
+export const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
 /** One page of classified deliveries and the cursor after it. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The MCP catalog projects the inbox page to JSON Schema; hosts decode it through this file's boundary functions.
-export const inboxResultSchema = Schema.Struct({
-  items: Schema.Array(harnessMessageReadyEventSchema),
-  nextCursor: Schema.optionalWith(Schema.String, { exact: true }),
-});
+
+export const inboxResultSchema = Schema.typeSchema(InboxPage);
 /** Validation diagnostics remain decodable as a send refusal at the runtime edge. */
 const invocationValidationErrorSchema = Schema.Struct({
   reason: Schema.Literal("content-invalid"),
@@ -163,12 +115,7 @@ const harnessSendErrorDataSchema = Schema.Union(
     failure: Schema.Unknown,
   }),
   Schema.Struct({
-    reason: Schema.String.pipe(
-      Schema.filter(
-        (reason) =>
-          reason !== "firewall-refused" && reason !== "collective-failed",
-      ),
-    ),
+    reason: Schema.Literal(...sendFailureReasons),
     detail: Schema.optionalWith(Schema.String, { exact: true }),
   }),
 );
@@ -194,7 +141,7 @@ export type HarnessSendErrorData =
   | (typeof firewallRefusalSchema.Type & {
       readonly reason: "firewall-refused";
     })
-  | Readonly<{ reason: string; detail?: string }>
+  | Readonly<{ reason: SendError["reason"]; detail?: string }>
   | Readonly<{
       reason: "collective-failed";
       operationId?: CollectiveId;
@@ -212,9 +159,9 @@ export type HarnessSendErrorData =
  * @returns The JSON error data.
  */
 export function sendErrorData(
-  error: SendError | CollectiveError | FirewallSendError,
+  error: SendError | RequestError | FirewallRefusal,
 ): HarnessSendErrorData {
-  if (error._tag === "FirewallSendError") {
+  if (error._tag === "FirewallRefusal") {
     return {
       reason: "firewall-refused",
       checkId: error.checkId,
@@ -222,7 +169,7 @@ export function sendErrorData(
       feedback: error.feedback,
     };
   }
-  if (error._tag === "CollectiveError") {
+  if (error._tag === "RequestError") {
     return {
       reason: "collective-failed",
       ...(error.operationId === undefined
@@ -293,37 +240,4 @@ export function checkHarnessSendResult(
   value: unknown,
 ): Effect.Effect<HarnessSendResult, ParseResult.ParseError> {
   return Schema.decodeUnknown(SendResultSchema)(value, exactParseOptions);
-}
-
-type ClosedOperationError = Readonly<{ readonly reason: string }>;
-
-/** The delivery operations a host calls: inbox and event reads, sends, and acknowledgments. */
-export interface DeliveryOperations {
-  readonly readEvent: (
-    input: typeof readEventRequestSchema.Type,
-  ) => Effect.Effect<typeof readEventResultSchema.Type, ClosedOperationError>;
-  readonly readInboxSummary: () => Effect.Effect<
-    InboxSummary,
-    ClosedOperationError
-  >;
-  readonly readInbox: (
-    input: HarnessReadInboxRequest,
-  ) => Effect.Effect<HarnessReadInboxResult, ClosedOperationError>;
-  readonly send: (
-    request: HarnessSendRequest,
-  ) => Effect.Effect<
-    HarnessSendResult,
-    SendError | CollectiveError | FirewallSendError
-  >;
-  readonly acknowledgeDelivery: (
-    deliveryToken: DeliveryToken,
-  ) => Effect.Effect<void, ClosedOperationError>;
-}
-
-/** Store-owned delivery identity shared across the loopback boundary. */
-export { DeliveryToken } from "../communication/store/types.js";
-/** Wakeup bookkeeping contains no peer content or collective protocol state. */
-export interface InboxSummary {
-  readonly pendingCount: number;
-  readonly newestSequence: number;
 }

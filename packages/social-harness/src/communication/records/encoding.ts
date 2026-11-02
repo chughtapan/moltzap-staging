@@ -2,8 +2,10 @@
 
 import { Effect, Encoding, Schema } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import type { VerifiedAgentCard } from "../../identity/cards.js";
-import type { AgentId } from "../../identity/identifiers.js";
+import type {
+  AgentId,
+  VerifiedAgentIdentityCard,
+} from "../../identity/agent.js";
 import type { AgentSigningAuthority } from "../../identity/keys.js";
 import {
   type ClientRepresentationError,
@@ -208,7 +210,7 @@ export type DecodedOuterBody =
 
 /** The local agent an outer body opens for, and the authority holding its opening key. */
 export interface OuterBodyReader {
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
 }
 
@@ -239,7 +241,7 @@ export const decodeOuterBody = (
   },
 ): Effect.Effect<DecodedOuterBody, ClientRepresentationError> =>
   SealedBody.open({
-    agentCard: input.agentCard,
+    identityCard: input.identityCard,
     signingAuthority: input.signingAuthority,
     signedMessage: input.message,
   }).pipe(
@@ -249,22 +251,22 @@ export const decodeOuterBody = (
 
 export const signEvidenceMessage = (input: {
   readonly statement: EvidenceStatementValue;
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
 }): Effect.Effect<
   LiveSignedMessage & VerifiedSignedMessage,
   ClientRepresentationError
 > =>
   Effect.gen(function* () {
-    if (input.statement.signerAgentId !== input.agentCard.agentId) {
+    if (input.statement.signerAgentId !== input.identityCard.agentId) {
       return yield* representationFailure();
     }
     const envelopeId = yield* deriveEvidenceEnvelopeId(input.statement);
     const body = yield* encodeCanonical(EvidenceStatement, input.statement);
     return yield* SignedMessage.sign({
-      agentCard: input.agentCard,
+      identityCard: input.identityCard,
       signingAuthority: input.signingAuthority,
-      recipientAgentIds: new Set([input.agentCard.agentId]),
+      recipientAgentIds: new Set([input.identityCard.agentId]),
       envelopeId,
       body,
     }).pipe(Effect.mapError(representationFailure));
@@ -272,14 +274,14 @@ export const signEvidenceMessage = (input: {
 
 export interface OuterMembership {
   readonly members: readonly [
-    VerifiedAgentCard,
-    VerifiedAgentCard,
-    ...VerifiedAgentCard[],
+    VerifiedAgentIdentityCard,
+    VerifiedAgentIdentityCard,
+    ...VerifiedAgentIdentityCard[],
   ];
 }
 
 /**
- * Seals a canonical Client value to every member's AgentCard key, bound to the
+ * Seals a canonical Client value to every member's AgentIdentityCard key, bound to the
  * sender and a fresh outer EnvelopeId, then signs the sealed bytes under that
  * EnvelopeId to the same members. The sender is a member, so it can open its
  * own stored envelope.
@@ -287,7 +289,7 @@ export interface OuterMembership {
 const signOuterBody = (input: {
   readonly body: Uint8Array;
   readonly membership: OuterMembership;
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
 }): Effect.Effect<
   LiveSignedMessage & VerifiedSignedMessage,
@@ -299,7 +301,7 @@ const signOuterBody = (input: {
     );
     if (
       !isStrictlyAscending(memberAgentIds, compareAgentIds) ||
-      !memberAgentIds.includes(input.agentCard.agentId)
+      !memberAgentIds.includes(input.identityCard.agentId)
     ) {
       return yield* representationFailure();
     }
@@ -311,13 +313,13 @@ const signOuterBody = (input: {
       `env_${Encoding.encodeBase64Url(randomId)}`,
     ).pipe(Effect.mapError(representationFailure));
     const sealed = yield* SealedBody.seal({
-      senderAgentId: input.agentCard.agentId,
-      recipientAgentCards: input.membership.members,
+      senderAgentId: input.identityCard.agentId,
+      recipientIdentityCards: input.membership.members,
       envelopeId,
       plaintext: input.body,
     }).pipe(Effect.mapError(representationFailure));
     return yield* SignedMessage.sign({
-      agentCard: input.agentCard,
+      identityCard: input.identityCard,
       signingAuthority: input.signingAuthority,
       recipientAgentIds: new Set(memberAgentIds),
       envelopeId,
@@ -328,7 +330,7 @@ const signOuterBody = (input: {
 export const signOuterPacket = (input: {
   readonly packet: DirectPacketValue;
   readonly membership: OuterMembership;
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
 }): Effect.Effect<
   LiveSignedMessage & VerifiedSignedMessage,
@@ -341,7 +343,7 @@ export const signOuterPacket = (input: {
 export const signOuterEvidence = (input: {
   readonly evidence: SignedMessageValue;
   readonly membership: OuterMembership;
-  readonly agentCard: VerifiedAgentCard;
+  readonly identityCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
 }): Effect.Effect<
   LiveSignedMessage & VerifiedSignedMessage,

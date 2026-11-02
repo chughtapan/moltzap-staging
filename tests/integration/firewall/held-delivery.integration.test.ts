@@ -4,7 +4,7 @@ import {
   acquireHarnessEndpoint,
   AgentAddress,
   type AgentName,
-  type AgentView,
+  type AgentCard,
   type Content,
   type HarnessEndpoint,
   type InboundDelivery,
@@ -101,8 +101,8 @@ interface HeldPair {
   readonly proxy: RouterHoldProxy;
   readonly senderFixture: DaemonProcessFixture;
   readonly targetFixture: DaemonProcessFixture;
-  readonly senderAgent: AgentView;
-  readonly targetAgent: AgentView;
+  readonly senderAgent: AgentCard;
+  readonly targetAgent: AgentCard;
 }
 
 interface HeldDelivery {
@@ -113,8 +113,8 @@ interface HeldDelivery {
   readonly targetInbox: Queue.Queue<InboundDelivery>;
   readonly senderAddress: AgentAddress;
   readonly targetAddress: AgentAddress;
-  readonly senderAgent: AgentView;
-  readonly targetAgent: AgentView;
+  readonly senderAgent: AgentCard;
+  readonly targetAgent: AgentCard;
   readonly heldSend: Fiber.RuntimeFiber<SendResult, unknown>;
 }
 

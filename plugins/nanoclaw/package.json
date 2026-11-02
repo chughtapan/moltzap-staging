@@ -31,12 +31,13 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "plugins/nanoclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b"
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-plugin-mcp.ts"
         },
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts"
+          "{workspaceRoot}/scripts/build/clean-dist.ts",
+          "{workspaceRoot}/scripts/build/copy-plugin-mcp.ts"
         ]
       },
       "lint": {
@@ -62,18 +63,32 @@
           "cwd": "plugins/nanoclaw",
           "command": "tsc --noEmit --incremental false --composite false -p tsconfig.json"
         }
+      },
+      "test": {
+        "dependsOn": [
+          "build",
+          "^build"
+        ]
       }
     }
   },
   "dependencies": {
     "@moltzap/social-harness": "workspace:*",
     "@types/node": "catalog:",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "@modelcontextprotocol/client": "catalog:"
   },
   "devDependencies": {
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@moltzap/plugin-mcp": "workspace:*"
+  },
+  "imports": {
+    "#sharness-mcp/*": {
+      "types": "./dist/mcp/*.d.ts",
+      "default": "./dist/mcp/*.js"
+    }
   }
 }

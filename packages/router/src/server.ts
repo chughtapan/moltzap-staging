@@ -6,7 +6,7 @@
 import { HttpServer } from "@effect/platform";
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { WIRE_VERSION } from "@moltzap/social-harness";
-import { AuthenticatedHttp, Registry } from "@moltzap/social-harness/internal";
+import { Authentication, Registry } from "@moltzap/social-harness/internal";
 import { Console, Data, Duration, Effect, Layer } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer.make requires Node's server factory at this adapter boundary.
 import { createServer } from "node:http";
@@ -128,12 +128,18 @@ export namespace RouterServer {
       registrySignerPublicKey: configuration.registrySignerPublicKey,
       requestTimeout: Duration.millis(configuration.registryLookupTimeoutMs),
     }).pipe(Layer.provide(NodeHttpClient.layer));
-    return AuthenticatedHttp.layer({
-      liveNonceCapacity: configuration.liveNonceCapacity,
-      agentCardCacheCapacity: configuration.agentCardCacheCapacity,
-      registryLookupConcurrencyLimit:
-        configuration.registryLookupConcurrencyLimit,
-    }).pipe(Layer.provide(registryLayer));
+    return Layer.unwrapEffect(
+      Effect.gen(function* () {
+        const registry = yield* Registry;
+        return Authentication.layer({
+          liveNonceCapacity: configuration.liveNonceCapacity,
+          identityCardCacheCapacity: configuration.identityCardCacheCapacity,
+          registryLookupConcurrencyLimit:
+            configuration.registryLookupConcurrencyLimit,
+          lookup: registry.lookup,
+        });
+      }),
+    ).pipe(Layer.provide(registryLayer));
   }
 
   function configurationFailure(

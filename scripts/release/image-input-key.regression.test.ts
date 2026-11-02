@@ -393,7 +393,7 @@ await test("runtime version gate excludes tests and modules reached only by test
   );
   write(
     repo,
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     "console.log(process.env.npm_package_version);",
   );
   write(
@@ -685,7 +685,7 @@ await test("installed workspace lifecycle inputs bind keys without runtime impor
 for (const instruction of [
   "FROM node:24-slim",
   "COPY . /app",
-  "COPY packages/social-harness/src/daemon/run.ts packages/router/src/server.ts",
+  "COPY packages/social-harness/src/harness/run.ts packages/router/src/server.ts",
   "COPY packages/social-harness/src/index.ts ./",
   "COPY ./ /app",
   "COPY packages/* /app",
@@ -813,7 +813,7 @@ await test("real Dockerfiles exclude daemon-only source and sibling version read
   const before = Effect.runSync(imageInputs(repo));
   write(
     repo,
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     "console.log(process.env.npm_package_version);",
   );
   write(
@@ -827,7 +827,7 @@ await test("real Dockerfiles exclude daemon-only source and sibling version read
   assert.notEqual(changedSibling.router?.key, before.router?.key);
   write(
     repo,
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     "export const changed = true;",
   );
   commit(repo);

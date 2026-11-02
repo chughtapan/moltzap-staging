@@ -1,8 +1,8 @@
 /** @file Operation IDs for peer messages with deliberately chosen requester identities and random bytes. */
 
 import { Schema } from "effect";
-import type { AgentId } from "../identity/identifiers.js";
-import { CollectiveId } from "../communication/collectives/contracts.js";
+import type { AgentId } from "../identity/agent.js";
+import { CollectiveId } from "../communication/requests/contracts.js";
 
 /** Reusing a byte across requesters exercises their independent operation namespaces. */
 export function collectiveOperationId(

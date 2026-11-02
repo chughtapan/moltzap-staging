@@ -5,20 +5,17 @@ import {
   HttpClient,
   HttpClientResponse,
 } from "@effect/platform";
-import { Effect, Match, Schema } from "effect";
-import type { openInboxFixture } from "./inbox-fixture.js";
-import {
-  DeliveryToken,
-  encodeRuntimeValue,
-} from "../communication/store/index.js";
-import { makeConsumerOwner } from "../daemon/mcp/consumer.js";
-import { makeWebhookEvents } from "../daemon/mcp/webhook.js";
-import { localGuidanceSchema } from "../host-protocol/advice.js";
-import { InboundItem } from "../host-protocol/items.js";
+import { SqlClient } from "@effect/sql";
+import { Effect, Match, Schema, Stream } from "effect";
+import { LocalGuidance, PermittedItem } from "../firewall/service.js";
+import { DeliveryToken, InboxError, InboxEvent } from "../harness/inbox.js";
+import { makeWebhookEvents } from "../harness/mcp/webhook.js";
+import { SocialHarness } from "../harness/service.js";
 import { INBOX_ITEM_EVENT } from "../host-protocol/names.js";
 import { digest, testAgentView } from "./agent-card-fixtures.js";
 import { collectiveOperationId } from "./collective-id-fixtures.js";
-type InboxFixture = Effect.Effect.Success<ReturnType<typeof openInboxFixture>>;
+import { openTestDatabase } from "./communication-test-database.js";
+type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 
 /** The signing secret of the scripted subscription. */
 export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
@@ -48,8 +45,9 @@ const occurrence = Schema.Struct({
   data: Schema.Union(
     Schema.Struct({
       kind: Schema.Literal("item"),
-      item: InboundItem,
-      guidance: Schema.optional(localGuidanceSchema),
+      address: Schema.String,
+      item: Schema.typeSchema(PermittedItem),
+      guidance: Schema.optional(LocalGuidance),
     }),
     Schema.Struct({
       kind: Schema.Literal("reference"),
@@ -113,10 +111,9 @@ export const token = (byte: number) =>
  * @returns An inbox item that reports `text` as its failure.
  */
 export const item = (text = "failed request") =>
-  Schema.decodeUnknownSync(InboundItem)({
+  Schema.decodeUnknownSync(PermittedItem)({
     kind: "operationFailed",
     operationId: collectiveOperationId(testAgentView("agent:alice").agentId, 1),
-    to: "agent:bob",
     error: text,
   });
 
@@ -128,11 +125,7 @@ export const item = (text = "failed request") =>
  * @returns The store's mutation.
  */
 export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
-  encodeRuntimeValue(item(text ?? "failed request")).pipe(
-    Effect.flatMap((canonicalItem) =>
-      store.putInboxItem({ deliveryToken: token(byte), canonicalItem }),
-    ),
-  );
+  store.save(token(byte), item(text ?? "failed request"));
 
 /**
  * Webhook events over `store` whose callback is scripted: it records each
@@ -144,7 +137,6 @@ export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
 ) {
-  const owner = yield* makeConsumerOwner;
   const gate = Effect.unsafeMakeSemaphore(1);
   let status = 200;
   let challengeValid = true;
@@ -166,7 +158,6 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   );
   return {
     gate,
-    owner,
     posts,
     status: (value: number) => {
       status = value;
@@ -177,8 +168,98 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     onEvent: (effect: Effect.Effect<void>) => {
       onEvent = effect;
     },
-    acquire: makeWebhookEvents(store, gate, owner).pipe(
+    acquire: makeWebhookEvents(gate).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provideService(SocialHarness, store.harness),
+      Effect.provideService(SqlClient.SqlClient, store.sql),
     ),
   };
+});
+
+/** A SQL-backed service fixture exercises webhook transactions without reading harness-owned tables. */
+export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
+  directory?: string,
+) {
+  const database = yield* openTestDatabase(directory);
+  const sql = database.sql;
+  yield* sql.unsafe(
+    "CREATE TABLE IF NOT EXISTS callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0)",
+  );
+  const payload = Schema.parseJson(Schema.typeSchema(InboxEvent));
+  const save = (
+    deliveryToken: DeliveryToken,
+    item: typeof PermittedItem.Type,
+    guidance?: typeof LocalGuidance.Type,
+  ) =>
+    Schema.encode(payload)({
+      address: Schema.decodeUnknownSync(InboxEvent.fields.address)("agent:bob"),
+      item,
+      ...(guidance === undefined ? {} : { guidance }),
+    }).pipe(
+      Effect.flatMap(
+        (bytes) =>
+          sql`INSERT INTO callback_fixture(token,payload) VALUES (${deliveryToken},${bytes})`,
+      ),
+      Effect.asVoid,
+    );
+  const getInboxEvent = (deliveryToken: DeliveryToken) =>
+    sql<{
+      readonly payload: string;
+    }>`SELECT payload FROM callback_fixture WHERE token=${deliveryToken}`.pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.fail(new InboxError({ reason: "unknown-event" }))
+          : Schema.decodeUnknown(payload)(rows[0].payload).pipe(
+              Effect.mapError(
+                () => new InboxError({ reason: "persistence-failed" }),
+              ),
+            ),
+      ),
+      Effect.mapError(() => new InboxError({ reason: "unknown-event" })),
+    );
+  const acknowledgeDelivery = (deliveryToken: DeliveryToken) =>
+    sql`UPDATE callback_fixture SET acknowledged=1 WHERE token=${deliveryToken}`.pipe(
+      Effect.asVoid,
+      Effect.orDie,
+    );
+  const harness = SocialHarness.of({
+    register: () => Effect.dieMessage("Unexpected registration"),
+    send: () => Effect.dieMessage("Unexpected send"),
+    listInbox: (request = {}) =>
+      sql<{
+        readonly token: string;
+        readonly payload: string;
+      }>`SELECT token,payload FROM callback_fixture WHERE acknowledged=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows.slice(0, 50), (row) =>
+            Schema.decodeUnknown(payload)(row.payload).pipe(
+              Effect.map((event) => ({
+                ...event,
+                deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(
+                  row.token,
+                ),
+              })),
+            ),
+          ),
+        ),
+        Effect.map((items) => ({
+          items,
+          ...(items.length === 50
+            ? { nextCursor: items.at(-1)?.deliveryToken }
+            : {}),
+        })),
+        Effect.mapError(() => new InboxError({ reason: "persistence-failed" })),
+      ),
+    getInboxEvent,
+    acknowledgeDelivery,
+    listConversations: () => Effect.succeed({ addresses: [] }),
+    readHistory: () => Effect.succeed({ records: [] }),
+    inboxChanged: Stream.never,
+  });
+  const pending = sql<{
+    readonly total: number;
+  }>`SELECT COUNT(*) AS total FROM callback_fixture WHERE acknowledged=0`.pipe(
+    Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
+  );
+  return { ...database, harness, save, pending };
 });

@@ -57,7 +57,8 @@ its work needs.
 ## MCP compatibility
 
 Serve MCP `2026-07-28` over Streamable HTTP, also negotiating older revisions
-supported by the server dependency. Validate outputs with JSON Schema 2020-12. `@modelcontextprotocol/sdk`.
+supported by the server. Tool discovery publishes input and output schemas
+using JSON Schema 2020-12.
 
 ## MCP interface
 
@@ -75,7 +76,7 @@ does not establish human confirmation.
 ### Local policy and diagnostics
 
 `SHARNESS_HISTORY_EXPORT` appends JSON lines for published incoming items and
-completed send invocations. Incoming items appear once per process, before
-delivery to the subscriber. Sends record their input and result or refusal.
+completed send invocations. Incoming items are logged when their permitted content is saved. Sends record
+the captured input and result or refusal.
 Export adds no delivery or management authority. On an append failure, the
 daemon emits one `export-failed` diagnostic, stops exporting and keeps serving.

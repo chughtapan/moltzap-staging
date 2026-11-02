@@ -1,324 +1,228 @@
 {
   "minFolderReadmeChildren": 9007199254740991,
-  "maxFolderCycles": 2,
+  "maxFolderCycles": 3,
   "facadeFiles": [
     {
       "file": "encoding/exact.ts",
-      "reason": "Closed struct decoding shared by host-loaded value schemas"
+      "reason": "Shared schema composition at serialization boundaries"
     },
     {
       "file": "encoding/canonical-json.ts",
-      "reason": "Canonical JSON encoding of signed and stored values"
+      "reason": "Canonical JSON for signed and retained data"
     },
     {
       "file": "encoding/identifier.ts",
-      "reason": "Canonical identifiers and ordering used by host-loaded values"
-    },
-    {
-      "file": "identity/identifiers.ts",
-      "reason": "Canonical agent, principal and immutable name schemas"
-    },
-    {
-      "file": "identity/keys.ts",
-      "reason": "Exact Ed25519 public keys and opaque signing authority"
-    },
-    {
-      "file": "identity/cards.ts",
-      "reason": "Immutable AgentCard representation, digest and pinned verification"
-    },
-    {
-      "file": "identity/card-signing.ts",
-      "reason": "Registry card issuance with private signing authority"
-    },
-    {
-      "file": "identity/wire-version.ts",
-      "reason": "Wire emission and live or retained compatibility policy"
-    },
-    {
-      "file": "identity/request-authentication.ts",
-      "reason": "Registered-request authentication capability with opaque verification proofs"
-    },
-    {
-      "file": "identity/index.ts",
-      "reason": "Identity request authentication and immutable Registry resolution"
-    },
-    {
-      "file": "identity/local.ts",
-      "reason": "Local identity service and scoped registration"
-    },
-    {
-      "file": "identity/local-store.ts",
-      "reason": "Single owner of the saved identity binding used during recovery"
-    },
-    {
-      "file": "identity/signing/http-signature.ts",
-      "reason": "Bootstrap and registered HTTP signing and verification boundary"
-    },
-    {
-      "file": "identity/signing/http-errors.ts",
-      "reason": "Closed authenticated HTTP framing and admission errors"
-    },
-    {
-      "file": "identity/registry/index.ts",
-      "reason": "Registry class tag and HTTP client composition for immutable resolution"
-    },
-    {
-      "file": "identity/bounded-cache.ts",
-      "reason": "Bounded immutable-key caches shared by identity implementations"
-    },
-    {
-      "file": "identity/registry/contract.ts",
-      "reason": "Exact Registry routes, operation grammar and canonical wire codecs"
-    },
-    {
-      "file": "identity/envelope/signed-message.ts",
-      "reason": "Opaque attributed message representation, signing and verification"
-    },
-    {
-      "file": "identity/envelope/sealed-body.ts",
-      "reason": "End-to-end sealing and opening of attributed message bodies"
-    },
-    {
-      "file": "identity/envelope/wire-profile.ts",
-      "reason": "Attributed envelope representation parameters read by host-loaded SignedMessage schemas"
-    },
-    {
-      "file": "communication/router/api/index.ts",
-      "reason": "Opaque Router operation schemas and client capability entry"
-    },
-    {
-      "file": "communication/router/api/contract.ts",
-      "reason": "Exact Router routes, operation grammar, bounds and wire codecs"
-    },
-    {
-      "file": "communication/router/api/client.ts",
-      "reason": "Router class tag and authenticated send or poll HTTP client"
-    },
-    {
-      "file": "communication/router/worker-contracts.ts",
-      "reason": "Router worker interfaces, state and retry rules shared by orchestration and outage handling"
-    },
-    {
-      "file": "communication/records/values.ts",
-      "reason": "Addresses, message identifiers, content, and member limits hosts decode without loading signing, verification, or the Router client"
-    },
-    {
-      "file": "communication/store/types.ts",
-      "reason": "Store value schemas hosts read without loading the SQLite store"
-    },
-    {
-      "file": "communication/conversations/errors.ts",
-      "reason": "Closed send, listen, and acknowledgment errors, read without loading the engine"
-    },
-    {
-      "file": "communication/message.ts",
-      "reason": "Shared message values, read without loading the engine"
-    },
-    {
-      "file": "communication/collectives/contracts.ts",
-      "reason": "Send forms and collective errors, read without loading the operation layer"
-    },
-    {
-      "file": "communication/collectives/inbound.ts",
-      "reason": "Inbound item schemas, read without loading the operation layer"
-    },
-    {
-      "file": "communication/collectives/message-text.ts",
-      "reason": "The message-text parser native hosts call, without loading the operation layer"
-    },
-    {
-      "file": "host-protocol/operations.ts",
-      "reason": "Harness operation values and decoders shared by the host and daemon"
-    },
-    {
-      "file": "host-protocol/names.ts",
-      "reason": "Tool and event names shared by the host and daemon"
-    },
-    {
-      "file": "daemon/inbox/host-traffic-log.ts",
-      "reason": "History export values hosts decode without loading inbox state or SQLite"
-    },
-    {
-      "file": "internal.ts",
-      "reason": "Condition-only named service verification, signing and wire contracts"
-    },
-    {
-      "file": "communication/records/schemas.ts",
-      "reason": "Closed Client wire grammar shared by encoding and verification within the records domain"
-    },
-    {
-      "file": "communication/store/database/values.ts",
-      "reason": "Closed store errors and row-value checks shared by database implementation modules"
-    },
-    {
-      "file": "daemon/bootstrap.ts",
-      "reason": "Loaded daemon configuration and closed bootstrap failures shared by daemon composition modules"
-    },
-    {
-      "file": "communication/conversations/engine-context.ts",
-      "reason": "Private context and phase ports for one conversation engine; phase implementations share its acquired state"
-    },
-    {
-      "file": "communication/collectives/validation.ts",
-      "reason": "Answer-schema validation shared by outbound answers and inbound result construction"
-    },
-    {
-      "file": "communication/collectives/store.ts",
-      "reason": "Collective request, answer and result persistence stays within its operation owner"
+      "reason": "Canonical identifiers at input boundaries"
     },
     {
       "file": "encoding/limits.ts",
-      "reason": "Shared stored-item bounds for host delivery and local policy evidence"
+      "reason": "Shared resource limits"
     },
     {
-      "file": "communication/store/database/index.ts",
-      "reason": "Effect SQL transaction and persistence error primitives shared by state owners"
+      "file": "identity/agent.ts",
+      "reason": "Agent cards, immutable identity cards and signing authority"
     },
     {
-      "file": "firewall/store/types.ts",
-      "reason": "Policy persistence requirements declared for daemon composition"
+      "file": "identity/keys.ts",
+      "reason": "Cryptographic key capabilities"
     },
     {
-      "file": "firewall/store/firewall.ts",
-      "reason": "Whole policy-owned operations called within daemon-composed transactions"
+      "file": "identity/wire-version.ts",
+      "reason": "Wire compatibility policy"
     },
     {
-      "file": "firewall/store/schema.ts",
-      "reason": "Policy initialization belongs to the shared daemon startup transaction"
+      "file": "identity/service.ts",
+      "reason": "Identity and registration service"
     },
     {
-      "file": "daemon/store.ts",
-      "reason": "Initializes persistence owners and composes their named transactions on one scoped SQLite connection"
+      "file": "identity/index.ts",
+      "reason": "Identity public contracts"
     },
     {
-      "file": "daemon/inbox/store.ts",
-      "reason": "Host persistence capability and whole inbox operations shared by delivery and daemon composition"
+      "file": "identity/authentication/index.ts",
+      "reason": "Request authentication service"
     },
     {
-      "file": "daemon/inbox/evidence.ts",
-      "reason": "Daemon-owned evidence reads combine protocol, policy and inbox state"
+      "file": "identity/authentication/proof.ts",
+      "reason": "Authenticated request signatures"
     },
     {
-      "file": "host-protocol/items.ts",
-      "reason": "Classified host items and withholding values independent of collective execution"
+      "file": "identity/registry/index.ts",
+      "reason": "Registry service"
     },
     {
-      "file": "host-protocol/render.ts",
-      "reason": "Host message rendering shared by adapters and policy evidence"
+      "file": "identity/registry/contract.ts",
+      "reason": "Registry HTTP grammar"
     },
     {
-      "file": "host-protocol/send-result.ts",
-      "reason": "Host send result schemas independent of protocol execution"
+      "file": "identity/envelope/signed-message.ts",
+      "reason": "Signed message envelopes"
+    },
+    {
+      "file": "identity/envelope/sealed-body.ts",
+      "reason": "Encrypted message bodies"
+    },
+    {
+      "file": "identity/envelope/wire-profile.ts",
+      "reason": "Envelope representation"
+    },
+    {
+      "file": "communication/index.ts",
+      "reason": "Message service and public semantic values"
+    },
+    {
+      "file": "communication/message.ts",
+      "reason": "Immutable messages and participant references"
+    },
+    {
+      "file": "communication/service.ts",
+      "reason": "Message exchange and readable history"
+    },
+    {
+      "file": "communication/requests/index.ts",
+      "reason": "Requests and results"
+    },
+    {
+      "file": "communication/requests/contracts.ts",
+      "reason": "Request content grammar"
+    },
+    {
+      "file": "communication/errors.ts",
+      "reason": "Closed communication failures"
+    },
+    {
+      "file": "communication/router/api.ts",
+      "reason": "Opaque Router operations used by server composition"
+    },
+    {
+      "file": "communication/records/values.ts",
+      "reason": "Public message content and identifiers"
+    },
+    {
+      "file": "communication/conversations/errors.ts",
+      "reason": "Public send failures"
+    },
+    {
+      "file": "firewall/index.ts",
+      "reason": "Policy service public exports"
+    },
+    {
+      "file": "firewall/service.ts",
+      "reason": "Message assessment and permitted content"
     },
     {
       "file": "firewall/check.ts",
-      "reason": "Message assessment and the safe result contracts consumed by host presentation"
+      "reason": "Standalone assessment types for test entry"
     },
     {
-      "file": "firewall/config.ts",
-      "reason": "Explicit rule configuration, loading and authenticated edit contracts"
+      "file": "firewall/rules/config.ts",
+      "reason": "Policy configuration and failures"
     },
     {
-      "file": "host-protocol/advice.ts",
-      "reason": "Host refusal wrappers and shared presentation of registered local advice"
+      "file": "firewall/rules/service.ts",
+      "reason": "Policy construction options"
     },
     {
-      "file": "daemon/inbox/incoming-worker.ts",
-      "reason": "Ordered incoming admission started by daemon runtime composition"
+      "file": "harness/index.ts",
+      "reason": "Process construction and trusted embedding services"
     },
     {
-      "file": "communication/store/outbound.ts",
-      "reason": "Outbox writes share the caller\u2019s SQL transaction with protocol state changes"
+      "file": "harness/service.ts",
+      "reason": "Sending, inbox and history"
     },
     {
-      "file": "daemon/inbox/firewall-context.ts",
-      "reason": "The daemon prepares messages and permitted history for incoming, outgoing and collective checks"
+      "file": "harness/inbox.ts",
+      "reason": "Saved inbox item grammar"
     },
     {
-      "file": "communication/collectives/model.ts",
-      "reason": "Captured questions and saved result source Messages"
+      "file": "harness/message-log.ts",
+      "reason": "Optional message export values"
     },
     {
-      "file": "daemon/inbox/pending.ts",
-      "reason": "Host-owned incoming queue and Message visibility"
+      "file": "harness/mcp/contracts.ts",
+      "reason": "Canonical MCP tool contracts"
     },
     {
-      "file": "daemon/inbox/types.ts",
-      "reason": "Host queue and assessment history values"
+      "file": "host-protocol/index.ts",
+      "reason": "Host value contracts"
     },
     {
-      "file": "daemon/inbox/inbox.ts",
-      "reason": "Host inbox decoding and local delivery token creation"
+      "file": "host-protocol/send-request.ts",
+      "reason": "Typed send requests"
+    },
+    {
+      "file": "host-protocol/send-result.ts",
+      "reason": "Send receipts"
+    },
+    {
+      "file": "host-protocol/render.ts",
+      "reason": "Host-independent content rendering"
+    },
+    {
+      "file": "host-protocol/operations.ts",
+      "reason": "Inbox and delivery values"
     },
     {
       "file": "host-protocol/daemon-tools.ts",
-      "reason": "Identity management and host history request/result schemas"
+      "reason": "Status and registration values"
     },
     {
-      "file": "daemon/messaging/inbox.ts",
-      "reason": "Host inbox operations share export and acknowledgment with MCP delivery"
+      "file": "host-protocol/names.ts",
+      "reason": "MCP tool names"
     },
     {
-      "file": "communication/store/runtime-codec.ts",
-      "reason": "Canonical schema serialization shared by protocol and host persistence"
+      "file": "host-protocol/event-schemas.ts",
+      "reason": "Event delivery grammar"
     },
     {
-      "file": "daemon/inbox/history.ts",
-      "reason": "Bounded lookup of saved local results independently of communication Messages"
+      "file": "host-protocol/advice.ts",
+      "reason": "Safe advice rendering"
     },
     {
-      "file": "communication/collectives/operations.ts",
-      "reason": "Shared lifecycle and exact Message custody for a collective operation"
+      "file": "release.ts",
+      "reason": "Release metadata"
     },
     {
-      "file": "communication/collectives/results.ts",
-      "reason": "Freezes outcomes and hands off durable collective results"
-    },
-    {
-      "file": "host-protocol/address.ts",
-      "reason": "Canonical host destination grammar before identity resolution"
-    },
-    {
-      "file": "communication/collectives/receive.ts",
-      "reason": "Interprets verified Messages into collective requests, answers and closes"
-    },
-    {
-      "file": "communication/collectives/wire.ts",
-      "reason": "The collective wire grammar keeps question forms, answers and close selection together"
-    },
-    {
-      "file": "communication/conversations/history/certificates.ts",
-      "reason": "Record certificate verification has one implementation boundary"
-    },
-    {
-      "file": "communication/records/encoding.ts",
-      "reason": "Canonical record and action encoding share their representation owner"
+      "file": "tracing.ts",
+      "reason": "Work progress instrumentation"
     }
   ],
   "compositionRoots": [
     {
+      "path": "src/index.ts",
+      "reason": "Public value exports"
+    },
+    {
       "path": "src/internal.ts",
-      "reason": "Condition-only identity verification, card signing, Registry and Router service contracts"
+      "reason": "Network service construction and wire contracts"
     },
     {
       "path": "src/test.ts",
-      "reason": "Condition-only management schemas for cross-package process fixtures"
-    },
-    {
-      "path": "src/index.ts",
-      "reason": "Package facade: re-exports the adapter-facing values each domain owns"
-    },
-    {
-      "path": "src/index.types-check.ts",
-      "reason": "Type canary for the package facade's public types"
+      "reason": "Offline evaluation and test-only wire overrides"
     },
     {
       "path": "package.json",
-      "reason": "Package metadata whose version the loopback MCP peers report"
+      "reason": "Library entry resolution"
     },
     {
-      "path": "src/daemon/store.ts",
-      "reason": "Initializes persistence owners and composes their named transactions on one scoped SQLite connection"
+      "path": "src/harness/index.ts",
+      "reason": "Process database and network construction"
+    },
+    {
+      "path": "src/harness/lifecycle.ts",
+      "reason": "Scoped service and MCP composition"
+    },
+    {
+      "path": "src/communication/conversations/certification.ts",
+      "reason": "Owns complete certification workflows within Communication"
+    },
+    {
+      "path": "src/communication/conversations/protocol.ts",
+      "reason": "Composes conversation state and protocol transitions"
+    },
+    {
+      "path": "src/communication/requests/service.ts",
+      "reason": "Composes the private request lifecycle and workers"
     }
   ],
   "domains": [
@@ -333,7 +237,7 @@
         "src/encoding/identifier.ts",
         "src/encoding/limits.ts"
       ],
-      "reason": "Leaf codecs depending only on Effect and canonicalize"
+      "reason": "Shared encoding at external boundaries"
     },
     {
       "name": "identity",
@@ -341,34 +245,67 @@
         "src/identity"
       ],
       "entrypoints": [
-        "src/identity/identifiers.ts",
-        "src/identity/keys.ts",
-        "src/identity/cards.ts",
-        "src/identity/card-signing.ts",
-        "src/identity/wire-version.ts",
-        "src/identity/request-authentication.ts",
         "src/identity/index.ts",
-        "src/identity/signing/http-signature.ts",
-        "src/identity/signing/http-errors.ts",
+        "src/identity/agent.ts",
+        "src/identity/keys.ts",
+        "src/identity/service.ts",
+        "src/identity/wire-version.ts",
+        "src/identity/authentication/index.ts",
+        "src/identity/authentication/proof.ts",
         "src/identity/registry/index.ts",
-        "src/identity/bounded-cache.ts",
         "src/identity/registry/contract.ts",
-        "src/identity/local.ts",
-        "src/identity/local-store.ts"
-      ],
-      "reason": "Identity, request authentication and immutable Registry resolution"
-    },
-    {
-      "name": "envelope",
-      "roots": [
-        "src/identity/envelope"
-      ],
-      "entrypoints": [
         "src/identity/envelope/signed-message.ts",
         "src/identity/envelope/sealed-body.ts",
         "src/identity/envelope/wire-profile.ts"
       ],
-      "reason": "Opaque attributed and sealed message bodies below endpoint protocols"
+      "reason": "Identity, authentication and Registry services"
+    },
+    {
+      "name": "communication",
+      "roots": [
+        "src/communication"
+      ],
+      "entrypoints": [
+        "src/communication/index.ts",
+        "src/communication/records/values.ts",
+        "src/communication/conversations/errors.ts",
+        "src/communication/router/api.ts"
+      ],
+      "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
+    },
+    {
+      "name": "firewall",
+      "roots": [
+        "src/firewall"
+      ],
+      "entrypoints": [
+        "src/firewall/index.ts",
+        "src/firewall/service.ts",
+        "src/firewall/check.ts",
+        "src/firewall/rules/config.ts"
+      ],
+      "reason": "Policy, assessment and permitted content"
+    },
+    {
+      "name": "harness",
+      "roots": [
+        "src/harness",
+        "src/host-protocol",
+        "src/vendor"
+      ],
+      "entrypoints": [
+        "src/harness/index.ts",
+        "src/harness/service.ts",
+        "src/harness/inbox.ts",
+        "src/harness/message-log.ts",
+        "src/host-protocol/render.ts",
+        "src/host-protocol/advice.ts",
+        "src/host-protocol/send-request.ts",
+        "src/host-protocol/send-result.ts",
+        "src/harness/mcp/contracts.ts",
+        "src/host-protocol/names.ts"
+      ],
+      "reason": "Agent service composition and MCP host interface"
     },
     {
       "name": "release",
@@ -378,305 +315,56 @@
       "entrypoints": [
         "src/release.ts"
       ],
-      "reason": "Client package release metadata used by MCP peers, policy provenance and telemetry"
+      "reason": "Release metadata"
     },
     {
-      "name": "router-api",
+      "name": "tracing",
       "roots": [
-        "src/communication/router/api"
+        "src/tracing.ts"
       ],
       "entrypoints": [
-        "src/communication/router/api/index.ts",
-        "src/communication/router/api/contract.ts",
-        "src/communication/router/api/client.ts"
+        "src/tracing.ts"
       ],
-      "reason": "Opaque Router values and HTTP client below endpoint protocol records"
-    },
-    {
-      "name": "records",
-      "roots": [
-        "src/communication/records"
-      ],
-      "entrypoints": [
-        "src/communication/records/index.ts",
-        "src/communication/records/values.ts"
-      ],
-      "reason": "Canonical protocol encoding, verification, and the message values every layer encodes"
-    },
-    {
-      "name": "store",
-      "roots": [
-        "src/communication/store"
-      ],
-      "entrypoints": [
-        "src/communication/store/index.ts",
-        "src/communication/store/types.ts",
-        "src/communication/store/database/index.ts"
-      ],
-      "reason": "Protocol persistence for certified history, accepted messages and exact outbox envelopes"
-    },
-    {
-      "name": "router",
-      "roots": [
-        "src/communication/router"
-      ],
-      "entrypoints": [
-        "src/communication/router/index.ts"
-      ],
-      "reason": "The Router attach, poll, send, and outage worker"
-    },
-    {
-      "name": "conversations",
-      "roots": [
-        "src/communication/conversations"
-      ],
-      "entrypoints": [
-        "src/communication/conversations/index.ts",
-        "src/communication/conversations/errors.ts"
-      ],
-      "reason": "Addressed send, FIRST_MESSAGE and MESSAGE certification, and recovery"
-    },
-    {
-      "name": "collectives",
-      "roots": [
-        "src/communication/collectives"
-      ],
-      "entrypoints": [
-        "src/communication/collectives/index.ts",
-        "src/communication/collectives/contracts.ts",
-        "src/communication/collectives/inbound.ts",
-        "src/communication/collectives/message-text.ts",
-        "src/communication/collectives/model.ts"
-      ],
-      "reason": "Gather and all_gather operations over messages"
-    },
-    {
-      "name": "host-protocol",
-      "roots": [
-        "src/host-protocol"
-      ],
-      "entrypoints": [
-        "src/host-protocol/index.ts",
-        "src/host-protocol/operations.ts",
-        "src/host-protocol/names.ts",
-        "src/host-protocol/catalog-schemas.ts",
-        "src/host-protocol/items.ts",
-        "src/host-protocol/render.ts",
-        "src/host-protocol/send-result.ts",
-        "src/host-protocol/advice.ts",
-        "src/host-protocol/daemon-tools.ts",
-        "src/host-protocol/address.ts"
-      ],
-      "reason": "The loopback MCP tools, events and results both peers speak"
-    },
-    {
-      "name": "host-client",
-      "roots": [
-        "src/host-client"
-      ],
-      "entrypoints": [
-        "src/host-client/index.ts"
-      ],
-      "reason": "The HarnessEndpoint library an agent host loads"
-    },
-    {
-      "name": "firewall",
-      "roots": [
-        "src/firewall"
-      ],
-      "entrypoints": [
-        "src/firewall/index.ts",
-        "src/firewall/check.ts",
-        "src/firewall/config.ts",
-        "src/firewall/store/index.ts",
-        "src/firewall/store/types.ts",
-        "src/firewall/store/firewall.ts",
-        "src/firewall/store/schema.ts"
-      ],
-      "reason": "One personal firewall owns configured rules, message checks, edits and retained decisions"
-    },
-    {
-      "name": "daemon-inbox",
-      "roots": [
-        "src/daemon/inbox"
-      ],
-      "entrypoints": [
-        "src/daemon/inbox/host-traffic-log.ts",
-        "src/daemon/inbox/store.ts",
-        "src/daemon/inbox/evidence.ts",
-        "src/daemon/inbox/firewall-context.ts",
-        "src/daemon/inbox/incoming-worker.ts",
-        "src/daemon/inbox/inbox.ts",
-        "src/daemon/inbox/pending.ts",
-        "src/daemon/inbox/types.ts",
-        "src/daemon/inbox/history.ts"
-      ],
-      "reason": "The admitted host inbox, delivery handoff and host traffic log"
-    },
-    {
-      "name": "daemon-mcp",
-      "roots": [
-        "src/daemon/mcp"
-      ],
-      "entrypoints": [
-        "src/daemon/mcp/index.ts"
-      ],
-      "reason": "The daemon's loopback MCP server, authentication and event delivery"
-    },
-    {
-      "name": "daemon",
-      "roots": [
-        "src/daemon"
-      ],
-      "entrypoints": [
-        "src/daemon/index.ts"
-      ],
-      "reason": "The always-on process: configuration, registration, supervision, and wiring"
-    },
-    {
-      "name": "daemon/launcher",
-      "roots": [
-        "src/daemon/launcher"
-      ],
-      "entrypoints": [
-        "src/daemon/launcher/index.ts"
-      ],
-      "reason": "The daemon launcher: chooses, verifies and installs the release each start runs, then starts its sharnessd as a child process"
-    },
-    {
-      "name": "communication",
-      "roots": [
-        "src/communication"
-      ],
-      "entrypoints": [
-        "src/communication/index.ts",
-        "src/communication/service/index.ts"
-      ],
-      "reason": "Reliable Message service owns Router workers and protocol recovery"
-    },
-    {
-      "name": "messages",
-      "roots": [
-        "src/communication/message.ts"
-      ],
-      "entrypoints": [
-        "src/communication/message.ts"
-      ],
-      "reason": "Shared Messages, participants and references"
+      "reason": "Shared work progress observation"
     }
   ],
   "layers": [
     {
-      "name": "daemon/launcher",
+      "name": "harness",
       "folders": [
-        "daemon/launcher"
+        "harness",
+        "host-protocol",
+        "vendor"
       ],
-      "reason": "The daemon launcher: chooses, verifies and installs the release each start runs, then starts its sharnessd as a child process"
-    },
-    {
-      "name": "daemon",
-      "folders": [
-        "daemon"
-      ],
-      "reason": "One agent process owns configuration, registration, persistence, MCP serving and message delivery"
-    },
-    {
-      "name": "host-client",
-      "folders": [
-        "host-client"
-      ],
-      "reason": "The HarnessEndpoint library an agent host loads"
-    },
-    {
-      "name": "host-protocol",
-      "folders": [
-        "host-protocol"
-      ],
-      "reason": "The loopback MCP tools, events and results both peers speak"
+      "reason": "Host calls coordinate lower services"
     },
     {
       "name": "firewall",
       "folders": [
         "firewall"
       ],
-      "reason": "Configured rules, message checking, rule edits and policy persistence"
-    },
-    {
-      "name": "collectives",
-      "folders": [
-        "communication/collectives"
-      ],
-      "reason": "Gather and all_gather carried in posts"
+      "reason": "Local policy uses semantic messages"
     },
     {
       "name": "communication",
       "folders": [
-        "communication/service"
-      ],
-      "reason": "Reliable Message service owns Router and certification workers"
-    },
-    {
-      "name": "conversations",
-      "folders": [
-        "communication/conversations"
-      ],
-      "reason": "Addressed send, FIRST_MESSAGE and MESSAGE certification, and recovery"
-    },
-    {
-      "name": "router",
-      "folders": [
-        "communication/router"
-      ],
-      "reason": "The Router attach, poll, send, and outage worker"
-    },
-    {
-      "name": "store",
-      "folders": [
-        "communication/store"
-      ],
-      "reason": "Protocol persistence: certified history, immutable message claims, outbox and pending peer deliveries"
-    },
-    {
-      "name": "messages",
-      "folders": [
         "communication"
       ],
-      "reason": "Shared Message values depend only on identity and content values"
-    },
-    {
-      "name": "records",
-      "folders": [
-        "communication/records"
-      ],
-      "reason": "Canonical protocol encoding, verification, and the message values every layer encodes"
-    },
-    {
-      "name": "router-api",
-      "folders": [
-        "communication/router/api"
-      ],
-      "reason": "Opaque Router values and HTTP client below endpoint protocol records"
-    },
-    {
-      "name": "envelope",
-      "folders": [
-        "identity/envelope"
-      ],
-      "reason": "Opaque attributed and sealed message bodies below endpoint protocols"
+      "reason": "Reliable communication uses verified identities"
     },
     {
       "name": "identity",
       "folders": [
         "identity"
       ],
-      "reason": "Identity, request authentication and immutable Registry resolution"
+      "reason": "Identity and authentication"
     },
     {
       "name": "encoding",
       "folders": [
         "encoding"
       ],
-      "reason": "Leaf codecs depending only on Effect and canonicalize"
+      "reason": "Shared serialization primitives"
     }
   ],
   "publicTypePackages": [
@@ -705,5 +393,13 @@
   ],
   "maxFolderImportDistance": 6,
   "maxFolderChildren": 24,
-  "maxFolderChildrenIncludingTests": 48
+  "maxFolderChildrenIncludingTests": 48,
+  "maxPublicExports": 100,
+  "maxPublicReexports": 25,
+  "minPublicFacadeModules": 26,
+  "maxExportedSiblingRatio": 1,
+  "minPackageMeshFolders": 30,
+  "minExplicitApiConcreteFiles": 20,
+  "minImplicitBoundaryIncomingFiles": 20,
+  "minSharedKernelExports": 40
 }

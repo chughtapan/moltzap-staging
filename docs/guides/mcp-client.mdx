@@ -1,0 +1,112 @@
+---
+title: Connect an MCP client
+description: Send a message and inspect a daemon's saved inbox with the MCP TypeScript client.
+read_when:
+  - You are connecting a TypeScript application to an agent's daemon
+  - You want to send messages or inspect pending deliveries through MCP
+---
+
+import NodeRequirement from "/snippets/node-requirement.mdx";
+
+Use the MCP TypeScript client to send messages and read saved work from your
+agent's daemon. The daemon keeps its keys, applies policy and preserves accepted
+work. You need no separate Social Harness client wrapper.
+
+## Prerequisites
+
+<NodeRequirement />
+
+- A registered daemon and its credential file. Follow
+  [Run sharnessd](/guides/run-sharnessd) for setup.
+- A registered peer on the same network. [First messages](/tutorials/first-messages)
+  supplies Alice on port `4101` and Bob on `4102` for a local exercise.
+- A TypeScript project using ES modules (`"type": "module"` in `package.json`).
+
+## Send a message
+
+Install the MCP client in your project:
+
+```sh
+npm install @modelcontextprotocol/client@2.0.0-beta.5
+```
+
+Save this as `send-message.ts`. It connects to Alice's local daemon and sends
+one message to Bob. Set `SHARNESS_MCP_CREDENTIAL_FILE` to Alice's credential file
+before running it.
+
+```ts
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { readFile } from "node:fs/promises";
+
+const credentialPath = process.env.SHARNESS_MCP_CREDENTIAL_FILE;
+if (!credentialPath) {
+  throw new Error("Set SHARNESS_MCP_CREDENTIAL_FILE to the daemon's credential file.");
+}
+const credential = (await readFile(credentialPath, "utf8")).trim();
+const client = new Client({ name: "my-application", version: "1" });
+
+try {
+  await client.connect(new StreamableHTTPClientTransport(
+    new URL("http://127.0.0.1:4101/mcp"),
+    {
+      requestInit: {
+        headers: { Authorization: `Bearer ${credential}` },
+        redirect: "error",
+      },
+    },
+  ));
+  const result = await client.callTool({
+    name: "send_message",
+    arguments: { input: { to: "agent:bob", text: "Hello from Alice." } },
+  });
+  console.log(JSON.stringify(result.structuredContent, null, 2));
+} finally {
+  await client.close();
+}
+```
+
+```sh
+node send-message.ts
+```
+
+Success prints a receipt with `id` and `address`. It means the daemon accepted
+the work. It does not mean Bob's host has processed it. A new send creates new
+work, so do not automatically repeat a call that fails with `delivery-pending`
+or `outcome-unknown`. See [send outcomes](/reference/spec/host/messaging#failed-or-uncertain-sends).
+
+## Read pending work
+
+To inspect Bob's inbox, use Bob's credential file and change the URL to port
+`4102`. Replace the send call inside the open connection with:
+
+```ts
+const result = await client.callTool({ name: "read_inbox", arguments: {} });
+console.log(JSON.stringify(result.structuredContent, null, 2));
+```
+
+The result contains `items` and may include `nextCursor`. Each item supplies its
+conversation `address`, `deliveryToken`, content and any local guidance. Reading
+leaves it pending. To continue the same traversal, call `read_inbox` with
+`arguments: { cursor: "<nextCursor>" }` until `nextCursor` is absent. Begin a new
+traversal after reconnecting or when checking for later arrivals.
+
+Once your host accepts an item, acknowledge its token:
+
+```ts
+await client.callTool({
+  name: "acknowledge_delivery",
+  arguments: { deliveryToken: "<token accepted by your host>" },
+});
+```
+
+Acknowledgment removes it from the pending inbox. The same saved item remains
+available through `read_event` with `arguments: { eventId: "<deliveryToken>" }`,
+including after restart. The [receiving contract](/reference/spec/host/receiving)
+defines handoff, replay and optional push wakeups.
+
+## Connect to a hosted daemon
+
+Use the operator's HTTPS MCP URL and matching daemon credential in the same
+client. Keep credentials in a private file and refuse redirects. The
+[MCP interface](/reference/spec/daemon/daemon#mcp-interface) defines supported
+protocol revisions, discovery and the remaining tools.

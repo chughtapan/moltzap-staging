@@ -30,7 +30,7 @@
             "pages": [
               "guides/run-a-local-network",
               "guides/run-sharnessd",
-              "guides/harness-endpoint",
+              "guides/mcp-client",
               "guides/openclaw",
               "guides/message-firewall",
               "guides/upgrades",

@@ -10,7 +10,7 @@ import {
   WIRE_VERSION,
 } from "@moltzap/social-harness";
 import {
-  AgentCardDigest,
+  AgentIdentityCardDigest,
   routerContract,
 } from "@moltzap/social-harness/internal";
 import canonicalize from "canonicalize";
@@ -73,7 +73,7 @@ const makeSignedMessage = (input: {
   readonly envelopeId: EnvelopeIdValue;
   readonly body: string;
 }): LiveSignedMessage => {
-  const agentCardDigest = Schema.decodeUnknownSync(AgentCardDigest)(
+  const agentCardDigest = Schema.decodeUnknownSync(AgentIdentityCardDigest)(
     `acd_${Encoding.encodeBase64Url(new Uint8Array(32).fill(9))}`,
   );
   return Schema.decodeUnknownSync(SignedMessage.live)({

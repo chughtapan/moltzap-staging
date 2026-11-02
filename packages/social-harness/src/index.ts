@@ -1,107 +1,128 @@
-/** @file Host entry for endpoint operations, delivery schemas, and immutable identity and envelope values. */
-// safer-arch-ignore no-folder-cycle: release.ts imports package.json for the Client release version, which places the package root below every domain that reads it, while this facade re-exports from host-client.
-// safer-arch-ignore require-curated-public-facade: Named re-exports join endpoint operations and delivery schemas with the immutable identities, cards, signing authority, attributed envelopes, and wire constants hosts read from their owning domains.
-// safer-arch-ignore no-large-public-surface: Hosts share one entry for endpoint operations, inbound items, immutable identity and envelope values, and launcher wire constants; Registry and Router composition use ./service, while process verification uses the condition-only internal entry.
+// safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
+/** @file MCP contracts and the values clients use to send messages and read their saved inbox. */
 
-/** The endpoint capability a host acquires, and its connect and delivery types. */
+/** A tool's schemas own its arguments, successful result and declared failures. */
 export {
-  ConnectError,
-  type HarnessEndpoint,
-  type HarnessEndpointOptions,
-  type InboundDelivery,
-} from "./host-client/index.js";
-/** Acquire the structural endpoint for one configured daemon endpoint. */
+  toolDefinitions,
+  toolFailureSchemas,
+  type ToolName,
+  type ToolRequest,
+  type ToolResult,
+} from "./harness/mcp/contracts.js";
+/** Clients distinguish a refused send from an unknown outcome using this decoder. */
+export { decodeHarnessSendErrorData } from "./host-protocol/operations.js";
+/** Host syntax is decoded once before resolving its destination. */
+export { SendRequest } from "./host-protocol/send-request.js";
+/** Native hosts can translate a text command through the same request grammar. */
 export {
-  acquireHarnessEndpoint,
-  safeCredentialEndpoint,
-} from "./host-client/index.js";
-/**
- * Decoders of the daemon's MCP tool results, refusal data and
- * pending-delivery event. They ignore fields they do not name, so a newer
- * daemon can add one without breaking a host on the previous release.
- */
+  MessageTextError,
+  parseMessageText,
+} from "./host-protocol/message-text.js";
+/** Host-neutral display keeps local advice separate from peer content. */
 export {
-  decodeHarnessMessageReadyEvent,
-  decodeHarnessReadInboxResult,
-  decodeHarnessSendErrorData,
-  decodeHarnessSendResult,
-} from "./host-protocol/operations.js";
-/** One line of the daemon's optional history export. */
-export { HistoryExportRecord } from "./daemon/inbox/host-traffic-log.js";
-/** Local message refusal and advice expose no private assessment evidence. */
-export {
-  FirewallSendError,
   type GuidanceBodyOrigin,
-  type LocalGuidance,
   renderLocalGuidance,
 } from "./host-protocol/advice.js";
-/** Registered advice carries only permitted message references. */
-export type { CheckedGuidance } from "./firewall/check.js";
-/** Send input and the closed error of a refused collective send. */
-export {
-  CollectiveError,
-  SendInput,
-} from "./communication/collectives/contracts.js";
-/** The items an endpoint delivers to its host. */
-export { InboundItem } from "./host-protocol/items.js";
-/** The text a host's model reads for each delivered message, question and result. */
+/** Presentation helpers use the delivered content and its saved policy view. */
 export {
   groupMembers,
   renderCollectiveRequest,
   renderCollectiveResult,
   renderContent,
+  replyAddress,
 } from "./host-protocol/render.js";
-/** The operation a native host's message text states. */
+/** The same refusal and policy-error schemas serve the server and clients. */
 export {
-  MessageTextError,
-  parseMessageText,
-} from "./communication/collectives/message-text.js";
-/** Explicit direct and group addresses. */
+  CollectiveResult,
+  FirewallRefusal,
+  LocalGuidance,
+  PermittedItem,
+  Withheld,
+} from "./firewall/service.js";
+/** Policy failures retain actionable reasons and bounded field information. */
+export { FirewallPolicyError } from "./firewall/rules/config.js";
+/** Guidance contains only the source text local policy permits the agent to read. */
+export type { CheckedGuidance } from "./firewall/check.js";
+/** Accepted sends have one receipt shape for messages, replies and questions. */
 export {
-  AgentAddress,
-  GroupAddress,
-  MessageAddressInput,
-} from "./communication/records/values.js";
-/** The closed errors of sending, listening, and acknowledging delivery. */
+  type SendResult,
+  SendResultSchema,
+} from "./host-protocol/send-result.js";
+/** Inbox items retain their content and token after acknowledgment. */
 export {
   DeliveryAcknowledgeError,
-  ListenError,
-  SendError,
-} from "./communication/conversations/errors.js";
-/** Shared message identities, participants and reply destinations. */
+  DeliveryToken,
+  InboxEntry,
+  InboxError,
+  InboxEvent,
+  InboxPage,
+  MessageAddress,
+} from "./harness/inbox.js";
+/** History uses the saved policy view and never rechecks old content. */
 export {
+  HistoryError,
+  type HistoryRecord,
+  type ListConversationsRequest,
+  type ListConversationsResult,
+  type ReadHistoryRequest,
+  type ReadHistoryResult,
+} from "./harness/service.js";
+/** Registration failures are distinct from communication startup. */
+export { RegistrationError } from "./identity/service.js";
+/** Optional traffic export records admitted incoming content and completed sends. */
+export { HistoryExportRecord } from "./harness/message-log.js";
+/** Shared values carry message identity and decoded request/reply meaning. */
+export {
+  Answer,
+  AnswerContent,
+  type AnswerInput,
+  AnswerOutcome,
+  CollectiveId,
   Message,
-  messageMembers,
+  MessageOperation,
   MessageReference,
-  replyAddress,
-} from "./communication/message.js";
-/** Message ids and the closed semantic content of a message. */
+  PaginatedRequest,
+  PaginatedResult,
+  ReceivedRequest,
+  Request,
+  RequestedSchema,
+  RequestError,
+  RequestResult,
+  ResultSources,
+} from "./communication/index.js";
+/** Explicit host destinations are independent of transport routing. */
 export {
+  AgentAddress,
   Content,
   ContentPart,
+  GroupAddress,
   JsonValue,
+  MessageAddressInput,
   MsgId,
 } from "./communication/records/values.js";
-
-/** Wire emission and the installed daemon's live compatibility window. */
-export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
-/** Canonical identities a host reads from immutable cards and messages. */
-export { AgentId, AgentName, PrincipalId } from "./identity/identifiers.js";
-/** Opaque signing authority and exact public-key representation. */
-export { AgentSigningAuthority, Ed25519PublicKey } from "./identity/keys.js";
-/** Immutable Registry identity and its verified brand. */
+/** A send error classifies correction, retained work and uncertain acceptance. */
+export { SendError } from "./communication/conversations/errors.js";
+/** Public identity and its complete signed document have distinct names. */
 export {
   AgentCard,
-  AgentView,
-  type VerifiedAgentCard,
-} from "./identity/cards.js";
-/** Attributed envelope values a host reads without service composition. */
+  AgentId,
+  AgentIdentityCard,
+  AgentName,
+  PrincipalId,
+  type VerifiedAgentIdentityCard,
+} from "./identity/agent.js";
+/** Signing authority exposes no private key bytes. */
+export { AgentPublicKey, AgentSigningAuthority } from "./identity/keys.js";
+/** Services and verification tools use attributed envelopes at the network boundary. */
 export {
   EnvelopeId,
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
 } from "./identity/envelope/signed-message.js";
-
-/** Successful host sends retain their local guidance beside the protocol outcome. */
-export type { SendResult } from "./host-protocol/send-result.js";
+/** Emission and compatibility use the installed release's wire policy. */
+export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
+/** Clients report the shipped core release without another version copy. */
+export { packageVersion } from "./release.js";
+/** Native notifications signal that the client should traverse its inbox again. */
+export { INBOX_PENDING_EVENT } from "./host-protocol/names.js";

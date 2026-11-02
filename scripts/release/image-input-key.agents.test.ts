@@ -18,7 +18,7 @@ import { imageInputs } from "./image-input-key.ts";
 
 for (const [file, content, image] of [
   [
-    "packages/social-harness/src/daemon/run.ts",
+    "packages/social-harness/src/harness/run.ts",
     "export const daemon = 42;",
     "daemon",
   ],

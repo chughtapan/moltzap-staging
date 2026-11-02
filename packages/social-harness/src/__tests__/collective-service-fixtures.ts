@@ -1,36 +1,38 @@
 /** @file Collective service scenarios use real SQL and a Message-only communication boundary. */
 
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "@effect/sql/SqlClient";
 import {
   Clock,
-  Context,
+  type Context,
   Deferred,
   Effect,
   Exit,
-  Layer,
   Queue,
   Schema,
   Scope,
 } from "effect";
-
-import type { AgentView } from "../identity/cards.js";
-
+import type { AgentCard } from "../identity/agent.js";
 import {
-  Collectives,
-  Question,
-  type ResultDelivery,
-} from "../communication/collectives/index.js";
-import {
-  type CollectiveValue,
-  encodeCollectiveContent,
-} from "../communication/collectives/wire.js";
-import { Communication, CommunicationError } from "../communication/index.js";
+  type Communication,
+  CommunicationError,
+} from "../communication/index.js";
 import {
   type Message,
   messageFromParticipants,
 } from "../communication/message.js";
-import { MsgId } from "../communication/records/index.js";
-import { Identity } from "../identity/local.js";
+import {
+  type MessageReference,
+  MsgId,
+} from "../communication/records/values.js";
+import {
+  type CollectiveValue,
+  encodeCollectiveContent,
+} from "../communication/requests/answers.js";
+import {
+  Request,
+  type ResultDelivery,
+} from "../communication/requests/index.js";
+import { makeRequests } from "../communication/requests/service.js";
 import { digest, testAgentView } from "./agent-card-fixtures.js";
 import { collectiveOperationId } from "./collective-id-fixtures.js";
 import {
@@ -40,13 +42,13 @@ import {
 
 interface FixtureInput {
   readonly database?: TestDatabase;
-  readonly agent?: AgentView;
+  readonly agent?: AgentCard;
   readonly waitForMessage?: (
     reference: Parameters<
       Context.Tag.Service<typeof Communication>["waitForMessage"]
     >[0],
   ) => Effect.Effect<void, CommunicationError>;
-  readonly send?: Context.Tag.Service<typeof Communication>["send"];
+  readonly send?: (message: Message) => Effect.Effect<void, CommunicationError>;
 }
 
 /** Fixed identities let tests distinguish participant selection from address parsing. */
@@ -84,19 +86,33 @@ export function openCollectives(input: FixtureInput = {}) {
     const agent = input.agent ?? alice;
     const sent = yield* Queue.unbounded<Message>();
     const results = yield* Queue.unbounded<ResultDelivery>();
-    const communication = createCommunication(input, sent, database);
-    const identity = registeredIdentity(agent);
+    yield* database.run(database.store.initializeCommunication(agent));
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    const services = yield* Layer.buildWithScope(
-      Collectives.layer.pipe(
-        Layer.provide(Layer.succeed(Identity, identity)),
-        Layer.provide(Layer.succeed(Communication, communication)),
-        Layer.provide(Layer.succeed(SqlClient.SqlClient, database.sql)),
-      ),
-      scope,
+    const transport = createTransport(input, sent, database);
+    const requests = yield* makeRequests({ self: agent, ...transport }).pipe(
+      Effect.provideService(SqlClient, database.sql),
+      Scope.extend(scope),
     );
-    const service = Context.get(services, Collectives);
+    const consumeResults = <E, R>(
+      handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
+    ) =>
+      requests
+        .deliverNextResult(handle)
+        .pipe(
+          Effect.zipRight(Effect.sleep("10 millis")),
+          Effect.forever,
+          Effect.raceFirst(requests.failed),
+          Effect.provideService(SqlClient, database.sql),
+        );
+    const service = {
+      accept: (request: Request) => database.run(requests.accept(request)),
+      answer: (message: Message) => database.run(requests.answer(message)),
+      getRequest: (operationId: Request["operationId"]) =>
+        database.run(requests.getRequest(operationId)),
+      receive: (message: Message) => database.run(requests.receive(message)),
+      consumeResults,
+    };
     return {
       database,
       service,
@@ -118,8 +134,8 @@ export function aliceRequest(
   deadlineAt: number,
   options: {
     readonly op?: "gather" | "all_gather";
-    readonly recipients?: readonly AgentView[];
-    readonly operationId?: Question["operationId"];
+    readonly recipients?: readonly AgentCard[];
+    readonly operationId?: Request["operationId"];
   } = {},
 ) {
   return wireMessage(
@@ -138,9 +154,9 @@ export function aliceRequest(
 
 /** A requester close selects complete author-scoped message identities. */
 export function aliceClose(
-  operationId: Question["operationId"],
+  operationId: Request["operationId"],
   included: ReadonlyArray<{
-    readonly authorAgentId: AgentView["agentId"];
+    readonly authorAgentId: AgentCard["agentId"];
     readonly msgId: Message["msgId"];
   }>,
   closedBy: "settled" | "deadline" = "deadline",
@@ -159,9 +175,9 @@ export function aliceClose(
 
 /** Declines retain their message identity even though they carry no answer content. */
 export function declineMessage(
-  author: AgentView,
-  recipients: readonly AgentView[],
-  operationId: Question["operationId"],
+  author: AgentCard,
+  recipients: readonly AgentCard[],
+  operationId: Request["operationId"],
   byte: number,
 ) {
   return wireMessage(
@@ -174,8 +190,8 @@ export function declineMessage(
 
 /** Original wire messages are constructed once with a caller-selected author-scoped id. */
 export function wireMessage(
-  author: AgentView,
-  recipients: readonly AgentView[],
+  author: AgentCard,
+  recipients: readonly AgentCard[],
   value: CollectiveValue,
   options: { readonly byte: number; readonly text?: string },
 ) {
@@ -191,15 +207,16 @@ export function wireMessage(
 /** The question deadline belongs to the caller's captured command. */
 export function question(
   deadlineAt: number,
-  recipients: readonly [AgentView, ...AgentView[]] = [bob],
+  recipients: readonly [AgentCard, ...AgentCard[]] = [bob],
   op: "gather" | "all_gather" = "gather",
 ) {
-  return Schema.decodeUnknownSync(Question)({
+  return Schema.decodeUnknownSync(Request)({
+    kind: "request",
     author: alice,
     recipients,
     op,
     operationId: collectiveOperationId(alice.agentId),
-    text: "Which day works?",
+    question: "Which day works?",
     requestedSchema: form,
     deadlineAt,
   });
@@ -207,21 +224,21 @@ export function question(
 
 const retainedMessages = new WeakMap<TestDatabase, Map<string, Message>>();
 
-function createCommunication(
+function createTransport(
   input: FixtureInput,
   sent: Queue.Queue<Message>,
   database: TestDatabase,
 ) {
   const messages = retainedMessages.get(database) ?? new Map<string, Message>();
   retainedMessages.set(database, messages);
-  return Communication.of({
-    send: (message) =>
+  return {
+    acceptMessage: (message: Message) =>
       Effect.gen(function* () {
         yield* input.send?.(message) ?? Effect.void;
         messages.set(`${message.author.agentId}:${message.msgId}`, message);
         yield* Queue.offer(sent, message);
       }),
-    waitForMessage: (reference) =>
+    waitForMessage: (reference: MessageReference) =>
       Effect.gen(function* () {
         yield* input.waitForMessage?.(reference) ?? Effect.void;
         const message = messages.get(
@@ -232,17 +249,5 @@ function createCommunication(
         }
         return message;
       }),
-    consume: () => Effect.never,
-    listConversations: () =>
-      Effect.succeed({ conversations: [], hasMore: false }),
-    readHistory: () => Effect.succeed({ messages: [], continuation: null }),
-  });
-}
-
-function registeredIdentity(agent: AgentView) {
-  return Identity.of({
-    me: () => Effect.succeed({ kind: "registered", agent }),
-    register: () => Effect.dieMessage("unexpected registration"),
-    resolve: () => Effect.dieMessage("unexpected resolution"),
-  });
+  };
 }

@@ -1,8 +1,8 @@
 /** @file Public Router capability tests across HTTP success and typed failure paths. */
 import { it } from "@effect/vitest";
 import {
-  AgentCard,
   AgentId,
+  AgentIdentityCard,
   type AgentId as AgentIdValue,
   AgentName,
   AgentSigningAuthority,
@@ -199,9 +199,10 @@ const makeRegisteredSenderFixture = () =>
           .sign(),
       catch: () => new RouterTestFixtureError(),
     });
-    const parsedCard = yield* Schema.decodeUnknown(AgentCard)(representation);
-    const agentCard = yield* AgentCard.verify({
-      agentCard: parsedCard,
+    const parsedCard =
+      yield* Schema.decodeUnknown(AgentIdentityCard)(representation);
+    const agentCard = yield* AgentIdentityCard.verify({
+      identityCard: parsedCard,
       registrySignerPublicKey,
     });
     return {
@@ -268,7 +269,7 @@ describe("send exhaustion behavior", () => {
         });
         const senderFixture = yield* makeRegisteredSenderFixture();
         const finalMessage = yield* SignedMessage.sign({
-          agentCard: senderFixture.verifiedRequest.agentCard,
+          identityCard: senderFixture.verifiedRequest.identityCard,
           signingAuthority: senderFixture.signingAuthority,
           recipientAgentIds: new Set([recipient]),
           envelopeId: makeEnvelopeId(1),
@@ -326,7 +327,7 @@ describe("send exhaustion behavior", () => {
         ).toEqual(accepted);
 
         const nextMessage = yield* SignedMessage.sign({
-          agentCard: senderFixture.verifiedRequest.agentCard,
+          identityCard: senderFixture.verifiedRequest.identityCard,
           signingAuthority: senderFixture.signingAuthority,
           recipientAgentIds: new Set([recipient]),
           envelopeId: makeEnvelopeId(2),
@@ -371,7 +372,7 @@ describe("configuration behavior", () => {
         requestConcurrencyLimit: 512,
         heldPollCapacity: 256,
         liveNonceCapacity: 100_000,
-        agentCardCacheCapacity: 10_000,
+        identityCardCacheCapacity: 10_000,
         registryLookupConcurrencyLimit: 32,
         registryLookupTimeoutMs: 5_000,
       });
@@ -415,7 +416,7 @@ describe("configuration behavior", () => {
         requestConcurrencyLimit: 4,
         heldPollCapacity: 3,
         liveNonceCapacity: 5,
-        agentCardCacheCapacity: 6,
+        identityCardCacheCapacity: 6,
         registryLookupConcurrencyLimit: 2,
         registryLookupTimeoutMs: 7,
       });

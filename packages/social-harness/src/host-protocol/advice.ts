@@ -1,46 +1,19 @@
 /** @file Host advice wrappers and rendering keep local instructions separate from peer content. */
 
-import { Data, Schema } from "effect";
+import { Schema } from "effect";
+import type { AgentCard } from "../identity/agent.js";
 import { exactStruct } from "../encoding/exact.js";
 import {
   type CheckedGuidance,
   checkedGuidanceSchema,
   ENDPOINT_SENDER,
   type FirewallCheck,
-  firewallRefusalReasonSchema,
 } from "../firewall/check.js";
-import { nextActionSchema } from "../firewall/config.js";
-import { AgentView } from "../identity/cards.js";
-
-const checkIdSchema = checkedGuidanceSchema.fields.checkId;
-
-/**
- * A result's guidance: one entry per answer whose check produced advice,
- * keyed by the member's verified identity, and one for the question when the
- * question was checked with the result. Each entry carries its own check.
- */
-const resultGuidance = exactStruct({
-  question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
-  answers: Schema.Array(
-    exactStruct({ member: AgentView, ...checkedGuidanceSchema.fields }),
-  ),
-});
-
-/**
- * Guidance for one checked message or request, or per checked text of a
- * collective result.
- */
-export const localGuidanceSchema = Schema.Union(
-  checkedGuidanceSchema,
-  resultGuidance,
-).annotations({ identifier: "LocalGuidance" });
-
-/**
- * Render this local advice separately from peer content. It does not alter
- * the underlying certified record.
- * @useDeclaredType
- */
-export type LocalGuidance = typeof localGuidanceSchema.Type;
+import {
+  firewallRefusalReasonSchema,
+  nextActionSchema,
+} from "../firewall/rules/config.js";
+import { FirewallRefusal, LocalGuidance } from "../firewall/service.js";
 
 /** Attribution of the body quoted alongside local instructions. */
 export type GuidanceBodyOrigin = "peer" | "endpoint";
@@ -105,7 +78,7 @@ export function renderLocalGuidance(
 /** A delivery precondition can withhold an otherwise eligible assessment without inventing a violation. */
 export function refusalReason(
   reason: FirewallCheck["reason"],
-): FirewallSendError["refusal"] {
+): FirewallRefusal["refusal"] {
   return reason === "eligible" ? "unresolved-evidence" : reason;
 }
 
@@ -132,7 +105,7 @@ function instructionDetails(
   return {};
 }
 
-function subjectAddress(identity: AgentView | typeof ENDPOINT_SENDER): string {
+function subjectAddress(identity: AgentCard | typeof ENDPOINT_SENDER): string {
   return identity === ENDPOINT_SENDER
     ? "Social Harness"
     : `agent:${identity.agentName}`;
@@ -151,7 +124,7 @@ function quoteForAgent(value: unknown): string {
 
 /** Closed refusal data exposes registered feedback without private assessment evidence. */
 export const firewallRefusalSchema = exactStruct({
-  checkId: checkIdSchema,
+  checkId: checkedGuidanceSchema.fields.checkId,
   refusal: firewallRefusalReasonSchema,
   feedback: Schema.Array(
     exactStruct({
@@ -161,24 +134,5 @@ export const firewallRefusalSchema = exactStruct({
   ),
 });
 
-const refusalText = {
-  "rule-violation": "the message violates local policy",
-  "unresolved-evidence": "local policy needs more evidence",
-  "check-unavailable": "the message policy check could not complete",
-} as const;
-
-/**
- * A refusal is returned only before an application invocation creates any intent.
- * Its opaque check reference survives hosts that retain only the error message.
- */
-export class FirewallSendError extends Data.TaggedError("FirewallSendError")<
-  typeof firewallRefusalSchema.Type
-> {
-  override get message(): string {
-    const feedback = this.feedback
-      .map((item) => `Next action: ${item.nextAction}. ${item.text}`)
-      .join(" ");
-    const description = `send withheld (check ${this.checkId}): ${refusalText[this.refusal]}.`;
-    return feedback.length === 0 ? description : `${description} ${feedback}`;
-  }
-}
+/** Safe advice and refusal values have one Firewall owner. */
+export { FirewallRefusal, LocalGuidance };

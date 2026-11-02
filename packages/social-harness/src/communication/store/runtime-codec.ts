@@ -2,7 +2,7 @@
 
 import { Effect, Schema } from "effect";
 import { canonicalBytes } from "../../encoding/canonical-json.js";
-import { EndpointStoreError } from "./database/index.js";
+import { EndpointStoreError } from "./database.js";
 const decoder = new TextDecoder("utf-8", { fatal: true });
 /**
  * Encode immutable runtime values before they enter the endpoint store.

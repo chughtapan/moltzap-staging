@@ -2,14 +2,11 @@
 
 import { Encoding, Schema } from "effect";
 import { expect, it } from "vitest";
+import type { CheckedGuidance } from "../firewall/check.js";
 import { testAgentView } from "../__tests__/agent-card-fixtures.js";
-import {
-  type CheckedGuidance,
-  FirewallSendError,
-  InboundItem,
-  renderCollectiveResult,
-  renderLocalGuidance,
-} from "../index.js";
+import { FirewallRefusal, PermittedItem } from "../firewall/service.js";
+import { renderLocalGuidance } from "./advice.js";
+import { renderCollectiveResult } from "./render.js";
 
 // @agent-code-guard/regression-only: These examples pin the public text projection and quoted peer attribution for hosts.
 
@@ -17,7 +14,8 @@ const checkId = `chk_${Encoding.encodeHex(new Uint8Array(32).fill(2))}`;
 const advice = "The communication prerequisite is not satisfied.";
 
 it("retains the check reference when no advice is supplied", () => {
-  const error = new FirewallSendError({
+  const error = new FirewallRefusal({
+    reason: "firewall-refused",
     checkId,
     refusal: "rule-violation",
     feedback: [],
@@ -34,7 +32,8 @@ it.each([
   "prints the check, advice and $nextAction next action",
   ({ nextAction, refusal }) => {
     const rendered = String(
-      new FirewallSendError({
+      new FirewallRefusal({
+        reason: "firewall-refused",
         checkId,
         refusal,
         feedback: [{ nextAction, text: advice }],
@@ -174,13 +173,12 @@ it("names endpoint evidence and its verified agent recipients", () => {
 
 it("keeps withheld result entries local while grouping answer and question advice", () => {
   const withheld = { kind: "withheld", checkId, reason: "rule-violation" };
-  const item = Schema.decodeUnknownSync(InboundItem)({
+  const item = Schema.decodeUnknownSync(PermittedItem)({
     kind: "collectiveResult",
     closedAt: 0,
     closedBy: "settled",
     op: "gather",
     operationId: `col_${"A".repeat(64)}`,
-    to: "group:alice,bob,carol",
     question: withheld,
     outcomes: [
       { member: testAgentView("agent:bob"), outcome: withheld },

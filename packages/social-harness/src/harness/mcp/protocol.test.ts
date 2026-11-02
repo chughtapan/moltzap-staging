@@ -1,0 +1,270 @@
+/** @file Public MCP clients exercise authentication, published contracts, failures and request cancellation. */
+import { scopedLive as it } from "@effect/vitest";
+import { Deferred, Effect, Fiber, Schema } from "effect";
+import { describe, expect } from "vitest";
+import { digest } from "../../__tests__/agent-card-fixtures.js";
+import {
+  connectInProcessClient,
+  mcpFixture,
+  mcpRequest,
+} from "../../__tests__/mcp-http-fixtures.js";
+import { SendError } from "../../communication/conversations/errors.js";
+import { toolDefinitions } from "./contracts.js";
+
+const response = Schema.parseJson(
+  Schema.Struct({
+    id: Schema.Unknown,
+    result: Schema.optional(Schema.Unknown),
+    error: Schema.optional(
+      Schema.Struct({
+        code: Schema.Number,
+        message: Schema.String,
+        data: Schema.optional(Schema.Unknown),
+      }),
+    ),
+  }),
+);
+const json = (reply: Response) =>
+  Effect.tryPromise(() => reply.text()).pipe(
+    Effect.flatMap(Schema.decodeUnknown(response)),
+  );
+const send = {
+  name: "send_message",
+  arguments: { input: { to: "agent:bob", text: "hello" } },
+};
+
+describe("MCP authentication and discovery", () => {
+  it.each([{ authorization: "" }, { authorization: "Bearer wrong" }])(
+    "refuses an invalid bearer before invoking a service",
+    (headers) =>
+      Effect.gen(function* () {
+        const fixture = yield* mcpFixture();
+        const reply = yield* Effect.promise(() =>
+          fixture.fetch(mcpRequest("tools/list", {}, { headers })),
+        );
+        expect(reply.status).toBe(401);
+        expect(reply.headers.get("www-authenticate")).toBe("Bearer");
+      }),
+  );
+
+  const rejectedOrigins: ReadonlyArray<Readonly<Record<string, string>>> = [
+    { host: "remote.example" },
+    { origin: "https://remote.example" },
+  ];
+  it.each(rejectedOrigins)("rejects a remote browser boundary", (headers) =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      expect(
+        (yield* Effect.promise(() =>
+          fixture.fetch(mcpRequest("tools/list", {}, { headers })),
+        )).status,
+      ).toBe(403);
+    }),
+  );
+
+  it("works with an unmodified stock MCP client", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const listed = yield* Effect.tryPromise(() => client.listTools());
+      expect(listed.tools.map((tool) => tool.name)).toContain("read_inbox");
+      expect(
+        listed.tools.find((tool) => tool.name === "read_inbox")?.outputSchema,
+      ).toBeDefined();
+      const reply = yield* Effect.tryPromise(() =>
+        client.callTool({ name: "read_inbox", arguments: {} }),
+      );
+      expect(
+        yield* Schema.decodeUnknown(toolDefinitions.read_inbox.output)(
+          reply.structuredContent,
+        ),
+      ).toEqual({ items: [] });
+    }));
+
+  it("hides active tools until registration is retained", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({ registered: false });
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const initial = yield* Effect.tryPromise(() => client.listTools());
+      expect(initial.tools.map((tool) => tool.name)).toEqual([
+        "status",
+        "register",
+      ]);
+      yield* Effect.tryPromise(() =>
+        client.callTool({
+          name: "register",
+          arguments: {
+            operationId: `opn_${"A".repeat(22)}`,
+            principalId: fixture.card.principalId,
+            agentName: fixture.card.agentName,
+          },
+        }),
+      );
+      expect(
+        (yield* Effect.tryPromise(() => client.listTools())).tools.map(
+          (tool) => tool.name,
+        ),
+      ).toContain("send_message");
+    }));
+  it("delivers registration tool changes through a stock notification subscription", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({ registered: false });
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const changed = yield* Deferred.make<void>();
+      client.setNotificationHandler("notifications/tools/list_changed", () => {
+        Effect.runFork(Deferred.succeed(changed, undefined));
+      });
+      const subscription = yield* Effect.acquireRelease(
+        Effect.tryPromise(() => client.listen({ toolsListChanged: true })),
+        (listening) =>
+          Effect.tryPromise(() => listening.close()).pipe(Effect.ignore),
+      );
+      expect(subscription.honoredFilter.toolsListChanged).toBe(true);
+      yield* Effect.tryPromise(() =>
+        client.callTool({
+          name: "register",
+          arguments: {
+            operationId: `opn_${"A".repeat(22)}`,
+            principalId: fixture.card.principalId,
+            agentName: fixture.card.agentName,
+          },
+        }),
+      );
+      yield* Deferred.await(changed).pipe(Effect.timeout("2 seconds"));
+      expect(
+        (yield* Effect.tryPromise(() => client.listTools())).tools.map(
+          (tool) => tool.name,
+        ),
+      ).toContain("send_message");
+      yield* Effect.tryPromise(() => subscription.close());
+      expect(yield* Effect.tryPromise(() => subscription.closed)).toBe("local");
+    }));
+});
+
+describe("MCP tool contracts", () => {
+  it.each(["a-string-id", 9_007_199_254_740_990])(
+    "preserves request id %s",
+    (id) =>
+      Effect.gen(function* () {
+        const fixture = yield* mcpFixture();
+        const reply = yield* Effect.promise(() =>
+          fixture.fetch(
+            mcpRequest(
+              "tools/call",
+              { name: "read_inbox", arguments: {} },
+              { id },
+            ),
+          ),
+        );
+        expect((yield* json(reply)).id).toBe(id);
+      }),
+  );
+
+  it("reports argument paths without submitting invalid work", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      const reply = yield* Effect.promise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", {
+            name: "read_event",
+            arguments: { eventId: "private-invalid-token" },
+          }),
+        ),
+      );
+      const error = (yield* json(reply)).error;
+      expect(error?.code).toBe(-32602);
+      expect(JSON.stringify(error?.data)).toContain("eventId");
+      expect(JSON.stringify(error)).not.toContain("private-invalid-token");
+    }));
+
+  it("preserves a closed send refusal without exposing internal failures", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({
+        harness: {
+          send: () =>
+            Effect.fail(new SendError({ reason: "delivery-pending" })),
+        },
+      });
+      const reply = yield* Effect.promise(() =>
+        fixture.fetch(mcpRequest("tools/call", send)),
+      );
+      expect((yield* json(reply)).error?.data).toEqual({
+        reason: "delivery-pending",
+      });
+    }));
+
+  it("classifies an interrupted or defective send as uncertain", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({
+        harness: { send: () => Effect.dieMessage("private-stack-detail") },
+      });
+      const reply = yield* Effect.promise(() =>
+        fixture.fetch(mcpRequest("tools/call", send)),
+      );
+      const error = (yield* json(reply)).error;
+      expect(error?.data).toEqual({ reason: "outcome-unknown" });
+      expect(JSON.stringify(error)).not.toContain("private-stack-detail");
+    }));
+
+  it("publishes one receipt shape through a stock client", () =>
+    Effect.gen(function* () {
+      const receipt = yield* Schema.decodeUnknown(
+        toolDefinitions.send_message.output,
+      )({ id: digest("msg_", 1), address: "agent:bob" });
+      const fixture = yield* mcpFixture({
+        harness: { send: () => Effect.succeed(receipt) },
+      });
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const reply = yield* Effect.tryPromise(() => client.callTool(send));
+      expect(reply.structuredContent).toEqual(receipt);
+    }));
+
+  it("interrupts only the aborted HTTP request", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const fixture = yield* mcpFixture({
+        harness: {
+          listInbox: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.zipRight(Effect.never),
+              Effect.onInterrupt(() =>
+                Deferred.succeed(interrupted, undefined),
+              ),
+            ),
+        },
+      });
+      const abort = new AbortController();
+      const waiting = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest(
+            "tools/call",
+            { name: "read_inbox", arguments: {} },
+            { id: "waiting", signal: abort.signal },
+          ),
+        ),
+      ).pipe(Effect.either, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      abort.abort();
+      yield* Deferred.await(interrupted);
+      yield* Fiber.join(waiting);
+      const reply = yield* Effect.promise(() =>
+        fixture.fetch(
+          mcpRequest(
+            "tools/call",
+            { name: "status", arguments: {} },
+            { id: "unrelated" },
+          ),
+        ),
+      );
+      expect((yield* json(reply)).error).toBeUndefined();
+    }));
+});

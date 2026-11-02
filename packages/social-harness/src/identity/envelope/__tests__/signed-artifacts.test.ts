@@ -1,4 +1,4 @@
-/** @file AgentCard and SignedMessage immutability, representation, bounds, and signature tests. */
+/** @file AgentIdentityCard and SignedMessage immutability, representation, bounds, and signature tests. */
 
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { Effect, Either, Encoding, Redacted, Schema } from "effect";
@@ -6,7 +6,7 @@ import * as fc from "fast-check";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { expect, it } from "vitest";
 import {
-  AgentCardIssuedAt,
+  AgentIdentityCardIssuedAt,
   makeVerifiedCard,
 } from "../../__tests__/agent-card-fixtures.js";
 import {
@@ -14,22 +14,18 @@ import {
   encodeCanonicalJson,
 } from "../../../encoding/canonical-json.js";
 import {
-  AgentCard,
-  AgentCardVerificationError,
-  digestAgentCard,
-  type VerifiedAgentCard,
-} from "../../cards.js";
-import {
   AgentId,
-  type AgentId as AgentIdValue,
+  AgentIdentityCard,
+  AgentIdentityCardVerificationError,
   AgentName,
+  digestAgentIdentityCard,
   PrincipalId,
-} from "../../identifiers.js";
+  type VerifiedAgentIdentityCard,
+} from "../../agent.js";
 import {
+  AgentPublicKey,
   AgentSigningAuthority,
-  type AgentSigningAuthority as AgentSigningAuthorityValue,
   agentSigningPrivateKey,
-  Ed25519PublicKey,
   ed25519PublicKeyThumbprintUri,
 } from "../../keys.js";
 import { WIRE_VERSION } from "../../wire-version.js";
@@ -73,8 +69,8 @@ type RawPayload = typeof rawPayload.Type;
 type RawProtectedHeader = typeof rawProtectedHeader.Type;
 
 interface IdentityFixture {
-  readonly agentCard: VerifiedAgentCard;
-  readonly agentSigningAuthority: AgentSigningAuthorityValue;
+  readonly identityCard: VerifiedAgentIdentityCard;
+  readonly agentSigningAuthority: AgentSigningAuthority;
   readonly registrySignerPublicKey: ReturnType<
     typeof AgentSigningAuthority.publicKey
   >;
@@ -95,18 +91,18 @@ const makeSigningAuthority = () => {
 const makeIdentityFixture = Effect.gen(function* () {
   const registrySigningAuthority = yield* makeSigningAuthority();
   const agentSigningAuthority = yield* makeSigningAuthority();
-  const agentCard = yield* makeVerifiedCard({
+  const identityCard = yield* makeVerifiedCard({
     agentId: Schema.decodeUnknownSync(AgentId)(identifier("agt_", 250)),
     principalId: Schema.decodeUnknownSync(PrincipalId)(identifier("prn_", 249)),
     agentName: Schema.decodeUnknownSync(AgentName)("snapshot-sender"),
     publicKey: AgentSigningAuthority.publicKey(agentSigningAuthority),
-    issuedAt: Schema.decodeUnknownSync(AgentCardIssuedAt)(
+    issuedAt: Schema.decodeUnknownSync(AgentIdentityCardIssuedAt)(
       "2026-07-30T12:00:00Z",
     ),
     registrySigningAuthority,
   });
   return {
-    agentCard,
+    identityCard,
     agentSigningAuthority,
     registrySignerPublicKey: AgentSigningAuthority.publicKey(
       registrySigningAuthority,
@@ -120,8 +116,8 @@ const makeAgentId = (byte: number) =>
 const makeEnvelopeId = (byte: number) =>
   Schema.decodeUnknownSync(EnvelopeId)(identifier("env_", byte));
 
-const recipientSet = (count: number): ReadonlySet<AgentIdValue> => {
-  const recipients = new Set<AgentIdValue>();
+const recipientSet = (count: number): ReadonlySet<AgentId> => {
+  const recipients = new Set<AgentId>();
   for (let index = 0; index < count; index += 1) {
     recipients.add(makeAgentId(index));
   }
@@ -131,11 +127,11 @@ const recipientSet = (count: number): ReadonlySet<AgentIdValue> => {
 const signMessage = (
   fixture: IdentityFixture,
   body: Uint8Array,
-  recipients: ReadonlySet<AgentIdValue>,
+  recipients: ReadonlySet<AgentId>,
   envelopeIdByte: number,
 ) =>
   SignedMessage.sign({
-    agentCard: fixture.agentCard,
+    identityCard: fixture.identityCard,
     signingAuthority: fixture.agentSigningAuthority,
     recipientAgentIds: recipients,
     envelopeId: makeEnvelopeId(envelopeIdByte),
@@ -154,7 +150,7 @@ const makeSnapshotFixture = Effect.gen(function* () {
   const body = Uint8Array.from([1, 2, 3, 4]);
   const signedMessage = yield* signMessage(identity, body, recipients, 5);
   return {
-    agentCard: identity.agentCard,
+    identityCard: identity.identityCard,
     registrySignerPublicKey: identity.registrySignerPublicKey,
     body,
     firstRecipient,
@@ -169,8 +165,8 @@ const messageRepresentation = (signedMessage: SignedMessageValue) =>
     Effect.flatMap(Schema.decodeUnknown(rawRepresentation)),
   );
 
-const agentCardRepresentation = (agentCard: VerifiedAgentCard) =>
-  Schema.encode(AgentCard)(agentCard).pipe(
+const agentCardRepresentation = (identityCard: VerifiedAgentIdentityCard) =>
+  Schema.encode(AgentIdentityCard)(identityCard).pipe(
     Effect.flatMap(Schema.decodeUnknown(rawRepresentation)),
   );
 
@@ -265,7 +261,7 @@ const replaceSignature = (
  */
 const resignWith = (
   representation: RawRepresentation,
-  authority: AgentSigningAuthorityValue,
+  authority: AgentSigningAuthority,
 ) =>
   Effect.tryPromise({
     try: () =>
@@ -285,14 +281,14 @@ const resignWith = (
 
 const mutationIsRejected = (
   representation: RawRepresentation,
-  agentCard: VerifiedAgentCard,
+  identityCard: VerifiedAgentIdentityCard,
 ) =>
   Schema.decodeUnknown(SignedMessage)(representation, {
     exact: true,
     onExcessProperty: "error",
   }).pipe(
     Effect.flatMap((signedMessage) =>
-      SignedMessage.verify({ signedMessage, agentCard }),
+      SignedMessage.verify({ signedMessage, identityCard }),
     ),
     Effect.either,
     Effect.map(Either.isLeft),
@@ -409,12 +405,12 @@ const cryptographicMutations = (representation: RawRepresentation) =>
 
 const assertMutationRejected = (
   mutation: NamedMutation,
-  agentCard: VerifiedAgentCard,
+  identityCard: VerifiedAgentIdentityCard,
 ) =>
   Effect.gen(function* () {
     const rejected = yield* mutationIsRejected(
       mutation.representation,
-      agentCard,
+      identityCard,
     );
     expect(rejected, mutation.name).toBe(true);
   });
@@ -444,7 +440,7 @@ it("retains the signed body and recipients independently of caller mutations", (
     Effect.gen(function* () {
       const fixture = yield* makeSnapshotFixture;
       const {
-        agentCard,
+        identityCard,
         body,
         firstRecipient,
         recipients,
@@ -463,7 +459,7 @@ it("retains the signed body and recipients independently of caller mutations", (
       const parsed = yield* Schema.decodeUnknown(SignedMessage)(representation);
       const verified = yield* SignedMessage.verify({
         signedMessage: parsed,
-        agentCard,
+        identityCard,
       });
 
       expect(verified.recipientAgentIds).toStrictEqual([firstRecipient]);
@@ -475,11 +471,13 @@ it("keeps encoded artifacts unchanged when callers mutate public views", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const fixture = yield* makeSnapshotFixture;
-      const cardBefore = yield* Schema.encode(AgentCard)(fixture.agentCard);
+      const cardBefore = yield* Schema.encode(AgentIdentityCard)(
+        fixture.identityCard,
+      );
       const messageBefore = yield* messageRepresentation(fixture.signedMessage);
 
       expect(
-        Reflect.set(fixture.agentCard.publicKey, "x", "A".repeat(43)),
+        Reflect.set(fixture.identityCard.publicKey, "x", "A".repeat(43)),
       ).toBe(false);
       expect(
         Reflect.set(
@@ -491,7 +489,9 @@ it("keeps encoded artifacts unchanged when callers mutate public views", () =>
       const body = fixture.signedMessage.body;
       body.fill(0);
 
-      const cardAfter = yield* Schema.encode(AgentCard)(fixture.agentCard);
+      const cardAfter = yield* Schema.encode(AgentIdentityCard)(
+        fixture.identityCard,
+      );
       const messageAfter = yield* messageRepresentation(fixture.signedMessage);
       expect(cardAfter).toStrictEqual(cardBefore);
       expect(messageAfter).toStrictEqual(messageBefore);
@@ -504,7 +504,7 @@ it("rejects every cryptographically covered field mutation after the original ve
       const fixture = yield* makeSnapshotFixture;
       yield* SignedMessage.verify({
         signedMessage: fixture.signedMessage,
-        agentCard: fixture.agentCard,
+        identityCard: fixture.identityCard,
       });
       const representation = yield* messageRepresentation(
         fixture.signedMessage,
@@ -514,7 +514,7 @@ it("rejects every cryptographically covered field mutation after the original ve
 
       yield* Effect.forEach(
         mutations,
-        (mutation) => assertMutationRejected(mutation, fixture.agentCard),
+        (mutation) => assertMutationRejected(mutation, fixture.identityCard),
         { concurrency: 1, discard: true },
       );
     }),
@@ -533,7 +533,7 @@ it("verifies each message under its own card's key, not another key already impo
       );
       yield* SignedMessage.verify({
         signedMessage: firstMessage,
-        agentCard: first.agentCard,
+        identityCard: first.identityCard,
       });
       const secondMessage = yield* signMessage(
         second,
@@ -546,23 +546,23 @@ it("verifies each message under its own card's key, not another key already impo
         first.agentSigningAuthority,
       );
 
-      expect(yield* mutationIsRejected(forged, second.agentCard)).toBe(true);
+      expect(yield* mutationIsRejected(forged, second.identityCard)).toBe(true);
       yield* SignedMessage.verify({
         signedMessage: secondMessage,
-        agentCard: second.agentCard,
+        identityCard: second.identityCard,
       });
     }),
   ));
 
 /**
- * A Proxy over a valid key passes the Ed25519PublicKey Schema, which inspects
+ * A Proxy over a valid key passes the AgentPublicKey Schema, which inspects
  * property descriptors only, yet throws when its `x` is read.
  */
-it("fails AgentCard verification with its typed error when the Registry key cannot be read", () =>
+it("fails AgentIdentityCard verification with its typed error when the Registry key cannot be read", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
-      const registrySignerPublicKey = Schema.validateSync(Ed25519PublicKey)(
+      const registrySignerPublicKey = Schema.validateSync(AgentPublicKey)(
         new Proxy(fixture.registrySignerPublicKey, {
           get: () => {
             throw new Error("unreadable key");
@@ -570,29 +570,29 @@ it("fails AgentCard verification with its typed error when the Registry key cann
         }),
       );
 
-      const outcome = yield* AgentCard.verify({
-        agentCard: fixture.agentCard,
+      const outcome = yield* AgentIdentityCard.verify({
+        identityCard: fixture.identityCard,
         registrySignerPublicKey,
       }).pipe(Effect.either);
 
       expect(outcome).toStrictEqual(
-        Either.left(new AgentCardVerificationError()),
+        Either.left(new AgentIdentityCardVerificationError()),
       );
     }),
   ));
 
-it("fails signing with its typed error when the sender's AgentCard cannot be read", () =>
+it("fails signing with its typed error when the sender's AgentIdentityCard cannot be read", () =>
   Effect.runPromise(
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
-      const agentCard = new Proxy(fixture.agentCard, {
+      const identityCard = new Proxy(fixture.identityCard, {
         get: () => {
           throw new Error("unreadable card");
         },
       });
 
       const outcome = yield* SignedMessage.sign({
-        agentCard,
+        identityCard,
         signingAuthority: fixture.agentSigningAuthority,
         recipientAgentIds: recipientSet(1),
         envelopeId: makeEnvelopeId(1),
@@ -611,27 +611,27 @@ it("rejects the identity-point universal signature on every signed artifact", ()
       const fixture = yield* makeSnapshotFixture;
       const universalSignature = new Uint8Array(64);
       universalSignature[0] = 1;
-      const [agentCard, signedMessage] = yield* Effect.all(
+      const [identityCard, signedMessage] = yield* Effect.all(
         [
-          agentCardRepresentation(fixture.agentCard),
+          agentCardRepresentation(fixture.identityCard),
           messageRepresentation(fixture.signedMessage),
         ] as const,
         { concurrency: 2 },
       );
 
-      const parsedCard = yield* Schema.decodeUnknown(AgentCard)(
-        replaceSignature(agentCard, universalSignature),
+      const parsedCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+        replaceSignature(identityCard, universalSignature),
       );
       const parsedMessage = yield* Schema.decodeUnknown(SignedMessage)(
         replaceSignature(signedMessage, universalSignature),
       );
-      const cardResult = yield* AgentCard.verify({
-        agentCard: parsedCard,
+      const cardResult = yield* AgentIdentityCard.verify({
+        identityCard: parsedCard,
         registrySignerPublicKey: fixture.registrySignerPublicKey,
       }).pipe(Effect.either);
       const messageResult = yield* SignedMessage.verify({
         signedMessage: parsedMessage,
-        agentCard: fixture.agentCard,
+        identityCard: fixture.identityCard,
       }).pipe(Effect.either);
 
       expect(wasRejected(cardResult)).toBe(true);
@@ -645,12 +645,12 @@ const makeMixedOrderCard = Effect.gen(function* () {
     agentId: makeAgentId(254),
     principalId: PrincipalId.make(identifier("prn_", 253)),
     agentName: AgentName.make("mixed-order-sender"),
-    publicKey: yield* Schema.decodeUnknown(Ed25519PublicKey)({
+    publicKey: yield* Schema.decodeUnknown(AgentPublicKey)({
       crv: "Ed25519",
       kty: "OKP",
       x: MIXED_ORDER_PUBLIC_KEY_X,
     }),
-    issuedAt: yield* Schema.decodeUnknown(AgentCardIssuedAt)(
+    issuedAt: yield* Schema.decodeUnknown(AgentIdentityCardIssuedAt)(
       "2026-07-30T12:00:00Z",
     ),
     registrySigningAuthority: yield* makeSigningAuthority(),
@@ -678,23 +678,23 @@ function cofactoredSignature(input: Uint8Array, publicKey: Uint8Array) {
 }
 
 /** The body selects an odd challenge for the current card, header and emitted version. */
-function makeCofactoredMessage(agentCard: VerifiedAgentCard) {
+function makeCofactoredMessage(identityCard: VerifiedAgentIdentityCard) {
   return Effect.gen(function* () {
     const header = Encoding.encodeBase64Url(
       yield* encodeCanonicalJson({
         alg: "Ed25519",
-        kid: yield* ed25519PublicKeyThumbprintUri(agentCard.publicKey),
+        kid: yield* ed25519PublicKeyThumbprintUri(identityCard.publicKey),
         typ: "application/vnd.sharness.signed-message+jws",
       }),
     );
-    const cardDigest = yield* digestAgentCard(agentCard);
-    const publicKey = yield* decodeBase64Url(agentCard.publicKey.x);
+    const cardDigest = yield* digestAgentIdentityCard(identityCard);
+    const publicKey = yield* decodeBase64Url(identityCard.publicKey.x);
     for (let attempt = 0; attempt < 256; attempt += 1) {
       const payload = Encoding.encodeBase64Url(
         yield* encodeCanonicalJson({
           kind: "signedMessage",
           sharnessVersion: WIRE_VERSION,
-          senderAgentId: agentCard.agentId,
+          senderAgentId: identityCard.agentId,
           agentCardDigest: cardDigest,
           recipientAgentIds: [makeAgentId(0)],
           envelopeId: makeEnvelopeId(1),
@@ -725,8 +725,8 @@ function makeCofactoredMessage(agentCard: VerifiedAgentCard) {
 it("rejects a signature accepted only by cofactored Ed25519 verification", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const agentCard = yield* makeMixedOrderCard;
-      const candidate = yield* makeCofactoredMessage(agentCard);
+      const identityCard = yield* makeMixedOrderCard;
+      const candidate = yield* makeCofactoredMessage(identityCard);
       expect(
         ed25519.verify(
           candidate.signature,
@@ -737,7 +737,7 @@ it("rejects a signature accepted only by cofactored Ed25519 verification", () =>
       ).toBe(true);
       const result = yield* SignedMessage.verify({
         signedMessage: candidate.signedMessage,
-        agentCard,
+        identityCard,
       }).pipe(Effect.either);
       expect(wasRejected(result)).toBe(true);
     }),

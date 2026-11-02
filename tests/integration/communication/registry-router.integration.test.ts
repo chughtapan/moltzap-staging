@@ -2,7 +2,7 @@
 import { FileSystem, HttpClient, HttpClientRequest } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import {
-  AgentCard,
+  AgentIdentityCard,
   AgentName,
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
@@ -11,10 +11,10 @@ import {
   PrincipalId,
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-  type VerifiedAgentCard,
+  type VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {
-  OperationId,
+  RegistrationId,
   Registry,
   type RegistryLookupRequest,
   type RegistryRegisterRequest,
@@ -24,7 +24,7 @@ import {
   type RouterSendRequest,
   type RouterSendResult,
 } from "@moltzap/social-harness/service";
-import { AuthenticatedHttp } from "@moltzap/social-harness/test";
+import { Authentication } from "@moltzap/social-harness/test";
 import { Effect, Encoding, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -77,7 +77,7 @@ const UNAVAILABLE_BODY = '{"error":"unavailable"}';
 const BATCH_BODY_FRAGMENT = '"kind":"batch"';
 interface RegisteredAgent {
   readonly signingAuthority: AgentSigningAuthorityValue;
-  readonly agentCard: VerifiedAgentCard;
+  readonly agentCard: VerifiedAgentIdentityCard;
 }
 
 interface RegisteredAgents {
@@ -124,7 +124,7 @@ const randomIdentifierPayload = (): string =>
   randomBytes(16).toString("base64url");
 
 const makeOperationId = () =>
-  Schema.decodeUnknownSync(OperationId)(`opn_${randomIdentifierPayload()}`);
+  Schema.decodeUnknownSync(RegistrationId)(`opn_${randomIdentifierPayload()}`);
 
 const makePrincipalId = () =>
   Schema.decodeUnknownSync(PrincipalId)(`prn_${randomIdentifierPayload()}`);
@@ -138,7 +138,7 @@ const signAuthenticatedRequest = (
   agent: RegisteredAgent,
   encodedRequest: unknown,
 ) =>
-  AuthenticatedHttp.signAgentRequest({
+  Authentication.signAgentRequest({
     httpRequest: HttpClientRequest.post(new URL(path, origin)),
     callerAgentId: agent.agentCard.agentId,
     encodedRequest,
@@ -230,8 +230,8 @@ const requireAccepted = (result: RouterSendResult): AcceptedResult => {
   return result;
 };
 
-const encodeAgentCard = (agentCard: VerifiedAgentCard) =>
-  Schema.encode(AgentCard)(agentCard);
+const encodeAgentCard = (agentCard: VerifiedAgentIdentityCard) =>
+  Schema.encode(AgentIdentityCard)(agentCard);
 
 const encodeSignedMessage = (signedMessage: SignedMessageValue) =>
   Schema.encode(SignedMessage)(signedMessage);
@@ -933,7 +933,7 @@ const concurrentRegistration = Effect.gen(function* () {
             processTestError(`registration returned ${registered.kind}`),
           );
         }
-        const agentCard = yield* Schema.decodeUnknown(AgentCard)(
+        const agentCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
           registered.agentCard,
         );
         expect(agentCard.agentName).toBe(fixture.agentName);

@@ -6,7 +6,7 @@ import type { SigningIdentity } from "./certified-history-fixtures.js";
 import {
   type DecodedOuterBody,
   decodeOuterBody,
-} from "../communication/records/index.js";
+} from "../communication/records/encoding.js";
 import {
   SignedMessage,
   type SignedMessageVerificationError,
@@ -34,12 +34,12 @@ export const openOuterBody = (
   Schema.encode(SignedMessage)(message).pipe(
     Effect.flatMap(Schema.decodeUnknown(SignedMessage.live)),
     Effect.flatMap((signedMessage) =>
-      SignedMessage.verify({ signedMessage, agentCard: sender.card }),
+      SignedMessage.verify({ signedMessage, identityCard: sender.card }),
     ),
     Effect.flatMap((verified) =>
       decodeOuterBody({
         message: verified,
-        agentCard: reader.card,
+        identityCard: reader.card,
         signingAuthority: reader.authority,
       }),
     ),

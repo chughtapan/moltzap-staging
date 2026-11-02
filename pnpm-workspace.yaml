@@ -16,6 +16,7 @@ catalog:
   "@effect/experimental": ^0.61.0
   "@effect/language-service": ^0.87.1
   "@effect/opentelemetry": 0.64.0
+  "@effect/rpc": 0.76.0
   "@effect/platform": ^0.97.0
   "@effect/platform-node": ^0.108.0
   "@effect/sql": ^0.52.0
@@ -47,6 +48,7 @@ catalog:
   effect: ^3.22.0
   eslint: ^9
   eslint-plugin-agent-code-guard: 0.0.21
+  find-my-way-ts: 0.1.6
   fast-check: 3.23.2
   http-message-signatures: 1.0.6
   husky: ^9.0.0

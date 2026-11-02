@@ -1,6 +1,6 @@
 /** @file Exact request bytes for adversarial Registry process tests. */
 
-import { Ed25519PublicKey } from "@moltzap/social-harness";
+import { AgentPublicKey } from "@moltzap/social-harness";
 import { Effect, Schema } from "effect";
 import { createHash } from "node:crypto";
 
@@ -29,8 +29,8 @@ export const contentDigest = (bodyBytes: Uint8Array): string =>
   `sha-256=:${createHash("sha256").update(bodyBytes).digest("base64")}:`;
 
 /** RFC 7638 key id derived from the public key's public Schema encoding. */
-export const ed25519PublicKeyThumbprintUri = (publicKey: Ed25519PublicKey) =>
-  Schema.encode(Ed25519PublicKey)(publicKey).pipe(
+export const ed25519PublicKeyThumbprintUri = (publicKey: AgentPublicKey) =>
+  Schema.encode(AgentPublicKey)(publicKey).pipe(
     Effect.flatMap(encodeCanonicalJson),
     Effect.map(
       (bytes) =>

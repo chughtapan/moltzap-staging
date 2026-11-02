@@ -10,16 +10,18 @@ import type { Effect, Option, Types } from "effect";
 import type {
   AgentId,
   AgentSigningAuthority,
-  EnvelopeId,
-  SignedMessage,
-  VerifiedAgentCard,
-  VerifiedSignedMessage,
-} from "../../../index.js";
+  VerifiedAgentIdentityCard,
+} from "../../agent.js";
 import type {
   SealedBody,
   SealedBodyOpeningError,
   SealedBodySealingError,
 } from "../sealed-body.js";
+import type {
+  EnvelopeId,
+  SignedMessage,
+  VerifiedSignedMessage,
+} from "../signed-message.js";
 
 type Expect<Value extends true> = Value;
 
@@ -33,7 +35,7 @@ type SealInputIsExact = Expect<
     Parameters<Seal>[0],
     {
       readonly senderAgentId: AgentId;
-      readonly recipientAgentCards: readonly VerifiedAgentCard[];
+      readonly recipientIdentityCards: readonly VerifiedAgentIdentityCard[];
       readonly envelopeId: EnvelopeId;
       readonly plaintext: Uint8Array;
     }
@@ -52,7 +54,7 @@ type OpenInputIsExact = Expect<
   Types.Equals<
     Parameters<Open>[0],
     {
-      readonly agentCard: VerifiedAgentCard;
+      readonly identityCard: VerifiedAgentIdentityCard;
       readonly signingAuthority: AgentSigningAuthority;
       readonly signedMessage: VerifiedSignedMessage;
     }

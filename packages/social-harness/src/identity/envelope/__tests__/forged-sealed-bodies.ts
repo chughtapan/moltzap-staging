@@ -6,7 +6,7 @@
 
 import { Effect, Encoding } from "effect";
 import { exportJWK, generateKeyPair } from "jose";
-import type { VerifiedAgentCard } from "../../cards.js";
+import type { VerifiedAgentIdentityCard } from "../../agent.js";
 import { encodeCanonicalJson } from "../../../encoding/canonical-json.js";
 import { x25519PublicJwk } from "../../keys.js";
 
@@ -105,10 +105,10 @@ const concatKdf = (sharedSecret: ArrayBuffer) => {
  * Derives the ECDH-ES+A256KW key-encryption key for one recipient: X25519
  * agreement with a fresh ephemeral key, then the Concat KDF.
  *
- * @param recipient Recipient AgentCard.
+ * @param recipient Recipient AgentIdentityCard.
  * @returns The key-encryption key and the ephemeral public JWK.
  */
-const deriveKeyEncryptionKey = (recipient: VerifiedAgentCard) =>
+const deriveKeyEncryptionKey = (recipient: VerifiedAgentIdentityCard) =>
   Effect.gen(function* () {
     const recipientJwk = yield* x25519PublicJwk(recipient.publicKey);
     const recipientKey = yield* Effect.tryPromise({
@@ -154,11 +154,14 @@ const deriveKeyEncryptionKey = (recipient: VerifiedAgentCard) =>
  * Wraps `contentKey` to one recipient as ECDH-ES+A256KW does: AES key wrap
  * under the derived key-encryption key.
  *
- * @param recipient Recipient AgentCard.
+ * @param recipient Recipient AgentIdentityCard.
  * @param contentKey 32-byte content-encryption key.
  * @returns The recipient entry with its ephemeral public key.
  */
-const wrapContentKey = (recipient: VerifiedAgentCard, contentKey: Bytes) =>
+const wrapContentKey = (
+  recipient: VerifiedAgentIdentityCard,
+  contentKey: Bytes,
+) =>
   Effect.gen(function* () {
     const { keyEncryptionKey, epk } = yield* deriveKeyEncryptionKey(recipient);
     const content = yield* importKey(contentKey, "AES-GCM", "encrypt");
@@ -176,7 +179,7 @@ const wrapContentKey = (recipient: VerifiedAgentCard, contentKey: Bytes) =>
 interface ManualSealInput {
   readonly protectedHeaderText: string;
   readonly saltedPlaintext: Uint8Array;
-  readonly recipients: readonly VerifiedAgentCard[];
+  readonly recipients: readonly VerifiedAgentIdentityCard[];
 }
 
 /**
@@ -358,7 +361,10 @@ const collideTag = (input: CollisionInput) =>
 
 interface TwoKeyInput {
   readonly protectedHeaderText: string;
-  readonly recipients: readonly [VerifiedAgentCard, VerifiedAgentCard];
+  readonly recipients: readonly [
+    VerifiedAgentIdentityCard,
+    VerifiedAgentIdentityCard,
+  ];
   readonly ciphertextBytes: number;
 }
 

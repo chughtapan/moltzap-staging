@@ -12,7 +12,7 @@ import type {
   FirewallSettings,
   TextPolicySettings,
   TextRule,
-} from "./config.js";
+} from "./rules/config.js";
 import {
   checkMessage,
   type DecisionProvider,
