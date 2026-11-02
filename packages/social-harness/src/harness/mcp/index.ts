@@ -1,8 +1,8 @@
 /** @file MCP binds the harness services and owns its loopback HTTP listener. */
 
 import {
-  HttpBody,
   type HttpApp,
+  HttpBody,
   HttpServerRequest,
   HttpServerResponse,
 } from "@effect/platform";
@@ -12,10 +12,11 @@ import {
   type Context,
   Effect,
   JSONSchema,
+  Match,
   Option,
   Schema,
-  Stream,
   type Scope,
+  Stream,
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
@@ -36,7 +37,6 @@ import {
   sendErrorData,
   toolDefinitions,
 } from "./contracts.js";
-import { installEvents, webhookHttpClientLayer } from "./events.js";
 import {
   authenticationChallenge,
   makeRequestAdmission,
@@ -44,6 +44,7 @@ import {
   protectedResourcePath,
   protectedResourceResponse,
 } from "./authentication.js";
+import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 type ServerSettings = McpAuthentication & {
   readonly implementation: { readonly name: string; readonly version: string };
@@ -410,23 +411,35 @@ function guardMcp(
           ),
         onSuccess: (expiresAt) =>
           app.pipe(
-            Effect.map((response) => {
-              if (expiresAt === undefined || response.body._tag !== "Stream")
-                return response;
-              return HttpServerResponse.setBody(
-                response,
-                HttpBody.stream(
-                  response.body.stream.pipe(
-                    Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
-                  ),
-                  response.body.contentType,
-                ),
-              );
-            }),
+            Effect.flatMap((response) => expireResponse(response, expiresAt)),
           ),
       }),
     );
   });
+}
+
+/** A request cannot outlive the authority that admitted its streaming body. */
+function expireResponse(
+  response: HttpServerResponse.HttpServerResponse,
+  expiresAt?: number,
+) {
+  if (expiresAt === undefined) {
+    return response;
+  }
+  return Match.value(response.body).pipe(
+    Match.tag("Stream", (body) =>
+      HttpServerResponse.setBody(
+        response,
+        HttpBody.stream(
+          body.stream.pipe(
+            Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
+          ),
+          body.contentType,
+        ),
+      ),
+    ),
+    Match.orElse(() => response),
+  );
 }
 
 function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
@@ -442,6 +455,7 @@ function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
   };
 }
 
+/** Equivalent single-item tuple notation also supports native clients using draft-07 validators. */
 function openObjects(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(openObjects);
@@ -449,13 +463,29 @@ function openObjects(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, nested]) =>
-      key === "additionalProperties" && nested === false
-        ? []
-        : [[key, openObjects(nested)]],
-    ),
-  );
+  const entries = Object.entries(value);
+  const prefixItems: unknown = entries.find(
+    ([key]) => key === "prefixItems",
+  )?.[1];
+  const singleTuple =
+    Array.isArray(prefixItems) &&
+    prefixItems.length === 1 &&
+    entries.some(([key, nested]) => key === "items" && nested === false);
+  return Object.fromEntries([
+    ...entries.flatMap(([key, nested]) => {
+      if (key === "additionalProperties" && nested === false) {
+        return [];
+      }
+      if (singleTuple && (key === "items" || key === "maxItems")) {
+        return [];
+      }
+      if (singleTuple && key === "prefixItems") {
+        return [["items", openObjects(prefixItems[0])]];
+      }
+      return [[key, openObjects(nested)]];
+    }),
+    ...(singleTuple ? [["maxItems", 1]] : []),
+  ]);
 }
 
 /** The listener and advertised MCP URL use the same literal loopback address. */

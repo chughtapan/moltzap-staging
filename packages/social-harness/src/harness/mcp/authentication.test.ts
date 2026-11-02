@@ -7,8 +7,9 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import { mcpFixture, mcpRequest } from "../../__tests__/mcp-http-fixtures.js";
 import type { DaemonOAuth } from "./authentication.js";
+import { mcpFixture, mcpRequest } from "../../__tests__/mcp-http-fixtures.js";
+import { INBOX_PENDING_EVENT } from "./contracts.js";
 
 const resource = new URL("https://mcp.example.test/mcp");
 const owner = "owner-subject";
@@ -21,8 +22,9 @@ const fixture = Effect.gen(function* () {
     host: "127.0.0.1",
     port: 0,
   });
-  if (server.address._tag !== "TcpAddress")
+  if (server.address._tag !== "TcpAddress") {
     return yield* Effect.dieMessage("Expected issuer listener");
+  }
   const issuer = `http://127.0.0.1:${server.address.port}/`;
   yield* server.serve(
     Effect.gen(function* () {
@@ -61,7 +63,7 @@ const fixture = Effect.gen(function* () {
         )
         .sign(keys.privateKey),
     );
-  const call = (bearer?: string, host = resource.host) =>
+  const call = (bearer?: string, host?: string) =>
     Effect.tryPromise(() =>
       test.fetch(
         mcpRequest(
@@ -73,7 +75,7 @@ const fixture = Effect.gen(function* () {
           },
           {
             headers: {
-              host,
+              host: host ?? resource.host,
               authorization: bearer === undefined ? "" : `Bearer ${bearer}`,
             },
           },
@@ -83,6 +85,8 @@ const fixture = Effect.gen(function* () {
   return { ...test, oauth, token, call };
 });
 
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and MCP wire notifications are external conformance contracts. */
+// @agent-code-guard/regression-only: These cases pin finite OAuth admission and stream-expiry contracts against a real issuer.
 it("advertises protected-resource discovery without granting MCP access", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
@@ -139,3 +143,62 @@ it("rejects a different Host even for the correct owner's token", () =>
     );
     expect(response.status).toBe(403);
   }));
+
+it(
+  "closes an admitted Events stream at token expiry without closing later requests",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* fixture;
+      const token = yield* test.token({
+        expiresAt: Math.floor(Date.now() / 1000) + 2,
+      });
+      const response = yield* Effect.tryPromise(() =>
+        test.fetch(
+          mcpRequest(
+            "events/stream",
+            {
+              name: INBOX_PENDING_EVENT,
+              arguments: {},
+              cursor: null,
+            },
+            {
+              headers: {
+                host: resource.host,
+                authorization: `Bearer ${token}`,
+              },
+            },
+          ),
+        ),
+      );
+      expect(response.status).toBe(200);
+      const body = yield* Effect.tryPromise(() => response.text());
+      expect(body).toContain("notifications/events/active");
+      const later = yield* test.call(yield* test.token());
+      expect(later.status).toBe(200);
+    }),
+  15000,
+);
+
+it("refuses an unlisted browser Origin before granting owner access", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const token = yield* test.token();
+    const response = yield* Effect.tryPromise(() =>
+      test.fetch(
+        mcpRequest(
+          "initialize",
+          {},
+          {
+            headers: {
+              host: resource.host,
+              origin: "https://another-host.example",
+              authorization: `Bearer ${token}`,
+            },
+          },
+        ),
+      ),
+    );
+    expect(response.status).toBe(403);
+  }));
+
+/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the assertion policy. */

@@ -18,10 +18,10 @@ import {
 import { generateKeyPairSync } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { McpAuthentication } from "../harness/mcp/authentication.js";
 import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
 import { InboxError } from "../harness/inbox.js";
-import type { McpAuthentication } from "../harness/mcp/authentication.js";
 import { makeMcpHttpApp } from "../harness/mcp/index.js";
 import { SocialHarness } from "../harness/service.js";
 import { Identity } from "../identity/service.js";

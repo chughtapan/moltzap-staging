@@ -141,7 +141,8 @@
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "fast-check": "catalog:"
+    "fast-check": "catalog:",
+    "ajv": "catalog:"
   },
   "sharnessContentHash": "sha256:2bce595a02f293a4613a4f8155e41cffa05f2f19ad711ae4634f588bc70be0d1",
   "sharnessWireVersion": "2026.1026.5"

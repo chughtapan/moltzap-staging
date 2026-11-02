@@ -19,8 +19,8 @@ import {
   Schema,
 } from "effect";
 import type { MessagePolicyConfigurationFailure } from "../firewall/rules.js";
-import type { DaemonOAuth, McpAuthentication } from "./mcp/authentication.js";
 import type { RegistrationRequest } from "../identity/service.js";
+import type { DaemonOAuth, McpAuthentication } from "./mcp/authentication.js";
 import { AgentName, PrincipalId } from "../identity/agent.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { RegistrationId } from "../identity/registry.js";

@@ -12,6 +12,7 @@ packages:
   - "plugins/*"
 
 catalog:
+  ajv: 8.18.0
   "@chughtapan/safer-architecture-lsp": 0.3.1
   "@effect/experimental": ^0.61.0
   "@effect/language-service": ^0.87.1

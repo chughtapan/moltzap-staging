@@ -96,6 +96,9 @@ catalogs:
     '@typescript/native':
       specifier: npm:typescript@7.0.2
       version: 7.0.2
+    ajv:
+      specifier: 8.18.0
+      version: 8.18.0
     canonicalize:
       specifier: 3.0.0
       version: 3.0.0
@@ -475,6 +478,9 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
+      ajv:
+        specifier: 'catalog:'
+        version: 8.18.0
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)

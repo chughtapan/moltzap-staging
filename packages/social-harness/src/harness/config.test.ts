@@ -23,11 +23,42 @@ const registrySigner =
 const mcpCredential = "mcp-local-test-credential-0000000001";
 const directories: string[] = [];
 
+const environmentReason = "environment";
+
+const publicOAuthSettings: Readonly<Record<string, string>> = {
+  SHARNESS_MCP_BIND_HOST: "0.0.0.0",
+  SHARNESS_MCP_PUBLIC_URL: "https://mcp.example.test/mcp",
+  SHARNESS_OAUTH_ISSUER: "https://issuer.example.test/",
+  SHARNESS_OAUTH_OWNER_SUBJECT: "owner-subject",
+  SHARNESS_OAUTH_REQUIRED_SCOPE: "use:mcp",
+  SHARNESS_OAUTH_ALLOWED_ORIGINS: '["https://host.example.test"]',
+};
+
 afterEach(() => {
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function publicConfiguration(
+  changes: Readonly<Record<string, string | undefined>> = {},
+) {
+  const local = fixture();
+  const values = new Map(
+    Object.entries({ ...local.values, ...publicOAuthSettings }),
+  );
+  values.delete("SHARNESS_MCP_CREDENTIAL_FILE");
+  for (const [name, value] of Object.entries(changes)) {
+    if (value === undefined) {
+      values.delete(name);
+    } else {
+      values.set(name, value);
+    }
+  }
+  return loadDaemonProcessConfiguration.pipe(
+    Effect.withConfigProvider(ConfigProvider.fromMap(values)),
+  );
+}
 
 function fixture(overrides: Readonly<Record<string, string>> = {}) {
   const directory = mkdtempSync(join(tmpdir(), "sharness-config-"));
@@ -308,3 +339,44 @@ it("requires one source when programmatic and file policy are both configured", 
   }));
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after boundary contract assertions. */
+
+it("loads public OAuth authority without a second MCP credential", () =>
+  Effect.gen(function* () {
+    const configuration = yield* publicConfiguration();
+    const bootstrap = yield* loadDaemonBootstrap(configuration);
+    expect(bootstrap.authentication).toEqual({
+      oauth: {
+        resource: new URL("https://mcp.example.test/mcp"),
+        issuer: publicOAuthSettings.SHARNESS_OAUTH_ISSUER,
+        ownerSubject: publicOAuthSettings.SHARNESS_OAUTH_OWNER_SUBJECT,
+        scope: publicOAuthSettings.SHARNESS_OAUTH_REQUIRED_SCOPE,
+        allowedOrigins: ["https://host.example.test"],
+      },
+    });
+  }));
+
+it.each([
+  { SHARNESS_OAUTH_ISSUER: undefined },
+  { SHARNESS_OAUTH_OWNER_SUBJECT: undefined },
+  { SHARNESS_OAUTH_REQUIRED_SCOPE: undefined },
+  { SHARNESS_MCP_PUBLIC_URL: undefined },
+  { SHARNESS_MCP_CREDENTIAL_FILE: "/unused-extra-credential" },
+  { SHARNESS_MCP_PUBLIC_URL: "http://mcp.example.test/mcp" },
+  { SHARNESS_MCP_PUBLIC_URL: "https://mcp.example.test/another-path" },
+  { SHARNESS_MCP_PUBLIC_URL: "https://mcp.example.test/mcp?resource=another" },
+  { SHARNESS_OAUTH_ISSUER: "http://issuer.example.test/" },
+  { SHARNESS_OAUTH_ALLOWED_ORIGINS: '["http://host.example.test"]' },
+])("refuses incomplete or ambiguous public authority: %j", (changes) =>
+  Effect.gen(function* () {
+    const failure = yield* publicConfiguration(changes).pipe(Effect.flip);
+    expect(failure.reason).toBe(environmentReason);
+  }),
+);
+
+it("refuses a public listener configured with only a local bearer", () =>
+  Effect.gen(function* () {
+    const failure = yield* fixture({
+      SHARNESS_MCP_BIND_HOST: "0.0.0.0",
+    }).load.pipe(Effect.flip);
+    expect(failure.reason).toBe(environmentReason);
+  }));
