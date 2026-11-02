@@ -181,6 +181,31 @@
       "project": [
         "*.ts"
       ]
+    },
+    "plugins/opencode": {
+      "entry": [
+        "*.config.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp",
+        "@modelcontextprotocol/client"
+      ]
+    },
+    "plugins/codex": {
+      "entry": [
+        "*.config.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp"
+      ]
     }
   }
 }

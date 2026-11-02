@@ -8,6 +8,7 @@ import {
 } from "@effect/platform";
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
+import { Ajv } from "ajv";
 import { Deferred, Effect, Exit, Fiber, Schema, Scope, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
@@ -45,6 +46,38 @@ const send = {
   name: "send_message",
   arguments: { input: { to: "agent:bob", text: "hello" } },
 };
+
+it("publishes signed identity schemas accepted by native draft-07 and 2020 clients", () =>
+  Effect.gen(function* () {
+    const fixture = yield* mcpFixture();
+    const client = yield* connectInProcessClient((input, init) =>
+      fixture.fetch(new Request(input, init)),
+    );
+    const listed = yield* Effect.tryPromise(() => client.listTools());
+    const status = listed.tools.find((tool) => tool.name === "status");
+    const reply = yield* Effect.tryPromise(() =>
+      client.callTool({ name: "status", arguments: {} }),
+    );
+    if (status?.outputSchema === undefined) {
+      return yield* Effect.dieMessage(
+        "Status must publish its output contract",
+      );
+    }
+    const validate = new Ajv({
+      strict: false,
+      validateFormats: false,
+      validateSchema: false,
+    }).compile(status.outputSchema);
+    expect(
+      validate(reply.structuredContent),
+      JSON.stringify(validate.errors),
+    ).toBe(true);
+    expect(
+      yield* Schema.decodeUnknown(toolDefinitions.status.output)(
+        reply.structuredContent,
+      ),
+    ).toBeDefined();
+  }));
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
 describe("MCP authentication and discovery", () => {

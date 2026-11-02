@@ -22,11 +22,33 @@ The daemon requires these environment settings:
 | `SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY` | Ed25519 public JWK as JSON with exactly `crv`, `kty` and `x` |
 | `SHARNESS_ROUTER_ORIGIN` | HTTP(S) origin in the same form as the Registry origin |
 | `SHARNESS_AGENT_PRIVATE_KEY_FILE` | Readable file containing the agent's unencrypted Ed25519 PKCS#8 PEM key |
-| `SHARNESS_MCP_CREDENTIAL_FILE` | File containing the MCP bearer credential used by clients |
 
-MCP listens at `127.0.0.1:<SHARNESS_MCP_PORT>/mcp`. Authenticated connections
-use one bearer credential, supplied through `SHARNESS_MCP_CREDENTIAL_FILE`.
-Local clients and tunneled clients use the same operations and policy.
+MCP serves `/mcp` on `SHARNESS_MCP_BIND_HOST` (default `127.0.0.1`) and
+`SHARNESS_MCP_PORT`. Choose one authentication mode:
+
+- Local: set `SHARNESS_MCP_CREDENTIAL_FILE` to the file containing the MCP bearer
+  credential. This mode requires the default loopback bind address.
+- Public OAuth: terminate HTTPS at the deployment ingress and supply the
+  settings below. Do not set `SHARNESS_MCP_CREDENTIAL_FILE` in this mode.
+
+| Public OAuth setting | Accepted value |
+| --- | --- |
+| `SHARNESS_MCP_BIND_HOST` | Listener bind address, such as `0.0.0.0` behind the ingress |
+| `SHARNESS_MCP_PUBLIC_URL` | Canonical HTTPS URL ending in `/mcp`, without credentials, query or fragment |
+| `SHARNESS_OAUTH_ISSUER` | HTTPS issuer URL used for discovery and JWT validation |
+| `SHARNESS_OAUTH_OWNER_SUBJECT` | Exact owner subject allowed to use this installation |
+| `SHARNESS_OAUTH_REQUIRED_SCOPE` | Required scope in the access token |
+| `SHARNESS_OAUTH_ALLOWED_ORIGINS` | JSON array of allowed HTTPS browser origins; defaults to `[]` |
+
+Public requests require the configured resource Host. Requests with an Origin
+header require an allowed origin. Protected-resource metadata is available at
+`/.well-known/oauth-protected-resource/mcp`; it advertises the authorization
+server without granting tool access. Access tokens must be signed with RS256,
+match the issuer, resource audience and owner subject, include the required
+scope, and remain unexpired. An admitted Events stream closes when its token
+expires. Clients must obtain fresh authorization before reconnecting.
+
+Both modes expose the same operations and firewall policy.
 
 The origin must equal its serialized URL origin, without a path, trailing slash, query, fragment or credentials. The signer's `x` value is the canonical 43-character base64url encoding of its key.
 Missing or invalid settings stop startup.

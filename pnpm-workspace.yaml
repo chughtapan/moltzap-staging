@@ -11,6 +11,7 @@ packages:
   - "plugins/*"
 
 catalog:
+  ajv: 8.18.0
   "@chughtapan/safer-architecture-lsp": 0.3.1
   "@effect/experimental": ^0.61.0
   "@effect/language-service": ^0.87.1
@@ -27,6 +28,7 @@ catalog:
   "@mermaid-js/mermaid-cli": ^11.15.0
   "@modelcontextprotocol/client": 2.0.0-beta.5
   "@noble/curves": 2.4.0
+  "@opencode-ai/plugin": 1.19.5
   "@opentelemetry/api": ^1.9.0
   "@opentelemetry/exporter-trace-otlp-proto": ^0.223.0
   "@opentelemetry/resources": ^2.12.0

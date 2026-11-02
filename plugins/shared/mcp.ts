@@ -1,12 +1,18 @@
 /** @file Scoped MCP connections and tool calls shared by native host plugins. */
 import {
+  auth,
+  type AuthProvider,
   Client,
+  extractWWWAuthenticateParams,
   type Implementation,
+  type OAuthClientProvider,
   ProtocolError,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
   StreamableHTTPClientTransport,
+  type StreamableHTTPClientTransportOptions,
+  UnauthorizedError,
 } from "@modelcontextprotocol/client";
 import {
   decodeHarnessSendErrorData,
@@ -77,11 +83,14 @@ type DomainFailure =
   | RegistrationError
   | FirewallPolicyError;
 
-/** One server and credential are captured for the connection's whole scope. */
-export interface McpConnectionSettings {
-  readonly endpoint: URL;
-  readonly credential: Redacted.Redacted;
-}
+/** One connection uses either a fixed bearer or the SDK's renewable authorization. */
+export type McpConnectionSettings = { readonly endpoint: URL } & (
+  | { readonly credential: Redacted.Redacted; readonly authProvider?: never }
+  | {
+      readonly credential?: never;
+      readonly authProvider: AuthProvider | OAuthClientProvider;
+    }
+);
 
 /**
  * Polling is the default. The `onReady` callback runs before the first poll or
@@ -108,6 +117,32 @@ export interface McpConnection {
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
 
+/** A native host may own the authorized MCP client; the receiver borrows only its standard tool call. */
+export function acquirePollingReceiver(
+  client: Pick<Client, "callTool">,
+): Effect.Effect<
+  <E, R>(
+    options: Pick<InboxOptions, "onReady">,
+    accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+  ) => Effect.Effect<void, E | McpReceiveError, R>,
+  never,
+  Scope.Scope
+> {
+  return Effect.gen(function* () {
+    const receiving = yield* Ref.make(false);
+    const scope = yield* Scope.Scope;
+    return <E, R>(
+      options: Pick<InboxOptions, "onReady">,
+      accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+    ) =>
+      runReception(
+        { client, receiving, scope },
+        pollingWakeups(options),
+        accept,
+      );
+  }).pipe(Effect.withSpan("Mcp.acquirePollingReceiver"));
+}
+
 /** TLS and literal loopback can carry the private bearer without redirects. */
 export function safeCredentialEndpoint(endpoint: URL): boolean {
   const privateAuthority =
@@ -128,19 +163,16 @@ export function acquireMcpConnection(
   implementation: Implementation,
 ): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
   const endpoint = new URL(settings.endpoint.href);
-  return acquireConnection(
-    { endpoint, credential: settings.credential },
-    { ...implementation },
-  );
+  return acquireConnection({ ...settings, endpoint }, { ...implementation });
 }
 
 export function callTool<Name extends ToolName>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   request: ToolRequest & { readonly name: Name },
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
 /** Calls the named MCP tool once. An uncertain send never triggers a retry. */
 export function callTool(
-  client: Client,
+  client: Pick<Client, "callTool">,
   request: ToolRequest,
 ): Effect.Effect<unknown, unknown> {
   return Effect.tryPromise({
@@ -175,7 +207,24 @@ function acquireConnection(
 ): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
   return Effect.gen(function* () {
     const endpoint = settings.endpoint;
-    const credential = settings.credential;
+    let authProvider = settings.authProvider;
+    if (authProvider !== undefined && "tokens" in authProvider) {
+      authProvider = yield* renewableAuthorization(authProvider);
+    }
+    const transportOptions: StreamableHTTPClientTransportOptions =
+      settings.authProvider === undefined
+        ? {
+            requestInit: {
+              headers: {
+                Authorization: `Bearer ${Redacted.value(settings.credential)}`,
+              },
+              redirect: "error",
+            },
+          }
+        : {
+            authProvider,
+            requestInit: { redirect: "error" },
+          };
     if (!safeCredentialEndpoint(endpoint)) {
       return yield* new McpConnectError({ reason: "transport-failed" });
     }
@@ -187,14 +236,7 @@ function acquireConnection(
       Effect.tryPromise({
         try: (signal) =>
           client.connect(
-            new StreamableHTTPClientTransport(endpoint, {
-              requestInit: {
-                headers: {
-                  Authorization: `Bearer ${Redacted.value(credential)}`,
-                },
-                redirect: "error",
-              },
-            }),
+            new StreamableHTTPClientTransport(endpoint, transportOptions),
             { signal },
           ),
         catch: (cause) =>
@@ -223,26 +265,49 @@ function acquireConnection(
         const ready = options.onReady ?? Effect.void;
         const wakeups =
           options.receiveMode === "push"
-            ? inboxWakeups(endpoint, credential, ready).pipe(
+            ? inboxWakeups(endpoint, transportOptions, ready).pipe(
                 Stream.as(undefined),
               )
-            : Stream.concat(
-                Stream.fromEffect(ready),
-                Stream.tick(Duration.millis(250)),
-              ).pipe(Stream.as(undefined));
-        return Effect.acquireUseRelease(
-          Effect.forkIn(
-            Effect.interruptible(
-              receiveInbox(client, receiving, wakeups, accept),
-            ),
-            scope,
-          ),
-          Fiber.join,
-          Fiber.interrupt,
-        );
+            : pollingWakeups(options);
+        return runReception({ client, receiving, scope }, wakeups, accept);
       },
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
+}
+
+/** Both transports serialize SDK refreshes so rotating tokens are never reused concurrently. */
+function renewableAuthorization(provider: OAuthClientProvider) {
+  return Effect.gen(function* () {
+    const refresh = yield* Effect.makeSemaphore(1);
+    return {
+      token: () =>
+        Effect.runPromise(
+          Effect.tryPromise(() => Promise.resolve(provider.tokens())).pipe(
+            Effect.map((tokens) => tokens?.access_token),
+          ),
+        ),
+      onUnauthorized: (context) =>
+        Effect.runPromise(
+          refresh.withPermits(1)(
+            Effect.tryPromise({
+              try: () =>
+                auth(provider, {
+                  serverUrl: context.serverUrl,
+                  fetchFn: context.fetchFn,
+                  ...extractWWWAuthenticateParams(context.response),
+                }),
+              catch: () => new UnauthorizedError(),
+            }).pipe(
+              Effect.filterOrFail(
+                (result) => result === "AUTHORIZED",
+                () => new UnauthorizedError(),
+              ),
+              Effect.asVoid,
+            ),
+          ),
+        ),
+    } satisfies AuthProvider;
+  });
 }
 
 function decodeToolResult(
@@ -406,7 +471,7 @@ function managementFailure(
 }
 
 function consumePending<E, R>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ): Effect.Effect<void, E | McpReceiveError, R> {
   return Effect.gen(function* () {
@@ -452,8 +517,29 @@ function connectionRefused(cause: unknown): boolean {
   return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
 }
 
+function runReception<E, R>(
+  owner: {
+    readonly client: Pick<Client, "callTool">;
+    readonly receiving: Ref.Ref<boolean>;
+    readonly scope: Scope.Scope;
+  },
+  wakeups: Stream.Stream<undefined, McpReceiveError>,
+  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+) {
+  return Effect.acquireUseRelease(
+    Effect.forkIn(
+      Effect.interruptible(
+        receiveInbox(owner.client, owner.receiving, wakeups, accept),
+      ),
+      owner.scope,
+    ),
+    Fiber.join,
+    Fiber.interrupt,
+  );
+}
+
 function receiveInbox<E, R>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   receiving: Ref.Ref<boolean>,
   wakeups: Stream.Stream<undefined, McpReceiveError>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
@@ -474,4 +560,11 @@ function receiveInbox<E, R>(
       );
     }),
   );
+}
+
+function pollingWakeups(options: Pick<InboxOptions, "onReady">) {
+  return Stream.concat(
+    Stream.fromEffect(options.onReady ?? Effect.void),
+    Stream.tick(Duration.millis(250)),
+  ).pipe(Stream.as(undefined));
 }

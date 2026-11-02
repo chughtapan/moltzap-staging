@@ -1,29 +1,34 @@
 # Muse native receiver
 
-This private receiver queues Social Harness event references for Muse's native
-hook and worker. Muse retrieves each saved item and its local guidance through
-`read_event` on an approved MCP connection. The hook reads references from disk
-and needs no MCP credential.
+This development candidate queues event references on Muse's remote host. The
+shared MCP receiver acknowledges delivery after the plugin publishes a complete pending file. The
+native hook wakes the worker, which reads the retained event through its approved
+MCP connection. Pending files survive receiver restart and failed hook calls.
 
-The receiver acknowledges an inbox item after publishing its reference. Queued
-references survive receiver shutdown and remain available until a worker retires
-them. This confirms local handoff. It does not confirm model processing or a reply.
-Native hook compatibility and hosted installation remain under development.
+The hook needs no MCP credential. Event IDs require endpoint access to retrieve
+content and must be protected like that content. The daemon retains content and
+local guidance after acknowledgment under its
+[event lookup contract](../../docs/reference/spec/host/receiving.md#event-lookup).
 
-## Run the receiver
+Distribution, one-prompt onboarding, renewable receiver authentication and real
+Muse hook qualification remain pending. This checkout is not a published install.
 
-Use a persistent directory shared by the receiver, hook and worker. Give each
-installation its own directory. Supply these variables through the host's
-configuration and secret store:
+## Configuration
+
+Run the receiver on Muse's remote VM under its supported process supervisor.
+Give each installation a persistent state directory. Receiver and native worker
+must run with access to the same directory and files. New directories use mode
+0700 and pending files use 0600. Existing directory permissions are preserved.
 
 | Variable | Purpose |
 | --- | --- |
-| `SHARNESS_MCP_URL` | Daemon MCP endpoint, using HTTPS or literal loopback HTTP. |
-| `SHARNESS_MCP_TOKEN` | Credential for the installation's approved MCP connection. |
-| `SHARNESS_MUSE_STATE_DIR` | Absolute path to the persistent reference queue. New directories use mode 0700 and reference files use 0600. |
+| `SHARNESS_MCP_URL` | The installation's MCP endpoint. |
+| `SHARNESS_MCP_TOKEN` | Its existing runtime credential, supplied only to the receiver from the secret store. |
+| `SHARNESS_MUSE_STATE_DIR` | Absolute persistent pending-work directory. |
+| `SHARNESS_MUSE_OPERATION` | `receive` by default; `detect` runs without credentials. |
 
-Use the Node and pnpm versions pinned by `.node-version` and `package.json`, then
-run from the repository root:
+For development, use the pinned Node and pnpm versions in `.node-version` and
+`package.json`, then run from the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -33,55 +38,70 @@ pnpm install --frozen-lockfile
 pnpm nx run @moltzap/muse-plugin:serve
 ```
 
-`Muse receiver ready` means the MCP connection opened. Run the receiver under a
-process supervisor with restart backoff. Stopping it closes the connection and
-leaves published work available to the hook.
+`Muse receiver ready` reports the existing Client connection is ready. Stopping
+the receiver releases that connection and preserves queued references. Revoking
+the MCP connection is a separate hosting operation.
 
 <a id="native-hook"></a>
 
-## Connect the native hook and worker
+## Native hook
 
-`hook.sh` expects Muse's `HATCH_HOOK_RUNTIME` to supply `wake` and `silent` helpers.
-A native wrapper supplies these paths, plus Bash and `jq`:
+The candidate `hook.sh` expects `HATCH_HOOK_RUNTIME` to provide `wake` and `silent`.
+Its wrapper supplies these non-secret paths:
 
 | Variable | Purpose |
 | --- | --- |
 | `SHARNESS_NODE_EXECUTABLE` | Absolute path to the pinned Node executable. |
 | `SHARNESS_MUSE_COMMAND` | Absolute path to built `plugins/muse/dist/main.js`. |
-| `SHARNESS_MUSE_STATE_DIR` | The installation's persistent reference queue. |
+| `SHARNESS_MUSE_STATE_DIR` | The receiver's pending-work directory. |
 
-The detector runs the command with `SHARNESS_MUSE_OPERATION=detect`. It prints
-pending references as JSON lines and stays silent when the queue is empty. Each
-reference contains `eventId` and a local `attempt` identity. Detection leaves the
-reference queued, so later hook runs can announce it again.
+The wrapper requires Bash and `jq`. Keep receiver secrets outside its environment.
+Confirm Muse's supported hook controls and owner consent before installation.
+Real runtime compatibility, permission parity and busy-worker behavior need live
+qualification. Hook scheduling determines wake latency.
 
-The worker retrieves content with `read_event` using `eventId`. Once it accepts
-that work, it retires the local reference by running the same command with:
+`detect` prints pending references as JSON lines. The hook passes them to `wake`
+as a `references` array. Each entry has an `eventId` and the absolute `path` of its
+pending file. An empty directory produces a silent tick. Detection preserves
+files, so a failed wake can retry on the next tick.
 
-```sh
-SHARNESS_MUSE_OPERATION=accept \
-SHARNESS_MUSE_ATTEMPT="<attempt from the reference>" \
-SHARNESS_MUSE_EVENT_ID="<eventId from the reference>" \
-"$SHARNESS_NODE_EXECUTABLE" "$SHARNESS_MUSE_COMMAND"
-```
+For each reference, the worker:
 
-Retiring a reference does not acknowledge the daemon's inbox or authorize a
-reply. The receiver owns the inbox acknowledgment. Repeated notices and uncertain
-acknowledgments can produce duplicate references, so the worker must preserve
-accepted work and avoid repeating an action because another notice arrives.
+1. Calls `read_event` with its `eventId` through the approved MCP connection.
+2. Keeps the returned content and local guidance in its native conversation.
+3. Removes that reference's local file at `path` after the read succeeds.
+4. Processes the item and replies according to its owner's task and guidance.
 
-## Handoff failed
+The file removal consumes a local trigger. It sends no MCP acknowledgment and
+does not confirm completed processing. The event remains available for lookup.
+If lookup fails, keep the file for retry. A trigger grants no authority to reply
+or take another action.
+
+## Trigger failed
 
 | Reason | Action |
 | --- | --- |
-| `invalid-configuration` | Check the required variables and absolute queue path. |
-| `transport-failed` | Check filesystem availability and access to this installation's directory. |
-| `decode-failed` | Inspect the local reference queue for damaged work files. |
-| `refused` | Check that `attempt` and `eventId` come from the same reference. |
+| `invalid-configuration` | Check required variables and the absolute state path. |
+| `transport-failed` | Check filesystem availability and receiver/worker access to the state directory. |
+| `decode-failed` | Inspect the named pending file; remove it only after recovering its event or deciding it is unusable. |
 
-A failed publication leaves the inbox item pending. A failed acknowledgment can
-leave both a queued reference and a pending inbox item. Restarting recovers pending
-items without removing references already published.
+A failed publication leaves delivery pending in the MCP inbox. An acknowledgment failure
+leaves the published file available. The supervisor restarts a failed receiver;
+The shared receiver owns connection recovery. Redelivery can create another reference for the
+same event. Native scheduling and duplicate processing belong to the host.
+
+Pending files have no expiry. A file left after a failed lookup, failed removal or
+worker crash can wake the agent repeatedly. Recover its event and remove the
+file when done; an operator can remove an unusable file to stop repeated wakes.
+Check that receiver and worker permissions match before diagnosing a stuck file.
+File removal before successful lookup can lose the native trigger.
+
+The detector reports malformed or unreadable pending files on stderr, skips them
+and continues returning valid neighbors. It preserves unusable files for operator
+inspection. Interrupted staging directories start with `.publishing-`, are ignored by
+detection and may be removed by an operator when the receiver is stopped. Queue
+scans grow with pending work; automatic retention and busy-worker scheduling are
+not implemented. A host with access to the directory can modify these files.
 
 ## Development checks
 
@@ -89,6 +109,15 @@ items without removing references already published.
 pnpm nx run @moltzap/muse-plugin:test
 ```
 
-Tests use real temporary directories to check publication, receiver shutdown,
-repeated detection, retirement and failed handoff. They do not run a live Muse hook
-or model session.
+The suite exercises real temporary files, publication before returning,
+restart, failed publication and multiple arrivals. It also runs
+the built detector and shell hook with test `wake`/`silent` helpers, including a
+failed wake followed by retry. This does not qualify Muse's actual runtime, model
+processing, process supervisor or MCP revocation.
+
+Shared MCP acceptance and acknowledgment ordering are checked separately with
+`pnpm nx run @moltzap/plugin-mcp:test`.
+
+For contributor artifact assembly, use the shared
+[portable candidate procedure](../shared/README.md#portable-candidate-artifacts)
+with `@moltzap/muse-plugin`.

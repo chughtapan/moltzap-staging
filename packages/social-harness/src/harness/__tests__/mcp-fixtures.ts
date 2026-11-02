@@ -18,6 +18,7 @@ import {
 import { generateKeyPairSync } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { McpAuthentication } from "../mcp/authentication.js";
 import { issueTestCard, makeTestAuthority } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { FirewallPolicyError } from "../../firewall/rules.js";
@@ -41,6 +42,7 @@ const mcpTestHeaders = {
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly registered?: boolean;
+    readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
 ) {
@@ -88,7 +90,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const app = yield* makeMcpHttpApp({
-    credential: mcpTestCredential,
+    ...(options.authentication ?? { credential: mcpTestCredential }),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

@@ -5,19 +5,11 @@ import {
   CLIENT_INFO_META_KEY,
   PROTOCOL_VERSION_META_KEY,
   StreamableHTTPClientTransport,
+  type StreamableHTTPClientTransportOptions,
   SUBSCRIPTION_ID_META_KEY,
 } from "@modelcontextprotocol/client";
 import { INBOX_PENDING_EVENT, packageVersion } from "@moltzap/social-harness";
-import {
-  Data,
-  Deferred,
-  Effect,
-  Queue,
-  Redacted,
-  Schema,
-  Stream,
-  Take,
-} from "effect";
+import { Data, Deferred, Effect, Queue, Schema, Stream, Take } from "effect";
 import { randomUUID } from "node:crypto";
 
 /** Reception failures contain no transport body, credentials or peer content. */
@@ -266,7 +258,7 @@ const watchSilence = (state: Reception) =>
  */
 export const inboxWakeups = (
   endpoint: URL,
-  credential: Redacted.Redacted,
+  options: StreamableHTTPClientTransportOptions,
   onReady?: Effect.Effect<void>,
 ): Stream.Stream<boolean, McpReceiveError> =>
   Stream.unwrapScoped(
@@ -277,12 +269,7 @@ export const inboxWakeups = (
       const state: Reception = {
         queue,
         active,
-        transport: new StreamableHTTPClientTransport(endpoint, {
-          requestInit: {
-            headers: { Authorization: `Bearer ${Redacted.value(credential)}` },
-            redirect: "error",
-          },
-        }),
+        transport: new StreamableHTTPClientTransport(endpoint, options),
         abort: new AbortController(),
         id: randomUUID(),
         phase: "opening",
