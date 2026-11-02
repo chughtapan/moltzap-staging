@@ -1,14 +1,7 @@
 /** @file Host sends name a canonical conversation and return its accepted work identity. */
 
 import { Effect, type ParseResult, Schema } from "effect";
-import { SendError } from "../communication/conversations/errors.js";
-import {
-  AcceptResponse,
-  CollectiveId,
-  DeadlineSeconds,
-  DeclineResponse,
-  RequestedSchema,
-} from "../communication/index.js";
+import { SendError } from "../communication/errors.js";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
@@ -18,7 +11,14 @@ import {
   MessageAddressInput,
   MsgId,
   wellFormedString,
-} from "../communication/records/values.js";
+} from "../communication/messages.js";
+import {
+  AcceptResponse,
+  CollectiveId,
+  DeadlineSeconds,
+  DeclineResponse,
+  RequestedSchema,
+} from "../communication/service.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { checkedGuidanceSchema } from "../firewall/check.js";

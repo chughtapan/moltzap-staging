@@ -6,7 +6,7 @@ export {
   WireVersions,
 } from "./identity/wire-version.js";
 /** Test processes create signed HTTP attempts with production signing authority. */
-export { signAgentRequest } from "./identity/http-signatures.js";
+export { signAgentRequest } from "./identity/authentication.js";
 /** Offline model evaluation remains independent of storage and daemon startup. */
 export {
   CheckInputError,

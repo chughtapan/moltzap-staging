@@ -3,14 +3,13 @@
 import { Either, Encoding, FastCheck as fc, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import type { CheckedGuidance } from "../firewall/check.js";
-import { digest, testAgentView } from "../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../__tests__/collective-id-fixtures.js";
-import { requestId } from "../__tests__/collective-operation-fixtures.js";
-import { MessageAddressInput } from "../communication/records/values.js";
+import { digest, testAgentCard } from "../__tests__/agents.js";
+import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
 import {
   answerFieldsText,
   MAXIMUM_DEADLINE_SECONDS,
-} from "../communication/requests/contracts.js";
+  MessageAddressInput,
+} from "../communication/messages.js";
 import { FirewallRefusal, PermittedItem } from "../firewall/service.js";
 import {
   type MessageTextError,
@@ -21,6 +20,8 @@ import {
   renderLocalGuidance,
   renderOutcome,
 } from "./render.js";
+
+const requestId = collectiveOperationId(testAgentCard("agent:bob").agentId);
 
 const checkId = `chk_${"a".repeat(64)}`;
 const withheld = {
@@ -61,11 +62,11 @@ function keepsPeerTextOnItsOwnLine() {
     closedAt: 0,
     closedBy: "settled",
     op: "all_gather",
-    operationId: collectiveOperationId(testAgentView("agent:alice").agentId, 1),
+    operationId: collectiveOperationId(testAgentCard("agent:alice").agentId, 1),
     question: `Which day works?${FORGED_LINE}`,
     outcomes: [
       {
-        member: testAgentView("agent:bob"),
+        member: testAgentCard("agent:bob"),
         outcome: {
           kind: "invalid",
           reason: answerFieldsText([
@@ -73,7 +74,7 @@ function keepsPeerTextOnItsOwnLine() {
           ]),
         },
       },
-      { member: testAgentView("agent:carol"), outcome: { kind: "declined" } },
+      { member: testAgentCard("agent:carol"), outcome: { kind: "declined" } },
     ],
   });
   if (item.kind !== "collectiveResult") {
@@ -94,11 +95,11 @@ function withheldResult() {
     closedAt: 0,
     closedBy: "settled",
     op: "gather",
-    operationId: collectiveOperationId(testAgentView("agent:alice").agentId, 1),
+    operationId: collectiveOperationId(testAgentCard("agent:alice").agentId, 1),
     question: withheld,
     outcomes: [
-      { member: testAgentView("agent:bob"), outcome: withheld },
-      { member: testAgentView("agent:carol"), outcome: { kind: "declined" } },
+      { member: testAgentCard("agent:bob"), outcome: withheld },
+      { member: testAgentCard("agent:carol"), outcome: { kind: "declined" } },
     ],
   });
 }
@@ -123,14 +124,14 @@ it("quotes a guided question and form while leaving endpoint answer instructions
     kind: "collectiveRequest",
     message: {
       msgId: digest("msg_", 2),
-      author: testAgentView("agent:alice"),
-      recipients: [testAgentView("agent:bob")],
+      author: testAgentCard("agent:alice"),
+      recipients: [testAgentCard("agent:bob")],
       content: [{ type: "text", text: "Which <day>?" }],
       operation: {
         kind: "request",
         op: "gather",
         operationId: collectiveOperationId(
-          testAgentView("agent:alice").agentId,
+          testAgentCard("agent:alice").agentId,
           1,
         ),
         deadlineAt: 1,
@@ -203,8 +204,8 @@ const normGuidance: CheckedGuidance = {
   subjects: [
     {
       id: "proposal",
-      sender: testAgentView("agent:alice"),
-      recipients: [testAgentView("agent:bob")],
+      sender: testAgentCard("agent:alice"),
+      recipients: [testAgentCard("agent:bob")],
       text: "Which day?",
     },
   ],
@@ -288,8 +289,8 @@ it("keeps hostile peer subjects quoted and attributed apart from local instructi
       subjects: [
         {
           id: "proposal",
-          sender: testAgentView("agent:alice"),
-          recipients: [testAgentView("agent:bob")],
+          sender: testAgentCard("agent:alice"),
+          recipients: [testAgentCard("agent:bob")],
           text,
         },
       ],
@@ -318,9 +319,9 @@ it("keeps withheld result entries local while grouping answer and question advic
     operationId: `col_${"A".repeat(64)}`,
     question: withheld,
     outcomes: [
-      { member: testAgentView("agent:bob"), outcome: withheld },
+      { member: testAgentCard("agent:bob"), outcome: withheld },
       {
-        member: testAgentView("agent:carol"),
+        member: testAgentCard("agent:carol"),
         outcome: { kind: "answered", content: { slot: "mon" } },
       },
     ],
@@ -330,7 +331,7 @@ it("keeps withheld result entries local while grouping answer and question advic
   }
   const rendered = renderLocalGuidance(
     {
-      answers: [{ member: testAgentView("agent:carol"), ...normGuidance }],
+      answers: [{ member: testAgentCard("agent:carol"), ...normGuidance }],
       question: normGuidance,
     },
     { text: renderCollectiveResult(item), origin: "endpoint" },

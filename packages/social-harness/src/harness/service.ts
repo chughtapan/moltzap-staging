@@ -17,7 +17,12 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { SendError } from "../communication/conversations/errors.js";
+import { SendError } from "../communication/errors.js";
+import {
+  AgentAddress,
+  GroupAddress,
+  type MessageAddressInput,
+} from "../communication/messages.js";
 import {
   Answer,
   Communication,
@@ -30,12 +35,7 @@ import {
   type PaginatedResult,
   Request,
   RequestError,
-} from "../communication/index.js";
-import {
-  AgentAddress,
-  GroupAddress,
-  type MessageAddressInput,
-} from "../communication/records/values.js";
+} from "../communication/service.js";
 import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import {
@@ -59,7 +59,7 @@ import {
   IdentityError,
   type RegistrationError,
   type RegistrationRequest,
-} from "../identity/service.js";
+} from "../identity/identity.js";
 import {
   catalogCursor,
   DeliveryAcknowledgeError,

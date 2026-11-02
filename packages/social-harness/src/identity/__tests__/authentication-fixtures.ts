@@ -1,4 +1,5 @@
-/** @file Signed identities and RFC 9421 requests for Authentication behavior tests. */
+/** @file Signed cards and HTTP requests for identity service behavior tests. */
+
 import {
   Headers,
   HttpClientRequest,
@@ -16,24 +17,60 @@ import {
 import {
   AgentId,
   AgentIdentityCard,
+  type AgentIdentityCardClaims,
+  agentIdentityCardSigning,
+  type AgentIdentityCardVerificationError,
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
 } from "../agent.js";
-import { Authentication } from "../authentication.js";
 import {
+  Authentication,
   AuthenticationFailedError,
   signAgentRequest,
-} from "../http-signatures.js";
+} from "../authentication.js";
 import {
   AgentSigningAuthority,
   agentSigningPrivateKey,
   ed25519PublicKeyThumbprintUri,
 } from "../keys.js";
-import {
-  AgentIdentityCardIssuedAt,
-  makeVerifiedCard,
-} from "./agent-card-fixtures.js";
+import { wireVersions } from "../wire-version.js";
+
+/** Whole-second UTC issuance evidence carried by an AgentIdentityCard. */
+// eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the package-owned domain name they decode.
+export const AgentIdentityCardIssuedAt = agentIdentityCardSigning.issuedAt;
+/** Validated nominal value decoded by AgentIdentityCardIssuedAt. */
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one package boundary model.
+export type AgentIdentityCardIssuedAt = typeof AgentIdentityCardIssuedAt.Type;
+
+interface CardFixtureInput
+  extends Omit<AgentIdentityCardClaims, "kind" | "sharnessVersion"> {
+  readonly registrySigningAuthority: AgentSigningAuthority;
+}
+
+/**
+ * Signs immutable card claims for Identity fixtures.
+ *
+ * @param input Complete identity fields and Registry signing authority.
+ * @returns A Registry-verified immutable AgentIdentityCard.
+ */
+export const makeVerifiedCard = (
+  input: CardFixtureInput,
+): Effect.Effect<
+  VerifiedAgentIdentityCard,
+  AgentIdentityCardVerificationError
+> =>
+  Effect.gen(function* () {
+    const { registrySigningAuthority, ...claims } = input;
+    return yield* agentIdentityCardSigning.sign(
+      {
+        kind: "agentCard",
+        sharnessVersion: yield* wireVersions.emitted,
+        ...claims,
+      },
+      registrySigningAuthority,
+    );
+  }).pipe(Effect.withSpan("makeVerifiedCard"));
 
 /** Independent Registry and agent signing keys bound by the verified card. */
 export interface IdentityFixture {
@@ -211,14 +248,6 @@ export const verifyAgentRequest = (prepared: PreparedRequest) =>
   Authentication.verifyRequest({
     request: prepared.serverRequest,
     body: prepared.bodyBytes,
-  });
-
-/** A view of `value` that throws on every member read. */
-export const unreadable = <Value extends object>(value: Value): Value =>
-  new Proxy(value, {
-    get: () => {
-      throw new Error("unreadable");
-    },
   });
 
 /**
