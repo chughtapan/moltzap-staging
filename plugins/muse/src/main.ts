@@ -1,10 +1,8 @@
 /** @file Remote Muse receiver and credential-free pending-work detector. */
 import { FetchHttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
-import { packageVersion } from "@moltzap/social-harness";
 import { Config, Console, Effect, Layer } from "effect";
 import { isAbsolute } from "node:path";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
 import { MuseWakeError } from "./errors.js";
 import { detectMuseWork, makeMuseWakeup } from "./index.js";
 
@@ -41,12 +39,26 @@ const program = Effect.gen(function* () {
   ),
 );
 
+/** Native detector ticks avoid loading network clients and daemon service modules. */
 function receive(directory: string) {
   return Effect.gen(function* () {
     const config = yield* Config.all({
       endpoint: Config.url("SHARNESS_MCP_URL"),
       credential: mcpCredential,
     });
+    const [{ acquireMcpConnection }, { packageVersion }] = yield* Effect.all(
+      [
+        Effect.tryPromise({
+          try: () => import("#sharness-mcp/mcp"),
+          catch: () => new MuseWakeError({ reason: "invalid-configuration" }),
+        }),
+        Effect.tryPromise({
+          try: () => import("@moltzap/social-harness"),
+          catch: () => new MuseWakeError({ reason: "invalid-configuration" }),
+        }),
+      ],
+      { concurrency: 2 },
+    );
     const wake = yield* makeMuseWakeup(directory);
     const connection = yield* acquireMcpConnection(config, {
       name: "sharness-muse",

@@ -2,8 +2,7 @@
 import { Command, FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { DeliveryAcknowledgeError } from "@moltzap/social-harness";
-import { ConfigProvider, Effect, Ref, Schema } from "effect";
+import { ConfigProvider, Effect, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Only POSIX permission constants are imported; all filesystem operations use Effect.
 import { constants } from "node:fs";
@@ -12,43 +11,34 @@ import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
 import { detectMuseWork, makeMuseWakeup } from "./index.js";
 
-const eventId = `evt_${"A".repeat(43)}`;
-const anotherEventId = `evt_${"B".repeat(43)}`;
+const eventId = `dlv_${"A".repeat(43)}`;
+const anotherEventId = `dlv_${"B".repeat(42)}A`;
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "sharness-muse-" });
   const directory = join(root, "pending");
   const wake = yield* makeMuseWakeup(directory);
-  const receipts = yield* Ref.make(0);
-  const receive = (id = eventId) =>
-    wake({
-      eventId: id,
-      acknowledge: Ref.update(receipts, (count) => count + 1),
-    });
-  return { fs, root, directory, wake, receipts, receive };
+  const receive = (id = eventId) => wake({ deliveryToken: id });
+  return { fs, root, directory, wake, receive };
 });
 type Fixture = Effect.Effect.Success<typeof fixture>;
 
-function queuesBeforeAcknowledging() {
-  return inDirectory(({ fs, directory, wake }) =>
-    wake({
-      eventId,
-      acknowledge: Effect.gen(function* () {
-        expect(
-          (yield* detectMuseWork(directory)).map((work) => work.eventId),
-        ).toEqual([eventId]);
-      }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.orDie),
+function publishesBeforeReturning() {
+  return inDirectory(({ directory, receive }) =>
+    Effect.gen(function* () {
+      yield* receive();
+      expect(
+        (yield* detectMuseWork(directory)).map((work) => work.eventId),
+      ).toEqual([eventId]);
     }),
   );
 }
 
 function survivesRestart() {
-  return inDirectory(({ directory, receive, receipts }) =>
+  return inDirectory(({ directory, receive }) =>
     Effect.gen(function* () {
       yield* receive().pipe(Effect.scoped);
       yield* makeMuseWakeup(directory).pipe(Effect.scoped);
-
-      expect(yield* Ref.get(receipts)).toBe(1);
       expect(
         (yield* detectMuseWork(directory)).map((work) => work.eventId),
       ).toEqual([eventId]);
@@ -74,7 +64,7 @@ function retainsUntilRead() {
 }
 
 function keepsMultipleArrivals() {
-  return inDirectory(({ directory, receive, receipts }) =>
+  return inDirectory(({ directory, receive }) =>
     Effect.gen(function* () {
       yield* Effect.all([receive(), receive(anotherEventId)], {
         concurrency: 2,
@@ -86,7 +76,6 @@ function keepsMultipleArrivals() {
           .map((work) => work.eventId)
           .sort((left, right) => left.localeCompare(right)),
       ).toEqual([eventId, anotherEventId]);
-      expect(yield* Ref.get(receipts)).toBe(2);
     }),
   );
 }
@@ -115,27 +104,8 @@ function protectsPendingReference() {
   );
 }
 
-function retainsOnReceiptFailure() {
-  return inDirectory(({ directory, wake }) =>
-    Effect.gen(function* () {
-      const failure = new DeliveryAcknowledgeError({
-        reason: "consumer-revoked",
-      });
-      const result = yield* wake({
-        eventId,
-        acknowledge: Effect.fail(failure),
-      }).pipe(Effect.flip);
-
-      expect(result).toBe(failure);
-      expect(
-        (yield* detectMuseWork(directory)).map((work) => work.eventId),
-      ).toEqual([eventId]);
-    }),
-  );
-}
-
 function refusesFailedPublication() {
-  return inDirectory(({ fs, directory, receive, receipts }) =>
+  return inDirectory(({ fs, directory, receive }) =>
     Effect.gen(function* () {
       yield* fs.remove(directory, { recursive: true });
       yield* fs.writeFileString(directory, "unavailable queue");
@@ -143,7 +113,6 @@ function refusesFailedPublication() {
       expect(yield* receive().pipe(Effect.flip)).toMatchObject({
         reason: "transport-failed",
       });
-      expect(yield* Ref.get(receipts)).toBe(0);
     }),
   );
 }
@@ -185,7 +154,7 @@ function hookRetry() {
               new URL("../dist/main.js", import.meta.url),
             ),
             MUSE_TEST_WAKE_EXIT: exit,
-            SHARNESS_RUNTIME_TOKEN: "",
+            SHARNESS_MCP_TOKEN: "",
           }),
         );
 
@@ -221,11 +190,11 @@ function inDirectory<A, E, R>(
 
 describe("Muse pending triggers", () => {
   it(
-    "publishes the retained reference before acknowledging",
-    queuesBeforeAcknowledging,
+    "publishes the retained reference before returning custody",
+    publishesBeforeReturning,
   );
   it(
-    "retains acknowledged work across receiver shutdown and restart",
+    "retains queued work across receiver shutdown and restart",
     survivesRestart,
   );
   it(
@@ -236,10 +205,6 @@ describe("Muse pending triggers", () => {
   it(
     "protects references in an existing traversable state directory",
     protectsPendingReference,
-  );
-  it(
-    "preserves queued work when acknowledgment fails",
-    retainsOnReceiptFailure,
   );
   it(
     "leaves delivery pending when publication fails",

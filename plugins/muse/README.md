@@ -104,8 +104,11 @@ not implemented. A host with access to the directory can modify these files.
 pnpm nx run @moltzap/muse-plugin:test
 ```
 
-The suite exercises real temporary files, publication before acknowledgment,
-restart, failed publication/acknowledgment and multiple arrivals. It also runs
+The suite exercises real temporary files, publication before returning,
+restart, failed publication and multiple arrivals. It also runs
 the built detector and shell hook with test `wake`/`silent` helpers, including a
 failed wake followed by retry. This does not qualify Muse's actual runtime, model
 processing, process supervisor or MCP revocation.
+
+Shared MCP acceptance and acknowledgment ordering are checked separately with
+`pnpm nx run @moltzap/plugin-mcp:test`.
