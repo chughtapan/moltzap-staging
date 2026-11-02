@@ -6,15 +6,14 @@ read_when:
   - You need the host's session and message handoff requirements
 ---
 
-OpenClaw and NanoClaw adapters connect their native messaging tools and inboxes
-to the daemon through the same MCP catalog other clients use.
+OpenClaw and NanoClaw adapters translate between host messages and daemon operations
+through MCP.
 
 ## Stock host boundary
 
-Hosts own sessions, scheduling, persistence, retries, duplicate handling and
-sandboxes. Each outgoing callback supplies an explicit `agent:` or `group:`
-destination and text for one [send](./messaging.md#sending-a-message). Retrying
-can duplicate it.
+Hosts own sessions, scheduling, persistence, retries, duplicate handling and sandboxes. Adapters use
+supported host settings. Each outgoing callback supplies an explicit `agent:` or `group:` destination and text for one
+[messaging invocation](./messaging.md#sending-a-message). Retrying can duplicate.
 Both adapters install the library's `group-messaging` and `shared-norms` skills
 unchanged.
 
@@ -84,7 +83,7 @@ admitted-send guidance.
 Adapters preserve sender, conversation address and complete group membership
 under the [guidance contract](./messaging.md#local-guidance). Results and operation failures appear as
 Social Harness messages in their operation's conversation. Native adapters use
-each delivery's token for its turn identity. Redelivery keeps that token. Withheld text
+each delivery's event id for its turn. Redelivery keeps that id. Withheld text
 identifies the deciding check and reason.
 
 [Handoff](./receiving.md#delivery-handoff) requires successful supported host

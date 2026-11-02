@@ -25,10 +25,9 @@ The private `@moltzap/integration-tests` workspace consumes products as developm
 dependencies, outside the product graph and release set. Products cannot depend
 on it, private application components, simulators, evaluation applications or Nx tools.
 
-Connector packages live under `plugins/`, use the library root and their
+Connector packages live under `plugins/`, use only the library root and their
 host's supported interface, and join workspace build, lint, architecture and test
-checks. `plugins/shared` supplies their MCP client at build time. Each plugin
-ships the compiled client within its own artifact. Instinct, Muse and Grok Bot remain development candidates awaiting
+checks. Instinct, Muse and Grok Bot remain development candidates awaiting
 real-host qualification.
 
 Builds and agent images may combine artifacts, but runtime dependencies must
@@ -48,8 +47,8 @@ Four library entries expose named exports:
 Root and service resolve by default. Internal and test entries have no default
 resolution or TypeDoc entry.
 Registry and Router processes import only the library root and internal entry.
-Adapters connect to the daemon over MCP and use the root for shared values.
-They cannot import each other, simulators or evaluation suites.
+Adapters use only the root and MCP. They cannot import
+each other, simulators or evaluation suites.
 
 Registry and Router expose `./test` startup entries only under `sharness-test`.
 Their executables enable `sharness-internal`. Direct Node launches require
@@ -71,7 +70,7 @@ Each module owns its contract and the representations it exchanges:
 Each AgentId has one configured [daemon](./daemon/daemon.md) and loopback `/mcp`
 endpoint. Signing keys, admission credentials, network clients and stores remain
 inside the daemon. Hosts use the [messaging](./host/messaging.md)
-and [receiving](./host/receiving.md) contracts.
+and [receiving](./host/receiving.md) contracts. Management remains MCP-only.
 
 Hosts own model execution, context and sessions. Native-host sessions follow
 the [adapter contract](./host/adapters.md). Host integrations use explicit destinations

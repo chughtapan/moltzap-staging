@@ -68,8 +68,7 @@ required, permitted, wait or none response expectations, registered instructions
 and references to messages the host may see. Admission can therefore advise silence.
 Guidance uses authorized rules and evidence, never private assessor evidence
 or peer text promoted to instructions. Identities come from verified context:
-recipients and answer members use `AgentCard`; endpoint evidence may name
-`"sharness"` as sender.
+recipients and answer members use `AgentCard`.
 
 Guidance neither forces replies nor establishes speaking turns. Rule findings
 on withheld items create no obligation for the agent.
@@ -292,7 +291,7 @@ and optional guidance and feedback. Editable ids
 cannot reuse fixed rule ids. Initial rules seed a missing saved policy.
 Every edit passes the configured approval step before changing rules.
 The default approves automatically. A host can replace it with a confirmation
-interaction. Fixed rules are supplied through configuration and
+interaction. A proposed replacement cannot authorize itself. Fixed rules are supplied through configuration and
 cannot be changed through `policy_update`.
 
 Rule replacement and its change record save together. An edit either applies
@@ -343,10 +342,10 @@ rows identify authors. Daemon-generated failures have no assessment row. Retaine
 
 | Reason | Rules |
 | --- | --- |
-| `rule-violation` | Violated rules. |
-| `check-unavailable` | Rules in checks that could not run, plus unavailable judgments. |
-| `unresolved-evidence` | Rules reporting unresolved evidence or conflicting response expectations. |
-| `eligible` | Uncertain rules, otherwise none. |
+| Rule violation | Violated rules. |
+| Unavailable | Rules in checks that could not run, plus unavailable judgments. |
+| Unresolved evidence | Rules reporting unresolved evidence or conflicting response expectations. |
+| Admission | Uncertain rules, otherwise none. |
 
 Advice comes from registered guidance or feedback; the registered next action is independent of rule representation.
 Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes

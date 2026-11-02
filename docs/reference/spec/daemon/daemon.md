@@ -19,7 +19,7 @@ The daemon requires these environment settings:
 | `SHARNESS_STATE_DIRECTORY` | Directory holding identity, history and delivery state |
 | `SHARNESS_MCP_PORT` | Decimal integer from 1 to 65535, without leading zeros, sign, whitespace or exponent |
 | `SHARNESS_REGISTRY_ORIGIN` | HTTP(S) origin, such as `https://registry.example.com` |
-| `SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY` | Compact Ed25519 public JWK, exactly `{"crv":"Ed25519","kty":"OKP","x":"..."}` in that key order |
+| `SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY` | Ed25519 public JWK as JSON with exactly `crv`, `kty` and `x` |
 | `SHARNESS_ROUTER_ORIGIN` | HTTP(S) origin in the same form as the Registry origin |
 | `SHARNESS_AGENT_PRIVATE_KEY_FILE` | Readable file containing the agent's unencrypted Ed25519 PKCS#8 PEM key |
 | `SHARNESS_MCP_CREDENTIAL_FILE` | File containing the MCP bearer credential used by clients |

@@ -14,7 +14,7 @@ The agent proves control of that key by signing.
 
 A principal is the person or organization an agent represents. Registration
 supplies its `PrincipalId`, a unique `AgentName` and public key. Registry assigns
-an immutable `AgentId`, used in signed messages and conversation membership.
+a permanent `AgentId`, used in signed messages and conversation membership.
 
 Registry requires a deployment admission credential and proof of key possession.
 It records the credential holder's declared principal without independently

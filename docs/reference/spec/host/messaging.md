@@ -6,9 +6,10 @@ read_when:
   - You need send outcomes or connection lifetime guarantees
 ---
 
-Hosts use MCP to send messages, read saved work and acknowledge delivery. The
-host owns the agent's model, tools and private context. Its daemon verifies
-identities, applies policy and preserves accepted work.
+The host runs the agent's model, tools and private context and decides what to
+send. Its daemon verifies identities, applies policy, holds keys and protocol
+state, and preserves accepted work. Hosts use MCP for this
+contract.
 
 ## Destinations
 
@@ -54,9 +55,8 @@ sending it after restart. Every new call, including identical input, creates a f
 invocation. [Collectives](../communication/collectives.md) defines how questions
 become group or direct requests.
 
-Every successful send returns `id` and the canonical `address`. For a message
-or answer, `id` identifies the accepted message. For a gather or all_gather, it
-identifies the question and matches the eventual result's `operationId`.
+Every successful send returns `id` and the canonical `address`. A message or
+answer uses its `msgId`. A question uses its `operationId`.
 
 An admitted send may include firewall guidance. A refusal belongs to its
 invocation and creates no successful history entry or inbox item. Inbox storage
@@ -79,8 +79,8 @@ assessment.
   defects, uncertain acceptance writes or response loss after a request may have
   reached the daemon produce this outcome.
 
-Repeating a send creates new work. Hosts must not automatically repeat a
-`delivery-pending` or `outcome-unknown` send. Ending the host's wait does not
+Repeating a successful send creates another message. Hosts must not automatically
+repeat a `delivery-pending` or `outcome-unknown` send. Ending its wait does not
 cancel accepted work.
 
 ## Receiving items
@@ -103,41 +103,36 @@ History lists conversations and returns the messages retained for the agent.
 The content and guidance stay the same across rule edits and restart. Messages
 appear first, followed by local collective results in the order saved.
 
-Conversation listing returns `addresses`. A history read returns `records`
-and fixes its end position on the first page. Later appends remain outside
-that read. Pages contain at most 50 entries. Pass `nextCursor` as `cursor`
-with the same selection until `nextCursor` is absent. Cursors are opaque and
-confer no access. After reconnecting, begin a new traversal. An invalid cursor
-fails with `invalid-cursor` rather than starting a new read.
+A history read fixes an opaque end position at its start. Later appends remain
+outside that read. Pages contain at most 50 entries. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
+`cursor` with the same selection until absent. Cursors belong to the service
+lifetime. An invalid cursor returns `invalid-cursor`. Start a new traversal after
+reconnecting.
 
 An invalid history page returns no messages. Reading history neither
 acknowledges delivery nor authorizes a send.
 
 ## Connection lifetime
 
-An MCP connection selects one configured daemon and its credential. Hosts
-recover pending work after connecting. They may poll the inbox or use push
-notifications to wake those reads. Concurrent receivers can process the same
-item, so hosts must tolerate duplicate handoffs.
-
-Closing a connection stops its active receiver and in-flight requests.
-Canceling one request leaves other requests active. Accepted sends and saved
-inbox items survive the connection.
+An MCP connection represents one configured agent. Hosts may poll the inbox or
+use push wakeups to read saved work. Concurrent connections can repeat a handoff.
 
 Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
 without userinfo or fragments. Requests carrying credentials refuse redirects.
 
+Closing a connection stops its active receiver and in-flight requests. Canceling
+one request leaves others active. Accepted sends and saved items survive.
+
 ## MCP projection
 
-`send_message` takes structured input and returns a receipt for accepted work.
+`send_message` takes structured input and returns the accepted-work receipt.
 Invalid arguments fail before invocation. Invalid completed results produce
 `outcome-unknown`.
 
 JSON-RPC error data preserves send, collective and firewall refusals. Collective
 errors name failing members or fields and include `operationId` for known
-operations. Other failures preserve the owning registration, inbox, history or
-policy reason. Credentials, private evidence and internal causes stay inside
-the daemon.
+operations. Other tool failures preserve their domain reason. Credentials,
+private evidence and internal causes stay inside the daemon.
 
 [Catalog compatibility](../daemon/daemon.md#mcp-interface) governs results.
 [Experiment switches](../../daemon-experiments.mdx#experiment-switches) apply to

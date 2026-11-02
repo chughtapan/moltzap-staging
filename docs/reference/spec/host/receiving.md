@@ -6,10 +6,8 @@ read_when:
   - You are implementing polling, events, or webhook delivery
 ---
 
-The daemon retains incoming work until a host acknowledges delivery. Reading
-leaves an item pending, so a failed handoff can be retried. Polling, push wakeups
-and signed webhooks use the same saved content and guidance. The host owns
-subsequent execution, notification and replies.
+Items remain pending until the host accepts and acknowledges them. Reading leaves
+them pending. Failures before acknowledgment can replay them. Polling, push wakeups and webhooks use the same saved items and guidance. The host owns subsequent execution, notification and replies.
 
 ## Inbox items
 
@@ -25,15 +23,16 @@ governs withheld questions and answers.
 The daemon saves an incoming decision, its permitted content and guidance, and
 any answer visibility changes together. Interrupted checks leave messages
 pending for recovery. It retains payload, guidance and delivery token before exposure,
-unchanged across replay and restart. Delivery tokens are opaque lookup and
-acknowledgment identities. Acknowledgments survive for the state-directory lifetime.
+unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
+random bytes encoded as 43 canonical unpadded base64url characters.
+Acknowledgments survive for the state-directory lifetime.
 
 ## Messages
 
-Messages identify their author and recipients and carry text and data parts.
-Request and answer messages also expose their meaning in `message.operation`.
-Hosts use the enclosing saved item's `address` for replies. Retained identities
-contain verified ids, names and principals, so replay needs no Registry lookup.
+Messages identify their author and recipients and carry content. Requests and
+answers expose decoded meaning in `message.operation`. Hosts use the enclosing
+item's `address` for replies. Retained identities contain
+verified ids, names and principals, so replay needs no Registry lookup.
 
 Authors receive no self-copy. Remote messages follow local commit order,
 preserving conversation order. Catch-up adds missing deliveries. Gather results
@@ -48,13 +47,13 @@ callback. Failure leaves the item pending. Webhook acceptance is HTTP 2xx.
 Ambiguous handoffs can duplicate. Subsequent scheduling and persistence belong
 to the host.
 
-`acknowledge_delivery` takes `{"deliveryToken": token}` and returns `{}`.
-Repeating an acknowledgment is harmless. Closing a native receiver interrupts
-its pending callback before it can begin another acknowledgment.
+`acknowledge_delivery` takes exactly `{"deliveryToken": token}` and returns `{}`.
+Repeating an acknowledgment is harmless. Closing a native receiver interrupts its
+pending callback before it can begin another acknowledgment.
 
 ## Event lookup
 
-`read_event({eventId})` returns the saved `address`, `item` and any local `guidance`. An item's event id
+`read_event({eventId})` returns retained `address`, `item` and guidance. An item's event id
 is its delivery token. Protect this opaque reference like its content.
 
 Lookup remains available after acknowledgment, revocation and restart,
@@ -80,14 +79,15 @@ Notification cursors are `null`. A `wake_` plus a random UUID identifies only th
 notification and fails `read_event` with InvalidParams.
 
 `read_inbox` takes an optional `cursor` and returns `items` with any `nextCursor`.
-Each entry carries its `address`, `deliveryToken`, `item` and optional `guidance`.
-Follow `nextCursor` until absent. Pages hold at most 50 items and 2 MiB of saved
-content, bounded by the first page's insertion position. Later arrivals await a
-new traversal. Acknowledged items may disappear. After reconnecting, begin a
-new traversal. An invalid cursor fails with `invalid-cursor`.
+Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
+of stored content. Cursors stop at the first page's insertion boundary.
+Later arrivals await a new traversal. Acknowledged items may disappear. Reads never
+acknowledge. Clients may read through the same MCP interface. A read grants no delivery
+authority.
 
-Polling repeats these inbox reads. A push stream only wakes the same traversal.
-Reads grant neither acknowledgment nor send authority.
+Polling repeats `read_inbox`, following `nextCursor` until absent. A push stream
+wakes the same reads. Invalid cursors return `invalid-cursor`. Start a new
+traversal after reconnecting.
 
 ## Webhook consumer
 
@@ -109,13 +109,13 @@ Complete UTF-8 envelopes above 256 KiB instead carry
 `data: {kind: "reference", itemKind, bytes}` for [lookup](#event-lookup).
 
 Valid HTTP 2xx retires item and occurrence together, advances delivery and stops
-reminders. A receipt after expiry or revocation cannot acknowledge delivery. Failures retry with capped backoff. Suspension follows at least 100
+reminders. Receipts after expiry or revocation cannot acknowledge delivery. Failures retry with capped backoff. Suspension follows at least 100
 attempts spanning an hour. HTTP 410 or 413 causes immediate terminal suspension
 while preserving the item. Restart, refresh, expiry and subscription resume cannot
 clear it. Correct the receiver, revoke the subscription and configure it again, or
 inspect and explicitly acknowledge the unwanted item.
 
-Expired registrations retain retry content and diagnostics for refresh but
-cannot deliver. URL
+Expired registrations
+retain retry content and diagnostics for refresh but cannot deliver. URL
 changes require revocation, which preserves unread items. Owner status, revoke
 and resume expose state without URLs or secrets.
