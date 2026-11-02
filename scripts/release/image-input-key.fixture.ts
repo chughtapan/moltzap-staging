@@ -102,7 +102,7 @@ export function fixture(): string {
       version: "1",
       dependencies: { "@fixture/core": "workspace:*" },
     });
-    files[`packages/${service}/src/index.test.ts`] =
+    files[`packages/${service}/src/index.spec.ts`] =
       'import "@fixture/core/test";\n';
     files[`packages/${service}/src/index.ts`] =
       'import "@fixture/core";\nimport "@fixture/core/internal";\n';
@@ -224,7 +224,7 @@ function fixtureFiles(
       extends: "../../tsconfig.base.json",
       compilerOptions: { rootDir: "src", outDir: "dist" },
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts"],
+      exclude: ["src/**/*.spec.ts"],
     }),
     "packages/social-harness/src/index.ts": "export const publicValue = 1;\n",
     "packages/social-harness/src/internal.ts":

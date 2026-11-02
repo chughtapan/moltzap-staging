@@ -10,7 +10,7 @@
     "inbox.ts"
   ],
   "exclude": [
-    "*.test.ts",
+    "*.spec.ts",
     "dist"
   ],
   "references": [

@@ -1,8 +1,4 @@
-/**
- * @file What one launcher start runs, against an image-installed seed on a
- * temporary home volume and a registry answered in memory. Every candidate
- * here is refused before installation, so no test reaches npm or Sigstore.
- */
+/** @file Launcher selection and installation preserve a usable recorded release. */
 
 import {
   FileSystem,
@@ -11,16 +7,156 @@ import {
   Path,
 } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { live as it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { effect as effectIt, it, live as liveIt } from "@effect/vitest";
+import { Effect, Exit, FastCheck as fc, Layer, Option } from "effect";
+import { gzipSync } from "node:zlib";
 import { describe, expect } from "vitest";
 import {
+  choose,
+  compareVersions,
   integrityOf,
   type LauncherConfiguration,
   prepare,
+  readPackedManifest,
   readRecord,
   writeRecord,
 } from "./installation.js";
+
+const recorded = {
+  version: "2026.1021.1",
+  liveWireVersions: ["2026.1019.2", "2026.1022.1"],
+};
+const follow = { kind: "follow", distTag: "latest" } as const;
+
+/** A calendar version whose parts compare correctly as padded text. */
+const sortKey = (version: string): string =>
+  version
+    .split(".")
+    .map((part) => part.padStart(16, "0"))
+    .join(".");
+
+const calendarVersion = fc
+  .tuple(
+    fc.integer({ min: 1000, max: 9999 }),
+    fc.integer({ min: 100, max: 9999 }),
+    fc.nat(),
+  )
+  .map(([year, day, counter]) => `${year}.${day}.${counter}`);
+
+describe("following a dist-tag", () => {
+  it.prop(
+    "should take only a newer release within the recorded wire window",
+    [
+      fc.oneof(calendarVersion, fc.constant(recorded.version)),
+      fc.oneof(fc.constantFrom(...recorded.liveWireVersions), fc.string()),
+    ],
+    ([version, wireVersion]) => {
+      const choice = choose(recorded, { version, wireVersion }, follow);
+      const order = sortKey(version).localeCompare(sortKey(recorded.version));
+      const admitted = recorded.liveWireVersions.includes(wireVersion);
+      if (order === 0) {
+        expect(choice).toEqual({ kind: "keep", reason: "current" });
+      } else if (order < 0) {
+        expect(choice).toEqual({ kind: "keep", reason: "older" });
+      } else if (admitted) {
+        expect(choice).toEqual({ kind: "take" });
+      } else {
+        expect(choice).toEqual({ kind: "keep", reason: "outside-wire-window" });
+      }
+    },
+  );
+});
+
+describe("an exact pin", () => {
+  it.prop(
+    "should take a pinned release across version and wire changes",
+    [calendarVersion, fc.string()],
+    ([version, wireVersion]) => {
+      const choice = choose(
+        recorded,
+        { version, wireVersion },
+        { kind: "pinned", version },
+      );
+      expect(choice.kind === "take").toBe(version !== recorded.version);
+    },
+  );
+});
+
+describe("calendar versions", () => {
+  it.prop(
+    "should order versions by their numeric parts",
+    [calendarVersion, calendarVersion],
+    ([left, right]) => {
+      const order = compareVersions(left, right) ?? 0;
+      expect(Math.sign(order)).toBe(
+        Math.sign(sortKey(left).localeCompare(sortKey(right))),
+      );
+    },
+  );
+
+  it("leave a version that is not a calendar version unresolved", () => {
+    expect(
+      choose(recorded, { version: "next", wireVersion: "2026.1019.2" }, follow),
+    ).toEqual({ kind: "keep", reason: "unresolved" });
+  });
+});
+
+/** A gzipped ustar archive holding `files`, as `npm pack` lays one out. */
+const tarball = (files: Readonly<Record<string, string>>): Uint8Array => {
+  const blocks: Uint8Array[] = [];
+  for (const [name, text] of Object.entries(files)) {
+    const body = new TextEncoder().encode(text);
+    const header = new Uint8Array(512);
+    header.set(new TextEncoder().encode(name), 0);
+    header.set(
+      new TextEncoder().encode(body.length.toString(8).padStart(11, "0")),
+      124,
+    );
+    header[156] = 0x30;
+    blocks.push(
+      header,
+      body,
+      new Uint8Array((512 - (body.length % 512)) % 512),
+    );
+  }
+  blocks.push(new Uint8Array(1024));
+  return gzipSync(Buffer.concat(blocks));
+};
+
+const manifest = {
+  name: "@moltzap/social-harness",
+  version: "2026.1025.1",
+  dependencies: { "@moltzap/social-harness": "2026.1025.1" },
+};
+
+// @agent-code-guard/regression-only: The tarball layout is npm's, pinned by its examples.
+describe("a packed manifest", () => {
+  effectIt("is read from package/package.json, past the other entries", () =>
+    Effect.gen(function* () {
+      const read = yield* readPackedManifest(
+        tarball({
+          "package/README.md": "x".repeat(700),
+          "package/package.json": JSON.stringify(manifest),
+        }),
+      );
+      expect(read).toMatchObject(manifest);
+    }),
+  );
+
+  effectIt(
+    "is missing from a tarball without one, or from bytes that are not a tarball",
+    () =>
+      Effect.gen(function* () {
+        for (const bytes of [
+          tarball({ "package/index.js": "" }),
+          new TextEncoder().encode("not gzip"),
+        ]) {
+          const exit = yield* Effect.exit(readPackedManifest(bytes));
+          expect(Exit.isFailure(exit)).toBe(true);
+        }
+      }),
+  );
+});
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- versions and keep reasons are the launcher contract under test. */
 
@@ -132,8 +268,6 @@ const configuration = (
   selection,
   registry: REGISTRY,
 });
-
-const follow = { kind: "follow", distTag: "latest" } as const;
 
 const start = (routes: Routes, asked: string[] = []) =>
   Layer.merge(NodeContext.layer, registry(routes, asked));
@@ -342,36 +476,36 @@ const refusesAnUnlaunchableRecordedRelease = () =>
 
 // @agent-code-guard/regression-only: Each start outcome is one closed launcher rule, pinned by its example.
 describe("a launcher start", () => {
-  it(
+  liveIt(
     "refuses a recorded prefix holding the old daemon package",
     refusesAnUnlaunchableRecordedRelease,
   );
-  it("seeds the record from the image install and runs it", seedsTheRecord);
-  it(
+  liveIt("seeds the record from the image install and runs it", seedsTheRecord);
+  liveIt(
     "keeps the recorded release when a newer one's wire version is outside its window, without downloading it",
     keepsOutsideTheWireWindow,
   );
-  it(
+  liveIt(
     "keeps the recorded release when a candidate's bytes are not the ones npm recorded",
     keepsUnverifiedBytes,
   );
-  it(
+  liveIt(
     "keeps the recorded release when the registry is unreachable",
     keepsWhenUnreachable,
   );
-  it(
+  liveIt(
     "keeps the recorded release when a release pins a sibling to something other than a calendar version",
     keepsAnUnsafePin,
   );
-  it(
+  liveIt(
     "refuses to prepare while another live launcher holds the directory, and takes over a stale lock",
     waitsForNoLiveLauncher,
   );
-  it(
+  liveIt(
     "refuses to start a recorded release whose cached tarball changed",
     refusesAChangedTarball,
   );
-  it(
+  liveIt(
     "records the image's new release when a new image installed one where the recorded one was",
     followsANewImage,
   );
@@ -394,7 +528,7 @@ const keepsMissingLibraryWireVersion = () =>
     expect(asked.filter((url) => url.includes("/tarballs/"))).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(NodeContext.layer));
 
-it(
+liveIt(
   "keeps the recorded release when the Client manifest has no wire version",
   keepsMissingLibraryWireVersion,
 );

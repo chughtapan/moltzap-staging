@@ -70,7 +70,7 @@ describe("canonical identity JSON encoding", () => {
 
   it("round-trips generated JSON through one stable canonical spelling", () => {
     fc.assert(
-      fc.property(fc.jsonValue({ maxDepth: 4 }), (value) => {
+      fc.property(fc.jsonValue({ maxDepth: 16 }), (value) => {
         const firstEncoding = Effect.runSync(encodeCanonicalJson(value));
         const parsed = Effect.runSync(parseCanonicalJson(firstEncoding));
         const secondEncoding = Effect.runSync(encodeCanonicalJson(parsed));

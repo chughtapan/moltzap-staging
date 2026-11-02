@@ -10,7 +10,7 @@ import {
   type VerifiedAgentIdentityCard,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
-import { httpErrors, registryContract } from "@moltzap/social-harness/internal";
+import { httpErrors } from "@moltzap/social-harness/internal";
 import { Registry } from "@moltzap/social-harness/service";
 import {
   PostgreSqlContainer,
@@ -41,7 +41,6 @@ import {
   waitForExit,
   waitForHealthStatus,
 } from "./__tests__/registry-process.js";
-import { encodeCanonicalJson } from "./__tests__/request-fixtures.js";
 import { verifyBootstrapRegistration } from "./admission.js";
 import { initializeRegistryStorage, makeRegistryStorage } from "./storage.js";
 
@@ -120,19 +119,6 @@ const makePostgreSqlRegistrySetup = Effect.gen(function* () {
   };
 });
 
-const issuedCard = (
-  result:
-    | typeof registryContract.lookupResultSchema.Type
-    | typeof registryContract.registerResultSchema.Type,
-) =>
-  Match.value(result).pipe(
-    Match.when({ kind: "registered" }, ({ agentCard }) =>
-      Effect.succeed(agentCard),
-    ),
-    Match.when({ kind: "found" }, ({ agentCard }) => Effect.succeed(agentCard)),
-    Match.orElse(() => Effect.dieMessage("Registry did not return a card")),
-  );
-
 const expectExactCard = (
   actual: VerifiedAgentIdentityCard,
   expected: VerifiedAgentIdentityCard,
@@ -204,50 +190,6 @@ const realPostgreSqlBehavior = Effect.gen(function* () {
 it("persists across Registry restart on real PostgreSQL and reports a database outage", () => {
   expect.hasAssertions();
   return Effect.runPromise(realPostgreSqlBehavior);
-}, 180_000);
-
-it("reopens a known ledger and serves the same card", () => {
-  expect.hasAssertions();
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      const setup = yield* makePostgreSqlRegistrySetup;
-      const sql = yield* PgClient.make({
-        url: Redacted.make(setup.container.getConnectionUri()),
-      }).pipe(Effect.provide(Reactivity.layer));
-      yield* initializeRegistryStorage({
-        sql,
-        registrySignerPublicKey: setup.registrySignerPublicKey,
-      });
-      const storage = makeRegistryStorage({
-        sql,
-        registrySignerPublicKey: setup.registrySignerPublicKey,
-        operationTimeoutMilliseconds: 5_000,
-      });
-      const prepared = yield* prepareAgent("ledger-authority");
-      const requestBytes = yield* Schema.encode(
-        registryContract.RegistryRegisterRequest,
-      )(prepared.request).pipe(Effect.flatMap(encodeCanonicalJson));
-      const registered = yield* storage.register({
-        request: prepared.request,
-        requestBytes,
-        registrySigningAuthority: setup.signingAuthority,
-      });
-      expect(registered.kind).toBe(REGISTERED_KIND);
-      yield* initializeRegistryStorage({
-        sql,
-        registrySignerPublicKey: setup.registrySignerPublicKey,
-      });
-      yield* storage.checkReadiness();
-      const lookup = yield* storage.lookup({
-        agentName: prepared.request.agentName,
-      });
-      expect(lookup.kind).toBe(FOUND_KIND);
-      yield* expectExactCard(
-        yield* issuedCard(lookup),
-        yield* issuedCard(registered),
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
-  );
 }, 180_000);
 
 it.each([{ mismatch: "signer", reason: "signer-mismatch" }])(

@@ -51,10 +51,9 @@ const PACKAGE_SOURCE_FILES = [
 
 const TEST_SUPPORT_FILES = [
   "integration/**/*.ts",
-  "src/**/*.test.ts",
   "src/**/*.spec.ts",
-  "src/**/*.integration.test.ts",
-  "src/**/*.int.test.ts",
+  "src/**/*.integration.spec.ts",
+  "src/**/*.int.spec.ts",
   "src/__tests__/**/*.ts",
   "src/**/__tests__/**/*.ts",
   "src/testing/**/*.ts",
@@ -172,7 +171,7 @@ export function packageEslintConfig(options: PackageEslintOptions) {
     packageIgnores,
     {
       ...makeStrictBlock(PACKAGE_SOURCE_FILES, languageOptions, strictRules),
-      ignores: ["**/*.test.ts", "**/*.spec.ts"],
+      ignores: ["**/*.spec.ts"],
       rules: {
         ...strictRules,
         "jsdoc/check-tag-names": ["error", { definedTags }],
@@ -180,7 +179,7 @@ export function packageEslintConfig(options: PackageEslintOptions) {
     },
     makeStrictBlock(TEST_SUPPORT_FILES, languageOptions, strictRules),
     makePresetBlock(
-      ["src/**/*.integration.test.ts", "integration/**/*.integration.test.ts"],
+      ["src/**/*.integration.spec.ts", "integration/**/*.integration.spec.ts"],
       languageOptions,
       guard.configs.integrationTests,
     ),
@@ -258,7 +257,7 @@ export function agentImageEslintConfig(tsconfigRootDir: string) {
       },
     },
     {
-      files: ["**/*.test.ts"],
+      files: ["**/*.spec.ts"],
       rules: {
         "agent-code-guard/no-example-only-tests": "off",
         "agent-code-guard/no-hardcoded-assertion-literals": "off",
@@ -271,7 +270,7 @@ export function agentImageEslintConfig(tsconfigRootDir: string) {
 /** Flat configuration for tests/integration: the strict preset on every TypeScript file plus the integration-test preset on process suites. */
 export function integrationEslintConfig(
   tsconfigRootDir: string,
-  testFiles: readonly string[] = ["**/*.integration.test.ts"],
+  testFiles: readonly string[] = ["**/*.integration.spec.ts"],
 ) {
   const languageOptions = makeTsLanguageOptions(tsconfigRootDir, [
     "./tsconfig.json",

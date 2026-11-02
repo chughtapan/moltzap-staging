@@ -1,4 +1,5 @@
-/** @file Text checks preserve stage independence, provider failures and registered advice. */
+/** @file Message checks enforce configured limits and release only the advice their evidence permits. */
+
 import { effect as it } from "@effect/vitest";
 import {
   Cause,
@@ -9,6 +10,7 @@ import {
   FastCheck as fc,
   Fiber,
   Schema,
+  TestClock,
 } from "effect";
 import { expect } from "vitest";
 import {
@@ -23,6 +25,7 @@ import {
 } from "./check.js";
 import {
   decodeMessagePolicy,
+  type FirewallSettings,
   type TextPolicySettings,
   type TextRule,
 } from "./rules.js";
@@ -299,11 +302,6 @@ const malformedAnswers: ReadonlyArray<{
     name: "wrong sum",
     choice: "compliant",
     probabilities: { compliant: 0.9, violation: 0.9, unresolved: 0.9 },
-  },
-  {
-    name: "nonmaximal selection",
-    choice: "compliant",
-    probabilities: { compliant: 0.1, violation: 0.8, unresolved: 0.1 },
   },
   {
     name: "selection below the maximum by more than the probability tolerance",
@@ -865,5 +863,330 @@ it("holds oversized context without truncating it", () =>
 function requestBytes(request: DecisionRequest): number {
   return new TextEncoder().encode(JSON.stringify(request)).byteLength;
 }
+
+/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore assertion checks after public contract cases. */
+
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Judgments and safe boundary failures are the behavior under test. */
+// @agent-code-guard/regression-only: Captured evidence, configured text limits and inference deadlines protect concrete boundary failures.
+
+const boundaryDraft: typeof Message.Encoded = {
+  id: "draft",
+  sender: "local-agent",
+  recipients: ["peer-agent"],
+  text: "Tuesday works.",
+};
+const incoming: typeof Message.Encoded = {
+  id: "request",
+  sender: "peer-agent",
+  recipients: ["local-agent"],
+  text: "Does Tuesday work?",
+};
+const boundaryContext: typeof MessageContext.Encoded = {
+  agentId: "local-agent",
+  principal: "owner",
+  participants: [{ agentId: "peer-agent", principal: "peer-owner" }],
+  history: [
+    {
+      ...incoming,
+      id: "earlier",
+      visibleToAgent: true,
+    },
+  ],
+  facts: [
+    {
+      id: "private-fact",
+      text: "Owner's private schedule",
+      source: "owner",
+      visibility: "assessor",
+    },
+  ],
+  gaps: [],
+};
+const boundarySettings: typeof FirewallSettings.Encoded = {
+  timeoutMilliseconds: 1000,
+  maximumInputBytes: 100000,
+  maximumResultBytes: 100000,
+};
+it("allows incoming and outgoing messages with no rules", () =>
+  Effect.gen(function* () {
+    const firewall = {
+      rules: [],
+      revision: "fixture",
+      settings: boundarySettings,
+    };
+    expect(
+      (yield* checkMessage({
+        ...firewall,
+        event: { direction: "outgoing", message: boundaryDraft },
+        context: boundaryContext,
+      })).judgment,
+    ).toBe("allow");
+    expect(
+      (yield* checkMessage({
+        ...firewall,
+        event: { direction: "incoming", message: incoming },
+        context: boundaryContext,
+      })).judgment,
+    ).toBe("allow");
+  }));
+it("rejects ambiguous references, wrong attribution and duplicate recipients", () =>
+  Effect.gen(function* () {
+    const firewall = {
+      rules: [],
+      revision: "fixture",
+      settings: boundarySettings,
+    };
+    const duplicate = yield* checkMessage({
+      ...firewall,
+      event: { direction: "outgoing", message: boundaryDraft },
+      context: {
+        ...boundaryContext,
+        history: [...boundaryContext.history, ...boundaryContext.history],
+      },
+    }).pipe(Effect.flip);
+    const forged = yield* checkMessage({
+      ...firewall,
+      event: {
+        direction: "outgoing",
+        message: { ...boundaryDraft, sender: "owner" },
+      },
+      context: boundaryContext,
+    }).pipe(Effect.flip);
+    const otherEndpoint = yield* checkMessage({
+      ...firewall,
+      event: {
+        direction: "incoming",
+        message: { ...incoming, recipients: ["elsewhere"] },
+      },
+      context: boundaryContext,
+    }).pipe(Effect.flip);
+    const recipients = yield* checkMessage({
+      ...firewall,
+      event: {
+        direction: "outgoing",
+        message: { ...boundaryDraft, recipients: ["peer", "peer"] },
+      },
+      context: boundaryContext,
+    }).pipe(Effect.flip);
+    expect(duplicate.reason).toBe("context");
+    expect(forged.reason).toBe("message");
+    expect(otherEndpoint.reason).toBe("message");
+    expect(recipients.reason).toBe("message");
+  }));
+function budgetCheck(
+  decisions: DecisionProvider,
+  options: {
+    message: Message;
+    context: MessageContext;
+    rules: readonly TextRule[];
+    settings: TextPolicySettings;
+    incoming: boolean;
+  },
+) {
+  const configuration = {
+    rules: options.rules,
+    settings: boundarySettings,
+    textSettings: options.settings,
+    revision: "a".repeat(64),
+  };
+  return validateChecks(configuration).pipe(
+    Effect.zipRight(
+      checkMessage({
+        ...configuration,
+        provider: decisions,
+        event: {
+          direction: options.incoming ? "incoming" : "outgoing",
+          message: options.message,
+        },
+        context: options.context,
+      }),
+    ),
+  );
+}
+
+/** Schema-minimum message and context keep this boundary independent of variable evidence size. */
+const minimumInput = {
+  message: {
+    id: "m",
+    sender: "b",
+    recipients: ["a"],
+    text: "",
+  } satisfies Message,
+  context: {
+    agentId: "a",
+    principal: "p",
+    participants: [],
+    history: [],
+    facts: [],
+    gaps: [],
+  } satisfies MessageContext,
+};
+function checkMinimumRequests(
+  decisions: DecisionProvider,
+  maximumRequestBytes: number,
+  documents: readonly TextRule[] = rules,
+) {
+  return Effect.forEach(
+    [true, false],
+    (incoming) =>
+      budgetCheck(decisions, {
+        rules: documents,
+        ...minimumInput,
+        message: incoming
+          ? minimumInput.message
+          : {
+              ...minimumInput.message,
+              sender: minimumInput.context.agentId,
+              recipients: [minimumInput.message.sender],
+            },
+        incoming,
+        settings: { ...settings, maximumRequestBytes },
+      }),
+    { concurrency: 1 },
+  );
+}
+it.each([
+  rules,
+  rules.map(
+    (rule): TextRule => ({
+      id: rule.id,
+      text: rule.text,
+      applies: rule.id === "privacy" ? "incoming" : "outgoing",
+    }),
+  ),
+])(
+  "requires enough installation budget for reachable minimum requests in each direction",
+  (documents) =>
+    Effect.gen(function* () {
+      const choices = {
+        [`expectations:${proposalAcceptance.id}:assessment`]: "unresolved",
+      };
+      const captured: DecisionRequest[] = [];
+      yield* checkMinimumRequests(
+        provider(choices, captured),
+        Number.MAX_SAFE_INTEGER,
+        documents,
+      );
+      const minimumBytes = Math.max(...captured.map(requestBytes));
+      const results = yield* checkMinimumRequests(
+        provider(choices),
+        minimumBytes,
+        documents,
+      );
+      expect(results.map((result) => result.judgment)).toEqual([
+        "allow",
+        "allow",
+      ]);
+      const rejected = yield* validateChecks({
+        rules: documents,
+        textSettings: {
+          ...settings,
+          maximumRequestBytes: minimumBytes - 1,
+        },
+        settings: boundarySettings,
+        revision: "a".repeat(64),
+      }).pipe(Effect.flip);
+      expect(rejected.reason).toBe("rules");
+    }),
+);
+it.each([
+  {
+    content: "documents",
+    documents: [
+      {
+        id: proposalAcceptance.id,
+        applies: proposalAcceptance.applies,
+        text: "x".repeat(60000),
+      },
+    ],
+    fittingBudget: 70000,
+  },
+  {
+    content: "mandatory questions",
+    documents: EffectArray.makeBy(100, (index) => ({
+      id: `rule-${index}`,
+      applies: proposalAcceptance.applies,
+      text: "Follow the timetable.",
+    })),
+    fittingBudget: 200000,
+  },
+])(
+  "rejects oversized $content during policy validation",
+  ({ documents, fittingBudget }) =>
+    Effect.gen(function* () {
+      const configuration = {
+        id: "owner",
+        rules: documents,
+      };
+      yield* validateChecks({
+        ...configuration,
+        textSettings: { ...settings, maximumRequestBytes: fittingBudget },
+        settings: boundarySettings,
+        revision: "a".repeat(64),
+      });
+      const rejected = yield* validateChecks({
+        ...configuration,
+        textSettings: settings,
+        settings: boundarySettings,
+        revision: "a".repeat(64),
+      }).pipe(Effect.flip);
+      expect(rejected.reason).toBe("rules");
+    }),
+);
+
+it("holds a text assessment that exceeds its total deadline", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<undefined>();
+    const provider: DecisionProvider = {
+      decide: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.zipRight(Effect.never),
+        ),
+    };
+    const running = yield* checkMessage({
+      rules: rules,
+      revision: "fixture",
+      provider,
+      settings: { ...boundarySettings, timeoutMilliseconds: 10 },
+      textSettings: { ...settings, timeoutMilliseconds: 10_000 },
+      event: { direction: "outgoing", message: boundaryDraft },
+      context: boundaryContext,
+    }).pipe(Effect.fork);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("10 millis");
+    const result = yield* Fiber.join(running);
+    expect(result).toMatchObject({
+      judgment: "hold",
+      reason: "check-unavailable",
+    });
+    expect(result.findings).toEqual(
+      rules.map((rule) => ({
+        ruleId: rule.id,
+        outcome: "hold",
+        reason: "check-unavailable",
+      })),
+    );
+  }));
+
+it.each([{ maximumInputBytes: 1 }, { maximumResultBytes: 1 }])(
+  "holds text assessment beyond a configured data bound: %j",
+  (bound) =>
+    Effect.gen(function* () {
+      const result = yield* checkMessage({
+        rules: rules,
+        revision: "fixture",
+        provider: provider(),
+        settings: { ...boundarySettings, ...bound },
+        textSettings: settings,
+        event: { direction: "outgoing", message: boundaryDraft },
+        context: boundaryContext,
+      });
+      expect(result).toMatchObject({
+        judgment: "hold",
+        reason: "check-unavailable",
+        guidance: [],
+      });
+    }),
+);
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore assertion checks after public contract cases. */

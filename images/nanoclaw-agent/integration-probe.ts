@@ -1,7 +1,7 @@
 /**
  * @file Drives NanoClaw's native inbox and outbound queue through its
  * registered Social Harness channel, inside the NanoClaw agent image.
- * `integration.live.test.ts` mounts it into a container of the image under test
+ * `integration.live.spec.ts` mounts it into a container of the image under test
  * and runs it with `node`; it reads the daemon's URL from `SHARNESS_MCP_URL`,
  * the sends to queue from `NANOCLAW_DESTINATIONS_JSON` and the inbound
  * message to wait for from `NANOCLAW_INBOUND_JSON`. It delivers the queued
@@ -29,7 +29,7 @@ const POLL_MILLIS = 50;
 const INBOUND_HISTORY_LIMIT = 10;
 /** The sender NanoClaw records for a message Social Harness itself gives the model. */
 const ENDPOINT_SENDER = "Social Harness";
-/** The prefix of the report line, which `integration.live.test.ts` looks for. */
+/** The prefix of the report line, which `integration.live.spec.ts` looks for. */
 const REPORT_PREFIX = "nanoclaw probe report: ";
 /**
  * The agent runner's script that queues each destination in order: one

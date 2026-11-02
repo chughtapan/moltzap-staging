@@ -3,7 +3,7 @@ import { Effect, Either } from "effect";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Synchronous Git fixtures exercise committed input behavior.
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { hostCodeHashOfPackage } from "./host-code-hash.ts";
@@ -388,7 +388,7 @@ await test("runtime version gate excludes tests and modules reached only by test
   });
   write(
     repo,
-    "packages/router/src/version.test.ts",
+    "packages/router/src/version.spec.ts",
     'console.log(process.env.npm_package_version); import "@fixture/core/service";',
   );
   write(
@@ -555,14 +555,35 @@ await test("refuses non-UTF-8 committed paths", (t) => {
   t.after(() => {
     rmSync(repo, { recursive: true, force: true });
   });
-  writeFileSync(
-    Buffer.concat([
-      Buffer.from(`${repo}/packages/router/`),
-      Buffer.from([255]),
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- Git creates a blob without an invalid filesystem path.
+  const blob = spawnSync("git", ["hash-object", "-w", "--stdin"], {
+    cwd: repo,
+    input: "invalid",
+    encoding: "utf8",
+  });
+  assert.equal(blob.status, 0, blob.stderr);
+  // eslint-disable-next-line sonarjs/no-os-command-from-path -- Git accepts the fixture's raw path bytes through its index.
+  const indexed = spawnSync("git", ["update-index", "-z", "--index-info"], {
+    cwd: repo,
+    input: Buffer.concat([
+      Buffer.from(`100644 ${blob.stdout.trim()}\tpackages/router/`),
+      Buffer.from([255, 0]),
     ]),
-    "invalid",
-  );
-  commit(repo);
+    encoding: "utf8",
+  });
+  assert.equal(indexed.status, 0, indexed.stderr);
+  git(repo, [
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.test",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--quiet",
+    "-m",
+    "invalid-path",
+  ]);
   const error = refused(repo);
   assert.ok(error instanceof ImageInputError);
   assert.match(error.message, /Non-UTF-8/u);
@@ -664,8 +685,8 @@ await test("installed workspace lifecycle inputs bind keys without runtime impor
   });
   write(repo, "packages/router/src/index.ts", "export {};");
   write(repo, "packages/registry/src/index.ts", "export {};");
-  write(repo, "packages/router/src/index.test.ts", "export {};");
-  write(repo, "packages/registry/src/index.test.ts", "export {};");
+  write(repo, "packages/router/src/index.spec.ts", "export {};");
+  write(repo, "packages/registry/src/index.spec.ts", "export {};");
   write(
     repo,
     "packages/social-harness/package.json",
@@ -843,7 +864,7 @@ const BUILD_TSCONFIG =
 
 for (const [file, baseline, content, changesKey] of [
   [
-    "integration/daemon.test.ts",
+    "integration/daemon.spec.ts",
     "baseline",
     "daemon-only integration test",
     false,

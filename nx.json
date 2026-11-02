@@ -7,7 +7,7 @@
     ],
     "production": [
       "default",
-      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/*.spec.ts",
       "!{projectRoot}/src/**/__tests__/**",
       "!{projectRoot}/tsconfig.test.json",
       "!{projectRoot}/vitest.config.ts",

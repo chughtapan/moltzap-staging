@@ -570,7 +570,7 @@ it("publishes independent results while incoming handlers share SQL transactions
 
 it.prop(
   "preserves ordinary text for every message passed through the collective boundary",
-  [fc.string({ maxLength: 128 })],
+  [fc.string()],
   ([text]) =>
     Effect.gen(function* () {
       const fixture = yield* openCollectives();

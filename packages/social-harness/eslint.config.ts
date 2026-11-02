@@ -6,7 +6,7 @@ import { plugin as guard } from "eslint-plugin-agent-code-guard";
 import { packageEslintConfig } from "../../eslint.shared.js";
 
 /** Test files, which sign peer envelopes directly. */
-const testFiles = ["src/**/*.test.ts", "src/**/__tests__/**"];
+const testFiles = ["src/**/*.spec.ts", "src/**/__tests__/**"];
 
 /**
  * Keeps `communication/conversations/service.ts` the one production module that signs
@@ -61,7 +61,11 @@ const sealingSigner = {
 
 /** Message schemas and their ordered assessment share one checking boundary. */
 const messageCheckRules = {
-  files: ["src/firewall/check.ts", "src/firewall/service.ts"],
+  files: [
+    "src/firewall/check.ts",
+    "src/firewall/service.ts",
+    "src/firewall/check.spec.ts",
+  ],
   rules: {
     "max-lines": [
       "error",
@@ -88,8 +92,8 @@ export default [
   {
     files: [
       "src/identity/authentication.ts",
-      "src/identity/authentication.test.ts",
-      "src/identity/envelope.sealing.test.ts",
+      "src/identity/authentication.spec.ts",
+      "src/identity/envelope.spec.ts",
       "src/communication/conversations/certification.ts",
       "src/identity/envelope.ts",
       "src/communication/messages.ts",
@@ -113,7 +117,7 @@ export default [
     },
   },
   {
-    files: ["src/firewall/rules.test.ts"],
+    files: ["src/firewall/rules.spec.ts"],
     rules: {
       "max-lines-per-function": [
         "error",
@@ -149,7 +153,7 @@ export default [
       "src/communication/conversations/recovery.ts",
       "src/communication/router/worker.ts",
       "src/communication/requests.ts",
-      "src/communication/records.verification.test.ts",
+      "src/communication/records.spec.ts",
       "src/harness/launcher/installation.ts",
       "src/communication/conversations/log.ts",
     ],

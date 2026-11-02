@@ -11,8 +11,8 @@ const config = defineConfig({
   root: WORKSPACE_ROOT,
   test: {
     include: [
-      "scripts/docs/__tests__/mermaid-extract.test.ts",
-      "scripts/docs/__tests__/mermaid-gate.test.ts",
+      "scripts/docs/__tests__/mermaid-extract.spec.ts",
+      "scripts/docs/__tests__/mermaid-gate.spec.ts",
     ],
   },
 });

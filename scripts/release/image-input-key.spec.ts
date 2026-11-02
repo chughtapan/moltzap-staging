@@ -643,7 +643,7 @@ for (const [label, manifest, source, mutation] of [
     );
     for (const service of ["router", "registry"]) {
       write(repo, `packages/${service}/src/index.ts`, source);
-      write(repo, `packages/${service}/src/index.test.ts`, "export {};");
+      write(repo, `packages/${service}/src/index.spec.ts`, "export {};");
     }
     write(repo, "packages/social-harness/src/internal.ts", "export {};");
     write(repo, "packages/social-harness/src/index.ts", 'import "#private";');
@@ -1035,6 +1035,6 @@ for (const [label, file, content, message] of [
   });
 }
 
-await import("./image-input-key.regression.test.ts");
+await import("./image-input-key.regression.spec.ts");
 
-await import("./image-input-key.agents.test.ts");
+await import("./image-input-key.agents.spec.ts");

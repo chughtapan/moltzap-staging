@@ -1,7 +1,16 @@
-/** @file Public MCP clients exercise authentication, published contracts, failures and request cancellation. */
+/** @file MCP clients authenticate, discover tools and use independent cancellable connections. */
 
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+  HttpServerResponse,
+} from "@effect/platform";
+import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Schema } from "effect";
+import { Deferred, Effect, Exit, Fiber, Schema, Scope, Stream } from "effect";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
+import { createServer } from "node:http";
 import { describe, expect } from "vitest";
 import {
   connectInProcessClient,
@@ -11,6 +20,7 @@ import {
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
 import { toolDefinitions } from "./contracts.js";
+import { serveMcp } from "./index.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
 
@@ -124,7 +134,6 @@ describe("MCP authentication and discovery", () => {
       client.setNotificationHandler("notifications/tools/list_changed", () => {
         Effect.runFork(Deferred.succeed(changed, undefined));
       });
-      // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- scopedLive owns this listening request.
       const subscription = yield* Effect.acquireRelease(
         Effect.tryPromise(() => client.listen({ toolsListChanged: true })),
         (listening) =>
@@ -276,3 +285,50 @@ describe("MCP tool contracts", () => {
 });
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the default assertion policy. */
+
+const boundPort = Effect.gen(function* () {
+  const server = yield* NodeHttpServer.make(createServer, {
+    host: "127.0.0.1",
+    port: 0,
+  });
+  if (server.address._tag !== "TcpAddress") {
+    return yield* Effect.dieMessage("Expected TCP listener");
+  }
+  return server.address.port;
+});
+
+it("reports an occupied port before declaring the listener ready", () =>
+  Effect.gen(function* () {
+    const port = yield* boundPort;
+    expect(
+      yield* serveMcp(port, Effect.succeed(HttpServerResponse.empty())).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ _tag: "ServeError" });
+  }));
+
+it("closes an active event stream with the listener's scope", () =>
+  Effect.gen(function* () {
+    const port = yield* Effect.scoped(boundPort);
+    const scope = yield* Scope.make();
+    const app = Effect.succeed(
+      HttpServerResponse.stream(
+        Stream.concat(Stream.make("active"), Stream.never).pipe(
+          Stream.encodeText,
+        ),
+      ),
+    );
+    yield* serveMcp(port, app).pipe(Effect.provideService(Scope.Scope, scope));
+    const url = `http://127.0.0.1:${port}`;
+    yield* HttpClient.get(url).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.provide(NodeHttpClient.layer),
+    );
+    yield* Scope.close(scope, Exit.void).pipe(Effect.timeout("2 seconds"));
+    expect(
+      yield* HttpClient.get(url).pipe(
+        Effect.provide(NodeHttpClient.layer),
+        Effect.flip,
+      ),
+    ).toBeInstanceOf(HttpClientError.RequestError);
+  }));

@@ -5,7 +5,7 @@ export default defineConfig({
   resolve: { conditions: ["sharness-test", "sharness-internal"] },
   ssr: { resolve: { conditions: ["sharness-test", "sharness-internal"] } },
   test: {
-    include: ["src/**/*.integration.test.ts"],
+    include: ["src/**/*.integration.spec.ts"],
     passWithNoTests: false,
   },
 });

@@ -17,6 +17,7 @@ import {
   digest as publicDigest,
   testAgentCard,
 } from "../__tests__/agents.js";
+import { encodeCanonical } from "../encoding/canonical-json.js";
 import {
   AgentAddress as PublicAgentAddress,
   Content as PublicContent,
@@ -505,26 +506,22 @@ const decodeValue = (value: unknown) =>
 
 // @agent-code-guard/regression-only: examples pin the closed collective content round trip.
 describe("collective content round trip", () => {
-  vitestIt("round-trips a gather request through message content", () => {
-    const content = Effect.runSync(
-      encodeCollectiveContent(decodeValue(gather), "Which day?"),
-    );
+  vitestIt(
+    "round-trips a request with the question before its collective data",
+    () => {
+      const content = Effect.runSync(
+        encodeCollectiveContent(decodeValue(gather), "Which day?"),
+      );
 
-    expect(Effect.runSync(readCollectiveValue(content))).toEqual(
-      Option.some(decodeValue(gather)),
-    );
-  });
-
-  vitestIt("puts the question text before the collective data part", () => {
-    const content = Effect.runSync(
-      encodeCollectiveContent(decodeValue(gather), "Which day?"),
-    );
-
-    expect(content).toEqual([
-      { type: "text", text: "Which day?" },
-      { type: "data", value: { [COLLECTIVE_DATA_KEY]: gather } },
-    ]);
-  });
+      expect(content).toEqual([
+        { type: "text", text: "Which day?" },
+        { type: "data", value: { [COLLECTIVE_DATA_KEY]: gather } },
+      ]);
+      expect(Effect.runSync(readCollectiveValue(content))).toEqual(
+        Option.some(decodeValue(gather)),
+      );
+    },
+  );
 
   vitestIt("round-trips an all_gather close record", () => {
     const close = {
@@ -901,9 +898,19 @@ describe("public message schemas", () => {
 
     vitestIt("accepts content at the exact canonical byte cap", () => {
       const text = "a".repeat(32_741);
-      const content = [{ type: "text", text }];
+      const content: Content = [{ type: "text", text }];
 
       expect(Schema.decodeUnknownSync(PublicContent)(content)).toEqual(content);
+      expect(Effect.runSync(encodeCanonical(Content, content))).toHaveLength(
+        32_768,
+      );
+      expect(
+        Effect.runSync(
+          encodeCanonical(Content, [{ type: "text", text: text + "a" }]).pipe(
+            Effect.either,
+          ),
+        ),
+      ).toMatchObject({ _tag: "Left" });
     });
 
     vitestIt.each([

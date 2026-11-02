@@ -9,7 +9,7 @@
         "scripts/docs/check-mermaid.ts",
         "scripts/docs/check-code-links.ts",
         "scripts/docs/vitest.config.ts",
-        "scripts/docs/__tests__/*.test.ts",
+        "scripts/docs/__tests__/*.spec.ts",
         "scripts/repo/check-agent-files.ts",
         "scripts/repo/check-dependency-versions.ts",
         "scripts/release/wire-version.ts"
@@ -25,11 +25,11 @@
     },
     "packages/social-harness": {
       "entry": [
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "src/**/*.types-check.ts",
         "src/harness/launcher/index.ts",
         "vitest*.config.ts",
-        "integration/**/*.integration.test.ts"
+        "integration/**/*.integration.spec.ts"
       ],
       "project": [
         "src/**/*.ts",
@@ -51,7 +51,7 @@
     },
     "plugins/openclaw": {
       "entry": [
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "vitest*.config.ts"
       ],
       "project": [
@@ -65,7 +65,7 @@
     },
     "packages/router": {
       "entry": [
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "src/**/*.types-check.ts",
         "vitest*.config.ts"
       ],
@@ -76,7 +76,7 @@
     },
     "packages/registry": {
       "entry": [
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "src/**/*.types-check.ts",
         "vitest*.config.ts"
       ],
@@ -91,7 +91,7 @@
     },
     "tests/integration": {
       "entry": [
-        "**/*.integration.test.ts",
+        "**/*.integration.spec.ts",
         "firewall/firewall-daemon.ts",
         "daemon/launcher-provenance.ts",
         "**/*vitest*.config.ts"
@@ -105,7 +105,7 @@
     },
     "images/openclaw-agent": {
       "entry": [
-        "*.test.ts",
+        "*.spec.ts",
         "configure-channel.ts",
         "patch-openclaw.ts"
       ],
@@ -118,7 +118,7 @@
     },
     "images/nanoclaw-agent": {
       "entry": [
-        "*.test.ts",
+        "*.spec.ts",
         "entrypoint.ts",
         "prepare.ts",
         "preload.ts",
@@ -137,7 +137,7 @@
     },
     "images/tests": {
       "entry": [
-        "*.test.ts"
+        "*.spec.ts"
       ],
       "project": [
         "*.ts"
@@ -151,7 +151,7 @@
     "plugins/instinct": {
       "entry": [
         "src/main.ts",
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "*.config.ts"
       ],
       "project": [
@@ -166,7 +166,7 @@
     "plugins/muse": {
       "entry": [
         "src/main.ts",
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "*.config.ts"
       ],
       "project": [
@@ -181,7 +181,7 @@
     "plugins/grokbot": {
       "entry": [
         "src/main.ts",
-        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
         "*.config.ts"
       ],
       "project": [
@@ -195,7 +195,7 @@
     },
     "plugins/shared": {
       "entry": [
-        "*.test.ts"
+        "*.spec.ts"
       ],
       "project": [
         "*.ts"

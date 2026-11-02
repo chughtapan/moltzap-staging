@@ -111,7 +111,7 @@ for (const [file, content, image] of [
     "openclaw-agent",
   ],
   [
-    "packages/social-harness/src/index.test.ts",
+    "packages/social-harness/src/index.spec.ts",
     'import { publicValue } from "./index.js";\n',
     "daemon",
   ],
@@ -148,7 +148,7 @@ await test("daemon key binds transitive runtime integrity while the standalone h
 for (const { file, content, changesKey } of [
   { file: "mcp.ts", content: "export const client = 2;", changesKey: true },
   { file: "inbox.ts", content: "export const inbox = 2;", changesKey: true },
-  { file: "mcp.test.ts", content: "export const test = 2;", changesKey: false },
+  { file: "mcp.spec.ts", content: "export const test = 2;", changesKey: false },
   {
     file: "README.md",
     content: "Build support documentation.",
@@ -202,12 +202,12 @@ function buildOnlyWorkspace(): string {
     JSON.stringify({
       compilerOptions: { rootDir: ".", outDir: "dist" },
       include: ["mcp.ts", "inbox.ts"],
-      exclude: ["*.test.ts"],
+      exclude: ["*.spec.ts"],
     }),
   );
   write(repo, "plugins/build-support/mcp.ts", "export const client = 1;");
   write(repo, "plugins/build-support/inbox.ts", "export const inbox = 1;");
-  write(repo, "plugins/build-support/mcp.test.ts", "export const test = 1;");
+  write(repo, "plugins/build-support/mcp.spec.ts", "export const test = 1;");
   write(repo, "plugins/build-support/README.md", "Build support.");
   write(
     repo,

@@ -195,7 +195,7 @@
         "{workspaceRoot}/tsconfig*.json"
       ],
       "options": {
-        "command": "node scripts/release/image-input-key.test.ts"
+        "command": "node scripts/release/image-input-key.spec.ts"
       }
     },
     "test:release": {
@@ -208,7 +208,7 @@
           "bash scripts/release/push-gate.test.sh",
           "bash scripts/release/npm-version-exists.test.sh",
           "bash scripts/release/ghcr-digest.test.sh",
-          "node scripts/release/select-packages.test.ts"
+          "node scripts/release/select-packages.spec.ts"
         ]
       }
     },

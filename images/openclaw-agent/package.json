@@ -8,14 +8,14 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "images/openclaw-agent",
-          "command": "node --test --test-timeout=180000 $(find . -maxdepth 1 -name '*.test.ts' ! -name '*.live.test.ts' -print)"
+          "command": "node --test --test-timeout=180000 $(find . -maxdepth 1 -name '*.spec.ts' ! -name '*.live.spec.ts' -print)"
         }
       },
       "test:live": {
         "executor": "nx:run-commands",
         "options": {
           "cwd": "images/openclaw-agent",
-          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 *.live.test.ts"
+          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 *.live.spec.ts"
         },
         "cache": false,
         "dependsOn": [
