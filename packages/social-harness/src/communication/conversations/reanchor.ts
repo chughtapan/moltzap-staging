@@ -1,12 +1,9 @@
 /** @file Agrees on a new Router anchor without discarding certified history. */
 
 import type { SqlClient } from "@effect/sql/SqlClient";
-
 import { Effect, Schema } from "effect";
-
 import type { AgentId } from "../../identity/agent.js";
-import type { EngineActionFold, EngineRuntime } from "./state.js";
-
+import type { EngineActionFold, EngineRuntime } from "./service.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -16,59 +13,53 @@ import {
 import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../identity/envelope/signed-message.js";
-import {
-  type DecodedOuterBody,
-  hashAnchor,
-  signEvidenceMessage,
-} from "../records/encoding.js";
+} from "../../identity/envelope.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,
   CompletedReanchor,
   type CompletedReanchor as CompletedReanchorValue,
   type ConversationId as ConversationIdValue,
+  type DecodedOuterBody,
   type EvidenceStatement,
   type EvidenceStatement as EvidenceStatementValue,
+  hashAnchor,
   InitialAnchorBody,
   type InitialAnchorBody as InitialAnchorBodyValue,
+  quorumThreshold,
   ReanchorBody,
   type ReanchorBody as ReanchorBodyValue,
   type ReanchorVoteStatement as ReanchorVoteStatementValue,
   RecordHash,
   type RecordHash as RecordHashValue,
   type RouterAnchor,
-} from "../records/schemas.js";
-import {
-  quorumThreshold,
+  signEvidenceMessage,
   type VerifiedMembership,
   verifyCompletedReanchor,
   verifyDeliveredEvidence,
   verifyOuterMessage,
   verifyStableEvidence,
-} from "../records/verification.js";
+} from "../records.js";
 import {
   type RouterDiscontinuityReason,
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
-} from "../router/connection.js";
+} from "../router/worker.js";
 import {
   applyCatchUpReanchor,
   completeReanchor,
-  recoverStoredState,
-  restartEmptyConversation,
-  stageReanchor,
-} from "../store/conversations.js";
-import {
   type ConversationFoundation,
   type EndpointRecovery,
   isSemanticStoreRejection,
+  mergeEvidence,
+  recoverStoredState,
+  restartEmptyConversation,
   type StagedRecord,
+  stageReanchor,
   type MessageIntent as StoredMessageIntent,
-} from "../store/database.js";
-import { mergeEvidence } from "../store/records.js";
+} from "../store.js";
 import {
   anchorRouterInstanceId,
   durablePosition,

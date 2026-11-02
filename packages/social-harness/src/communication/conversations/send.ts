@@ -2,20 +2,14 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Deferred, Duration, Effect, Exit, Schedule, Schema } from "effect";
-
-import type { RouterWorkerUnavailableError } from "../router/connection.js";
-import type {
-  ConversationFoundation,
-  EndpointStoreError,
-  MessageIntent as StoredMessageIntent,
-} from "../store/database.js";
+import type { RouterWorkerUnavailableError } from "../router/worker.js";
 import type {
   AcceptedMessage,
   EngineConversation,
   EngineMessageIntent,
   EngineOutboxError,
   EngineRuntime,
-} from "./state.js";
+} from "./service.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
   agentCardOf,
@@ -23,28 +17,29 @@ import {
   type VerifiedAgentIdentityCard,
 } from "../../identity/agent.js";
 import { markRetries, type RetryOutcome } from "../../tracing.js";
-import { type Message, messageMembers } from "../message.js";
+import { isTerminalSendFailure, SendError } from "../errors.js";
+import { compareAgentIds, type Message, messageMembers } from "../messages.js";
 import {
+  type ActionCore,
+  type ActionHash,
   deriveConversationId,
   hashAction,
   hashAnchor,
   hashMessageIntent,
-} from "../records/encoding.js";
-import {
-  type ActionCore,
-  type ActionHash,
   InitialAnchorBody,
   MembershipDescriptor as MembershipDescriptorSchema,
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
-} from "../records/schemas.js";
-import { compareAgentIds } from "../records/values.js";
-import {
   type VerifiedMembership,
   verifyMembershipDescriptor,
-} from "../records/verification.js";
-import { bindMessageIntent, failMessage } from "../store/conversations.js";
-import { isTerminalSendFailure, SendError } from "./errors.js";
+} from "../records.js";
+import {
+  bindMessageIntent,
+  type ConversationFoundation,
+  type EndpointStoreError,
+  failMessage,
+  type MessageIntent as StoredMessageIntent,
+} from "../store.js";
 import { anchorHashAtHead } from "./log.js";
 import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
 

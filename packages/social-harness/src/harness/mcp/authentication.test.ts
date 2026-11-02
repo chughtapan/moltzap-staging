@@ -8,7 +8,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createServer } from "node:http";
 import { expect } from "vitest";
 import type { DaemonOAuth } from "./authentication.js";
-import { mcpFixture, mcpRequest } from "../../__tests__/mcp-http-fixtures.js";
+import { mcpFixture, mcpRequest } from "../__tests__/mcp-fixtures.js";
 import { INBOX_PENDING_EVENT } from "./contracts.js";
 
 const resource = new URL("https://mcp.example.test/mcp");

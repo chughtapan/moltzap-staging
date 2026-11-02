@@ -9,22 +9,24 @@ import type { InboxEntry } from "../index.js";
 import type { HistoryExportRecord } from "./message-log.js";
 import type { ReadHistoryResult, SendRequest } from "./service.js";
 import {
-  decisionResponse,
-  decisionState,
-  firewallOptions,
-  makeHarnessFixture,
-  waitForInbox,
-} from "../__tests__/harness-fixtures.js";
+  encodeCollectiveContent,
+  MessageAddressInput,
+} from "../communication/messages.js";
 import {
   Answer,
   Message,
   ReceivedRequest,
   Request,
-} from "../communication/index.js";
-import { MessageAddressInput } from "../communication/records/values.js";
-import { encodeCollectiveContent } from "../communication/requests/answers.js";
+} from "../communication/service.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { FirewallPolicyError } from "../firewall/rules.js";
+import {
+  decisionResponse,
+  decisionState,
+  firewallOptions,
+  makeHarnessFixture,
+  waitForInbox,
+} from "./__tests__/service-fixtures.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed public failure reasons are part of the service contract. */
 
