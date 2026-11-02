@@ -38,8 +38,8 @@ export const publishReference = Effect.fn("Muse.publishReference")(
 
 /**
  * Returns pending event IDs and their local paths without consuming them.
- * A failed hook or lookup can retry. The worker removes a file after successful
- * read_event; until then the same file may wake it more than once.
+ * A failed wake can retry. A worker claims the file before lookup or processing;
+ * until then the same file may wake several workers.
  */
 export const detectMuseWork = Effect.fn("Muse.detectWork")(function* (
   directory: string,
