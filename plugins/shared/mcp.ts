@@ -110,6 +110,32 @@ export interface McpConnection {
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
 
+/** A native host may own the authorized MCP client; the receiver borrows only its standard tool call. */
+export function acquirePollingReceiver(
+  client: Pick<Client, "callTool">,
+): Effect.Effect<
+  <E, R>(
+    options: Pick<InboxOptions, "onReady">,
+    accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+  ) => Effect.Effect<void, E | McpReceiveError, R>,
+  never,
+  Scope.Scope
+> {
+  return Effect.gen(function* () {
+    const receiving = yield* Ref.make(false);
+    const scope = yield* Scope.Scope;
+    return <E, R>(
+      options: Pick<InboxOptions, "onReady">,
+      accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+    ) =>
+      runReception(
+        { client, receiving, scope },
+        pollingWakeups(options),
+        accept,
+      );
+  }).pipe(Effect.withSpan("Mcp.acquirePollingReceiver"));
+}
+
 /** TLS and literal loopback can carry the private bearer without redirects. */
 export function safeCredentialEndpoint(endpoint: URL): boolean {
   const privateAuthority =
@@ -131,12 +157,12 @@ export function acquireMcpConnection(
 }
 
 export function callTool<Name extends ToolName>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   request: ToolRequest & { readonly name: Name },
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
 /** Calls the named MCP tool once. An uncertain send never triggers a retry. */
 export function callTool(
-  client: Client,
+  client: Pick<Client, "callTool">,
   request: ToolRequest,
 ): Effect.Effect<unknown, unknown> {
   return Effect.tryPromise({
@@ -232,20 +258,8 @@ function acquireConnection(
             ? inboxWakeups(endpoint, transportOptions, ready).pipe(
                 Stream.as(undefined),
               )
-            : Stream.concat(
-                Stream.fromEffect(ready),
-                Stream.tick(Duration.millis(250)),
-              ).pipe(Stream.as(undefined));
-        return Effect.acquireUseRelease(
-          Effect.forkIn(
-            Effect.interruptible(
-              receiveInbox(client, receiving, wakeups, accept),
-            ),
-            scope,
-          ),
-          Fiber.join,
-          Fiber.interrupt,
-        );
+            : pollingWakeups(options);
+        return runReception({ client, receiving, scope }, wakeups, accept);
       },
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
@@ -447,7 +461,7 @@ function managementFailure(
 }
 
 function consumePending<E, R>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ): Effect.Effect<void, E | McpReceiveError, R> {
   return Effect.gen(function* () {
@@ -493,8 +507,29 @@ function connectionRefused(cause: unknown): boolean {
   return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
 }
 
+function runReception<E, R>(
+  owner: {
+    readonly client: Pick<Client, "callTool">;
+    readonly receiving: Ref.Ref<boolean>;
+    readonly scope: Scope.Scope;
+  },
+  wakeups: Stream.Stream<undefined, McpReceiveError>,
+  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+) {
+  return Effect.acquireUseRelease(
+    Effect.forkIn(
+      Effect.interruptible(
+        receiveInbox(owner.client, owner.receiving, wakeups, accept),
+      ),
+      owner.scope,
+    ),
+    Fiber.join,
+    Fiber.interrupt,
+  );
+}
+
 function receiveInbox<E, R>(
-  client: Client,
+  client: Pick<Client, "callTool">,
   receiving: Ref.Ref<boolean>,
   wakeups: Stream.Stream<undefined, McpReceiveError>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
@@ -515,4 +550,11 @@ function receiveInbox<E, R>(
       );
     }),
   );
+}
+
+function pollingWakeups(options: Pick<InboxOptions, "onReady">) {
+  return Stream.concat(
+    Stream.fromEffect(options.onReady ?? Effect.void),
+    Stream.tick(Duration.millis(250)),
+  ).pipe(Stream.as(undefined));
 }

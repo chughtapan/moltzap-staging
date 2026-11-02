@@ -17,7 +17,11 @@ import {
   mcpTestCredential,
 } from "../../packages/social-harness/src/__tests__/mcp-http-fixtures.js";
 import { toolDefinitions } from "@moltzap/social-harness";
-import { acquireMcpConnection, callTool } from "./mcp.js";
+import {
+  acquireMcpConnection,
+  acquirePollingReceiver,
+  callTool,
+} from "./mcp.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
@@ -58,7 +62,7 @@ const inboxFixture = Effect.gen(function* () {
 });
 
 describe("shared inbox reception", () => {
-  it.each(["poll", "push"] as const)(
+  it.each(["poll", "push", "native"] as const)(
     "acknowledges after host acceptance over %s",
     (receiveMode) =>
       Effect.gen(function* () {
@@ -69,14 +73,22 @@ describe("shared inbox reception", () => {
         );
         const entered = yield* Deferred.make<void>();
         const accepted = yield* Deferred.make<void>();
-        const receiver = yield* connection
-          .consumeInbox({ receiveMode }, (received) => {
-            expect(received).toEqual(entry);
-            return Deferred.succeed(entered, undefined).pipe(
-              Effect.zipRight(Deferred.await(accepted)),
-            );
-          })
-          .pipe(Effect.forkScoped);
+        const consume =
+          receiveMode === "native"
+            ? yield* acquirePollingReceiver({
+                callTool: (...args) => connection.client.callTool(...args),
+              })
+            : connection.consumeInbox;
+        const options = {
+          onReady: Effect.void,
+          ...(receiveMode === "native" ? {} : { receiveMode }),
+        };
+        const receiver = yield* consume(options, (received) => {
+          expect(received).toEqual(entry);
+          return Deferred.succeed(entered, undefined).pipe(
+            Effect.zipRight(Deferred.await(accepted)),
+          );
+        }).pipe(Effect.forkScoped);
         yield* Deferred.await(entered);
         expect(yield* Ref.get(fixture.acknowledged)).toBe(0);
         yield* Deferred.succeed(accepted, undefined);
