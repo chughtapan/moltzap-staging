@@ -1,4 +1,4 @@
-/** @file MCP binds the harness services and owns its loopback HTTP listener. */
+/** @file MCP binds the harness services and owns its HTTP listener. */
 
 import {
   type HttpApp,
@@ -33,17 +33,17 @@ import {
 import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
 import { SocialHarness } from "../service.js";
 import {
-  type HarnessWebhookEvents,
-  sendErrorData,
-  toolDefinitions,
-} from "./contracts.js";
-import {
   authenticationChallenge,
   makeRequestAdmission,
   type McpAuthentication,
   protectedResourcePath,
   protectedResourceResponse,
 } from "./authentication.js";
+import {
+  type HarnessWebhookEvents,
+  sendErrorData,
+  toolDefinitions,
+} from "./contracts.js";
 import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 type ServerSettings = McpAuthentication & {
@@ -488,14 +488,14 @@ function openObjects(value: unknown): unknown {
   ]);
 }
 
-/** The listener and advertised MCP URL use the same literal loopback address. */
+/** Local bearer mode uses the same default address for binding and advertisement. */
 export const LOOPBACK_HOST = "127.0.0.1";
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
   port: number,
   app: HttpApp.Default<never, Scope.Scope>,
-  host = LOOPBACK_HOST,
+  host: string = LOOPBACK_HOST,
 ) {
   const listener = yield* Effect.sync(createServer);
   const server = yield* NodeHttpServer.make(() => listener, {
