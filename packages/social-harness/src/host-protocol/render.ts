@@ -131,29 +131,6 @@ export function replyAddress(message: Pick<Message, "author" | "recipients">) {
       );
 }
 
-/** Incoming and outgoing assessment use the same question text and form. */
-function renderCollectiveQuestion(
-  question: Pick<
-    Request,
-    | "author"
-    | "recipients"
-    | "question"
-    | "op"
-    | "deadlineAt"
-    | "requestedSchema"
-  >,
-): string {
-  const asked =
-    question.op === "all_gather"
-      ? `all_gather from agent:${question.author.agentName} to ${replyAddress(question)}`
-      : `gather from agent:${question.author.agentName}`;
-  return [
-    `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
-    `Question: ${question.question}`,
-    `Form: ${JSON.stringify(question.requestedSchema)}`,
-  ].join("\n");
-}
-
 /**
  * One member's outcome as its line of a result reads it. The firewall checks
  * an answer as exactly this text.
@@ -177,6 +154,29 @@ export function renderOutcome(outcome: MemberOutcome): string {
       return exhaustive;
     }
   }
+}
+
+/** Incoming and outgoing assessment use the same question text and form. */
+function renderCollectiveQuestion(
+  question: Pick<
+    Request,
+    | "author"
+    | "recipients"
+    | "question"
+    | "op"
+    | "deadlineAt"
+    | "requestedSchema"
+  >,
+): string {
+  const asked =
+    question.op === "all_gather"
+      ? `all_gather from agent:${question.author.agentName} to ${replyAddress(question)}`
+      : `gather from agent:${question.author.agentName}`;
+  return [
+    `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
+    `Question: ${question.question}`,
+    `Form: ${JSON.stringify(question.requestedSchema)}`,
+  ].join("\n");
 }
 
 function renderWithheld(

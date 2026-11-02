@@ -182,11 +182,13 @@ interface SocialHarnessService {
  *
  * ```mermaid
  * flowchart LR
- *   H[Host] <-->|MCP| S[SocialHarness]
+ *   H[Host] -->|MCP call| S[SocialHarness]
+ *   S -->|MCP result or notification| H
  *   S -->|Resolve names| I[L1 Identity]
  *   S -->|Check outgoing content| F[L3 Firewall]
  *   S -->|Send approved message| C[L2 Communication]
- *   C <-->|Messages| P[Peers]
+ *   C -->|Messages| P[Peers]
+ *   P -->|Messages| C
  *   C -->|Incoming message| S
  *   S -->|Check incoming content| F
  * ```
