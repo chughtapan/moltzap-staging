@@ -194,8 +194,16 @@ function runDaemonRuntime(
         const app = yield* makeMcpHttpApp({
           implementation: { name: "sharnessd", version: packageVersion },
           ...bootstrap.authentication,
-        }).pipe(Effect.catchTag("AuthenticationRefused", () => Effect.fail(new DaemonStartupError({ phase: "listener" }))));
-        yield* serveMcp(bootstrap.configuration.mcpPort, app, bootstrap.configuration.mcpBindHost).pipe(
+        }).pipe(
+          Effect.catchTag("AuthenticationRefused", () =>
+            Effect.fail(new DaemonStartupError({ phase: "listener" })),
+          ),
+        );
+        yield* serveMcp(
+          bootstrap.configuration.mcpPort,
+          app,
+          bootstrap.configuration.mcpBindHost,
+        ).pipe(
           Effect.catchTag("ServeError", () =>
             Effect.fail(new DaemonStartupError({ phase: "listener" })),
           ),
