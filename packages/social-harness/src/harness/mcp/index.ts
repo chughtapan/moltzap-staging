@@ -22,7 +22,7 @@ import { createServer } from "node:http";
 import { Firewall } from "../../firewall/service.js";
 import { validationIssues } from "../../host-protocol/render.js";
 import { AgentIdentityCard } from "../../identity/agent.js";
-import { Identity } from "../../identity/service.js";
+import { Identity } from "../../identity/identity.js";
 import {
   CallToolResult,
   ProtocolError,

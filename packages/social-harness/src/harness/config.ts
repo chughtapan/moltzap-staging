@@ -19,7 +19,7 @@ import {
   Schema,
 } from "effect";
 import type { MessagePolicyConfigurationFailure } from "../firewall/rules.js";
-import type { RegistrationRequest } from "../identity/service.js";
+import type { RegistrationRequest } from "../identity/identity.js";
 import { AgentName, PrincipalId } from "../identity/agent.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { RegistrationId } from "../identity/registry.js";

@@ -2,8 +2,8 @@
 
 import { Effect, Either, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { testAgentView } from "../../__tests__/agent-card-fixtures.js";
-import { collectiveOperationId } from "../../__tests__/collective-id-fixtures.js";
+import { testAgentCard } from "../../__tests__/agents.js";
+import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import {
   decodeHarnessSendErrorData,
   managementSearchConversationsRequestSchema,
@@ -17,10 +17,10 @@ describe("message operation contracts", () => {
       (reason) => {
         const failure = {
           reason: "collective-failed",
-          operationId: collectiveOperationId(testAgentView("alice").agentId),
+          operationId: collectiveOperationId(testAgentCard("alice").agentId),
           failure: {
             kind: "members-unreachable",
-            members: [{ member: testAgentView("bob"), reason }],
+            members: [{ member: testAgentCard("bob"), reason }],
           },
         };
         expect(Effect.runSync(decodeHarnessSendErrorData(failure))).toEqual(

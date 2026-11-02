@@ -16,16 +16,16 @@ import {
   Option,
 } from "effect";
 import { join } from "node:path";
-import { Communication, CommunicationError } from "../communication/index.js";
 import { Router } from "../communication/router/api.js";
+import { Communication, CommunicationError } from "../communication/service.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
   MessagePolicyConfigurationError,
 } from "../firewall/rules.js";
 import { Firewall, type FirewallOptions } from "../firewall/service.js";
+import { Identity, type RegistrationError } from "../identity/identity.js";
 import { Registry } from "../identity/registry.js";
-import { Identity, type RegistrationError } from "../identity/service.js";
 import { WIRE_VERSION } from "../identity/wire-version.js";
 import { packageVersion } from "../release.js";
 import {
@@ -331,9 +331,9 @@ export {
   type IdentityState,
   RegistrationError,
   type RegistrationRequest,
-} from "../identity/service.js";
+} from "../identity/identity.js";
 /** Message transport owns requests, replies and verified history. */
-export { Communication, CommunicationError } from "../communication/index.js";
+export { Communication, CommunicationError } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
 export {
   Firewall,

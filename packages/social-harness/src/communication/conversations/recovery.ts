@@ -1,7 +1,6 @@
 /** @file Recovers missing ancestry and coordinates progress after Router interruption. */
 
 import type { SqlClient } from "@effect/sql/SqlClient";
-
 import {
   Deferred,
   Duration,
@@ -12,14 +11,13 @@ import {
   Schedule,
   Scope,
 } from "effect";
-
 import type { AgentId } from "../../identity/agent.js";
-import type { SignedMessage } from "../../identity/envelope/signed-message.js";
+import type { SignedMessage } from "../../identity/envelope.js";
 import type {
-  EndpointRecovery,
-  StoredOutboundMessage,
-} from "../store/database.js";
-
+  EngineActionFold,
+  EngineConversation,
+  EngineRuntime,
+} from "./service.js";
 import {
   ClientRepresentationError,
   decodeCanonical,
@@ -31,35 +29,38 @@ import {
   retryPending,
   retrySettled,
 } from "../../tracing.js";
-import { type DecodedOuterBody, hashAnchor } from "../records/encoding.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
   type AnchorHash,
   type ConversationId,
   type ConversationId as ConversationIdValue,
+  type DecodedOuterBody,
   type DirectPacket,
   EvidenceStatement,
   type EvidenceStatement as EvidenceStatementValue,
-  type RecordHash as RecordHashValue,
-} from "../records/schemas.js";
-import {
+  hashAnchor,
   memberCard,
   quorumThreshold,
+  type RecordHash as RecordHashValue,
   type VerifiedMembership,
   verifyActionCertifiedRecord,
   verifyDeliveredEvidence,
   verifyOuterMessage,
-} from "../records/verification.js";
+} from "../records.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
   RouterWorkerRecoveryError,
-} from "../router/connection.js";
-import { recoverStoredState } from "../store/conversations.js";
-import { discardOutbound } from "../store/outbound.js";
+} from "../router/worker.js";
+import {
+  discardOutbound,
+  type EndpointRecovery,
+  recoverStoredState,
+  type StoredOutboundMessage,
+} from "../store.js";
 import {
   acceptCatchUpIncomplete,
   acceptCatchUpPage,
@@ -77,6 +78,7 @@ import {
 import {
   anchorHashAtHead,
   durableRouterInstanceId,
+  evidenceTarget,
   verifyRecoveredHistory,
   verifyStoredMemberships,
   verifyStoredOutbounds,
@@ -88,12 +90,6 @@ import {
   type ReanchorRun,
   startReanchorRun,
 } from "./reanchor.js";
-import {
-  type EngineActionFold,
-  type EngineConversation,
-  type EngineRuntime,
-  evidenceTarget,
-} from "./state.js";
 
 /**
  * Delay before a conversation's first catch-up retry. One second is well past
