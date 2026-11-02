@@ -1,8 +1,8 @@
-/** @file Marks work that remains in progress while a trace has no other activity. */
+/** @file Tracks background work between attempts, including idle waits. */
 
 import { Effect, Exit } from "effect";
 
-/** Categories observed by the daemon activity reader. */
+/** Background work included in activity traces. */
 export type RetryKind =
   | "proposal"
   | "catch-up"
@@ -10,7 +10,7 @@ export type RetryKind =
   | "outbound"
   | "firewall-check"
   | "webhook";
-/** A settled marker records why the matching work ended. */
+/** How a tracked operation finished. */
 export type RetryOutcome =
   | "certified"
   | "superseded"
@@ -22,7 +22,7 @@ export type RetryOutcome =
   | "interrupted"
   | "failed";
 
-/** Domain-specific success is supplied by the work's owner. */
+/** Uses the supplied outcome for success, otherwise marks failure or interruption. */
 export function exitOutcome(
   exit: Exit.Exit<unknown, unknown>,
   succeeded: RetryOutcome,
@@ -33,7 +33,7 @@ export function exitOutcome(
   return Exit.isInterrupted(exit) ? "interrupted" : "failed";
 }
 
-/** Readers pair pending and settled counts per category and identity. */
+/** Opens an activity that `retrySettled` closes under the same kind and ID. */
 export function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
   return Effect.withSpan(Effect.void, "retry.pending", {
     captureStackTrace: false,
@@ -41,7 +41,7 @@ export function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
   });
 }
 
-/** Every pending marker receives one settled marker, including on cancellation. */
+/** Closes the matching `retryPending` activity. */
 export function retrySettled(
   kind: RetryKind,
   id: string,
@@ -53,7 +53,7 @@ export function retrySettled(
   });
 }
 
-/** Cancellation can interrupt the work after its opening marker, while retaining its closing marker. */
+/** Pairs activity markers even when work fails or is cancelled. */
 export function markRetries<A, E, R>(
   kind: RetryKind,
   id: string,

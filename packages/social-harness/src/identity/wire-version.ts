@@ -12,10 +12,8 @@ export const WIRE_VERSION_PATTERN = /^\d{4}\.\d{3,4}\.\d+$/;
 export const WIRE_VERSION = "2026.1030.1";
 
 /**
- * The emitted version, then at most one adjacent version. Holding two lets
- * adjacent releases interoperate across a bump in either direction: the
- * release before a bump lists the successor it does not yet emit, and the
- * bumping release lists the predecessor it no longer emits.
+ * The emitted version and at most one adjacent version let neighboring
+ * releases interoperate on either side of a version bump.
  */
 type LiveWindow =
   | readonly [emitted: typeof WIRE_VERSION]

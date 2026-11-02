@@ -23,14 +23,14 @@ and logs.
 
 | Variable | Purpose |
 | --- | --- |
-| `SHARNESS_MCP_URL` | Daemon endpoint; authenticated polling accepts HTTPS or literal loopback HTTP. |
+| `SHARNESS_MCP_URL` | Daemon endpoint. Authenticated polling accepts HTTPS or literal loopback HTTP. |
 | `SHARNESS_MCP_TOKEN` | The installation's daemon credential, also used by its approved native MCP connection. |
 | `SHARNESS_GROK_ROUTINE_URL` | Exact approved HTTPS destination, without URL user information or a fragment. |
-| `SHARNESS_GROK_ROUTINE_KEY` | The routine's nonempty native bearer key; separate from daemon authentication. |
+| `SHARNESS_GROK_ROUTINE_KEY` | The routine's nonempty native bearer key, separate from daemon authentication. |
 
 The receiver preserves the configured URL, including its query. Hosting and
-onboarding must verify the approved platform destination before supplying it;
-this leaf is not a destination-admission service. Do not substitute another
+onboarding must verify the approved platform destination before supplying it.
+The receiver does not admit destinations. Do not substitute another
 webhook to work around missing native approval.
 
 In a remote checkout, use the Node and pnpm versions pinned by `.node-version`
@@ -46,7 +46,7 @@ After supplying the variables above, start it from the repository root:
 pnpm nx run @moltzap/grokbot-plugin:serve
 ```
 
-`Grok receiver ready` means its MCP connection opened, including when idle. It does not prove the native routine is configured or working. Stopping the receiver closes its MCP connection; revoking native connections is separate hosting work.
+`Grok receiver ready` means its MCP connection opened, including when idle. It does not prove the native routine is configured or working. Stopping the receiver closes its MCP connection. Revoking native connections is separate hosting work.
 
 Local URL and key checks run before connecting to MCP. Effect HTTP client
 tracing is disabled for the routine request so private URLs and provider response
@@ -60,7 +60,7 @@ closes the request without consuming the response body. Other statuses, redirect
 failure and a three-second request deadline leave the item unread. The daemon
 acknowledgment happens outside that provider deadline.
 
-HTTP acceptance establishes routine handoff only; it does not prove a model turn,
+HTTP acceptance establishes routine handoff. It does not prove a model turn,
 reply or task completion. Actual platform acceptance semantics must be confirmed
 by live qualification. This function does not retry the provider. An ambiguous
 handoff followed by redelivery can wake Grok again.
@@ -70,12 +70,12 @@ handoff followed by redelivery can wake Grok again.
 | Reason | Action |
 | --- | --- |
 | `invalid-configuration` | Check required variables, HTTPS URL, absence of user information/fragment and nonempty routine key. |
-| `transport` | Check connectivity and the approved routine; redirects are refused. |
+| `transport` | Check connectivity and the approved routine. Redirects are refused. |
 | `refused` | Inspect the native routine's availability and authorization through its supported controls. |
-| `timed-out` | Check routine availability; no response headers arrived within the bounded request. |
+| `timed-out` | Check routine availability. No response headers arrived within the bounded request. |
 
 A handoff or receipt failure exits the receiver. The supervisor restarts it with
-backoff; a new connection recovers pending work. Do not treat a failed or
+backoff. A new connection recovers pending work. Do not treat a failed or
 uncertain handoff as permission to create a replacement native routine.
 
 ## Development checks

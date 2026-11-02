@@ -20,7 +20,7 @@ import {
   type TextRule,
 } from "./rules.js";
 
-/** Captured policy data is independent of provider acquisition and durable retention. */
+/** Defines the policy captured for one assessment without storage or provider setup. */
 export interface CheckConfiguration {
   readonly rules: readonly TextRule[];
   readonly settings: FirewallSettings;
@@ -28,7 +28,7 @@ export interface CheckConfiguration {
   readonly revision: string;
 }
 
-/** The caller supplies verified attribution, prepared bytes and an already bound provider. */
+/** Requires verified attribution, prepared message bytes and a configured provider. */
 export interface CheckMessageInput extends CheckConfiguration {
   readonly event: MessageEvent;
   readonly context: MessageContext;
@@ -66,10 +66,8 @@ const probability = Schema.Number.pipe(Schema.between(0, 1));
 const collectingOp = Schema.Literal("gather", "all_gather");
 
 /**
- * The collective operation a message belongs to, so a policy can tell a
- * question, an answer, a result or a failure from a plain message without
- * reading its text. A request carries its absolute deadline in epoch
- * milliseconds; an answer and a result name the operation they belong to.
+ * Request deadlines use epoch milliseconds. Operation metadata lets policy
+ * distinguish questions and answers without interpreting message text.
  */
 const messageOperation = Schema.Union(
   Schema.Struct({
@@ -86,8 +84,7 @@ const messageOperation = Schema.Union(
 );
 
 /**
- * Attribution is supplied by Client, never inferred from names in the body.
- * `operation` is absent for a plain message.
+ * Requires verified attribution from the caller. Plain messages omit `operation`.
  */
 export class Message extends Schema.Class<Message>("Message")({
   id: identifier,
@@ -113,10 +110,9 @@ export type HistoryEntry = typeof HistoryEntry.Type;
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the Schema/type pair. */
 
 /**
- * Trusted composition supplies verified attribution and authorized evidence
- * preceding the candidate. Exclude future messages, expected test labels and
- * another endpoint's private state. Visibility determines which admitted
- * messages may appear as subjects in runtime guidance.
+ * Requires verified participants and authorized evidence preceding the candidate.
+ * Exclude future messages, test labels and another endpoint's private state.
+ * Visibility limits the messages guidance may reference.
  */
 export class MessageContext extends Schema.Class<MessageContext>(
   "MessageContext",
@@ -132,7 +128,7 @@ export class MessageContext extends Schema.Class<MessageContext>(
   history: Schema.Array(HistoryEntry),
   /** Older certified records outside the configured window are not an evidence gap. */
   earlierHistoryOmitted: Schema.optional(Schema.Boolean),
-  /** Epoch milliseconds when Client captured the context, so a deadline can be judged and a check replayed. */
+  /** Epoch milliseconds when the caller captured the context. */
   now: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
   facts: Schema.Array(OwnerFact),
   gaps: Schema.Array(Schema.NonEmptyString),
@@ -166,7 +162,7 @@ export type PolicyFinding =
       readonly reason: "unresolved-evidence" | "check-unavailable";
     };
 
-/** Local response conduct under a rule, with subjects restricted to admitted visible messages or the incoming event. */
+/** Restricts response subjects to visible admitted messages or the incoming event. */
 class ResponseExpectation extends Schema.Class<ResponseExpectation>(
   "ResponseExpectation",
 )({
@@ -187,12 +183,15 @@ export interface CapturedInput {
   readonly context: MessageContext;
 }
 
-/** Invalid construction or evidence is a typed failure, never permission. */
+/** Reports invalid settings, rules, messages or evidence before a judgment exists. */
 export class CheckInputError extends Data.TaggedError("CheckInputError")<{
   readonly reason: "settings" | "rules" | "message" | "context";
 }> {}
 
-/** Offline callers capture the same owned evidence used by managed checks. */
+/**
+ * Assesses supplied rules and evidence without reading configuration or storage.
+ * Captures and freezes the evidence before inference.
+ */
 export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
   input: CheckMessageInput,
 ): Effect.fn.Return<FirewallCheck, CheckInputError> {
@@ -203,7 +202,10 @@ export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
   return yield* checkCapturedMessage(input, captured);
 });
 
-/** Private findings and traces stay separate from advice permitted for the host. */
+/**
+ * Provider failure produces a hold judgment. Findings and traces stay private.
+ * The host may receive feedback and guidance.
+ */
 export interface FirewallCheck extends TextAssessment {
   readonly judgment: "allow" | "reject" | "hold";
   readonly reason: Reason;
@@ -220,7 +222,7 @@ type UncertainGuidance = Extract<
 >;
 
 /**
- * Question semantics have a recorded edition independent of rule wording.
+ * Separates response expectations from candidate compliance.
  * @inline
  */
 type PolicyStage = "expectations" | "compliance";
@@ -274,11 +276,7 @@ export class DecisionProviderError extends Data.TaggedError(
     | "defect";
   readonly status?: number;
   readonly response?: string;
-  /**
-   * The usage a response body reported before the call failed, named as an
-   * answered response names it, so the call's cost stays accountable. A
-   * failure without a parsed body has none.
-   */
+  /** Retains provider, model and usage when they were parsed before failure. */
   readonly accounting?: Pick<DecisionResponse, "provider" | "model" | "usage">;
 }> {}
 
@@ -312,7 +310,6 @@ type PolicyStageTrace = {
   | { readonly status: "unavailable"; readonly dependency: "expectations" }
 );
 
-/** Internal text-policy state adds frozen documents without a public snapshot/binding. */
 interface TextCheck {
   readonly event: typeof messageEvent.Type;
   readonly context: MessageContext;
@@ -324,10 +321,9 @@ interface TextCheck {
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
 /**
- * Only registered instructions and runtime-visible subjects cross into a
- * host. An instruction names either the expectation the decision provider settled and
- * the messages it refers to, the choice and probability of an unsettled judgment, or registered advice
- * for a settled violation admitted in guidance mode.
+ * Only registered instructions and visible message subjects reach the host.
+ * Instructions carry settled expectations, uncertain choices and probabilities,
+ * or advice for violations admitted in guidance mode.
  */
 const checkedGuidance = {
   checkId: checkIdSchema,
@@ -345,7 +341,7 @@ const checkedGuidance = {
 /** Exact decoding of one check's guidance, wherever a host receives it. */
 export const checkedGuidanceSchema = exactStruct(checkedGuidance);
 
-/** The guidance of one checked text: a message, a request, an answer, a question or a send. */
+/** Host-visible advice for one assessed text. */
 export type CheckedGuidance = typeof checkedGuidanceSchema.Type;
 
 const utf8 = new TextEncoder();
@@ -380,11 +376,9 @@ const defaultFeedback: Readonly<Record<Reason, FirewallCheck["feedback"]>> = {
 };
 
 /**
- * A rule that produced a decision's reason. `finding` is `unavailable` when
- * its check could not run or its judgment could not be obtained, `uncertain`
- * when the judgment was left unsettled, and `settled` otherwise. `advice` is
- * the rule's own registered text the decision projects for it: its guidance
- * for an admission, or its feedback when the reason permits its next action.
+ * Identifies a rule that determined the decision's reason. `finding` records
+ * whether its judgment was settled, uncertain or unavailable. `advice` contains
+ * registered guidance for admission, or feedback whose next action fits the reason.
  */
 export interface DecidingRule {
   readonly ruleId: string;
@@ -394,7 +388,7 @@ export interface DecidingRule {
 
 type QuestionEntry = readonly [string, DecisionRequest["questions"][string]];
 
-/** NonEmptyTrimmedString requires at least one unescaped UTF-8 byte. This slot is only sized, never evaluated as an identity. */
+/** One unescaped UTF-8 byte is the minimum required identifier size for budgeting. */
 const minimumIdentifier = "x";
 
 /** Changes to question semantics produce a separate experimental cohort. */
@@ -447,7 +441,7 @@ const subjectCriteria = Object.freeze({
   unresolved: "Required evidence is missing or relevance cannot be determined.",
 });
 
-/** Assessment and retained decisions share one validated, detached input. */
+/** Assesses previously captured evidence without saving the result. */
 export function checkCapturedMessage(
   input: Omit<CheckMessageInput, "event" | "context">,
   captured: CapturedInput,
@@ -524,12 +518,7 @@ export const validateChecks = Effect.fn("Firewall.validateChecks")(function* (
   yield* validateTextRules(input);
 });
 
-/**
- * Copy before freezing so callers and injected policies cannot alter later checks.
- * @param schema Grammar for the detached value captured at this boundary.
- * @param input Caller-owned evidence whose references must not escape.
- * @returns A deeply frozen copy or a typed decoding failure.
- */
+/** Decodes and deeply freezes a copy so caller mutations cannot alter a check. */
 export function decodeFrozen<A, I>(
   schema: Schema.Schema<A, I>,
   input: unknown,
@@ -626,7 +615,6 @@ export function freezeData(value: unknown): void {
   Object.freeze(value);
 }
 
-/** Detaches and freezes message evidence before assessment or retention can observe it. */
 function captureInput(event: MessageEvent, context: MessageContext) {
   return Effect.gen(function* () {
     const capturedEvent = yield* decodeFrozen(messageEvent, event).pipe(
@@ -644,10 +632,8 @@ function captureInput(event: MessageEvent, context: MessageContext) {
 }
 
 /**
- * Inspect the full cause before capturing failures so cleanup cannot erase cancellation.
- * @param check One bounded check whose interruption must propagate.
- * @param onDefect Projects an unexpected defect to a closed check failure.
- * @returns The completed result or typed failure, preserving interruption.
+ * Preserves interruption when capturing typed failures or mapping defects.
+ * Cleanup must not turn cancellation into a completed check.
  */
 function captureResult<A, E, R>(
   check: Effect.Effect<A, E, R>,
@@ -742,7 +728,6 @@ function selectReason(
   return "eligible";
 }
 
-/** How a finding decided `reason`, or undefined when it did not. */
 function decidingFinding(
   finding: PolicyFinding,
   reason: Reason,
@@ -814,9 +799,8 @@ function matchesReason(finding: PolicyFinding, reason: Reason): boolean {
 }
 
 /**
- * Each settled expectation and each uncertain pass whose rule registers
- * guidance becomes one entry; an uncertain one carries the decision provider's choice
- * and probability.
+ * Uncertain passes include the provider's choice and probability when their rule
+ * registers guidance.
  */
 function projectGuidance(
   rules: readonly TextRule[],
@@ -904,10 +888,9 @@ function decideWithinBudget(
 }
 
 /**
- * Each answer must give a probability to exactly its question's choices, sum
- * to one, and state a choice that no other option exceeds, within
- * a provider probability tolerance of 0.02. The policy routes by the stated choice, and a
- * stated choice that trails another option is unsettled.
+ * Requires exactly the question's choices and probabilities summing to one.
+ * Validation tolerates 0.02 in sums and distance from the maximum. A selected
+ * choice below another option remains uncertain.
  */
 function validAnswers(
   request: DecisionRequest,
@@ -985,10 +968,6 @@ function assessQuestions(
   }).pipe(Effect.withSpan("TextPolicy.assessQuestions"));
 }
 
-/**
- * The decision provider did not settle an answer that is `unresolved`, below the routing
- * threshold, or a rounded near-tie whose stated choice trails another option.
- */
 function unsettled(
   answer: DecisionResponse["answers"][string],
   minimumProbability: number,
@@ -1111,11 +1090,7 @@ function forDirection(
   });
 }
 
-/**
- * The expectations the decision provider settled, each with the references it settled
- * as relevant. An unsettled expectation reaches the agent as guidance
- * instead, and an unsettled reference is left out.
- */
+/** Omits uncertain subjects and turns uncertain expectations into guidance. */
 function readResponseExpectations(
   trace: PolicyStageTrace,
 ): readonly ResponseExpectation[] {
@@ -1189,9 +1164,8 @@ function stageFindings(
 }
 
 /**
- * Valid unsettled judgments admit with registered advice and preserve the
- * provider's choice and probability. Unsettled references are omitted from
- * response expectations without erasing another stage's settled violation.
+ * Uncertain judgments admit with registered advice. Omitting uncertain references
+ * preserves other stages' settled violations.
  */
 function questionFinding(
   question: DecisionRequest["questions"][string],
@@ -1249,9 +1223,8 @@ function makeTextRequest(
 }
 
 /**
- * The catalog, required state structure and mandatory questions must fit at
- * their schema minimums. This lower bound does not reserve space for variable
- * candidate, context or settled-assessment data.
+ * Checks the minimum catalog, state and questions against the request budget.
+ * Variable candidate, context and settled assessments still need space.
  */
 function textPolicyFitsBudget(
   policy: Pick<TextCheck, "rules" | "revision">,
@@ -1360,10 +1333,8 @@ function requestEvidence(
 }
 
 /**
- * Size only the serialized slots: one recipient and one byte per required
- * identifier, with empty unrestricted text and arrays. Optional evidence can
- * be absent; uncertain assessments can leave settled response expectations empty. No check,
- * Message or MessageContext is synthesized or passed to a provider.
+ * Sizes serialized slots using one recipient and one byte per required id.
+ * Unrestricted text and arrays are empty. No synthetic evidence reaches a provider.
  */
 function minimumEvidence(
   stage: PolicyStage,

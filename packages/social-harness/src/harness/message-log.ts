@@ -10,10 +10,6 @@ import { SendRequest } from "../host-protocol/messages.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 
-/**
- * Accepted message identities or the send failure, with an operation id for
- * a collective question or answer.
- */
 const historyExportSendOutcome = Schema.Union(
   exactStruct({
     kind: Schema.Literal("sent"),
@@ -24,10 +20,8 @@ const historyExportSendOutcome = Schema.Union(
 );
 
 /**
- * One line of the daemon's optional history export: an item as the daemon
- * published it, a completed `send` invocation with its input and outcome, or
- * the one line that says the export stopped. Readers decode the file line by
- * line with this schema rather than copying its shape.
+ * Decodes each JSON line as a delivered item, completed send with input and
+ * outcome, or export-failure marker.
  */
 export const HistoryExportRecord = Schema.Union(
   exactStruct({
@@ -60,10 +54,10 @@ export type HistoryExport = (
 ) => Effect.Effect<void>;
 
 /**
- * Append complete JSON lines before exposing incoming items or returning sends.
- * The first write creates the file, and serialized appends cannot interleave.
- * The first failed append disables export for this process and attempts one
- * `export-failed` line. Export failure does not stop message delivery.
+ * Appends complete JSON lines before exposing items or returning sends.
+ * The first write creates the file. Serialized appends cannot interleave.
+ * A failed append disables export for this process and attempts one
+ * `export-failed` line without interrupting delivery.
  */
 export function makeHistoryExport(
   path: string,

@@ -1,7 +1,5 @@
 /** @license MIT. Effect contributors. See LICENSE and README.md in this directory. */
-/**
- * @since 1.0.0
- */
+/** @file Serves MCP tools and optional event delivery over HTTP. */
 import * as HttpApp from "@effect/platform/HttpApp";
 import * as HttpServerRequest from "@effect/platform/HttpServerRequest";
 import * as HttpServerResponse from "@effect/platform/HttpServerResponse";
@@ -43,16 +41,14 @@ import {
 
 interface ToolRegistration {
   readonly tool: Tool;
+  /** Reevaluated for each listing and call. Omission makes the tool visible. */
   readonly visible?: Effect.Effect<boolean>;
   readonly handle: (
     payload: unknown,
   ) => Effect.Effect<CallToolResult, McpError, McpServerClient>;
 }
 
-/**
- * @since 1.0.0
- * @category McpServer
- */
+/** Registers tools and optional event operations for one MCP server. */
 export class McpServer extends Context.Tag("@effect/ai/McpServer")<
   McpServer,
   {
@@ -81,15 +77,14 @@ export class McpServer extends Context.Tag("@effect/ai/McpServer")<
     };
 
     readonly tools: ReadonlyArray<Tool>;
+    /** Replaces a tool with the same name and announces the catalog change. */
     readonly addTool: (options: ToolRegistration) => Effect.Effect<void>;
     readonly callTool: (
       requests: typeof CallTool.payloadSchema.Type,
     ) => Effect.Effect<CallToolResult, McpError, McpServerClient>;
   }
 >() {
-  /**
-   * @since 1.0.0
-   */
+  /** Creates an empty tool catalog with coalesced change notifications. */
   static readonly make = Effect.gen(function* () {
     const registrations = new Map<string, ToolRegistration>();
     const events: McpServer["Type"]["events"] = {};
@@ -318,8 +313,8 @@ const requestEnvelope = Schema.Struct({
 });
 
 /**
- * MCP's HTTP codec retains wire IDs and sanitizes failures before publishing them.
- * The RPC engine owns request fibers; the HTTP scope interrupts exactly its client.
+ * Serves requests while the caller's scope remains open. Disconnecting cancels
+ * that request's handler. Responses preserve request IDs and expose protocol errors.
  */
 export const makeHttpApp = Effect.fnUntraced(function* (options: {
   readonly name: string;

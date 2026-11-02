@@ -26,7 +26,10 @@ export const writeWork = Effect.fn("Muse.writeWork")(function* (
   yield* fs.rename(staging, join(directory, "work.json"));
 });
 
-/** The worker and detector share the receiver's reference format without reconstructing a Client item. */
+/**
+ * Returns undefined when no reference is published. Damaged references and
+ * other I/O failures fail the read.
+ */
 export function readWork(fs: FileSystem.FileSystem, directory: string) {
   return readOptionalFile(fs, join(directory, "work.json")).pipe(
     Effect.flatMap((bytes) =>

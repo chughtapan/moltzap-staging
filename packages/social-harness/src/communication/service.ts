@@ -1,4 +1,4 @@
-/** @file Reliable message delivery, request completion and retained history share one scoped service. */
+/** @file Accepts durable messages and questions, and supplies certified history and incoming work. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import {
@@ -141,7 +141,7 @@ export interface HistoryPage extends PaginatedResult {
 export const Outgoing = Schema.Union(Message, Request);
 /** Final outgoing work is fixed before policy assessment. */
 export type Outgoing = typeof Outgoing.Type;
-/** The one handoff grammar preserves Message encoding at storage boundaries. */
+/** Incoming work retains encoded Message values at storage boundaries. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
 export const Incoming = Schema.Union(
   exactStruct({ kind: Schema.Literal("message"), message: Message }),
@@ -157,28 +157,47 @@ export const Incoming = Schema.Union(
     error: Schema.String,
   }),
 );
-/** Complete incoming work precedes the local policy decision and readable projection. */
+/** Incoming work awaits local policy before the host receives it. */
 export type Incoming = typeof Incoming.Type;
-/** Reliable messages, requests and retained conversation history. */
+
 interface CommunicationService {
+  /**
+   * Returns after durable acceptance. Certification continues in the layer's
+   * scope after caller cancellation. Retry the same `Message` or `Request`,
+   * retaining its `msgId` or `operationId`.
+   */
   readonly send: (
     value: Outgoing,
   ) => Effect.Effect<void, CommunicationError | RequestError>;
+  /** Checks current answer eligibility without reserving the request. */
   readonly getRequest: (
     operationId: CollectiveId,
   ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
+  /**
+   * Waits for a locally authored message to certify, or reports its retained
+   * terminal failure. Unknown references fail with `unknown-message`.
+   * Cancellation stops this wait and leaves accepted work running.
+   */
   readonly waitForMessage: (
     reference: MessageReference,
   ) => Effect.Effect<Message, CommunicationError>;
+  /**
+   * Calls the handler for incoming work and retires the item after success.
+   * Failed or interrupted handling leaves it pending. Failed retirement can
+   * replay a successfully handled item, so handlers must tolerate repeats.
+   */
   readonly consume: <E, R>(
     handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
+  /** Finds a retained certified conversation by all member names, including self. */
   readonly getConversation: (
     names: readonly AgentName[],
   ) => Effect.Effect<Conversation | undefined, CommunicationError>;
+  /** Lists retained conversations. Cursors expire when this service instance ends. */
   readonly listConversations: (
     query?: ConversationQuery,
   ) => Effect.Effect<ConversationPage, CommunicationError>;
+  /** Reads verified application messages. Continuation cursors require this service instance. */
   readonly readHistory: (
     query: HistoryQuery,
   ) => Effect.Effect<HistoryPage, CommunicationError>;
@@ -191,7 +210,10 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService
 >() {
-  /** Resources and accepted background work belong to the layer's scope. */
+  /**
+   * Runs delivery and request workers until the layer's scope closes. Reopen
+   * the same SQL store with the same identity and key to resume accepted work.
+   */
   static layer(settings: CommunicationSettings) {
     return Layer.scoped(Communication, makeCommunicationLayer(settings));
   }
@@ -276,7 +298,6 @@ const membershipRow = Schema.Struct({
   sort_key: Schema.String,
 });
 
-/** Live listing visits a bounded semantic-name index, including self-authored conversations. */
 const listConversations = Effect.fn("Communication.listConversations")(
   function* (
     query: ConversationQuery,
@@ -324,7 +345,6 @@ const listConversations = Effect.fn("Communication.listConversations")(
   mapHistoryErrors,
 );
 
-/** Retained membership resolves names without contacting Registry or exposing log identifiers. */
 const getConversation = Effect.fn("Communication.getConversation")(function* (
   names: readonly AgentName[],
   local: VerifiedAgentIdentityCard,
@@ -613,7 +633,7 @@ function consumeIncoming<E, R>(
 
 function acceptMessage(environment: Environment, message: Message) {
   return Effect.gen(function* () {
-    const local = agentCardOf(yield* registeredCard(environment));
+    const local = agentCardOf(environment.settings.identityCard);
     if (
       message.author.agentId !== local.agentId ||
       message.author.agentName !== local.agentName ||
@@ -659,7 +679,7 @@ function acceptMessage(environment: Environment, message: Message) {
 
 function waitForMessage(environment: Environment, reference: MessageReference) {
   return Effect.gen(function* () {
-    const card = yield* registeredCard(environment);
+    const card = environment.settings.identityCard;
     if (reference.authorAgentId !== card.agentId) {
       return yield* new CommunicationError({ reason: "unknown-message" });
     }
@@ -683,10 +703,6 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
       yield* Effect.sleep(Duration.millis(100));
     }
   });
-}
-
-function registeredCard(environment: Environment) {
-  return Effect.succeed(environment.settings.identityCard);
 }
 
 function prepareAcceptedMessages(environment: Environment) {

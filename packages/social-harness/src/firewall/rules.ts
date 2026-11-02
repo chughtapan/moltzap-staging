@@ -36,7 +36,7 @@ export const firewallRefusalReasonSchema = Schema.Literal(
   "check-unavailable",
 );
 
-/** Facts are supplied by trusted composition; visibility limits references shown to the agent. */
+/** Trusted callers supply facts. Visibility limits what guidance may reference. */
 export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
   id: identifier,
   source: identifier,
@@ -45,12 +45,10 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 }) {}
 
 /**
- * The decision provider interprets the rule as natural-language text.
- * Validation requires nonempty text and imposes no language restriction.
- * Guidance is registered advice for the agent; feedback supplies refusal and
- * repair text. Direction is explicit for every natural-language rule.
- * See the [editable policy contract](https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy)
- * for installation identifiers, ownership and edit validation.
+ * Registers natural-language policy, admission guidance and refusal feedback.
+ * Validation requires nonempty text without restricting its language.
+ * The [editable policy contract](https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy)
+ * defines ownership and edit validation.
  */
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
@@ -85,7 +83,7 @@ export class TextPolicySettings extends Schema.Class<TextPolicySettings>(
 
 const editableRuleSchema = exactStruct(TextRule.fields);
 
-/** The most editable natural-language rules one daemon holds, across seeding, persistence and updates. */
+/** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
 
 /** The complete editable document. */
@@ -93,10 +91,6 @@ export const editableDocumentSchema = Schema.Array(editableRuleSchema).pipe(
   Schema.maxItems(MAXIMUM_EDITABLE_RULES),
 );
 
-/**
- * A shared norm's `BEHAVIOR.md` exactly as proposed, mapped to its rule as a
- * policy file's behaviors are: docs/reference/spec/firewall/message-policy.md#behaviors.
- */
 const behaviorAddition = exactStruct({ behavior: Schema.String });
 
 /** Removing and adding the same editable id replaces it in one activation. */
@@ -120,7 +114,7 @@ export const policyReadSchema = exactStruct({
   activeRevision: Schema.NonEmptyString,
 });
 
-/** Activation acknowledges future checks only; retained dispositions are unchanged. */
+/** Edits affect future checks. Saved decisions stay unchanged. */
 export const policyUpdateResultSchema = exactStruct({
   activeRevision: Schema.NonEmptyString,
 });
@@ -139,11 +133,10 @@ const firewallActivationSchema = exactStruct({
 });
 
 /**
- * One row per peer contains no message content or provider traces. The only
- * text is `decidedBy[].advice`, the deciding rule's own registered feedback,
- * or its guidance for an admission. `decidedBy[].from` says where the rule is
- * defined: a fixed or owner-editable natural-language rule. `checkedRuleIds` lists every rule with a
- * finding in the completed assessment.
+ * Contains one row per peer without message content or provider traces.
+ * `decidedBy[].advice` contains registered feedback or admission guidance.
+ * `from` identifies fixed or editable rules. `checkedRuleIds` includes every
+ * rule with a finding.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
@@ -161,7 +154,7 @@ export const firewallDecisionSummarySchema = exactStruct({
   activeRevision: Schema.NonEmptyString,
 });
 
-/** The saved publication outcome accompanies the assessment's captured summary. */
+/** Reports saved judgments, admission or withholding, and policy activations. */
 export const firewallDecisionsSchema = exactStruct({
   activations: Schema.Array(firewallActivationSchema),
   decisions: Schema.Array(
@@ -175,9 +168,7 @@ export const firewallDecisionsSchema = exactStruct({
 });
 
 /**
- * What made an edit's rule invalid. A `BEHAVIOR.md` addition fails as
- * `frontmatter`, `schema` or `too-large`; an edit as
- * `duplicate-id`, `unknown-id` or `editable-limit`.
+ * Identifies invalid behavior documents or rule edits.
  * @inline
  */
 export type PolicyProblem = typeof policyProblemSchema.Type;
@@ -220,11 +211,9 @@ const editRefusalDocs =
   "Docs: https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy";
 
 /**
- * A failed edit never replaces the active installation or retained editable
- * document. `ruleId` and `path` name the failing rule when the edit had one:
- * `path` is its place in the update, such as `["add", 0]`. `problem` says why
- * an `invalid-rule` edit failed. The message names all three, and never the
- * text of a rejected `BEHAVIOR.md`.
+ * Failed edits preserve active and saved rules. `ruleId` and `path` locate the
+ * failure, such as `["add", 0]`. `problem` explains an invalid rule. Messages
+ * include these details without rejected behavior text.
  */
 export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>()(
   "FirewallPolicyError",
@@ -256,10 +245,7 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
       : text;
   }
 
-  /**
-   * The fields a refusal's error data carries beside its reason.
-   * @returns `ruleId`, `path` and `problem`, each when the refusal has it.
-   */
+  /** Returns available rule, path and problem details for error data. */
   get data(): Readonly<{
     ruleId?: string;
     path?: readonly [field: "add" | "remove", index: number];
@@ -315,10 +301,8 @@ export type CredentialReader = (
 const POLICY_SPEC =
   "https://docs.moltzap.xyz/reference/spec/firewall/message-policy";
 
-/** The message-firewall guide, whose troubleshooting entries policy failures link. */
 const FIREWALL_GUIDE = "https://docs.moltzap.xyz/guides/message-firewall";
 
-/** Each failure's operator text and the troubleshooting entry that matches it. */
 const failureMessages: Readonly<
   Record<
     MessagePolicyConfigurationFailure,
@@ -347,14 +331,11 @@ const failureMessages: Readonly<
   },
 };
 
-/** The `format` every message-policy document names. */
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
 /**
- * The service that assesses natural-language rules. `jev` needs the key file the
- * daemon names in `SHARNESS_DECISION_PROVIDER_KEY_FILE`; `unavailable`
- * installs the rules with no service, so every natural-language check is unavailable:
- * enforcement holds the message and guidance admits it.
+ * An unavailable provider holds messages in enforcement mode and admits them in
+ * guidance mode. Only Jev requires a provider key.
  */
 const decisionProvider = Schema.Union(
   Schema.Struct({
@@ -367,14 +348,12 @@ const decisionProvider = Schema.Union(
 const textRules = Schema.optionalWith(Schema.Array(TextRule), {
   default: () => [],
 });
-/** Natural-language assessment defaults: the lowest routing probability Client accepts, and request bounds for a full history window. */
 const defaultTextSettings = {
   minimumProbability: 0.5,
   maximumRequestBytes: 384_000,
   timeoutMilliseconds: 15_000,
 };
 
-/** Per-check bounds sized for natural-language assessment of a full history window. */
 const defaultSettings = {
   timeoutMilliseconds: 150_000,
   maximumInputBytes: 512_000,
@@ -413,9 +392,8 @@ const document = Schema.Struct({
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The document Schema shares its domain name with the value it decodes. */
 
 /**
- * Explicit natural-language rules, provider options and check bounds for one daemon.
- * Missing settings take Client defaults. Text policy requires a provider and
- * unique rule ids across fixed and initial rules.
+ * Fills omitted settings with defaults and requires a provider for text rules.
+ * Fixed and initial rule ids must be unique.
  */
 const MessagePolicy = document.pipe(
   Schema.filter(
@@ -431,25 +409,20 @@ const MessagePolicy = document.pipe(
   }),
 );
 
-/** One decoded message-policy document, with Client's defaults filled in. */
 type MessagePolicy = typeof MessagePolicy.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the Schema/type pair. */
 
-/**
- * Decodes the text of a message-policy document, refusing any property it
- * does not name, so a misspelled or newer setting never silently weakens the
- * policy.
- */
+/** Rejects unknown properties so misspelled settings cannot silently weaken policy. */
 export const decodeMessagePolicy = Schema.decodeUnknown(
   Schema.parseJson(MessagePolicy),
   { onExcessProperty: "error" },
 );
 
-/** The Behaviors spec limits each BEHAVIOR.md to 64 KiB: docs/reference/spec/firewall/message-policy.md#behaviors. */
+/** Limits each `BEHAVIOR.md` to 64 KiB. */
 export const MAXIMUM_BEHAVIOR_BYTES = 65_536;
 
-/** YAML owns frontmatter syntax; only Social Harness metadata is a closed namespace. */
+/** YAML defines frontmatter syntax. Only Social Harness metadata rejects unknown fields. */
 const behaviorFrontmatter = Schema.Struct({
   name: Schema.NonEmptyTrimmedString,
   description: Schema.NonEmptyString,
@@ -462,10 +435,9 @@ const behaviorFrontmatter = Schema.Struct({
   }),
 });
 
-/** The closed categories a `BEHAVIOR.md` that does not map to a rule fails with. */
 type BehaviorRefusal = "frontmatter" | "schema";
 
-/** Provider construction owns execution; loading returns only its validated parameters. */
+/** Loading validates provider parameters. Construction binds execution. */
 type LoadedDecisionProvider =
   | { readonly kind: "unavailable" }
   | {
@@ -474,10 +446,9 @@ type LoadedDecisionProvider =
       readonly apiKey: Redacted.Redacted;
     };
 
-/** Larger than any document of 256 editable rules and the fixed rules beside them. */
 const MAXIMUM_POLICY_BYTES = 1_048_576;
 
-/** A key is one token; surrounding whitespace, such as a trailing newline, is ignored. */
+/** Trims surrounding whitespace from the single-token key. */
 const decisionProviderKey = Schema.Trim.pipe(
   Schema.compose(
     Schema.String.pipe(
@@ -488,21 +459,16 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
-/** A configured document with the decision provider it names, and its decision provider. */
+/** Contains validated policy and the provider parameters it selects. */
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
   readonly provider: LoadedDecisionProvider;
 }
 
 /**
- * The document `SHARNESS_MESSAGE_POLICY_FILE` names, or none when it is
- * unset. A `jev` decision provider reads its key from
- * `SHARNESS_DECISION_PROVIDER_KEY_FILE` and returns validated provider parameters; the
- * key file is not read for any other provider. An unreadable or invalid
- * document and a missing or invalid key fail configuration naming no file content.
- * @param configuration The policy and provider file locations.
- * @param readCredential The daemon-owned secret-file reader.
- * @returns The document and its decision provider.
+ * Loads `SHARNESS_MESSAGE_POLICY_FILE`, returning none when unset. Only Jev
+ * reads `SHARNESS_DECISION_PROVIDER_KEY_FILE` through the supplied credential
+ * reader. Invalid documents or keys fail without exposing file contents.
  */
 export const loadMessagePolicy = (
   configuration: PolicyConfiguration,
@@ -551,12 +517,9 @@ export const firewallConfigurationSchema = Schema.Struct({
 export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
- * Maps one `BEHAVIOR.md` to its editable natural-language rule. YAML parser
- * diagnostics stay private; only a closed category reaches `refused`, which
- * builds the caller's own failure.
- * @param bytes The behavior's bytes; callers bound them by {@link MAXIMUM_BEHAVIOR_BYTES}.
- * @param refused The caller's failure for a closed category.
- * @returns The rule.
+ * Maps a `BEHAVIOR.md` to an editable rule. Callers must bound `bytes` by
+ * {@link MAXIMUM_BEHAVIOR_BYTES}. Only a closed failure category reaches
+ * `refused`. YAML diagnostics stay private.
  */
 export function decodeBehavior<Failure>(
   bytes: Buffer,
@@ -591,13 +554,7 @@ function uniqueTextRuleIds(policy: typeof document.Type): boolean {
   return new Set(ids).size === ids.length;
 }
 
-/**
- * Decodes the YAML between a behavior's `---` lines. Parser diagnostics,
- * including unresolved tags, stay inside this boundary.
- * @param text The frontmatter YAML.
- * @param refused The caller's failure for a closed category.
- * @returns The frontmatter fields.
- */
+/** Keeps YAML parser diagnostics, including unresolved tags, private. */
 function decodeFrontmatter<Failure>(
   text: string,
   refused: (reason: BehaviorRefusal) => Failure,
@@ -628,7 +585,7 @@ function decodeFrontmatter<Failure>(
   });
 }
 
-/** Reports only the policy entry; YAML diagnostics may contain private file content. */
+/** Reports only the policy entry because YAML diagnostics may expose private content. */
 function invalidBehavior(path: string, reason: BehaviorFailure) {
   return policyConfigurationError("message-policy", path, reason);
 }
@@ -803,7 +760,7 @@ function readBoundedFile(
   }).pipe(Effect.scoped);
 }
 
-/** A short read need not be EOF; stop only at EOF or the extra byte. */
+/** Continues after short reads until EOF or the byte beyond the limit. */
 function readDescriptor(file: FileHandle, maximumBytes: number) {
   return Effect.gen(function* () {
     const buffer = Buffer.alloc(maximumBytes + 1);
@@ -842,12 +799,6 @@ function invalidPolicy(
   });
 }
 
-/**
- * The failing rule as a refusal names it: its place in the update, then its id.
- * @param path The rule's place in the update, when the refusal has one.
- * @param ruleId The rule's id, when the refusal has one.
- * @returns The subject, or undefined when the refusal names neither.
- */
 function editSubject(
   path?: FirewallPolicyError["path"],
   ruleId?: string,
@@ -895,14 +846,6 @@ function jevKey(
       );
 }
 
-/**
- * The configuration failure for a message-policy setting, with its fixed
- * operator message.
- * @param reason Why the setting cannot start the daemon.
- * @param path The indexed behavior entry, if one fails.
- * @param behaviorReason The closed behavior failure category.
- * @returns The failure, naming no configured value.
- */
 function policyConfigurationError(
   reason: MessagePolicyConfigurationFailure,
   path = "",
@@ -921,17 +864,8 @@ function policyConfigurationError(
 }
 
 /**
- * The operator message for a message-policy failure: its text, any detail,
- * and one `Docs:` link. An entry under a behavior list links the behavior
- * rules, `docs` replaces the failure's own troubleshooting entry, and an
- * empty `docs` leaves the link out for a failure with no fix to point at.
- * @param reason The closed failure.
- * @param detail Text after the failure's own, starting with `; `.
- * @param link The entry to link in place of the failure's own.
- * @param link.path The failing policy entry, which links the behavior rules
- *     when it names a behavior list.
- * @param link.docs Another entry to link, or empty for none.
- * @returns The message, naming no configured value.
+ * Links behavior failures to their rules and other failures to troubleshooting.
+ * `link.docs` overrides that target. An empty value omits the link.
  */
 function policyFailureMessage(
   reason: MessagePolicyConfigurationFailure,

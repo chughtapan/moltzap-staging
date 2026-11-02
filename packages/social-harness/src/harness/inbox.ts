@@ -131,7 +131,7 @@ export interface PendingItem {
   readonly incoming: Incoming;
 }
 
-/** One owner uses these operations through its captured SQL client. */
+/** Captures the database and scopes opaque cursors to this inbox instance. */
 export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const cursorKey = randomBytes(32);
@@ -458,7 +458,7 @@ function persistenceFailure() {
   return new InboxError({ reason: "persistence-failed" });
 }
 
-/** Cursor integrity and lifetime belong to this inbox owner, independently of access control. */
+/** Binds cursor integrity and lifetime to this inbox independently of access control. */
 function encodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   value: A,
@@ -476,7 +476,6 @@ function encodeCursor<A, I>(
   );
 }
 
-/** Authenticate cursor position before decoding its operation-specific payload once. */
 function decodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   cursor: string,

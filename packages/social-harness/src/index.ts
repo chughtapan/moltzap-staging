@@ -1,7 +1,7 @@
 /** @file MCP contracts and the values clients use to send messages and read their saved inbox. */
 // safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
 
-/** A tool's schemas own its arguments, successful result and declared failures. */
+/** MCP tool arguments, results and failures derive from these schemas. */
 export {
   toolDefinitions,
   toolFailureSchemas,
@@ -11,16 +11,16 @@ export {
 } from "./harness/mcp/contracts.js";
 /** Clients distinguish a refused send from an unknown outcome using this decoder. */
 export { decodeHarnessSendErrorData } from "./harness/mcp/contracts.js";
-/** Host syntax is decoded once before resolving its destination. */
+/** Message text, destinations and collective options accepted by the daemon. */
 export { SendRequest } from "./host-protocol/messages.js";
 /** Native hosts can translate a text command through the same request grammar. */
 export { MessageTextError, parseMessageText } from "./host-protocol/render.js";
-/** Host-neutral display keeps local advice separate from peer content. */
+/** Formats local advice separately from peer content. */
 export {
   type GuidanceBodyOrigin,
   renderLocalGuidance,
 } from "./host-protocol/render.js";
-/** Presentation helpers use the delivered content and its saved policy view. */
+/** Formats delivered messages and collective results for hosts. */
 export {
   groupMembers,
   renderCollectiveRequest,
@@ -28,7 +28,7 @@ export {
   renderContent,
   replyAddress,
 } from "./host-protocol/render.js";
-/** The same refusal and policy-error schemas serve the server and clients. */
+/** Results and policy feedback that a host may show its agent. */
 export {
   CollectiveResult,
   FirewallRefusal,
@@ -65,7 +65,7 @@ export {
 export { RegistrationError } from "./identity/identity.js";
 /** Optional traffic export records admitted incoming content and completed sends. */
 export { HistoryExportRecord } from "./harness/message-log.js";
-/** Shared values carry message identity and decoded request/reply meaning. */
+/** Message, question, answer and collective result values. */
 export {
   Answer,
   AnswerContent,
@@ -84,7 +84,7 @@ export {
   RequestResult,
   ResultSources,
 } from "./communication/service.js";
-/** Explicit host destinations are independent of transport routing. */
+/** Names and addresses used in host messages. */
 export {
   AgentAddress,
   Content,
@@ -96,7 +96,7 @@ export {
 } from "./communication/messages.js";
 /** A send error classifies correction, retained work and uncertain acceptance. */
 export { SendError } from "./communication/errors.js";
-/** Public identity and its complete signed document have distinct names. */
+/** Agent attribution and Registry-signed identity cards. */
 export {
   AgentCard,
   AgentId,
@@ -107,16 +107,16 @@ export {
 } from "./identity/agent.js";
 /** Signing authority exposes no private key bytes. */
 export { AgentPublicKey, AgentSigningAuthority } from "./identity/keys.js";
-/** Services and verification tools use attributed envelopes at the network boundary. */
+/** Signed network messages and their verification results. */
 export {
   EnvelopeId,
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
 } from "./identity/envelope.js";
-/** Emission and compatibility use the installed release's wire policy. */
+/** Wire versions emitted and accepted by this release. */
 export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
-/** Clients report the shipped core release without another version copy. */
+/** Package version reported by the daemon. */
 export { packageVersion } from "./release.js";
-/** Native notifications signal that the client should traverse its inbox again. */
+/** Notification name that prompts clients to read their saved inbox. */
 export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";

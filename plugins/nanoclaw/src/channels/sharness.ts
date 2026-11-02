@@ -168,12 +168,7 @@ function decodeOutboundOperation(
     : Effect.succeed(text);
 }
 
-/**
- * Read the text from NanoClaw's `messages_out` content: a bare string, or the
- * `text` of the object `send_message` writes.
- * @param message One outbound row as NanoClaw delivers it.
- * @returns The text, or null when the row carries none.
- */
+/** Accepts a bare string or the text field NanoClaw's send_message writes. */
 function extractOutboundText(message: OutboundMessage): string | null {
   const content = message.content;
   if (typeof content === "string") {
@@ -188,11 +183,8 @@ function extractOutboundText(message: OutboundMessage): string | null {
 }
 
 /**
- * Send failures whose message the daemon still delivers, `delivery-pending`, or
- * may already have sent, `outcome-unknown`. NanoClaw's retry is a new send
- * and would send the message a second time, so such a row completes even
- * when the host callback that reports it fails; the model, told the message
- * may have been sent, can resend it deliberately.
+ * Completes uncertain or pending sends even if feedback fails, because a host
+ * retry would create a new send. The model can choose to resend deliberately.
  */
 const POSTED_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
   "delivery-pending",
@@ -200,9 +192,8 @@ const POSTED_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
 ]);
 
 /**
- * Send failures NanoClaw's retry must not repeat. The model hears of these;
- * any other failure stays with that retry. An invalid address or content
- * fails the same way again, and `POSTED_REFUSALS` says why the rest do.
+ * Reports these failures to the model instead of asking NanoClaw to retry.
+ * Invalid input would fail again. POSTED_REFUSALS covers pending or uncertain sends.
  */
 const FINAL_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
   "invalid-address",
@@ -464,14 +455,8 @@ class HarnessChannelAdapter {
   }
 
   /**
-   * Report a send refused for a reason in `FINAL_REFUSALS`. A send in
-   * `POSTED_REFUSALS` completes even when its report cannot reach the host,
-   * since failing its row would hand it to NanoClaw's retry.
-   * @param config The host callbacks the delivery started under.
-   * @param to The conversation the text was sent to.
-   * @param error The send's refusal.
-   * @returns Completion once the report is handed to the host or, for a
-   *     sent refusal, logged as unreported.
+   * Completes POSTED_REFUSALS even when feedback fails, so NanoClaw cannot
+   * repeat a send that may already have reached its destination.
    */
   private reportFinalRefusal(
     config: ChannelSetup,
@@ -491,18 +476,9 @@ class HarnessChannelAdapter {
   }
 
   /**
-   * Hand a refused send back to the model as a Social Harness message in the
-   * conversation it was sent to. `send_message` has already returned, so this
-   * is how the model learns of it. The row completes rather than reaching
-   * NanoClaw's retry: a text the parser refuses would fail the same way again,
-   * and a send refused for a reason in `FINAL_REFUSALS` must not be repeated,
-   * for the reasons it gives.
-   * @param config The host callbacks the delivery started under. The channel
-   *     can stop while the send runs, as when the daemon stops, and the report
-   *     still reaches the host rather than failing the row into a retry.
-   * @param to The conversation the text was sent to.
-   * @param report The refusal's text.
-   * @returns Completion after the host callback completed.
+   * Returns refused sends to the model through the captured host callback, even
+   * if the channel stops meanwhile. The tool has already returned. Successful
+   * feedback completes the row instead of retrying unchanged refused input.
    */
   private reportRefusedText(
     config: ChannelSetup,
@@ -553,12 +529,8 @@ class HarnessChannelAdapter {
   }
 
   /**
-   * Hand one projected message to NanoClaw's main session, replying to its
-   * Social Harness address.
-   * @param config The host callbacks from the active setup.
-   * @param address The Social Harness conversation the message belongs to.
-   * @param inbound The message in NanoClaw's inbox shape.
-   * @returns Completion after the host callback completed.
+   * Awaits handoff to the main session with a reply route to the Social Harness
+   * conversation.
    */
   private handToHost(
     config: ChannelSetup,

@@ -260,13 +260,9 @@ const watchSilence = (state: Reception) =>
   );
 
 /**
- * Attach before reading the inbox so arrivals during catch-up remain visible.
- * The official transport supplies framing and cancellation without a request
- * timeout on the retained stream. Notifications contain no message content.
- * @param endpoint Explicit daemon MCP URL.
- * @param credential Bearer shared with the daemon's operation connection.
- * @param onReady Runs once the server activates the stream.
- * @returns Coalesced inbox wakeups until the owning host subscription ends.
+ * Subscribe before reading the inbox so arrivals during catch-up remain visible.
+ * Notifications carry no message content. The `onReady` callback runs after
+ * activation. The owning scope cancels the stream, which has no request timeout.
  */
 export const inboxWakeups = (
   endpoint: URL,

@@ -1,23 +1,17 @@
 #!/usr/bin/env node
 /**
- * @file Content hash of one package as `pnpm pack` would publish it.
+ * @file Hashes package contents selected by pnpm pack.
+ * Usage: `node scripts/release/content-hash.ts DIR` or `--tarball FILE`.
+ * DIR is repository-relative. Prints `sha256:` and a hex digest. The tarball
+ * form reads no workspace and needs no installation.
  *
- * Usage: `node scripts/release/content-hash.ts DIR`, where DIR names a
- * repository-relative package directory, or `--tarball FILE` for a packed tarball.
- * Prints `sha256:` and a hex digest. The tarball form reads no workspace, so
- * the publish job checks what it publishes without installing anything.
+ * The release records `sharnessContentHash` to detect changes. The hash covers
+ * packed paths, executable bits and file bytes. Manifests omit version and the
+ * recorded hashes, but retain workspace dependency pins, so a sibling release
+ * changes its dependents' hashes.
  *
- * The release records this value in each published manifest as
- * `sharnessContentHash`, and compares it with the value the manifest's
- * version recorded on npm to decide whether the package changed. The hash
- * covers every packed file with its executable bit, and the packed manifest
- * without the fields a release writes: `version` and the recorded hashes. The
- * packed manifest carries the exact versions `pnpm pack` pins each workspace
- * sibling to, so a sibling that publishes a new version changes the hash of
- * every package that depends on it.
- *
- * Run from the repository root after `pnpm build`. Exits 1 when packing or
- * extracting fails.
+ * Run from the repository root after `pnpm build`. Packing or extraction failure
+ * exits 1.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -67,11 +61,8 @@ const DEPENDENCY_SECTIONS = [
 ];
 
 /**
- * Pack `DIR` as the workspace stands and hash the tarball's
- * contents.
- * @param repo Repository root.
- * @param dir Repository-relative package directory.
- * @returns The content hash, or the step that failed.
+ * Packs a repository-relative directory from the current workspace and hashes
+ * the published contents.
  */
 export function contentHashOfPackage(
   repo: string,
@@ -83,12 +74,7 @@ export function contentHashOfPackage(
   });
 }
 
-/**
- * Hash a packed tarball's contents, the same way {@link contentHashOfPackage}
- * hashes what `pnpm pack` writes.
- * @param file The `.tgz` to extract.
- * @returns The content hash, or the extraction that failed.
- */
+/** Uses the same content hash as contentHashOfPackage without reading a workspace. */
 export function contentHashOfTarball(file: string): string | PackFailure {
   return withScratch((scratch) => {
     const extracted =
@@ -102,10 +88,8 @@ export function contentHashOfTarball(file: string): string | PackFailure {
 }
 
 /**
- * Hash an extracted package directory: every file path, in byte order, with
- * its executable bit and the SHA-256 of its hashed bytes.
- * @param root The directory `package/` of an extracted tarball.
- * @returns `sha256:` and the hex digest over the directory's files.
+ * Requires an extracted package directory. Hashes file paths in byte order,
+ * executable bits and file contents.
  */
 export function contentHashOfDirectory(root: string): string {
   return digestOf(
@@ -115,10 +99,7 @@ export function contentHashOfDirectory(root: string): string {
   );
 }
 
-/**
- * Runs `body` with a fresh scratch directory and removes it afterwards.
- * @returns What `body` returns.
- */
+/** Provides a fresh scratch directory and removes it after the callback returns. */
 export function withScratch<T>(body: (scratch: string) => T): T {
   const scratch = mkdtempSync(path.join(tmpdir(), "content-hash-"));
   const result = body(scratch);
@@ -127,11 +108,8 @@ export function withScratch<T>(body: (scratch: string) => T): T {
 }
 
 /**
- * Pack `DIR` into `scratch/DIR` and extract it there.
- * @param repo Repository root.
- * @param dir Repository-relative package directory.
- * @param scratch Directory that receives the tarball and its contents.
- * @returns The extracted `package/` directory, or the step that failed.
+ * Packs a repository-relative directory into scratch and returns its extracted
+ * package directory or the failed step.
  */
 export function packInto(
   repo: string,
@@ -164,9 +142,8 @@ export function packInto(
 }
 
 /**
- * Add launcher metadata to a local Client archive without mutating the checkout.
- * The package manager owns file selection and workspace pins; only the extracted manifest changes.
- * Archive creation excludes macOS file metadata so package contents remain portable.
+ * Updates only the archived manifest, preserving pnpm's file selection and
+ * workspace pins. Excludes macOS file metadata when recreating the archive.
  */
 export function recordPackedWireVersion(
   archive: string,
@@ -219,13 +196,8 @@ export function packedFiles(root: string): readonly string[] {
 }
 
 /**
- * One hashed line: the label, the executable bit, and the SHA-256 of the
- * file's hashed bytes. A `package.json` hashes as its manifest view.
- * @param root Extracted package directory.
- * @param relative File path under `root`.
- * @param label The path the line names.
- * @param view How a manifest is hashed.
- * @returns The line.
+ * Includes the label, executable bit and content digest. A package.json uses
+ * the supplied manifest view.
  */
 export function fileEntry(
   root: string,
@@ -241,10 +213,7 @@ export function fileEntry(
   return `${label}\0${executable}\0${digest}\n`;
 }
 
-/**
- * The digest over hashed lines, independent of the order they arrive in.
- * @returns `sha256:` and the hex digest.
- */
+/** Returns `sha256:` and a hex digest, independent of entry order. */
 export function digestOf(entries: readonly string[]): string {
   const digest = createHash("sha256");
   for (const entry of [...entries].sort(byteOrder)) {
@@ -275,10 +244,7 @@ export function byteOrder(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-/**
- * Runs one command to completion.
- * @returns Nothing on success, otherwise the failure with its output.
- */
+/** Returns command output with failures, or undefined on success. */
 function run(
   command: string,
   args: readonly string[],

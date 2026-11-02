@@ -1,4 +1,4 @@
-/** @file Canonical JSON bytes, closed schemas and shared representation bounds. */
+/** @file Encodes and validates canonical JSON bytes. */
 
 import type { ParseOptions } from "effect/SchemaAST";
 import canonicalize from "canonicalize";
@@ -8,18 +8,18 @@ const MAXIMUM_CONTAINER_DEPTH = 16;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 
-/** Reject omitted exact fields and unknown properties at closed boundaries. */
+/** Rejects missing required fields and unknown properties. */
 export const exactParseOptions = {
   exact: true,
   onExcessProperty: "error",
 } satisfies ParseOptions;
 
-/** A closed wire struct never retains members absent from its schema. */
+/** Rejects properties outside the supplied fields. */
 export const exactStruct = <Fields extends Schema.Struct.Fields>(
   fields: Fields,
 ) => Schema.Struct(fields).annotations({ parseOptions: exactParseOptions });
 
-/** Maximum retained item or evidence window, including separate guidance bytes. */
+/** Byte limit for a saved item or history window, including guidance. */
 export const MAXIMUM_RUNTIME_ITEM_BYTES = 2 * 1024 * 1024;
 
 /* eslint-disable agent-code-guard/no-nullish-type-aliases -- JSON null is a value, not an optional absence. */
@@ -41,21 +41,21 @@ const jsonValueSchema = Schema.Unknown.pipe(
 );
 const jsonTextSchema = Schema.parseJson(jsonValueSchema);
 
-/** Canonical JSON decoding or encoding failed without exposing its cause. */
+/** JSON could not be encoded or decoded as canonical UTF-8. */
 export class CanonicalJsonError extends Data.TaggedError(
   "CanonicalJsonError",
 ) {}
 
-/** A Client-owned representation, hash or verification check failed. */
+/** A message representation, hash or verification check failed. */
 export class ClientRepresentationError extends Data.TaggedError(
   "ClientRepresentationError",
 ) {}
 
-/** Decoder details remain private to the owning representation boundary. */
+/** Reports a representation failure without exposing decoder details. */
 export const representationFailure = (): ClientRepresentationError =>
   new ClientRepresentationError();
 
-/** Complete byte equality does not depend on a candidate's array methods. */
+/** Requires equal lengths and equal byte values. */
 export const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => {
   if (left.byteLength !== right.byteLength) {
     return false;
@@ -69,11 +69,8 @@ export const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => {
 };
 
 /**
- * Parses bounded bytes only when their original spelling is RFC 8785 JCS.
- *
- * @param bytes Bounded candidate representation, captured before decoding.
- * @returns Parsed JSON with finite numbers, valid Unicode and depth at most sixteen.
- * @failure CanonicalJsonError when byte or JSON-domain validation fails.
+ * Parses RFC 8785 canonical UTF-8 JSON with finite numbers, valid Unicode
+ * and at most sixteen nested containers.
  */
 export const parseCanonicalJson = (bytes: Uint8Array) =>
   parseJsonBytes(bytes).pipe(
@@ -92,12 +89,8 @@ export const parseCanonicalJson = (bytes: Uint8Array) =>
   );
 
 /**
- * Applies one closed domain schema after canonical-byte admission.
- *
- * @param schema Closed domain schema.
- * @param bytes Bounded canonical JSON bytes.
- * @returns The decoded value without imposing its schema's encoded defaults.
- * @failure CanonicalJsonError when representation or domain validation fails.
+ * Validates canonical JSON bytes, then decodes them with the schema.
+ * Schema defaults affect the returned value, not the required input bytes.
  */
 export const decodeCanonicalJson = <A, I, R>(
   schema: Schema.Schema<A, I, R>,
@@ -109,11 +102,8 @@ export const decodeCanonicalJson = <A, I, R>(
   );
 
 /**
- * Captures a JSON value as canonical bytes in one synchronous encoding step.
- *
- * @param value JSON-domain value, with at most sixteen nested containers.
- * @returns Fresh canonical UTF-8 bytes independent of later caller mutation.
- * @failure CanonicalJsonError when the value is outside the JSON domain.
+ * Copies a JSON value into canonical UTF-8 bytes. Rejects invalid Unicode,
+ * non-finite numbers and more than sixteen nested containers.
  */
 export const encodeCanonicalJson = (
   value: unknown,
@@ -128,7 +118,7 @@ export const encodeCanonicalJson = (
     catch: () => new CanonicalJsonError(),
   });
 
-/** Serializes trusted schema-owned data, including class values and omitted optional fields. */
+/** Accepts decoded schema values, including classes and undefined optional fields. */
 export const canonicalBytes = (
   value: unknown,
 ): Effect.Effect<Uint8Array, ClientRepresentationError> =>
@@ -153,8 +143,8 @@ export const encodeCanonical = <A, I, R>(
   );
 
 /**
- * Requires bytes to equal the schema's canonical encoded representation.
- * Schema defaults and transformations therefore participate in equality.
+ * Requires input bytes to match the schema's canonical encoding, including
+ * its defaults and transformations.
  */
 export const decodeCanonical = <A, I, R>(
   schema: Schema.Schema<A, I, R>,

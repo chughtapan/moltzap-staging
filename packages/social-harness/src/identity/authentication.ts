@@ -280,14 +280,8 @@ const signPreparedRequest = (input: {
   });
 
 /**
- * Installs one exact Social Harness HTTP signature profile on a prepared request.
- *
- * @param input Request and fixed profile inputs.
- * @param input.httpRequest Request whose method and URL are already selected.
- * @param input.bodyBytes Canonical body octets to install and sign.
- * @param input.signingAuthority Opaque authority for the caller key.
- * @param input.profile Route-owned signature profile.
- * @returns The request with its body and exact signed fields installed.
+ * Installs and signs the canonical body bytes on a request whose method and
+ * URL are already selected. The route selects the signature profile.
  */
 export const signHttpRequest = (input: {
   readonly httpRequest: HttpClientRequest.HttpClientRequest;
@@ -635,14 +629,8 @@ const verifyWithLibrary = (input: {
 };
 
 /**
- * Verifies the exact profile and returns its replay nonce.
- *
- * @param input Request and fixed verification inputs.
- * @param input.httpRequest Bounded server request at the selected route.
- * @param input.bodyBytes Copied body octets covered by the digest.
- * @param input.publicKey Public key selected by the boundary owner.
- * @param input.profile Route-owned signature profile.
- * @returns Replay material bound to the exact accepted verification second.
+ * Verifies the selected route profile against the exact body bytes. Returns
+ * the nonce and verification second for replay admission.
  */
 export const verifyHttpRequestSignature = (input: {
   readonly httpRequest: HttpServerRequest.HttpServerRequest;
@@ -1080,13 +1068,8 @@ function runLeadingResolution(
 }
 
 /**
- * Looks up `agentId` through the supplied resolver. Lookup failures have
- * one recovery at this boundary, so a lookup that fails, throws or dies fails
- * with an unavailable reason and still settles pending resolution. An
- * interrupted lookup stays interrupted.
- * @param dependencies Bounded Registry lookup and shared card-resolution state.
- * @param agentId Immutable identity whose verified card is required.
- * @returns The verified card or a closed resolution failure.
+ * Lookup failure or defect settles pending resolution as unavailable.
+ * Interruption remains interruption.
  */
 function lookupCard(
   dependencies: CardResolverDependencies,
@@ -1110,14 +1093,9 @@ function lookupCard(
 const isVerifiedIdentityCard = Schema.is(verifiedAgentIdentityCardSchema);
 
 /**
- * A Registry provider must return a card verified by this package for the
- * requested identity. Its failure to supply that evidence leaves authentication
- * unavailable. Only an explicit missing identity refuses the caller here.
- * Provider-owned properties are read under a try because injected providers can
- * return objects whose getters throw.
- * @param attempted Registry outcome, absent when no lookup permit was available.
- * @param agentId Requested identity that the returned card must bind.
- * @returns The verified card or a closed resolution failure.
+ * Requires a card this package verified for the requested agent. An explicit
+ * missing identity refuses authentication. Other provider failures leave it
+ * unavailable. Provider getters may throw.
  */
 function resolveLookupAttempt(
   attempted: Option.Option<RegistryLookupResult>,
@@ -1147,15 +1125,7 @@ function resolveLookupAttempt(
   }).pipe(Effect.flatten);
 }
 
-/**
- * Bounded-cache reads and writes are synchronous and never span a yield, so
- * cache access and pending-resolution decisions cannot interleave.
- * @param pendingResolutions Shared in-flight resolutions whose entries must be preserved.
- * @param cards Bounded cache of verified immutable cards.
- * @param agentId Identity used as the cache and pending-resolution key.
- * @param candidate Deferred value installed only if this lookup wins acquisition.
- * @returns The cached card or shared pending lookup selected atomically.
- */
+/** Synchronous cache access and pending-lookup selection cannot interleave. */
 function beginCardResolution(
   pendingResolutions: Ref.Ref<PendingResolutions>,
   cards: BoundedCache<AgentId, VerifiedAgentIdentityCard>,

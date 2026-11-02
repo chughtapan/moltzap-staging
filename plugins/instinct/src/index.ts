@@ -1,4 +1,4 @@
-/** @file Instinct's email acceptance boundary; Client owns receive and recovery. */
+/** @file Hands event references to AgentMail for Instinct to retrieve through MCP. */
 import {
   FetchHttpClient,
   HttpClient,
@@ -7,7 +7,7 @@ import {
 } from "@effect/platform";
 import { Data, Effect, type Redacted, Schema, Stream } from "effect";
 
-/** Deployment-owned sender credentials; AgentMail owns inbox and address syntax. */
+/** Deployment-owned sender credentials. AgentMail owns inbox and address syntax. */
 export interface InstinctSender {
   readonly apiKey: Redacted.Redacted;
   readonly inboxId: string;
@@ -28,16 +28,16 @@ class InstinctWakeError extends Data.TaggedError("InstinctWakeError")<{
   }
 }
 
-/** A message-id response is small; cap body consumption even without Content-Length. */
+/** A message-id response is small. Bound body consumption even without Content-Length. */
 const maximumResponseBytes = 16_384;
 const acceptance = Schema.parseJson(
   Schema.Struct({ message_id: Schema.NonEmptyString }),
 );
 
 /**
- * Acknowledges only after AgentMail accepts a message, not after model processing.
- * Failures leave the Client item unread. An ambiguous handoff can send another
- * email when the host restarts; this function never retries a provider request.
+ * Returns after AgentMail accepts the email and the HTTP request closes.
+ * The inbox consumer then acknowledges handoff, before model processing.
+ * This call never retries. Uncertain acceptance can produce another email on redelivery.
  */
 export const deliverToInstinct = Effect.fn("Instinct.deliver")(function* (
   sender: InstinctSender,

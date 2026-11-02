@@ -74,7 +74,10 @@ const RegistryLookupRequest = Schema.Union(
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one boundary model.
 type RegistryLookupRequest = typeof RegistryLookupRequest.Type;
 
-/** Name, key and idempotency conflicts are results; authentication and transport failures remain errors. */
+/**
+ * Returns name, key and idempotency conflicts as results. Authentication and
+ * transport failures remain errors.
+ */
 export type RegistryRegisterResult =
   | Readonly<{ kind: "registered"; identityCard: VerifiedAgentIdentityCard }>
   | Readonly<{ kind: "name_taken" }>
@@ -249,7 +252,7 @@ export class Registry extends Context.Tag("SocialHarness/Registry")<
     Registry,
     (service) => service.register,
   );
-  /** Resolves an immutable identity card; absence is a normal not_found result. */
+  /** Resolves an immutable identity card. An absent identity returns `not_found`. */
   static readonly lookup = Effect.serviceFunctionEffect(
     Registry,
     (service) => service.lookup,
@@ -263,15 +266,6 @@ export class Registry extends Context.Tag("SocialHarness/Registry")<
     Layer.effect(Registry, makeRegistryService(input));
 }
 
-/**
- * Builds the service installed behind the public Registry capability.
- *
- * @param input Immutable Registry client configuration.
- * @param input.origin Registry HTTP origin.
- * @param input.registrySignerPublicKey Pinned Registry verification key.
- * @param input.requestTimeout Complete per-call deadline.
- * @returns The configured service, requiring an Effect HTTP client.
- */
 function makeRegistryService(input: {
   readonly origin: URL;
   readonly registrySignerPublicKey: AgentPublicKey;

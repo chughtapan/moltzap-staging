@@ -79,12 +79,8 @@ export type EvidenceRoute =
   | Readonly<{ fold: EngineActionFold; kind: "durability" }>;
 
 /**
- * The hash of a conversation's current anchor, which its next record binds.
- * A conversation still on its initial anchor holds the anchor body unhashed,
- * and every record since that anchor, the head included, binds its hash.
- * @param conversation The conversation whose anchor is current.
- * @param head The conversation's certified head.
- * @returns The current anchor's hash.
+ * The certified head binds the current anchor hash. Before certification,
+ * the initial anchor is retained as an unhashed body.
  */
 export const anchorHashAtHead = (
   conversation: EngineConversation,
@@ -94,11 +90,7 @@ export const anchorHashAtHead = (
     ? head.record.actionCertifiedRecord.recordCore.anchorHash
     : conversation.currentAnchor.anchorHash;
 
-/**
- * Resolve the immutable Router anchor bound when one action fold is created.
- * @param fold Selected action and its action-specific Router anchor.
- * @returns The canonical anchor hash committed by the record core.
- */
+/** Uses the immutable anchor captured when the action fold was created. */
 export const recordAnchorHash = (
   fold: EngineActionFold,
 ): Effect.Effect<AnchorHash, ClientRepresentationError> =>
@@ -118,14 +110,7 @@ const encodeOrderedEvidence = (
     ),
   );
 
-/**
- * Convert one verified inner signature into its durable evidence row.
- * @param conversationId Private conversation that owns the evidence.
- * @param kind Evidence statement family retained by the store.
- * @param subjectId Hash named by the evidence statement.
- * @param message Verified self-addressed evidence message.
- * @returns Canonical durable evidence without changing its signer bytes.
- */
+/** Retains the inner signature's exact bytes as signer-attributed evidence. */
 export const protocolEvidence = (
   conversationId: string,
   kind: ProtocolEvidence["kind"],
@@ -142,12 +127,7 @@ export const protocolEvidence = (
     })),
   );
 
-/**
- * Build the action-certified record after its threshold is reached.
- * @param fold In-memory fold containing verified action evidence.
- * @param anchorHash Completed anchor bound by the record core.
- * @returns One evidence-independent record core with its action certificate.
- */
+/** Builds the record core and action certificate from threshold-complete evidence. */
 export const makeActionCertifiedRecord = (
   fold: EngineActionFold,
   anchorHash: RecordCore["anchorHash"],
@@ -180,12 +160,7 @@ export const makeActionCertifiedRecord = (
     );
   }).pipe(Effect.withSpan("makeActionCertifiedRecord"));
 
-/**
- * Add a durability certificate without changing the certified record hash.
- * @param record Action-certified core being finalized.
- * @param fold In-memory fold containing verified durability evidence.
- * @returns One complete certified record with mergeable durability votes.
- */
+/** Adds durability evidence without changing record identity. */
 export const makeCertifiedRecord = (
   record: ActionCertifiedRecord,
   fold: EngineActionFold,
@@ -223,13 +198,7 @@ export const stagedRecord = (
   );
 };
 
-/**
- * Convert a complete wire record into one complete store promotion row.
- * @param record Complete certified wire record.
- * @param actionSignatures Verified action signatures stored with the record.
- * @param durabilityVotes Verified durability votes stored with the record.
- * @returns Store promotion data with separate action and durability evidence.
- */
+/** Keeps action and durability evidence separate in the promotion row. */
 export const storedCertifiedRecord = (
   record: CertifiedRecord,
   actionSignatures: Iterable<SignedMessage>,
@@ -324,12 +293,7 @@ interface RecoveredEngineState {
   readonly outboundMessages: readonly StoredOutboundMessage[];
 }
 
-/**
- * Rebuild only state whose hashes, signatures, and cross-fields still verify.
- * @param input Engine dependencies used to verify persisted representation.
- * @param recovery Complete store snapshot captured before engine startup.
- * @returns Verified conversations, folds, and durable message intents.
- */
+/** Reconstructs only state whose hashes, signatures and projected fields agree. */
 export const recoverEngineState = (
   input: EndpointEngineInput,
   recovery: EndpointRecovery,
@@ -408,13 +372,8 @@ interface CertifiedFoldRecoveryInput {
 }
 
 /**
- * Open an empty fold for one action: no evidence, and no local signature
- * queued yet, so certification decides what to sign and send.
- * @param conversation Conversation whose next position the action proposes.
- * @param action Selected action the fold collects evidence for.
- * @param actionHash Hash that action and durability evidence name.
- * @param routerAnchor Anchor the action's record certifies against.
- * @returns A fold the caller registers in `EngineRuntime.actionFolds`.
+ * Starts without evidence or queued signatures. The caller registers the
+ * fold in `EngineRuntime.actionFolds` so certification can choose local evidence.
  */
 export function makeActionFold(
   conversation: EngineConversation,
@@ -435,12 +394,7 @@ export function makeActionFold(
   };
 }
 
-/**
- * Resolve evidence once for both recovery fencing and active certification.
- * @param runtime Engine holding the active folds.
- * @param statement Decoded statement whose signature has not yet been checked.
- * @returns Its named conversation and active fold, when known.
- */
+/** Finds the named conversation and fold before verifying the statement's signature. */
 export function evidenceTarget(
   runtime: EngineRuntime,
   statement: EvidenceStatement,
@@ -478,12 +432,7 @@ export function evidenceTarget(
   }
 }
 
-/**
- * Bind verified evidence to the active fold selected by its signed subject.
- * @param route Active fold and the certificate role the statement targets.
- * @param statement Cryptographically verified evidence statement.
- * @returns Whether all fold-specific bindings match.
- */
+/** Checks fold-specific bindings after cryptographic verification. */
 export function evidenceMatchesFold(
   route: EvidenceRoute,
   statement: VerifiedEvidence["statement"],
@@ -515,11 +464,8 @@ export function evidenceMatchesFold(
 }
 
 /**
- * Encode signer messages in decoded-AgentId byte order, which a certificate
- * requires and neither a fold's map nor the store's key order gives.
- * @param messages Verified signer messages, in any order.
- * @returns The encoded messages, or `undefined` when there are none; each
- *   caller reports an empty certificate in its own error.
+ * Orders signatures by decoded AgentId bytes, independent of map or store
+ * order. Returns undefined when empty so callers choose the error.
  */
 export function orderedSignatures(
   messages: Iterable<SignedMessage>,
@@ -570,13 +516,8 @@ export function verifyStoredMemberships(
 }
 
 /**
- * Read a page of stored certified history for the owner tools, with the same
- * row checks startup and recovery apply. Each membership the page names is
- * verified once, however many of its records the page holds.
- * @param registrySignerPublicKey Registry key the member cards verify under.
- * @param history Retained memberships and anchors named by these records.
- * @param records Durable record rows, in page order.
- * @returns The verified messages and their history positions, in page order.
+ * Applies startup's retained-history checks and verifies each membership once
+ * per page. Preserves page order.
  */
 export function readStoredHistory(
   registrySignerPublicKey: AgentPublicKey,
@@ -617,13 +558,9 @@ export function readStoredHistory(
 }
 
 /**
- * Decode one stored membership, verify it against the Registry signer, and
- * check that the row's conversation and membership hash name it.
- * @param stored Durable membership row.
- * @param registrySignerPublicKey Registry key the member cards verify under.
- * @returns The verified membership. A descriptor that fails to decode or
- *   verify is a representation error; a row whose columns disagree with its
- *   own descriptor is a persistence error.
+ * Verifies the descriptor against the Registry signer and its projected row
+ * fields. Invalid representation differs from a persistence error caused by
+ * columns disagreeing with their descriptor.
  */
 export function verifyStoredMembership(
   stored: StoredMembership,
@@ -645,15 +582,7 @@ export function verifyStoredMembership(
   );
 }
 
-/**
- * Read one stored certified record with the anchor row it names. The anchor
- * row's columns must match the anchor it holds, and the record row must pass
- * `recordFromStore`.
- * @param membership Verified membership of the record's conversation.
- * @param history Retained anchors needed to verify this record.
- * @param stored Durable record row.
- * @returns The complete verified record.
- */
+/** Verifies the record and its anchor, including agreement with projected row fields. */
 export function readStoredRecord(
   membership: VerifiedMembership,
   history: Pick<EndpointRecovery, "anchors">,
@@ -674,12 +603,7 @@ export function readStoredRecord(
   );
 }
 
-/**
- * Resolve the Router instance named by one conversation's durable current anchor.
- * @param membership Fixed membership that owns the conversation.
- * @param recovery Complete verified store snapshot.
- * @returns The instance bound by the initial or completed re-anchor at the position.
- */
+/** Resolves the Router instance from the durable current anchor. */
 export function durableRouterInstanceId(
   membership: VerifiedMembership,
   recovery: EndpointRecovery,
@@ -705,12 +629,7 @@ export function durableRouterInstanceId(
   );
 }
 
-/**
- * Name the Router instance an anchor binds: the initial anchor's instance, or
- * the instance a completed re-anchor moved the conversation to.
- * @param anchor Verified initial or completed re-anchor.
- * @returns The bound Router instance.
- */
+/** Reads the instance bound by an initial or completed anchor. */
 export function anchorRouterInstanceId(
   anchor: RouterAnchor,
 ): InitialAnchorBodyValue["routerInstanceId"] {
@@ -719,12 +638,7 @@ export function anchorRouterInstanceId(
     : anchor.reanchor.routerInstanceId;
 }
 
-/**
- * Decode and verify one durable initial or completed re-anchor row.
- * @param membership Fixed membership that owns the anchor.
- * @param stored Durable anchor row and canonical representation.
- * @returns A verified anchor usable for record reconstruction.
- */
+/** Verifies a retained anchor before record reconstruction. */
 export function decodeStoredAnchor(
   membership: VerifiedMembership,
   stored: EndpointRecovery["anchors"][number],
@@ -740,11 +654,8 @@ export function decodeStoredAnchor(
 }
 
 /**
- * Verify every retained current outer envelope before Router resumption.
- * @param input Engine identity and signature-verification dependencies.
- * @param outbounds Exact pending rows recovered in durable insertion order.
- * @param memberships Verified membership for each retained conversation.
- * @returns The unchanged rows after canonical bytes and attribution verify.
+ * Verifies canonical bytes and attribution before resuming unchanged outbox
+ * rows in durable order.
  */
 export function verifyStoredOutbounds(
   input: EndpointEngineInput,
@@ -761,12 +672,7 @@ export function verifyStoredOutbounds(
   );
 }
 
-/**
- * Verify that every recovered record and anchor forms one gap-free history.
- * @param recovery Complete store snapshot to verify.
- * @param memberships Verified fixed memberships keyed by conversation.
- * @returns Completion only when every retained history is complete and unique.
- */
+/** Requires one complete, gap-free chain of records and anchors per conversation. */
 export function verifyRecoveredHistory(
   recovery: EndpointRecovery,
   memberships: Map<ConversationIdValue, VerifiedMembership>,
@@ -782,14 +688,8 @@ export function verifyRecoveredHistory(
 }
 
 /**
- * The staged record that extends a position but holds no durability
- * certificate yet. At most one exists: its action certificate and this
- * endpoint's proposal lock select one successor per predecessor and anchor.
- * @param recovery Complete verified recovery snapshot.
- * @param conversationId Conversation whose position is examined.
- * @param head Record the successor extends.
- * @param anchorHash Anchor the successor binds; any anchor when omitted.
- * @returns The staged, uncertified successor, when this endpoint holds one.
+ * Returns the uncertified staged successor. A proposal lock selects at most
+ * one per predecessor and anchor. Omit `anchorHash` to search any anchor.
  */
 export function stagedSuccessor(
   recovery: EndpointRecovery,
@@ -806,14 +706,7 @@ export function stagedSuccessor(
   );
 }
 
-/**
- * Determine whether one observed record belongs to the retained head ancestry.
- * @param recovery Complete verified recovery snapshot.
- * @param conversationId Conversation whose record chain is examined.
- * @param observed Record hash reported by a fixed member.
- * @param head Locally retained certified head.
- * @returns Whether the observed record is the head or one of its ancestors.
- */
+/** Includes the head itself when testing retained record ancestry. */
 export function observedHeadIsResolved(
   recovery: EndpointRecovery,
   conversationId: ConversationIdValue,
@@ -832,14 +725,7 @@ export function observedHeadIsResolved(
   );
 }
 
-/**
- * Determine whether one observed anchor belongs to the retained anchor chain.
- * @param recovery Complete verified recovery snapshot.
- * @param conversationId Conversation whose anchor chain is examined.
- * @param observed Anchor hash reported by a fixed member.
- * @param current Locally retained current anchor.
- * @returns Whether the observed anchor is current or one of its ancestors.
- */
+/** Includes the current anchor itself when testing retained anchor ancestry. */
 export function observedAnchorIsResolved(
   recovery: EndpointRecovery,
   conversationId: ConversationIdValue,
@@ -1447,15 +1333,9 @@ function recoverCertifiedFold(
 }
 
 /**
- * Reconstruct one complete certified record from separately retained
- * evidence. Each evidence row must name the record's conversation, the kind
- * and subject its certificate covers, and its own signer; the signatures are
- * verified once, with the record as a whole.
- * @param membership Verified membership of the record's conversation, which a
- *     MESSAGE record names only by its hash.
- * @param stored Durable record core and signer-attributed evidence rows.
- * @param routerAnchor Verified anchor named by the durable record core.
- * @returns The complete record after all hashes and store projections match.
+ * Requires evidence to name the record's conversation, subject and signer.
+ * Verifies the assembled record's signatures once and checks projected store
+ * fields against the record core.
  */
 function recordFromStore(
   membership: VerifiedMembership,
@@ -1477,13 +1357,6 @@ function recordFromStore(
   );
 }
 
-/**
- * Check that a stored record row's columns name the record core it holds.
- * @param row Staged or certified record row.
- * @param core The row's decoded record core.
- * @param membership Verified membership of the row's conversation.
- * @returns Whether every projected column matches.
- */
 function storedRowMatchesCore(
   row: StagedRecord,
   core: RecordCore,
@@ -1529,14 +1402,6 @@ function assembleStoredRecord(
   });
 }
 
-/**
- * Assemble an action-certified record from its verified parts.
- * @param recordCore Record core the action certificate certifies.
- * @param recordHash Hash of `recordCore`.
- * @param routerAnchor Anchor the record core commits to.
- * @param signatures Action signatures in certificate order.
- * @returns The record, whose certificate names the core's action hash.
- */
 function actionCertifiedRecord(
   recordCore: RecordCore,
   recordHash: RecordHash,
@@ -1663,13 +1528,7 @@ function completeRecoveredFold(
   fold.certified = true;
 }
 
-/**
- * Restore only evidence whose signer, subject, and conversation still match.
- * @param recovery Complete endpoint-store snapshot.
- * @param actionFolds Active folds indexed by verified action hash.
- * @param recordFolds Active folds indexed by verified record hash.
- * @returns Completion after every relevant row is verified and installed.
- */
+/** Restores only evidence whose signer, subject and conversation agree. */
 function recoverFoldEvidence(
   recovery: EndpointRecovery,
   actionFolds: Map<ActionHash, EngineActionFold>,

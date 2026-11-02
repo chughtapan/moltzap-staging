@@ -484,7 +484,10 @@ export type StoredCollectiveOperation = OperationState &
       }
   );
 
-/** The accepted Message lives in Communication; a collective retains only its role and identity. */
+/**
+ * Communication retains the accepted Message. A collective retains its role
+ * and identity.
+ */
 export interface StoredCollectiveMessage {
   readonly operationId: CollectiveId;
   readonly role: "request" | "response" | "close";
@@ -571,13 +574,9 @@ export function putConversationFoundation(
 }
 
 /**
- * Commits the first valid Router-ordered action for one predecessor.
- *
- * A caller signs only after this operation succeeds, so an endpoint cannot
- * sign two actions for the same predecessor across crashes or restarts.
- *
- * @param proposal Verified action core selected in Router order.
- * @returns Whether the lock was inserted or the same lock already existed.
+ * Selects the first valid Router-ordered action durably. Sign only after
+ * success to prevent conflicting signatures across restart. Returns inserted
+ * or an identical existing lock.
  */
 export function lockProposal(
   proposal: ProposalLock,
@@ -622,13 +621,9 @@ export function lockFirstMessageProposal(
 }
 
 /**
- * Replaces an uncommitted conversation's Router-instance foundation.
- *
- * The exact old foundation and empty certified head prevent this cleanup from
- * erasing committed history or a concurrently advanced anchor.
- *
- * @param restart Expected old and verified replacement initial foundations.
- * @returns The replacement foundation and immutable retained message intents.
+ * Requires the exact old foundation and an empty certified head, protecting
+ * committed history and concurrent anchor changes. Returns the replacement
+ * and retained immutable intents.
  */
 export function restartEmptyConversation(
   restart: EmptyConversationRestart,
@@ -652,13 +647,8 @@ export function restartEmptyConversation(
 }
 
 /**
- * Durably stages at most one re-anchor proposal for one Router-instance scope,
- * for this endpoint's vote. It refuses a proposal away from a head this
- * endpoint holds a staged successor of under the same anchor, since it has
- * voted that successor durable.
- *
- * @param reanchor Verified proposal body and stable hash.
- * @returns Whether the same proposal was inserted or already durable.
+ * Stages one candidate per Router-instance scope for a local vote. Refuses
+ * to leave a head with a staged successor under that anchor.
  */
 export function stageReanchor(
   reanchor: StagedReanchor,
@@ -685,16 +675,9 @@ export function completeReanchor(
 }
 
 /**
- * Atomically stages and completes one member's verified completed re-anchor.
- *
- * The completion replaces a different candidate this endpoint staged for the
- * same previous anchor and Router instance. The one-candidate rule limits
- * what this endpoint signs, not which quorum-certified anchor it accepts:
- * two certificates in one scope would need an honest member to vote twice,
- * so the replaced candidate can never be certified.
- *
- * @param reanchor One verified completed re-anchor from a member.
- * @returns Whether any durable state was added.
+ * Adopts a quorum-certified anchor even over a competing staged candidate.
+ * The rule requiring one candidate limits local votes because two certificates
+ * in one scope would require an honest member to vote twice.
  */
 export function applyCatchUpReanchor(
   reanchor: CompletedReanchor,
@@ -1059,22 +1042,10 @@ export function mergeEvidence(
 }
 
 /**
- * Atomically replaces the lock this endpoint holds on another action at a
- * predecessor with the lock on an action whose `q(n)` action certificate it
- * verified, releasing everything held for the other action and retaining the
- * certificate's signatures. They are written with the new lock so that a
- * restart never finds the certified action locked without the certificate
- * that keeps this endpoint from signing it.
- *
- * A held action this endpoint already staged refuses the replacement as a
- * conflict. Staging it took its own `q(n)` action certificate, so a second one
- * at the same predecessor shows more than `f` faulty members, and this
- * endpoint, which may have voted for the staged record, must never vote for
- * another successor of that head under the same anchor.
- *
- * @param lock The lock on the certified action.
- * @param certificate The action certificate's signatures as evidence rows.
- * @returns Whether the lock on the certified action was inserted.
+ * Replaces a competing lock and retains the verified `q(n)` action certificate
+ * atomically. After restart that certificate prevents another local signature.
+ * Refuses a staged competitor: its own certificate would prove conflicting
+ * quorums beyond the fault bound.
  */
 export function supersedeProposalLock(
   lock: ProposalLock,
@@ -1125,16 +1096,10 @@ export function promoteRecord(
 }
 
 /**
- * Atomically stages and promotes a record received whole, with its
- * certificates' evidence and its local message completion. A crash therefore never leaves its core staged without its
- * certification, where a restart could not tell it from a record this
- * endpoint staged for its own durability vote. This endpoint casts no vote
- * for it, so its core is staged even under an anchor this endpoint has
- * staged a re-anchor candidate away from. Retaining an already verified
- * signature, including this endpoint's earlier signature, casts no new vote.
- *
- * @param record Verified complete certified record.
- * @returns Whether any durable state was inserted.
+ * Stages and promotes a complete certified record atomically with its evidence
+ * and local completion. Recovery must never mistake it for a locally staged
+ * record needing a vote. Adoption casts no new vote, including when retaining
+ * an earlier local signature, and may cross a pending re-anchor.
  */
 export function applyCertifiedRecord(
   record: CertifiedRecord,
@@ -1515,7 +1480,10 @@ export function saveRemoteClose(operationId: CollectiveId, message: Message) {
   }).pipe(storeOperation, Effect.withSpan("saveRemoteClose"));
 }
 
-/** Final bytes and exact source identities freeze once; close certification only changes visibility. */
+/**
+ * Freezes final bytes and exact source identities. Close certification
+ * changes only their visibility.
+ */
 export function saveCollectiveResult(input: {
   readonly operationId: CollectiveId;
   readonly item: ResultDelivery["item"];
@@ -2032,12 +2000,8 @@ function insertFoundation(
 }
 
 /**
- * Stage a re-anchor proposal. A proposal staged for this endpoint's vote
- * must not leave a head it holds a staged successor of; one adopted complete
- * from members carries no vote of this endpoint's, so it may.
- * @param reanchor Verified proposal body and stable hash.
- * @param purpose Whether this endpoint votes for it or adopts it complete.
- * @returns Whether the proposal was inserted or already durable.
+ * Local voting cannot leave a head with a staged successor. Adopting a
+ * completed member anchor casts no local vote and may do so.
  */
 function stageReanchorInTransaction(
   reanchor: StagedReanchor,
@@ -2103,21 +2067,10 @@ function requireSameReanchor(
 }
 
 /**
- * Retires the proposal locked at the head a completed re-anchor selects, with
- * everything held for it.
- *
- * An action binds its anchor, so once the new anchor is current no action
- * under the previous one is gap-free, and the old proposal can never be
- * signed, staged or certified here again. Its lock, kept, would refuse every
- * candidate at that head under the new anchor and stall the conversation.
- *
- * The staged record can be retired because the re-anchor's quorum
- * certificate shows it can never be certified anywhere: a member holding a
- * staged successor does not vote to re-anchor behind it, so the q(n) members
- * that selected this head leave at most 2f members that can attest the
- * successor's durability, fewer than q(n).
- *
- * @param reanchor Completed re-anchor that just became current.
+ * Retires the superseded proposal and staged successor when re-anchoring.
+ * Actions under the previous anchor cannot certify, and their lock would
+ * block proposals under the new anchor. A holder never votes to re-anchor behind its staged successor, so
+ * the completed anchor's quorum leaves too few members to certify it.
  */
 function releaseSupersededProposal(
   reanchor: CompletedReanchor,
@@ -2134,12 +2087,9 @@ function releaseSupersededProposal(
 }
 
 /**
- * Deletes one proposal lock inside a caller-owned transaction, with the
- * action signatures held for its action and every record staged for that
- * action, including the record's durability votes and signed outbox association. The caller shows the action can never be certified; kept
- * without the lock, any of these rows would name an action no durable lock
- * selects, which startup refuses.
- * @param lock The durable lock to release.
+ * Removes the lock, evidence, staged records and outbox associations in the
+ * caller's transaction. The caller must establish that the action cannot
+ * certify because orphaned rows would fail startup verification.
  */
 function releaseProposalLock(
   lock: ProposalLock,
@@ -2235,11 +2185,8 @@ function requireUnclaimedReanchorScope(
 }
 
 /**
- * Refuse a re-anchor away from a head this endpoint holds a staged successor
- * of under the same anchor. It voted that successor durable, so a re-anchor
- * away from the head and a durability certificate extending it never both
- * collect this endpoint's signature.
- * @param reanchor Proposal about to be staged.
+ * A member that staged a successor cannot vote to re-anchor behind it under
+ * the same anchor.
  */
 function requireNoStagedSuccessor(
   reanchor: StagedReanchor,
@@ -2682,14 +2629,7 @@ function readCertifiedRecord(
   }).pipe(storeOperation, Effect.withSpan("readCertifiedRecord"));
 }
 
-/**
- * Reads one ordered signer evidence map from its separate store rows.
- *
- * @param conversationId Conversation whose evidence is retained.
- * @param kind Separate evidence domain to read.
- * @param subjectId Action, record, request, or anchor identity.
- * @returns Detached evidence ordered by signer key.
- */
+/** Returns detached signer evidence in stored signer-key order. */
 function readEvidenceForSubject(
   conversationId: string,
   kind: ProtocolEvidence["kind"],
@@ -3266,14 +3206,9 @@ function readStagedRecord(
 }
 
 /**
- * Refuse a record under an anchor this endpoint has staged a re-anchor
- * candidate away from, wherever this endpoint would vote for it: as it stages
- * the record for its vote, and as it stores its own vote for any staged
- * record. A member that has voted to leave an anchor signs nothing more under
- * it, so a re-anchor away from a head and a durability certificate extending
- * that head never both collect this endpoint's signature.
- * @param record Record about to be staged for this endpoint's vote, or a
- *     staged record this endpoint's own vote is about to be stored for.
+ * After staging a re-anchor away from an anchor, refuses both staging and
+ * retaining new local durability votes under that anchor. This member cannot
+ * sign both leaving a head and certifying its successor.
  */
 function requireNoReanchorAwayFrom(
   record: StagedRecord,

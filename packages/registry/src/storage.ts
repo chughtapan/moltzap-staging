@@ -105,12 +105,8 @@ export interface RegistryStorage {
 }
 
 /**
- * Initializes an empty schema or validates the current format and its signer.
- *
- * @param input Initialization dependencies.
- * @param input.sql Exclusive SQL capability for this Registry process.
- * @param input.registrySignerPublicKey Pinned Registry verification key.
- * @returns An effect that completes only after storage is ready.
+ * Requires exclusive use of the SQL client during initialization. An occupied
+ * namespace must have the current format and the configured Registry signer.
  */
 export function initializeRegistryStorage(input: {
   readonly sql: SqlClient;
@@ -132,13 +128,8 @@ export function initializeRegistryStorage(input: {
 }
 
 /**
- * Creates durable Registry operations over one initialized SQL client.
- *
- * @param input Storage dependencies and operation bounds.
- * @param input.sql Initialized SQL capability.
- * @param input.registrySignerPublicKey Pinned Registry verification key.
- * @param input.operationTimeoutMilliseconds Complete SQL operation deadline.
- * @returns Durable Registry operations.
+ * Requires an initialized SQL client and its pinned Registry verification key.
+ * The configured deadline covers each complete storage operation.
  */
 export function makeRegistryStorage(input: StorageInput): RegistryStorage {
   return Object.freeze({
@@ -412,7 +403,7 @@ const bindStorageMetadata = (input: {
     }),
   );
 
-/** Only an empty namespace can initialize; an existing namespace must carry the current format. */
+/** Only an empty namespace can initialize. An existing namespace must carry the current format. */
 function runStorageInitialization(input: {
   readonly sql: SqlClient;
   readonly registrySignerPublicKey: AgentPublicKey;

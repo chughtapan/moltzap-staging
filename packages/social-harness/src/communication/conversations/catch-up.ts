@@ -59,15 +59,10 @@ import { applyCompletedReanchor } from "./reanchor.js";
 // safer-arch-ignore no-module-cycle: Protocol state imports from service are type-only; runtime dependencies point into the algorithms.
 
 /**
- * How a pending position becomes ready. With no entry, `q(n) − 1` other
- * members' `incomplete` answers make it ready.
- * - `every-member`: this endpoint holds, or a member sent, a re-anchor vote
- *   at the position for an earlier Router instance. That re-anchor may have
- *   completed at a member that has not answered yet, and settling without it
- *   could re-anchor apart from that member, so the position waits for every
- *   other member while its retries last.
- * - `retries-spent`: the retries ran out, and `q(n) − 1` answers settle it.
- * - `ready`: the request has made its position ready once.
+ * A position normally needs `q(n) − 1` other members' incomplete answers.
+ * A vote to re-anchor for an earlier Router instance requires answers from
+ * every member until retries expire. An unanswered member may hold its
+ * completed anchor. `ready` records that readiness was already claimed.
  */
 type Readiness = "every-member" | "retries-spent" | "ready";
 
@@ -83,7 +78,7 @@ export interface CatchUpState {
   readonly acceptedSuccessors: Map<string, RecordHashValue | AnchorHashValue>;
 }
 
-/** What catch-up needs from the recovery run it belongs to; the run builds it. */
+/** The recovery run supplies these operations to catch-up. */
 export interface CatchUpRun {
   readonly runtime: EngineRuntime;
   readonly state: CatchUpState;
@@ -135,12 +130,8 @@ export function makeCatchUpState(): CatchUpState {
 }
 
 /**
- * Queue a signed catch-up request at the engine's current durable position.
- * A run that has ended, or that does not hold the conversation, such as one a
- * member created during recovery, asks for nothing.
- * @param run Recovery run that owns the request.
- * @param conversationId Private conversation identity to reconcile.
- * @returns Completion after the request is stored in the recovery queue.
+ * Queues a request at the durable position. An ended run or a conversation
+ * absent from the engine queues nothing.
  */
 export const requestCertifiedHistory = (
   run: CatchUpRun,
@@ -151,12 +142,8 @@ export const requestCertifiedHistory = (
   );
 
 /**
- * Ask the members again for the history after the conversation's durable
- * position. The attestations already held for that same position still
- * count, so a retry only collects the members that have not answered yet.
- * @param run Recovery run that owns the request.
- * @param conversationId Private conversation identity to reconcile.
- * @returns Completion after the request is stored in the recovery queue.
+ * Retries at the current durable position. Answers already held for that
+ * position still count.
  */
 export const resendCertifiedHistoryRequest = (
   run: CatchUpRun,
@@ -167,13 +154,9 @@ export const resendCertifiedHistoryRequest = (
   );
 
 /**
- * Let a quorum of answers settle a conversation's position again once its
- * request has used up its retries. The caller runs this on the retry fiber
- * as the retries end, so the switch applies to the request those retries
- * sent and not to one a re-arm starts afterwards.
- * @param run Recovery run that owns the request.
- * @param conversationId Conversation whose retries ran out.
- * @returns Whether a quorum has already answered, so the position is ready.
+ * Allows quorum settlement when retries expire. Call from the ending retry
+ * fiber so a re-armed request cannot inherit this relaxation. Returns whether
+ * the position is ready.
  */
 export function settleOnQuorum(
   run: CatchUpRun,
@@ -190,16 +173,9 @@ export function settleOnQuorum(
 }
 
 /**
- * Make a conversation's pending position wait for every other member while
- * its retries last, once a member's re-anchor vote for an earlier Router
- * instance verifies and selects that position. A vote for any other
- * position, or for a position whose readiness is already decided, is not
- * verified at all. The position is checked again once the vote verifies,
- * since a retry can replace the pending request meanwhile.
- * @param run Recovery run that owns the request.
- * @param vote The vote's re-anchor body.
- * @param verified Verifies the vote as the member's.
- * @returns Completion once the vote is checked.
+ * A verified vote to re-anchor for an earlier Router instance makes its
+ * pending position wait for every member until retries expire. Skip unrelated
+ * or settled positions and recheck the pending position after verification.
  */
 export function waitBehindEarlierReanchor<E>(
   run: Pick<CatchUpRun, "state">,
@@ -233,15 +209,8 @@ export function waitBehindEarlierReanchor<E>(
 }
 
 /**
- * Send members the staged, uncertified successor this endpoint holds and its
- * durability vote for it, both taken from the record's fold. A holder sends
- * them in place of an `incomplete` catch-up answer at the successor's
- * predecessor, and again when its own position is ready, since it votes for
- * no re-anchor there.
- * @param sender Engine whose fold holds the record, and how it sends.
- * @param membership Verified membership of the record's conversation.
- * @param staged The staged record row.
- * @returns Completion once the record and the vote are queued.
+ * Sends the held staged successor and local durability vote instead of an
+ * incomplete answer. A holder cannot re-anchor away from that successor.
  */
 export function queueStagedSuccessor(
   sender: Pick<CatchUpResponder, "runtime" | "queue">,
@@ -269,12 +238,8 @@ export function queueStagedSuccessor(
 }
 
 /**
- * Answer an authenticated catch-up request with the requester's next certified
- * history item, or with an attestation that there is none.
- * @param responder Engine and membership lookup, inside or outside a run.
- * @param ingress Verified Router delivery carrying the request.
- * @param request Catch-up request from a fixed member.
- * @returns Whether the request was answered or safely ignored.
+ * Answers a fixed member with its next certified item or an incomplete
+ * attestation. Returns whether the request was answered or safely ignored.
  */
 export function acceptCatchUpRequest(
   responder: CatchUpResponder,
@@ -314,14 +279,7 @@ export function acceptCatchUpRequest(
   );
 }
 
-/**
- * Whether a delivery came from one of the conversation's other fixed members,
- * the only senders whose catch-up traffic counts.
- * @param runtime Engine whose local identity is excluded.
- * @param membership Verified fixed membership of the conversation.
- * @param senderAgentId Outer sender of the delivery.
- * @returns True for a fixed member other than this endpoint.
- */
+/** Excludes the local agent and non-members from counted catch-up traffic. */
 export function sentByOtherMember(
   runtime: EngineRuntime,
   membership: VerifiedMembership,
@@ -334,15 +292,9 @@ export function sentByOtherMember(
 }
 
 /**
- * Apply the certified history item a member answered the run's pending
- * request with, then ask for the next one. A page whose item does not extend
- * the conversation, or whose successor differs from the one already applied
- * for that request, does not count: it is ignored, and at most that
- * conversation's catch-up waits on the other members.
- * @param run Recovery run that sent the request.
- * @param ingress Verified Router delivery carrying the page.
- * @param page Catch-up page from a fixed member.
- * @returns Whether the page was applied or safely ignored.
+ * Applies the requested certified successor and asks for the next item.
+ * Ignores pages that do not extend history or conflict with a successor already
+ * applied for this request.
  */
 export function acceptCatchUpPage(
   run: CatchUpRun,
@@ -394,15 +346,7 @@ export function acceptCatchUpPage(
   );
 }
 
-/**
- * Record a member's attestation that it holds no later history; once a
- * quorum of members, counting this endpoint, has attested, the
- * conversation's position is ready.
- * @param run Recovery run that sent the request.
- * @param ingress Verified Router delivery carrying the attestation.
- * @param incomplete Catch-up incomplete attestation from a fixed member.
- * @returns Whether the attestation was taken or safely ignored.
- */
+/** Counts an incomplete attestation toward readiness at the pending position. */
 export function acceptCatchUpIncomplete(
   run: CatchUpRun,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -454,14 +398,6 @@ export function acceptCatchUpIncomplete(
   );
 }
 
-/**
- * Record a page's applied successor and ask for the history after it.
- * @param run Recovery run that sent the request.
- * @param page The applied page.
- * @param key The page's request key.
- * @param successor Hash of the page's applied item.
- * @returns Completion after the next request is queued.
- */
 function continueAfterPage(
   run: CatchUpRun,
   page: CatchUpPage,
@@ -531,12 +467,8 @@ function queueCatchUpRequest(
 }
 
 /**
- * In-memory positions follow durable promotions and completed re-anchors.
- * An unchanged retry can retain its request and attestations without loading
- * the conversation's retained records and evidence from the store.
- * @param runtime Engine whose installed position reflects durable writes.
- * @param request Pending request to compare with that position.
- * @returns Whether the pending request still names the installed position.
+ * An unchanged position retains its request and attestations without reloading
+ * durable history.
  */
 function requestMatchesCurrentPosition(
   runtime: EngineRuntime,
@@ -565,22 +497,10 @@ function requestMatchesCurrentPosition(
 }
 
 /**
- * Answer a member's request with the certified successor of its position, or
- * say none is held. A responder, recovering or not, that holds a staged,
- * uncertified successor there sends that successor and its durability vote
- * instead of `incomplete`: an `incomplete` answer from a holder would let a
- * requester settle at the head the successor extends. An `incomplete` answer
- * follows this endpoint's votes for uncompleted re-anchors at the position
- * for Router instances earlier than the one delivering the request, so a
- * requester at that later instance waits for the member that may have
- * completed one.
- * @param responder The endpoint answering.
- * @param membership Verified membership of the request's conversation.
- * @param delivered The member's verified catch-up request and the Router
- *     instance that delivered it.
- * @param delivered.request The member's verified catch-up request.
- * @param delivered.routerInstanceId The Router instance that delivered it.
- * @returns Completion once the answer is queued.
+ * A staged successor and its vote replace an incomplete answer, which could
+ * otherwise let the requester re-anchor away from that successor. First send
+ * held votes to re-anchor for earlier Router instances so the requester waits
+ * for any member that may hold a completed anchor.
  */
 function respondToCatchUp(
   responder: CatchUpResponder,
@@ -625,12 +545,8 @@ function respondToCatchUp(
 }
 
 /**
- * Start counting attestations for a request at a new position. The position
- * waits for every other member when this endpoint holds a re-anchor
- * candidate there for an earlier Router instance.
- * @param run Recovery run that owns the request.
- * @param recovery Complete verified recovery snapshot the request was made from.
- * @param request The request now pending.
+ * A new position waits for every member if this endpoint holds a candidate
+ * for an earlier Router instance. Another member may have completed it.
  */
 function restartAttestations(
   run: CatchUpRun,
@@ -650,19 +566,9 @@ function restartAttestations(
 }
 
 /**
- * This endpoint's own votes for its uncompleted re-anchor candidates at a
- * request's position for Router instances other than the one delivering the
- * request. An `incomplete` answer carries them, so a requester learns that a
- * re-anchor from that position may already have completed for an earlier
- * Router instance. A vote for the delivering instance is re-anchor traffic
- * of that instance's own, not partial evidence of an answer.
- * @param runtime Engine whose identity signed the votes.
- * @param recovery Complete verified recovery snapshot.
- * @param delivered The catch-up request being answered and the Router
- *     instance that delivered it.
- * @param delivered.request The catch-up request being answered.
- * @param delivered.routerInstanceId The Router instance that delivered it.
- * @returns The votes, in stored order.
+ * Returns local votes for uncompleted anchors at the requested position,
+ * excluding the delivering Router instance. These warn that an earlier anchor
+ * may have completed at another member.
  */
 function heldReanchorVotes(
   runtime: EngineRuntime,
@@ -700,12 +606,8 @@ function heldReanchorVotes(
 }
 
 /**
- * This endpoint's uncompleted re-anchor candidates at a request's position:
- * candidates that select the requested record from the requested anchor,
- * for any Router instance.
- * @param recovery Complete verified recovery snapshot.
- * @param request The catch-up request whose position is examined.
- * @returns The candidates, completed ones excluded.
+ * Selects uncompleted candidates at the requested record and anchor across
+ * Router instances.
  */
 function heldReanchorCandidates(
   recovery: EndpointRecovery,
@@ -835,14 +737,8 @@ function successorBodies(
 }
 
 /**
- * Answer that no next item is held, after this endpoint's own re-anchor votes
- * at the requested position. The votes go first, so a requester marks the
- * position as waiting for every member before it counts this answer.
- * @param responder The endpoint answering.
- * @param membership Verified membership of the request's conversation.
- * @param request The member's verified catch-up request.
- * @param votes This endpoint's votes for its re-anchor candidates there.
- * @returns Completion once the votes and the answer are queued.
+ * Queues re-anchor votes before the incomplete answer so they change the
+ * requester's readiness rule before that answer counts.
  */
 function sendCatchUpIncomplete(
   responder: CatchUpResponder,
@@ -938,15 +834,7 @@ function pageSuccessorHash(
     : page.item.anchorHash;
 }
 
-/**
- * Apply a verified page's item. A record item goes through certification's
- * recovery path, which ignores a record that does not extend the
- * conversation, and a completed re-anchor the store refuses is ignored too.
- * @param runtime Engine whose store and conversations take the item.
- * @param ingress Verified Router delivery carrying the page.
- * @param page Verified catch-up page for the pending request.
- * @returns Whether the item was applied or ignored.
- */
+/** Ignores records that do not extend history and re-anchors the store refuses. */
 function applyCatchUpPage(
   runtime: EngineRuntime,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -975,14 +863,8 @@ function persistenceFailure(): RouterWorkerPersistenceError {
 }
 
 /**
- * Count a member's attestation for the pending request. The request stays
- * pending once the position is ready: a member that had not answered may
- * still send a page with later history, which then moves the position on.
- * @param state The run's catch-up bookkeeping.
- * @param membership Verified membership of the conversation.
- * @param conversationId Conversation the attestation is for.
- * @param senderAgentId Member that attested.
- * @returns Whether this attestation made the position ready.
+ * Keeps the request pending after readiness so a late page can still advance
+ * the position.
  */
 function recordIncompleteResponder(
   state: CatchUpState,
@@ -1001,13 +883,8 @@ function recordIncompleteResponder(
 }
 
 /**
- * Mark a position ready the first time its attestations suffice: a quorum
- * counting this endpoint, or every other member while the position waits
- * behind an earlier Router instance's re-anchor vote and its retries last.
- * @param state The run's catch-up bookkeeping.
- * @param membership Verified membership of the conversation.
- * @param conversationId Conversation whose attestations are counted.
- * @returns Whether the position became ready now.
+ * Claims readiness once: at quorum normally, or every member while earlier
+ * re-anchor evidence requires it and retries remain.
  */
 function claimReadyPosition(
   state: CatchUpState,

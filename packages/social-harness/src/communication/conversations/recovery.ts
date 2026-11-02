@@ -99,11 +99,9 @@ import {
 const catchUpRetryBase = Duration.seconds(1);
 
 /**
- * Catch-up retries after a conversation's first request. With the doubling
- * delay, eight retries span about four minutes (1 s + 2 s + ... + 128 s,
- * each jittered). After the last one the conversation stays paused until a
- * member's traffic for it, a local message into it, the Router worker
- * reattaching, or the next recovery run arms it again.
+ * Eight jittered, doubling retries span about four minutes. Exhaustion leaves
+ * the conversation paused until member traffic, a local send, Router
+ * reattachment or another recovery run re-arms it.
  */
 export const catchUpRetryAttempts = 8;
 
@@ -119,16 +117,16 @@ export const catchUpRetrySchedule = Schedule.exponential(catchUpRetryBase).pipe(
 );
 
 /**
- * One authenticated recovery run. It holds each conversation that has not
- * recovered behind its own fence; the others carry on. Its catch-up and
- * re-anchor reach it only through the ports built here.
+ * Holds each unrecovered conversation behind its own fence so other
+ * conversations can continue. Catch-up and re-anchoring use the operations
+ * this run supplies.
  */
 interface RecoveryRun {
   readonly runtime: EngineRuntime;
   readonly recovery: RouterWorkerRecovery;
   /**
-   * Conversations whose durable anchor names a Router instance other than the
-   * recovery anchor. Only these re-anchor; the rest recover by catch-up alone.
+   * Only conversations anchored to another Router instance need re-anchoring.
+   * The others recover by catch-up alone.
    */
   readonly reanchoring: ReadonlySet<string>;
   readonly memberships: Map<ConversationIdValue, VerifiedMembership>;
@@ -165,11 +163,8 @@ const activeRuns = new WeakMap<EngineRuntime, RecoveryRun>();
 const ignoredDisposition: RouterIngressDisposition = "ignored";
 
 /**
- * An engine's recovery fences. The engine fence holds every send from a
- * discontinuity until its recovery run has verified durable history and
- * fenced each conversation it holds. From then on a send waits only for its
- * own conversation's fence, so a conversation that cannot recover holds no
- * other.
+ * The engine fence blocks all sends until verified recovery installs each
+ * conversation's fence. Each conversation then blocks only its own sends.
  */
 interface RecoveryFences {
   engine?: Deferred.Deferred<undefined>;
@@ -191,14 +186,9 @@ interface HeldDelivery {
 }
 
 /**
- * What a re-anchoring member holds toward converting to a successor of its
- * head: the one verified action-certified record extending that head under
- * the current anchor, and each other member's latest durability vote for
- * it. A member that voted for a successor of the head under an anchor the
- * conversation has since left votes again under the new one, so a later
- * vote replaces an earlier one, and one vote per member keeps a faulty
- * member from growing the hold. A hold belongs to one position and is
- * dropped once the head or the anchor moves, by whatever path.
+ * Holds one verified successor and each member's latest durability vote.
+ * Later votes may use a replacement anchor. Keeping one vote per member
+ * bounds faulty input. Moving the head or anchor discards the hold.
  */
 interface PendingSuccessor {
   readonly position: HeadPosition;
@@ -227,18 +217,9 @@ interface SuccessorRun {
 const acceptedDisposition: RouterIngressDisposition = "accepted";
 
 /**
- * Accept one verified Router delivery, whether the Router worker polls it
- * while it recovers or while it is active. Catch-up and re-anchor traffic
- * goes to the recovery run, and a member's catch-up request is always
- * answered. Every other value goes to the protocol phases unless its
- * conversation is fenced: while a discontinuity has no recovery run, every
- * conversation is, and afterwards each one the run has not recovered. A
- * fenced conversation's certified records are applied through recovery, and
- * its action traffic is ignored. A member's traffic for a fenced conversation
- * whose catch-up retries ran out arms them again.
- * @param runtime Engine whose state receives the ingress.
- * @param ingress Verified Router delivery and decoded private payload.
- * @returns Whether the payload was accepted or safely ignored.
+ * Always answers member catch-up requests. Fenced conversations apply
+ * certified records through recovery and ignore action traffic. Member traffic
+ * re-arms exhausted catch-up retries.
  */
 export function acceptEngineIngressWithRecovery(
   runtime: EngineRuntime,
@@ -257,17 +238,9 @@ export function acceptEngineIngressWithRecovery(
 }
 
 /**
- * Start catch-up again for paused conversations: those the recovery run
- * still holds whose capped retries ran out. A local send to such a
- * conversation arms its catch-up, and a Router worker that reattaches after
- * an outage arms every one, so a paused conversation always has a way back to
- * recovery. The requests go out on a fiber in the run's scope, so neither the
- * send nor the reattaching worker waits on the store reads they take. A store
- * failure while asking ends the new retries the same way.
- * @param runtime Engine whose recovery run holds the conversations.
- * @param conversationId The one conversation to arm; every paused
- *     conversation when omitted.
- * @returns Completion once the arming fiber is started.
+ * Re-arms exhausted catch-up retries for one conversation, or all when omitted.
+ * Runs in the recovery scope so local sends and Router reattachment need not
+ * wait for its store reads. Another store failure ends these retries.
  */
 export function rearmPausedCatchUp(
   runtime: EngineRuntime,
@@ -300,11 +273,8 @@ export function rearmPausedCatchUp(
 }
 
 /**
- * Restart catch-up from a newly promoted head while its conversation is fenced.
- * Before a run starts, its initial request will use the durable head instead.
- * @param runtime Engine whose protocol phases promoted the record.
- * @param conversationId Conversation whose head advanced.
- * @returns Completion once a fresh request and retry schedule are installed.
+ * Restarts catch-up at a newly certified head while fenced. Before a run
+ * starts, its initial request reads the durable head instead.
  */
 export function recoveryHeadAdvanced(
   runtime: EngineRuntime,
@@ -316,13 +286,7 @@ export function recoveryHeadAdvanced(
     : Effect.void;
 }
 
-/**
- * Whether a conversation is still fenced: by the engine fence before a run
- * has fenced each conversation, or by its own fence until it recovers.
- * @param runtime Engine whose recovery fences are read.
- * @param conversationId Conversation to check.
- * @returns True while the conversation's traffic waits for its recovery.
- */
+/** Includes the engine-wide fence until per-conversation fences are installed. */
 export function isRecovering(
   runtime: EngineRuntime,
   conversationId: ConversationIdValue,
@@ -331,19 +295,10 @@ export function isRecovering(
 }
 
 /**
- * Reconcile every certified chain and threshold-anchor a restarted Router.
- * It verifies durable history, fences each conversation, asks its members
- * for catch-up, and returns: the Router worker resumes normal ingress while
- * each conversation recovers on its own, so one that cannot recover holds no
- * other. A run that starts replaces the engine's previous one.
- *
- * Re-anchoring is reserved for a conversation whose durable anchor names a
- * Router instance other than the recovery anchor. A daemon cold start reports
- * `router_restarted` because it has no prior instance in memory; conversations
- * still anchored to the polled instance recover by catch-up alone.
- * @param runtime Engine whose durable histories require reconciliation.
- * @param recoveryInput Authenticated Router recovery reason and new anchor.
- * @returns Completion once the run holds and has asked for every conversation.
+ * Verifies durable history and starts independent catch-up for each
+ * conversation, replacing any previous run. Returns after requests are queued.
+ * Only conversations anchored to another Router instance need re-anchoring.
+ * A daemon starting against the same Router uses catch-up alone.
  */
 export function recoverCertifiedHistory(
   runtime: EngineRuntime,
@@ -417,12 +372,8 @@ export function installRecoveryBarrier(
 }
 
 /**
- * The fence traffic for `conversationId` waits behind: the engine fence while
- * a discontinuity has no recovery run, otherwise that conversation's own
- * fence.
- * @param runtime Engine whose recovery state guards the conversation.
- * @param conversationId Conversation the send or ingress targets.
- * @returns The pending fence, or absence when the conversation is open.
+ * Returns the engine fence before a run installs conversation fences, then
+ * the conversation fence. An open conversation has none.
  */
 export function pendingRecoveryFence(
   runtime: EngineRuntime,
@@ -432,13 +383,7 @@ export function pendingRecoveryFence(
   return fences?.engine ?? fences?.conversations.get(conversationId);
 }
 
-/**
- * Release the exact engine fence once a recovery run holds each
- * conversation's own fence.
- * @param runtime Engine whose recovery run has started.
- * @param barrier Engine fence captured by that recovery attempt.
- * @returns Completion after waiters resume and the fence is removed.
- */
+/** Releases only the engine fence captured by this recovery attempt. */
 function completeRecoveryBarrier(
   runtime: EngineRuntime,
   barrier: Deferred.Deferred<undefined>,
@@ -453,13 +398,7 @@ function completeRecoveryBarrier(
   });
 }
 
-/**
- * Fence a conversation until its recovery completes. A conversation already
- * fenced keeps its fence and the sends waiting on it.
- * @param runtime Engine whose recovery run holds the conversation.
- * @param conversationId Conversation to fence.
- * @returns Completion after the conversation is fenced.
- */
+/** Preserves an existing fence and its send waiters. */
 function fenceConversation(
   runtime: EngineRuntime,
   conversationId: ConversationId,
@@ -520,15 +459,9 @@ function routePacket(
 }
 
 /**
- * Route a history or action packet by its conversation's fence. A fenced
- * conversation's certified records are applied through recovery, an
- * action-certified record extending its head goes to the run's staged
- * successors, and its proposals are ignored; an open conversation's go to
- * the protocol phases.
- * @param runtime Engine whose state receives the packet.
- * @param ingress Verified Router delivery carrying the packet.
- * @param packet The certified record or action packet.
- * @returns Whether the packet was accepted or safely ignored.
+ * Fenced conversations apply certified records through recovery, hold
+ * action-certified successors and ignore proposals. Open conversations use
+ * normal certification.
  */
 function acceptHistoryPacket(
   runtime: EngineRuntime,
@@ -568,15 +501,8 @@ function acceptHistoryPacket(
 }
 
 /**
- * Take a member's action-certified record for a recovering conversation when
- * it extends the conversation's head. Outside a re-anchor the record alone
- * is enough, so the protocol phases verify it, stage it and vote for it at
- * once. During a re-anchor this endpoint verifies and holds it, and converts
- * to it only once more than `n − q(n)` members have voted it durable.
- * @param run Recovery run that holds the conversation.
- * @param ingress Verified Router delivery carrying the record.
- * @param record The member's action-certified record.
- * @returns Whether the record was taken or ignored.
+ * During re-anchoring, holds a verified successor until more than `n − q(n)`
+ * members vote it durable. Other recovery can stage and vote immediately.
  */
 function acceptSuccessorRecord(
   run: SuccessorRun,
@@ -614,16 +540,8 @@ function acceptSuccessorRecord(
 }
 
 /**
- * Route one evidence message by the conversation its statement names. A
- * re-anchor vote goes to the recovery run. A durability vote for a fenced
- * conversation goes to the run's staged successors, and its action
- * signatures are ignored, as its proposals are; an action signature for a
- * proposal this endpoint has not seen names no conversation yet and goes to
- * the protocol phases, which ignore it.
- * @param runtime Engine whose state receives the evidence.
- * @param ingress Verified Router delivery carrying the evidence.
- * @param message The evidence message from the outer envelope.
- * @returns Whether the evidence was accepted or safely ignored.
+ * Fenced conversations hold durability evidence and ignore action signatures.
+ * Unknown action signatures reach normal certification, which ignores them.
  */
 function acceptEvidence(
   runtime: EngineRuntime,
@@ -705,16 +623,8 @@ function routeEvidence(
 }
 
 /**
- * Take a member's durability vote for a recovering conversation's staged
- * successor. A successor this endpoint has staged takes the vote in the
- * protocol phases, which certify it at `q(n)` votes. During a re-anchor, a
- * vote for a successor it has not staged is held toward converting to it.
- * @param run Recovery run that holds the conversation.
- * @param ingress Verified Router delivery carrying the vote.
- * @param vote The vote's evidence message and its decoded statement.
- * @param vote.message The vote's evidence message.
- * @param vote.statement The vote's decoded statement.
- * @returns Whether the vote was taken or ignored.
+ * A locally staged successor takes votes through normal certification. During
+ * re-anchoring, an unstaged successor holds votes toward conversion.
  */
 function acceptSuccessorVote(
   run: SuccessorRun,
@@ -766,17 +676,9 @@ function acceptSuccessorVote(
 }
 
 /**
- * Take a member's re-anchor vote for a Router instance other than the run's.
- * The run's re-anchor cannot use it, but a pending position it selects waits
- * for every member: that re-anchor may have completed at a member that has
- * not answered yet. Only a vote that verifies as the member's, names the
- * conversation's membership, and hashes to the anchor it signs counts.
- * @param run The active recovery run.
- * @param ingress Router delivery carrying the vote.
- * @param vote The vote's evidence message and its decoded statement.
- * @param vote.message The vote's evidence message.
- * @param vote.statement The vote's decoded statement.
- * @returns Ignored, since the vote counts toward no re-anchor of this run.
+ * A vote for another Router instance contributes no vote to this run. Its verified
+ * selected position waits for every member because an unanswered member may
+ * hold its completed anchor.
  */
 function noteEarlierReanchor(
   run: RecoveryRun,
@@ -866,14 +768,7 @@ function acceptRunPacket(
   }
 }
 
-/**
- * Arm a conversation's catch-up again after its retries ran out, on traffic
- * one of its other fixed members sent for it.
- * @param runtime Engine whose run holds the conversation.
- * @param ingress Verified Router delivery the member sent.
- * @param conversationId Conversation the delivery names.
- * @returns Completion once the conversation's catch-up is armed again.
- */
+/** Only traffic from another fixed member re-arms its conversation's catch-up. */
 function rearmOnMemberTraffic(
   runtime: EngineRuntime,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -886,14 +781,7 @@ function rearmOnMemberTraffic(
     : Effect.void;
 }
 
-/**
- * Arm catch-up again for a conversation the active run still holds whose
- * retries ran out. A conversation the run has recovered, or one whose retries
- * are still running, needs nothing.
- * @param runtime Engine whose run holds the conversation.
- * @param conversationId Conversation to arm.
- * @returns Completion once the conversation's catch-up is armed again.
- */
+/** Leaves recovered conversations and active retries alone. */
 function rearmIfPaused(
   runtime: EngineRuntime,
   conversationId: ConversationIdValue,
@@ -914,15 +802,9 @@ function rearmIfPaused(
 }
 
 /**
- * Ask a conversation's members for its history now, then retry on
- * {@link catchUpRetrySchedule} until it recovers or the retries run out. The
- * retries start only if the conversation has not recovered while the first
- * request was being queued, since a re-arm runs beside the ingress that can
- * recover it. A retry whose store read fails ends the retries; the
- * conversation waits for traffic to arm them again.
- * @param run Recovery run that holds the conversation.
- * @param conversationId Conversation to catch up.
- * @returns Completion once the first request is queued and the retries run.
+ * Installs retries only if the conversation is still unrecovered after
+ * queueing the first request. A failed store read ends retries until new
+ * traffic re-arms them.
  */
 function armCatchUp(
   run: RecoveryRun,
@@ -945,17 +827,9 @@ function armCatchUp(
 }
 
 /**
- * Resend a conversation's request on {@link catchUpRetrySchedule}, then let a
- * quorum of answers settle a position that waited for every member. A
- * position a quorum already settles recovers on its own fiber in the run's
- * scope: recovering the conversation removes this retry fiber, which it could
- * not do from inside it. That recovery is bracketed as catch-up of its own,
- * opened before the retries' bracket closes, so a trace reader keeps the
- * conversation busy until it recovers the conversation or hands it on to a
- * re-anchor round.
- * @param run Recovery run that holds the conversation.
- * @param conversationId Conversation to catch up.
- * @returns The retries, ending once any settled position's recovery started.
+ * Exhausted retries permit quorum settlement. Recovery runs on a separate
+ * fiber because marking recovered removes the retry fiber. Overlapping trace
+ * brackets keep the conversation busy through that handoff.
  */
 function retryCatchUp(
   run: RecoveryRun,
@@ -989,13 +863,8 @@ function retryCatchUp(
 }
 
 /**
- * Recover a position a quorum settled, on its own fiber in the run's scope.
- * Its `retry.pending` is recorded here, before the fork and so before the
- * retries it takes over from settle, so a trace reader never sees the
- * conversation idle between them.
- * @param run Recovery run that holds the conversation.
- * @param conversationId Conversation whose position a quorum settled.
- * @returns Completion once the recovery is forked.
+ * Records the recovery wait before forking so traces show no idle gap when
+ * it takes over from exhausted retries.
  */
 function recoverOnQuorum(
   run: RecoveryRun,
@@ -1026,18 +895,8 @@ function recoverOnQuorum(
 }
 
 /**
- * How a conversation's catch-up retries, or the quorum recovery that took
- * over from them, ended.
- * @param run Recovery run that held the conversation.
- * @param conversationId Conversation being caught up.
- * @param exit How the bracketed fiber ended.
- * @param returned The outcome when it returned without recovering the
- *     conversation: `gave-up` for retries that ran out, `superseded` for a
- *     quorum recovery that handed the conversation to a re-anchor round.
- * @returns `recovered` once the conversation recovered, which removes its
- *     retries; `returned`; `failed` when a store read or defect ended it; or
- *     `interrupted` when the run, or a fresh arm of the same conversation,
- *     replaced it.
+ * Reports recovered, exhausted, handed to re-anchoring, failed or interrupted
+ * work. A replacement run or re-arm interrupts the previous fiber.
  */
 function catchUpOutcome(
   run: RecoveryRun,
@@ -1050,13 +909,7 @@ function catchUpOutcome(
     : exitOutcome(exit, returned);
 }
 
-/**
- * Select conversations whose durable anchor names another Router instance.
- * @param recovery Router discontinuity and the polled recovery anchor.
- * @param snapshot Exact durable state captured before recovery starts.
- * @param memberships Verified membership for every retained conversation.
- * @returns Conversations that must re-anchor; empty unless the reason is a restart.
- */
+/** Only a Router restart requires conversations on another instance to re-anchor. */
 function reanchoringConversations(
   recovery: RouterWorkerRecovery,
   snapshot: EndpointRecovery,
@@ -1084,12 +937,8 @@ function reanchoringConversations(
 }
 
 /**
- * Verify retained outer envelopes and invalidate only rows bound to an old Router.
- * @param runtime Engine whose local identity authored the retained envelopes.
- * @param snapshot Exact durable state captured before recovery starts.
- * @param memberships Verified membership for every retained conversation.
- * @param reanchoring Conversations anchored to another Router instance.
- * @returns Same-instance rows that must resume with their stable outbox identity.
+ * Verifies retained envelopes before invalidating old-Router rows. Same-instance
+ * rows preserve their retry identities.
  */
 function prepareRecoveryOutbox(
   runtime: EngineRuntime,
@@ -1150,16 +999,7 @@ function groupByConversation(
   return grouped;
 }
 
-/**
- * Allocate one run's scope, retries and completion accounting, and build the
- * catch-up and re-anchor ports its phases run against.
- * @param runtime Engine the run recovers.
- * @param recovery Router discontinuity reason and anchor.
- * @param history Verified memberships that must be reconciled, the
- *     conversations among them anchored to a different Router instance, and
- *     each conversation's retained envelopes.
- * @returns The run, not yet installed.
- */
+/** Allocates a run's scope and accounting without installing it. */
 function makeRecoveryRun(
   runtime: EngineRuntime,
   recovery: RouterWorkerRecovery,
@@ -1228,14 +1068,6 @@ function settleReanchorWaits(
   });
 }
 
-/**
- * Build a run's catch-up port.
- * @param runtime Engine the run recovers.
- * @param context The run's discontinuity and the memberships it reconciles.
- * @param isActive Whether the run is still the engine's active recovery.
- * @param currentRun The run the port belongs to, once it is built.
- * @returns The port the run's catch-up requests, answers, and readiness use.
- */
 function catchUpPort(
   runtime: EngineRuntime,
   context: Pick<RecoveryRun, "recovery" | "memberships">,
@@ -1255,15 +1087,6 @@ function catchUpPort(
   };
 }
 
-/**
- * Build a run's re-anchor port.
- * @param runtime Engine the run recovers.
- * @param context The run's discontinuity, memberships, and the
- *     conversations it re-anchors.
- * @param isActive Whether the run is still the engine's active recovery.
- * @param currentRun The run the port belongs to, once it is built.
- * @returns The run's re-anchor.
- */
 function reanchorPort(
   runtime: EngineRuntime,
   context: Pick<RecoveryRun, "recovery" | "memberships" | "reanchoring">,
@@ -1307,14 +1130,7 @@ function catchUpResponder(runtime: EngineRuntime): CatchUpResponder {
   };
 }
 
-/**
- * Build a run's staged-successor port. A newly certified head restarts the
- * conversation's catch-up from it, with fresh retries.
- * @param runtime Engine the run recovers.
- * @param context The memberships the run reconciles and the conversations it
- *     re-anchors.
- * @returns The run's staged-successor port.
- */
+/** A newly certified successor restarts catch-up with fresh retries. */
 function successorPort(
   runtime: EngineRuntime,
   context: Pick<RecoveryRun, "memberships" | "reanchoring">,
@@ -1328,13 +1144,8 @@ function successorPort(
 }
 
 /**
- * Route a conversation whose catch-up position is ready: to re-anchor after a
- * Router restart, and straight to recovered for any other reason. A member's
- * answer can complete a position after the run has ended; nothing is left to
- * route then.
- * @param run Recovery run that asked for the position.
- * @param conversationId Conversation whose position is ready.
- * @returns Completion once re-anchor has taken the position or it is recovered.
+ * An ended run routes nothing. A ready position re-anchors on Router restart
+ * and otherwise completes recovery.
  */
 function positionReady(
   run: RecoveryRun,
@@ -1352,15 +1163,9 @@ function positionReady(
 }
 
 /**
- * Open a restarted conversation's re-anchor `retry.pending` once its
- * position has proposed a re-anchor, or holds behind a staged successor,
- * without recovering. The round has no timeout: it waits for a quorum of
- * members, so the conversation reads busy until it recovers or the run ends.
- * The wait is recorded and its span emitted together, so an interruption
- * cannot leave the run's finalizer settling a wait that never opened.
- * @param run Recovery run that holds the conversation.
- * @param conversationId Conversation whose position is ready.
- * @returns Completion once the wait is marked, or at once when nothing waits.
+ * Re-anchor waits have no timeout: they require a member quorum. Recording
+ * the wait and its trace share an interruption boundary so finalization cannot
+ * settle a wait that never opened.
  */
 function awaitReanchor(
   run: RecoveryRun,
@@ -1382,15 +1187,9 @@ function awaitReanchor(
 }
 
 /**
- * Mark one conversation recovered: stop its catch-up retries, resume its
- * retained envelopes, dissemination, folds and pending messages, and then
- * release the sends waiting on its fence. The run ends once every
- * conversation it holds has recovered. The steps run uninterruptibly: the
- * conversation counts as recovered from the first of them, so nothing would
- * release a fence an interruption left held.
- * @param run Recovery run that reconciled the conversation.
- * @param conversationId Conversation whose verified position is complete.
- * @returns Completion after the conversation's held work has resumed.
+ * Resumes retained work before releasing the conversation's send fence. The
+ * steps share an interruption boundary so a conversation marked recovered
+ * cannot retain a fence. The run ends when all conversations recover.
  */
 function markRecovered(
   run: RecoveryRun,
@@ -1438,14 +1237,7 @@ function releaseConversation(
   });
 }
 
-/**
- * Resume one recovered conversation's held work: its retained envelopes in
- * durable order, its dissemination obligations, its folds' evidence, and its
- * messages not yet certified, which a re-anchor sends again at the new anchor.
- * @param run Recovery run that recovered the conversation.
- * @param conversationId Conversation that recovered.
- * @returns Completion after its held work is queued.
- */
+/** Resumes envelopes in durable order, dissemination, evidence and uncertified messages. */
 function resumeConversation(
   run: RecoveryRun,
   conversationId: ConversationIdValue,
@@ -1463,14 +1255,7 @@ function resumeConversation(
   );
 }
 
-/**
- * Propose a recovered conversation's messages that have not certified. A message
- * proposed under a replaced anchor forgets that proposal first, so it
- * proposes again at the new one.
- * @param run Recovery run that recovered the conversation.
- * @param conversationId Conversation whose messages resume.
- * @returns Completion after each pending message is proposed.
- */
+/** Discards a previous-anchor proposal before reproposing the message. */
 function resumeIntents(
   run: RecoveryRun,
   conversationId: ConversationIdValue,
@@ -1509,13 +1294,7 @@ function endRunOnceRecovered(
   );
 }
 
-/**
- * Uninstall the engine's recovery run and end its catch-up retries. The
- * scope closes uninterruptibly: a close cut short leaves the scope closed
- * with its retries running and its re-anchor waits never settled.
- * @param runtime Engine whose run ends.
- * @returns Completion once no run is installed.
- */
+/** Uninterruptible scope closure stops retries and settles re-anchor waits. */
 function endRun(runtime: EngineRuntime): Effect.Effect<void, never, SqlClient> {
   return Effect.suspend(() => {
     const run = activeRuns.get(runtime);
@@ -1527,16 +1306,7 @@ function endRun(runtime: EngineRuntime): Effect.Effect<void, never, SqlClient> {
   });
 }
 
-/**
- * Sign one outer envelope and queue it in the durable outbox. The Router
- * worker sends the outbox once it is active, which is as soon as the run has
- * started, so recovery traffic and the messages of recovered conversations go
- * out in one durable order.
- * @param runtime Engine whose outbox signs and retains the envelope.
- * @param membership Verified fixed membership for the outer envelope.
- * @param body Recovery packet or relayed evidence the envelope carries.
- * @returns Completion after the envelope is retained.
- */
+/** Queues recovery traffic and recovered conversations' messages in one durable order. */
 function queueRecoveryEnvelope(
   runtime: EngineRuntime,
   membership: VerifiedMembership,
@@ -1637,17 +1407,7 @@ function fencesOf(runtime: EngineRuntime): RecoveryFences {
   return created;
 }
 
-/**
- * Hand a member's vote for a successor this endpoint has staged to the
- * protocol phases, which certify it at `q(n)` votes.
- * @param run Recovery run that holds the conversation.
- * @param target The conversation the vote names and the voted record's fold.
- * @param target.conversation The conversation whose head the record extends.
- * @param target.fold The fold of the record the member voted for.
- * @param ingress Verified Router delivery carrying the vote.
- * @param statement The member's durability vote.
- * @returns Whether the vote was taken or ignored.
- */
+/** Forwards votes for locally staged successors to normal certification at `q(n)`. */
 function acceptStagedSuccessorVote(
   run: SuccessorRun,
   target: Readonly<{
@@ -1673,15 +1433,7 @@ function acceptStagedSuccessorVote(
     : Effect.succeed(ignoredDisposition);
 }
 
-/**
- * Hold a member's verified record or vote toward converting, then convert if
- * the hold is now complete.
- * @param run Recovery run that holds the conversation.
- * @param membership Verified membership of the successor's conversation.
- * @param verified Whether the delivery verified for this conversation.
- * @param hold Records the delivery in the conversation's pending successor.
- * @returns Accepted once held, ignored when the delivery did not verify.
- */
+/** Holds verified input and attempts conversion. Returns ignored when verification fails. */
 function holdTowardConversion(
   run: SuccessorRun,
   membership: VerifiedMembership,
@@ -1743,15 +1495,9 @@ function verifyHeldVote(
 }
 
 /**
- * Convert to the held successor once more than `n − q(n)` other members have
- * voted it durable: more than the members that can be faulty, so at least one
- * correct member staged it. The protocol phases stage the record and sign
- * this endpoint's vote, then take the held votes. The store refuses the
- * record when this endpoint has staged a re-anchor candidate away from its
- * anchor, and the endpoint tries once.
- * @param run Recovery run that holds the conversation.
- * @param membership Verified membership of the successor's conversation.
- * @returns Completion once the endpoint has converted or keeps waiting.
+ * When more than `n − q(n)` other members vote for the successor, at least
+ * one honest member holds a staged copy. Try conversion once because the
+ * store can refuse it after a re-anchor is staged away from its anchor.
  */
 function maybeConvert(
   run: SuccessorRun,
@@ -1791,14 +1537,7 @@ function maybeConvert(
   });
 }
 
-/**
- * The position an action extends in the run's conversation, with the run's
- * membership of that conversation.
- * @param run Recovery run that holds the conversation.
- * @param action The action a member's record carries.
- * @returns The position and membership, or nothing when the action extends
- *     no held head under the conversation's current anchor.
- */
+/** Finds a held conversation whose head the action extends under its current anchor. */
 function headExtendedBy(
   run: SuccessorRun,
   action: ActionCore,
@@ -1828,13 +1567,7 @@ function headPosition(
       };
 }
 
-/**
- * Whether an action is the next MESSAGE at a position. A record that names the
- * head from an anchor the conversation has left can never be staged.
- * @param position The conversation's head and current anchor.
- * @param action The action a record carries.
- * @returns Whether the action extends the position.
- */
+/** A successor naming a departed anchor cannot be staged. */
 function extendsHead(position: HeadPosition, action: ActionCore): boolean {
   return (
     action.kind === "MESSAGE" &&
@@ -1843,14 +1576,7 @@ function extendsHead(position: HeadPosition, action: ActionCore): boolean {
   );
 }
 
-/**
- * Whether a hold takes a member's vote: one for the held record, or for any
- * record while none is held, that the member has not already sent.
- * @param pending The hold at the conversation's head.
- * @param signerAgentId The member that voted.
- * @param recordHash The record the member voted for.
- * @returns Whether the vote may replace the member's held one.
- */
+/** Keeps one vote per member for the held record, or any record before one is held. */
 function takesVote(
   pending: PendingSuccessor,
   signerAgentId: AgentId,

@@ -1,4 +1,4 @@
-/** @file Owns the local agent's saved identity, registration, and name resolution. */
+/** @file Saves local registration and resolves verified agent identities. */
 
 import { SqlClient } from "@effect/sql";
 import {
@@ -32,7 +32,7 @@ import {
   type RegistryError,
 } from "./registry.js";
 
-/** Local identity bytes must remain readable and agree with the configured keys. */
+/** Registration storage or peer resolution failed. `agentName` identifies a failed lookup. */
 export class IdentityError extends Data.TaggedError("IdentityError")<{
   readonly agentName?: AgentName;
   readonly reason:
@@ -54,13 +54,11 @@ const identityRow = Schema.Struct({
   ),
 });
 
-/** Canonical bytes bound to the one local identity. */
 interface IdentityBinding {
   readonly agentId: string;
   readonly canonicalAgentCard: Uint8Array;
 }
 
-/** Durable protocol recovery can inspect the binding without assigning identity authority. */
 const readIdentityBinding = () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -113,7 +111,6 @@ function bindIdentity(binding: IdentityBinding) {
   }).pipe(Effect.withSpan("bindIdentity"));
 }
 
-/** Reopening a store verifies both Registry authority and ownership of its agent key. */
 function readSavedIdentity(input: {
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly agentPublicKey: AgentPublicKey;
@@ -145,7 +142,6 @@ function readSavedIdentity(input: {
   }).pipe(Effect.withSpan("readSavedIdentity"));
 }
 
-/** Registration retries may repeat the same binding but cannot replace it. */
 function saveIdentity(
   card: VerifiedAgentIdentityCard,
 ): Effect.Effect<void, IdentityError, SqlClient.SqlClient> {
@@ -174,7 +170,7 @@ export class RegistrationError extends Schema.TaggedError<RegistrationError>()(
   },
 ) {}
 
-/** The Registry binds this operation to an immutable principal, name and local key. */
+/** Reuse the same operation, principal, name and signing key when retrying registration. */
 export interface RegistrationRequest {
   readonly operationId: RegistrationId;
   readonly principalId: PrincipalId;
@@ -185,11 +181,11 @@ export interface RegistrationRequest {
 export type IdentityState =
   | Readonly<{ kind: "unregistered" }>
   | Readonly<{ kind: "registered"; identityCard: VerifiedAgentIdentityCard }>;
-/** Saved registration and verified identity resolution. */
+
 interface IdentityService {
   /** Reports saved registration independently of communication startup. */
   readonly me: () => Effect.Effect<IdentityState>;
-  /** Saves a Registry-verified identity before returning to its caller. */
+  /** Saves the verified card before returning. Retry an interrupted call with the same request. */
   readonly register: (
     request: RegistrationRequest,
   ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
@@ -204,7 +200,7 @@ export class Identity extends Context.Tag("SocialHarness/Identity")<
   Identity,
   IdentityService
 >() {
-  /** Captures Registry, retained keys and SQL once for the service lifetime. */
+  /** Verifies saved registration against the configured Registry signer and agent key. */
   static readonly layer = identityLayer;
 }
 
@@ -214,7 +210,6 @@ interface IdentitySettings {
   readonly admissionCredential: Effect.Effect<Redacted.Redacted, unknown>;
 }
 
-/** Saves registration independently of communication startup or recovery. */
 function identityLayer(
   settings: IdentitySettings,
 ): Layer.Layer<Identity, IdentityError, Registry | SqlClient.SqlClient> {

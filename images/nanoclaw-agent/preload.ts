@@ -1,9 +1,6 @@
 /**
- * @file Registers the NanoClaw channel and process-session runtime. The host
- * loads it with `--import` before its own entry point, so the stock modules
- * register first and the image's gateway provider and session driver join
- * NanoClaw's registries before the host selects them. The compiled modules'
- * shapes are known only at run time, so each export is checked before use.
+ * @file Registers the image's channel, gateway and session driver before
+ * NanoClaw selects them. Runtime-loaded exports are checked before use.
  */
 import { pathToFileURL } from "node:url";
 

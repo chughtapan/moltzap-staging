@@ -38,12 +38,7 @@ type CollectiveResultItem = Extract<
 >;
 type MemberOutcome = CollectiveResultItem["outcomes"][number]["outcome"];
 
-/**
- * A message's content as the text a model reads: each text part as written,
- * each data part as JSON, one part per line.
- * @param content The delivered message's content.
- * @returns The text a host puts in the model's turn.
- */
+/** Renders one content part per line, preserving text and serializing data as JSON. */
 export function renderContent(content: Content): string {
   return content
     .map((part) =>
@@ -53,10 +48,8 @@ export function renderContent(content: Content): string {
 }
 
 /**
- * The agents a group address names, as `agent:` addresses, in its order; a
- * direct address names none. Hosts list them on a group turn.
- * @param address A canonical address an item carries.
- * @returns The group's member addresses, or an empty list.
+ * Returns a canonical group's members as `agent:` addresses in address order.
+ * Direct addresses return an empty list.
  */
 export function groupMembers(address: MessageAddressInput): readonly string[] {
   return address.startsWith("group:")
@@ -68,15 +61,9 @@ export function groupMembers(address: MessageAddressInput): readonly string[] {
 }
 
 /**
- * A question another agent asked: who asked and until when, the question,
- * its form, and the exact text that answers it, naming the question's operationId so
- * the answer reaches it when several questions are open in the conversation.
- * Only the last line differs by host, since each host's model sends the
- * answer through its own tool.
- * @param item The delivered question.
- * @param howToAnswer The host's sentence naming the tool that sends the answer to its conversation.
- * @param guidance Optional local instructions accompanying the peer question.
- * @returns The text of the model's turn.
+ * Renders a peer question, deadline, response form and answer instructions.
+ * `howToAnswer` names the host's tool for sending the answer. Local guidance
+ * quotes the peer question separately from instructions.
  */
 export function renderCollectiveRequest(
   item: CollectiveRequestItem,
@@ -99,11 +86,8 @@ export function renderCollectiveRequest(
 }
 
 /**
- * A question another agent asked: who asked and until when, the question and
- * its form. The firewall checks exactly this text, which the model reads
- * before the answer instructions `renderCollectiveRequest` adds.
- * @param item The delivered question.
- * @returns The question's lines of the model's turn.
+ * Renders the peer question, author, deadline and response form checked by the
+ * firewall. Use {@link renderCollectiveRequest} to add the host's answer instructions.
  */
 export function renderCollectiveRequestBody(
   item: CollectiveRequestItem,
@@ -116,11 +100,8 @@ export function renderCollectiveRequestBody(
 }
 
 /**
- * A gather's or all_gather's result: the question and one line per member.
- * The question is quoted as JSON, so a question a peer asked cannot add
- * lines that read as other members' outcomes.
- * @param item The delivered result.
- * @returns The text of the model's turn.
+ * Renders the question and one outcome per member. JSON quoting prevents peer
+ * question text from appearing as another member's outcome.
  */
 export function renderCollectiveResult(item: CollectiveResultItem): string {
   const question =
@@ -136,7 +117,7 @@ export function renderCollectiveResult(item: CollectiveResultItem): string {
   ].join("\n");
 }
 
-/** Direct replies reach the author; group replies keep the complete participant set. */
+/** Direct replies reach the author. Group replies keep every participant. */
 export function replyAddress(message: Pick<Message, "author" | "recipients">) {
   return message.recipients.length === 1
     ? agentAddressOf(message.author)
@@ -148,12 +129,7 @@ export function replyAddress(message: Pick<Message, "author" | "recipients">) {
       );
 }
 
-/**
- * One member's outcome as its line of a result reads it. The firewall checks
- * an answer as exactly this text.
- * @param outcome The member's outcome.
- * @returns The outcome's text.
- */
+/** Renders a member's outcome as the firewall checks it and the host displays it. */
 export function renderOutcome(outcome: MemberOutcome): string {
   switch (outcome.kind) {
     case "answered":
@@ -177,12 +153,8 @@ export function renderOutcome(outcome: MemberOutcome): string {
 export type GuidanceBodyOrigin = "peer" | "endpoint";
 
 /**
- * Registered local instructions stay separate from attributed, quoted peer text.
- * @param guidance The admitted advice for one text or a result.
- * @param quoted Optional delivered text with its authorship.
- * @param quoted.text The body to quote.
- * @param quoted.origin Whether the body comes from a peer or the endpoint.
- * @returns Host-neutral model text, with no composition identifiers.
+ * Renders registered local instructions separately from quoted content and its
+ * peer or endpoint attribution. Composition identifiers stay out of model text.
  */
 export function renderLocalGuidance(
   guidance: LocalGuidance,
@@ -233,7 +205,6 @@ export function renderLocalGuidance(
   return `${advice}\n\n${label}:\n${quoteForAgent(quoted.text)}`;
 }
 
-/** The operations that ask a question, in the order their keys are read. */
 const COLLECTING_OPERATIONS = ["gather", "all_gather"] as const;
 
 type CollectingOperation = (typeof COLLECTING_OPERATIONS)[number];
@@ -245,9 +216,8 @@ type CollectingOperation = (typeof COLLECTING_OPERATIONS)[number];
 type StatedOperation = "message" | CollectingOperation | "answer";
 
 /**
- * A message text states an operation it does not validly carry, or is plain
- * text that is not well-formed Unicode. The message names each failing field
- * so a host can hand it to its model as the tool error.
+ * Reports invalid operation fields or malformed Unicode without exposing the
+ * submitted text. Hosts may show its message as a tool error.
  */
 export class MessageTextError extends Data.TaggedError("MessageTextError")<{
   readonly operation: StatedOperation;
@@ -263,18 +233,13 @@ const decodeJsonText = Schema.decodeUnknownOption(
   Schema.parseJson(Schema.Unknown),
 );
 
-/** The JSON object a whole text is, if it is one. */
 const jsonObject = (text: string) =>
   decodeJsonText(text).pipe(Option.filter(Predicate.isRecord));
 
 /**
- * Read one message text as the send it states.
- * @param to The address the host's tool call names: the recipients of a
- *   multicast, gather or all_gather, or for an answer the conversation whose
- *   open request it answers.
- * @param text The whole text of the message.
- * @returns The send input, or an error naming each field a stated operation
- *   gets wrong.
+ * Parses ordinary text or a structured question or answer. `to` identifies the
+ * recipients, or the conversation containing the request an answer names.
+ * Invalid operations return an error identifying each failing field.
  */
 export const parseMessageText = (
   to: MessageAddressInput,
@@ -289,13 +254,9 @@ export const parseMessageText = (
 const MAXIMUM_VALIDATION_ISSUES = 20;
 
 /**
- * Projects only schema expectations and field paths, keeping submitted values
- * and custom decoder messages out of errors and logs. At most 20 issues cross
- * the boundary even when a schema reports many failing fields or union arms,
- * and an issue two union arms share crosses once. A union reports only the
- * arms the input selects (see `selectedArms`), and a named value, such as an
- * agent name, reports its own description rather than the first of its checks
- * that failed.
+ * Returns at most 20 distinct schema expectations and field paths. Submitted
+ * values and custom decoder messages stay private. Union errors describe the
+ * arms selected by the input. Named values report their full constraint.
  */
 export function validationIssues(error: ParseResult.ParseError) {
   const issues: ValidationIssue[] = [];
@@ -355,21 +316,13 @@ function instructionDetails(
   return {};
 }
 
-/**
- * Escaped JSON keeps peer text inside quoted values, including in tagged host prompts.
- * @param value The model-facing projection to quote.
- * @returns JSON with host prompt delimiters escaped.
- */
+/** Escapes JSON and host prompt delimiters to keep peer text inside quoted values. */
 function quoteForAgent(value: unknown): string {
   return JSON.stringify(value)
     .replaceAll("<", "\\u003c")
     .replaceAll(">", "\\u003e");
 }
 
-/**
- * The operation a JSON object states by its key, or undefined when it has
- * none of `gather`, `all_gather` and `action` and so is plain text.
- */
 function statedOperation(
   to: MessageAddressInput,
   value: Readonly<Record<string, unknown>>,
@@ -471,7 +424,7 @@ function appendIssues(
   addIssue(issues, { path, message: expectedMessage(issue) });
 }
 
-/** A named value reports its own rule; any other refinement or transformation reports what failed inside it. */
+/** Named values report their full constraint. Other refinements report the inner failure. */
 function appendRefined(
   issue: ParseResult.Refinement | ParseResult.Transformation,
   path: ReadonlyArray<string | number>,
@@ -485,10 +438,8 @@ function appendRefined(
 }
 
 /**
- * A failed union reports the arms the input selects. When several of those
- * each reject the value as a whole, the union reports once, naming every
- * type it accepts; one such arm reports its own expectation; otherwise the
- * arms that failed inside the value report.
+ * Reports selected union arms once when they reject the whole value, or reports
+ * their failing fields when they match its structure.
  */
 function appendUnion(
   issue: ParseResult.Composite,
@@ -518,11 +469,8 @@ function appendChildren(
 }
 
 /**
- * The arms of a failed union the input selects. An `undefined` arm, which an
- * optional field adds, never explains a value that is present. An arm whose
- * literal fields, such as `kind`, all equal the input's is the one the input
- * chose; otherwise an arm with every field it needs and none it forbids. With
- * no such arm, every arm reports.
+ * Selects arms by matching literal fields, then required and forbidden fields.
+ * An absent-value arm cannot explain a present value. If none match, all report.
  */
 function selectedArms(
   arms: readonly ParseResult.ParseIssue[],
@@ -567,7 +515,6 @@ function literalsMatch(
   );
 }
 
-/** Whether an arm lacks a field it requires or holds one it forbids, in every way it can match. */
 function fieldsMismatch(issue: ParseResult.ParseIssue): boolean {
   if (issue._tag === "Refinement" || issue._tag === "Transformation") {
     return fieldsMismatch(issue.issue);
@@ -586,7 +533,6 @@ function fieldsMismatch(issue: ParseResult.ParseIssue): boolean {
   );
 }
 
-/** A failed value of a named schema whose description states its whole rule. */
 function namedValue(issue: ParseResult.Refinement): boolean {
   return (
     Option.isSome(SchemaAST.getIdentifierAnnotation(issue.ast)) &&

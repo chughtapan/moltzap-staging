@@ -70,9 +70,8 @@ blockedV6.addSubnet("3fff::", 20, "ipv6");
 /* eslint-enable sonarjs/no-hardcoded-ip -- Restore endpoint address checks outside the exclusion table. */
 
 /**
- * Exclude local, mapped, transition, reserved and documentation destinations.
- * @param address One resolved literal address, never a hostname.
- * @returns Whether the callback may connect directly to this address.
+ * Accepts a resolved IP address only if it is public. Excludes local, mapped,
+ * transition, reserved and documentation ranges.
  */
 export const isPublicWebhookAddress = (address: string): boolean => {
   const family = isIP(address);
@@ -84,9 +83,8 @@ export const isPublicWebhookAddress = (address: string): boolean => {
 };
 
 /**
- * Validate the URL before either verification or delivery can open a connection.
- * @param value Callback URL supplied by the authenticated subscriber.
- * @returns A canonical HTTPS URL without embedded authority or fragments.
+ * Returns a canonical HTTPS URL without userinfo or fragments, or `undefined`
+ * when invalid. Verification and delivery validate URLs before connecting.
  */
 export const webhookUrl = (value: string): URL | undefined => {
   if (!URL.canParse(value)) {
@@ -101,11 +99,7 @@ export const webhookUrl = (value: string): URL | undefined => {
     : undefined;
 };
 
-/**
- * Validate the Standard Webhooks secret without retaining an alternate spelling.
- * @param secret Client-generated symmetric signing secret.
- * @returns Whether it contains canonical base64 of 24 through 64 bytes.
- */
+/** Requires `whsec_` followed by canonical base64 encoding of 24–64 bytes. */
 export const validWebhookSecret = (secret: string): boolean => {
   if (!secret.startsWith("whsec_")) {
     return false;
@@ -119,11 +113,7 @@ export const validWebhookSecret = (secret: string): boolean => {
   );
 };
 
-/**
- * Sign the exact retained body with a fresh delivery timestamp.
- * @param post Immutable message identity and body plus current signing authority.
- * @returns Standard Webhooks headers and the MCP subscription routing identity.
- */
+/** Signs retained bytes with a fresh timestamp and includes subscription routing. */
 const webhookHeaders = (
   post: WebhookPost,
 ): Readonly<Record<string, string>> => {
@@ -168,10 +158,9 @@ const publicLookup: LookupFunction = (hostname, options, callback) => {
 };
 
 /**
- * Effect owns sockets, interruption and response decoding. Connection-time DNS
- * validation retains the original Host and TLS name without a second lookup.
- * Keep-alive is disabled so each delivery attempts a fresh validated connection.
- * Redirect following is not installed on this client.
+ * Validates DNS addresses at connection time while preserving Host and TLS names.
+ * Each attempt opens a fresh connection. Redirects are disabled. The scope owns
+ * sockets and response decoding.
  */
 export const webhookHttpClientLayer = NodeHttpClient.layerWithoutAgent.pipe(
   Layer.provide(
@@ -252,11 +241,7 @@ const boundedCallback = <A>(
     }),
   );
 
-/**
- * Read only the challenge response, with Effect closing the connection on exit.
- * @param post Signed verification request with its challenge.
- * @returns Bounded response text for challenge validation.
- */
+/** Reads bounded challenge-response text and closes the connection on exit. */
 export const readWebhookChallenge = (
   post: WebhookPost,
 ): Effect.Effect<string, WebhookCallbackError, HttpClient.HttpClient> =>
@@ -271,9 +256,8 @@ export const readWebhookChallenge = (
   ).pipe(Effect.withSpan("readWebhookChallenge"));
 
 /**
- * A 2xx response accepts transport delivery; its body cannot change that receipt.
- * @param post Exact retained event bytes and current signing metadata.
- * @returns Completion at successful headers, with Effect closing the response.
+ * Accepts transport delivery at 2xx headers and closes the response.
+ * Response bodies cannot change that receipt.
  */
 export const sendWebhook = (
   post: WebhookPost,

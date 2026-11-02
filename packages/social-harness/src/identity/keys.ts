@@ -1,4 +1,4 @@
-/** @file Exact Ed25519 public keys, opaque private signing authority, and the single-signature General JWS that AgentIdentityCard and SignedMessage carry. */
+/** @file Ed25519 keys, private signing authority and shared General JWS representation. */
 
 import { ed25519 } from "@noble/curves/ed25519.js";
 import {
@@ -114,16 +114,8 @@ const decodeAcceptedPublicKey = (value: string): Uint8Array | undefined => {
 };
 
 /**
- * Checks the closed Ed25519 signature representation before cryptographic
- * verification.
- *
- * The standards verifier supplies the strict verification equation. This
- * boundary additionally rejects alternate point and scalar encodings that
- * permissive platform verifiers may otherwise accept. The public-key Schema
- * separately rejects small-order verification keys.
- *
- * @param signature Candidate 64-byte Ed25519 signature.
- * @returns Whether its point and scalar use the single accepted encoding.
+ * Rejects alternate Ed25519 point and scalar encodings before cryptographic
+ * verification. The public-key schema separately rejects small-order keys.
  */
 export const hasCanonicalEd25519SignatureEncoding = (
   signature: Uint8Array,
@@ -334,7 +326,7 @@ export const ed25519VerificationKey = (
     importPublicJwk(jwk, "Ed25519"),
   );
 
-/** JWE key management of sealed bodies; the opening key is imported for it. */
+/** Selects key management for sealed bodies and import of the opening key. */
 export const SEALED_BODY_KEY_MANAGEMENT_ALGORITHM = "ECDH-ES+A256KW";
 
 /** X25519 public JWK of one agent: the key a sealed body is encrypted to. */
@@ -345,15 +337,8 @@ interface X25519PublicJwk {
 }
 
 /**
- * Maps a validated Ed25519 public key to the same agent's X25519 public key
- * through the RFC 7748 birational map `u = (1 + y) / (1 - y)`. The opening key
- * that `fromPkcs8` derives is the private half of this key.
- *
- * The Ed25519 public-key Schema admits canonical encodings that are not curve
- * points, and the map fails for those.
- *
- * @param publicKey Validated Ed25519 public key, such as an AgentIdentityCard key.
- * @returns The X25519 public JWK.
+ * Maps an Ed25519 public key to X25519 with RFC 7748. Fails for canonical
+ * encodings that are not curve points. `fromPkcs8` derives its private half.
  */
 export const x25519PublicJwk = (
   publicKey: PublicKeyValue,
@@ -427,17 +412,9 @@ const invalidPrivateKey = (): InvalidAgentPrivateKeyError =>
 const EXPANDED_SECRET_BYTES = 64;
 
 /**
- * Selects the bytes to erase for `bytes`: its whole buffer when the view
- * starts that buffer and the buffer is no larger than the SHA-512 expansion,
- * and only the view otherwise.
- *
- * The decoded seed and the expansion behind the X25519 secret each sit alone
- * in such a buffer, so erasing it also removes the expansion's RFC 8032 nonce
- * prefix. A view into a larger shared buffer, such as Node's pooled Buffer
- * slab, is erased alone so that unrelated data survives.
- *
- * @param bytes Key bytes.
- * @returns The bytes to overwrite.
+ * Erases standalone seed/expansion buffers, including the RFC 8032 nonce
+ * prefix. Erases only the view in larger shared buffers to preserve unrelated
+ * data, such as other values in a Node Buffer pool.
  */
 const erasableBytes = (bytes: Uint8Array): Uint8Array =>
   bytes.byteOffset === 0 && bytes.buffer.byteLength <= EXPANDED_SECRET_BYTES
@@ -445,13 +422,8 @@ const erasableBytes = (bytes: Uint8Array): Uint8Array =>
     : bytes;
 
 /**
- * Overwrites the key bytes behind `bytes` once `effect` settles. The
- * base64url strings that JOSE requires cannot be zeroed and remain until
- * garbage collection.
- *
- * @param bytes Key bytes to erase.
- * @param effect Work that reads them.
- * @returns `effect`, with the erasure attached.
+ * Erases key bytes when the effect settles. JOSE requires base64url strings
+ * that cannot be erased and remain until garbage collection.
  */
 const zeroAfter = <A, E>(
   bytes: Uint8Array,
@@ -466,16 +438,8 @@ const zeroAfter = <A, E>(
   );
 
 /**
- * Derives the non-extractable X25519 opening key from the Ed25519 seed.
- *
- * The secret is the clamped first half of SHA-512 over the seed, which is the
- * RFC 8032 signing scalar. The JWK pairs it with `x25519PublicJwk` of the
- * Ed25519 public key, and the import refuses a pair whose halves disagree, so
- * the opener and every sealer use the same key.
- *
- * @param seed Ed25519 seed decoded from the exported private JWK.
- * @param publicKey Ed25519 public key of the same seed.
- * @returns The opening key, usable only for X25519 `deriveBits`.
+ * Derives the X25519 private key from the clamped first half of SHA-512 over
+ * the Ed25519 seed. Import rejects a key pair whose halves disagree.
  */
 const importFromSeed = (
   seed: Uint8Array,
@@ -525,14 +489,8 @@ const importOpeningKey = (
   });
 
 /**
- * Imports one Ed25519 PKCS#8 key as an opaque authority.
- *
- * JOSE needs an extractable import to derive the public JWK and the seed of
- * the opening key, while the authority retains a separate non-extractable
- * import for signing.
- *
- * @param pkcs8 Redacted unencrypted Ed25519 PKCS#8 text.
- * @returns The authority.
+ * Uses an extractable import to derive the public JWK and opening seed, and
+ * retains a separate non-extractable signing key.
  */
 const fromPkcs8 = (
   pkcs8: Redacted.Redacted,
@@ -600,14 +558,10 @@ export const agentOpeningPrivateKey = (
 ): CryptoKey => getAuthorityState(authority).openingKey;
 
 /**
- * Loads and identifies one Ed25519 signing authority without exposing its
- * private keys or a generic signing or decryption operation.
- *
- * `fromPkcs8` requires redacted, unencrypted Ed25519 PKCS#8 text. It retains
- * non-extractable signing and X25519 opening keys derived from that seed.
- * Invalid material fails with `InvalidAgentPrivateKeyError`. `publicKey`
- * returns the immutable Ed25519 public key that registration and signing
- * bind to the agent's card.
+ * Imports redacted, unencrypted Ed25519 PKCS#8 text and retains non-extractable
+ * signing and X25519 opening keys. Invalid material fails with
+ * `InvalidAgentPrivateKeyError`. `publicKey` returns the immutable key used in
+ * registration and signing. Private keys stay inaccessible.
  */
 // eslint-disable-next-line @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The approved Effect-style API uses one name for its opaque type and capability value.
 export const AgentSigningAuthority = Object.freeze({

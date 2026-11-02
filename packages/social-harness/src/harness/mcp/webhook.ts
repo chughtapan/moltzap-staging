@@ -84,25 +84,14 @@ const now = (runtime: WebhookRuntime) =>
 const active = (runtime: WebhookRuntime) =>
   runtime.state.registration !== null &&
   runtime.state.registration.expiresAt > now(runtime);
-/**
- * Make a persisted registration current, keeping the `webhook` marker in
- * step; every state change goes through here.
- * @param runtime The webhook state to update.
- * @param state The state just persisted.
- * @returns Completion once the state and its marker are current.
- */
+/** Updates in-memory registration and retry telemetry after persistence. */
 function adopt(runtime: WebhookRuntime, state: State): Effect.Effect<void> {
   return Effect.sync(() => {
     runtime.state = state;
   }).pipe(Effect.zipRight(markWaitingDelivery(runtime)));
 }
 
-/**
- * Settle an open `webhook` marker as `interrupted` when the events close, so
- * the daemon that reopens it after a restart does not leave this one unpaired.
- * @param runtime The webhook state whose marker may be open.
- * @returns Completion once no marker is open.
- */
+/** Settles retry telemetry as interrupted when this server closes. */
 function settleOnClose(runtime: WebhookRuntime): Effect.Effect<void> {
   return Effect.suspend(() => {
     const marked = runtime.retrying;
@@ -113,12 +102,6 @@ function settleOnClose(runtime: WebhookRuntime): Effect.Effect<void> {
   });
 }
 
-/**
- * The event id of a delivery waiting out its backoff after a failed callback,
- * which the daemon retries on its own.
- * @param runtime The webhook state and clock.
- * @returns The event id, or `undefined` when no delivery waits.
- */
 function waitingDelivery(runtime: WebhookRuntime): string | undefined {
   const registration = runtime.state.registration;
   if (registration === null || registration.stalled !== null) {
@@ -130,13 +113,6 @@ function waitingDelivery(runtime: WebhookRuntime): string | undefined {
     : undefined;
 }
 
-/**
- * How the delivery whose marker is open stopped waiting.
- * @param registration The current subscription, or `null` once revoked.
- * @param marked The event id the open marker carries.
- * @returns `interrupted` for a revoked subscription, `gave-up` while the
- *     delivery is still the subscription's outbox, else `delivered`.
- */
 function waitOutcome(
   registration: Registration | null,
   marked: string,
@@ -150,15 +126,9 @@ function waitOutcome(
 }
 
 /**
- * Keep the `webhook` marker in step with the delivery state. A delivery that
- * waits out its backoff is daemon work in flight: its next attempt can be
- * minutes away and the callback client records no spans. The marker settles
- * as `delivered` once the delivery leaves the outbox, `gave-up` when it
- * stalls or its subscription lapses, and `interrupted` when the subscription
- * is revoked. The bookkeeping and its spans change together, never split by
- * an interruption.
- * @param runtime The webhook state, clock and open marker.
- * @returns Completion once the marker matches the state.
+ * Keeps retry telemetry open during backoff. Leaving the outbox settles it as
+ * delivered. Stalling or expiry settles it as gave-up. Revocation interrupts it.
+ * State and telemetry change without an interruption between them.
  */
 function markWaitingDelivery(runtime: WebhookRuntime): Effect.Effect<void> {
   return Effect.uninterruptible(
@@ -468,7 +438,6 @@ const deliver = (runtime: WebhookRuntime, registration: Registration) => {
   );
 };
 
-/** Pending reads use the public inbox contract, including across page boundaries. */
 const pendingEntry = (runtime: WebhookRuntime, token: DeliveryToken) =>
   Effect.gen(function* () {
     let cursor: string | undefined;
@@ -538,8 +507,8 @@ const prepareOccurrence = (runtime: WebhookRuntime) =>
   );
 
 /**
- * Drain immediately after receipts; the timer is only a retry and expiry
- * wakeup, so each drain also settles the marker of a lapsed subscription.
+ * Receipts trigger an immediate drain. Timers wake retries and settle expired
+ * subscriptions' retry telemetry.
  */
 const observe = (runtime: WebhookRuntime) =>
   runtime.deliveryGate.withPermits(1)(
@@ -610,7 +579,6 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
   resume: runtime.gate.withPermits(1)(resume(runtime)),
 });
 
-/** Webhook receipt and retry state belongs to this optional MCP adapter. */
 function writeState(runtime: Pick<WebhookRuntime, "sql">, state: State) {
   return Schema.encode(Schema.parseJson(stateSchema))(state).pipe(
     Effect.flatMap(
@@ -658,12 +626,9 @@ export const makeWebhookEvents = (gate: Effect.Semaphore) =>
   );
 
 /**
- * Keeps the original item and separate local guidance together. An envelope
- * exceeding the transport bound becomes a reference to the retained event;
- * neither content nor guidance is truncated.
- * @param entry The admitted, immutable inbox row.
- * @param timestamp The occurrence's Unix time in milliseconds.
- * @returns A bounded event whose identity remains stable across retries.
+ * Keeps content and local guidance together. Oversized envelopes reference the
+ * saved event without truncation. Event identity stays stable across retries.
+ * `timestamp` is the occurrence's Unix time in milliseconds.
  */
 function makeItemEvent(entry: InboxEntry, timestamp: number) {
   const { address, item, guidance } = entry;

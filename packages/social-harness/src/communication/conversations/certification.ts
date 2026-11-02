@@ -114,14 +114,8 @@ const gapFree = (
   });
 
 /**
- * The membership an action's conversation has here: the one this endpoint
- * holds, or, for the FIRST_MESSAGE of a conversation it does not hold yet, the
- * descriptor FIRST_MESSAGE carries, verified against the Registry key. A MESSAGE names
- * its membership only by hash, so a MESSAGE for a conversation this endpoint
- * does not hold does not verify.
- * @param runtime Engine whose held conversations are searched.
- * @param action The action whose conversation is resolved.
- * @returns The verified membership of the action's conversation.
+ * FIRST_MESSAGE can supply verified membership for an unknown conversation.
+ * MESSAGE carries only its hash and requires membership already held here.
  */
 const ingressMembership = (
   runtime: EngineRuntime,
@@ -289,13 +283,8 @@ const mergeEvidence = (
   });
 
 /**
- * Merge unless the evidence is already retained, then queue and flag it.
- * Queueing and its flag share an interruption boundary after evidence is durable.
- * @param runtime Engine whose store and outbox retain the evidence.
- * @param fold Fold that owes the local evidence.
- * @param role The evidence obligation being completed.
- * @param evidence Local signature or vote selected by the caller.
- * @returns Completion once the evidence is durable and queued.
+ * Persists evidence before queueing it. Queueing and the fold's queued flag
+ * share an interruption boundary.
  */
 const completeLocalEvidence = (
   runtime: EngineRuntime,
@@ -354,15 +343,9 @@ const localActionEvidence = (
   });
 
 /**
- * Select this endpoint's action signature for a fold: the one it holds, or a
- * new one. The fold's action passed verification when it arrived, so the
- * endpoint signs it without consulting anything outside the transport. A fold that already holds its action
- * certificate gets no new signature: the action needs none, and this endpoint
- * may have taken that certificate over a lock it held on another action at
- * the same predecessor, which it signed.
- * @param runtime Engine whose identity signs.
- * @param fold Fold the signature names.
- * @returns The signature to send, or nothing when none is due.
+ * Reuses a retained action signature or creates one. Never signs after an
+ * action certificate arrives: this endpoint may have signed the competing
+ * action whose lock that certificate superseded.
  */
 function selectLocalActionEvidence(
   runtime: EngineRuntime,
@@ -423,15 +406,8 @@ const actionAnchorHash = (
   recordAnchorHash(fold).pipe(Effect.mapError(localRepresentationFailure));
 
 /**
- * Queue this endpoint's durability vote for a fold's staged record: the vote
- * it holds, or a new one. An uncertified fold's record is one this endpoint
- * staged for its own vote, since a record received whole is staged in the
- * transaction that certifies it. A certified fold gets no new vote: a vote is
- * stored before it is sent, so a certified fold without one names a record
- * this endpoint never voted for, and the record needs no vote.
- * @param runtime Engine whose identity signs and whose outbox sends.
- * @param fold Fold whose staged record the vote names.
- * @returns Completion once the vote is queued, or at once when none is due.
+ * Votes only for locally staged, uncertified records. Records received whole
+ * are staged and certified atomically, so they never draw a new local vote.
  */
 const localDurabilityEvidence = (
   runtime: EngineRuntime,
@@ -534,14 +510,8 @@ const reproposePendingIntent = (
   );
 
 /**
- * Propose a conversation's uncertified messages again at its new head. A
- * conversation still recovering proposes nothing here: its endpoint ignores
- * the Router's echo of a proposal while fenced, so the proposal would be
- * signed by members but never by its author, and its recovery proposes the
- * messages at the head it settles on.
- * @param runtime Engine whose pending messages are rebased.
- * @param conversationId Conversation whose head moved.
- * @returns Completion once each pending message is proposed again.
+ * Recovery proposes pending messages at its settled head. Proposing while
+ * fenced would lose the author's Router echo and leave peers signing alone.
  */
 const rebasePendingIntents = (
   runtime: EngineRuntime,
@@ -559,14 +529,8 @@ const rebasePendingIntents = (
       );
 
 /**
- * Store a fold's complete record as certified and install it as its
- * conversation's head in one uninterruptible step. An interruption between
- * the two would leave the store holding the record certified while the fold,
- * the conversation's head and the local message's completion still lag it.
- * @param runtime Engine whose store and conversation take the record.
- * @param fold Fold of the record's action, holding its votes.
- * @param record The complete certified record.
- * @returns Completion once the record is installed and pending messages rebased.
+ * Promotes durable state and adopts the head in one interruption boundary so
+ * folds and local completion cannot lag a committed record.
  */
 const promote = (
   runtime: EngineRuntime,
@@ -619,16 +583,9 @@ const maybePromote = (
   });
 
 /**
- * Stage a record from its action certificate, then vote for it and promote it
- * once the votes reach `q(n)`. The first time this endpoint stages the record,
- * whether it assembled the certificate or received a copy, it sends its own
- * copy before its vote. A faulty member can seal a body that some members
- * cannot open, so a member that staged from such a copy still gives every
- * member a copy it can open ahead of its vote.
- * @param runtime Engine that stages the record and owns its fold.
- * @param fold Fold of the record's action.
- * @param record Verified action certificate for the fold's action.
- * @returns Completion once the record is staged and its local evidence queued.
+ * Stages before voting and promotes at `q(n)` votes. Disseminates a local copy
+ * ahead of the vote because a faulty sender may have encrypted its copy so
+ * some members cannot open it.
  */
 const stageActionCertificate = (
   runtime: EngineRuntime,
@@ -865,21 +822,10 @@ const mergeActionCertificate = (
   );
 
 /**
- * Lock the action a verified record certifies over the lock this endpoint
- * holds on another MESSAGE at the same predecessor. The record's `q(n)` action
- * certificate means that other action can never be certified, because any
- * two `q(n)` quorums share an honest member, who signs one action at a
- * predecessor under one anchor. The store replaces the lock and keeps the
- * certificate's signatures with it. In the same uninterruptible step the other
- * action's fold is dropped, since the store now refuses its evidence, and the
- * certified action's fold takes the whole certificate, so this endpoint, which
- * signed the other action, never signs this one even when the rest of the
- * record's acceptance is interrupted. The store refuses the replacement when
- * this endpoint already staged the other action, and the record is ignored.
- * @param runtime Engine whose store and folds change.
- * @param conversation Conversation the record extends.
- * @param record The verified action-certified record.
- * @returns Completion once the record's action is locked here.
+ * Replaces a competing proposal lock with the verified action certificate and
+ * drops its fold atomically. Retaining the certificate prevents this endpoint
+ * from signing again if interrupted. A staged competitor refuses replacement:
+ * it already required a conflicting quorum certificate.
  */
 const supersedeLock = (
   runtime: EngineRuntime,
@@ -1020,16 +966,9 @@ function retainCertifiedFold(
 }
 
 /**
- * Accept a record that arrives whole, with its durability certificate. The
- * store stages, certifies and promotes it in one transaction, and the fold
- * takes the record, its votes and its promotion in the same uninterruptible
- * step. Neither a crash nor an interruption therefore leaves the record
- * staged but not certified, where it would draw a durability vote from this
- * endpoint, which never voted for it.
- * @param runtime Engine that accepts the record.
- * @param ingress Authenticated delivery carrying the record.
- * @param record The record with its durability certificate.
- * @returns Whether the record was accepted or ignored.
+ * Stages and promotes a complete certified record atomically with its fold.
+ * A crash must not leave it staged alone, where recovery would cast a local
+ * vote for a record this endpoint received already certified.
  */
 const acceptCertifiedRecord = (
   runtime: EngineRuntime,
@@ -1106,11 +1045,8 @@ function acceptPacket(
 const ignoredDisposition: RouterIngressDisposition = "ignored";
 
 /**
- * Apply one semantically verified Router-ordered protocol value.
- * @param runtime Current engine state and durable protocol dependencies.
- * @param ingress Authenticated Router-ordered protocol input.
- * @param statement Evidence decoded from this ingress's inner message, when available.
- * @returns Whether the input changed durable state or was irrelevant.
+ * Applies verified Router-ordered input. Returns whether it changed durable
+ * state or was irrelevant.
  */
 export const acceptEngineIngress = (
   runtime: EngineRuntime,
@@ -1187,13 +1123,8 @@ export const acceptEngineRecoveryIngress = (
     );
 
 /**
- * Resume the evidence one fold owes from durable state. A fold whose input the
- * store refuses, such as a record under an anchor this endpoint has staged a
- * re-anchor candidate away from, resumes nothing past the refusal, as live
- * ingress ignores the same refusal, so only that fold's conversation waits.
- * @param runtime Recovered engine state and durable protocol dependencies.
- * @param fold Fold whose evidence resumes.
- * @returns Completion once the fold's due evidence is queued or refused.
+ * Resumes retained evidence obligations. A store refusal stops only that fold,
+ * including one under an anchor a staged re-anchor is leaving.
  */
 const resumeFold = (
   runtime: EngineRuntime,
@@ -1254,11 +1185,8 @@ const resumeFold = (
   );
 
 /**
- * Resume only the evidence obligations already selected in durable state.
- * @param runtime Recovered engine state and durable protocol dependencies.
- * @param conversationId The one conversation to resume; every conversation
- *     when omitted.
- * @returns Completion after all resumable evidence work has been queued.
+ * Resumes durable evidence obligations for one conversation, or all when
+ * `conversationId` is omitted.
  */
 export const resumeEngineFolds = (
   runtime: EngineRuntime,

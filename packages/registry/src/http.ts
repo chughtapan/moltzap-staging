@@ -39,17 +39,7 @@ type RegistryHttpAppInput = Readonly<{
   requestSemaphore: Effect.Semaphore;
 }>;
 
-/**
- * Builds the complete Registry HTTP application.
- *
- * @param input Complete Registry boundary dependencies.
- * @param input.registrySigningAuthority Issuer of registered agent cards.
- * @param input.storage Durable registrations, lookups, and bootstrap nonces.
- * @param input.admissionCredential Bootstrap admission secret.
- * @param input.nonceCapacity Maximum live bootstrap nonces.
- * @param input.requestSemaphore Immediate global request admission.
- * @returns The complete Registry HTTP application.
- */
+/** Rejects requests immediately when the shared request semaphore is full. */
 export function makeRegistryHttpApp(input: RegistryHttpAppInput) {
   return HttpRouter.empty.pipe(
     HttpRouter.post(registryContract.REGISTER_ROUTE, registerHandler(input)),

@@ -1,25 +1,17 @@
 #!/usr/bin/env node
 /**
- * @file Hash of the code a host process loads for one plugin package.
+ * @file Hashes the packed code a host loads for a plugin.
+ * Usage: `node scripts/release/host-code-hash.ts DIR` with a repository-relative
+ * package directory. Prints `sha256:` and a hex digest.
  *
- * Usage: `node scripts/release/host-code-hash.ts DIR`, where DIR names a
- * repository-relative package directory. Prints `sha256:` and a hex digest.
+ * The launcher compares `sharnessHostCodeHash` to decide whether to restart
+ * OpenClaw. The hash covers every plugin file and sibling modules reachable
+ * through static or dynamic imports and package exports. Manifests omit version,
+ * recorded hashes and workspace dependency pins, so a sibling version bump
+ * without reachable code changes leaves the hash unchanged.
  *
- * The release records this value in the OpenClaw channel's published
- * manifest as `sharnessHostCodeHash`. OpenClaw loads the channel and every
- * module the channel's JavaScript reaches, including modules of the
- * workspace siblings it imports, and nothing else of those siblings: the
- * channel imports only the Client root entry, never `./service` or the
- * `sharnessd` binary. A launcher compares two versions' values and restarts
- * OpenClaw only when they differ. The hash therefore covers every packed
- * file of the plugin package, plus each sibling module reachable from it by
- * static or dynamic import through the sibling's `exports` map. Manifests
- * hash without `version`, the recorded hashes, and workspace dependency
- * entries, so a sibling version bump with identical reachable code leaves it
- * unchanged.
- *
- * Run from the repository root after `pnpm build`. Exits 1 when packing or
- * extracting fails.
+ * Run from the repository root after `pnpm build`. Packing or extraction failure
+ * exits 1.
  */
 
 import { Either } from "effect";
@@ -37,11 +29,8 @@ import {
 import { moduleGraph } from "./module-graph.ts";
 
 /**
- * Pack `DIR` and its workspace dependency closure and hash the code a host
- * loads for it.
- * @param repo Repository root.
- * @param dir Repository-relative package directory.
- * @returns The host-code hash, or the step that failed.
+ * Packs a repository-relative plugin and its runtime workspace dependencies
+ * before hashing the code the host loads.
  */
 export function hostCodeHashOfPackage(
   repo: string,
@@ -67,11 +56,8 @@ export function hostCodeHashOfPackage(
 }
 
 /**
- * Hash the host package's files and every sibling module they reach.
- * @param host The plugin package's npm name.
- * @param roots Extracted `package/` directories in the host's runtime dependency closure.
- * @param workspaceNames All workspace package names, whose pins are omitted in every dependency section.
- * @returns `sha256:` and the hex digest.
+ * Requires extracted package roots for the host's runtime dependency closure.
+ * Workspace names identify pins to omit from every dependency section.
  */
 export function hostCodeHashOfDirectories(
   host: string,
@@ -98,7 +84,7 @@ export function hostCodeHashOfDirectories(
   );
 }
 
-/** Inventory and manifest decoding failures use the CLI's existing failure channel. */
+/** Reports inventory and manifest decoding failures as packing failures. */
 function workspaceDirectories(repo: string): Map<string, string> | PackFailure {
   return Either.match(
     Either.try({
@@ -130,7 +116,6 @@ function manifestName(repo: string, dir: string): string {
   return String(readManifest(repo, dir)?.name);
 }
 
-/** The package and every workspace dependency it reaches. */
 function siblingClosure(
   repo: string,
   name: string,

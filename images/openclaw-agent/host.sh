@@ -1,38 +1,15 @@
 #!/usr/bin/env bash
-# Host command for the OpenClaw agent image: import the pairing seed, bind
-# the run's Claude Code token profile or import its Codex login, then become
-# the gateway.
+# Prepares OpenClaw authentication and state, then becomes the gateway.
+# doctor imports the bootstrap's paired devices into SQLite without --fix,
+# preserving openclaw.json. Channel selection runs before that import.
 #
-# The bootstrap writes `devices/paired.json` at every Pod start, and the
-# gateway reads paired devices only from OpenClaw's SQLite state; OpenClaw
-# leaves importing file state to `doctor`, which its own image entrypoint
-# runs before the gateway. `doctor` imports the devices that state lacks and
-# archives the file as `paired.json.migrated`. Without `--fix` it leaves
-# openclaw.json as configured. After the bootstrap merge and before doctor,
-# configure-channel.ts selects the channel load path in the host settings.
+# OPENCLAW_SECRETS_PLAN binds environment-backed credentials before startup.
+# The plan names variables and carries no values. A delivered Codex login is
+# imported once without a backup archive. Reimporting it would overwrite tokens
+# OpenClaw has since refreshed.
 #
-# OpenClaw forwards a subscription token to the `claude` child only from a
-# stored auth profile, and it rejects a token reference written into
-# openclaw.json. So when the launcher delivers a secrets plan
-# (OPENCLAW_SECRETS_PLAN), this script applies it once against the fresh
-# per-pod state before the gateway exists. The plan names an environment
-# variable and never carries a value.
-#
-# OpenClaw's Codex harness authenticates only from an `openai` profile in
-# the agent's own auth store; it never reads a Codex CLI login in
-# `$CODEX_HOME/auth.json`. When the run delivers that login (the
-# CODEX_AUTH_JSON credential, a ChatGPT subscription sign-in), this script
-# imports it with OpenClaw's Codex migration, once: after that OpenClaw owns
-# the refresh token, and importing the delivered file again would replace a
-# token OpenClaw refreshed with the older one. The import skips OpenClaw's
-# pre-migration backup, which would copy the login into an archive in the
-# state directory.
-#
-# A failed step ends the host with that step's exit status, so the run
-# reports an agent start failure instead of a gateway that cannot
-# authenticate. The gateway then replaces this shell, so it receives the
-# entrypoint's signals and reports its own exit status with no relay in
-# between. OPENCLAW_ENTRY stands in for OpenClaw in the tests.
+# A failed preparation step exits with its status. exec gives the gateway the
+# entrypoint's signals and exit status. OPENCLAW_ENTRY selects its executable.
 set -euo pipefail
 
 readonly ENTRY="${OPENCLAW_ENTRY:-/app/openclaw.mjs}"
@@ -66,7 +43,7 @@ prepare() {
 # Globals:
 #   ENTRY
 # Returns:
-#   0 when it does, 1 when it does not; a failed listing ends the host.
+#   0 when it does, 1 when it does not. A failed listing ends the host.
 #######################################
 has_openai_profile() {
   local profiles

@@ -36,26 +36,16 @@ export class FeedOrderOutOfRangeError extends Data.TaggedError(
 ) {}
 
 /**
- * Creates the sole owner of Router private order, retention, and retry state.
- *
- * @param input Process identity and finite retention bounds.
- * @param input.routerInstanceId Current volatile process identity.
- * @param input.retainedMessageCapacity Maximum retained message count.
- * @param input.retainedMessageByteCapacity Maximum retained message bytes.
- * @returns A scoped state capability for send and poll.
+ * Creates an empty in-memory feed. Retention limits evict messages and their
+ * retry identities together. Process loss discards both.
  */
 export const makeRouterFeed = (
   input: RouterFeedInput,
 ): Effect.Effect<RouterFeed> => makeFeed(input, 0n);
 
 /**
- * Creates a feed over an already-consumed private-order prefix.
- *
- * The prefix is treated as evicted history and must fit the unsigned
- * private-order range.
- *
- * @param input Process identity, finite retention bounds, and consumed order.
- * @returns A scoped state capability for send and poll.
+ * Treats the consumed order prefix as evicted history. The initial order must
+ * be between zero and maximumPrivateOrder, inclusive.
  */
 export const makeRouterFeedAtOrder = (
   input: RouterFeedInput & Readonly<{ initialTailOrder: bigint }>,
@@ -69,13 +59,7 @@ export const makeRouterFeedAtOrder = (
   return makeFeed(input, input.initialTailOrder);
 };
 
-/**
- * Restricts one stable feed snapshot to entries after a private order.
- *
- * @param snapshot Stable feed state for one scan.
- * @param order Exclusive lower private-order bound.
- * @returns Entries with a greater private order.
- */
+/** Uses an exclusive lower bound on feed order. */
 export const entriesAfter = (
   snapshot: FeedSnapshot,
   order: bigint,

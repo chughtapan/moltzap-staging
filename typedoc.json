@@ -1,6 +1,7 @@
 {
   "$schema": "https://typedoc.org/schema.json",
   "name": "Social Harness API",
+  "customCss": "scripts/docs/api.css",
   "entryPointStrategy": "packages",
   "plugin": ["typedoc-plugin-missing-exports"],
   "entryPoints": [

@@ -9,7 +9,10 @@ import { writeWork } from "./handoff-files.js";
 /** The native worker retires a reference after retrieving its saved event. */
 export { acceptMuseWork, detectMuseWork } from "./worker.js";
 
-/** Returns after publishing a persistent reference, before model processing. */
+/**
+ * Requires an absolute directory. The returned callback completes after
+ * publishing a reference that survives receiver shutdown, before model processing.
+ */
 export const makeMuseWakeup = Effect.fn("Muse.makeWakeup")(function* (
   directory: string,
 ) {

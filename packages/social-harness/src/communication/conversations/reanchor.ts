@@ -74,16 +74,13 @@ const acceptedDisposition: RouterIngressDisposition = "accepted";
 
 const ignoredDisposition: RouterIngressDisposition = "ignored";
 
-/**
- * What a re-anchor needs from the recovery run it belongs to. The run builds
- * it, so re-anchor never reads the run's state directly.
- */
+/** Limits re-anchoring to the recovery operations exposed by its run. */
 export interface ReanchorRunPort {
   readonly runtime: EngineRuntime;
   readonly reason: RouterDiscontinuityReason;
   /** The Router instance the run polls, which a re-anchor moves conversations to. */
   readonly routerInstanceId: RouterWorkerRecovery["anchor"]["routerInstanceId"];
-  /** Conversations anchored to another Router instance; only these re-anchor. */
+  /** Only conversations anchored to another Router instance need re-anchoring. */
   readonly reanchoring: ReadonlySet<string>;
   /** Whether the run is still the engine's active recovery. */
   readonly isActive: () => boolean;
@@ -115,10 +112,7 @@ export interface ReanchorRunPort {
   ) => Effect.Effect<void, RouterWorkerPersistenceError, SqlClient>;
 }
 
-/**
- * One recovery run's re-anchor: the run's port, its vote memory, and the
- * conversations whose position is ready to take votes.
- */
+/** Holds votes and positions ready for re-anchoring during one recovery run. */
 export interface ReanchorRun extends ReanchorRunPort {
   readonly votes: ReanchorVotes;
   readonly positionsReady: Set<ConversationIdValue>;
@@ -141,11 +135,8 @@ interface CandidatePositionInput {
 }
 
 /**
- * What a ready position does with a member's verified vote: `certify` stages
- * and counts it now, `hold` keeps it without certifying it, and `decline`
- * drops it because it names an anchor or record this endpoint cannot resolve.
- * A declined vote does not count; at most it leaves that conversation
- * unrecovered.
+ * A ready position certifies a usable vote, holds one awaiting history, or
+ * declines one outside its known ancestry. Declined votes do not count.
  */
 type ReadyVoteAction = "certify" | "hold" | "decline";
 
@@ -183,10 +174,6 @@ interface PendingReanchorVote {
   readonly statement: ReanchorVoteStatementValue;
 }
 
-/**
- * One recovery run's re-anchor vote memory: the votes it holds per
- * conversation and candidate anchor.
- */
 type ReanchorVotes = Map<
   ConversationIdValue,
   Map<AnchorHashValue, Map<AgentId, PendingReanchorVote>>
@@ -194,23 +181,12 @@ type ReanchorVotes = Map<
 
 type WriteReanchor = typeof completeReanchor | typeof applyCatchUpReanchor;
 
-/**
- * Start one recovery run's re-anchor with empty vote memory and no position
- * ready yet.
- * @param port What the run exposes to its re-anchor.
- * @returns The run's re-anchor, which the run passes to every operation.
- */
+/** Starts with no votes or ready positions. */
 export function startReanchorRun(port: ReanchorRunPort): ReanchorRun {
   return { ...port, votes: new Map(), positionsReady: new Set() };
 }
 
-/**
- * Reconcile one restarted conversation position and start or finish its
- * re-anchor.
- * @param run Recovery run whose position is ready.
- * @param membership Fixed membership of the conversation.
- * @returns Completion after re-anchor progress is durably queued.
- */
+/** Advances a reconciled position toward a durable replacement anchor. */
 export function positionReady(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -220,14 +196,7 @@ export function positionReady(
   }).pipe(Effect.zipRight(finishRestartedPosition(run, membership)));
 }
 
-/**
- * Accept one stable re-anchor vote from a verified outer member envelope.
- * @param run Recovery run the vote targets.
- * @param ingress Authenticated Router delivery containing the outer envelope.
- * @param message Stable self-addressed vote evidence.
- * @param statement Statement decoded from the vote's body by ingress.
- * @returns Whether the vote was accepted or safely ignored.
- */
+/** Accepts a verified member vote or safely ignores it. */
 export function acceptReanchorVote(
   run: ReanchorRun,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -243,13 +212,7 @@ export function acceptReanchorVote(
   );
 }
 
-/**
- * Accept one completed threshold re-anchor from a fixed conversation member.
- * @param run Recovery run the completion targets.
- * @param ingress Authenticated Router delivery containing the completion.
- * @param completed Complete re-anchor and signer-attributed certificate.
- * @returns Whether the completion was accepted or safely ignored.
- */
+/** Accepts a completed member anchor or safely ignores it. */
 export function acceptCompletedReanchor(
   run: ReanchorRun,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -265,17 +228,9 @@ export function acceptCompletedReanchor(
 }
 
 /**
- * Make a member's verified completed re-anchor durable and the
- * conversation's current anchor. It supersedes a different candidate this
- * endpoint staged for the same anchor and Router instance: its quorum
- * certificate shows that candidate can never be certified, because two
- * certificates for one scope would need an honest member to vote twice. The
- * store refuses a completion that does not extend this endpoint's durable
- * position; that refusal comes from the member's input, not a failed store,
- * so the completion does not count.
- * @param runtime Engine whose store and conversation take the anchor.
- * @param completed Verified completed re-anchor from a member.
- * @returns Whether the anchor was applied; false when the store refused it.
+ * Makes a verified completed anchor current, superseding a competing staged
+ * candidate. Two certificates in one scope would require an honest member to
+ * vote twice. Returns false if the anchor does not extend durable history.
  */
 export function applyCompletedReanchor(
   runtime: EngineRuntime,
@@ -334,13 +289,9 @@ function finishRestartedPosition(
 }
 
 /**
- * Replace an initial foundation only while its certified history is empty. The
- * caller marks the conversation recovered. The durable replacement and the
- * engine's adoption of its anchor are one uninterruptible step: a retry reads
- * the durable anchor as already restarted and never resets the engine, so an
- * interruption between them would leave actions binding the old anchor.
- * @param input Durable and recovered state for one empty conversation.
- * @returns Completion after the new foundation is durable and active.
+ * Replaces an initial foundation only before any certified history exists.
+ * Persisting and adopting it share an interruption boundary: retries already
+ * see the new foundation and would otherwise leave memory on the old one.
  */
 function restartEmptyPosition(
   input: EmptyPositionRestartInput,
@@ -386,15 +337,9 @@ function restartEmptyPosition(
 }
 
 /**
- * Move a restart-recovered position toward the new Router instance: finish it
- * when it is already anchored there, hold behind a staged successor, or
- * replay the peer votes held while catch-up ran and then propose this
- * endpoint's own re-anchor. A holder of a staged successor votes for no
- * re-anchor at its head; it sends the successor and its durability vote
- * again, so members can certify it. The replay can complete the re-anchor, so
- * whether to propose is decided only after it has run.
- * @param input Recovery run, membership, durable position and its head.
- * @returns Completion once the position is finished, waiting, or proposed.
+ * A staged successor blocks re-anchoring at its head. Resend it and the local
+ * vote instead. Replay held votes before proposing because they may complete
+ * the anchor.
  */
 function advanceRestartedPosition(
   input: RestartedPositionInput,
@@ -420,13 +365,8 @@ function advanceRestartedPosition(
 }
 
 /**
- * Finish a conversation already anchored to the recovery Router instance.
- *
- * Catch-up alone reconciles it. A retained completed re-anchor for that
- * instance is relayed again so members still recovering can finish.
- * @param run Recovery run reconciling the conversation.
- * @param membership Fixed membership of the reconciled conversation.
- * @returns Completion after the conversation is marked recovered.
+ * Catch-up suffices when the retained anchor already names this Router. Relay
+ * its completed re-anchor again for members still recovering.
  */
 function finishAnchoredPosition(
   run: ReanchorRun,
@@ -466,15 +406,8 @@ function acceptReanchorVoteEffect(
 }
 
 /**
- * Verify a re-anchor vote's outer envelope and evidence against the
- * conversation's membership, then offer the vote to the active recovery run.
- * A vote that fails either check fails with a representation error, which
- * the caller reports as ignored like any other unusable input.
- * @param run Recovery run that receives the vote.
- * @param ingress Router delivery whose outer envelope carries the vote.
- * @param membership Recovered membership of the vote's conversation.
- * @param vote The signed evidence and its decoded statement.
- * @returns Accepted when the run took the vote, ignored when it did not.
+ * Unusable member envelopes or vote evidence fail as representation errors,
+ * which the caller ignores.
  */
 function verifyInboundVote(
   run: ReanchorRun,
@@ -541,22 +474,7 @@ function acceptCompletedReanchorEffect(
   );
 }
 
-/**
- * Whether a relayed completion targets this run's re-anchor: a conversation
- * the run re-anchors after a Router restart, not yet anchored to the run's
- * Router instance, under the conversation's membership. The run applies a
- * verified completion directly: its quorum certificate settles the position,
- * even behind a staged successor this endpoint holds, which the certificate
- * shows can never be certified. Either way the conversation goes back to
- * catch-up: after an applied completion, to fetch what members certified
- * under the new anchor before it recovers; after one this endpoint cannot
- * apply, because its position lacks the selected record, to fetch the
- * history the completion extends, with which it arrives again.
- * @param run Recovery run the completion arrived in.
- * @param membership Verified membership of the completion's conversation.
- * @param completed The relayed completed re-anchor.
- * @returns Whether the run applies the completion.
- */
+/** Only restarted conversations awaiting this run's Router instance accept completion. */
 function completionTargetsRecovery(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -576,15 +494,7 @@ function completionTargetsRecovery(
   );
 }
 
-/**
- * Propose this endpoint's re-anchor at its durable head. The run can end
- * while the position is being advanced, such as during the vote replay; an
- * ended run proposes nothing.
- * @param run Recovery run the proposal belongs to.
- * @param membership Fixed membership of the conversation.
- * @param position Durable position with a certified head.
- * @returns Completion once the candidate is voted for, or left unproposed.
- */
+/** An ended run proposes nothing, including one ended during vote replay. */
 function proposeReanchor(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -640,15 +550,7 @@ function makeReanchorBody(
   }).pipe(Effect.mapError(persistenceFailure));
 }
 
-/**
- * Stage this endpoint's own candidate and vote for it. A candidate the
- * endpoint cannot stage gets no vote, and the conversation waits.
- * @param run Recovery run proposing the candidate.
- * @param membership Fixed membership of the conversation.
- * @param body This endpoint's re-anchor body at its durable position.
- * @param anchorHash Hash of `body`.
- * @returns Completion once the candidate is voted for, or left unproposed.
- */
+/** Votes only after staging the candidate. A refusal leaves the conversation waiting. */
 function proposeReanchorCandidate(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -662,16 +564,7 @@ function proposeReanchorCandidate(
   );
 }
 
-/**
- * Replay the votes held for a conversation before its position was ready.
- * Only votes that select this endpoint's head are replayed; a held vote for a
- * record that catch-up never supplied does not count.
- * @param run Recovery run holding the votes.
- * @param membership Fixed membership of the conversation.
- * @param conversationId Conversation whose position is ready.
- * @param headRecordHash This endpoint's certified head.
- * @returns Completion once every matching held vote is replayed.
- */
+/** Replays only votes selecting the head catch-up supplied. */
 function replayReanchorVotes(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -709,16 +602,8 @@ function replayCandidateVotes(
 }
 
 /**
- * Take a vote into the active recovery run when it targets that run's Router
- * restart and names the anchor its body hashes to. Before the position is
- * ready the vote is held; once it is ready the position judges it. A vote
- * outside a restart, after the run has ended, for a conversation already
- * anchored to the run's Router instance, or one the ready position declines
- * changes nothing, so the caller reports it as ignored.
- * @param run Recovery run the vote targets.
- * @param membership Verified membership of the vote's conversation.
- * @param vote Verified re-anchor vote and its signed message.
- * @returns Whether the run took the vote.
+ * Holds votes until the position is ready to judge them. Ignores votes outside
+ * an active Router restart or after the conversation reaches the new Router.
  */
 function processReanchorVote(
   run: ReanchorRun,
@@ -746,14 +631,8 @@ function processReanchorVote(
 }
 
 /**
- * Whether a vote targets this run's re-anchor. Only a conversation the run
- * re-anchors after a Router restart takes votes, and only until it is
- * anchored to the run's Router instance: a vote from that new anchor would
- * start a second re-anchor at the same instance, which no restart calls for.
- * @param run Recovery run the vote arrived in.
- * @param membership Verified membership of the vote's conversation.
- * @param vote Verified re-anchor vote.
- * @returns Whether the run takes the vote.
+ * Only restarted conversations awaiting this Router instance take votes.
+ * Voting again after reaching it would start an unneeded second re-anchor.
  */
 function voteTargetsRecovery(
   run: ReanchorRun,
@@ -774,12 +653,7 @@ function voteTargetsRecovery(
   );
 }
 
-/**
- * A daemon restart does not replace a verified anchor for the same Router.
- * @param run Recovery with an authenticated Router instance.
- * @param conversationId Fixed conversation whose anchor is being reconciled.
- * @returns The retained anchor only when it already names the current Router.
- */
+/** A daemon restart preserves an anchor already naming the current Router. */
 function currentAnchorForRecovery(
   run: ReanchorRun,
   conversationId: ConversationIdValue,
@@ -793,14 +667,7 @@ function currentAnchorForRecovery(
     : undefined;
 }
 
-/**
- * Apply a vote to a conversation whose position is ready. A conversation with
- * no head has nothing to re-anchor, so the vote is declined.
- * @param run Recovery run the vote targets.
- * @param membership Verified membership of the vote's conversation.
- * @param vote Verified re-anchor vote and its signed message.
- * @returns Whether the vote counts.
- */
+/** A position without a certified head has nothing to re-anchor and declines votes. */
 function processReadyReanchorVote(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -874,15 +741,9 @@ function reconcileCandidatePosition(
 }
 
 /**
- * Judge a vote by the record it selects. A vote for this endpoint's head is
- * certified unless a staged successor of that head is pending, and a vote for
- * an ancestor is held. A vote for a record this endpoint does not hold sends
- * the position back to catch-up and is held, unless this endpoint has already
- * staged a candidate for the Router instance: it stages no other then, so the
- * vote is declined.
- * @param input Recovery run, durable snapshot, vote body, and this endpoint's
- *     head and anchor.
- * @returns What the position does with the vote.
+ * Holds votes for ancestors. An unknown selected record restarts catch-up
+ * unless a candidate is already staged for this Router instance, when the
+ * vote is declined. A staged successor blocks certification at its predecessor.
  */
 function selectedHeadAction(
   input: CandidatePositionInput,
@@ -917,13 +778,8 @@ function selectedHeadAction(
 }
 
 /**
- * Judge a vote for this endpoint's head by the anchor it re-anchors from: the
- * current anchor is certified, an ancestor is held, and an anchor outside
- * this endpoint's anchor chain is declined.
- * @param recovery Durable snapshot holding the anchor chain.
- * @param body The vote's re-anchor body.
- * @param anchor This endpoint's current anchor.
- * @returns What the position does with the vote.
+ * Certifies from the current anchor, holds from ancestors and declines
+ * anchors outside retained ancestry.
  */
 function previousAnchorAction(
   recovery: EndpointRecovery,
@@ -954,15 +810,7 @@ function hasStagedReanchor(
   );
 }
 
-/**
- * Stage a member's vote's candidate, persist the vote, and complete the
- * re-anchor once a quorum has voted. A vote for a candidate this endpoint
- * cannot stage, or one the store refuses, does not count.
- * @param run Recovery run the vote targets.
- * @param membership Verified membership of the vote's conversation.
- * @param vote Verified vote for this endpoint's head and anchor.
- * @returns Whether the vote counts.
- */
+/** A candidate the endpoint cannot stage or the store refuses contributes no vote. */
 function certifyReanchorVote(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -998,16 +846,9 @@ function voteAndComplete(
 }
 
 /**
- * Stage `body` as this endpoint's candidate when it still matches the durable
- * position and no other candidate holds its anchor and Router instance. An
- * endpoint stages at most one candidate per anchor and Router instance. A
- * certified successor can still move the head after a candidate is staged;
- * the endpoint then keeps that candidate and stages no other.
- * @param run Recovery run staging the candidate.
- * @param membership Fixed membership of the conversation.
- * @param body Re-anchor body to stage.
- * @param anchorHash Hash of `body`.
- * @returns Whether the candidate is staged.
+ * Stages at most one candidate per anchor and Router instance, only at the
+ * durable position. A later certified head preserves that candidate rather
+ * than allowing a competing one.
  */
 function stageReanchorCandidate(
   run: ReanchorRun,
@@ -1103,15 +944,7 @@ function persistReanchorCandidate(
   );
 }
 
-/**
- * Make sure this endpoint's own vote for a staged candidate is stored, sent,
- * and held. A run that has ended signs and sends nothing.
- * @param run Recovery run the vote belongs to.
- * @param membership Fixed membership of the conversation.
- * @param body Staged re-anchor body.
- * @param anchorHash Hash of `body`.
- * @returns Completion once the vote is stored, sent, and held.
- */
+/** An ended run signs and sends nothing. */
 function ensureLocalReanchorVote(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -1139,12 +972,6 @@ function ensureLocalReanchorVote(
   );
 }
 
-/**
- * Whether the run already holds this signer's vote for this candidate anchor.
- * @param votes The run's vote memory.
- * @param vote Vote to look up.
- * @returns Whether the vote is held.
- */
 function reanchorVoteIsRemembered(
   votes: ReanchorVotes,
   vote: PendingReanchorVote,
@@ -1172,13 +999,8 @@ function localReanchorVoteStatement(
 }
 
 /**
- * Sign, persist, send, and hold this endpoint's own vote. The endpoint signs
- * only when no vote of its own is stored for the candidate, so a store
- * refusal of that vote is a local inconsistency.
- * @param run Recovery run the vote belongs to.
- * @param membership Fixed membership of the conversation.
- * @param statement This endpoint's vote for the staged candidate.
- * @returns Completion once the vote is durable, queued, and held.
+ * Signs only when no local vote is stored. Refusal of the new local vote
+ * therefore indicates inconsistent state.
  */
 function createLocalReanchorVote(
   run: ReanchorRun,
@@ -1205,12 +1027,6 @@ function createLocalReanchorVote(
   );
 }
 
-/**
- * Hold a verified vote for the rest of the run.
- * @param votes The run's vote memory.
- * @param vote Verified vote the run took.
- * @returns Completion once the vote is held.
- */
 function rememberReanchorVote(
   votes: ReanchorVotes,
   vote: PendingReanchorVote,
@@ -1239,12 +1055,8 @@ function rememberReanchorVote(
 }
 
 /**
- * Merge one vote into the store's re-anchor evidence for its candidate anchor.
- * One statement has more than one valid signature, so a member can send a
- * second, differently signed copy of a vote the store already holds. The
- * store refuses that copy, and it does not count.
- * @param vote Verified vote to persist.
- * @returns Whether the vote is durable; false when the store refused it.
+ * A differently signed copy of one member's retained vote conflicts with its
+ * stored bytes and does not count.
  */
 function persistReanchorVote(
   vote: PendingReanchorVote,
@@ -1289,13 +1101,7 @@ function completeReanchorAtThreshold(
   );
 }
 
-/**
- * Read and verify every stored vote for one candidate anchor.
- * @param membership Verified membership the votes must verify under.
- * @param body Re-anchor body every stored vote must name.
- * @param anchorHash Candidate anchor the votes are for.
- * @returns The stored votes, one per signer.
- */
+/** Verifies retained votes and returns one per signer. */
 function decodeReanchorVotes(
   membership: VerifiedMembership,
   body: ReanchorBodyValue,
@@ -1325,14 +1131,7 @@ function decodeReanchorVotes(
   );
 }
 
-/**
- * Assemble a completed re-anchor whose certificate holds `votes` in
- * decoded-AgentId order.
- * @param body Re-anchor body the votes name.
- * @param anchorHash Hash of `body`.
- * @param votes Stored votes for the anchor, at least one.
- * @returns The completed re-anchor.
- */
+/** Orders certificate votes by decoded AgentId bytes. Requires at least one vote. */
 function assembleCompletedReanchor(
   body: ReanchorBodyValue,
   anchorHash: AnchorHashValue,
@@ -1380,12 +1179,6 @@ function finalizeCompletedReanchor(
   );
 }
 
-/**
- * Make a completed re-anchor durable and the conversation's current anchor.
- * @param runtime Engine whose store and conversation receive the anchor.
- * @param completed Verified completed re-anchor.
- * @returns Completion once the anchor is durable and current.
- */
 function persistCompletedReanchor(
   runtime: EngineRuntime,
   completed: CompletedReanchorValue,
@@ -1610,14 +1403,9 @@ function storeAndAdoptReanchor(
 }
 
 /**
- * Make a durable completed re-anchor the conversation's current anchor in
- * memory, and drop the fold of the proposal it supersedes at the selected
- * head, staged or not. That proposal binds the previous anchor, so it is no
- * longer gap-free and can never certify; the store has retired its lock,
- * signatures and staged record, and resuming its fold would only resend dead
- * evidence.
- * @param runtime Engine whose conversation and folds change.
- * @param completed Completed re-anchor the store has made current.
+ * Drops the superseded action's fold when adopting the durable anchor. Its
+ * previous-anchor evidence can no longer certify, and the store has retired
+ * its lock and staged record.
  */
 function adoptCompletedReanchor(
   runtime: EngineRuntime,

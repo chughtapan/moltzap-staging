@@ -23,7 +23,6 @@ import {
   UPGRADES_GUIDE,
 } from "./installation.js";
 
-/** The packages a launcher may follow: the daemon alone, or the OpenClaw channel and the daemon it pins. */
 const RELEASE_PACKAGES = [
   DAEMON_PACKAGE,
   "@moltzap/openclaw-channel",
@@ -137,10 +136,9 @@ function configurationMessage(error: ConfigError.ConfigError): string {
 }
 
 /**
- * Runs the launcher for the arguments after the executable: `--help` prints
- * usage, `prepare` prints the chosen release as one JSON line, and no
- * argument also starts its daemon. It returns the process exit status: 0
- * after `prepare`, otherwise the daemon's.
+ * Prints usage for `--help`. Otherwise selects a release and prints it as one
+ * JSON line for `prepare`, or starts its daemon with no argument. Returns zero
+ * for help and preparation, or the daemon's exit status.
  */
 export const main = Effect.fn("Launcher.main")(function* (
   argv: readonly string[],
@@ -176,13 +174,7 @@ export const main = Effect.fn("Launcher.main")(function* (
   );
 });
 
-/**
- * The settings with the directory and seed resolved against the working
- * directory, since `npm install` runs from inside the launcher directory.
- *
- * @param configuration The settings as configured.
- * @returns The settings with absolute paths.
- */
+/** Resolves paths before npm changes the working directory during installation. */
 function absolute(
   configuration: LauncherConfiguration,
 ): Effect.Effect<LauncherConfiguration, never, Path.Path> {
@@ -195,13 +187,7 @@ function absolute(
   }));
 }
 
-/**
- * The prefix the image installed.
- *
- * @param configuration The launcher's settings.
- * @returns `SHARNESS_LAUNCHER_SEED`, or the directory whose `node_modules`
- *   holds this package.
- */
+/** Defaults to the install prefix containing this launcher's `node_modules`. */
 function seedPrefix(
   configuration: LauncherConfiguration,
 ): Effect.Effect<string, LauncherError, Path.Path> {

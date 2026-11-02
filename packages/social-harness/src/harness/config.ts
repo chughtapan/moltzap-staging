@@ -25,7 +25,7 @@ import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { RegistrationId } from "../identity/registry.js";
 import { packageVersion } from "../release.js";
 
-/** Closed reason that daemon configuration cannot become startup authority. */
+/** Identifies the setting that prevents startup without exposing its value. */
 export type DaemonConfigurationFailure =
   | "environment"
   | "agent-private-key-file"
@@ -54,20 +54,15 @@ export interface DaemonProcessConfiguration {
   readonly routerOrigin: URL;
   readonly agentPrivateKeyFile: Redacted.Redacted;
   /**
-   * Admission credential file an unregistered daemon requires; a daemon whose
-   * state directory holds a registered identity never reads it. An empty
-   * value is the same as an unset one.
+   * Required only before registration. Registered daemons never read it.
+   * Empty and unset values both omit the file.
    */
   readonly admissionCredentialFile?: Redacted.Redacted;
-  /**
-   * File the daemon appends its delivered and sent messages to, one JSON
-   * line each, when the operator asks for that record.
-   */
+  /** Optional JSON-lines file for delivered items and send outcomes. */
   readonly historyExport?: string;
   readonly mcpCredentialFile: Redacted.Redacted;
-  /** The message-policy document the daemon installs as its firewall; unset, it installs none. */
+  /** Omitting the policy file disables the firewall. */
   readonly messagePolicyFile?: string;
-  /** The key of the decision provider a message policy names. */
   readonly decisionProviderKeyFile?: Redacted.Redacted;
   /** An evaluation hides `group:` addresses from every send. */
   readonly hideGroups: boolean;
@@ -91,20 +86,14 @@ export interface DaemonBootstrap {
 }
 
 /**
- * One non-diagnostic credential loading failure. Its stage says whether
- * reading the file as exact UTF-8 failed or the text it holds was refused, so
- * callers map it onto their own closed reasons without ever seeing
- * the path, the bytes, or the decoder detail.
+ * Distinguishes unreadable UTF-8 from rejected credential text. Paths, bytes
+ * and decoder details stay private.
  */
 export class CredentialError extends Data.TaggedError("CredentialError")<{
   readonly stage: "file" | "value";
 }> {}
 
-/**
- * Grammar of an admission credential: 8 to 512 token characters with optional
- * base64 padding, exactly as the file holds it with no surrounding whitespace.
- * Other bearer credentials narrow it.
- */
+/** Accepts admission tokens exactly as stored, without surrounding whitespace. */
 const credentialText = Schema.String.pipe(
   Schema.minLength(8),
   Schema.maxLength(512),
@@ -137,13 +126,7 @@ const readExactUtf8 = (
     ),
   );
 
-/**
- * Reads one secret file and accepts its exact text.
- *
- * @param path Redacted location of the credential file.
- * @param grammar Grammar the whole file text must satisfy.
- * @returns The redacted credential.
- */
+/** Reads exact UTF-8, validates the whole text with `grammar`, and redacts it. */
 export const readCredential = (
   path: Redacted.Redacted,
   grammar: Schema.Schema<string>,
@@ -155,12 +138,7 @@ export const readCredential = (
     Effect.map(Redacted.make),
   );
 
-/**
- * Reads the agent's PKCS#8 private key and constructs its Ed25519 authority.
- *
- * @param path Redacted location of the private key file.
- * @returns Opaque signing authority for the configured agent.
- */
+/** Reads a PKCS#8 key and returns opaque Ed25519 signing authority. */
 const loadSigningAuthority = (
   path: Redacted.Redacted,
 ): Effect.Effect<AgentSigningAuthority, CredentialError> =>
@@ -172,12 +150,6 @@ const loadSigningAuthority = (
     ),
   );
 
-/**
- * Reads the admission credential an unregistered agent presents.
- *
- * @param path Redacted location of the admission credential file.
- * @returns The redacted admission credential.
- */
 const loadAdmissionCredential = (
   path: Redacted.Redacted,
 ): Effect.Effect<Redacted.Redacted, CredentialError> =>
@@ -221,7 +193,6 @@ const origin = Schema.String.pipe(
 
 const publicKeyJson = Schema.parseJson(AgentPublicKey);
 
-/** `Config.boolean`'s spellings, read case-sensitively. */
 const experimentSwitch = Schema.String.pipe(
   Schema.compose(
     Schema.transformLiterals(
@@ -309,7 +280,6 @@ export const processHelp = [
   "Docs: https://docs.moltzap.xyz/reference/spec/daemon/daemon#process-and-configuration",
 ].join("\n");
 
-/** The process settings' failures; message-policy failures carry their own messages. */
 type ProcessConfigurationFailure = Exclude<
   DaemonConfigurationFailure,
   MessagePolicyConfigurationFailure
@@ -317,10 +287,8 @@ type ProcessConfigurationFailure = Exclude<
 
 const RUN_SHARNESSD = "https://docs.moltzap.xyz/guides/run-sharnessd";
 
-/** A secret-file failure of the process settings. */
 type SecretFileFailure = Exclude<ProcessConfigurationFailure, "environment">;
 
-/** Each secret-file failure's operator text and its troubleshooting entry in Run sharnessd. */
 const secretFileFailures: Readonly<
   Record<SecretFileFailure, { readonly text: string; readonly docs: string }>
 > = {
@@ -350,7 +318,6 @@ const secretFileFailures: Readonly<
   },
 };
 
-/** An operator message followed by its one troubleshooting link. */
 const linked = (text: string, docs: string): string => `${text}. Docs: ${docs}`;
 
 const configurationError = (
@@ -364,7 +331,7 @@ const configurationError = (
     ),
   });
 
-/** Loads explicit daemon inputs with optional export and MCP authority separation. */
+/** Validates daemon settings and keeps secret-file locations redacted. */
 export const loadDaemonProcessConfiguration: Effect.Effect<
   DaemonProcessConfiguration,
   DaemonConfigurationError
@@ -413,7 +380,7 @@ export const loadDaemonProcessConfiguration: Effect.Effect<
   Effect.withSpan("loadDaemonProcessConfiguration"),
 );
 
-/** A startup request is complete or omitted; partial registration cannot choose an identity. */
+/** Requires all registration fields together so partial input cannot choose an identity. */
 function registrationRequest(
   input: Pick<
     Config.Config.Success<typeof configuredValues>,
@@ -482,10 +449,8 @@ const loadConfiguredAdmissionCredential = (
       );
 
 /**
- * Reads the agent private key and constructs the configured Ed25519 authority.
- *
- * @param configuration Validated process configuration and redacted credential paths.
- * @returns Opaque signing authority, the MCP credential, and deferred admission credential.
+ * Loads signing authority and the MCP credential. Defers admission-credential
+ * loading until registration requires it.
  */
 export const loadDaemonBootstrap = (
   configuration: DaemonProcessConfiguration,
@@ -510,7 +475,7 @@ export const loadDaemonBootstrap = (
     });
   }).pipe(Effect.withSpan("loadDaemonBootstrap"));
 
-/** Config and operator text share the name, schema and default at declaration. */
+/** Keeps each setting's parser, default and help text together. */
 function setting<A, D = never>(
   name: string,
   schema: Schema.Schema<A, string>,
@@ -572,12 +537,6 @@ function invalidConfigurationMessage(error: ConfigError.InvalidData): string {
     : `${name} ${field.reason}`;
 }
 
-/**
- * One standard OpenTelemetry variable, trimmed.
- * @param name An `OTEL_*` environment variable.
- * @returns Its value, or none when it is unset or blank, as OpenTelemetry's
- *     own exporter reads it.
- */
 const otelVariable = (name: string) =>
   Config.option(Config.string(name)).pipe(
     Config.map((value) =>
@@ -600,13 +559,8 @@ const spanExportSettings = Config.all({
 type SpanExportSettings = Config.Config.Success<typeof spanExportSettings>;
 
 /**
- * The resource's service name. The resource layer lets an explicit name
- * override both standard variables, so the default applies only when neither
- * names one.
- * @param settings The span export settings read from the environment.
- * @returns `OTEL_SERVICE_NAME`, else the last `service.name` in
- *     `OTEL_RESOURCE_ATTRIBUTES` parsed the way the resource layer parses it,
- *     else `sharnessd`.
+ * Uses `OTEL_SERVICE_NAME`, then the last `service.name` resource attribute,
+ * then `sharnessd`, matching OpenTelemetry's resource precedence.
  */
 function spanServiceName(settings: SpanExportSettings): string {
   const attributed = Option.getOrElse(settings.resourceAttributes, () => "")
@@ -624,10 +578,8 @@ function spanServiceName(settings: SpanExportSettings): string {
 }
 
 /**
- * The `v1/traces` URL under a base OTLP endpoint, keeping its query.
- * @param endpoint The configured `OTEL_EXPORTER_OTLP_ENDPOINT`.
- * @returns The traces URL, or `endpoint` unchanged when it does not parse,
- *     so the caller's check refuses it.
+ * Appends `v1/traces` while preserving the query. Invalid endpoints pass through
+ * to URL validation.
  */
 function tracesUnder(endpoint: string): string {
   if (!URL.canParse(endpoint)) {
@@ -639,16 +591,9 @@ function tracesUnder(endpoint: string): string {
 }
 
 /**
- * The URL spans are sent to, or why the settings cannot start an exporter.
- * The URL is `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, else `v1/traces` under
- * `OTEL_EXPORTER_OTLP_ENDPOINT`; the caller passes it to the exporter, so the
- * URL checked is the URL used. A URL
- * that is not http(s), which the exporter would replace with its localhost
- * default or could not reach, and a trace protocol other than http/protobuf
- * are refused.
- * @param endpoint The configured `OTEL_EXPORTER_OTLP_ENDPOINT`.
- * @param settings The span export settings read from the environment.
- * @returns The traces URL, or the refusal.
+ * Selects the traces endpoint or appends `v1/traces` to the base endpoint.
+ * Rejects non-HTTP(S) URLs and protocols other than `http/protobuf` before the
+ * exporter can substitute a default.
  */
 function spanExportUrl(
   endpoint: string,
@@ -682,9 +627,8 @@ function spanExportUrl(
 }
 
 /**
- * OpenTelemetry's own warnings and export failures, which go nowhere without
- * a logger, on standard error. The diag logger is process-global: export
- * takes it over, without the override warning, and leaves it in place.
+ * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
+ * The logger remains installed after export closes.
  */
 const exportDiagnostics = Layer.effectDiscard(
   Effect.sync(() =>
@@ -696,13 +640,9 @@ const exportDiagnostics = Layer.effectDiscard(
 );
 
 /**
- * Exports every span the daemon records as OTLP/HTTP protobuf while
- * `OTEL_EXPORTER_OTLP_ENDPOINT` is set; unset, the layer is empty and no
- * exporter exists. Settings the exporter could not honour, per
- * {@link spanExportUrl}, are refused at startup rather than exported
- * somewhere or in a format the collector does not expect. The OpenTelemetry
- * exporter and batch processor read the rest of their standard variables
- * themselves, and the resource takes `OTEL_RESOURCE_ATTRIBUTES`.
+ * Exports spans as OTLP/HTTP protobuf when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+ * Invalid endpoints and unsupported protocols fail startup. OpenTelemetry reads
+ * its remaining exporter, batch and resource settings from standard variables.
  */
 // eslint-disable-next-line agent-code-guard/require-span-on-exported-effect -- The exporter installs tracing; tracing its acquisition changes the daemon's exported spans.
 export const spanExport: Layer.Layer<never, DaemonConfigurationError> =

@@ -47,7 +47,7 @@ interface Declaration {
 type Version = readonly [number, number, number];
 
 /**
- * Comparator operators, longest first so `>=` is not read as `>`; the empty
+ * Comparator operators, longest first so `>=` is not read as `>`. The empty
  * operator means equality.
  */
 const OPERATORS: ReadonlyArray<readonly [string, (order: number) => boolean]> =
@@ -124,11 +124,7 @@ function manifestAt(where: string): Manifest {
   return { where, manifest: readJsonObject(path.join(repo, where)) };
 }
 
-/**
- * A workspace manifest names no npm version itself.
- * @param manifests Root and package manifests.
- * @returns The names declared through `catalog:`.
- */
+/** Requires workspace manifests to take npm versions from the catalog. */
 function checkInstalledSpecifiers(
   manifests: readonly Manifest[],
 ): ReadonlySet<string> {
@@ -149,12 +145,7 @@ function checkInstalledSpecifiers(
   );
 }
 
-/**
- * A peer range is a support floor set in its manifest; the catalog pin the
- * package is tested against must satisfy it.
- * @param manifests Root and package manifests.
- * @param catalog Catalog name to range.
- */
+/** Requires the tested catalog pin to satisfy each manifest's peer support floor. */
 function checkPeerFloors(
   manifests: readonly Manifest[],
   catalog: Readonly<Record<string, string>>,
@@ -174,12 +165,7 @@ function checkPeerFloors(
   }
 }
 
-/**
- * Readers install the helper manifest from npm, so it copies each catalog
- * range literally.
- * @param helpers The helper manifest.
- * @param catalog Catalog name to range.
- */
+/** Requires the independently installed helper manifest to copy catalog ranges. */
 function checkHelperCopies(
   helpers: Manifest,
   catalog: Readonly<Record<string, string>>,
@@ -233,10 +219,8 @@ function checkNodeRange(root: Manifest, helpers: Manifest): void {
 }
 
 /**
- * Published manifests and the helper manifest must carry the root range; any
- * other package manifest that declares one must match it.
- * @param nodeRange Root `engines.node`.
- * @param helpers The helper manifest.
+ * Requires published and helper manifests to carry the root Node range.
+ * Other manifests may omit it, but any declared range must match.
  */
 function checkEngineCopies(nodeRange: string, helpers: Manifest): void {
   const copies = [

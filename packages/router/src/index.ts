@@ -67,8 +67,8 @@ export namespace RouterServer {
    * restart invalidates continuations and requires endpoint recovery.
    *
    * Configuration is read from the active Effect ConfigProvider. Missing or
-   * invalid settings and listener acquisition fail with `StartupError`;
-   * releasing the layer closes the listener and discards its feed.
+   * invalid settings and listener acquisition fail with `StartupError`.
+   * Releasing the layer closes the listener and discards its feed.
    */
   export const layer: Layer.Layer<never, StartupError> =
     Layer.scopedDiscard(runRouterServer);

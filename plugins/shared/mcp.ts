@@ -83,7 +83,10 @@ export interface McpConnectionSettings {
   readonly credential: Redacted.Redacted;
 }
 
-/** Reception uses the connection's captured server, without another credential setting. */
+/**
+ * Polling is the default. The `onReady` callback runs before the first poll or
+ * after the push stream becomes active, before reading pending items.
+ */
 export interface InboxOptions {
   readonly receiveMode?: "push" | "poll";
   readonly onReady?: Effect.Effect<void>;
@@ -92,7 +95,11 @@ export interface InboxOptions {
 /** Inbox values contain a stable lookup token, content and saved local advice. */
 export type InboxEntry = ToolResult<"read_inbox">["items"][number];
 
-/** The stock MCP client remains visible to plugin code. */
+/**
+ * Allows one inbox consumer at a time. A failed callback stops reception before
+ * acknowledgment. Successful callbacks are acknowledged, and an uncertain
+ * acknowledgment can cause redelivery.
+ */
 export interface McpConnection {
   readonly client: Client;
   readonly consumeInbox: <E, R>(
@@ -112,7 +119,10 @@ export function safeCredentialEndpoint(endpoint: URL): boolean {
   return privateAuthority && secure;
 }
 
-/** The caller's scope owns both the client and every active reception. */
+/**
+ * Returns after MCP negotiation succeeds. Closing the caller's scope interrupts
+ * active reception and closes the client.
+ */
 export function acquireMcpConnection(
   settings: McpConnectionSettings,
   implementation: Implementation,

@@ -1,8 +1,6 @@
 /**
- * @file In-process NanoClaw session driver for the complete agent image. The
- * image is already the isolation boundary, so the driver runs the one agent
- * session as a child process group of the host instead of a nested container,
- * and realizes the session's mounts as symbolic links.
+ * @file Runs NanoClaw sessions as child process groups inside the image's
+ * isolation boundary, with session mounts represented by symbolic links.
  */
 import type { Stats } from "node:fs";
 import { type ChildProcess, spawn } from "node:child_process";
@@ -22,12 +20,7 @@ import { setTimeout as delay } from "node:timers/promises";
 /** The driver kind NanoClaw's runtime registry selects this driver by. */
 export const PROCESS_DRIVER_KIND = "social-harness-process";
 
-/**
- * Claude Code's telemetry and content switches and the OTLP exporter's
- * settings, which hosting sets for an agent with a telemetry origin. The
- * agent is Claude Code under the Agent SDK, which passes them on, so it
- * exports whenever the host's environment carries them.
- */
+/** Forwards configured Claude Code telemetry and OTLP settings to the Agent SDK. */
 export const AGENT_TELEMETRY_VARIABLES = Object.freeze([
   "CLAUDE_CODE_ENABLE_TELEMETRY",
   "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
@@ -50,10 +43,8 @@ export const AGENT_TELEMETRY_VARIABLES = Object.freeze([
 ]);
 
 /**
- * The variables Claude Code under the Agent SDK signs in with, forwarded
- * whenever the host's environment carries them. Which one a run uses is the
- * run's choice, made by the credentials its application declares; Claude
- * Code prefers an API key to a token when it sees both.
+ * Forwards configured Claude Code credentials. Claude Code prefers an API key
+ * when both an API key and a token are present.
  */
 export const AGENT_CREDENTIAL_VARIABLES = Object.freeze([
   "ANTHROPIC_API_KEY",
@@ -62,10 +53,8 @@ export const AGENT_CREDENTIAL_VARIABLES = Object.freeze([
 ]);
 
 /**
- * The HTTPS proxy a provider gateway serves Claude Code through and the
- * authority that proxy signs the provider's host with, forwarded whenever
- * the host's environment carries them. Both spellings are kept, because the
- * tools Claude Code runs read the lowercase ones.
+ * Forwards the provider proxy and its signing authority. Both variable
+ * spellings are needed by tools Claude Code runs.
  */
 export const AGENT_PROXY_VARIABLES = Object.freeze([
   "HTTPS_PROXY",
@@ -149,7 +138,7 @@ export type SessionStatus =
   | { readonly phase: "stopped" }
   | { readonly phase: "failed"; readonly failure: SessionFailure };
 
-/** A change NanoClaw's host is told about; `terminal` ends the session. */
+/** A change NanoClaw's host is told about. `terminal` ends the session. */
 export interface SessionEvent {
   readonly key: SessionKey;
   readonly kind: "phase" | "terminal";
@@ -228,12 +217,9 @@ export interface MountOptions {
 export type OnHostShutdown = (stop: () => Promise<undefined>) => void;
 
 /**
- * The driver's collaborators. `resolveContainerPath` maps a path inside the
- * session's notional container to the outer container's file system,
- * `workingDirectory` is the agent's container working directory, and
- * `baseEnvironment` replaces the agent's inherited environment, which by
- * default carries only the host's Claude Code sign-in variables, telemetry
- * settings and provider proxy, `HOME`, `NODE_ENV`, `PATH` and `TMPDIR`.
+ * Maps session paths into the outer container. The `baseEnvironment` option replaces
+ * inherited variables. Its default permits only Claude Code credentials,
+ * telemetry, provider proxy and basic process settings.
  */
 export interface ProcessDriverOptions {
   readonly policy: unknown;
@@ -278,11 +264,6 @@ interface Session {
   readonly handle: SessionHandle;
 }
 
-/**
- * The driver's mutable state: the one key the container is bound to, the
- * latest session, the host's watchers, and the stop the host's shutdown
- * started.
- */
 interface DriverState {
   readonly settings: DriverSettings;
   readonly watchers: Map<symbol, (event: SessionEvent) => void>;
@@ -319,10 +300,8 @@ export async function materializeProcessMounts(
 }
 
 /**
- * Create the single-session process realization used inside one app pod.
- * The first prepared key binds the container; preparing another key fails.
- * The driver registers its stop with the host's shutdown, after which
- * preparing any session fails.
+ * The first prepared key binds this container to one session identity. Other
+ * keys and preparations after host shutdown fail. Host shutdown stops the session.
  */
 export function createProcessSessionDriver(
   options: ProcessDriverOptions,
@@ -355,9 +334,8 @@ export function createProcessSessionDriver(
 }
 
 /**
- * Register the process driver through NanoClaw's public driver seam. The
- * session's `/workspace` and its session-context file resolve under the
- * state directory `DEPLOYMENT_NANOCLAW_STATE` names.
+ * Registers through NanoClaw's driver interface. The session workspace and
+ * context file resolve under DEPLOYMENT_NANOCLAW_STATE.
  */
 export function installProcessSessionDriver(
   dependencies: ProcessDriverDependencies,
@@ -411,9 +389,8 @@ function defaultBaseEnvironment(): Readonly<Record<string, string>> {
 }
 
 /**
- * Validate `spec`, bind the container to its key, and return the live
- * session for that key or prepare a new one once the last has ended. Once
- * the host's shutdown has begun, nothing is prepared.
+ * Reuses the live session for the bound key, or prepares another after it ends.
+ * Preparation fails once host shutdown begins.
  */
 async function prepareSession(
   state: DriverState,
@@ -449,9 +426,8 @@ async function prepareSession(
 }
 
 /**
- * Stop the live session once when the host shuts down. NanoClaw leaves sessions
- * for a later host to adopt, while this container owns the session's lifetime.
- * The container's termination grace must cover the session's stopGraceSeconds and KILL_WAIT_MILLIS.
+ * Stops the session once on host shutdown. Container termination grace must
+ * cover stopGraceSeconds plus KILL_WAIT_MILLIS.
  */
 function stopWithHost(state: DriverState): Promise<undefined> {
   state.hostShutdown ??= stopLiveSession(state);
@@ -495,12 +471,9 @@ function makeHandle(
 }
 
 /**
- * Start the agent from a ready session in its own process group, so `stop`
- * reaches every process the agent starts in that group. A process that
- * starts a session of its own, as Claude Code does for each shell command,
- * leaves the group, and `stop` does not reach it. The agent's output reaches
- * the host's through pipes the host reads, so no agent process holds the
- * host's own output open after the host exits, however it exits.
+ * Starts a process group so stop reaches its descendants. Children that create
+ * their own sessions leave that group and escape its signals. Output uses pipes
+ * read by the host, preventing descendants from holding host output open after exit.
  */
 async function startSession(
   state: DriverState,
@@ -528,11 +501,7 @@ async function startSession(
   });
 }
 
-/**
- * Spawn the agent's command. A spawn that fails, for example when the host
- * is out of file descriptors, has no pid and no pipes; its `error` event
- * fails the session.
- */
+/** A failed spawn has no PID or pipes. Its error event fails the session. */
 function spawnAgent(settings: DriverSettings, spec: SessionSpec): ChildProcess {
   const [agent] = spec.containers;
   const [executable, ...commandArgs] = agent?.command ?? [];
@@ -574,11 +543,7 @@ function recordAgentError(
   emit(state, "terminal");
 }
 
-/**
- * An exit the driver did not ask for is a failure of a started session, and
- * ends whatever is left of the agent's process group, as a container's
- * processes end with its first one.
- */
+/** An unrequested exit fails the started session and ends its remaining process group. */
 function recordAgentExit(
   state: DriverState,
   record: SessionRecord,
@@ -608,10 +573,6 @@ async function sessionStatus(
   return record.status;
 }
 
-/**
- * Stop the session: a running agent's process group receives `SIGTERM`, and
- * `SIGKILL` once the specification's grace period passes.
- */
 async function stopSession(
   state: DriverState,
   record: SessionRecord,
@@ -651,7 +612,6 @@ async function terminate(
   }
 }
 
-/** Whether the process group `processId` leads is gone within `timeoutMillis`. */
 async function groupEnds(
   processId: number,
   timeoutMillis: number,
@@ -666,7 +626,7 @@ async function groupEnds(
   return true;
 }
 
-/** Signal the process group `processId` leads; `false` once it is gone. */
+/** Returns false once the process group is gone. */
 function signalGroup(processId: number, signal: NodeJS.Signals | 0): boolean {
   try {
     process.kill(-processId, signal);
@@ -679,10 +639,7 @@ function signalGroup(processId: number, signal: NodeJS.Signals | 0): boolean {
   }
 }
 
-/**
- * Link the session's mounts, then mark it ready. A refused mount fails the
- * session with `spec-invalid` and rejects `prepare`.
- */
+/** A refused mount fails the session and rejects prepare with spec-invalid. */
 async function materializeRecord(
   state: DriverState,
   record: SessionRecord,
@@ -796,8 +753,8 @@ function keyText(key: SessionKey): string {
 
 /**
  * Replace the mount target `path` with a link to `source`. A target that
- * already resolves to `source` stays; an empty directory or a link is
- * replaced; anything else is refused so no agent data is lost.
+ * already resolves to `source` stays. An empty directory or a link is
+ * replaced. Anything else is refused so no agent data is lost.
  */
 async function replaceWithSymlink(
   path: string,
@@ -821,7 +778,7 @@ async function replaceWithSymlink(
   await symlink(source, path, sourceInfo.isDirectory() ? "dir" : "file");
 }
 
-/** `true` when `path` already reaches `source`, even as a dangling link. */
+/** Includes dangling links to the same source. */
 async function resolvesTo(path: string, source: string): Promise<boolean> {
   const resolvedPath = await realpathIfResolvable(path);
   const resolvedSource =
@@ -859,7 +816,6 @@ async function removeMountTarget(
   await rmdir(path);
 }
 
-/** The real path of `path`, or `undefined` when the file system refuses it. */
 async function realpathIfResolvable(path: string): Promise<string | undefined> {
   try {
     return await realpath(path);

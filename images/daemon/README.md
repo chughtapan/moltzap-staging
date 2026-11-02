@@ -66,13 +66,13 @@ upgrade, replace both containers with the newer image and a fresh launcher volum
 ## Kubernetes
 
 Use the daemon as a native sidecar (`restartPolicy: Always` under
-`initContainers`). An exec startup probe connects to `127.0.0.1:4319`; a TCP probe
+`initContainers`). An exec startup probe connects to `127.0.0.1:4319`. A TCP probe
 from the kubelet cannot reach a loopback-only listener. Kubernetes waits for the
 startup probe before starting the host.
 
 The following Pod template excerpt assumes a `daemon-settings` ConfigMap, a
 `daemon-secrets` Secret and a `daemon-state` PersistentVolumeClaim. The ConfigMap
-sets the paths and port used in the Docker example; `fsGroup` lets the daemon
+sets the paths and port used in the Docker example. `fsGroup` lets the daemon
 create its state directory on a new volume, whose root it does not own. Take
 `<daemon-key>` and `<openclaw-agent-key>` from `pnpm image:keys` at one release
 commit, or at one commit whose `images.yml` run published. The seed init

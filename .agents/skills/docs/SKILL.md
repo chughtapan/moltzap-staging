@@ -94,8 +94,10 @@ from TypeScript and JSDoc. Polish that source prose with the same care as a
 hand-written page. Explain what callers need beyond the signature, such as
 preconditions, ownership, lifetime, effects, and failures. Link to the owning
 specification for protocol guarantees. Keep export inventories and copied
-signatures out of hand-written specs. Verify that a generated page exists
-before removing its only useful explanation elsewhere.
+signatures out of hand-written specs. Put caller obligations on service methods
+and public overload declarations. Comments on private helpers or implementation
+bodies may disappear from the generated reference. Verify that a generated page
+exists before removing its only useful explanation elsewhere.
 
 Explain the actor, event and evidence behind a value when its type leaves
 those unclear. A timestamp needs the event and clock it records. A signed

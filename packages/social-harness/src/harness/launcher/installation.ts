@@ -20,10 +20,7 @@ import { lstat } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { verify } from "sigstore";
 
-/**
- * The certificate subject alternative name of the one release workflow the
- * launcher trusts.
- */
+/** Certificate subject alternative name of the trusted release workflow. */
 const RELEASE_IDENTITY =
   "https://github.com/social-harness/moltzap/.github/workflows/publish.yml@refs/heads/main";
 const CALENDAR_VERSION = /^(\d+)\.(\d+)\.(\d+)$/u;
@@ -60,17 +57,11 @@ export const launcherError = (
   message: string,
 ): LauncherError => new LauncherError({ reason, message });
 
-/**
- * The SRI `sha512-` integrity of `bytes`, as npm records it.
- *
- * @param bytes A tarball.
- * @returns Its integrity.
- */
+/** Returns npm's SRI `sha512-` integrity for tarball bytes. */
 export function integrityOf(bytes: Uint8Array): string {
   return `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
 }
 
-/** The manifest fields the launcher compares with the registry's metadata. */
 const packedManifest = Schema.Struct({
   name: Schema.String,
   version: Schema.String,
@@ -81,7 +72,7 @@ const packedManifest = Schema.Struct({
   sharnessWireVersion: Schema.optional(Schema.String),
 });
 
-/** The fields of a packed manifest the launcher reads. */
+/** Contains the packed fields compared with registry metadata. */
 export type PackedManifest = typeof packedManifest.Type;
 
 const MANIFEST_PATH = "package/package.json";
@@ -89,11 +80,8 @@ const MANIFEST_PATH = "package/package.json";
 const BLOCK = 512;
 
 /**
- * The `package/package.json` an npm tarball holds.
- *
- * @param bytes A gzipped npm tarball.
- * @returns Its manifest, or a `provenance` failure for a tarball without a
- *   readable one.
+ * Reads `package/package.json` from a gzipped npm tarball. Missing or unreadable
+ * manifests fail with `provenance`.
  */
 export const readPackedManifest = (
   bytes: Uint8Array,
@@ -123,18 +111,9 @@ export const readPackedManifest = (
   );
 
 /**
- * Decides whether a start takes `candidate` over `recorded`. Following a
- * dist-tag takes only a newer release whose emitted wire version the
- * recorded daemon already admits, so a release outside the live window, which
- * every reset release is, never applies on its own and no start moves an
- * agent backwards. An exact pin is the operator's choice in either direction
- * and across a wire change; the endpoint store still refuses a schema newer
- * than the pinned daemon creates.
- *
- * @param recorded The release the agent ran last.
- * @param candidate The release the selection resolved to.
- * @param selection How the release is chosen.
- * @returns Whether to take the candidate, or why the recorded release runs.
+ * Following a dist-tag takes only newer releases within the recorded daemon's
+ * accepted wire versions. Exact pins permit either version direction and wire
+ * changes. The endpoint store still rejects schemas newer than the daemon.
  */
 export function choose(
   recorded: RecordedRelease,
@@ -160,13 +139,8 @@ export function choose(
 }
 
 /**
- * Orders two calendar versions `YYYY.MDD.N` by their numeric parts.
- *
- * @param left One version.
- * @param right The other version.
- * @returns A negative number, zero or a positive number as `left` is older
- *   than, equal to or newer than `right`; `undefined` when either is not a
- *   calendar version.
+ * Compares numeric parts of `YYYY.MDD.N` versions. Returns negative, zero or
+ * positive for older, equal or newer, and `undefined` for invalid versions.
  */
 export function compareVersions(
   left: string,
@@ -186,7 +160,6 @@ export function compareVersions(
   return 0;
 }
 
-/** The text of the archive's manifest entry, walking ustar headers. */
 function manifestText(archive: Uint8Array): string | undefined {
   const decoder = new TextDecoder();
   let offset = 0;
@@ -219,13 +192,11 @@ function field(
   return decoder.decode(end === -1 ? bytes : bytes.subarray(0, end));
 }
 
-/** The scope every Social Harness package publishes under. */
 const SCOPE = "@moltzap/";
 
 /** The package that carries `sharnessd`. */
 export const DAEMON_PACKAGE = "@moltzap/social-harness";
 
-/** One published package version, with the fields the launcher reads. */
 interface PublishedPackage {
   readonly name: string;
   readonly version: string;
@@ -239,7 +210,6 @@ interface PublishedPackage {
   readonly wireVersion?: string;
 }
 
-/** A package name and the exact version a release pins it to. */
 type Pin = readonly [name: string, version: string];
 
 const manifest = Schema.Struct({
@@ -259,19 +229,12 @@ const manifest = Schema.Struct({
 
 const distTags = Schema.Record({ key: Schema.String, value: Schema.String });
 
-/**
- * The names and versions a release may pin. Both reach file names on the
- * home volume, so anything else is refused before it is used.
- */
+/** Package pins become home-volume file names and must be safe path components. */
 const PACKAGE_NAME = /^@moltzap\/[a-z0-9][a-z0-9-]*$/u;
 
-/** How long one registry read, body included, may take. */
+/** Includes response-body consumption. */
 const READ_TIMEOUT = "60 seconds";
 
-/**
- * The version `tag` names for `name` on the registry at origin `registry`,
- * or a `registry` failure.
- */
 const taggedVersion = Effect.fn("Launcher.taggedVersion")(function* (
   registry: string,
   name: string,
@@ -291,10 +254,6 @@ const taggedVersion = Effect.fn("Launcher.taggedVersion")(function* (
   return version;
 });
 
-/**
- * The published manifest of `name@version`, or a `registry` failure when
- * the registry answers another package or version.
- */
 const publishedPackage = Effect.fn("Launcher.publishedPackage")(function* (
   registry: string,
   name: string,
@@ -325,9 +284,8 @@ const publishedPackage = Effect.fn("Launcher.publishedPackage")(function* (
 });
 
 /**
- * Every package the release `name@version` installs from this scope: the
- * release package first, then each exact sibling pin, transitively. Two
- * different pins of one package fail with `registry`.
+ * Traverses exact sibling pins from the release package. Conflicting versions of
+ * one package fail with `registry`.
  */
 const releaseClosure = Effect.fn("Launcher.releaseClosure")(function* (
   registry: string,
@@ -342,12 +300,6 @@ const releaseClosure = Effect.fn("Launcher.releaseClosure")(function* (
   return [...found.values()];
 });
 
-/**
- * The bytes at `url`, or a `registry` failure.
- *
- * @param url A tarball URL.
- * @returns The bytes.
- */
 const download = (
   url: string,
 ): Effect.Effect<Uint8Array, LauncherError, HttpClient.HttpClient> =>
@@ -360,12 +312,6 @@ const download = (
     withinTimeout(url),
   );
 
-/**
- * The JSON at `url`, unvalidated, or a `registry` failure.
- *
- * @param url An attestations or metadata URL.
- * @returns The parsed body.
- */
 const downloadJson = (
   url: string,
 ): Effect.Effect<unknown, LauncherError, HttpClient.HttpClient> =>
@@ -547,15 +493,13 @@ const statement = Schema.Struct({
   ),
 });
 
-/** Where Sigstore keeps its trust root between starts. */
 interface ProvenanceOptions {
   readonly tufCachePath: string;
 }
 
 /**
- * Checks that `bytes` are the tarball npm recorded for `published` and that
- * its SLSA provenance, signed for {@link RELEASE_IDENTITY}, covers them;
- * fails with `provenance` naming the package otherwise.
+ * Requires npm integrity and SLSA provenance signed for {@link RELEASE_IDENTITY}
+ * to cover the tarball. Otherwise fails with `provenance`.
  */
 const verifyProvenance = Effect.fn("Launcher.verifyProvenance")(function* (
   published: PublishedPackage,
@@ -592,9 +536,8 @@ const verifyProvenance = Effect.fn("Launcher.verifyProvenance")(function* (
 });
 
 /**
- * The first field the registry reported for a package that its signed
- * manifest does not carry, so a registry cannot drop a sibling pin from the
- * verified closure or report another wire version or host-code hash.
+ * Detects registry metadata that disagrees with the signed manifest, including
+ * omitted sibling pins, wire version and host-code hash.
  */
 function differingField(
   published: PublishedPackage,
@@ -623,7 +566,6 @@ function sorted(
   return [...entries].sort(([a], [b]) => a.localeCompare(b));
 }
 
-/** The provenance statement at `url`, once its signature verifies. */
 function signedPayload(
   url: string,
   options: ProvenanceOptions,
@@ -686,7 +628,6 @@ const installedPackage = Schema.Struct({
   tarball: Schema.String,
 });
 
-/** One package of a verified release, and the cached tarball it came from. */
 type InstalledPackage = typeof installedPackage.Type;
 
 const recordSchema = Schema.Struct({
@@ -702,7 +643,6 @@ const recordSchema = Schema.Struct({
 /** The release an agent runs, as the home volume records it. */
 export type LauncherRecord = typeof recordSchema.Type;
 
-/** One verified tarball, ready to cache and install. */
 interface VerifiedTarball {
   readonly name: string;
   readonly version: string;
@@ -710,13 +650,10 @@ interface VerifiedTarball {
   readonly bytes: Uint8Array;
 }
 
-/** A verified release to install. */
 interface ReleaseToInstall {
   readonly releasePackage: string;
   readonly version: string;
-  /** Every `@moltzap/*` tarball of the release. */
   readonly tarballs: readonly VerifiedTarball[];
-  /** The registry the remaining dependencies come from. */
   readonly registry: string;
 }
 
@@ -743,7 +680,7 @@ const liveWindow = Schema.Struct({
   LIVE_WIRE_VERSIONS: Schema.Array(Schema.String),
 });
 
-/** The record in launcher directory `directory`, none, or a `record` failure. */
+/** Returns the saved release, none when absent, or a `record` failure. */
 export const readRecord = Effect.fn("Launcher.readRecord")(function* (
   directory: string,
 ) {
@@ -763,10 +700,7 @@ export const readRecord = Effect.fn("Launcher.readRecord")(function* (
   );
 });
 
-/**
- * Replaces the record in `directory` atomically, so a crash leaves the old
- * or the new one, or fails with `record`.
- */
+/** Replaces the release record atomically. A crash leaves the old or new record. */
 export const writeRecord = Effect.fn("Launcher.writeRecord")(
   function* (directory: string, record: LauncherRecord) {
     const fs = yield* FileSystem.FileSystem;
@@ -783,10 +717,6 @@ export const writeRecord = Effect.fn("Launcher.writeRecord")(
   Effect.mapError((failure) => launcherError("record", failure.message)),
 );
 
-/**
- * The record of the release the image installed under `prefix`, whose
- * `node_modules` holds `releasePackage`, or a `seed` failure.
- */
 const seedRecord = Effect.fn("Launcher.seedRecord")(
   function* (prefix: string, releasePackage: string) {
     const manifest = yield* installedManifest(prefix, releasePackage);
@@ -801,9 +731,8 @@ const seedRecord = Effect.fn("Launcher.seedRecord")(
 );
 
 /**
- * Checks, without the network, that every cached tarball of `record` still
- * has the integrity it was verified with and that its prefix holds the
- * recorded release; fails with `integrity` otherwise.
+ * Checks cached tarball integrity and the installed release without the network.
+ * A mismatch fails with `integrity`.
  */
 const checkIntegrity = Effect.fn("Launcher.checkIntegrity")(
   function* (record: LauncherRecord) {
@@ -832,9 +761,8 @@ const checkIntegrity = Effect.fn("Launcher.checkIntegrity")(
 );
 
 /**
- * Caches the release's tarballs in `directory` and installs them into a new
- * prefix, fetching only their dependencies outside the scope from the
- * registry; fails with `install`.
+ * Installs verified tarballs in a new prefix. Only dependencies outside
+ * `@moltzap` come from the registry.
  */
 const install = Effect.fn("Launcher.install")(
   function* (directory: string, release: ReleaseToInstall) {
@@ -859,10 +787,8 @@ const install = Effect.fn("Launcher.install")(
 );
 
 /**
- * Holds `directory` for one start for the scope's lifetime, so two
- * launchers on one volume never interleave their reads and writes. A lock
- * left by a process that is gone, or by this process's own PID after a
- * restart, is taken over; one held by a live process fails with `record`.
+ * Holds the launcher directory for the scope. Takes over stale locks, including
+ * this PID after restart. Another live holder fails with `record`.
  */
 const lockDirectory = Effect.fn("Launcher.lockDirectory")(function* (
   directory: string,
@@ -898,10 +824,7 @@ const lockDirectory = Effect.fn("Launcher.lockDirectory")(function* (
   );
 });
 
-/**
- * Points `current` in `directory` at `prefix` atomically, so a host that
- * loads the channel through it sees one whole release; fails with `record`.
- */
+/** Moves `current` atomically so hosts load one complete release. */
 const pointCurrent = Effect.fn("Launcher.pointCurrent")(
   function* (directory: string, prefix: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -916,10 +839,8 @@ const pointCurrent = Effect.fn("Launcher.pointCurrent")(
 );
 
 /**
- * Runs after the launcher installs a release, before recording it. Package
- * code contains no secrets and must load from a host running as another user.
- * Symbolic links are left alone: a workspace link may dangle,
- * and following one would change modes outside the release.
+ * Makes installed code readable by hosts running as another user. Leaves
+ * symlinks alone to avoid changing modes outside the release.
  */
 const readableRelease = Effect.fn("Launcher.readableRelease")(
   function* (prefix: string) {
@@ -945,11 +866,6 @@ const readableRelease = Effect.fn("Launcher.readableRelease")(
   Effect.mapError((failure) => launcherError("install", failure.message)),
 );
 
-/**
- * Removes every installed prefix and cached tarball in `directory` that
- * `record` does not name, so the volume holds only the release that runs;
- * fails with `record`.
- */
 const pruneReleases = Effect.fn("Launcher.pruneReleases")(
   function* (directory: string, record: LauncherRecord) {
     const fs = yield* FileSystem.FileSystem;
@@ -974,10 +890,6 @@ const pruneReleases = Effect.fn("Launcher.pruneReleases")(
   Effect.mapError((failure) => launcherError("record", failure.message)),
 );
 
-/**
- * The wire versions the daemon installed under `prefix` admits, read from
- * the Client root, or an `integrity` failure.
- */
 const liveWireVersions = Effect.fn("Launcher.liveWireVersions")(
   function* (prefix: string) {
     const path = yield* Path.Path;
@@ -1001,12 +913,6 @@ const liveWireVersions = Effect.fn("Launcher.liveWireVersions")(
   ),
 );
 
-/**
- * The `sharnessd` executable installed under `prefix`.
- *
- * @param prefix An installed release.
- * @returns The path the launcher runs with the current Node.
- */
 const daemonExecutable = (
   prefix: string,
 ): Effect.Effect<string, never, Path.Path> =>
@@ -1049,7 +955,6 @@ function cacheTarballs(
   );
 }
 
-/** Installs `packages` into a staging directory, then moves it to `prefix`. */
 function installInto(
   prefix: string,
   packages: readonly InstalledPackage[],
@@ -1085,10 +990,7 @@ function installInto(
   );
 }
 
-/**
- * Runs `npm install` of the cached tarballs in `staging`. Install scripts
- * never run; npm's progress output is dropped and its errors reach stderr.
- */
+/** Disables install scripts and npm progress output. Errors reach stderr. */
 function npmInstall(
   staging: string,
   packages: readonly InstalledPackage[],
@@ -1166,10 +1068,7 @@ function recordOf(
   };
 }
 
-/**
- * Writes `bytes` to `file` through a temporary file and a rename, so a
- * tarball another recorded release names is never seen half written.
- */
+/** Uses a temporary file and rename so recorded tarballs cannot appear partial. */
 function writeAtomically(
   file: string,
   bytes: Uint8Array,
@@ -1190,7 +1089,6 @@ function installFailure(prefix: string): LauncherError {
   return launcherError("install", `could not install into ${prefix}`);
 }
 
-/** The PID of a live process other than this one holding `lock`, after removing a stale lock. */
 function lockHolder(
   lock: string,
 ): Effect.Effect<string | undefined, LauncherError, FileSystem.FileSystem> {
@@ -1235,15 +1133,14 @@ export interface Prepared {
   readonly version: string;
   readonly prefix: string;
   readonly daemon: string;
-  /** The release that ran before this start, when the start took a new one. */
+  /** Present when this start replaces a release. */
   readonly previous?: string;
-  /** Why the recorded release runs, when it does. */
   readonly kept?: KeepReason;
   /** Whether the code OpenClaw loads for the channel changed, so the gateway restarts. */
   readonly restartHost: boolean;
 }
 
-/** The services a start uses. */
+/** Supply these services at the process boundary. */
 export type LauncherServices =
   | FileSystem.FileSystem
   | Path.Path
@@ -1254,7 +1151,6 @@ type Outcome =
   | { readonly kind: "keep"; readonly reason: KeepReason }
   | { readonly kind: "take"; readonly record: LauncherRecord };
 
-/** The keep reason each candidate failure reports. */
 const KEEP_REASONS: Readonly<Record<LauncherError["reason"], KeepReason>> = {
   provenance: "unverified",
   install: "uninstalled",
@@ -1267,13 +1163,10 @@ const KEEP_REASONS: Readonly<Record<LauncherError["reason"], KeepReason>> = {
 };
 
 /**
- * Runs on every start to choose, install and record its release, given the
- * launcher's settings and the prefix the image installed, holding the
- * launcher directory for the scope. It fails only when nothing is safe to
- * run. Only a newly installed release is made readable; image seeds supply
+ * Chooses, installs and records a release while holding the launcher directory
+ * for the scope. Fails only when no safe release can run. Image seeds supply
  * their own readable modes. The `current` link moves before the record commits,
- * so a start interrupted between them takes the release again and still
- * reports `restartHost`.
+ * so an interrupted start takes that release again and reports `restartHost`.
  */
 export const prepare = Effect.fn("Launcher.prepare")(function* (
   configuration: LauncherConfiguration,
@@ -1313,11 +1206,9 @@ export const prepare = Effect.fn("Launcher.prepare")(function* (
 });
 
 /**
- * The release the agent last ran. A record of the image's own install, which
- * caches no tarball, follows the image: a new image installs another release
- * under the same prefix, so the start records that one again instead of
- * refusing the prefix it no longer matches. A recorded prefix must contain
- * the daemon package before candidate failures can keep it running.
+ * Image seeds follow the release currently installed at their prefix without
+ * cached tarballs. Every retained prefix must contain the daemon before a failed
+ * candidate can fall back to it.
  */
 function recordedRelease(
   configuration: LauncherConfiguration,
@@ -1369,7 +1260,6 @@ function recordedRelease(
   );
 }
 
-/** The candidate release, decided against the recorded one and taken when it passes. */
 function candidate(
   configuration: LauncherConfiguration,
   recorded: LauncherRecord,
@@ -1417,7 +1307,6 @@ function candidate(
   });
 }
 
-/** The daemon manifest supplies the candidate wire version. */
 function wireVersionOf(
   closure: readonly PublishedPackage[],
   version: string,
@@ -1434,7 +1323,6 @@ function wireVersionOf(
       );
 }
 
-/** Downloads and verifies every package of the release, then installs and checks it. */
 function take(
   configuration: LauncherConfiguration,
   version: string,

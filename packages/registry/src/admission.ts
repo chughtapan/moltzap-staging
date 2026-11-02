@@ -46,15 +46,8 @@ type BootstrapRegistrationInput = Readonly<{
 }>;
 
 /**
- * Verifies Registry-owned bootstrap admission through its durable replay step.
- *
- * @param input Bootstrap boundary dependencies and request.
- * @param input.httpRequest Server request carrying signed framing.
- * @param input.bodyBytes Bounded body octets covered by the signature.
- * @param input.admissionCredential Configured bootstrap secret.
- * @param input.nonceCapacity Maximum live bootstrap nonces.
- * @param input.storage Durable nonce store.
- * @returns The complete registration request after every admission check.
+ * Verifies the bootstrap credential and signed request, then durably claims
+ * its replay nonce before validating the complete registration body.
  */
 export function verifyBootstrapRegistration(
   input: BootstrapRegistrationInput,

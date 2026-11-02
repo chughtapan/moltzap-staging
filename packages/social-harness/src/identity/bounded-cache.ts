@@ -1,22 +1,14 @@
 /** @file Bounded least-recently-used caches for immutable identity material. */
 import { Option } from "effect";
 
-/**
- * A map that keeps at most its capacity of entries. Reading or storing an
- * entry makes it the most recently used, and storing past the capacity drops
- * the least recently used entry, so memory stays bounded however many
- * distinct keys arrive.
- */
+/** Bounds memory by evicting the least recently read or written entry at capacity. */
 export interface BoundedCache<K, V> {
-  /** The value for `key`, which becomes the most recently used entry. */
   readonly get: (key: K) => Option.Option<V>;
-  /** Stores `value` as the most recently used entry for `key`. */
+
   readonly set: (key: K, value: V) => void;
 }
 
-/**
- * Creates an empty LRU cache. The caller supplies a positive integer capacity.
- */
+/** Requires a positive integer capacity. */
 export const makeBoundedCache = <K, V>(
   capacity: number,
 ): BoundedCache<K, V> => {

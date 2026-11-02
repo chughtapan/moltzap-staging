@@ -94,16 +94,11 @@ type CanonicalMessageAddress =
     };
 
 /**
- * Put one destination in canonical form, the rule every send shares. An
- * `agent:` address names one other agent. A `group:` address names each agent
- * once and the local agent is added when absent. Naming one other agent makes
- * it that agent's direct address, since the two-member set is the direct
- * conversation; otherwise the complete group has 3 to `maximumMembers` members
- * in unsigned ASCII name order.
- * @param to The validated destination input.
- * @param localAgentName The local agent's Registry name.
- * @returns The canonical address with its names, local agent included for a
- *   group, or `invalid-address` or `membership-invalid`.
+ * Canonicalizes a destination before Registry lookup. Groups include the local
+ * agent, reject duplicate names, and sort names in unsigned ASCII order.
+ * One peer becomes a direct address. Larger groups contain 3 to `maximumMembers`
+ * agents. Invalid names and membership return `invalid-address` or
+ * `membership-invalid`.
  */
 export function canonicalMessageAddress(
   to: MessageAddressInput,
@@ -114,15 +109,6 @@ export function canonicalMessageAddress(
     : canonicalGroup(to, localAgentName);
 }
 
-/**
- * Render a fixed membership's group address: every member's Registry name,
- * the local agent's included, in unsigned ASCII order. This is the one place
- * that orders a group's names, so the names it returns list the members in
- * the address's order.
- * @param names The members' names, in any order.
- * @returns The canonical group address and the names in its order, or the
- *   parse error when the names cannot form one.
- */
 function renderGroupAddress<Name extends string>(
   names: readonly Name[],
 ): Effect.Effect<

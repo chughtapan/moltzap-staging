@@ -1,13 +1,13 @@
-/** @file Condition-only offline evaluation and process-test configuration. */
+/** @file Offline evaluation and process fixtures under the test import condition. */
 
-/** Process tests supply the same compatibility policy as production services. */
+/** Wire-version overrides for process tests. */
 export {
   HISTORY_WIRE_VERSIONS,
   WireVersions,
 } from "./identity/wire-version.js";
-/** Test processes create signed HTTP attempts with production signing authority. */
+/** HTTP signing for process fixtures. */
 export { signAgentRequest } from "./identity/authentication.js";
-/** Offline model evaluation remains independent of storage and daemon startup. */
+/** Offline firewall checks with a caller-supplied provider. */
 export {
   CheckInputError,
   checkMessage,

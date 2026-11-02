@@ -47,7 +47,7 @@ const requireEvent = (
       );
 };
 
-/** Registers the pinned Events draft in the protocol engine without an SDK callback runtime. */
+/** Registers Events wake streams and webhook delivery with the protocol engine. */
 export const installEvents = Effect.fn("installEvents")(function* () {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;

@@ -212,13 +212,7 @@ const enginePhases = {
   isRecovering,
 };
 
-/**
- * Build the outbox of one engine.
- * @param input Signing identity and Router worker.
- * @param retained Outbox identities the store retains at startup, in durable
- *   order; when there are any, the outbound loop wakes to send them.
- * @returns The engine's outbox port.
- */
+/** Retained outbox identities resume in durable order and wake the outbound loop. */
 export const makeOutbox = (
   input: EndpointEngineInput,
   retained: readonly string[],
@@ -377,11 +371,9 @@ export interface EndpointEngineInput {
   readonly registry: Pick<Context.Tag.Service<typeof Registry>, "lookup">;
   readonly routerWorker: EngineRouterPort;
   /**
-   * Report a store failure that may leave a message's intent bound but not
-   * proposed: an uncertain persistence failure while binding it, or any store failure
-   * while queueing its proposal. The host must stop, so recovery after the
-   * restart proposes the intent; a host that kept running would leave it
-   * waiting for a head move that a new conversation never gets.
+   * Stops the host after a store failure may leave an accepted intent absent
+   * from memory or unproposed. Restart recovery resumes it. Waiting for the head
+   * to move cannot recover a new conversation.
    */
   readonly reportStorageFault: (
     error: EndpointStoreError,
@@ -458,10 +450,8 @@ export interface EngineRuntime {
 export type EngineOutboxError = ClientRepresentationError | EndpointStoreError;
 
 /**
- * The outbox's mutable state. `queued` holds outbox identities in durable
- * order and `signal` wakes the outbound loop. `gate` orders a drain's reads
- * and removals of the queue head against `serialized` callers; `push` and
- * `clear` change the queue in one synchronous step without it.
+ * Queue mutation is synchronous. The gate orders drain reads and removals
+ * against serialized callers and must not cover network sends.
  */
 interface OutboxState {
   readonly input: EndpointEngineInput;
@@ -637,15 +627,9 @@ function push(
 }
 
 /**
- * Wake on each signal and drain once the worker is attached. After a
- * transient worker failure, back off, wait for the worker to re-anchor, and
- * drain again; recovery may have reset the queue meanwhile, so each attempt
- * re-reads its head. A drain that starts with queued identities is marked as
- * `outbound` work, since its waits for the Router can last the whole outage
- * and emit nothing. A fatal failure is logged with its reason before it ends
- * the daemon.
- * @param state Outbox whose queued identities the worker sends.
- * @returns An effect that drains until a fatal worker failure.
+ * After transient failure, waits for reattachment and rereads the queue head
+ * because recovery may replace the queue. Outbound trace spans cover outage
+ * waits. Fatal failures end the daemon.
  */
 function run(state: OutboxState): Effect.Effect<never, RouterWorkerSendError> {
   const attachedDrain = state.input.routerWorker.awaitAnchor.pipe(
@@ -673,18 +657,9 @@ function run(state: OutboxState): Effect.Effect<never, RouterWorkerSendError> {
 }
 
 /**
- * Send queued outbox identities in order until the queue is empty.
- *
- * The gate covers only reading and removing the queue head, never the worker
- * send. A worker send queues behind a running recovery on the worker's
- * recovery gate, and may run that recovery on its own fiber after it observes
- * a Router restart; recovery resumes intents through `serialized`, so holding
- * the gate across the send would deadlock either way. The worker serializes
- * transmissions and a sent outbox identity is inactive, so concurrent drains
- * stay ordered; a drain removes the head only when it is still the identity
- * that drain sent.
- * @param state Outbox whose queued identities are sent.
- * @returns Completion once no queued identity remains.
+ * Never holds the queue gate across worker sends. Those sends can wait for
+ * or run recovery, which resumes intents through the same gate. The worker
+ * serializes transmission. Remove only the head actually sent.
  */
 function drain(state: OutboxState): Effect.Effect<void, RouterWorkerSendError> {
   return Effect.gen(function* () {

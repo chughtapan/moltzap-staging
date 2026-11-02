@@ -139,7 +139,6 @@ function runDaemon(composed?: FirewallOptions) {
   });
 }
 
-/** The process scope owns message processing, registration and the loopback listener. */
 function runDaemonRuntime(
   bootstrap: DaemonBootstrap,
   source?: FirewallOptions | LoadedMessagePolicy,

@@ -489,11 +489,8 @@ const decodePlaintext = (
   );
 
 /**
- * Opens a verified outer message's sealed body for the reader and decodes the
- * Client value inside. Every outer body is sealed, so a plaintext body fails
- * here like one sealed to other recipients, under another sender, or under
- * another EnvelopeId: each refuses the sender's message and says nothing about
- * local state.
+ * Opens and decodes a verified outer message. Invalid or plaintext bodies
+ * cause refusal of peer input without indicating broken local state.
  */
 export const decodeOuterBody = (
   input: OuterBodyReader & {
@@ -541,10 +538,8 @@ export interface OuterMembership {
 }
 
 /**
- * Seals a canonical Client value to every member's AgentIdentityCard key, bound to the
- * sender and a fresh outer EnvelopeId, then signs the sealed bytes under that
- * EnvelopeId to the same members. The sender is a member, so it can open its
- * own stored envelope.
+ * Seals to all members, including the sender, before signing with the same
+ * sender, recipients and fresh EnvelopeId.
  */
 const signOuterBody = (input: {
   readonly body: Uint8Array;
@@ -715,9 +710,8 @@ export interface VerifiedEvidence {
 }
 
 /**
- * Verify the signature and stable identity of self-addressed evidence. Ingress
- * may supply the statement it decoded from this same body so routing and
- * verification share that decode; stored representations decode here instead.
+ * Checks self-addressed evidence identity and signature. Reuses the statement
+ * decoded at ingress and decodes stored evidence here.
  */
 export const verifyStableEvidence = (input: {
   readonly representation: unknown;
@@ -763,15 +757,8 @@ export const verifyStableEvidence = (input: {
   }).pipe(Effect.withSpan("verifyStableEvidence"));
 
 /**
- * Verify stable evidence a member delivered inside an outer envelope: the
- * envelope verifies as that member's, addressed to the whole membership, and
- * the evidence it carries verifies against the same membership.
- * @param input The delivery to verify.
- * @param input.outer The member's outer envelope.
- * @param input.evidence The evidence message the envelope carries.
- * @param input.membership Membership both must verify against.
- * @param input.statement Statement already decoded from this evidence body by ingress.
- * @returns The verified evidence message and its statement.
+ * Requires the outer envelope and its inner evidence to verify under the
+ * same membership. The envelope must name every member.
  */
 export const verifyDeliveredEvidence = (input: {
   readonly outer: LiveSignedMessage;
@@ -806,7 +793,10 @@ const verifyEvidenceSet = <Kind extends EvidenceKind>(input: {
   readonly representations: readonly unknown[];
   readonly expectedKind: Kind;
   readonly membership: VerifiedMembership;
-  /** At least this many distinct member signers, at most one per member; all-member requirements are exact. */
+  /**
+   * Requires at least this many distinct member signers with one signature per
+   * member. A requirement for every member is exact.
+   */
   readonly requiredCount: number;
   readonly statementMatches: (
     statement: Extract<EvidenceStatement, { readonly kind: Kind }>,
@@ -1007,14 +997,8 @@ export const verifyCompletedReanchor = (input: {
   }).pipe(Effect.withSpan("verifyCompletedReanchor"));
 
 /**
- * Check that a record core binds the membership this endpoint holds for its
- * conversation. A FIRST_MESSAGE core carries the descriptor, which must be the held
- * descriptor byte for byte; a MESSAGE core carries only the `MembershipHash`,
- * which must be the held membership's hash. The caller verified the held
- * membership against the Registry when it first took it.
- * @param recordCore The record core to check.
- * @param membership The membership held for the record's conversation.
- * @returns Completion when the core names that membership.
+ * FIRST_MESSAGE must carry the exact held descriptor and MESSAGE must name
+ * its hash. The held membership must already be verified against the Registry.
  */
 const verifyRecordMembership = (
   recordCore: RecordCore,

@@ -66,13 +66,9 @@ export type Selection =
   | { readonly kind: "unavailable"; readonly message: string };
 
 /**
- * Selects changed packages in dependency order, updating each selected
- * manifest before examining its dependents. A later failure leaves earlier
+ * Requires package directories after the siblings they depend on. Updates each
+ * selected manifest before examining dependents. A later failure leaves earlier
  * selections applied.
- * @param workspace Workspace and registry operations.
- * @param version The calendar version selected packages take.
- * @param dirs Package directories, each after the siblings it depends on.
- * @returns The selected directories in order, or the failure that stopped it.
  */
 export function selectPackages(
   workspace: Workspace,
@@ -102,11 +98,7 @@ export function selectPackages(
   return { kind: "selected", dirs: selected };
 }
 
-/**
- * The repository's packages and the public npm registry.
- * @param repo Repository root.
- * @returns Operations over the packages under `repo`.
- */
+/** Reads packages under the repository root and queries the public npm registry. */
 export function repositoryWorkspace(repo: string): Workspace {
   return {
     manifest: (dir) => {
@@ -134,12 +126,8 @@ export function repositoryWorkspace(repo: string): Workspace {
 }
 
 /**
- * Classify one `npm view NAME@VERSION sharnessContentHash --json` result. A
- * 404 for the name or the version reads as absent, like a version published
- * without a hash; any other failure is unavailable.
- * @param result The command's exit status and output.
- * @param subject The `name@version` the command asked about.
- * @returns What npm recorded.
+ * Treats an npm 404 or a published version without a hash as absent.
+ * Other npm failures mean the registry is unavailable.
  */
 export function classifyNpmView(
   result: NpmViewResult,

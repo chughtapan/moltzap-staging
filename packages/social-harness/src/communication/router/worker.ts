@@ -57,10 +57,8 @@ export class RouterWorkerPayloadInvalidError extends Data.TaggedError(
 ) {}
 
 /**
- * The Router could not be reached, timed out, or answered overloaded,
- * unavailable, or internal error through a bounded run of quick retries, or a
- * send spent its attempts while Router kept losing its retry identity. Either
- * way the work waits for the next attempt rather than failing closed.
+ * Quick transport retries or retry-identity resends exhausted their bound.
+ * Work remains pending for another attempt.
  */
 export class RouterWorkerTransportError extends Data.TaggedError(
   "RouterWorkerTransportError",
@@ -204,17 +202,16 @@ export interface RouterWorker {
     RouterWorkerUnavailableError
   >;
   /**
-   * The active anchor as soon as one exists: the current anchor while the
-   * worker is active, otherwise the anchor the next answered poll or
-   * completed recovery publishes. Callers bound the wait; the worker itself
-   * never gives up.
+   * Returns the current anchor while active. Otherwise waits for the next poll
+   * or completed recovery to publish one. Callers bound the wait because the
+   * worker never gives up.
    */
   readonly awaitAnchor: Effect.Effect<RouterTailAnchor>;
   readonly pollOnce: Effect.Effect<void, RouterWorkerPollError>;
   /**
    * Polls for the endpoint's lifetime. A transient failure detaches the
-   * worker and backs off until the Router answers; only a non-transient
-   * failure ends the loop.
+   * worker and backs off until Router answers. Only a non-transient failure
+   * ends the loop.
    */
   readonly run: Effect.Effect<never, RouterWorkerPollError>;
   readonly send: (
@@ -238,8 +235,8 @@ interface RouterWorkerRecoveringState {
   readonly volatileFoldsAbandoned: boolean;
   readonly anchor?: RouterTailAnchor;
   /**
-   * Clock epoch milliseconds when a recovery attempt first lost the Router;
-   * none once the Router answers the recovery's tail poll.
+   * Records when recovery first lost Router in epoch milliseconds. The next
+   * answered tail poll clears it.
    */
   readonly unreachableSince: Option.Option<number>;
 }
@@ -306,11 +303,8 @@ const routerWorkerBlipSchedule = Schedule.exponential("50 millis").pipe(
 );
 
 /**
- * Backoff for work that waits out an unreachable or re-anchoring Router: the
- * poll loop and the outbound drain. Delays grow from 100 ms to a 5 s cap and
- * are jittered so endpoints do not return in lockstep after a Router restart.
- * It never ends, because a Router outage halts progress rather than failing
- * the endpoint.
+ * Jittered delays grow from 100 ms to 5 s without exhaustion. Router outages
+ * pause progress rather than end the endpoint.
  */
 export const routerWorkerReconnectSchedule = Schedule.exponential(
   "100 millis",
@@ -333,7 +327,7 @@ const transientByTag = {
   RouterWorkerUnavailableError: true,
 } as const satisfies Readonly<Record<RouterWorkerPollError["_tag"], boolean>>;
 
-/** Every failure the Router client raises; poll and send share one union. */
+/** Poll and send share the Router client failure union. */
 type RouterCallError = Effect.Effect.Error<
   ReturnType<RouterWorkerServices["router"]["poll"]>
 >;
@@ -345,10 +339,8 @@ type TaggedFailure = Readonly<{ _tag: string }>;
 type RouterCallFailure = RouterWorkerTransportError | RouterWorkerRejectedError;
 
 /**
- * Outage-shaped Router failures (unreachable, timed out, 429, 5xx) are
- * transport failures the worker waits out. A refusal of the request itself
- * (401, 412 version mismatch, other 4xx, an undecodable answer, or a local
- * signing failure) cannot succeed on retry and is a rejection.
+ * Retries outage failures: unreachable, timeout, 429 and 5xx. Authentication,
+ * version, malformed responses, signing failures and other 4xx are rejections.
  */
 const routerFailureByTag = {
   AgentSigningError: rejectedFailure("signing"),
@@ -433,11 +425,8 @@ export function makeRouterWorker<Payload>(
 }
 
 /**
- * Whether a worker failure ends once the Router answers and the worker
- * re-anchors. Every other failure is a protocol, persistence, recovery, or
- * Router-rejection fault that stays fatal.
- * @param error Poll or send failure; both unions share these tags.
- * @returns True for transport loss, a pending recovery, or a discontinuity.
+ * Transport loss, pending recovery and discontinuity can recover. Protocol,
+ * persistence and rejection failures remain fatal.
  */
 export function isTransientRouterWorkerError(
   error: RouterWorkerPollError | RouterWorkerSendError,
@@ -446,10 +435,8 @@ export function isTransientRouterWorkerError(
 }
 
 /**
- * One line naming why the worker or the outbound drain failed; a Router
- * rejection names what the Router refused.
- * @param error Poll or send failure.
- * @returns Human-readable reason for the log.
+ * Names why the worker or outbound drain failed. Router rejection includes
+ * what Router refused.
  */
 export function describeRouterWorkerFailure(
   error: RouterWorkerPollError | RouterWorkerSendError,
@@ -540,11 +527,8 @@ function makeWorker<Payload>(
 }
 
 /**
- * Repeat a warning every `routerWorkerDetachedReportInterval` for as long as
- * the worker waits on an unreachable Router, detached or recovering, so an
- * outage is never silent however long it lasts.
- * @param runtime Worker whose state is watched.
- * @returns A watcher that runs for the worker's lifetime.
+ * Repeats outage warnings at `routerWorkerDetachedReportInterval` for the
+ * worker's lifetime.
  */
 function reportUnreachable<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -568,12 +552,8 @@ function reportUnreachable<Payload>(
 }
 
 /**
- * Report a failed poll-loop step before the loop retries or ends: a fatal
- * failure logs why the daemon exits, and a failed recovery attempt warns and
- * marks when the Router was first unreachable.
- * @param runtime Worker whose step failed.
- * @param error The step's failure.
- * @returns Completion once the failure is logged and recorded.
+ * Fatal failures log the exit reason. Recovery failures warn and retain the
+ * first unreachable time.
  */
 function noteRunFailure<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -672,13 +652,8 @@ function pollActiveOnce<Payload>(
 }
 
 /**
- * Mark the worker detached after a poll issued at `generation` lost the
- * Router through its quick retries, so sends and the outbound drain wait for
- * the next answered poll instead of transmitting. A generation that recovery
- * has since replaced stays as it is.
- * @param runtime Worker whose poll lost the Router.
- * @param generation Generation the failed poll was issued from.
- * @returns Completion once a matching active state is detached.
+ * Detaches only the generation that lost its poll. Newer recovery state
+ * remains untouched, and sends wait for an answered poll.
  */
 function detach<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -770,15 +745,9 @@ function resolveSenderCard<Payload>(
 }
 
 /**
- * Accept each verified input durably before advancing the cursor. Callbacks
- * queue network work for the worker; they do not transmit while this ordered
- * batch holds the state gate.
- * @param runtime The worker's state gate and durable acceptance callbacks.
- * @param snapshot The active generation when polling began.
- * @param result The batch whose cursor follows the verified inputs.
- * @param verified Authenticated inputs in batch order, with none left unchecked.
- * @returns Completion after acceptance and cursor advancement, or no change if
- * the generation became obsolete.
+ * Accepts the entire verified batch durably before advancing the cursor.
+ * Callbacks queue network work without transmitting under the state gate.
+ * An obsolete generation makes no change.
  */
 function commitBatch<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -843,13 +812,8 @@ function stateMatches(
 }
 
 /**
- * Reattach a detached worker once the Router answers. The probe is an
- * omitted-cursor poll, which the Router answers at once, whereas a
- * continuation poll may be held for 25 s. The same instance reattaches at the
- * retained anchor and cursor; another instance starts restart recovery.
- * @param runtime Detached worker.
- * @param snapshot Detached state the probe was issued from.
- * @returns Completion once the worker is active again or recovering.
+ * An omitted-cursor probe answers immediately. The same Router resumes the
+ * retained cursor and another instance starts recovery.
  */
 function probeDetached<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -869,14 +833,7 @@ function probeDetached<Payload>(
   );
 }
 
-/**
- * Mark a detached worker active again at its retained anchor, unless another
- * generation replaced it meanwhile, and then tell the engine through
- * `callbacks.reattached`, so work the outage paused can start again.
- * @param runtime Worker whose probe the Router answered.
- * @param snapshot Detached state the probe was issued from.
- * @returns Completion once the worker is active or left as it was.
- */
+/** Reattaches only the probed generation, then notifies the engine to resume paused work. */
 function reattach<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
   snapshot: RouterWorkerDetachedState,
@@ -934,12 +891,8 @@ function makeSend<Payload>(
 }
 
 /**
- * Sends one durable current envelope selected by its stable outbox identity.
- *
- * @param runtime Worker capabilities and durable outbox.
- * @param envelopeId Stable identity of the signed envelope.
- * @param instance Router instance fence for this attempt.
- * @returns Whether the stored envelope completed or observed a Router restart.
+ * Sends the current durable envelope by stable outbox identity under the
+ * Router-instance fence. Returns acceptance or Router restart.
  */
 function transmitOutbound<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -999,25 +952,12 @@ function interpretSendResult<Payload>(
 }
 
 /**
- * Sends the same stored envelope again under the other Router mode.
+ * Resends identical bytes as `initial` when retry identity was evicted, and
+ * as `retry` after an initial conflict. Other mode/result pairings fail closed.
  *
- * Router forgets a retry identity at eviction and refuses an `initial` for
- * any retained identity, even with identical bytes. So a `retry` that finds no
- * retained identity goes out again as `initial`, and an `initial` that
- * conflicts asks again as `retry`, which Router accepts only for
- * byte-identical bytes. Any other pairing of mode and result fails closed.
- *
- * The conflict path spends no attempt, so an `initial` that conflicts with a
- * slower copy of itself still gets its answer on the last attempt. The
- * unknown-identity path spends one, so a Router alternating the two results
- * still exhausts the bound. Running out is a transport failure, as for lost
- * connections, so the envelope waits for the next drain.
- *
- * @param runtime Worker capabilities and endpoint identity.
- * @param input The attempt whose Router result named the other mode.
- * @param mode The mode the resend uses.
- * @param spent Attempts the resend costs.
- * @returns Whether Router accepted the stored bytes or reported a restart.
+ * Conflicts spend no attempt so a slower copy can succeed on the last one.
+ * Unknown identities spend an attempt to bound repeated eviction. Exhaustion
+ * leaves the envelope pending for the next drain.
  */
 function resendInMode<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
@@ -1036,13 +976,7 @@ function resendInMode<Payload>(
     : transmitOuter(runtime, { ...input, mode, attemptsRemaining });
 }
 
-/**
- * Send one stored envelope, resending its exact bytes and EnvelopeId on every
- * ambiguous outcome.
- * @param runtime Worker capabilities and endpoint identity.
- * @param input Exact envelope, Router fence, mode, and remaining attempts.
- * @returns Whether Router accepted the envelope or reported a restart.
- */
+/** Preserves exact stored bytes and EnvelopeId across ambiguous outcomes. */
 function transmitOuter<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
   input: TransmitInput,
@@ -1179,13 +1113,9 @@ function logRecoveryAfterLoss(
 }
 
 /**
- * Anchor a restarted or rejoined Router and reconcile certified history, then
- * go active. Recovery fences each conversation and asks for catch-up without
- * waiting for answers, so the worker polls nothing until it is active, and
- * every message the Router holds meanwhile reaches the active path.
- * @param runtime Worker runtime whose generation is being recovered.
- * @param recovering Generation-scoped state to reconcile.
- * @returns An effect that completes after the worker becomes active.
+ * Recovery fences conversations and queues catch-up without waiting for
+ * answers. Polling starts only after activation, so retained traffic reaches
+ * the active path.
  */
 function finishRouterRecovery<Payload>(
   runtime: RouterWorkerRuntime<Payload>,

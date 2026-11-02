@@ -84,7 +84,7 @@ const emptyArguments = Schema.Record({
   key: Schema.String,
   value: Schema.Never,
 });
-/** An absent cursor has the draft's explicit null meaning. */
+/** Omitting the cursor requests the draft's explicit null position. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
 export const eventStreamInput = Schema.Struct({
   name: Schema.String,
@@ -92,12 +92,12 @@ export const eventStreamInput = Schema.Struct({
   cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
   maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
 });
-/** Catalog pagination uses its own cursor rather than event replay state. */
+/** Catalog cursors are independent of event replay positions. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
 export const eventListInput = Schema.Struct({
   cursor: Schema.optionalWith(Schema.String, { exact: true }),
 });
-/** Delivery policy checks follow SDK shape validation. */
+/** Validates subscription shape before authorization and callback URL checks. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
 export const eventSubscribeInput = Schema.Struct({
   ...eventStreamInput.fields,
@@ -120,9 +120,7 @@ export const eventUnsubscribeInput = Schema.Struct({
 
 /** Validated webhook subscription parameters before authorization and URL checks. */
 export type EventSubscribeInput = typeof eventSubscribeInput.Type;
-/** Exact subscription key supplied for eager webhook cleanup. */
 type EventUnsubscribeInput = typeof eventUnsubscribeInput.Type;
-/** Server grant for one webhook registration. */
 interface EventSubscriptionGrant {
   readonly id: string;
   readonly refreshBefore: string;
@@ -188,7 +186,6 @@ const historyRecord = Schema.Union(
   }),
 );
 
-/** Closed local registration input; configured secrets are never tool fields. */
 const managementRegisterRequestSchema = exactStruct({
   operationId: Schema.propertySignature(RegistrationId).annotations({
     description:
@@ -204,7 +201,6 @@ const managementRegisterRequestSchema = exactStruct({
   }),
 });
 
-/** The signed identity document returned after successful registration. */
 const managementRegisterResultSchema = encodedAgentCard;
 
 /** Saved identity is visible while communication activation proceeds. */
@@ -227,13 +223,11 @@ export const managementSearchConversationsResultSchema = Schema.Struct({
   ...PaginatedResult.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
-/** Keeps one conversation address while following its opaque history cursor. */
 const managementReadConversationRequestSchema = exactStruct({
   address: MessageAddress,
   ...PaginatedRequest.fields,
 });
 
-/** Saved messages and results at the traversal's fixed history boundaries. */
 const managementReadConversationResultSchema = Schema.Struct({
   records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
@@ -262,17 +256,14 @@ export const itemEventDataJsonSchema = JSONSchema.make(itemEventDataSchema, {
   target: "jsonSchema2020-12",
 });
 
-/** Read-only content lookup never acknowledges or retries delivery. */
 const readEventRequestSchema = exactStruct({
   eventId: Schema.propertySignature(DeliveryToken).annotations({
     description:
       "The eventId of an org.social-harness/inbox.item event, or one a host's wakeup carries from an inbox item; retained content remains readable after acknowledgment.",
   }),
 });
-/** The original classified payload, including after its handoff. */
 const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
-/** A delivery acknowledgment names the delivery it retires. */
 const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
   deliveryToken: Schema.propertySignature(DeliveryToken).annotations({
     description:
@@ -280,7 +271,6 @@ const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
   }),
 });
 
-/** The model-visible arguments of one send. */
 const harnessSendArgumentsSchema = exactStruct({
   input: Schema.propertySignature(SendRequest).annotations({
     description:
@@ -288,11 +278,8 @@ const harnessSendArgumentsSchema = exactStruct({
   }),
 });
 
-/** One page request over the classified inbox. */
 const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
-/** One page of classified deliveries and the cursor after it. */
 const inboxResultSchema = Schema.typeSchema(InboxPage);
-/** Validation diagnostics remain decodable as a send refusal at the runtime edge. */
 const invocationValidationErrorSchema = Schema.Struct({
   reason: Schema.Literal("content-invalid"),
   detail: Schema.optionalWith(Schema.String, { exact: true }),
@@ -305,14 +292,9 @@ const invocationValidationErrorSchema = Schema.Struct({
 });
 
 /**
- * The JSON-RPC error data of a refused `send_message`: a `SendError` reason
- * with the detail naming its specific cause, or a refused collective send
- * with its selected operationId and the failure naming each
- * unreachable member or failing field, which `decodeCollectiveFailure`
- * validates. Named-request refusals disclose no unrelated request or
- * conversation. Fields a newer daemon adds are ignored; a firewall or
- * collective refusal that misses its own fields never decodes as a plain
- * reason.
+ * Preserves typed send and collective failures without disclosing unrelated
+ * requests. New fields are ignored. Missing firewall or collective fields cannot
+ * decode as a plain send reason.
  */
 const harnessSendErrorDataSchema = Schema.Union(
   invocationValidationErrorSchema,
@@ -350,12 +332,8 @@ type HarnessSendErrorData =
     }>;
 
 /**
- * The error data a refused send carries across the daemon boundary: a
- * collective failure keeps its operationId and the members or fields it names, and a
- * send failure keeps the detail naming its cause, so the receiving side
- * rebuilds the same typed error and message.
- * @param error The refused send's typed error.
- * @returns The JSON error data.
+ * Preserves the typed refusal's details, operation id and failing members or
+ * fields in JSON-RPC error data.
  */
 export function sendErrorData(
   error: SendError | RequestError | FirewallRefusal,
@@ -383,11 +361,7 @@ export function sendErrorData(
   return { reason: error.reason, detail: error.detail };
 }
 
-/**
- * Decode the error data of one refused `send_message` call.
- * @param value Untrusted JSON-RPC error data.
- * @returns The collective failure or send reason it carries.
- */
+/** Decodes JSON-RPC refusal data while preserving send and collective details. */
 export function decodeHarnessSendErrorData(
   value: unknown,
 ): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> {
@@ -527,7 +501,7 @@ export const toolDefinitions = {
   },
 } as const;
 
-/** The actual MCP tool names, rather than a second semantic client API. */
+/** Names the tools published by the daemon's MCP catalog. */
 export type ToolName = keyof typeof toolDefinitions;
 
 /** Arguments are derived from the server's owning Effect schema. */

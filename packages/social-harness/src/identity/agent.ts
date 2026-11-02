@@ -298,11 +298,7 @@ export const AgentCard = Schema.Struct({
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one boundary model.
 export type AgentCard = typeof AgentCard.Type;
 
-/**
- * Project an immutable Registry identity for host results.
- * @param identityCard A card verified against the pinned Registry signer.
- * @returns The card's public fields.
- */
+/** Returns frozen public identity fields without the signed card representation. */
 export function agentCardOf(
   identityCard: VerifiedAgentIdentityCard,
 ): AgentCard {
@@ -371,12 +367,7 @@ const verifyAgentIdentityCard = (input: {
     return brandVerifiedAgentIdentityCard(input.identityCard);
   });
 
-/**
- * Identity-owned digest over the complete retained AgentIdentityCard JWS.
- *
- * @param identityCard Parsed AgentIdentityCard to digest.
- * @returns The refined SHA-256 AgentIdentityCard digest.
- */
+/** Returns the SHA-256 digest of the complete retained card JWS. Rejects cards this module did not parse. */
 export const digestAgentIdentityCard = (
   identityCard: AgentIdentityCard,
 ): Effect.Effect<AgentIdentityCardDigest, AgentIdentityCardVerificationError> =>
@@ -395,19 +386,12 @@ const wireVersion = (card: AgentIdentityCard): string =>
   cardState.get(card)?.wireVersion ?? "";
 
 /**
- * Parses immutable cards and verifies their Registry attestation.
+ * Retains the exact General JWS and a frozen public key. Parsing alone does
+ * not verify the Registry signature.
  *
- * Use this Schema to decode and re-encode a card. Decoding retains its exact
- * General JWS and exposes a frozen public-key snapshot. Parsing alone does
- * not establish that the Registry signed the card.
- *
- * `verify` checks the signature and protected key identifier against the
- * deployment-pinned `registrySignerPublicKey`. Only successful verification
- * returns `VerifiedAgentIdentityCard`. A rejected card fails with
- * `AgentIdentityCardVerificationError`.
- *
- * `wireVersion` reads the retained signed version, which members use to
- * derive the same conversation foundation.
+ * `verify` checks the signature and protected key identifier against
+ * `registrySignerPublicKey`. `wireVersion` reads the retained signed version
+ * used to derive conversation foundations.
  */
 export const AgentIdentityCard = Object.assign(agentIdentityCardSchema, {
   verify: verifyAgentIdentityCard,

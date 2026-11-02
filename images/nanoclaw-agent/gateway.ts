@@ -1,8 +1,4 @@
-/**
- * @file Serves the NanoClaw host's CLI socket on a TCP gateway, which is how
- * the principal reaches the agent's CLI channel. Each gateway client gets a
- * socket connection of its own, piped both ways.
- */
+/** @file Exposes NanoClaw's CLI socket over TCP for the principal's CLI channel. */
 import { createConnection, createServer, type Socket } from "node:net";
 
 /** The TCP address the host's CLI socket is served on. */
@@ -16,19 +12,15 @@ export interface Gateway {
   /** The port the gateway listens on, which the system picks for port 0. */
   readonly port: number;
   /**
-   * Stop accepting clients and end every open connection. NanoClaw's
-   * shutdown ends only the client that has sent a chat line, then waits for
-   * every other connection to its CLI socket to end, so a principal that
-   * never sent one would hold the host's shutdown until it is killed.
+   * Closes the listener and all connections, including idle clients that would
+   * otherwise prevent NanoClaw from shutting down.
    */
   close(): undefined;
 }
 
 /**
- * Serve the CLI socket at `socketPath` on `address`. A client's end reaches
- * its socket connection only after everything the client wrote, so a client
- * that writes and closes at once is delivered in full, however slowly
- * NanoClaw reads.
+ * Resolves once listening. Each client gets its own CLI socket connection.
+ * A client close reaches that socket only after its buffered writes drain.
  */
 export function startGateway(
   address: GatewayAddress,

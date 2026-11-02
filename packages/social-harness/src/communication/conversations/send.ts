@@ -46,13 +46,9 @@ import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
 // safer-arch-ignore no-fat-orchestrator: Immutable intent binding and protocol proposal share the engine gate and durable conversation binding.
 
 /**
- * Fail a send whose intent bind did not complete. A store refusal is raised
- * before the bind commits and rolls it back, so nothing was queued. A raw
- * persistence failure leaves durability unknown and is reported as a storage
- * fault, since a durable intent outside `runtime.intents` waits for a restart.
- * @param runtime The engine whose daemon hears of the fault.
- * @param error The store's failure.
- * @returns The send's failure.
+ * A semantic store refusal rolls back acceptance. A persistence failure leaves
+ * it uncertain, so report a storage fault: a durable intent absent from memory
+ * requires restart to resume.
  */
 function failBind(
   runtime: EngineRuntime,
@@ -90,16 +86,9 @@ const representationFailure = (): SendError =>
   new SendError({ reason: "certification-unavailable" });
 
 /**
- * How long a send waits for the Router worker to attach before failing as
- * `network-unavailable`.
- *
- * A cold-start attach can span a Router tail hold, `HOLD_DURATION` in
- * `@moltzap/router`, and the daemon's own `ROUTER_POLL_TIMEOUT`, so a bound
- * near either one fails sends that are merely early. It stays under the MCP
- * SDK's `DEFAULT_REQUEST_TIMEOUT_MSEC`, the deadline a host client applies to
- * the tool call, so the host receives this closed failure rather than a
- * transport timeout it cannot classify, and the remaining margin covers the
- * send itself.
+ * Allows cold attachment to span a Router tail hold and daemon poll timeout.
+ * Stays below the MCP client's default timeout, leaving time to report a
+ * classified failure and complete the send.
  */
 const ROUTER_ATTACH_TIMEOUT = Duration.seconds(45);
 
@@ -315,16 +304,9 @@ const proposalResendSchedule = catchUpRetrySchedule.pipe(
 );
 
 /**
- * Queue a proposal behind the certified record it extends, then resend both
- * while its action certificate is incomplete. A store failure while
- * queueing is reported as a storage fault: the intent stays bound but not
- * proposed until recovery after a restart proposes it. Activation proposes
- * inside an uninterruptible region and a forked fiber inherits it, so the
- * resends run interruptibly and end with the engine.
- * @param runtime Engine that sends the proposal.
- * @param proposal The local proposal and the intent it proposes.
- * @returns Completion once both envelopes are queued, the intent records the
- *     proposed action, and its resends are scheduled.
+ * Persistence failure after binding requires restart to resume the intent.
+ * Resends run interruptibly in the engine scope even when activation inherits
+ * an uninterruptible region.
  */
 function queueLocalProposal(
   runtime: EngineRuntime,
@@ -361,12 +343,6 @@ function queueLocalProposal(
   });
 }
 
-/**
- * How a proposal's resends ended: the engine ended them; a defect did; they
- * ran out while the proposal still awaited its action certificate; its message
- * was certified; or a later proposal of the intent, or a moved head,
- * replaced it.
- */
 function resendOutcome(
   runtime: EngineRuntime,
   proposal: LocalProposal,
@@ -390,15 +366,9 @@ function resendOutcome(
 }
 
 /**
- * Queue a proposal and, for a MESSAGE, the certified record of the head it
- * extends ahead of it. A faulty member can seal its durability vote so that
- * only some members open it, so a member may not have certified the head the
- * proposer certified when the proposal arrives, and it would drop the
- * proposal as not gap-free. The proposer's own copy of that record, which
- * every member can open, reaches each member first.
- * @param runtime Engine that sends the proposal.
- * @param proposal The proposal and the conversation it extends.
- * @returns Completion once both envelopes are queued.
+ * Queues the certified predecessor before a MESSAGE proposal. A faulty
+ * member may seal evidence so another member cannot open it and certify the
+ * head. The proposer supplies a readable copy to fill that gap.
  */
 function queueProposal(
   runtime: EngineRuntime,
@@ -421,17 +391,9 @@ function queueProposal(
 }
 
 /**
- * Send a proposal again, with its head, while it is still the intent's
- * proposal at the conversation's head and its action certificate is
- * incomplete. Members that dropped it, such as one still catching up while
- * fenced, sign the new copy; members that signed already deduplicate it by
- * `ActionHash`. A fenced conversation sends nothing, and its resends wait for
- * it to recover without consuming attempts. The wait releases the engine
- * gate so recovery can complete. A store failure ends the resends and
- * reports a storage fault.
- * @param runtime Engine that sends the proposal.
- * @param proposal The proposal, the conversation it extends, and its intent.
- * @returns Whether a later resend is still due.
+ * Fenced conversations release the engine gate and wait without spending
+ * attempts. Members deduplicate repeated proposals by ActionHash. Store failure
+ * ends resends and reports a storage fault.
  */
 function resendProposal(
   runtime: EngineRuntime,
@@ -482,13 +444,8 @@ function resendProposal(
 }
 
 /**
- * Whether a proposal still awaits its action certificate: it is still its
- * intent's proposal, its message has not completed, no record certifies it, and
- * the conversation's head is still the one it extends.
- * @param runtime Engine that sent the proposal.
- * @param proposal The proposal and the intent it proposes.
- * @param conversation The conversation's current state.
- * @returns Whether a resend of the proposal is still useful.
+ * Resends are useful only for the intent's current, uncertified proposal at
+ * the unchanged conversation head.
  */
 function proposalIsOpen(
   runtime: EngineRuntime,

@@ -1,13 +1,11 @@
-/** @file Canonical identifier text and deterministic byte and ASCII ordering. */
+/** @file Validates identifier spelling and orders IDs and names. */
 
 import { Array, Either, Encoding, Schema } from "effect";
 
 const HASH_BYTE_LENGTH = 32;
 
 /**
- * Decode base64url only in its canonical encoding, so one key has one text form.
- * @param value The base64url text.
- * @returns The bytes, or undefined when the text is not canonical base64url.
+ * Returns bytes for canonical base64url, or undefined for another spelling.
  */
 export const decodeCanonicalBase64Url = (
   value: string,
@@ -19,10 +17,7 @@ export const decodeCanonicalBase64Url = (
   });
 
 /**
- * Tests a prefix followed by canonical base64url for 32 bytes.
- * @param prefix The identifier's kind prefix, such as `msg_`.
- * @param value The candidate identifier.
- * @returns Whether the value is canonical for that prefix.
+ * Requires the prefix followed by canonical base64url encoding of 32 bytes.
  */
 export function isCanonicalIdentifier(prefix: string, value: string): boolean {
   if (!value.startsWith(prefix)) {
@@ -35,11 +30,7 @@ export function isCanonicalIdentifier(prefix: string, value: string): boolean {
 }
 
 /**
- * Orders AgentIds by their decoded identifier bytes for canonical membership
- * and message recipient lists. Group addresses order AgentNames instead.
- * @param left One agent id.
- * @param right The other agent id.
- * @returns A negative, zero, or positive comparison result.
+ * Compares validated agent IDs by decoded bytes, as membership lists require.
  */
 export const compareAgentIds = (left: string, right: string): number => {
   const leftBytes = decodeCanonicalBase64Url(left.slice(4));
@@ -58,10 +49,7 @@ export const compareAgentIds = (left: string, right: string): number => {
 };
 
 /**
- * Unsigned ASCII order, the order a canonical group address lists its names in.
- * @param left One name.
- * @param right The other name.
- * @returns Negative, zero, or positive as `left` sorts before, with, or after `right`.
+ * Compares ASCII names in the order used by group addresses.
  */
 export const compareAscii = (left: string, right: string): number => {
   const sharedLength = Math.min(left.length, right.length);
@@ -74,7 +62,7 @@ export const compareAscii = (left: string, right: string): number => {
   return left.length - right.length;
 };
 
-/** Require each adjacent pair to increase strictly, rejecting duplicates and missing entries. */
+/** Rejects duplicate, missing or out-of-order values. */
 export function isStrictlyAscending<Value>(
   values: readonly Value[],
   compare: (left: Value, right: Value) => number,
@@ -94,11 +82,7 @@ export function isStrictlyAscending<Value>(
 }
 
 /**
- * Tests whether a string is the unique base64url encoding of a fixed byte length.
- *
- * @param value Candidate unpadded base64url text.
- * @param byteLength Required decoded byte length.
- * @returns Whether the candidate has the one canonical encoding for that length.
+ * Requires canonical base64url of the specified decoded byte length.
  */
 export const hasCanonicalBase64UrlLength = (
   value: string,
@@ -106,14 +90,8 @@ export const hasCanonicalBase64UrlLength = (
 ): boolean => decodeCanonicalBase64Url(value)?.byteLength === byteLength;
 
 /**
- * Constructs one exact prefixed identity Schema for its semantic owner.
- * The pattern preserves byte length and zero padding bits in runtime
- * validation and JSON Schema projections.
- *
- * @param name Nominal Schema and brand name.
- * @param prefix Fixed representation prefix.
- * @param byteLength Required decoded payload length.
- * @returns The exact branded string Schema.
+ * Keeps the prefix, decoded byte length and canonical base64url spelling identical
+ * in runtime validation and generated JSON Schema.
  */
 export const canonicalIdentifier = <const Name extends string>(
   name: Name,

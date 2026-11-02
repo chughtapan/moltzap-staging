@@ -55,11 +55,8 @@ export function isTerminalSendFailure(reason: SendFailure): boolean {
 }
 
 /**
- * What each failure means, in words a model reads as a tool error. The text
- * states only the cause. A failed send was not sent, except `outcome-unknown`,
- * where the message may have gone out, and `delivery-pending`, whose message's
- * intent is durably bound and still proposed and delivered once the Router
- * answers or the daemon restarts, so a resend sends the message twice.
+ * Pending work retains its original intent. A send with an unknown outcome
+ * may already have happened. A new send can duplicate either message.
  */
 const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "invalid-address": "the address is not a valid agent: or group: address",
@@ -90,12 +87,7 @@ export interface ValidationIssue {
   readonly message: string;
 }
 
-/**
- * Validation issues as one line an agent can act on, each field's path
- * before what it expected, such as `input.to: Expected an agent name`.
- * @param issues The issues, in the order the schema reported them.
- * @returns The issues joined with semicolons.
- */
+/** Formats issues in reported order as `field.path: expectation`, joined with semicolons. */
 export function issuesText(
   issues: ReadonlyArray<{
     readonly path: readonly PropertyKey[];
@@ -110,11 +102,10 @@ export function issuesText(
 }
 
 /**
- * A send was refused, remains pending, or has an uncertain outcome. Check
- * `reason` before retrying: `delivery-pending` retains the original message,
- * and `outcome-unknown` leaves its completion uncertain. Repeating either
- * operation can create a second message. The host can present `message` to
- * its agent. Validation issues identify fields without exposing their values.
+ * Check `reason` before retrying. `delivery-pending` retains the original
+ * message. A send with `outcome-unknown` may already have happened. A new send
+ * can duplicate either message. The host may show `message` to its agent.
+ * Validation issues omit rejected values.
  */
 export class SendError extends Data.TaggedError("SendError")<{
   readonly reason: SendFailure;

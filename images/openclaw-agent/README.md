@@ -45,7 +45,7 @@ Kubernetes, use the two-container Pod example in the daemon README and add the
 host state mount and `OPENCLAW_CONFIG_PATH` shown here. The Pod example also
 mounts the daemon's MCP credential for the host. Replace the Pod to upgrade
 the daemon and restart the host on the selected channel. Settings are specified in the
-[daemon contract](../../docs/reference/spec/daemon/daemon.md); release selection and
+[daemon contract](../../docs/reference/spec/daemon/daemon.md). Release selection and
 fallback are specified in [Upgrades](https://docs.moltzap.xyz/guides/upgrades).
 
 ## Build and check locally

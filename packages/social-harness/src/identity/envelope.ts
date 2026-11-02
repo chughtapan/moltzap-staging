@@ -542,31 +542,20 @@ const encodedByteLength = (signedMessage: SignedMessage): number =>
  * The accepted same-name Schema/type API retains the exact private General JWS AST while erasing only its encoded TypeScript type.
  */
 /**
- * Parses and signs attributed messages while retaining their complete General JWS.
+ * Retains the complete General JWS, snapshots recipients and copies body bytes
+ * on every read. Parsing accepts history versions without verifying
+ * attribution. `live` additionally requires a live version.
  *
- * Decode and re-encode messages through this Schema. Recipients are an
- * immutable snapshot, and each read of `body` returns a defensive copy.
- * Changes to caller-owned values cannot change the retained signed bytes.
- * Parsing admits retained-history versions but does not verify attribution.
- * `live` additionally requires a version in the live acceptance window.
+ * `sign` requires the authority key to match the verified sender card. It
+ * checks bounds, sorts recipients by AgentId bytes and returns a verified live
+ * message. Seal bodies before signing when encryption is required.
  *
- * `sign` requires a verified card carrying the authority's public key.
- * Signing copies the body and recipient set, enforces their bounds, and
- * orders recipients by decoded AgentId bytes. It derives the sender, card
- * digest, and emitted version, then returns a verified live message.
- * It signs the supplied body bytes, so callers seal them before signing
- * when the message requires encryption. Failure is `SignedMessageSigningError`.
+ * `verify` checks sender, card digest, protected key identifier, type and
+ * signature against the verified sender card. It preserves the live brand.
  *
- * `verify` checks the sender, complete card digest, protected key identifier,
- * type, and signature against the supplied verified sender card.
- * Success returns `VerifiedSignedMessage` and preserves any live-version brand.
- * Failure is `SignedMessageVerificationError`. Only `sign` and `verify`
- * establish the verified state.
- *
- * `encodedByteLength` is total for parsed messages and returns the exact UTF-8
- * canonical-JSON length of the retained General JWS. Use
- * `maximumEncodedByteLength` to bound an enclosing request. `wireVersion`
- * reads the message's retained signed version.
+ * `encodedByteLength` reports the UTF-8 size of the retained JWS in canonical
+ * JSON. `maximumEncodedByteLength` bounds an enclosing request. `wireVersion`
+ * reads the retained signed version.
  */
 export const SignedMessage = Object.assign(signedMessageSchema, {
   live: live as Schema.Schema<LiveSignedMessage, unknown>,
@@ -652,16 +641,7 @@ type ProtectedHeader = typeof sealedBodyHeader.Type;
 
 const protectedHeaderJson = Schema.parseJson(sealedBodyHeader);
 
-/**
- * Builds the protected-header members in their one accepted order. The sealer
- * hands jose this object, and the opener rebuilds it to require that exact
- * spelling.
- *
- * @param commitment Base64url SHA-256 of the salted plaintext.
- * @param envelopeId Outer SignedMessage EnvelopeId bound by the header.
- * @param senderAgentId Sender bound by the header.
- * @returns The members in serialization order.
- */
+/** Shares protected-header serialization order between sealing and opening. */
 const protectedHeaderMembers = (
   commitment: string,
   envelopeId: EnvelopeId,
@@ -718,14 +698,9 @@ const MULTIPLE_RECIPIENT_FIXED_BYTES = sealedRepresentationSizes.multiple;
 const RECIPIENT_ENTRY_BYTES = sealedRepresentationSizes.recipient;
 
 /**
- * Commits to the salted plaintext. A256GCM does not bind the content key to
- * the ciphertext, so a sender could wrap a different key for each recipient
- * over one ciphertext and tag that authenticate under both. The commitment in
- * the authenticated header lets at most one plaintext open.
- *
- * @param saltedPlaintext Salt followed by the plaintext.
- * @param failure Error for a digest failure.
- * @returns The base64url SHA-256 digest.
+ * A256GCM does not commit to one content key. The authenticated SHA-256
+ * commitment to salted plaintext prevents different recipient keys from
+ * opening one ciphertext as different plaintexts.
  */
 const commitmentOf = <E>(saltedPlaintext: Uint8Array, failure: () => E) =>
   Effect.tryPromise({
@@ -797,29 +772,7 @@ const snapshotRecipientCards = (
     );
   });
 
-/**
- * Encrypts one plaintext to every recipient's AgentIdentityCard key, binds the sender
- * AgentId and the outer EnvelopeId in the protected header, and commits the
- * header to the salted plaintext.
- *
- * Each recipient entry carries its own ephemeral key, which is the layout
- * jose's supported multi-recipient ECDH-ES+A256KW API produces.
- *
- * Recipient entries follow the canonical SignedMessage recipient order, so the
- * caller signs the returned bytes as a SignedMessage body from the same sender
- * under the same EnvelopeId to exactly these recipients. A sender that must
- * read its own body includes its card among the recipients.
- *
- * @param input Sender AgentId, 1 to 128 distinct verified recipient cards,
- * the EnvelopeId the caller passes to `SignedMessage.sign`, and the plaintext
- * to seal.
- * @returns The canonical JSON bytes of the General JWE.
- */
-/**
- * Reads the caller's SealInput once under a try, copying the plaintext, so an
- * input whose members throw fails as a sealing error and later steps read only
- * this copy.
- */
+/** Snapshots input under a try so throwing getters fail as sealing errors. */
 const snapshotSealInput = (
   input: SealInput,
 ): Effect.Effect<SealInput, SealedBodySealingError> =>
@@ -837,6 +790,11 @@ const snapshotSealInput = (
     catch: sealingFailure,
   });
 
+/**
+ * Encrypts to 1–128 distinct verified recipient cards. Sign the returned
+ * canonical General JWE bytes with the same sender, EnvelopeId and recipients.
+ * Include the sender as a recipient if it needs to read its own body.
+ */
 const seal = (
   input: SealInput,
 ): Effect.Effect<Uint8Array, SealedBodySealingError> =>
@@ -879,14 +837,7 @@ const seal = (
     );
   });
 
-/**
- * Rebuilds the one spelling jose produces for a header: `JSON.stringify` of
- * the members in `protectedHeaderMembers` order, followed for a single
- * recipient by the `epk` that jose appends with members `x`, `crv`, `kty`.
- *
- * @param header Decoded protected header.
- * @returns The exact header text a sealer produces.
- */
+/** Matches jose serialization, including the `epk` appended for one recipient. */
 const expectedHeaderText = (header: ProtectedHeader): string => {
   const members = protectedHeaderMembers(
     header[COMMITMENT_HEADER],
@@ -904,18 +855,9 @@ const expectedHeaderText = (header: ProtectedHeader): string => {
 };
 
 /**
- * Decodes the protected header and requires the exact bytes a sealer writes.
- *
- * The header is not JCS for a single recipient, because jose appends `epk`
- * after the other members. A256GCM authenticates whatever bytes the sender
- * chose, so the byte comparison is what stops a sender from respelling the
- * header with reordered, repeated, escaped, or spaced members. It compares
- * the encoded bytes rather than the decoded text, because the UTF-8 decoder
+ * Requires the exact header bytes sealing produces. GCM authenticates
+ * noncanonical spellings too. Compare encoded bytes because UTF-8 decoding
  * strips a leading byte-order mark.
- *
- * @param encodedHeader The canonical base64url `protected` member of the
- * General JWE.
- * @returns The decoded header.
  */
 const decodeProtectedHeader = (
   encodedHeader: string,
@@ -943,11 +885,9 @@ const decodeProtectedHeader = (
 type RecipientEntry = SealedBodyRepresentation["recipients"][number];
 
 /**
- * Selects the one entry sealed to `agentId` after requiring the one
- * ephemeral-key placement the sealer produces: the protected header carries it
- * for a single recipient, and each recipient header carries its own otherwise.
- * Entries follow the canonical SignedMessage recipient order, so the agent's
- * position in that list is its entry and no other entry is tried.
+ * Selects the local agent's entry in canonical recipient order. A single
+ * recipient carries `epk` in the protected header and multiple recipients
+ * carry one per entry.
  */
 const localRecipientEntry = (
   representation: SealedBodyRepresentation,
@@ -1014,27 +954,13 @@ const snapshotOpenInput = (
   });
 
 /**
- * Decrypts a verified SignedMessage body sealed to the local agent.
+ * Requires a message parsed and verified by this package. Opens it with the
+ * local card and authority. Checks exact sealed-body encoding, recipient count, sender, EnvelopeId,
+ * authentication and plaintext commitment. All recipients that open the body
+ * obtain the same plaintext. A sender can prevent some recipients from opening.
  *
- * It first refuses a SignedMessage this package did not parse, so a view whose
- * member reads throw fails as an opening error, and an AgentIdentityCard whose key is
- * not the authority's Ed25519 key.
- * A successful unwrap cannot prove that pairing: a sender may wrap any entry
- * to any key, and an Ed25519 key and its negation share one X25519 key.
- *
- * It then refuses a body that is not an exact sealed body, a protected-header
- * sender or EnvelopeId that differs from the verified SignedMessage sender or
- * EnvelopeId, an entry count that differs from the SignedMessage recipient
- * count, an agent the SignedMessage does not name, any authentication failure,
- * and a decryption that does not match the header commitment. Every recipient
- * that opens a given body therefore obtains the same plaintext, but a sender
- * can still make a body open for some recipients and not others. The sealed
- * bytes open only inside a SignedMessage from the sender and EnvelopeId they
- * were sealed for.
- *
- * @param input The local agent's AgentIdentityCard and authority, and the verified
- * SignedMessage.
- * @returns The sealed plaintext.
+ * The local Ed25519 key must match the authority even if decryption succeeds:
+ * a key and its negation share an X25519 key.
  */
 const open = (
   input: OpenInput,
@@ -1090,11 +1016,8 @@ const fixedByteLength = (recipientCount: number): number =>
     : MULTIPLE_RECIPIENT_FIXED_BYTES + RECIPIENT_ENTRY_BYTES * recipientCount;
 
 /**
- * Computes `ceil(4n / 3)`, the unpadded base64url length of `n` bytes, without
- * fractional arithmetic.
- *
- * @param byteLength Non-negative safe integer.
- * @returns The encoded length.
+ * Computes the unpadded base64url size `ceil(4n / 3)` for a non-negative safe
+ * integer without fractional arithmetic.
  */
 const base64UrlLength = (byteLength: number): number => {
   const remainder = byteLength % 3;
@@ -1107,13 +1030,9 @@ interface SealedByteLengthInput {
 }
 
 /**
- * Returns the exact length of the body `seal` produces, so a consumer checks a
- * SignedMessage body bound without reproducing the representation formula.
- *
- * @param input Plaintext length and recipient count.
- * @returns The sealed length, or none when the recipient count is not an
- * integer from 1 to 128, the plaintext length is not a non-negative safe
- * integer, or the sealed length would exceed `Number.MAX_SAFE_INTEGER`.
+ * Returns the exact sealed-body size. Returns none for a recipient count
+ * other than an integer from 1–128, a non-integer or unsafe plaintext size,
+ * a negative plaintext size, or an unsafe result.
  */
 const sealedByteLength = (
   input: SealedByteLengthInput,
@@ -1134,11 +1053,8 @@ const sealedByteLength = (
 };
 
 /**
- * Returns the largest plaintext whose sealed body fits one SignedMessage body.
- *
- * @param recipientCount Number of recipients.
- * @returns The largest plaintext length, or none when the recipient count is
- * not an integer from 1 to 128.
+ * Returns the largest plaintext size that fits a SignedMessage body, or none
+ * unless the recipient count is an integer from 1–128.
  */
 const maximumPlaintextByteLength = (
   recipientCount: number,
@@ -1151,9 +1067,8 @@ const maximumPlaintextByteLength = (
 };
 
 /**
- * Seals a SignedMessage body to its recipients, opens a verified sealed body,
- * and reports sealed sizes. `SignedMessage.sign` never seals; the caller
- * chooses which bodies to seal and signs the sealed bytes.
+ * Encrypts bodies before `SignedMessage.sign` and opens verified messages.
+ * Use the size helpers to check bounds before sealing.
  */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- The deep-module capability uses its domain name, as SignedMessage and AgentSigningAuthority do.
 export const SealedBody = Object.freeze({

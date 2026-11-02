@@ -1,31 +1,31 @@
-/** @file Condition-only network service contracts and identity verification capabilities. */
+/** @file Network service contracts available under the internal import condition. */
 
-/** Bootstrap verification returns the retained proof accepted by Registry. */
+/** HTTP authentication for Registry bootstrap requests. */
 export {
   httpErrors,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
 } from "./identity/authentication.js";
-/** Registry issuance and history verification use the complete identity document. */
+/** Signing and verification of Registry-issued identity cards. */
 export {
   type AgentIdentityCardClaims,
   AgentIdentityCardDigest,
   agentIdentityCardSigning,
   AgentIdentityCardVerificationError,
 } from "./identity/agent.js";
-/** Registered HTTP requests expose verified attribution before operation decoding. */
+/** HTTP authentication for registered agents. */
 export {
   Authentication,
   AuthenticationError,
   type VerifiedAgentRequest,
 } from "./identity/authentication.js";
-/** Service construction uses the same Registry client as local identity. */
+/** Registry lookup for network services. */
 export { Registry } from "./identity/registry.js";
-/** Router operations and their exact wire contract belong to Communication. */
+/** Router client and wire schemas shared with its server. */
 export { Router, routerContract } from "./communication/router/api.js";
-/** Registry HTTP and storage adapters share their owning wire contract. */
+/** Registry wire schemas shared by its client, server and storage. */
 export { registryContract } from "./identity/registry.js";
-/** Service processes apply the installed compatibility policy. */
+/** Wire versions emitted and accepted by this release. */
 export {
   HISTORY_WIRE_VERSIONS,
   LIVE_WIRE_VERSIONS,

@@ -206,9 +206,9 @@ export const RouterSendResult: Schema.Schema<
 
 /**
  * `accepted` permits checking equality with the retained message, but proves
- * no delivery or durability. `router_restarted` fences old-instance sends.
- * A retained identity conflicts with `initial`; `retry` conflicts only when
- * its bytes differ, and reports `retry_identity_unknown` after eviction.
+ * no delivery or durability. `router_restarted` fences sends to an old instance.
+ * A retained identity conflicts with `initial`. A `retry` conflicts only when
+ * its bytes differ and reports `retry_identity_unknown` after eviction.
  * @useDeclaredType
  */
 export type RouterSendResult = typeof sendResult.Type;
@@ -258,8 +258,8 @@ export const RouterPollResult: Schema.Schema<
 /**
  * A batch's messages remain unverified until the endpoint checks them all.
  * Advance the cursor after verifying and durably accepting every message.
- * `feed_gap` has no partial batch;
- * `cursor_invalid` reveals no Router instance.
+ * `feed_gap` returns no partial batch and `cursor_invalid` reveals no Router
+ * instance.
  * @useDeclaredType
  */
 export type RouterPollResult = typeof pollResult.Type;
@@ -450,13 +450,8 @@ const maximumAgentId = "agt_AAAAAAAAAAAAAAAAAAAAAA";
 const maximumRouterInstanceId = "rti_AAAAAAAAAAAAAAAAAAAAAA";
 
 /**
- * Computes exact cursor length for a caller, instance, and order width.
- *
- * @param input Plaintext cursor members.
- * @param input.agentId Caller bound into the encrypted continuation.
- * @param input.routerInstanceId Process bound into the continuation.
- * @param input.lastScannedOrder Private order bound into the continuation.
- * @returns The complete prefixed Compact JWE length.
+ * Measures the complete prefixed Compact JWE for the bound caller, Router
+ * instance and order width.
  */
 const pollCursorEncodedLength = (input: {
   readonly agentId: AgentId;
@@ -692,11 +687,9 @@ interface RouterClientSettings {
 }
 
 /**
- * Sends attributed messages and polls one agent's share of the Router feed.
- *
- * Each call authenticates with the supplied agent's signing authority. Router
- * acceptance establishes volatile retention, while recipients verify messages
- * and endpoints establish durable conversation history. See the
+ * Authenticates each call with the agent's signing authority. Router retains
+ * accepted messages until eviction or restart. Endpoints verify delivery and
+ * establish durable history. See the
  * [Router contract](https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/communication/protocol.md#router).
  */
 export class Router extends Context.Tag("@moltzap/social-harness/Router")<
@@ -704,13 +697,10 @@ export class Router extends Context.Tag("@moltzap/social-harness/Router")<
   RouterClientService
 >() {
   /**
-   * Sends under the last observed Router instance. `initial` appends a new
-   * retained identity; `retry` checks the exact previously sent bytes without
-   * appending. The authenticated caller must be the message's sender.
-   *
-   * An `accepted` result proves neither delivery nor durable storage. A
-   * transport failure may leave acceptance unknown, so retry the same message
-   * rather than signing another one.
+   * `initial` appends under the observed Router instance. A `retry` checks exact
+   * retained bytes without appending. The caller must be the sender. Acceptance
+   * proves neither delivery nor durable storage. After uncertain transport
+   * outcomes, retry the same message instead of signing another.
    */
   static readonly send: (input: {
     readonly request: RouterSendRequest;
@@ -720,13 +710,12 @@ export class Router extends Context.Tag("@moltzap/social-harness/Router")<
     Effect.serviceFunctionEffect(Router, (service) => service.send);
 
   /**
-   * Omitting the cursor returns an immediate empty batch at the current tail.
-   * A continuation returns addressed messages in Router order or waits for the
-   * fixed poll deadline. Results contain parsed, unverified messages. Verify
-   * the entire batch and durably accept its inputs before advancing the cursor.
+   * Omit the cursor for an immediate empty tail anchor. Continue to poll
+   * addressed, parsed but unverified messages in Router order. Verify and durably
+   * accept the whole batch before advancing its cursor.
    *
-   * `feed_gap` requires endpoint history recovery. `cursor_invalid` supplies no
-   * replacement instance; obtain a new omitted-cursor anchor for recovery.
+   * `feed_gap` requires history recovery. After `cursor_invalid`, obtain a new
+   * omitted-cursor anchor because the error supplies no replacement instance.
    */
   static readonly poll: (input: {
     readonly request: RouterPollRequest;

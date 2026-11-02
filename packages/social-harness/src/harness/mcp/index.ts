@@ -1,4 +1,4 @@
-/** @file MCP binds the harness services and owns its loopback HTTP listener. */
+/** @file Exposes an agent's MCP tools over authenticated loopback HTTP. */
 
 import {
   type HttpApp,
@@ -55,7 +55,7 @@ const digest = (value: string) => createHash("sha256").update(value).digest();
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
-/** Captures service dependencies once; each call executes in the protocol engine's request scope. */
+/** Serves the agent's MCP catalog using the supplied bearer credential. */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   settings: ServerSettings,
 ) {

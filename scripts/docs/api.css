@@ -1,0 +1,12 @@
+/* Keep large inferred types from displacing their API descriptions. */
+.tsd-signature {
+  max-height: 18rem;
+  overflow: auto;
+}
+
+@media print {
+  .tsd-signature {
+    max-height: none;
+    overflow: visible;
+  }
+}

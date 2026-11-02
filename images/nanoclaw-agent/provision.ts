@@ -1,7 +1,6 @@
 /**
- * @file Idempotently initializes NanoClaw's one image-owned agent group,
- * through the compiled NanoClaw modules under the application root. Their
- * shapes are known only at run time, so each export is checked before use.
+ * @file Initializes the image's native NanoClaw agent group idempotently.
+ * Runtime-loaded exports are checked before use.
  */
 import { cp, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,11 +22,7 @@ export type McpServer =
       readonly env: Readonly<Record<string, string>>;
     };
 
-/**
- * The agent the image provisions: its name and optional model, the state
- * directory NanoClaw runs in, the workspace seed copied into the agent's
- * group folder, and the MCP servers its container configuration lists.
- */
+/** Seeds the native agent group and configures its model, workspace and MCP access. */
 export interface NanoClawConfig {
   readonly agentName: string;
   readonly stateDirectory: string;
@@ -61,11 +56,8 @@ interface AgentGroup {
 }
 
 /**
- * Initialize the native agent group that gives the single host its workspace.
- *
- * The owner-local CLI gateway is wired during provisioning. Social Harness
- * conversations and sessions remain absent until NanoClaw receives traffic
- * and routes it through its normal host lifecycle.
+ * Provisions the agent group and owner-local CLI gateway. Social Harness
+ * conversations and sessions begin only when NanoClaw receives traffic.
  */
 export async function provisionNanoClaw(
   config: NanoClawConfig,
@@ -105,10 +97,7 @@ export async function provisionNanoClaw(
   }
 }
 
-/**
- * Import the NanoClaw modules provisioning uses. The module barrel loads
- * first because it contributes the migrations the stock host runs.
- */
+/** Loads the module barrel first to register the stock host's migrations. */
 async function importModules(appRoot: string): Promise<NanoClawModules> {
   await importModule(appRoot, "modules/index.js");
   const [
@@ -228,10 +217,7 @@ async function ensurePrincipalGroup(
   return PRINCIPAL_MESSAGING_GROUP_ID;
 }
 
-/**
- * Copy the workspace seed's entries into the agent's group folder, keeping
- * any file the agent already has. A missing seed copies nothing.
- */
+/** Preserves existing agent files. A missing seed copies nothing. */
 async function seedWorkspace(
   sourceDirectory: string,
   targetDirectory: string,

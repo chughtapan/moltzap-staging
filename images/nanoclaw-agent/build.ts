@@ -35,10 +35,8 @@ export const NANOCLAW_SOURCE = Object.freeze({
 });
 
 /**
- * The image stock NanoClaw's `container/Dockerfile` names in its `FROM`, and
- * the digest of the multi-platform index the base build resolves it to
- * through a named build context, so upstream's floating tag never reaches
- * the build.
+ * Pins the multi-platform base image digest behind the upstream Dockerfile's
+ * image name, so its floating tag cannot reach the build.
  */
 export const NANOCLAW_BASE_IMAGE = Object.freeze({
   name: "node:22-slim",
@@ -46,20 +44,15 @@ export const NANOCLAW_BASE_IMAGE = Object.freeze({
     "sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c",
 });
 
-/**
- * What one invocation does: stage the verified inputs into a directory,
- * resolve the lockfile, or build and load the image under a tag.
- */
+/** Selects staging verified inputs, resolving the lockfile, or loading a tagged image. */
 export type BuildRequest =
   | { readonly mode: "stage"; readonly directory: string }
   | { readonly mode: "lock" }
   | { readonly mode: "build"; readonly tag: string };
 
 /**
- * Download both inputs, verify them, and write under `directory`, which is
- * empty or absent, the NanoClaw tree (`source/`), the channel
- * (`channel/sharness.ts`) and `inputs.json`, which names the pins the two
- * image builds take as arguments.
+ * Requires an empty or absent directory. Writes the verified NanoClaw tree,
+ * channel source and inputs.json pins for the image builds.
  */
 export async function stageInputs(directory: string) {
   const source = join(directory, "source");
@@ -96,10 +89,7 @@ export function nanoClawSourceUrl(source: typeof NANOCLAW_SOURCE): string {
   return `https://github.com/nanocoai/nanoclaw/archive/${source.revision}.tar.gz`;
 }
 
-/**
- * Download `url` and return its bytes only when their lowercase hex sha256
- * is `sha256`; a non-2xx answer is refused before hashing.
- */
+/** Rejects non-2xx responses and SHA-256 mismatches before returning bytes. */
 export async function downloadVerified(
   url: string,
   sha256: string,
@@ -120,9 +110,8 @@ export async function downloadVerified(
 }
 
 /**
- * Read the process arguments after the script path into a request, throwing
- * a `TypeError` carrying the usage line for any other shape, an image
- * reference without a tag included.
+ * Throws TypeError with usage for invalid arguments, including an image
+ * reference without a tag.
  */
 export function parseBuildArguments(args: readonly string[]): BuildRequest {
   const parsed = parseOrUsage(args);
@@ -136,10 +125,7 @@ export function parseBuildArguments(args: readonly string[]): BuildRequest {
   return request;
 }
 
-/**
- * Refuse a stock `container/Dockerfile` that builds from any image other than
- * `NANOCLAW_BASE_IMAGE.name`, which the pin would then not cover.
- */
+/** Refuses FROM entries outside NANOCLAW_BASE_IMAGE.name so every base stays pinned. */
 export function requirePinnedBase(dockerfile: string): void {
   const bases = [...dockerfile.matchAll(/^FROM\s+(\S+)/gmu)].map(
     (match) => match[1] ?? "",
@@ -245,10 +231,8 @@ async function stageNanoClawTree(directory: string, source: string) {
 }
 
 /**
- * Resolve the dependencies of the tree the Dockerfile installs, without
- * installing them: stage it, apply the patch, run prepare.ts at the core
- * release, and resolve with the pnpm release its `packageManager` names
- * (through corepack), then write `pnpm-lock.yaml` beside this script.
+ * Resolves without installing, using the pnpm release in NanoClaw's
+ * packageManager. Writes pnpm-lock.yaml beside this script.
  */
 async function writeLockfile() {
   const staging = await mkdtemp(join(tmpdir(), "nanoclaw-agent-lock-"));

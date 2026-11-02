@@ -134,14 +134,8 @@ export interface PollCursorCodec {
 }
 
 /**
- * Creates the current-instance authenticated client-held cursor codec. The
- * key is imported once as a non-extractable AES-GCM `CryptoKey`, so no
- * encrypt or decrypt imports raw key bytes.
- *
- * @param input Process-local key and instance identity.
- * @param input.key Process-local direct encryption key.
- * @param input.routerInstanceId Current volatile process identity.
- * @returns A caller-bound cursor codec.
+ * Binds cursors to their caller and Router instance. Imports the key once
+ * as a non-extractable AES-GCM key.
  */
 export const makePollCursorCodec = (input: {
   readonly key: Uint8Array;
@@ -168,11 +162,7 @@ export const makePollCursorCodec = (input: {
   });
 };
 
-/**
- * Generates one process-local random Router instance identity.
- *
- * @returns A fresh random instance identifier.
- */
+/** Returns a fresh random identity for one Router process. */
 export const generateRouterInstanceId =
   (): typeof routerContract.RouterInstanceId.Type =>
     Schema.decodeUnknownSync(routerContract.RouterInstanceId)(
@@ -183,11 +173,7 @@ export const generateRouterInstanceId =
       )}`,
     );
 
-/**
- * Generates the process-local direct A256GCM key.
- *
- * @returns A fresh random 256-bit key.
- */
+/** Returns a fresh random 256-bit key for one Router process. */
 export const generatePollCursorKey = (): Uint8Array =>
   globalThis.crypto.getRandomValues(new Uint8Array(32));
 

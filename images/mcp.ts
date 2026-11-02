@@ -1,19 +1,11 @@
 /**
- * @file Calls the MCP tools of one local `sharnessd` from the command line.
- * `SHARNESS_MCP_URL` names the daemon's loopback endpoint.
+ * @file Calls sharnessd at SHARNESS_MCP_URL from the command line.
+ * `register NAME` first checks status, then reuses registration.json in the
+ * current directory until a final answer. Rerunning after a lost answer
+ * recovers the identity or repeats the saved request.
  *
- * `node mcp.ts register NAME` registers the daemon's agent under NAME. It
- * reads `status` first, so a rerun after a registration whose answer was
- * lost reports the saved identity instead of registering again. Until the
- * daemon gives a final answer, the request waits in `registration.json` in
- * the current directory, and a rerun sends that same request, which the
- * daemon treats as the same registration.
- *
- * `node mcp.ts call TOOL [JSON]` calls one tool with a JSON object of
- * arguments, `{}` when omitted, and prints the tool's structured result.
- *
- * A refusal or failure exits 1 and prints the reason and the `Docs:` link of
- * the troubleshooting entry that names it on standard error.
+ * `call TOOL [JSON]` defaults to {} and prints the structured result.
+ * Failures exit 1 and print the reason and Docs troubleshooting link to stderr.
  */
 import { FileSystem } from "@effect/platform";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
@@ -148,7 +140,7 @@ function register(
 
 /**
  * Sends the saved or a new `register` request for `name`. A final answer
- * deletes the saved request; a failed call keeps it for the rerun.
+ * deletes the saved request. A failed call keeps it for the rerun.
  */
 function submit(
   client: Client,
@@ -423,10 +415,8 @@ const MESSAGE_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The failure for a call the daemon or the transport rejected: the daemon's
- * message for invalid arguments, whose message names each invalid field, and
- * for {@link MESSAGE_REASONS}; otherwise its reason, then any detail. A
- * firewall refusal has its own troubleshooting entry.
+ * Preserves daemon diagnostics for invalid arguments and MESSAGE_REASONS.
+ * Otherwise reports the reason and detail. Firewall refusals have their own help entry.
  */
 function toolFailure(tool: string, cause: unknown): ToolFailure {
   if (!ProtocolError.isInstance(cause)) {

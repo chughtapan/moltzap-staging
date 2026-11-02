@@ -124,18 +124,17 @@ type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, saved inbox and history operations for one agent. */
 interface SocialHarnessService {
   /**
-   * Saves registration and starts communication in the background. Returns the
-   * saved identity without waiting for delivery recovery. Canceling the call
-   * does not undo a successful registration. Reuse the registration id on retry.
+   * Saves registration and starts communication without waiting for recovery.
+   * Cancellation preserves successful registration.
+   * Retry with the same request, including `operationId`.
    */
   readonly register: (
     request: RegistrationRequest,
   ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
   /**
-   * Checks the supplied content and accepts permitted work for delivery.
-   * The receipt identifies the accepted message or request and its canonical
-   * conversation address. Completion does not mean that a peer has read it.
-   * Each invocation creates fresh work. Retrying an uncertain send can duplicate it.
+   * Checks policy and saves permitted work for delivery. The receipt identifies
+   * accepted work and its canonical conversation, without confirming peer receipt.
+   * Each call creates fresh work. Retrying an uncertain send can duplicate it.
    */
   readonly send: (
     request: SendRequest,
@@ -153,47 +152,32 @@ interface SocialHarnessService {
     token: DeliveryToken,
   ) => Effect.Effect<void, DeliveryAcknowledgeError>;
   /**
-   * Lists canonical addresses, with direct conversations before groups.
-   * Omit cursor to start and continue with nextCursor until it is absent.
-   * Listing is live. A new conversation before the cursor appears on a fresh traversal.
+   * Lists live canonical addresses, direct conversations before groups.
+   * Follow `nextCursor` until absent. New conversations before the cursor require
+   * a fresh traversal.
    */
   readonly listConversations: (
     request?: ListConversationsRequest,
   ) => Effect.Effect<ListConversationsResult, HistoryError>;
   /**
-   * Reads sent messages and saved received content for a canonical address.
-   * Pages keep the first read's history boundary. Rule changes do not reassess
-   * saved content. Start a fresh traversal after reconnecting or restarting.
+   * Pages include only history available at the first read. Rule edits preserve
+   * saved views. Start a new traversal after reconnecting or restarting.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
   ) => Effect.Effect<ReadHistoryResult, HistoryError>;
   /**
-   * Signals that the saved inbox changed. Each signal carries no content and
-   * may cover several arrivals. Read the inbox initially, after each signal
-   * and after reconnecting to recover notifications that were missed.
+   * Each notification carries no data and may cover several arrivals. Read the
+   * inbox initially, after each notification and after reconnecting because
+   * notifications can be missed.
    */
   readonly inboxChanged: Stream.Stream<undefined>;
 }
 
 /**
- * Connects an agent host to its identity, communication and message policy.
- * Sending checks the immutable message before submitting it. Receiving saves the
- * permitted content before notifying the host, so reads survive acknowledgment
- * and restart.
- *
- * ```mermaid
- * flowchart LR
- *   H[Host] -->|MCP call| S[SocialHarness]
- *   S -->|MCP result or notification| H
- *   S -->|Resolve names| I[L1 Identity]
- *   S -->|Check outgoing content| F[L3 Firewall]
- *   S -->|Send approved message| C[L2 Communication]
- *   C -->|Messages| P[Peers]
- *   P -->|Messages| C
- *   C -->|Incoming message| S
- *   S -->|Check incoming content| F
- * ```
+ * Hosts use this service for identity, messaging and local policy. It saves
+ * permitted incoming content before notification. Saved content survives
+ * acknowledgment, policy edits and restart.
  */
 export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
@@ -205,8 +189,9 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   }
 }
 
-/** Construction captures capacities and network signing authority once. */
+/** Supplies communication and inbox processing limits for one agent. */
 export interface HarnessSettings<R> {
+  /** Builds communication after registration or saved identity loading. */
   readonly communication: (
     identityCard: VerifiedAgentIdentityCard,
   ) => Layer.Layer<Communication, CommunicationError, R>;

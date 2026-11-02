@@ -80,6 +80,10 @@ import {
 
 /** Provider resources remain fixed while authorized edits change text rules. */
 export interface FirewallOptions {
+  /**
+   * Guidance admits messages despite reject or hold judgments, including provider
+   * failures. Enforcement refuses sends or withholds incoming text for those judgments.
+   */
   readonly mode: "guidance" | "enforcement";
   readonly settings: FirewallSettings;
   readonly facts: MessageContext["facts"];
@@ -102,7 +106,7 @@ type Policy = Effect.Effect.Success<ReturnType<typeof initialPolicy>>;
 type ReplyResult = Extract<Incoming, { readonly kind: "result" }>;
 type Direction = "incoming" | "outgoing";
 
-/** A bounded preceding history, with the read permission retained for each source. */
+/** Carries bounded preceding history and each message's visibility to the agent. */
 export interface FirewallEvidence {
   readonly history: ReadonlyArray<{
     readonly message: Message;
@@ -204,7 +208,10 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   }
 }
 
-/** Save the completed judgment before returning refusal or submitting this exact message. */
+/**
+ * Run `save` before returning refusal or submitting this exact message.
+ * Saving is repeatable and uses the caller's current SQL transaction.
+ */
 type OutgoingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
 } & (
@@ -212,7 +219,10 @@ type OutgoingDecision = {
   | { readonly kind: "refused"; readonly refusal: FirewallRefusal }
 );
 
-/** Run save with incoming publication so decisions and permitted content commit together. */
+/**
+ * Run `save` in the same SQL transaction as the inbox write and visibility update.
+ * Saving is repeatable.
+ */
 export type IncomingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
   readonly visibility: ReadonlyArray<{
@@ -229,12 +239,15 @@ export type IncomingDecision = {
 );
 /** Message assessment, policy edits and saved decision summaries. */
 interface FirewallService {
-  /** Save returned decisions before returning refusal or submitting allowed work. */
+  /** Assesses without saving. Refusals expose feedback. Allowed work may carry guidance. */
   readonly checkOutgoing: (
     value: Outgoing,
     evidence: FirewallEvidence,
   ) => Effect.Effect<OutgoingDecision, CheckInputError>;
-  /** A result uses one policy while each peer source retains its preceding context. */
+  /**
+   * Assesses each peer-controlled part under one policy with its preceding evidence.
+   * Withheld items expose no guidance.
+   */
   readonly checkIncoming: (
     value: Incoming,
     evidence?: FirewallEvidence | ResultEvidence,
@@ -243,6 +256,10 @@ interface FirewallService {
     typeof policyReadSchema.Type,
     FirewallPolicyError
   >;
+  /**
+   * Validates and approves each edit before saving and activating it.
+   * Retries validate again and may repeat approval.
+   */
   readonly updatePolicy: (
     request: typeof policyUpdateSchema.Type,
   ) => Effect.Effect<typeof policyUpdateResultSchema.Type, FirewallPolicyError>;
@@ -411,7 +428,6 @@ interface Candidate {
   readonly text?: string;
 }
 
-/** The daemon supplies exact projected text and verified, authorized evidence. */
 interface RuleCheckInput {
   readonly direction: "incoming" | "outgoing";
   readonly canonicalCandidate: Uint8Array;
@@ -420,7 +436,6 @@ interface RuleCheckInput {
   readonly agents: readonly AgentCard[];
 }
 
-/** A completed assessment includes the evidence needed to retain its decision. */
 interface RuleDecision {
   readonly completion: FirewallCompletion;
   readonly result: FirewallCheck;
@@ -1303,7 +1318,7 @@ function persistRules(
   );
 }
 
-/** Each `{behavior}` addition becomes its rule; a behavior the policy file would refuse is an invalid rule at its place in `add`. */
+/** Maps each `{behavior}` to a rule and reports invalid behavior at its index in `add`. */
 function resolvedChange(change: typeof policyUpdateSchema.Type) {
   return Effect.gen(function* () {
     const captured = yield* Effect.try({
@@ -1397,7 +1412,6 @@ function invalidRule(
   return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
 }
 
-/** Completed saves use the caller's current transaction and remain repeatable. */
 function saveDecisions(
   sql: SqlClient.SqlClient,
   decisions: readonly FirewallCompletion[],
@@ -1483,9 +1497,7 @@ const savedSummary = Schema.parseJson(
 );
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-/** An edit remains visible even when no later assessment uses its rules. */
 type FirewallActivation = typeof activationRow.Type;
-/** Preserve every field of the original completed assessment when saving it. */
 type FirewallCompletion = typeof completedCheck.Type;
 
 /** Initialization joins the process's existing database transaction. */
@@ -1603,7 +1615,6 @@ function saveCheckDecision(
   );
 }
 
-/** Reads saved summaries without exposing message text, private inputs or provider evidence. */
 function readSavedDecisions(request: {
   readonly since?: number;
 }): Effect.Effect<

@@ -11,9 +11,8 @@ class MalformedJsonInput extends Data.TaggedError("MalformedJsonInput")<{
 }> {}
 
 /**
- * Read and decode a JSON file whose top level must be an object.
- * @param file Absolute path.
- * @returns The decoded object; malformed input fails the check.
+ * Requires an absolute path. Unreadable files, invalid JSON and non-object
+ * values fail the read.
  */
 export function readJsonObject(file: string): JsonObject {
   const value: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -25,12 +24,7 @@ export function readJsonObject(file: string): JsonObject {
   return value;
 }
 
-/**
- * Optional object fields default to empty; malformed fields fail decoding.
- * @param source Object holding the field.
- * @param key Field name.
- * @returns The nested object.
- */
+/** Returns an empty object for an absent field and rejects malformed fields. */
 export function objectAt(source: JsonObject, key: string): JsonObject {
   const value = source[key];
   if (value === undefined) {
@@ -44,22 +38,13 @@ export function objectAt(source: JsonObject, key: string): JsonObject {
   return value;
 }
 
-/**
- * The string at one field.
- * @param source Object holding the field.
- * @param key Field name.
- * @returns The string, or undefined when absent or not a string.
- */
+/** Returns undefined for absent or non-string values. */
 export function stringAt(source: JsonObject, key: string): string | undefined {
   const value = source[key];
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * Whether a decoded JSON value is an object rather than an array or primitive.
- * @param value Decoded value.
- * @returns True for a plain JSON object.
- */
+/** Excludes null and arrays from object values. */
 export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

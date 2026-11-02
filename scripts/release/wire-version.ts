@@ -6,18 +6,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-/** Workspace-relative source of `WIRE_VERSION`. */
 const WIRE_VERSION_SOURCE =
   "packages/social-harness/src/identity/wire-version.ts";
 
-/** Matches the literal export; group 1 is the value. */
 const WIRE_VERSION_LITERAL =
   /export\s+const\s+WIRE_VERSION\s*=\s*["']([^"']*)["']/;
 
 /**
- * Read the literal from the workspace, or explain why it could not be read.
- * @param workspaceRoot Absolute workspace root.
- * @returns The trimmed literal, or an error message.
+ * Reads the trimmed source literal under an absolute workspace root.
+ * Returns an error message for unreadable, missing or empty values.
  */
 export const readCompatibilityVersion = (
   workspaceRoot: string,
@@ -35,8 +32,8 @@ export const readCompatibilityVersion = (
 };
 
 /**
- * Read the emitted wire value from source text, including a committed tree.
- * `push-gate.sh` imports it to read the tree being gated.
+ * Reads the wire version from source text so push-gate.sh can inspect a
+ * committed tree without executing it.
  */
 export function parseCompatibilityVersion(
   source: string,

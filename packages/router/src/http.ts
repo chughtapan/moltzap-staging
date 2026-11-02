@@ -40,16 +40,7 @@ interface RouterHttpInput {
   readonly requestSemaphore: Effect.Semaphore;
 }
 
-/**
- * Builds the complete Router HTTP application over private capabilities.
- *
- * @param input Domain operations, readiness, and admission capability.
- * @param input.send Authenticated message admission.
- * @param input.poll Authenticated feed polling.
- * @param input.feed Feed readiness state.
- * @param input.requestSemaphore Immediate active-request admission.
- * @returns The complete named-route HTTP application.
- */
+/** Rejects requests immediately when the shared request semaphore is full. */
 export const makeRouterHttpApp = (input: RouterHttpInput) =>
   HttpRouter.empty.pipe(
     sendRoute(input),
@@ -59,10 +50,8 @@ export const makeRouterHttpApp = (input: RouterHttpInput) =>
   );
 
 /**
- * Reports local readiness without exposing feed state.
- *
- * @param feed Current process feed.
- * @returns An empty 204 or 503 response.
+ * Returns an empty 204 while the feed can accept a fresh append, or 503
+ * once its order range is exhausted.
  */
 export const routerHealthResponse = (
   feed: RouterFeed,

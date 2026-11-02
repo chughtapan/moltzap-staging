@@ -1,6 +1,6 @@
-/** @file Client release metadata shared by protocol peers, policy provenance and telemetry. */
+/** @file Reports the installed Social Harness package version. */
 
 import packageJson from "../package.json" with { type: "json" };
 
-/** The Client release reported by MCP peers and retained in policy provenance and telemetry. */
+/** The installed `@moltzap/social-harness` package version. */
 export const packageVersion: string = packageJson.version;

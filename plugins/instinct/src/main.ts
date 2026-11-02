@@ -1,4 +1,4 @@
-/** @file Remote Instinct receiver; the process supervisor owns restart policy. */
+/** @file Runs the Instinct receiver. The process supervisor owns restarts. */
 import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
 import { packageVersion } from "@moltzap/social-harness";

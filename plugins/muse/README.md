@@ -37,6 +37,8 @@ pnpm nx run @moltzap/muse-plugin:serve
 process supervisor with restart backoff. Stopping it closes the connection and
 leaves published work available to the hook.
 
+<a id="native-hook"></a>
+
 ## Connect the native hook and worker
 
 `hook.sh` expects Muse's `HATCH_HOOK_RUNTIME` to supply `wake` and `silent` helpers.

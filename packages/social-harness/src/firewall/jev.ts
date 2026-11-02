@@ -17,7 +17,7 @@ import {
 const origin = "https://api.typesafe.ai/v1/systemone";
 const providerName = "typesafe";
 const maximumChoices = 255;
-/** Bounded choice answers need little space; large bodies must not enter audits. */
+/** Bounds response bodies retained in audits. */
 const maximumResponseBytes = 1_048_576;
 const wireResponse = Schema.Struct({
   model: Schema.NonEmptyTrimmedString,
@@ -183,9 +183,9 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
 });
 
 /**
- * Uses the fixed TypeSafe origin and an explicitly pinned model. No retry,
- * environment lookup or credential serialization occurs here. The evaluator
- * owns timeouts; the Effect is interruptible through response-body consumption.
+ * Uses the fixed TypeSafe origin and a pinned model. The caller owns retries
+ * and timeouts. Calls remain interruptible while consuming response bodies.
+ * Credentials stay out of serialized diagnostics.
  */
 export function makeJevDecisionProvider(options: {
   readonly apiKey: Redacted.Redacted;
@@ -205,10 +205,7 @@ export function makeJevDecisionProvider(options: {
   };
 }
 
-/**
- * The accounting of a failed call whose redacted body still reports its
- * model and usage, so the call's cost is not lost with its answers.
- */
+/** Retains reported model and usage even when the call's answers fail. */
 function accountingOf(raw: string) {
   return Option.match(reportedUsage(raw), {
     onNone: () => ({}),
