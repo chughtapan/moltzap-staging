@@ -253,82 +253,6 @@ export function transaction<A, E, R>(
   ).pipe(storeOperation);
 }
 
-/** Protocol metadata allows other owners to initialize their own tables independently. */
-export function inspectStoreState(): Effect.Effect<
-  StoreOpening,
-  EndpointStoreError,
-  SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const tables = yield* sql.unsafe<{
-      readonly name: string;
-    }>(
-      "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('communication_metadata','memberships')",
-    );
-    if (!tables.some((row) => row.name === "communication_metadata")) {
-      if (tables.length !== 0) {
-        return yield* new EndpointStoreError({ reason: "incompatible" });
-      }
-      return "create";
-    }
-    const [metadata] = yield* sql.unsafe<{
-      readonly version: number;
-    }>("SELECT version FROM communication_metadata WHERE singleton=1");
-    if (metadata?.version !== SCHEMA_VERSION) {
-      return yield* new EndpointStoreError({ reason: "incompatible" });
-    }
-    const checks =
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "PRAGMA quick_check",
-      );
-    if (
-      checks.length !== 1 ||
-      checks[0] === undefined ||
-      readText(checks[0], "quick_check") !== "ok"
-    ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    return "reopen";
-  }).pipe(storeOperation, Effect.withSpan("inspectCommunicationState"));
-}
-
-/** Fresh databases receive the current protocol layout inside daemon startup's transaction. */
-export function createCommunicationTables(): Effect.Effect<
-  void,
-  EndpointStoreError,
-  SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    for (const statement of (schemaSql + collectiveSchemaSql)
-      .split(";")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0)) {
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(statement);
-    }
-  }).pipe(storeOperation, Effect.withSpan("createCommunicationTables"));
-}
-
-/**
- * Maps every internal failure to the store's closed error channel.
- *
- * @param failure Internal failure or closed control-flow signal.
- * @param fallback Closed category for unexpected implementation failures.
- * @returns A non-diagnostic endpoint-store error.
- */
-export function mapStoreFailure(
-  failure: unknown,
-  fallback: EndpointStoreFailure,
-): EndpointStoreError {
-  if (failure instanceof EndpointStoreError) {
-    return failure;
-  }
-  return new EndpointStoreError({
-    reason: failure instanceof StoreSignal ? failure.reason : fallback,
-  });
-}
-
 /** Random durable identities are checked against retained bindings before use. */
 export function mintDeliveryToken<E, R>(
   isRetained: (token: string) => Effect.Effect<boolean, E, R>,
@@ -445,25 +369,6 @@ export function readInteger(
 }
 
 /**
- * Requires two optional byte bindings to be both absent or byte-identical.
- *
- * @param prior Previously retained bytes, if any.
- * @param next Candidate bytes, if any.
- */
-export function requireSameOptionalBytes(
-  prior?: Uint8Array,
-  next?: Uint8Array,
-): void {
-  if (prior === undefined || next === undefined) {
-    if (prior !== next) {
-      throw new StoreSignal("conflict");
-    }
-    return;
-  }
-  requireSameBytes(prior, next);
-}
-
-/**
  * Requires canonical byte equality for idempotent state.
  *
  * @param left Previously retained canonical bytes.
@@ -507,4 +412,80 @@ export function requireBytes(value: Uint8Array): void {
   if (!(value instanceof Uint8Array) || value.byteLength === 0) {
     throw new StoreSignal("invalid-input");
   }
+}
+
+/** Protocol metadata allows other owners to initialize their own tables independently. */
+function inspectStoreState(): Effect.Effect<
+  StoreOpening,
+  EndpointStoreError,
+  SqlClient
+> {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const tables = yield* sql.unsafe<{
+      readonly name: string;
+    }>(
+      "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('communication_metadata','memberships')",
+    );
+    if (!tables.some((row) => row.name === "communication_metadata")) {
+      if (tables.length !== 0) {
+        return yield* new EndpointStoreError({ reason: "incompatible" });
+      }
+      return "create";
+    }
+    const [metadata] = yield* sql.unsafe<{
+      readonly version: number;
+    }>("SELECT version FROM communication_metadata WHERE singleton=1");
+    if (metadata?.version !== SCHEMA_VERSION) {
+      return yield* new EndpointStoreError({ reason: "incompatible" });
+    }
+    const checks =
+      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+        "PRAGMA quick_check",
+      );
+    if (
+      checks.length !== 1 ||
+      checks[0] === undefined ||
+      readText(checks[0], "quick_check") !== "ok"
+    ) {
+      return yield* new EndpointStoreError({ reason: "corrupt" });
+    }
+    return "reopen";
+  }).pipe(storeOperation, Effect.withSpan("inspectCommunicationState"));
+}
+
+/** Fresh databases receive the current protocol layout inside daemon startup's transaction. */
+function createCommunicationTables(): Effect.Effect<
+  void,
+  EndpointStoreError,
+  SqlClient
+> {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    for (const statement of (schemaSql + collectiveSchemaSql)
+      .split(";")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)) {
+      yield* sql.unsafe<Readonly<Record<string, unknown>>>(statement);
+    }
+  }).pipe(storeOperation, Effect.withSpan("createCommunicationTables"));
+}
+
+/**
+ * Maps every internal failure to the store's closed error channel.
+ *
+ * @param failure Internal failure or closed control-flow signal.
+ * @param fallback Closed category for unexpected implementation failures.
+ * @returns A non-diagnostic endpoint-store error.
+ */
+function mapStoreFailure(
+  failure: unknown,
+  fallback: EndpointStoreFailure,
+): EndpointStoreError {
+  if (failure instanceof EndpointStoreError) {
+    return failure;
+  }
+  return new EndpointStoreError({
+    reason: failure instanceof StoreSignal ? failure.reason : fallback,
+  });
 }

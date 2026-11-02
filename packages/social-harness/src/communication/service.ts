@@ -185,7 +185,7 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
 }
 
 /** Signing and Registry authority belong to the one configured local agent. */
-export interface CommunicationSettings {
+interface CommunicationSettings {
   readonly identityCard: VerifiedAgentIdentityCard;
   readonly maximumHistoryRecords?: number;
   readonly signingAuthority: AgentSigningAuthority;

@@ -28,8 +28,6 @@ catalog:
   "@eslint-community/eslint-plugin-eslint-comments": ^4.7.1
   "@mermaid-js/mermaid-cli": ^11.15.0
   "@modelcontextprotocol/client": 2.0.0-beta.5
-  "@modelcontextprotocol/node": 2.0.0-beta.5
-  "@modelcontextprotocol/server": 2.0.0-beta.5
   "@noble/curves": 2.4.0
   "@opentelemetry/api": ^1.9.0
   "@opentelemetry/exporter-trace-otlp-proto": ^0.223.0
@@ -66,7 +64,6 @@ catalog:
   typedoc: ^0.28.19
   typedoc-plugin-missing-exports: ^4.1.4
   typescript: npm:@typescript/typescript6@6.0.2
-  undici: 7.30.1
   vitest: 3.2.4
   yaml: 2.9.1
 

@@ -68,7 +68,7 @@ export const MessageParticipants = exactStruct({
 );
 
 /** Adds the author-scoped identity to the captured participants. */
-export const MessageHeader = MessageParticipants.pipe(
+const MessageHeader = MessageParticipants.pipe(
   Schema.extend(exactStruct({ msgId: MsgId })),
 );
 

@@ -3,7 +3,7 @@
 The launcher prepares a verified installed release before starting its daemon.
 When changing the upgrade path, distinguish a candidate that cannot be taken
 from a recorded release that cannot be trusted. The former leaves a usable
-release running. The latter stops startup. `prepare.ts` → `prepare` joins
+release running. The latter stops startup. `installation.ts` → `prepare` joins
 selection, verification and installation at that failure boundary.
 
 Changes to the `current` link or release record must account for interruption

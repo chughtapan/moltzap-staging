@@ -24,7 +24,7 @@ import {
   type McpConnection,
 } from "../../../plugins/shared/mcp.js";
 import {
-  agentNotAdmittedDiagnostic,
+  agentNotAdmittedReason,
   agentNotAdmittedRemedy,
   agentResetDocsLink,
   configurationStartupPhase,
@@ -45,8 +45,8 @@ import {
   awaitDaemonStartupFailure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  managedProcess,
   makeRegistrationRequest,
+  managedProcess,
   type ProcessInfrastructure,
   ProcessTestError,
   type RunningProcess,
@@ -594,7 +594,7 @@ it(
         yield* waitForExit(daemon);
 
         expect(daemon.child.exitCode).toBe(1);
-        expect(daemon.stderr()).toContain(agentNotAdmittedDiagnostic);
+        expect(daemon.stderr()).toContain(agentNotAdmittedReason);
         expect(daemon.stderr()).toContain(agentNotAdmittedRemedy);
         expect(daemon.stderr()).toContain(agentResetDocsLink);
       }),

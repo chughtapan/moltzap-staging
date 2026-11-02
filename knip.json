@@ -28,7 +28,7 @@
       "entry": [
         "src/**/*.test.ts",
         "src/**/*.types-check.ts",
-        "src/daemon/launcher/index.ts",
+        "src/harness/launcher/index.ts",
         "vitest*.config.ts",
         "integration/**/*.integration.test.ts"
       ],
@@ -36,12 +36,18 @@
         "src/**/*.ts",
         "*.ts",
         "integration/**/*.ts"
+      ],
+      "ignore": [
+        "src/vendor/effect-mcp/**"
       ]
     },
     "plugins/nanoclaw": {
       "project": [
         "src/**/*.ts",
         "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp"
       ]
     },
     "plugins/openclaw": {
@@ -52,6 +58,10 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp",
+        "@modelcontextprotocol/client"
       ]
     },
     "packages/router": {
@@ -110,7 +120,6 @@
     "images/nanoclaw-agent": {
       "entry": [
         "*.test.ts",
-        "build.ts",
         "entrypoint.ts",
         "prepare.ts",
         "preload.ts",
@@ -149,6 +158,10 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp",
+        "@modelcontextprotocol/client"
       ]
     },
     "plugins/muse": {
@@ -160,6 +173,10 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp",
+        "@modelcontextprotocol/client"
       ]
     },
     "plugins/grokbot": {
@@ -170,6 +187,18 @@
       ],
       "project": [
         "src/**/*.ts",
+        "*.ts"
+      ],
+      "ignoreDependencies": [
+        "@moltzap/plugin-mcp",
+        "@modelcontextprotocol/client"
+      ]
+    },
+    "plugins/shared": {
+      "entry": [
+        "*.test.ts"
+      ],
+      "project": [
         "*.ts"
       ]
     }

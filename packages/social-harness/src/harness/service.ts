@@ -182,11 +182,11 @@ interface SocialHarnessService {
  *
  * ```mermaid
  * flowchart LR
- *   H[Host] &lt;-->|MCP| S[SocialHarness]
+ *   H[Host] <-->|MCP| S[SocialHarness]
  *   S -->|Resolve names| I[L1 Identity]
  *   S -->|Check outgoing content| F[L3 Firewall]
  *   S -->|Send approved message| C[L2 Communication]
- *   C &lt;-->|Messages| P[Peers]
+ *   C <-->|Messages| P[Peers]
  *   C -->|Incoming message| S
  *   S -->|Check incoming content| F
  * ```
@@ -990,13 +990,3 @@ function supervise<E, R>(
     Effect.flatMap((fiber) => FiberSet.add(workers, fiber)),
   );
 }
-
-/** The main service owns retained content and the types callers use to read it. */
-export {
-  DeliveryAcknowledgeError,
-  DeliveryToken,
-  InboxEntry,
-  InboxError,
-  InboxEvent,
-  InboxPage,
-} from "./inbox.js";

@@ -29,11 +29,7 @@ import {
 import { AGENT_CARD_TYPE, WireVersions } from "./wire-version.js";
 
 /** Signing capabilities expose the public key without exposing private key material. */
-export {
-  AgentPublicKey,
-  AgentSigningAuthority,
-  InvalidAgentPrivateKeyError,
-} from "./keys.js";
+export { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
 
@@ -109,7 +105,7 @@ export const AgentIdentityCardDigest = canonicalIdentifier(
 export type AgentIdentityCardDigest = typeof AgentIdentityCardDigest.Type;
 
 /** Shared whole-second UTC validation for parsed and issued AgentCards. */
-export const agentIdentityCardIssuedAtSchema = Schema.String.pipe(
+const agentIdentityCardIssuedAtSchema = Schema.String.pipe(
   Schema.pattern(WHOLE_SECOND_UTC),
   Schema.filter(isWholeSecondUtc, {
     identifier: "AgentIdentityCardIssuedAt",

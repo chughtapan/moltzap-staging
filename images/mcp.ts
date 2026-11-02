@@ -4,7 +4,7 @@
  *
  * `node mcp.ts register NAME` registers the daemon's agent under NAME. It
  * reads `status` first, so a rerun after a registration whose answer was
- * lost reports the active agent instead of registering again. Until the
+ * lost reports the saved identity instead of registering again. Until the
  * daemon gives a final answer, the request waits in `registration.json` in
  * the current directory, and a rerun sends that same request, which the
  * daemon treats as the same registration.
@@ -22,13 +22,12 @@ import {
   ProtocolError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { safeCredentialEndpoint } from "@moltzap/social-harness";
+import { AgentIdentityCard, RegistrationError } from "@moltzap/social-harness";
 import {
   Config,
   Console,
   Data,
   Effect,
-  Match,
   Option,
   Redacted,
   Schema,
@@ -60,25 +59,17 @@ class CommandError extends Data.TaggedError("CommandError")<{
 class ToolFailure extends Data.TaggedError("ToolFailure")<{
   readonly message: string;
   readonly refused: boolean;
+  readonly registrationReason?: RegistrationError["reason"];
   readonly entry: string;
 }> {}
 
 const statusResult = Schema.Union(
   Schema.Struct({ kind: Schema.Literal("unregistered") }),
   Schema.Struct({
-    kind: Schema.Literal("active"),
-    agent: Schema.Struct({ agentName: Schema.String }),
+    kind: Schema.Literal("registered"),
+    identityCard: AgentIdentityCard,
   }),
 );
-
-const registerResult = Schema.Struct({
-  kind: Schema.Literal(
-    "registered",
-    "name_taken",
-    "key_already_registered",
-    "idempotency_conflict",
-  ),
-});
 
 /** The `register` request, saved so that a rerun repeats it exactly. */
 const savedRequest = Schema.Struct({
@@ -124,7 +115,7 @@ NodeRuntime.runMain(
 
 /**
  * Registers the daemon at `url` under `name`, or confirms it is already
- * active under that name.
+ * registered under that name.
  */
 function register(
   url: URL,
@@ -141,16 +132,17 @@ function register(
     if (status.kind === "unregistered") {
       return yield* submit(client, name);
     }
-    const active = status.agent.agentName;
-    if (active !== name) {
+    const registeredName = status.identityCard.agentName;
+    if (registeredName !== name) {
       return yield* Effect.fail(
         commandError(
-          `this daemon is already registered as agent:${active}`,
+          `this daemon is already registered as agent:${registeredName}`,
           "already-registered",
         ),
       );
     }
-    return yield* Console.log(`already active: agent:${name}`);
+    yield* forgetRequest();
+    return yield* Console.log(`already registered: agent:${name}`);
   });
 }
 
@@ -165,59 +157,61 @@ function submit(
   return Effect.gen(function* () {
     const request = yield* savedOrNewRequest(name);
     const answer = yield* callTool(client, "register", request).pipe(
-      Effect.catchTag("ToolFailure", (failure) =>
-        failure.refused
-          ? forgetRequest().pipe(
-              Effect.zipRight(
-                Effect.fail(commandError(failure.message, "register-failed")),
-              ),
-            )
+      Effect.catchTag("ToolFailure", (failure) => {
+        const error =
+          failure.registrationReason === undefined
+            ? commandError(failure.message, "register-failed")
+            : registrationFailure(failure.registrationReason, name);
+        return failure.refused
+          ? forgetRequest().pipe(Effect.zipRight(Effect.fail(error)))
           : Effect.fail(
               commandError(
-                `${failure.message}; rerun the same command, which repeats the request saved in ${REGISTRATION_FILE}`,
-                "register-failed",
+                `${error.message}; rerun the same command, which repeats the request saved in ${REGISTRATION_FILE}`,
+                error.entry,
               ),
-            ),
-      ),
+            );
+      }),
     );
-    const { kind } = yield* decode(registerResult, answer, "register");
+    const identityCard = yield* decode(AgentIdentityCard, answer, "register");
     yield* forgetRequest();
-    return yield* outcome(kind, name);
+    return yield* Console.log(`registered agent:${identityCard.agentName}`);
   });
 }
 
-function outcome(
-  kind: typeof registerResult.Type.kind,
+function registrationFailure(
+  reason: RegistrationError["reason"],
   name: string,
-): Effect.Effect<void, CommandError> {
-  return Match.value(kind).pipe(
-    Match.when("registered", () => Console.log(`registered agent:${name}`)),
-    Match.when("name_taken", () =>
-      Effect.fail(
-        commandError(
-          `register agent:${name}: name_taken; another agent holds this name, so choose another`,
-          "name-taken",
-        ),
-      ),
-    ),
-    Match.when("key_already_registered", () =>
-      Effect.fail(
-        commandError(
-          `register agent:${name}: key_already_registered; this daemon's key belongs to another registered agent`,
-          "key-already-registered",
-        ),
-      ),
-    ),
-    Match.when("idempotency_conflict", () =>
-      Effect.fail(
-        commandError(
-          `register agent:${name}: idempotency_conflict; the Registry already saw this operation id with another request`,
-          "idempotency-conflict",
-        ),
-      ),
-    ),
-    Match.exhaustive,
-  );
+): CommandError {
+  switch (reason) {
+    case "name_taken":
+      return commandError(
+        `register agent:${name}: name_taken; another agent holds this name, so choose another`,
+        "name-taken",
+      );
+    case "key_already_registered":
+      return commandError(
+        `register agent:${name}: key_already_registered; this daemon's key belongs to another registered agent`,
+        "key-already-registered",
+      );
+    case "idempotency_conflict":
+      return commandError(
+        `register agent:${name}: idempotency_conflict; the Registry already saw this operation id with another request`,
+        "idempotency-conflict",
+      );
+    case "admission-refused":
+      return commandError(
+        "register failed: The Registry refused the admission credential",
+        "the-registry-refused-the-admission-credential",
+      );
+    case "dependency-unavailable":
+    case "persistence-failed":
+    case "incompatible-daemon":
+    default:
+      return commandError(
+        `register agent:${name}: ${reason}`,
+        "register-failed",
+      );
+  }
 }
 
 function call(
@@ -376,6 +370,18 @@ function connect(
   });
 }
 
+/** The bearer can travel over TLS or literal loopback without URL credentials. */
+function safeCredentialEndpoint(endpoint: URL): boolean {
+  const privateAuthority =
+    !endpoint.username && !endpoint.password && !endpoint.hash;
+  const local =
+    endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
+  return (
+    privateAuthority &&
+    (endpoint.protocol === "https:" || (endpoint.protocol === "http:" && local))
+  );
+}
+
 function callTool(
   client: Client,
   tool: string,
@@ -434,15 +440,27 @@ function toolFailure(tool: string, cause: unknown): ToolFailure {
     Schema.decodeUnknownOption(failureData)(cause.data),
     (): typeof failureData.Type => ({}),
   );
+  const registrationReason =
+    tool === "register"
+      ? Option.getOrUndefined(
+          Schema.decodeUnknownOption(RegistrationError.fields.reason)(reason),
+        )
+      : undefined;
   const said =
     cause.code === INVALID_PARAMS ||
     reason === undefined ||
     MESSAGE_REASONS.has(reason)
       ? cause.message
       : [reason, ...(detail === undefined ? [] : [detail])].join("; ");
+  const registrationRefused =
+    registrationReason === "admission-refused" ||
+    registrationReason === "name_taken" ||
+    registrationReason === "key_already_registered" ||
+    registrationReason === "idempotency_conflict";
   return new ToolFailure({
     message: `${tool} failed: ${said}`,
-    refused: cause.code === INVALID_PARAMS || reason === "admission-refused",
+    refused: cause.code === INVALID_PARAMS || registrationRefused,
+    ...(registrationReason === undefined ? {} : { registrationReason }),
     entry: reason === "firewall-refused" ? "firewall-refused" : "tool-failed",
   });
 }

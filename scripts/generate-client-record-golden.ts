@@ -8,40 +8,42 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Redacted, Schema } from "effect";
 import { fileURLToPath } from "node:url";
 import {
-  AgentCardIssuedAt as agentCardIssuedAt,
-  issueAgentCard,
+  AgentIdentityCardIssuedAt as agentIdentityCardIssuedAt,
+  issueAgentIdentityCard,
 } from "../packages/registry/dist/issuance.js";
 import {
-  ActionCertifiedRecord,
-  ActionCore,
-  CertifiedRecord,
-  CompletedReanchor,
   deriveConversationId,
-  DirectPacket,
-  type EvidenceStatement,
   hashAction,
   hashAnchor,
   hashMembershipDescriptor,
   hashMessageIntent,
   hashRecord,
+  signEvidenceMessage,
+} from "../packages/social-harness/dist/communication/records/encoding.js";
+import {
+  ActionCertifiedRecord,
+  ActionCore,
+  CertifiedRecord,
+  CompletedReanchor,
+  DirectPacket,
+  type EvidenceStatement,
   InitialAnchorBody,
   MembershipDescriptor,
   MessageIntent,
-  MsgId,
-  quorumThreshold,
   ReanchorBody,
   RecordCore,
   type RecordHash,
-  signEvidenceMessage,
-} from "../packages/social-harness/dist/communication/records/index.js";
-import { RouterInstanceId } from "../packages/social-harness/dist/communication/router/api/index.js";
+} from "../packages/social-harness/dist/communication/records/schemas.js";
+import { MsgId } from "../packages/social-harness/dist/communication/records/values.js";
+import { quorumThreshold } from "../packages/social-harness/dist/communication/records/verification.js";
+import { RouterInstanceId } from "../packages/social-harness/dist/communication/router/api.js";
 import { encodeCanonical } from "../packages/social-harness/dist/encoding/canonical-json.js";
 import {
-  AgentIdentityCard,
   AgentId,
+  AgentIdentityCard,
   AgentName,
-  AgentSigningAuthority,
   AgentPublicKey,
+  AgentSigningAuthority,
   PrincipalId,
   SignedMessage,
   WIRE_VERSION,
@@ -81,7 +83,7 @@ function agentIdOf(byte: number) {
 function deterministicIdentity(byte: number, registry: AgentSigningAuthority) {
   return Effect.gen(function* () {
     const authority = yield* testAuthority(byte + 10);
-    const card = yield* issueAgentCard({
+    const card = yield* issueAgentIdentityCard({
       agentId: yield* agentIdOf(byte),
       principalId: yield* Schema.decodeUnknown(PrincipalId)(
         `prn_${Buffer.alloc(16, byte).toString("base64url")}`,
@@ -90,7 +92,7 @@ function deterministicIdentity(byte: number, registry: AgentSigningAuthority) {
         `golden-member-${byte}`,
       ),
       publicKey: AgentSigningAuthority.publicKey(authority),
-      issuedAt: yield* Schema.decodeUnknown(agentCardIssuedAt)(
+      issuedAt: yield* Schema.decodeUnknown(agentIdentityCardIssuedAt)(
         "2026-08-27T12:00:00Z",
       ),
       registrySigningAuthority: registry,
@@ -147,7 +149,7 @@ function signSet(
     ({ card, authority }) =>
       signEvidenceMessage({
         statement: statement(card.agentId),
-        agentCard: card,
+        identityCard: card,
         signingAuthority: authority,
       }).pipe(
         Effect.flatMap((message) => Schema.encode(SignedMessage)(message)),

@@ -239,7 +239,7 @@ const SCOPE = "@moltzap/";
 export const DAEMON_PACKAGE = "@moltzap/social-harness";
 
 /** One published package version, with the fields the launcher reads. */
-export interface PublishedPackage {
+interface PublishedPackage {
   readonly name: string;
   readonly version: string;
   /** The SRI `sha512-` value npm records as `dist.integrity`. */
@@ -285,7 +285,7 @@ const READ_TIMEOUT = "60 seconds";
  * The version `tag` names for `name` on the registry at origin `registry`,
  * or a `registry` failure.
  */
-export const taggedVersion = Effect.fn("Launcher.taggedVersion")(function* (
+const taggedVersion = Effect.fn("Launcher.taggedVersion")(function* (
   registry: string,
   name: string,
   tag: string,
@@ -342,7 +342,7 @@ const publishedPackage = Effect.fn("Launcher.publishedPackage")(function* (
  * release package first, then each exact sibling pin, transitively. Two
  * different pins of one package fail with `registry`.
  */
-export const releaseClosure = Effect.fn("Launcher.releaseClosure")(function* (
+const releaseClosure = Effect.fn("Launcher.releaseClosure")(function* (
   registry: string,
   name: string,
   version: string,
@@ -361,7 +361,7 @@ export const releaseClosure = Effect.fn("Launcher.releaseClosure")(function* (
  * @param url A tarball URL.
  * @returns The bytes.
  */
-export const download = (
+const download = (
   url: string,
 ): Effect.Effect<Uint8Array, LauncherError, HttpClient.HttpClient> =>
   fetchOk(url).pipe(
@@ -379,7 +379,7 @@ export const download = (
  * @param url An attestations or metadata URL.
  * @returns The parsed body.
  */
-export const downloadJson = (
+const downloadJson = (
   url: string,
 ): Effect.Effect<unknown, LauncherError, HttpClient.HttpClient> =>
   fetchOk(url).pipe(
@@ -505,7 +505,7 @@ export interface CandidateRelease {
 }
 
 /** Why a start keeps the recorded release. */
-export type KeepReason =
+type KeepReason =
   | "current"
   | "older"
   | "outside-wire-window"
@@ -570,47 +570,39 @@ interface ProvenanceOptions {
  * its SLSA provenance, signed for {@link RELEASE_IDENTITY}, covers them;
  * fails with `provenance` naming the package otherwise.
  */
-export const verifyProvenance = Effect.fn("Launcher.verifyProvenance")(
-  function* (
-    published: PublishedPackage,
-    bytes: Uint8Array,
-    options: ProvenanceOptions,
-  ) {
-    const refuse = refusal(published);
-    if (integrityOf(bytes) !== published.integrity) {
-      return yield* refuse(
-        "the tarball differs from the integrity npm recorded",
-      );
-    }
-    if (published.attestations === undefined) {
-      return yield* refuse("npm holds no attestations");
-    }
-    const payload = yield* signedPayload(
-      published.attestations,
-      options,
-      refuse,
+const verifyProvenance = Effect.fn("Launcher.verifyProvenance")(function* (
+  published: PublishedPackage,
+  bytes: Uint8Array,
+  options: ProvenanceOptions,
+) {
+  const refuse = refusal(published);
+  if (integrityOf(bytes) !== published.integrity) {
+    return yield* refuse("the tarball differs from the integrity npm recorded");
+  }
+  if (published.attestations === undefined) {
+    return yield* refuse("npm holds no attestations");
+  }
+  const payload = yield* signedPayload(published.attestations, options, refuse);
+  const subject = purl(published.name, published.version);
+  const digest = createHash("sha512").update(bytes).digest("hex");
+  const covered = payload.subject.some(
+    (entry) => entry.name === subject && entry.digest.sha512 === digest,
+  );
+  if (!covered) {
+    return yield* refuse(
+      `its provenance does not cover ${subject} with these bytes`,
     );
-    const subject = purl(published.name, published.version);
-    const digest = createHash("sha512").update(bytes).digest("hex");
-    const covered = payload.subject.some(
-      (entry) => entry.name === subject && entry.digest.sha512 === digest,
+  }
+  const packed = yield* readPackedManifest(bytes).pipe(
+    Effect.mapError((failure) => refuse(failure.message)),
+  );
+  const differing = differingField(published, packed);
+  if (differing !== undefined) {
+    return yield* refuse(
+      `the registry's ${differing} differs from the signed package's`,
     );
-    if (!covered) {
-      return yield* refuse(
-        `its provenance does not cover ${subject} with these bytes`,
-      );
-    }
-    const packed = yield* readPackedManifest(bytes).pipe(
-      Effect.mapError((failure) => refuse(failure.message)),
-    );
-    const differing = differingField(published, packed);
-    if (differing !== undefined) {
-      return yield* refuse(
-        `the registry's ${differing} differs from the signed package's`,
-      );
-    }
-  },
-);
+  }
+});
 
 /**
  * The first field the registry reported for a package that its signed
@@ -709,7 +701,7 @@ const installedPackage = Schema.Struct({
 });
 
 /** One package of a verified release, and the cached tarball it came from. */
-export type InstalledPackage = typeof installedPackage.Type;
+type InstalledPackage = typeof installedPackage.Type;
 
 const recordSchema = Schema.Struct({
   format: Schema.Literal(RECORD_FORMAT),
@@ -725,7 +717,7 @@ const recordSchema = Schema.Struct({
 export type LauncherRecord = typeof recordSchema.Type;
 
 /** One verified tarball, ready to cache and install. */
-export interface VerifiedTarball {
+interface VerifiedTarball {
   readonly name: string;
   readonly version: string;
   readonly integrity: string;
@@ -733,7 +725,7 @@ export interface VerifiedTarball {
 }
 
 /** A verified release to install. */
-export interface ReleaseToInstall {
+interface ReleaseToInstall {
   readonly releasePackage: string;
   readonly version: string;
   /** Every `@moltzap/*` tarball of the release. */
@@ -809,7 +801,7 @@ export const writeRecord = Effect.fn("Launcher.writeRecord")(
  * The record of the release the image installed under `prefix`, whose
  * `node_modules` holds `releasePackage`, or a `seed` failure.
  */
-export const seedRecord = Effect.fn("Launcher.seedRecord")(
+const seedRecord = Effect.fn("Launcher.seedRecord")(
   function* (prefix: string, releasePackage: string) {
     const manifest = yield* installedManifest(prefix, releasePackage);
     return recordOf(releasePackage, prefix, manifest, []);
@@ -827,7 +819,7 @@ export const seedRecord = Effect.fn("Launcher.seedRecord")(
  * has the integrity it was verified with and that its prefix holds the
  * recorded release; fails with `integrity` otherwise.
  */
-export const checkIntegrity = Effect.fn("Launcher.checkIntegrity")(
+const checkIntegrity = Effect.fn("Launcher.checkIntegrity")(
   function* (record: LauncherRecord) {
     const fs = yield* FileSystem.FileSystem;
     for (const installed of record.packages) {
@@ -858,7 +850,7 @@ export const checkIntegrity = Effect.fn("Launcher.checkIntegrity")(
  * prefix, fetching only their dependencies outside the scope from the
  * registry; fails with `install`.
  */
-export const install = Effect.fn("Launcher.install")(
+const install = Effect.fn("Launcher.install")(
   function* (directory: string, release: ReleaseToInstall) {
     const path = yield* Path.Path;
     const packages = yield* cacheTarballs(
@@ -886,7 +878,7 @@ export const install = Effect.fn("Launcher.install")(
  * left by a process that is gone, or by this process's own PID after a
  * restart, is taken over; one held by a live process fails with `record`.
  */
-export const lockDirectory = Effect.fn("Launcher.lockDirectory")(function* (
+const lockDirectory = Effect.fn("Launcher.lockDirectory")(function* (
   directory: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -924,7 +916,7 @@ export const lockDirectory = Effect.fn("Launcher.lockDirectory")(function* (
  * Points `current` in `directory` at `prefix` atomically, so a host that
  * loads the channel through it sees one whole release; fails with `record`.
  */
-export const pointCurrent = Effect.fn("Launcher.pointCurrent")(
+const pointCurrent = Effect.fn("Launcher.pointCurrent")(
   function* (directory: string, prefix: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -943,7 +935,7 @@ export const pointCurrent = Effect.fn("Launcher.pointCurrent")(
  * Symbolic links are left alone: a workspace link may dangle,
  * and following one would change modes outside the release.
  */
-export const readableRelease = Effect.fn("Launcher.readableRelease")(
+const readableRelease = Effect.fn("Launcher.readableRelease")(
   function* (prefix: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -972,7 +964,7 @@ export const readableRelease = Effect.fn("Launcher.readableRelease")(
  * `record` does not name, so the volume holds only the release that runs;
  * fails with `record`.
  */
-export const pruneReleases = Effect.fn("Launcher.pruneReleases")(
+const pruneReleases = Effect.fn("Launcher.pruneReleases")(
   function* (directory: string, record: LauncherRecord) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1000,7 +992,7 @@ export const pruneReleases = Effect.fn("Launcher.pruneReleases")(
  * The wire versions the daemon installed under `prefix` admits, read from
  * the Client root, or an `integrity` failure.
  */
-export const liveWireVersions = Effect.fn("Launcher.liveWireVersions")(
+const liveWireVersions = Effect.fn("Launcher.liveWireVersions")(
   function* (prefix: string) {
     const path = yield* Path.Path;
     const manifest = yield* installedManifest(prefix, DAEMON_PACKAGE);
@@ -1029,7 +1021,7 @@ export const liveWireVersions = Effect.fn("Launcher.liveWireVersions")(
  * @param prefix An installed release.
  * @returns The path the launcher runs with the current Node.
  */
-export const daemonExecutable = (
+const daemonExecutable = (
   prefix: string,
 ): Effect.Effect<string, never, Path.Path> =>
   Effect.map(Path.Path, (path) =>

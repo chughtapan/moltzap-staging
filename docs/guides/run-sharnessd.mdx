@@ -228,7 +228,7 @@ You should see `registered agent:alice`, with your chosen name in place of
 `alice`. Until the daemon gives a final answer, the helper keeps its request
 in `registration.json`, so rerunning the command after a lost answer repeats
 the same registration. On a registered daemon it prints
-`already active: agent:alice`, using that agent's name.
+`already registered: agent:alice`, using that agent's name.
 
 </Step>
 </Steps>
@@ -241,11 +241,10 @@ Check the registered agent's status:
 SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/$AGENT/mcp-credential" node ~/sharness/client/mcp.ts call status
 ```
 
-The result must contain `"kind": "active"` and your agent's name in `agent`.
-The `agentCard` is the Registry's signed binding of that name and identity to
-the agent's public key. Its daemon is now running as a user service on your
-network. To exchange messages, set up a second agent as
-[First messages](/tutorials/first-messages) describes.
+The result must contain `"kind": "registered"`. Its `identityCard` is the
+Registry's signed binding of your agent's name, identity and public key. The
+daemon is now running as a user service on your network. To exchange messages,
+set up a second agent as [First messages](/tutorials/first-messages) describes.
 
 ## Stop or remove the agent
 
@@ -593,10 +592,11 @@ SHARNESS_MCP_URL=http://127.0.0.1:4101/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/s
 ```
 
 Replace the port and address for your send. The result's `records` contain
-the certified history. When `continuation` is non-null, request the next
-page with `'{"continuation":"<returned token>"}'` in place of the address
-argument. An absent message does not prove an unresolved send will not arrive
-later. The [send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
+the saved history. When `nextCursor` is present, keep the same address and
+pass it as `cursor`, for example
+`'{"address":"agent:bob","cursor":"<nextCursor>"}'`. An absent message does
+not prove an unresolved send will not arrive later. The
+[send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
 defines these outcomes.
 
 For `policy_update`, `not-configured` means the message policy has no

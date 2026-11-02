@@ -417,7 +417,7 @@ const document = Schema.Struct({
  * Missing settings take Client defaults. Text policy requires a provider and
  * unique rule ids across fixed and initial rules.
  */
-export const MessagePolicy = document.pipe(
+const MessagePolicy = document.pipe(
   Schema.filter(
     (policy) =>
       policy.decisionProvider !== undefined || policy.text === undefined,
@@ -432,7 +432,7 @@ export const MessagePolicy = document.pipe(
 );
 
 /** One decoded message-policy document, with Client's defaults filled in. */
-export type MessagePolicy = typeof MessagePolicy.Type;
+type MessagePolicy = typeof MessagePolicy.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the Schema/type pair. */
 
@@ -552,80 +552,6 @@ export const firewallConfigurationSchema = Schema.Struct({
 
 /** Evidence limits and fixed facts are immutable for a process installation. */
 export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
-
-/**
- * Where a rule installation failure's fix is written: the rules-not-installed
- * entry covers invalid rule sets that exceed the request budget.
- * Storage failures have no policy-document fix to link.
- */
-const installationDocs: Readonly<
-  Record<Exclude<FirewallPolicyError["reason"], "not-configured">, string>
-> = {
-  "invalid-rule": `${FIREWALL_GUIDE}#rules-not-installed`,
-  "fixed-rule": `${FIREWALL_GUIDE}#rules-not-installed`,
-  "approval-refused": "",
-  "build-failed": `${FIREWALL_GUIDE}#rules-not-installed`,
-  "persistence-failed": "",
-};
-
-/**
- * The configuration failure for a document whose rules the daemon could not
- * install against its store, such as an initial rule reusing a code rule's
- * id. `not-configured` here means the store holds editable natural-language rules
- * that a document without `text` cannot install; the document itself is
- * valid, so that message names the stored rules instead.
- * @param cause The closed installation failure.
- * @param behaviorRulePaths The source entry for each file-loaded behavior.
- * @returns The failure naming `SHARNESS_MESSAGE_POLICY_FILE` and the reason.
- */
-export function policyInstallationError(
-  cause: FirewallPolicyError,
-  behaviorRulePaths?: ReadonlyMap<string, string>,
-): MessagePolicyConfigurationError {
-  const path =
-    cause.ruleId === undefined
-      ? undefined
-      : behaviorRulePaths?.get(cause.ruleId);
-  const location =
-    path === undefined ? "" : `; invalid at ${path} (duplicate-id)`;
-  return new MessagePolicyConfigurationError({
-    reason: "message-policy",
-    behaviorReason: path === undefined ? undefined : "duplicate-id",
-    message:
-      cause.reason === "not-configured"
-        ? `SHARNESS_MESSAGE_POLICY_FILE configures no natural-language policy, but the state directory holds natural-language rules an earlier policy added; restore the text block, remove those rules with policy_update, then remove the block. Docs: ${FIREWALL_GUIDE}#stored-text-rules`
-        : policyFailureMessage(
-            "message-policy",
-            `; its rules could not be installed (${cause.reason})${location}`,
-            { path: path ?? "", docs: installationDocs[cause.reason] },
-          ),
-  });
-}
-
-/**
- * The configuration failure for a message-policy setting, with its fixed
- * operator message.
- * @param reason Why the setting cannot start the daemon.
- * @param path The indexed behavior entry, if one fails.
- * @param behaviorReason The closed behavior failure category.
- * @returns The failure, naming no configured value.
- */
-export function policyConfigurationError(
-  reason: MessagePolicyConfigurationFailure,
-  path = "",
-  behaviorReason?: BehaviorFailure,
-): MessagePolicyConfigurationError {
-  const category = behaviorReason === undefined ? "" : ` (${behaviorReason})`;
-  return new MessagePolicyConfigurationError({
-    reason,
-    behaviorReason,
-    message: policyFailureMessage(
-      reason,
-      path === "" ? "" : `; invalid at ${path}${category}`,
-      { path },
-    ),
-  });
-}
 
 /**
  * Maps one `BEHAVIOR.md` to its editable natural-language rule. YAML parser
@@ -926,30 +852,6 @@ function invalidPolicy(
 }
 
 /**
- * The operator message for a message-policy failure: its text, any detail,
- * and one `Docs:` link. An entry under a behavior list links the behavior
- * rules, `docs` replaces the failure's own troubleshooting entry, and an
- * empty `docs` leaves the link out for a failure with no fix to point at.
- * @param reason The closed failure.
- * @param detail Text after the failure's own, starting with `; `.
- * @param link The entry to link in place of the failure's own.
- * @param link.path The failing policy entry, which links the behavior rules
- *     when it names a behavior list.
- * @param link.docs Another entry to link, or empty for none.
- * @returns The message, naming no configured value.
- */
-function policyFailureMessage(
-  reason: MessagePolicyConfigurationFailure,
-  detail: string,
-  link: { readonly path?: string; readonly docs?: string } = {},
-): string {
-  const docs = failureDocs(reason, link);
-  return docs === ""
-    ? `${failureMessages[reason].text}${detail}`
-    : `${failureMessages[reason].text}${detail}. Docs: ${docs}`;
-}
-
-/**
  * The failing rule as a refusal names it: its place in the update, then its id.
  * @param path The rule's place in the update, when the refusal has one.
  * @param ruleId The rule's id, when the refusal has one.
@@ -964,17 +866,6 @@ function editSubject(
   return place !== undefined && rule !== undefined
     ? `${place} (${rule})`
     : (place ?? rule);
-}
-
-function failureDocs(
-  reason: MessagePolicyConfigurationFailure,
-  link: { readonly path?: string; readonly docs?: string },
-): string {
-  const path = link.path ?? "";
-  if (/^text\.(?:fixed|initial)Behaviors\./u.test(path)) {
-    return `${POLICY_SPEC}#behaviors`;
-  }
-  return link.docs ?? failureMessages[reason].docs;
 }
 
 function loadDecisionProvider(
@@ -1011,4 +902,64 @@ function jevKey(
           ),
         ),
       );
+}
+
+/**
+ * The configuration failure for a message-policy setting, with its fixed
+ * operator message.
+ * @param reason Why the setting cannot start the daemon.
+ * @param path The indexed behavior entry, if one fails.
+ * @param behaviorReason The closed behavior failure category.
+ * @returns The failure, naming no configured value.
+ */
+function policyConfigurationError(
+  reason: MessagePolicyConfigurationFailure,
+  path = "",
+  behaviorReason?: BehaviorFailure,
+): MessagePolicyConfigurationError {
+  const category = behaviorReason === undefined ? "" : ` (${behaviorReason})`;
+  return new MessagePolicyConfigurationError({
+    reason,
+    behaviorReason,
+    message: policyFailureMessage(
+      reason,
+      path === "" ? "" : `; invalid at ${path}${category}`,
+      { path },
+    ),
+  });
+}
+
+/**
+ * The operator message for a message-policy failure: its text, any detail,
+ * and one `Docs:` link. An entry under a behavior list links the behavior
+ * rules, `docs` replaces the failure's own troubleshooting entry, and an
+ * empty `docs` leaves the link out for a failure with no fix to point at.
+ * @param reason The closed failure.
+ * @param detail Text after the failure's own, starting with `; `.
+ * @param link The entry to link in place of the failure's own.
+ * @param link.path The failing policy entry, which links the behavior rules
+ *     when it names a behavior list.
+ * @param link.docs Another entry to link, or empty for none.
+ * @returns The message, naming no configured value.
+ */
+function policyFailureMessage(
+  reason: MessagePolicyConfigurationFailure,
+  detail: string,
+  link: { readonly path?: string; readonly docs?: string } = {},
+): string {
+  const docs = failureDocs(reason, link);
+  return docs === ""
+    ? `${failureMessages[reason].text}${detail}`
+    : `${failureMessages[reason].text}${detail}. Docs: ${docs}`;
+}
+
+function failureDocs(
+  reason: MessagePolicyConfigurationFailure,
+  link: { readonly path?: string; readonly docs?: string },
+): string {
+  const path = link.path ?? "";
+  if (/^text\.(?:fixed|initial)Behaviors\./u.test(path)) {
+    return `${POLICY_SPEC}#behaviors`;
+  }
+  return link.docs ?? failureMessages[reason].docs;
 }

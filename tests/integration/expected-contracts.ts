@@ -25,9 +25,8 @@ export const messagePolicyFileSetting = "SHARNESS_MESSAGE_POLICY_FILE";
 export const unavailablePolicyRemedy =
   "A required policy check is unavailable.";
 
-/** A Router authentication rejection after reset stops the daemon at its listener boundary. */
-export const agentNotAdmittedDiagnostic =
-  "sharnessd startup failed in phase listener (agent-not-admitted)";
+/** A network reset ends the daemon with the registration-revoked reason. */
+export const agentNotAdmittedReason = "agent-not-admitted";
 
 /** Daemon startup explains the lost registration and the operator's recovery action. */
 export const agentNotAdmittedRemedy = "register again";

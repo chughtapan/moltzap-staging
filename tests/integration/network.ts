@@ -176,11 +176,11 @@ function ownNetworkPath(
     yield* expectOutput(
       alice,
       ["register", "alice"],
-      ["already active: agent:alice"],
+      ["already registered: agent:alice"],
     );
     yield* expectOutput(bob, ["register", "bob"], ["registered agent:bob"]);
     yield* expectRefusal(carol, ["register", "alice"], ["name_taken"]);
-    yield* expectOutput(alice, ["call", "status"], ['"kind": "active"']);
+    yield* expectOutput(alice, ["call", "status"], ['"kind": "registered"']);
 
     yield* expectOutput(alice, ["call", "send_message", sendTo("bob")], ["{"]);
     yield* expectOutput(

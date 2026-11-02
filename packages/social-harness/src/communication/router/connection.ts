@@ -42,7 +42,7 @@ import {
 } from "./api.js";
 
 /** An outer sender card could not be resolved, pinned, or authenticated. */
-export class RouterWorkerAuthenticationError extends Data.TaggedError(
+class RouterWorkerAuthenticationError extends Data.TaggedError(
   "RouterWorkerAuthenticationError",
 ) {}
 
@@ -86,7 +86,7 @@ export class RouterWorkerDiscontinuityError extends Data.TaggedError(
  * Social Harness version, its representation, or its local signature. Retrying
  * cannot succeed, so the failure is fatal rather than an outage.
  */
-export class RouterWorkerRejectedError extends Data.TaggedError(
+class RouterWorkerRejectedError extends Data.TaggedError(
   "RouterWorkerRejectedError",
 )<{
   readonly reason:
@@ -171,7 +171,7 @@ export interface RouterWorkerRecovery {
 }
 
 /** Private endpoint callbacks around the Router worker's ordering boundary. */
-export interface RouterWorkerCallbacks<Payload> {
+interface RouterWorkerCallbacks<Payload> {
   readonly pinSenderCard: (
     card: VerifiedAgentIdentityCard,
   ) => Effect.Effect<void, RouterWorkerPersistenceError>;
@@ -227,14 +227,14 @@ export interface RouterWorker {
 }
 
 /** Volatile cursor state for an active Router instance. */
-export interface RouterWorkerActiveState {
+interface RouterWorkerActiveState {
   readonly kind: "active";
   readonly generation: number;
   readonly anchor: RouterTailAnchor;
 }
 
 /** Volatile discontinuity state while certified history is reconciled. */
-export interface RouterWorkerRecoveringState {
+interface RouterWorkerRecoveringState {
   readonly kind: "recovering";
   readonly generation: number;
   readonly reason: RouterDiscontinuityReason;
@@ -253,7 +253,7 @@ export interface RouterWorkerRecoveringState {
  * The next answered poll either reattaches at the same anchor or starts
  * recovery, so no send runs until the Router's instance is known again.
  */
-export interface RouterWorkerDetachedState {
+interface RouterWorkerDetachedState {
   readonly kind: "detached";
   readonly generation: number;
   readonly anchor: RouterTailAnchor;
@@ -262,19 +262,19 @@ export interface RouterWorkerDetachedState {
 }
 
 /** Closed volatile lifecycle of the Router worker. */
-export type RouterWorkerState =
+type RouterWorkerState =
   | RouterWorkerActiveState
   | RouterWorkerDetachedState
   | RouterWorkerRecoveringState;
 
 /** Resolved public capabilities consumed by private worker mechanics. */
-export interface RouterWorkerServices {
+interface RouterWorkerServices {
   readonly router: Context.Tag.Service<typeof Router>;
   readonly registry: Context.Tag.Service<typeof Registry>;
 }
 
 /** Shared mutable worker runtime, guarded by its three semaphores. */
-export interface RouterWorkerRuntime<Payload> extends RouterWorkerServices {
+interface RouterWorkerRuntime<Payload> extends RouterWorkerServices {
   readonly input: RouterWorkerInput<Payload>;
   readonly cards: Map<AgentId, VerifiedAgentIdentityCard>;
   readonly state: SubscriptionRef.SubscriptionRef<RouterWorkerState>;
@@ -284,28 +284,28 @@ export interface RouterWorkerRuntime<Payload> extends RouterWorkerServices {
 }
 
 /** Outer message with both sender card and signature verified. */
-export interface RouterWorkerVerifiedIngress {
+interface RouterWorkerVerifiedIngress {
   readonly message: LiveSignedMessage & VerifiedSignedMessage;
   readonly senderCard: VerifiedAgentIdentityCard;
 }
 
 /** Router send outcome relevant above transport representation. */
-export type RouterWorkerSendOutcome =
+type RouterWorkerSendOutcome =
   | Readonly<{ kind: "accepted" }>
   | Readonly<{ kind: "restarted" }>;
 
 /** Attempts one send spends on transport retries and identity-loss resends. */
-export const routerWorkerRetryAttempts = 3;
+const routerWorkerRetryAttempts = 3;
 
 /** Fixed interruptible spacing between bounded attempts. */
-export const routerWorkerRetryDelay = "25 millis";
+const routerWorkerRetryDelay = "25 millis";
 
 /**
  * Quick retries of one poll before a transport failure detaches the worker,
  * spanning about 350 ms, so a connection reset or a single overloaded answer
  * does not block sends.
  */
-export const routerWorkerBlipSchedule = Schedule.exponential("50 millis").pipe(
+const routerWorkerBlipSchedule = Schedule.exponential("50 millis").pipe(
   Schedule.intersect(Schedule.recurs(3)),
 );
 
@@ -324,7 +324,7 @@ export const routerWorkerReconnectSchedule = Schedule.exponential(
  * How often a worker that cannot reach the Router, detached or recovering,
  * repeats its warning.
  */
-export const routerWorkerDetachedReportInterval = "60 seconds";
+const routerWorkerDetachedReportInterval = "60 seconds";
 
 const transientByTag = {
   RouterWorkerAuthenticationError: false,
@@ -346,9 +346,7 @@ type RouterCallError = Effect.Effect.Error<
 type TaggedFailure = Readonly<{ _tag: string }>;
 
 /** Worker failure a Router call maps to. */
-export type RouterCallFailure =
-  | RouterWorkerTransportError
-  | RouterWorkerRejectedError;
+type RouterCallFailure = RouterWorkerTransportError | RouterWorkerRejectedError;
 
 /**
  * Outage-shaped Router failures (unreachable, timed out, 429, 5xx) are
@@ -376,7 +374,7 @@ const routerFailureByTag = {
 >;
 
 /** Quick retries of one Router poll, for transport failures only. */
-export const pollBlipRetry = routerWorkerBlipSchedule.pipe(
+const pollBlipRetry = routerWorkerBlipSchedule.pipe(
   Schedule.whileInput(isTransportFailure),
 );
 
@@ -440,123 +438,6 @@ export function makeRouterWorker<Payload>(
 }
 
 /**
- * Classify one Router client failure as an outage or a rejection.
- * @param error Failure the Router client raised.
- * @returns The worker failure it maps to.
- */
-export function mapRouterFailure(error: RouterCallError): RouterCallFailure {
-  return routerFailureByTag[error._tag]();
-}
-
-/**
- * Whether a worker failure is a Router outage rather than a rejection.
- * @param error Any tagged worker failure.
- * @returns True for `RouterWorkerTransportError`.
- */
-export function isTransportFailure(error: TaggedFailure): boolean {
-  return error._tag === "RouterWorkerTransportError";
-}
-
-/**
- * Mark the worker detached after a poll issued at `generation` lost the
- * Router through its quick retries, so sends and the outbound drain wait for
- * the next answered poll instead of transmitting. A generation that recovery
- * has since replaced stays as it is.
- * @param runtime Worker whose poll lost the Router.
- * @param generation Generation the failed poll was issued from.
- * @returns Completion once a matching active state is detached.
- */
-export function detach<Payload>(
-  runtime: RouterWorkerRuntime<Payload>,
-  generation: number,
-): Effect.Effect<void> {
-  return Clock.currentTimeMillis.pipe(
-    Effect.flatMap((detachedAt) =>
-      runtime.stateGate.withPermits(1)(
-        Ref.modify(
-          runtime.state,
-          (
-            state,
-          ): readonly [
-            Option.Option<RouterWorkerDetachedState>,
-            RouterWorkerState,
-          ] => {
-            if (state.kind !== "active" || state.generation !== generation) {
-              return [Option.none(), state];
-            }
-            const detached: RouterWorkerDetachedState = {
-              ...state,
-              kind: "detached",
-              detachedAt,
-            };
-            return [Option.some(detached), detached];
-          },
-        ),
-      ),
-    ),
-    Effect.flatMap(
-      Option.match({ onNone: () => Effect.void, onSome: logDetached }),
-    ),
-  );
-}
-
-/**
- * Repeat a warning every `routerWorkerDetachedReportInterval` for as long as
- * the worker waits on an unreachable Router, detached or recovering, so an
- * outage is never silent however long it lasts.
- * @param runtime Worker whose state is watched.
- * @returns A watcher that runs for the worker's lifetime.
- */
-export function reportUnreachable<Payload>(
-  runtime: RouterWorkerRuntime<Payload>,
-): Effect.Effect<void> {
-  return runtime.state.changes.pipe(
-    Stream.map(stallOf),
-    Stream.changesWith(sameStall),
-    Stream.flatMap(
-      Option.match({
-        onNone: () => Stream.empty,
-        onSome: (stall) =>
-          Stream.tick(routerWorkerDetachedReportInterval).pipe(
-            Stream.drop(1),
-            Stream.mapEffect(() => logStillStalled(stall)),
-          ),
-      }),
-      { switch: true },
-    ),
-    Stream.runDrain,
-  );
-}
-
-/**
- * Report a failed poll-loop step before the loop retries or ends: a fatal
- * failure logs why the daemon exits, and a failed recovery attempt warns and
- * marks when the Router was first unreachable.
- * @param runtime Worker whose step failed.
- * @param error The step's failure.
- * @returns Completion once the failure is logged and recorded.
- */
-export function noteRunFailure<Payload>(
-  runtime: RouterWorkerRuntime<Payload>,
-  error: RouterWorkerPollError,
-): Effect.Effect<void> {
-  return isTransientRouterWorkerError(error)
-    ? Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) =>
-          runtime.stateGate.withPermits(1)(
-            Ref.updateAndGet(runtime.state, (state) =>
-              markUnreachable(state, error, now),
-            ),
-          ),
-        ),
-        Effect.flatMap((state) => logRecoveryAttemptFailed(state, error)),
-      )
-    : Effect.logError(
-        `Router worker stopping, daemon exits: ${describeRouterWorkerFailure(error)}`,
-      );
-}
-
-/**
  * Whether a worker failure ends once the Router answers and the worker
  * re-anchors. Every other failure is a protocol, persistence, recovery, or
  * Router-rejection fault that stays fatal.
@@ -584,64 +465,12 @@ export function describeRouterWorkerFailure(
 }
 
 /**
- * Warn that a worker that had lost the Router now recovers from a
- * discontinuity its first answered probe revealed.
- * @param state The new recovering state.
- * @returns Completion once logged.
+ * Classify one Router client failure as an outage or a rejection.
+ * @param error Failure the Router client raised.
+ * @returns The worker failure it maps to.
  */
-export function logRecoveryAfterLoss(
-  state: RouterWorkerRecoveringState,
-): Effect.Effect<void> {
-  return Effect.logWarning(
-    `Router answered after a loss with ${state.reason}: recovering`,
-  ).pipe(Effect.annotateLogs({ generation: state.generation }));
-}
-
-/**
- * Note that certified-history recovery finished and the worker is active.
- * @param state The recovering state recovery completed.
- * @returns Completion once logged.
- */
-export function logRecoveryComplete(
-  state: RouterWorkerRecoveringState,
-): Effect.Effect<void> {
-  return Effect.logInfo(`Router recovery complete after ${state.reason}`).pipe(
-    Effect.annotateLogs({ generation: state.generation }),
-  );
-}
-
-/**
- * Mark a detached worker active again at its retained anchor, unless another
- * generation replaced it meanwhile, and then tell the engine through
- * `callbacks.reattached`, so work the outage paused can start again.
- * @param runtime Worker whose probe the Router answered.
- * @param snapshot Detached state the probe was issued from.
- * @returns Completion once the worker is active or left as it was.
- */
-export function reattach<Payload>(
-  runtime: RouterWorkerRuntime<Payload>,
-  snapshot: RouterWorkerDetachedState,
-): Effect.Effect<void> {
-  return runtime.stateGate
-    .withPermits(1)(
-      Ref.get(runtime.state).pipe(
-        Effect.flatMap((current) =>
-          current.kind === "detached" &&
-          current.generation === snapshot.generation
-            ? Ref.set(runtime.state, {
-                kind: "active",
-                generation: current.generation,
-                anchor: current.anchor,
-              }).pipe(Effect.zipRight(logReattached(current)), Effect.as(true))
-            : Effect.succeed(false),
-        ),
-      ),
-    )
-    .pipe(
-      Effect.flatMap((reattached) =>
-        reattached ? runtime.input.callbacks.reattached() : Effect.void,
-      ),
-    );
+function mapRouterFailure(error: RouterCallError): RouterCallFailure {
+  return routerFailureByTag[error._tag]();
 }
 
 function mapAuthenticationError() {
@@ -754,6 +583,62 @@ function makeWorker<Payload>(
   });
 }
 
+/**
+ * Repeat a warning every `routerWorkerDetachedReportInterval` for as long as
+ * the worker waits on an unreachable Router, detached or recovering, so an
+ * outage is never silent however long it lasts.
+ * @param runtime Worker whose state is watched.
+ * @returns A watcher that runs for the worker's lifetime.
+ */
+function reportUnreachable<Payload>(
+  runtime: RouterWorkerRuntime<Payload>,
+): Effect.Effect<void> {
+  return runtime.state.changes.pipe(
+    Stream.map(stallOf),
+    Stream.changesWith(sameStall),
+    Stream.flatMap(
+      Option.match({
+        onNone: () => Stream.empty,
+        onSome: (stall) =>
+          Stream.tick(routerWorkerDetachedReportInterval).pipe(
+            Stream.drop(1),
+            Stream.mapEffect(() => logStillStalled(stall)),
+          ),
+      }),
+      { switch: true },
+    ),
+    Stream.runDrain,
+  );
+}
+
+/**
+ * Report a failed poll-loop step before the loop retries or ends: a fatal
+ * failure logs why the daemon exits, and a failed recovery attempt warns and
+ * marks when the Router was first unreachable.
+ * @param runtime Worker whose step failed.
+ * @param error The step's failure.
+ * @returns Completion once the failure is logged and recorded.
+ */
+function noteRunFailure<Payload>(
+  runtime: RouterWorkerRuntime<Payload>,
+  error: RouterWorkerPollError,
+): Effect.Effect<void> {
+  return isTransientRouterWorkerError(error)
+    ? Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          runtime.stateGate.withPermits(1)(
+            Ref.updateAndGet(runtime.state, (state) =>
+              markUnreachable(state, error, now),
+            ),
+          ),
+        ),
+        Effect.flatMap((state) => logRecoveryAttemptFailed(state, error)),
+      )
+    : Effect.logError(
+        `Router worker stopping, daemon exits: ${describeRouterWorkerFailure(error)}`,
+      );
+}
+
 function makePollOnce<Payload>(
   runtime: RouterWorkerRuntime<Payload>,
 ): Effect.Effect<void, RouterWorkerPollError> {
@@ -828,6 +713,49 @@ function pollActiveOnce<Payload>(
       }),
       Effect.interruptible,
     );
+}
+
+/**
+ * Mark the worker detached after a poll issued at `generation` lost the
+ * Router through its quick retries, so sends and the outbound drain wait for
+ * the next answered poll instead of transmitting. A generation that recovery
+ * has since replaced stays as it is.
+ * @param runtime Worker whose poll lost the Router.
+ * @param generation Generation the failed poll was issued from.
+ * @returns Completion once a matching active state is detached.
+ */
+function detach<Payload>(
+  runtime: RouterWorkerRuntime<Payload>,
+  generation: number,
+): Effect.Effect<void> {
+  return Clock.currentTimeMillis.pipe(
+    Effect.flatMap((detachedAt) =>
+      runtime.stateGate.withPermits(1)(
+        Ref.modify(
+          runtime.state,
+          (
+            state,
+          ): readonly [
+            Option.Option<RouterWorkerDetachedState>,
+            RouterWorkerState,
+          ] => {
+            if (state.kind !== "active" || state.generation !== generation) {
+              return [Option.none(), state];
+            }
+            const detached: RouterWorkerDetachedState = {
+              ...state,
+              kind: "detached",
+              detachedAt,
+            };
+            return [Option.some(detached), detached];
+          },
+        ),
+      ),
+    ),
+    Effect.flatMap(
+      Option.match({ onNone: () => Effect.void, onSome: logDetached }),
+    ),
+  );
 }
 
 function verifyBatch<Payload>(
@@ -984,6 +912,40 @@ function probeDetached<Payload>(
     ),
     Effect.interruptible,
   );
+}
+
+/**
+ * Mark a detached worker active again at its retained anchor, unless another
+ * generation replaced it meanwhile, and then tell the engine through
+ * `callbacks.reattached`, so work the outage paused can start again.
+ * @param runtime Worker whose probe the Router answered.
+ * @param snapshot Detached state the probe was issued from.
+ * @returns Completion once the worker is active or left as it was.
+ */
+function reattach<Payload>(
+  runtime: RouterWorkerRuntime<Payload>,
+  snapshot: RouterWorkerDetachedState,
+): Effect.Effect<void> {
+  return runtime.stateGate
+    .withPermits(1)(
+      Ref.get(runtime.state).pipe(
+        Effect.flatMap((current) =>
+          current.kind === "detached" &&
+          current.generation === snapshot.generation
+            ? Ref.set(runtime.state, {
+                kind: "active",
+                generation: current.generation,
+                anchor: current.anchor,
+              }).pipe(Effect.zipRight(logReattached(current)), Effect.as(true))
+            : Effect.succeed(false),
+        ),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((reattached) =>
+        reattached ? runtime.input.callbacks.reattached() : Effect.void,
+      ),
+    );
 }
 
 function makeSend<Payload>(
@@ -1248,6 +1210,20 @@ function triggerDiscontinuity<Payload>(
 }
 
 /**
+ * Warn that a worker that had lost the Router now recovers from a
+ * discontinuity its first answered probe revealed.
+ * @param state The new recovering state.
+ * @returns Completion once logged.
+ */
+function logRecoveryAfterLoss(
+  state: RouterWorkerRecoveringState,
+): Effect.Effect<void> {
+  return Effect.logWarning(
+    `Router answered after a loss with ${state.reason}: recovering`,
+  ).pipe(Effect.annotateLogs({ generation: state.generation }));
+}
+
+/**
  * Anchor a restarted or rejoined Router and reconcile certified history, then
  * go active. Recovery fences each conversation and asks for catch-up without
  * waiting for answers, so the worker polls nothing until it is active, and
@@ -1289,6 +1265,19 @@ function finishRouterRecovery<Payload>(
       }),
     );
   }).pipe(Effect.withSpan("finishRouterRecovery"));
+}
+
+/**
+ * Note that certified-history recovery finished and the worker is active.
+ * @param state The recovering state recovery completed.
+ * @returns Completion once logged.
+ */
+function logRecoveryComplete(
+  state: RouterWorkerRecoveringState,
+): Effect.Effect<void> {
+  return Effect.logInfo(`Router recovery complete after ${state.reason}`).pipe(
+    Effect.annotateLogs({ generation: state.generation }),
+  );
 }
 
 /**
@@ -1489,6 +1478,15 @@ function markUnreachable(
     Option.isNone(state.unreachableSince)
     ? { ...state, unreachableSince: Option.some(now) }
     : state;
+}
+
+/**
+ * Whether a worker failure is a Router outage rather than a rejection.
+ * @param error Any tagged worker failure.
+ * @returns True for `RouterWorkerTransportError`.
+ */
+function isTransportFailure(error: TaggedFailure): boolean {
+  return error._tag === "RouterWorkerTransportError";
 }
 
 function logRecoveryAttemptFailed(

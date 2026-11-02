@@ -42,10 +42,10 @@ import { SignedMessage } from "../../identity/envelope/signed-message.js";
 import { LIVE_WIRE_VERSIONS } from "../../identity/wire-version.js";
 
 /** Exact Router send target. */
-export const routerSendPath = "/v1/messages:send";
+const routerSendPath = "/v1/messages:send";
 
 /** Exact Router poll target. */
-export const routerPollPath = "/v1/messages:poll";
+const routerPollPath = "/v1/messages:poll";
 
 /** Exact Router health target. */
 const routerHealthPath = "/healthz";
@@ -57,7 +57,7 @@ const routerSendRoutePattern = "/v1/messages::send";
 const routerPollRoutePattern = "/v1/messages::poll";
 
 /** Exact media type for Router-owned JSON representations. */
-export const routerJsonContentType = "application/json";
+const routerJsonContentType = "application/json";
 
 const INSTANCE_BYTE_LENGTH = 16;
 
@@ -285,7 +285,7 @@ export class RouterInvalidResponseError extends Data.TaggedError(
  * Closed failures represented by Router HTTP error envelopes.
  * @inline
  */
-export type RouterHttpEnvelopeError =
+type RouterHttpEnvelopeError =
   | MalformedRequestError
   | AuthenticationFailedError
   | RouteNotFoundError
@@ -400,7 +400,7 @@ const isCanonicalRouterJson = (text: string, encoded: unknown): boolean => {
  * @param body Candidate exact body text.
  * @returns The matching typed failure, when the pair is declared.
  */
-export const routerHttpErrorFromResponse = (
+const routerHttpErrorFromResponse = (
   status: number,
   body: string,
 ): Option.Option<RouterHttpEnvelopeError> => {

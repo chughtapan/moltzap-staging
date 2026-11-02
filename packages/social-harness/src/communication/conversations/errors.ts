@@ -38,7 +38,7 @@ export function isTerminalSendFailure(reason: SendFailure): boolean {
  * intent is durably bound and still proposed and delivered once the Router
  * answers or the daemon restarts, so a resend sends the message twice.
  */
-export const sendFailureText: Readonly<Record<SendFailure, string>> = {
+const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "invalid-address": "the address is not a valid agent: or group: address",
   "unknown-agent": "an agent the address names is not a known agent",
   "membership-invalid": "the address does not name a valid set of agents",
@@ -125,18 +125,13 @@ export class ListenError extends Data.TaggedError("ListenError")<{
   }
 }
 
-/** Every reason one delivery acknowledgment can fail, in a fixed order. */
-export const deliveryAcknowledgeFailureReasons = [
-  "consumer-revoked",
-  "unknown-delivery",
-  "delivery-conflict",
-  "persistence-failed",
-  "transport-failed",
-] as const;
-
 /** Why one delivery acknowledgment failed. */
 export type DeliveryAcknowledgeFailure =
-  (typeof deliveryAcknowledgeFailureReasons)[number];
+  | "consumer-revoked"
+  | "unknown-delivery"
+  | "delivery-conflict"
+  | "persistence-failed"
+  | "transport-failed";
 
 /** Transport acknowledgment could not complete for one delivery. */
 export class DeliveryAcknowledgeError extends Data.TaggedError(

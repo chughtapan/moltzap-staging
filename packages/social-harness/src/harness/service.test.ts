@@ -5,8 +5,9 @@ import { Deferred, Effect, Exit, Fiber, Schedule, Schema, Scope } from "effect";
 import { expect } from "vitest";
 import type { DecisionRequest } from "../firewall/check.js";
 import type { AgentCard } from "../identity/agent.js";
+import type { InboxEntry } from "../index.js";
 import type { HistoryExportRecord } from "./message-log.js";
-import type { InboxEntry, ReadHistoryResult, SendRequest } from "./service.js";
+import type { ReadHistoryResult, SendRequest } from "./service.js";
 import {
   decisionResponse,
   decisionState,

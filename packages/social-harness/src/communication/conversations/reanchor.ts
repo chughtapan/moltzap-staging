@@ -187,7 +187,7 @@ interface RestartedEmptyState {
 }
 
 /** One verified re-anchor vote and its signed message, held for the rest of the run. */
-export interface PendingReanchorVote {
+interface PendingReanchorVote {
   readonly message: SignedMessageValue;
   readonly statement: ReanchorVoteStatementValue;
 }
@@ -196,7 +196,7 @@ export interface PendingReanchorVote {
  * One recovery run's re-anchor vote memory: the votes it holds per
  * conversation and candidate anchor.
  */
-export type ReanchorVotes = Map<
+type ReanchorVotes = Map<
   ConversationIdValue,
   Map<AnchorHashValue, Map<AgentId, PendingReanchorVote>>
 >;
@@ -274,228 +274,6 @@ export function acceptCompletedReanchor(
 }
 
 /**
- * Replace an initial foundation only while its certified history is empty. The
- * caller marks the conversation recovered. The durable replacement and the
- * engine's adoption of its anchor are one uninterruptible step: a retry reads
- * the durable anchor as already restarted and never resets the engine, so an
- * interruption between them would leave actions binding the old anchor.
- * @param input Durable and recovered state for one empty conversation.
- * @returns Completion after the new foundation is durable and active.
- */
-export function restartEmptyPosition(
-  input: EmptyPositionRestartInput,
-): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
-  const { membership, position, recovery, routerInstanceId, runtime } = input;
-  return Effect.gen(function* () {
-    const expectedFoundation = yield* emptyConversationFoundation(
-      recovery,
-      membership,
-      position,
-    );
-    const replacement = yield* replacementEmptyFoundation(
-      routerInstanceId,
-      membership,
-      expectedFoundation,
-    );
-    yield* Effect.uninterruptible(
-      Effect.gen(function* () {
-        const restarted = yield* restartEmptyConversation({
-          expectedFoundation,
-          replacementFoundation: replacement.foundation,
-        }).pipe(Effect.mapError(persistenceFailure));
-        if (
-          !restartedEmptyStateMatches({
-            runtime,
-            conversationId: membership.descriptor.conversationId,
-            expected: replacement.foundation,
-            retained: restarted.foundation,
-            messageIntents: restarted.messageIntents,
-          })
-        ) {
-          return yield* Effect.fail(persistenceFailure());
-        }
-        yield* resetEmptyConversationRuntime(
-          runtime,
-          membership.descriptor.conversationId,
-          replacement.anchor,
-          restarted.messageIntents,
-        );
-      }),
-    );
-  }).pipe(Effect.withSpan("restartEmptyPosition"));
-}
-
-/**
- * Hold a verified vote for the rest of the run.
- * @param votes The run's vote memory.
- * @param vote Verified vote the run took.
- * @returns Completion once the vote is held.
- */
-export function rememberReanchorVote(
-  votes: ReanchorVotes,
-  vote: PendingReanchorVote,
-): Effect.Effect<void, never, SqlClient> {
-  return Effect.sync(() => {
-    const conversationId = vote.statement.reanchor.conversationId;
-    const candidates =
-      votes.get(conversationId) ??
-      new Map<
-        AnchorHashValue,
-        Map<
-          PendingReanchorVote["statement"]["signerAgentId"],
-          PendingReanchorVote
-        >
-      >();
-    votes.set(conversationId, candidates);
-    const signers =
-      candidates.get(vote.statement.anchorHash) ??
-      new Map<
-        PendingReanchorVote["statement"]["signerAgentId"],
-        PendingReanchorVote
-      >();
-    candidates.set(vote.statement.anchorHash, signers);
-    signers.set(vote.statement.signerAgentId, vote);
-  });
-}
-
-/**
- * Whether the run already holds this signer's vote for this candidate anchor.
- * @param votes The run's vote memory.
- * @param vote Vote to look up.
- * @returns Whether the vote is held.
- */
-export function reanchorVoteIsRemembered(
-  votes: ReanchorVotes,
-  vote: PendingReanchorVote,
-): boolean {
-  return (
-    votes
-      .get(vote.statement.reanchor.conversationId)
-      ?.get(vote.statement.anchorHash)
-      ?.has(vote.statement.signerAgentId) === true
-  );
-}
-
-/**
- * Merge one vote into the store's re-anchor evidence for its candidate anchor.
- * One statement has more than one valid signature, so a member can send a
- * second, differently signed copy of a vote the store already holds. The
- * store refuses that copy, and it does not count.
- * @param vote Verified vote to persist.
- * @returns Whether the vote is durable; false when the store refused it.
- */
-export function persistReanchorVote(
-  vote: PendingReanchorVote,
-): Effect.Effect<boolean, RouterWorkerPersistenceError, SqlClient> {
-  return protocolEvidence(
-    vote.statement.reanchor.conversationId,
-    "reanchor",
-    vote.statement.anchorHash,
-    vote.message,
-  ).pipe(
-    Effect.flatMap((evidence) => mergeEvidence(evidence)),
-    Effect.as(true),
-    Effect.catchTag("EndpointStoreError", (error) =>
-      isSemanticStoreRejection(error)
-        ? Effect.succeed(false)
-        : Effect.fail(persistenceFailure()),
-    ),
-    Effect.mapError(persistenceFailure),
-  );
-}
-
-/**
- * Read and verify every stored vote for one candidate anchor.
- * @param membership Verified membership the votes must verify under.
- * @param body Re-anchor body every stored vote must name.
- * @param anchorHash Candidate anchor the votes are for.
- * @returns The stored votes, one per signer.
- */
-export function decodeReanchorVotes(
-  membership: VerifiedMembership,
-  body: ReanchorBodyValue,
-  anchorHash: AnchorHashValue,
-): Effect.Effect<
-  readonly SignedMessageValue[],
-  RouterWorkerPersistenceError,
-  SqlClient
-> {
-  return recoverStoredState(body.conversationId).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.flatMap((recovery) =>
-      Effect.forEach(
-        recovery.evidence.filter((evidence) =>
-          evidenceTargetsAnchor(evidence, body.conversationId, anchorHash),
-        ),
-        (evidence) =>
-          verifyStoredReanchorVote(evidence, membership, body, anchorHash),
-        { concurrency: 1 },
-      ),
-    ),
-    Effect.flatMap((votes) =>
-      votesHaveUniqueSigners(votes)
-        ? Effect.succeed(votes)
-        : Effect.fail(persistenceFailure()),
-    ),
-  );
-}
-
-/**
- * Assemble a completed re-anchor whose certificate holds `votes` in
- * decoded-AgentId order.
- * @param body Re-anchor body the votes name.
- * @param anchorHash Hash of `body`.
- * @param votes Stored votes for the anchor, at least one.
- * @returns The completed re-anchor.
- */
-export function assembleCompletedReanchor(
-  body: ReanchorBodyValue,
-  anchorHash: AnchorHashValue,
-  votes: readonly SignedMessageValue[],
-): Effect.Effect<
-  CompletedReanchorValue,
-  RouterWorkerPersistenceError,
-  SqlClient
-> {
-  return orderedSignatures(votes).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.flatMap((ordered) => {
-      if (ordered === undefined) {
-        return Effect.fail(persistenceFailure());
-      }
-      const completed: CompletedReanchorValue = {
-        sharnessVersion: body.sharnessVersion,
-        kind: "completed_reanchor",
-        anchorHash,
-        reanchor: body,
-        certificate: {
-          sharnessVersion: body.sharnessVersion,
-          kind: "reanchor_certificate",
-          anchorHash,
-          votes: ordered,
-        },
-      };
-      return Effect.succeed(completed);
-    }),
-  );
-}
-
-/**
- * Make a completed re-anchor durable and the conversation's current anchor.
- * @param runtime Engine whose store and conversation receive the anchor.
- * @param completed Verified completed re-anchor.
- * @returns Completion once the anchor is durable and current.
- */
-export function persistCompletedReanchor(
-  runtime: EngineRuntime,
-  completed: CompletedReanchorValue,
-): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
-  return storeAndAdoptReanchor(runtime, completed, completeReanchor).pipe(
-    Effect.mapError(persistenceFailure),
-  );
-}
-
-/**
  * Make a member's verified completed re-anchor durable and the
  * conversation's current anchor. It supersedes a different candidate this
  * endpoint staged for the same anchor and Router instance: its quorum
@@ -562,6 +340,58 @@ function finishRestartedPosition(
       );
     }),
   );
+}
+
+/**
+ * Replace an initial foundation only while its certified history is empty. The
+ * caller marks the conversation recovered. The durable replacement and the
+ * engine's adoption of its anchor are one uninterruptible step: a retry reads
+ * the durable anchor as already restarted and never resets the engine, so an
+ * interruption between them would leave actions binding the old anchor.
+ * @param input Durable and recovered state for one empty conversation.
+ * @returns Completion after the new foundation is durable and active.
+ */
+function restartEmptyPosition(
+  input: EmptyPositionRestartInput,
+): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
+  const { membership, position, recovery, routerInstanceId, runtime } = input;
+  return Effect.gen(function* () {
+    const expectedFoundation = yield* emptyConversationFoundation(
+      recovery,
+      membership,
+      position,
+    );
+    const replacement = yield* replacementEmptyFoundation(
+      routerInstanceId,
+      membership,
+      expectedFoundation,
+    );
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const restarted = yield* restartEmptyConversation({
+          expectedFoundation,
+          replacementFoundation: replacement.foundation,
+        }).pipe(Effect.mapError(persistenceFailure));
+        if (
+          !restartedEmptyStateMatches({
+            runtime,
+            conversationId: membership.descriptor.conversationId,
+            expected: replacement.foundation,
+            retained: restarted.foundation,
+            messageIntents: restarted.messageIntents,
+          })
+        ) {
+          return yield* Effect.fail(persistenceFailure());
+        }
+        yield* resetEmptyConversationRuntime(
+          runtime,
+          membership.descriptor.conversationId,
+          replacement.anchor,
+          restarted.messageIntents,
+        );
+      }),
+    );
+  }).pipe(Effect.withSpan("restartEmptyPosition"));
 }
 
 /**
@@ -1318,6 +1148,24 @@ function ensureLocalReanchorVote(
   );
 }
 
+/**
+ * Whether the run already holds this signer's vote for this candidate anchor.
+ * @param votes The run's vote memory.
+ * @param vote Vote to look up.
+ * @returns Whether the vote is held.
+ */
+function reanchorVoteIsRemembered(
+  votes: ReanchorVotes,
+  vote: PendingReanchorVote,
+): boolean {
+  return (
+    votes
+      .get(vote.statement.reanchor.conversationId)
+      ?.get(vote.statement.anchorHash)
+      ?.has(vote.statement.signerAgentId) === true
+  );
+}
+
 function localReanchorVoteStatement(
   runtime: EngineRuntime,
   body: ReanchorBodyValue,
@@ -1366,6 +1214,67 @@ function createLocalReanchorVote(
   );
 }
 
+/**
+ * Hold a verified vote for the rest of the run.
+ * @param votes The run's vote memory.
+ * @param vote Verified vote the run took.
+ * @returns Completion once the vote is held.
+ */
+function rememberReanchorVote(
+  votes: ReanchorVotes,
+  vote: PendingReanchorVote,
+): Effect.Effect<void, never, SqlClient> {
+  return Effect.sync(() => {
+    const conversationId = vote.statement.reanchor.conversationId;
+    const candidates =
+      votes.get(conversationId) ??
+      new Map<
+        AnchorHashValue,
+        Map<
+          PendingReanchorVote["statement"]["signerAgentId"],
+          PendingReanchorVote
+        >
+      >();
+    votes.set(conversationId, candidates);
+    const signers =
+      candidates.get(vote.statement.anchorHash) ??
+      new Map<
+        PendingReanchorVote["statement"]["signerAgentId"],
+        PendingReanchorVote
+      >();
+    candidates.set(vote.statement.anchorHash, signers);
+    signers.set(vote.statement.signerAgentId, vote);
+  });
+}
+
+/**
+ * Merge one vote into the store's re-anchor evidence for its candidate anchor.
+ * One statement has more than one valid signature, so a member can send a
+ * second, differently signed copy of a vote the store already holds. The
+ * store refuses that copy, and it does not count.
+ * @param vote Verified vote to persist.
+ * @returns Whether the vote is durable; false when the store refused it.
+ */
+function persistReanchorVote(
+  vote: PendingReanchorVote,
+): Effect.Effect<boolean, RouterWorkerPersistenceError, SqlClient> {
+  return protocolEvidence(
+    vote.statement.reanchor.conversationId,
+    "reanchor",
+    vote.statement.anchorHash,
+    vote.message,
+  ).pipe(
+    Effect.flatMap((evidence) => mergeEvidence(evidence)),
+    Effect.as(true),
+    Effect.catchTag("EndpointStoreError", (error) =>
+      isSemanticStoreRejection(error)
+        ? Effect.succeed(false)
+        : Effect.fail(persistenceFailure()),
+    ),
+    Effect.mapError(persistenceFailure),
+  );
+}
+
 function completeReanchorAtThreshold(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -1389,6 +1298,82 @@ function completeReanchorAtThreshold(
   );
 }
 
+/**
+ * Read and verify every stored vote for one candidate anchor.
+ * @param membership Verified membership the votes must verify under.
+ * @param body Re-anchor body every stored vote must name.
+ * @param anchorHash Candidate anchor the votes are for.
+ * @returns The stored votes, one per signer.
+ */
+function decodeReanchorVotes(
+  membership: VerifiedMembership,
+  body: ReanchorBodyValue,
+  anchorHash: AnchorHashValue,
+): Effect.Effect<
+  readonly SignedMessageValue[],
+  RouterWorkerPersistenceError,
+  SqlClient
+> {
+  return recoverStoredState(body.conversationId).pipe(
+    Effect.mapError(persistenceFailure),
+    Effect.flatMap((recovery) =>
+      Effect.forEach(
+        recovery.evidence.filter((evidence) =>
+          evidenceTargetsAnchor(evidence, body.conversationId, anchorHash),
+        ),
+        (evidence) =>
+          verifyStoredReanchorVote(evidence, membership, body, anchorHash),
+        { concurrency: 1 },
+      ),
+    ),
+    Effect.flatMap((votes) =>
+      votesHaveUniqueSigners(votes)
+        ? Effect.succeed(votes)
+        : Effect.fail(persistenceFailure()),
+    ),
+  );
+}
+
+/**
+ * Assemble a completed re-anchor whose certificate holds `votes` in
+ * decoded-AgentId order.
+ * @param body Re-anchor body the votes name.
+ * @param anchorHash Hash of `body`.
+ * @param votes Stored votes for the anchor, at least one.
+ * @returns The completed re-anchor.
+ */
+function assembleCompletedReanchor(
+  body: ReanchorBodyValue,
+  anchorHash: AnchorHashValue,
+  votes: readonly SignedMessageValue[],
+): Effect.Effect<
+  CompletedReanchorValue,
+  RouterWorkerPersistenceError,
+  SqlClient
+> {
+  return orderedSignatures(votes).pipe(
+    Effect.mapError(persistenceFailure),
+    Effect.flatMap((ordered) => {
+      if (ordered === undefined) {
+        return Effect.fail(persistenceFailure());
+      }
+      const completed: CompletedReanchorValue = {
+        sharnessVersion: body.sharnessVersion,
+        kind: "completed_reanchor",
+        anchorHash,
+        reanchor: body,
+        certificate: {
+          sharnessVersion: body.sharnessVersion,
+          kind: "reanchor_certificate",
+          anchorHash,
+          votes: ordered,
+        },
+      };
+      return Effect.succeed(completed);
+    }),
+  );
+}
+
 function finalizeCompletedReanchor(
   run: ReanchorRun,
   membership: VerifiedMembership,
@@ -1401,6 +1386,21 @@ function finalizeCompletedReanchor(
       run.queue(membership, { kind: "direct", packet: completed }),
     ),
     Effect.zipRight(run.markRecovered(completed.reanchor.conversationId)),
+  );
+}
+
+/**
+ * Make a completed re-anchor durable and the conversation's current anchor.
+ * @param runtime Engine whose store and conversation receive the anchor.
+ * @param completed Verified completed re-anchor.
+ * @returns Completion once the anchor is durable and current.
+ */
+function persistCompletedReanchor(
+  runtime: EngineRuntime,
+  completed: CompletedReanchorValue,
+): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
+  return storeAndAdoptReanchor(runtime, completed, completeReanchor).pipe(
+    Effect.mapError(persistenceFailure),
   );
 }
 

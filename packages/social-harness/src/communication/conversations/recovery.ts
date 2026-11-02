@@ -216,7 +216,7 @@ interface PendingSuccessor {
 }
 
 /** What staged-successor handling needs from the recovery run it belongs to. */
-export interface SuccessorRun {
+interface SuccessorRun {
   readonly runtime: EngineRuntime;
   /** The successor each re-anchoring conversation holds toward converting. */
   readonly pending: Map<ConversationIdValue, PendingSuccessor>;
@@ -421,15 +421,19 @@ export function installRecoveryBarrier(
 }
 
 /**
- * Read the engine fence a discontinuity installed.
- * @param runtime Engine whose recovery state guards action activation.
- * @returns The pending engine fence, or absence once a recovery run holds
- *     each conversation's own fence.
+ * The fence traffic for `conversationId` waits behind: the engine fence while
+ * a discontinuity has no recovery run, otherwise that conversation's own
+ * fence.
+ * @param runtime Engine whose recovery state guards the conversation.
+ * @param conversationId Conversation the send or ingress targets.
+ * @returns The pending fence, or absence when the conversation is open.
  */
-export function currentRecoveryBarrier(
+export function pendingRecoveryFence(
   runtime: EngineRuntime,
+  conversationId: ConversationId,
 ): Deferred.Deferred<undefined> | undefined {
-  return recoveryFences.get(runtime)?.engine;
+  const fences = recoveryFences.get(runtime);
+  return fences?.engine ?? fences?.conversations.get(conversationId);
 }
 
 /**
@@ -439,7 +443,7 @@ export function currentRecoveryBarrier(
  * @param barrier Engine fence captured by that recovery attempt.
  * @returns Completion after waiters resume and the fence is removed.
  */
-export function completeRecoveryBarrier(
+function completeRecoveryBarrier(
   runtime: EngineRuntime,
   barrier: Deferred.Deferred<undefined>,
 ): Effect.Effect<void, never, SqlClient> {
@@ -460,7 +464,7 @@ export function completeRecoveryBarrier(
  * @param conversationId Conversation to fence.
  * @returns Completion after the conversation is fenced.
  */
-export function fenceConversation(
+function fenceConversation(
   runtime: EngineRuntime,
   conversationId: ConversationId,
 ): Effect.Effect<void, never, SqlClient> {
@@ -474,151 +478,6 @@ export function fenceConversation(
       }),
     ),
   );
-}
-
-/**
- * Release a recovered conversation's fence, resuming the sends that wait on
- * it.
- * @param runtime Engine whose recovery run recovered the conversation.
- * @param conversationId Conversation that recovered.
- * @returns Completion after its waiters resume.
- */
-export function releaseConversation(
-  runtime: EngineRuntime,
-  conversationId: ConversationId,
-): Effect.Effect<void, never, SqlClient> {
-  return Effect.suspend(() => {
-    const fences = recoveryFences.get(runtime);
-    const fence = fences?.conversations.get(conversationId);
-    if (fences === undefined || fence === undefined) {
-      return Effect.void;
-    }
-    fences.conversations.delete(conversationId);
-    return Deferred.succeed(fence, undefined).pipe(Effect.asVoid);
-  });
-}
-
-/**
- * The fence traffic for `conversationId` waits behind: the engine fence while
- * a discontinuity has no recovery run, otherwise that conversation's own
- * fence.
- * @param runtime Engine whose recovery state guards the conversation.
- * @param conversationId Conversation the send or ingress targets.
- * @returns The pending fence, or absence when the conversation is open.
- */
-export function pendingRecoveryFence(
-  runtime: EngineRuntime,
-  conversationId: ConversationId,
-): Deferred.Deferred<undefined> | undefined {
-  const fences = recoveryFences.get(runtime);
-  return fences?.engine ?? fences?.conversations.get(conversationId);
-}
-
-/**
- * Take a member's action-certified record for a recovering conversation when
- * it extends the conversation's head. Outside a re-anchor the record alone
- * is enough, so the protocol phases verify it, stage it and vote for it at
- * once. During a re-anchor this endpoint verifies and holds it, and converts
- * to it only once more than `n − q(n)` members have voted it durable.
- * @param run Recovery run that holds the conversation.
- * @param ingress Verified Router delivery carrying the record.
- * @param record The member's action-certified record.
- * @returns Whether the record was taken or ignored.
- */
-export function acceptSuccessorRecord(
-  run: SuccessorRun,
-  ingress: RouterWorkerIngress<DecodedOuterBody>,
-  record: ActionCertifiedRecord,
-): Effect.Effect<
-  RouterIngressDisposition,
-  RouterWorkerPersistenceError,
-  SqlClient
-> {
-  const { conversationId } = record.recordCore.action;
-  const extended = headExtendedBy(run, record.recordCore.action);
-  if (
-    extended === undefined ||
-    run.runtime.recordFolds.has(record.recordHash)
-  ) {
-    return Effect.succeed(ignoredDisposition);
-  }
-  if (!run.reanchoring(conversationId)) {
-    return run.runtime.phases.acceptIngress(run.runtime, ingress);
-  }
-  const { position, membership } = extended;
-  const pending = pendingFor(run.pending, conversationId, position);
-  if (pending.settled || pending.record?.recordHash === record.recordHash) {
-    return Effect.succeed(ignoredDisposition);
-  }
-  return holdTowardConversion(
-    run,
-    membership,
-    verifyHeldRecord(membership, ingress, record),
-    () => {
-      pending.record = { recordHash: record.recordHash, ingress };
-    },
-  ).pipe(Effect.withSpan("acceptSuccessorRecord"));
-}
-
-/**
- * Take a member's durability vote for a recovering conversation's staged
- * successor. A successor this endpoint has staged takes the vote in the
- * protocol phases, which certify it at `q(n)` votes. During a re-anchor, a
- * vote for a successor it has not staged is held toward converting to it.
- * @param run Recovery run that holds the conversation.
- * @param ingress Verified Router delivery carrying the vote.
- * @param vote The vote's evidence message and its decoded statement.
- * @param vote.message The vote's evidence message.
- * @param vote.statement The vote's decoded statement.
- * @returns Whether the vote was taken or ignored.
- */
-export function acceptSuccessorVote(
-  run: SuccessorRun,
-  ingress: RouterWorkerIngress<DecodedOuterBody>,
-  vote: Readonly<{
-    message: SignedMessage;
-    statement: Extract<EvidenceStatement, { readonly kind: "durability_vote" }>;
-  }>,
-): Effect.Effect<
-  RouterIngressDisposition,
-  RouterWorkerPersistenceError,
-  SqlClient
-> {
-  const { conversationId, recordHash, signerAgentId } = vote.statement;
-  const conversation = run.runtime.conversations.get(conversationId);
-  const membership = run.membership(conversationId);
-  if (conversation === undefined || membership === undefined) {
-    return Effect.succeed(ignoredDisposition);
-  }
-  const fold = run.runtime.recordFolds.get(recordHash);
-  if (fold !== undefined) {
-    return acceptStagedSuccessorVote(
-      run,
-      { conversation, fold },
-      ingress,
-      vote.statement,
-    );
-  }
-  const position = headPosition(conversation);
-  if (!run.reanchoring(conversationId) || position === undefined) {
-    return Effect.succeed(ignoredDisposition);
-  }
-  const pending = pendingFor(run.pending, conversationId, position);
-  if (!takesVote(pending, signerAgentId, recordHash)) {
-    return Effect.succeed(ignoredDisposition);
-  }
-  return holdTowardConversion(
-    run,
-    membership,
-    verifyHeldVote(run, membership, ingress, vote),
-    () => {
-      pending.votes.set(signerAgentId, {
-        recordHash,
-        ingress,
-        statement: vote.statement,
-      });
-    },
-  ).pipe(Effect.withSpan("acceptSuccessorVote"));
 }
 
 function acceptPacket(
@@ -713,6 +572,52 @@ function acceptHistoryPacket(
 }
 
 /**
+ * Take a member's action-certified record for a recovering conversation when
+ * it extends the conversation's head. Outside a re-anchor the record alone
+ * is enough, so the protocol phases verify it, stage it and vote for it at
+ * once. During a re-anchor this endpoint verifies and holds it, and converts
+ * to it only once more than `n − q(n)` members have voted it durable.
+ * @param run Recovery run that holds the conversation.
+ * @param ingress Verified Router delivery carrying the record.
+ * @param record The member's action-certified record.
+ * @returns Whether the record was taken or ignored.
+ */
+function acceptSuccessorRecord(
+  run: SuccessorRun,
+  ingress: RouterWorkerIngress<DecodedOuterBody>,
+  record: ActionCertifiedRecord,
+): Effect.Effect<
+  RouterIngressDisposition,
+  RouterWorkerPersistenceError,
+  SqlClient
+> {
+  const { conversationId } = record.recordCore.action;
+  const extended = headExtendedBy(run, record.recordCore.action);
+  if (
+    extended === undefined ||
+    run.runtime.recordFolds.has(record.recordHash)
+  ) {
+    return Effect.succeed(ignoredDisposition);
+  }
+  if (!run.reanchoring(conversationId)) {
+    return run.runtime.phases.acceptIngress(run.runtime, ingress);
+  }
+  const { position, membership } = extended;
+  const pending = pendingFor(run.pending, conversationId, position);
+  if (pending.settled || pending.record?.recordHash === record.recordHash) {
+    return Effect.succeed(ignoredDisposition);
+  }
+  return holdTowardConversion(
+    run,
+    membership,
+    verifyHeldRecord(membership, ingress, record),
+    () => {
+      pending.record = { recordHash: record.recordHash, ingress };
+    },
+  ).pipe(Effect.withSpan("acceptSuccessorRecord"));
+}
+
+/**
  * Route one evidence message by the conversation its statement names. A
  * re-anchor vote goes to the recovery run. A durability vote for a fenced
  * conversation goes to the run's staged successors, and its action
@@ -761,6 +666,18 @@ function acceptEvidence(
   );
 }
 
+/**
+ * Read the engine fence a discontinuity installed.
+ * @param runtime Engine whose recovery state guards action activation.
+ * @returns The pending engine fence, or absence once a recovery run holds
+ *     each conversation's own fence.
+ */
+function currentRecoveryBarrier(
+  runtime: EngineRuntime,
+): Deferred.Deferred<undefined> | undefined {
+  return recoveryFences.get(runtime)?.engine;
+}
+
 function routeEvidence(
   runtime: EngineRuntime,
   ingress: RouterWorkerIngress<DecodedOuterBody>,
@@ -789,6 +706,67 @@ function routeEvidence(
   return run !== undefined && statement.kind === "durability_vote"
     ? acceptSuccessorVote(run.successor, ingress, { message, statement })
     : Effect.succeed(ignoredDisposition);
+}
+
+/**
+ * Take a member's durability vote for a recovering conversation's staged
+ * successor. A successor this endpoint has staged takes the vote in the
+ * protocol phases, which certify it at `q(n)` votes. During a re-anchor, a
+ * vote for a successor it has not staged is held toward converting to it.
+ * @param run Recovery run that holds the conversation.
+ * @param ingress Verified Router delivery carrying the vote.
+ * @param vote The vote's evidence message and its decoded statement.
+ * @param vote.message The vote's evidence message.
+ * @param vote.statement The vote's decoded statement.
+ * @returns Whether the vote was taken or ignored.
+ */
+function acceptSuccessorVote(
+  run: SuccessorRun,
+  ingress: RouterWorkerIngress<DecodedOuterBody>,
+  vote: Readonly<{
+    message: SignedMessage;
+    statement: Extract<EvidenceStatement, { readonly kind: "durability_vote" }>;
+  }>,
+): Effect.Effect<
+  RouterIngressDisposition,
+  RouterWorkerPersistenceError,
+  SqlClient
+> {
+  const { conversationId, recordHash, signerAgentId } = vote.statement;
+  const conversation = run.runtime.conversations.get(conversationId);
+  const membership = run.membership(conversationId);
+  if (conversation === undefined || membership === undefined) {
+    return Effect.succeed(ignoredDisposition);
+  }
+  const fold = run.runtime.recordFolds.get(recordHash);
+  if (fold !== undefined) {
+    return acceptStagedSuccessorVote(
+      run,
+      { conversation, fold },
+      ingress,
+      vote.statement,
+    );
+  }
+  const position = headPosition(conversation);
+  if (!run.reanchoring(conversationId) || position === undefined) {
+    return Effect.succeed(ignoredDisposition);
+  }
+  const pending = pendingFor(run.pending, conversationId, position);
+  if (!takesVote(pending, signerAgentId, recordHash)) {
+    return Effect.succeed(ignoredDisposition);
+  }
+  return holdTowardConversion(
+    run,
+    membership,
+    verifyHeldVote(run, membership, ingress, vote),
+    () => {
+      pending.votes.set(signerAgentId, {
+        recordHash,
+        ingress,
+        statement: vote.statement,
+      });
+    },
+  ).pipe(Effect.withSpan("acceptSuccessorVote"));
 }
 
 /**
@@ -1440,6 +1418,28 @@ function markRecovered(
       Effect.zipRight(endRunOnceRecovered(run)),
     );
   }).pipe(Effect.uninterruptible);
+}
+
+/**
+ * Release a recovered conversation's fence, resuming the sends that wait on
+ * it.
+ * @param runtime Engine whose recovery run recovered the conversation.
+ * @param conversationId Conversation that recovered.
+ * @returns Completion after its waiters resume.
+ */
+function releaseConversation(
+  runtime: EngineRuntime,
+  conversationId: ConversationId,
+): Effect.Effect<void, never, SqlClient> {
+  return Effect.suspend(() => {
+    const fences = recoveryFences.get(runtime);
+    const fence = fences?.conversations.get(conversationId);
+    if (fences === undefined || fence === undefined) {
+      return Effect.void;
+    }
+    fences.conversations.delete(conversationId);
+    return Deferred.succeed(fence, undefined).pipe(Effect.asVoid);
+  });
 }
 
 /**

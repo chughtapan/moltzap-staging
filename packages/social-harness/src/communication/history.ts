@@ -1,5 +1,4 @@
 /** @file Verified application history and live participant pages hide protocol positions. */
-// safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Option, Schema } from "effect";
@@ -50,6 +49,8 @@ import {
   readMemberships,
   readRecentConversation,
 } from "./store/reads.js";
+
+// safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
 
 const conversationCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
@@ -221,7 +222,7 @@ export const readHistory = Effect.fn("Communication.readHistory")(function* (
 }, mapHistoryErrors);
 
 /** Reserved close and malformed traffic stays in the private log. */
-export function isApplicationMessage(message: Message) {
+function isApplicationMessage(message: Message) {
   return messageInterpretation(message).pipe(
     Effect.match({
       onFailure: () => false,

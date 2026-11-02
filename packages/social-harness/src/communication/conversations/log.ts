@@ -277,93 +277,6 @@ export function orderedSignatures(
 }
 
 /**
- * Assemble an action-certified record from its verified parts.
- * @param recordCore Record core the action certificate certifies.
- * @param recordHash Hash of `recordCore`.
- * @param routerAnchor Anchor the record core commits to.
- * @param signatures Action signatures in certificate order.
- * @returns The record, whose certificate names the core's action hash.
- */
-export function actionCertifiedRecord(
-  recordCore: RecordCore,
-  recordHash: RecordHash,
-  routerAnchor: RouterAnchor,
-  signatures: CertificateSignatures,
-): ActionCertifiedRecord {
-  return {
-    sharnessVersion: recordCore.sharnessVersion,
-    kind: "action_certified_record",
-    recordHash,
-    recordCore,
-    routerAnchor,
-    actionCertificate: {
-      sharnessVersion: recordCore.sharnessVersion,
-      kind: "action_certificate",
-      actionHash: recordCore.actionHash,
-      signatures,
-    },
-  };
-}
-
-/**
- * Add a durability certificate without changing the record hash.
- * @param record Action-certified record being completed.
- * @param votes Durability votes in certificate order.
- * @returns The complete certified record.
- */
-export function certifiedRecord(
-  record: ActionCertifiedRecord,
-  votes: CertificateSignatures,
-): CertifiedRecord {
-  return {
-    sharnessVersion: record.recordCore.sharnessVersion,
-    kind: "certified_record",
-    actionCertifiedRecord: record,
-    durabilityCertificate: {
-      sharnessVersion: record.recordCore.sharnessVersion,
-      kind: "durability_certificate",
-      recordHash: record.recordHash,
-      votes,
-    },
-  };
-}
-
-/** Why a stored row failed to decode or to match what it claims to hold. */
-export type StoredRowError =
-  | ClientRepresentationError
-  | ParseResult.ParseError
-  | RouterWorkerPersistenceError;
-
-/**
- * Decode one stored membership, verify it against the Registry signer, and
- * check that the row's conversation and membership hash name it.
- * @param stored Durable membership row.
- * @param registrySignerPublicKey Registry key the member cards verify under.
- * @returns The verified membership. A descriptor that fails to decode or
- *   verify is a representation error; a row whose columns disagree with its
- *   own descriptor is a persistence error.
- */
-export function verifyStoredMembership(
-  stored: StoredMembership,
-  registrySignerPublicKey: AgentPublicKey,
-): Effect.Effect<
-  VerifiedMembership,
-  ClientRepresentationError | RouterWorkerPersistenceError
-> {
-  return decodeCanonical(MembershipDescriptor, stored.canonicalMembership).pipe(
-    Effect.flatMap((descriptor) =>
-      verifyMembershipDescriptor(descriptor, registrySignerPublicKey),
-    ),
-    Effect.flatMap((membership) =>
-      stored.conversationId === membership.descriptor.conversationId &&
-      stored.membershipHash === membership.hash
-        ? Effect.succeed(membership)
-        : Effect.fail(persistenceFailure()),
-    ),
-  );
-}
-
-/**
  * Verify every stored membership row with `verifyStoredMembership`.
  * @param rows Durable membership rows.
  * @param registrySignerPublicKey Registry key the member cards verify under.
@@ -389,65 +302,6 @@ export function verifyStoredMemberships(
             membership,
           ]),
         ),
-    ),
-  );
-}
-
-/**
- * Reconstruct one complete certified record from separately retained
- * evidence. Each evidence row must name the record's conversation, the kind
- * and subject its certificate covers, and its own signer; the signatures are
- * verified once, with the record as a whole.
- * @param membership Verified membership of the record's conversation, which a
- *     MESSAGE record names only by its hash.
- * @param stored Durable record core and signer-attributed evidence rows.
- * @param routerAnchor Verified anchor named by the durable record core.
- * @returns The complete record after all hashes and store projections match.
- */
-export const recordFromStore = (
-  membership: VerifiedMembership,
-  stored: StoredCertifiedRecord,
-  routerAnchor: EngineConversation["currentAnchor"],
-): Effect.Effect<CertifiedRecord, StoredRowError> =>
-  assembleStoredRecord(stored, routerAnchor).pipe(
-    Effect.tap((record) => verifyCertifiedRecord({ record, membership })),
-    Effect.filterOrFail(
-      (record) =>
-        storedRowMatchesCore(
-          stored,
-          record.actionCertifiedRecord.recordCore,
-          membership,
-        ),
-      persistenceFailure,
-    ),
-    Effect.withSpan("recordFromStore"),
-  );
-
-/**
- * Read one stored certified record with the anchor row it names. The anchor
- * row's columns must match the anchor it holds, and the record row must pass
- * `recordFromStore`.
- * @param membership Verified membership of the record's conversation.
- * @param history Retained anchors needed to verify this record.
- * @param stored Durable record row.
- * @returns The complete verified record.
- */
-export function readStoredRecord(
-  membership: VerifiedMembership,
-  history: Pick<EndpointRecovery, "anchors">,
-  stored: StoredCertifiedRecord,
-): Effect.Effect<CertifiedRecord, StoredRowError> {
-  const anchor = history.anchors.find(
-    (candidate) =>
-      candidate.conversationId === stored.conversationId &&
-      candidate.anchorHash === stored.anchorHash,
-  );
-  if (anchor === undefined) {
-    return Effect.fail(persistenceFailure());
-  }
-  return decodeStoredAnchor(membership, anchor).pipe(
-    Effect.flatMap((routerAnchor) =>
-      recordFromStore(membership, stored, routerAnchor),
     ),
   );
 }
@@ -496,6 +350,101 @@ export function readStoredHistory(
       ),
     ),
     Effect.withSpan("readStoredHistory"),
+  );
+}
+
+/** Why a stored row failed to decode or to match what it claims to hold. */
+export type StoredRowError =
+  | ClientRepresentationError
+  | ParseResult.ParseError
+  | RouterWorkerPersistenceError;
+
+/**
+ * Decode one stored membership, verify it against the Registry signer, and
+ * check that the row's conversation and membership hash name it.
+ * @param stored Durable membership row.
+ * @param registrySignerPublicKey Registry key the member cards verify under.
+ * @returns The verified membership. A descriptor that fails to decode or
+ *   verify is a representation error; a row whose columns disagree with its
+ *   own descriptor is a persistence error.
+ */
+export function verifyStoredMembership(
+  stored: StoredMembership,
+  registrySignerPublicKey: AgentPublicKey,
+): Effect.Effect<
+  VerifiedMembership,
+  ClientRepresentationError | RouterWorkerPersistenceError
+> {
+  return decodeCanonical(MembershipDescriptor, stored.canonicalMembership).pipe(
+    Effect.flatMap((descriptor) =>
+      verifyMembershipDescriptor(descriptor, registrySignerPublicKey),
+    ),
+    Effect.flatMap((membership) =>
+      stored.conversationId === membership.descriptor.conversationId &&
+      stored.membershipHash === membership.hash
+        ? Effect.succeed(membership)
+        : Effect.fail(persistenceFailure()),
+    ),
+  );
+}
+
+/**
+ * Read one stored certified record with the anchor row it names. The anchor
+ * row's columns must match the anchor it holds, and the record row must pass
+ * `recordFromStore`.
+ * @param membership Verified membership of the record's conversation.
+ * @param history Retained anchors needed to verify this record.
+ * @param stored Durable record row.
+ * @returns The complete verified record.
+ */
+export function readStoredRecord(
+  membership: VerifiedMembership,
+  history: Pick<EndpointRecovery, "anchors">,
+  stored: StoredCertifiedRecord,
+): Effect.Effect<CertifiedRecord, StoredRowError> {
+  const anchor = history.anchors.find(
+    (candidate) =>
+      candidate.conversationId === stored.conversationId &&
+      candidate.anchorHash === stored.anchorHash,
+  );
+  if (anchor === undefined) {
+    return Effect.fail(persistenceFailure());
+  }
+  return decodeStoredAnchor(membership, anchor).pipe(
+    Effect.flatMap((routerAnchor) =>
+      recordFromStore(membership, stored, routerAnchor),
+    ),
+  );
+}
+
+/**
+ * Reconstruct one complete certified record from separately retained
+ * evidence. Each evidence row must name the record's conversation, the kind
+ * and subject its certificate covers, and its own signer; the signatures are
+ * verified once, with the record as a whole.
+ * @param membership Verified membership of the record's conversation, which a
+ *     MESSAGE record names only by its hash.
+ * @param stored Durable record core and signer-attributed evidence rows.
+ * @param routerAnchor Verified anchor named by the durable record core.
+ * @returns The complete record after all hashes and store projections match.
+ */
+export function recordFromStore(
+  membership: VerifiedMembership,
+  stored: StoredCertifiedRecord,
+  routerAnchor: EngineConversation["currentAnchor"],
+): Effect.Effect<CertifiedRecord, StoredRowError> {
+  return assembleStoredRecord(stored, routerAnchor).pipe(
+    Effect.tap((record) => verifyCertifiedRecord({ record, membership })),
+    Effect.filterOrFail(
+      (record) =>
+        storedRowMatchesCore(
+          stored,
+          record.actionCertifiedRecord.recordCore,
+          membership,
+        ),
+      persistenceFailure,
+    ),
+    Effect.withSpan("recordFromStore"),
   );
 }
 
@@ -630,22 +579,6 @@ export function storedRowMatchesCore(
 }
 
 /**
- * Resolve the latest durable position for one fixed conversation.
- * @param conversationId Private conversation identity to locate.
- * @returns The conversation's recovery snapshot and its matching position row.
- */
-export const durablePosition = (conversationId: ConversationIdValue) =>
-  recoverStoredState(conversationId).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.map((recovery) => ({
-      recovery,
-      position: recovery.positions.find(
-        (candidate) => candidate.conversationId === conversationId,
-      ),
-    })),
-  );
-
-/**
  * The staged record that extends a position but holds no durability
  * certificate yet. At most one exists: its action certificate and this
  * endpoint's proposal lock select one successor per predecessor and anchor.
@@ -695,6 +628,22 @@ export function observedHeadIsResolved(
       )?.previousRecordHash,
   );
 }
+
+/**
+ * Resolve the latest durable position for one fixed conversation.
+ * @param conversationId Private conversation identity to locate.
+ * @returns The conversation's recovery snapshot and its matching position row.
+ */
+export const durablePosition = (conversationId: ConversationIdValue) =>
+  recoverStoredState(conversationId).pipe(
+    Effect.mapError(persistenceFailure),
+    Effect.map((recovery) => ({
+      recovery,
+      position: recovery.positions.find(
+        (candidate) => candidate.conversationId === conversationId,
+      ),
+    })),
+  );
 
 /**
  * Determine whether one observed anchor belongs to the retained anchor chain.
@@ -783,20 +732,6 @@ function recoveryOnlyContainsMemberships(
   return validCollections.every((valid) => valid);
 }
 
-interface HistoryCursor {
-  readonly currentAnchor: EngineConversation["currentAnchor"];
-  readonly currentAnchorHash: string;
-  readonly currentRecordHash: string | null;
-  readonly anchorIndex: number;
-}
-
-interface ConversationHistory {
-  readonly position: EndpointRecovery["positions"][number];
-  readonly anchors: ReadonlyArray<EndpointRecovery["anchors"][number]>;
-  readonly records: ReadonlyArray<EndpointRecovery["certifiedRecords"][number]>;
-  readonly initial: HistoryCursor;
-}
-
 function verifyConversationHistory(
   recovery: EndpointRecovery,
   membership: VerifiedMembership,
@@ -867,6 +802,20 @@ function conversationHistory(
     })),
     Effect.mapError(recoveryFailure),
   );
+}
+
+interface HistoryCursor {
+  readonly currentAnchor: EngineConversation["currentAnchor"];
+  readonly currentAnchorHash: string;
+  readonly currentRecordHash: string | null;
+  readonly anchorIndex: number;
+}
+
+interface ConversationHistory {
+  readonly position: EndpointRecovery["positions"][number];
+  readonly anchors: ReadonlyArray<EndpointRecovery["anchors"][number]>;
+  readonly records: ReadonlyArray<EndpointRecovery["certifiedRecords"][number]>;
+  readonly initial: HistoryCursor;
 }
 
 function validHistoryFoundation(
@@ -980,6 +929,58 @@ function assembleStoredRecord(
       votes,
     );
   });
+}
+
+/**
+ * Assemble an action-certified record from its verified parts.
+ * @param recordCore Record core the action certificate certifies.
+ * @param recordHash Hash of `recordCore`.
+ * @param routerAnchor Anchor the record core commits to.
+ * @param signatures Action signatures in certificate order.
+ * @returns The record, whose certificate names the core's action hash.
+ */
+function actionCertifiedRecord(
+  recordCore: RecordCore,
+  recordHash: RecordHash,
+  routerAnchor: RouterAnchor,
+  signatures: CertificateSignatures,
+): ActionCertifiedRecord {
+  return {
+    sharnessVersion: recordCore.sharnessVersion,
+    kind: "action_certified_record",
+    recordHash,
+    recordCore,
+    routerAnchor,
+    actionCertificate: {
+      sharnessVersion: recordCore.sharnessVersion,
+      kind: "action_certificate",
+      actionHash: recordCore.actionHash,
+      signatures,
+    },
+  };
+}
+
+/**
+ * Add a durability certificate without changing the record hash.
+ * @param record Action-certified record being completed.
+ * @param votes Durability votes in certificate order.
+ * @returns The complete certified record.
+ */
+function certifiedRecord(
+  record: ActionCertifiedRecord,
+  votes: CertificateSignatures,
+): CertifiedRecord {
+  return {
+    sharnessVersion: record.recordCore.sharnessVersion,
+    kind: "certified_record",
+    actionCertifiedRecord: record,
+    durabilityCertificate: {
+      sharnessVersion: record.recordCore.sharnessVersion,
+      kind: "durability_certificate",
+      recordHash: record.recordHash,
+      votes,
+    },
+  };
 }
 
 /**

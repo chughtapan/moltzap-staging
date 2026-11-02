@@ -155,7 +155,7 @@ const NumberSchema = Schema.Struct({
 });
 
 /** One admitted form field: a primitive property of a form-mode schema. */
-export type FormField =
+type FormField =
   | typeof UntitledSingleSelectEnumSchema.Type
   | typeof TitledSingleSelectEnumSchema.Type
   | typeof UntitledMultiSelectEnumSchema.Type

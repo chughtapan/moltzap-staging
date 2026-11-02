@@ -1,6 +1,5 @@
 /** @file Verified agents and real SQL for conversation engine tests. */
 
-import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import type { Content, MsgId } from "../communication/records/values.js";
@@ -24,10 +23,6 @@ import {
   issueTestCard,
   makeTestAuthority,
 } from "./agent-card-fixtures.js";
-import {
-  buildCertifiedFirstMessage,
-  storeCertifiedFirstMessage,
-} from "./certified-history-fixtures.js";
 import { openTestDatabase } from "./communication-test-database.js";
 import { pollCursor } from "./router-worker-fixtures.js";
 
@@ -90,27 +85,6 @@ export function authoredMessage(
       },
     );
   }).pipe(Effect.orDie, Effect.withSpan("authoredMessage"));
-}
-
-/** A signed FIRST_MESSAGE seeds the default conversation without network traffic. */
-export function seedIncoming(
-  subject: Pick<Fixture, "local" | "remote" | "membership" | "store" | "sql">,
-  authoredLocally = false,
-) {
-  return Effect.gen(function* () {
-    const { local, remote, membership, store } = subject;
-    const record = yield* buildCertifiedFirstMessage(
-      authoredLocally ? remote : local,
-      authoredLocally ? local : remote,
-      membership,
-      anchor.routerInstanceId,
-    );
-    yield* storeCertifiedFirstMessage(store, local.card, membership, record);
-    return record;
-  }).pipe(
-    Effect.provideService(SqlClient, subject.sql),
-    Effect.withSpan("seedIncoming"),
-  );
 }
 
 /** One test agent's signing authority and the card the test Registry issued it. */

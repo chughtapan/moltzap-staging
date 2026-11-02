@@ -8,22 +8,22 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Encoding, Redacted, Schema } from "effect";
 import { fileURLToPath } from "node:url";
 import {
-  AgentCardIssuedAt as agentCardIssuedAt,
-  issueAgentCard,
+  AgentIdentityCardIssuedAt as agentIdentityCardIssuedAt,
+  issueAgentIdentityCard,
 } from "../packages/registry/dist/issuance.js";
-import { AgentIdentityCard } from "../packages/social-harness/dist/identity/agent.js";
+import {
+  AgentId,
+  AgentIdentityCard,
+  AgentName,
+  PrincipalId,
+} from "../packages/social-harness/dist/identity/agent.js";
 import {
   EnvelopeId,
   SignedMessage,
 } from "../packages/social-harness/dist/identity/envelope/signed-message.js";
 import {
-  AgentId,
-  AgentName,
-  PrincipalId,
-} from "../packages/social-harness/dist/identity/agent.js";
-import {
-  AgentSigningAuthority,
   AgentPublicKey,
+  AgentSigningAuthority,
 } from "../packages/social-harness/dist/identity/keys.js";
 import { WireVersions } from "../packages/social-harness/dist/identity/wire-version.js";
 
@@ -47,18 +47,18 @@ const retainedVersion = "2099.101.0";
 const generate = Effect.gen(function* () {
   const registryAuthority = yield* testAuthority(1);
   const signingAuthority = yield* testAuthority(2);
-  const agentCard = yield* issueAgentCard({
+  const agentCard = yield* issueAgentIdentityCard({
     agentId: Schema.decodeUnknownSync(AgentId)(identifier("agt_", 1)),
     principalId: Schema.decodeUnknownSync(PrincipalId)(identifier("prn_", 2)),
     agentName: Schema.decodeUnknownSync(AgentName)("http-signer"),
     publicKey: AgentSigningAuthority.publicKey(signingAuthority),
-    issuedAt: Schema.decodeUnknownSync(agentCardIssuedAt)(
+    issuedAt: Schema.decodeUnknownSync(agentIdentityCardIssuedAt)(
       "2026-07-30T12:00:00Z",
     ),
     registrySigningAuthority: registryAuthority,
   });
   const message = yield* SignedMessage.sign({
-    agentCard,
+    identityCard: agentCard,
     signingAuthority,
     recipientAgentIds: new Set([agentCard.agentId]),
     envelopeId: Schema.decodeUnknownSync(EnvelopeId)(identifier("env_", 2)),

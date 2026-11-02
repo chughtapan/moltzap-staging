@@ -97,7 +97,7 @@ export class CredentialError extends Data.TaggedError("CredentialError")<{
  * base64 padding, exactly as the file holds it with no surrounding whitespace.
  * Other bearer credentials narrow it.
  */
-export const credentialText = Schema.String.pipe(
+const credentialText = Schema.String.pipe(
   Schema.minLength(8),
   Schema.maxLength(512),
   Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
@@ -153,7 +153,7 @@ export const readCredential = (
  * @param path Redacted location of the private key file.
  * @returns Opaque signing authority for the configured agent.
  */
-export const loadSigningAuthority = (
+const loadSigningAuthority = (
   path: Redacted.Redacted,
 ): Effect.Effect<AgentSigningAuthority, CredentialError> =>
   readExactUtf8(path).pipe(
@@ -170,7 +170,7 @@ export const loadSigningAuthority = (
  * @param path Redacted location of the admission credential file.
  * @returns The redacted admission credential.
  */
-export const loadAdmissionCredential = (
+const loadAdmissionCredential = (
   path: Redacted.Redacted,
 ): Effect.Effect<Redacted.Redacted, CredentialError> =>
   readCredential(path, credentialText);

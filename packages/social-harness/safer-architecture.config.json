@@ -35,10 +35,6 @@
       "reason": "Identity and registration service"
     },
     {
-      "file": "identity/index.ts",
-      "reason": "Identity public contracts"
-    },
-    {
       "file": "identity/authentication/index.ts",
       "reason": "Request authentication service"
     },
@@ -101,10 +97,6 @@
     {
       "file": "communication/conversations/errors.ts",
       "reason": "Public send failures"
-    },
-    {
-      "file": "firewall/index.ts",
-      "reason": "Policy service public exports"
     },
     {
       "file": "firewall/service.ts",
@@ -229,7 +221,6 @@
         "src/identity"
       ],
       "entrypoints": [
-        "src/identity/index.ts",
         "src/identity/agent.ts",
         "src/identity/keys.ts",
         "src/identity/service.ts",
@@ -263,7 +254,6 @@
         "src/firewall"
       ],
       "entrypoints": [
-        "src/firewall/index.ts",
         "src/firewall/service.ts",
         "src/firewall/check.ts",
         "src/firewall/rules/config.ts"

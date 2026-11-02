@@ -42,7 +42,7 @@ export function readWork(fs: FileSystem.FileSystem, directory: string) {
 }
 
 /** Absence is normal while a reference is being published or released. Other I/O failures remain failures. */
-export function readOptionalFile(fs: FileSystem.FileSystem, path: string) {
+function readOptionalFile(fs: FileSystem.FileSystem, path: string) {
   return fs.readFileString(path).pipe(
     Effect.catchTags({
       SystemError: (error) =>

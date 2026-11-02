@@ -101,19 +101,6 @@ export class InternalServerError extends Schema.TaggedError<InternalServerError>
   {},
 ) {}
 
-/** Closed failures represented by the shared HTTP error envelope. */
-export type HttpEnvelopeError =
-  | MalformedRequestError
-  | AuthenticationFailedError
-  | RouteNotFoundError
-  | MethodNotAllowedError
-  | VersionMismatchError
-  | PayloadTooLargeError
-  | UnsupportedMediaTypeError
-  | OverloadedError
-  | UnavailableError
-  | InternalServerError;
-
 /** Service adapters construct and decode the same closed HTTP envelope failures as their clients. */
 export const httpErrors = Object.freeze({
   AuthenticationFailedError,

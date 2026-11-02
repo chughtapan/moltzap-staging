@@ -4,7 +4,6 @@ export { CommunicationError } from "./errors.js";
 /** Messages carry application content and decoded request meaning. */
 export {
   Message,
-  messageMembers,
   MessageOperation,
   PaginatedRequest,
   PaginatedResult,
@@ -21,7 +20,6 @@ export {
   DeadlineSeconds,
   DeclineResponse,
   decodeCollectiveFailure,
-  EpochMillis,
   RequestError,
   RequestOperation,
 } from "./requests/contracts.js";
@@ -38,9 +36,7 @@ export {
 /** One scoped service owns delivery, request completion and offline history. */
 export {
   Communication,
-  type CommunicationSettings,
   type Conversation,
-  type ConversationPage,
   type ConversationQuery,
   type HistoryPage,
   type HistoryQuery,

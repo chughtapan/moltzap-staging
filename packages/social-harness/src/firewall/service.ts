@@ -67,7 +67,7 @@ export interface ResultEvidence {
 const completedDecision = Symbol("CompletedDecision");
 
 /** Immutable completed assessment data. Pass it unchanged to saveDecisions. */
-export interface CompletedDecision {
+interface CompletedDecision {
   readonly checkId: string;
   readonly direction: Direction;
   /** @internal */
@@ -158,7 +158,7 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
 }
 
 /** Policy permission applies to the immutable outgoing value supplied to the check. */
-export type OutgoingDecision = {
+type OutgoingDecision = {
   readonly decisions: readonly CompletedDecision[];
 } & (
   | { readonly kind: "allowed"; readonly guidance?: CheckedGuidance }
@@ -716,11 +716,3 @@ function referenceId(value: string): string {
 
 /** Construction settings and rule types are shared with the policy owner. */
 export type { FirewallOptions } from "./rules/service.js";
-/** Policy documents are decoded at their configuration boundary. */
-export {
-  type FirewallSettings,
-  loadMessagePolicy,
-  MessagePolicy,
-  type TextPolicySettings,
-  type TextRule,
-} from "./rules/config.js";

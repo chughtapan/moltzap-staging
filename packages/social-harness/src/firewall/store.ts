@@ -152,29 +152,6 @@ export function writeFirewallPolicy(
   );
 }
 
-/** Recent edits use reverse insertion order when their activation times match. */
-export function readFirewallActivations(request: {
-  readonly since?: number;
-}): Effect.Effect<
-  readonly FirewallActivation[],
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const read = findAll({
-      Request: time,
-      Result: activationRow,
-      execute: (since) =>
-        sql`SELECT activated_at AS time, active_revision AS activeRevision, added_rule_ids AS addedRuleIds, removed_rule_ids AS removedRuleIds FROM firewall_activations WHERE activated_at >= ${since} ORDER BY activated_at DESC, sequence DESC LIMIT 100`,
-    });
-    return yield* read(request.since ?? 0);
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("readFirewallActivations"),
-  );
-}
-
 /** Repeating an exact save retains its original database timestamp and evidence. */
 export function saveCheckDecision(
   completion: FirewallCompletion,
@@ -254,6 +231,29 @@ export function readDecisions(request: {
   }).pipe(
     Effect.mapError(persistenceFailure),
     Effect.withSpan("readDecisions"),
+  );
+}
+
+/** Recent edits use reverse insertion order when their activation times match. */
+function readFirewallActivations(request: {
+  readonly since?: number;
+}): Effect.Effect<
+  readonly FirewallActivation[],
+  FirewallPolicyError,
+  SqlClient.SqlClient
+> {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const read = findAll({
+      Request: time,
+      Result: activationRow,
+      execute: (since) =>
+        sql`SELECT activated_at AS time, active_revision AS activeRevision, added_rule_ids AS addedRuleIds, removed_rule_ids AS removedRuleIds FROM firewall_activations WHERE activated_at >= ${since} ORDER BY activated_at DESC, sequence DESC LIMIT 100`,
+    });
+    return yield* read(request.since ?? 0);
+  }).pipe(
+    Effect.mapError(persistenceFailure),
+    Effect.withSpan("readFirewallActivations"),
   );
 }
 

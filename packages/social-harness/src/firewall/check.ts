@@ -623,8 +623,19 @@ export function decidingRules(
   });
 }
 
+/** Freeze newly decoded data that no caller owns. */
+export function freezeData(value: unknown): void {
+  if (typeof value !== "object" || value === null) {
+    return;
+  }
+  for (const child of Object.values(value)) {
+    freezeData(child);
+  }
+  Object.freeze(value);
+}
+
 /** Detaches and freezes message evidence before assessment or retention can observe it. */
-export function captureInput(event: MessageEvent, context: MessageContext) {
+function captureInput(event: MessageEvent, context: MessageContext) {
   return Effect.gen(function* () {
     const capturedEvent = yield* decodeFrozen(messageEvent, event).pipe(
       Effect.catchTag("ParseError", () =>
@@ -638,17 +649,6 @@ export function captureInput(event: MessageEvent, context: MessageContext) {
     );
     return Object.freeze({ event: capturedEvent, context: capturedContext });
   }).pipe(Effect.withSpan("Firewall.captureInput"));
-}
-
-/** Freeze newly decoded data that no caller owns. */
-export function freezeData(value: unknown): void {
-  if (typeof value !== "object" || value === null) {
-    return;
-  }
-  for (const child of Object.values(value)) {
-    freezeData(child);
-  }
-  Object.freeze(value);
 }
 
 /**

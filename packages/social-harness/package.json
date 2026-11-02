@@ -114,8 +114,6 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@modelcontextprotocol/node": "catalog:",
-    "@modelcontextprotocol/server": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
     "@opentelemetry/resources": "catalog:",
@@ -143,7 +141,6 @@
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "undici": "catalog:",
     "vitest": "catalog:",
     "fast-check": "catalog:"
   },
