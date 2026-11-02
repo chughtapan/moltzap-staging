@@ -48,11 +48,8 @@ import {
   waitForExit,
   waitForHealthStatus,
   waitForPgliteListening,
-} from "./__tests__/registry-process.js";
-import {
-  contentDigest,
-  encodeCanonicalJson,
-} from "./__tests__/request-fixtures.js";
+} from "./process.js";
+import { contentDigest, encodeCanonicalJson } from "./requests.js";
 
 const REGISTERED_KIND = "registered";
 const NOT_FOUND_KIND = "not_found";
@@ -992,11 +989,11 @@ const makeExternalConsumer = Effect.gen(function* () {
   const scopeDirectory = join(directory, "node_modules", "@moltzap");
   yield* fileSystem.makeDirectory(scopeDirectory, { recursive: true });
   yield* fileSystem.symlink(
-    fileURLToPath(new URL("..", import.meta.url)),
+    fileURLToPath(new URL("../../../packages/registry", import.meta.url)),
     join(scopeDirectory, "registry"),
   );
   yield* fileSystem.symlink(
-    fileURLToPath(new URL("../../social-harness", import.meta.url)),
+    fileURLToPath(new URL("../../../packages/social-harness", import.meta.url)),
     join(scopeDirectory, "social-harness"),
   );
   return directory;

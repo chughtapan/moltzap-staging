@@ -33,6 +33,11 @@ import {
 } from "../encoding/canonical-json.js";
 import { hasCanonicalBase64UrlLength } from "../encoding/identifier.js";
 import {
+  LIVE_WIRE_VERSIONS,
+  WIRE_VERSION_PATTERN,
+  WireVersions,
+} from "../wire-version.js";
+import {
   AgentId,
   type VerifiedAgentIdentityCard,
   verifiedAgentIdentityCardSchema,
@@ -46,11 +51,6 @@ import {
   ed25519VerificationKey,
   hasCanonicalEd25519SignatureEncoding,
 } from "./keys.js";
-import {
-  LIVE_WIRE_VERSIONS,
-  WIRE_VERSION_PATTERN,
-  WireVersions,
-} from "./wire-version.js";
 
 // safer-arch-ignore no-module-cycle: Registry is imported only for its result type; authentication has no runtime dependency on its client.
 

@@ -59,7 +59,7 @@ import {
 } from "../../identity/agent.js";
 import { SignedMessage } from "../../identity/envelope.js";
 import { AgentPublicKey } from "../../identity/keys.js";
-import { WIRE_VERSION } from "../../identity/wire-version.js";
+import { WIRE_VERSION } from "../../wire-version.js";
 import {
   compareAgentIds,
   Message,

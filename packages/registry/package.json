@@ -81,17 +81,6 @@
           "command": "vitest run --config vitest.config.ts"
         }
       },
-      "test:integration": {
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "build",
-          "^build"
-        ],
-        "options": {
-          "cwd": "packages/registry",
-          "command": "vitest run --config vitest.integration.config.ts"
-        }
-      },
       "lint": {
         "executor": "nx:run-commands",
         "options": {
@@ -115,18 +104,14 @@
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
     "effect": "catalog:",
-    "@moltzap/social-harness": "workspace:*",
-    "@electric-sql/pglite": "catalog:",
-    "@electric-sql/pglite-socket": "catalog:"
+    "@moltzap/social-harness": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@testcontainers/postgresql": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "http-message-signatures": "catalog:"
+    "vitest": "catalog:"
   },
   "private": true
 }

@@ -62,7 +62,7 @@ export {
   type ReadHistoryResult,
 } from "./harness/service.js";
 /** Registration failures are distinct from communication startup. */
-export { RegistrationError } from "./identity/identity.js";
+export { RegistrationError } from "./identity/service.js";
 /** Optional traffic export records admitted incoming content and completed sends. */
 export { HistoryExportRecord } from "./harness/message-log.js";
 /** Message, question, answer and collective result values. */
@@ -115,7 +115,7 @@ export {
   type VerifiedSignedMessage,
 } from "./identity/envelope.js";
 /** Wire versions emitted and accepted by this release. */
-export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
+export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./wire-version.js";
 /** Package version reported by the daemon. */
 export { packageVersion } from "./release.js";
 /** Notification name that prompts clients to read their saved inbox. */

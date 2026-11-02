@@ -198,7 +198,7 @@ function seedPrefix(
     const path = yield* Path.Path;
     const packageRoot = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
-      "../../..",
+      "../..",
     );
     const nodeModules = path.dirname(path.dirname(packageRoot));
     if (path.basename(nodeModules) !== "node_modules") {

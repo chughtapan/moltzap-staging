@@ -1,4 +1,10 @@
 /** @file Runs a shared daemon fixture in the image under test. */
+import { Duration, Effect } from "effect";
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { chmod } from "node:fs/promises";
+import { dirname } from "node:path";
+import { promisify } from "node:util";
 import {
   acquireDaemonProcess,
   awaitReady,
@@ -6,13 +12,7 @@ import {
   type DaemonProcessFixture,
   managedProcess,
   processTestError,
-} from "@moltzap/integration-tests/daemon-process-harness";
-import { Duration, Effect } from "effect";
-import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { chmod } from "node:fs/promises";
-import { dirname } from "node:path";
-import { promisify } from "node:util";
+} from "../daemon/daemon-process-harness.ts";
 
 const docker = promisify(execFile);
 

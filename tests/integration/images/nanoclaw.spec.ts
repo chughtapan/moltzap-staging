@@ -1,9 +1,4 @@
 /** @file Exercises NanoClaw native inbox and sends against the disposable network. */
-import {
-  type Network,
-  type Endpoint as NetworkEndpoint,
-  startNetwork,
-} from "@moltzap/integration-tests/process-network";
 import { replyAddress } from "@moltzap/social-harness";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -12,9 +7,12 @@ import { describe, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { inspect, isDeepStrictEqual, promisify } from "node:util";
-
-import { startDaemonContainer } from "../tests/daemon-container.ts";
-import { isRecord } from "../tests/test-support.ts";
+import {
+  type Network,
+  type Endpoint as NetworkEndpoint,
+  startNetwork,
+} from "../process-network.ts";
+import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";
 const SKIP =
@@ -28,7 +26,7 @@ const PROBE_TIMEOUT_MILLIS = 180_000;
 const PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
 /** The prefix of the probe's one report line on stdout. */
 const PROBE_REPORT_PREFIX = "nanoclaw probe report: ";
-const PROBE = fileURLToPath(new URL("integration-probe.ts", import.meta.url));
+const PROBE = fileURLToPath(new URL("nanoclaw-probe.ts", import.meta.url));
 /** Where the probe is mounted inside the image's own file system. */
 // eslint-disable-next-line sonarjs/publicly-writable-directories -- a path inside the disposable container, not on the host.
 const PROBE_IN_IMAGE = "/tmp/integration-probe.ts";
@@ -660,4 +658,9 @@ async function withNetwork(
 
 function asRecord(value: unknown): Readonly<Record<string, unknown>> {
   return isRecord(value) ? value : {};
+}
+
+/** Rejects null and arrays before reading a JSON object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

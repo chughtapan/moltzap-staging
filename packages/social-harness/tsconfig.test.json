@@ -13,8 +13,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "*.ts",
-    "integration/**/*.ts"
+    "*.ts"
   ],
   "exclude": [
     "dist"

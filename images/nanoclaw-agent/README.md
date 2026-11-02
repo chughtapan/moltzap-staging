@@ -76,7 +76,7 @@ the runner's tool and final output. After building the daemon image, run:
 ```sh
 DAEMON_INTEGRATION_IMAGE=social-harness-daemon:local \
 NANOCLAW_INTEGRATION_IMAGE=social-harness-nanoclaw:local \
-  pnpm nx run @social-harness/nanoclaw-agent:test:live
+  pnpm nx run @moltzap/integration-tests:test:live
 ```
 
 These tests run separate host and daemon containers sharing one network

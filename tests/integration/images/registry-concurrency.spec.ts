@@ -5,13 +5,13 @@
  * PGlite server, Registry and Router a run network hosts, the Registry on the
  * single PostgreSQL connection configured by the local fixture.
  */
+import assert from "node:assert/strict";
+import { after, before, test } from "node:test";
 import {
   type Endpoint,
   type Network,
   startNetwork,
-} from "@moltzap/integration-tests/process-network";
-import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+} from "../process-network.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 /**

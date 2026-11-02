@@ -25,8 +25,8 @@ import {
   type AgentPublicKey,
   AgentSigningAuthority,
 } from "../../identity/keys.js";
-import { wireVersions } from "../../identity/wire-version.js";
 import { exitOutcome, markRetries } from "../../tracing.js";
+import { wireVersions } from "../../wire-version.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,

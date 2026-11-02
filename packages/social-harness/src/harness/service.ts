@@ -60,7 +60,7 @@ import {
   IdentityError,
   type RegistrationError,
   type RegistrationRequest,
-} from "../identity/identity.js";
+} from "../identity/service.js";
 import {
   catalogCursor,
   DeliveryAcknowledgeError,

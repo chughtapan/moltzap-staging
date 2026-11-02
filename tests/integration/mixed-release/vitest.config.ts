@@ -6,8 +6,8 @@ export default defineConfig({
   ssr: { resolve: { conditions: ["sharness-test", "sharness-internal"] } },
   test: {
     include: [
-      "tests/integration/mixed-release/mixed-release.integration.spec.ts",
-      "tests/integration/mixed-release/launcher-upgrades.integration.spec.ts",
+      "tests/integration/mixed-release/mixed-release.spec.ts",
+      "tests/integration/mixed-release/launcher-upgrades.spec.ts",
     ],
     maxWorkers: 1,
     passWithNoTests: false,

@@ -27,7 +27,7 @@ import {
   AgentPublicKey,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
 } from "../identity/keys.js";
-import { WIRE_VERSION, WireVersions } from "../identity/wire-version.js";
+import { WIRE_VERSION, WireVersions } from "../wire-version.js";
 import {
   Content,
   type Content as ContentValue,

@@ -56,7 +56,7 @@ import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
   WireVersions,
-} from "../../identity/wire-version.js";
+} from "../../wire-version.js";
 import { SendError } from "../errors.js";
 import { Content, Message, messageFromIntent, mintMsgId } from "../messages.js";
 import {

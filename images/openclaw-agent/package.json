@@ -8,19 +8,8 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "images/openclaw-agent",
-          "command": "node --test --test-timeout=180000 $(find . -maxdepth 1 -name '*.spec.ts' ! -name '*.live.spec.ts' -print)"
+          "command": "node --test --test-timeout=180000 *.spec.ts"
         }
-      },
-      "test:live": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/openclaw-agent",
-          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 *.live.spec.ts"
-        },
-        "cache": false,
-        "dependsOn": [
-          "^build"
-        ]
       },
       "typecheck": {
         "executor": "nx:run-commands",
@@ -52,14 +41,9 @@
           "command": "bash images/openclaw-agent/smoke.sh social-harness-openclaw:local"
         }
       }
-    },
-    "implicitDependencies": [
-      "@social-harness/image-tests"
-    ]
+    }
   },
   "devDependencies": {
-    "openclaw": "catalog:",
-    "tsx": "catalog:",
-    "@moltzap/integration-tests": "workspace:*"
+    "openclaw": "catalog:"
   }
 }

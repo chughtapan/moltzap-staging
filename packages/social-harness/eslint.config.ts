@@ -2,7 +2,6 @@
  * @file Package ESLint configuration: the shared workspace preset plus the
  * rules that keep envelope signing in its owning modules.
  */
-import { plugin as guard } from "eslint-plugin-agent-code-guard";
 import { packageEslintConfig } from "../../eslint.shared.js";
 
 /** Test files, which sign peer envelopes directly. */
@@ -86,10 +85,6 @@ export default [
     tsconfigRootDir: import.meta.dirname,
   }),
   {
-    ...guard.configs.integrationTests,
-    files: ["integration/**/*.ts"],
-  },
-  {
     files: [
       "src/identity/authentication.ts",
       "src/identity/authentication.spec.ts",
@@ -154,7 +149,7 @@ export default [
       "src/communication/router/worker.ts",
       "src/communication/requests.ts",
       "src/communication/records.spec.ts",
-      "src/harness/launcher/installation.ts",
+      "src/launcher/installation.ts",
       "src/communication/conversations/log.ts",
     ],
     rules: {

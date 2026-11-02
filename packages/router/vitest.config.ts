@@ -6,7 +6,6 @@ export default defineConfig({
   ssr: { resolve: { conditions: ["sharness-test", "sharness-internal"] } },
   test: {
     include: ["src/**/*.spec.ts"],
-    exclude: ["src/**/*.integration.spec.ts"],
     passWithNoTests: false,
   },
 });

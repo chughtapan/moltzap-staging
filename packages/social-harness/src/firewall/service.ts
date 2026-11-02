@@ -35,7 +35,7 @@ import {
   sameBytes,
 } from "../encoding/canonical-json.js";
 import { AgentCard, agentCardOf } from "../identity/agent.js";
-import { Identity } from "../identity/identity.js";
+import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
   type Message as AssessmentText,

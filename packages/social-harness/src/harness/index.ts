@@ -24,10 +24,10 @@ import {
   MessagePolicyConfigurationError,
 } from "../firewall/rules.js";
 import { Firewall, type FirewallOptions } from "../firewall/service.js";
-import { Identity, type RegistrationError } from "../identity/identity.js";
 import { Registry } from "../identity/registry.js";
-import { WIRE_VERSION } from "../identity/wire-version.js";
+import { Identity, type RegistrationError } from "../identity/service.js";
 import { packageVersion } from "../release.js";
+import { WIRE_VERSION } from "../wire-version.js";
 import {
   type DaemonBootstrap,
   DaemonConfigurationError,
@@ -330,7 +330,7 @@ export {
   type IdentityState,
   RegistrationError,
   type RegistrationRequest,
-} from "../identity/identity.js";
+} from "../identity/service.js";
 /** Message transport owns requests, replies and verified history. */
 export { Communication, CommunicationError } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */

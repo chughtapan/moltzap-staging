@@ -42,8 +42,8 @@ import {
   AgentName,
   PrincipalId,
 } from "../../identity/agent.js";
-import { RegistrationError } from "../../identity/identity.js";
 import { RegistrationId } from "../../identity/registry.js";
+import { RegistrationError } from "../../identity/service.js";
 import {
   DeliveryAcknowledgeError,
   DeliveryToken,

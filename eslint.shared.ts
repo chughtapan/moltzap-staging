@@ -40,7 +40,6 @@ const configModuleRules = {
 };
 
 const PACKAGE_SOURCE_FILES = [
-  "integration/**/*.ts",
   "src/**/*.ts",
   "src/**/*.cts",
   "src/**/*.mts",
@@ -50,10 +49,7 @@ const PACKAGE_SOURCE_FILES = [
 ];
 
 const TEST_SUPPORT_FILES = [
-  "integration/**/*.ts",
   "src/**/*.spec.ts",
-  "src/**/*.integration.spec.ts",
-  "src/**/*.int.spec.ts",
   "src/__tests__/**/*.ts",
   "src/**/__tests__/**/*.ts",
   "src/testing/**/*.ts",
@@ -154,8 +150,7 @@ const strictPlugins = {
 
 /**
  * Flat configuration for one package: the strict preset on sources, scripts,
- * and root configuration modules, plus the test, integration-test, and
- * barrel-documentation presets.
+ * and root configuration modules, plus the test and barrel-documentation presets.
  */
 export function packageEslintConfig(options: PackageEslintOptions) {
   const strictRules = makeStrictRules(options.maxLines);
@@ -178,11 +173,6 @@ export function packageEslintConfig(options: PackageEslintOptions) {
       },
     },
     makeStrictBlock(TEST_SUPPORT_FILES, languageOptions, strictRules),
-    makePresetBlock(
-      ["src/**/*.integration.spec.ts", "integration/**/*.integration.spec.ts"],
-      languageOptions,
-      guard.configs.integrationTests,
-    ),
     {
       ...makePresetBlock(
         ["src/**/index.ts"],
@@ -270,7 +260,7 @@ export function agentImageEslintConfig(tsconfigRootDir: string) {
 /** Flat configuration for tests/integration: the strict preset on every TypeScript file plus the integration-test preset on process suites. */
 export function integrationEslintConfig(
   tsconfigRootDir: string,
-  testFiles: readonly string[] = ["**/*.integration.spec.ts"],
+  testFiles: readonly string[] = ["**/*.spec.ts"],
 ) {
   const languageOptions = makeTsLanguageOptions(tsconfigRootDir, [
     "./tsconfig.json",

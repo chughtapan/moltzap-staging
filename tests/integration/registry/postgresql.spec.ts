@@ -1,25 +1,32 @@
 /** @file PostgreSQL Registry persistence, restart, admission, and outage integration tests. */
 
 import * as Reactivity from "@effect/experimental/Reactivity";
-import { FileSystem, HttpServerRequest } from "@effect/platform";
+import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
+import { layer as registryLayer } from "@moltzap/registry";
 import {
   AgentIdentityCard,
   AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
   WIRE_VERSION,
 } from "@moltzap/social-harness";
-import { httpErrors } from "@moltzap/social-harness/internal";
 import { Registry } from "@moltzap/social-harness/service";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,
 } from "@testcontainers/postgresql";
-import { Duration, Effect, Either, Match, Redacted, Schema } from "effect";
+import {
+  ConfigProvider,
+  Duration,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { clockAt } from "./__tests__/clock.js";
+import { clockAt } from "./clock.js";
 import {
   BOOTSTRAP_SIGNATURE_INTERVAL_SECONDS,
   callRegister,
@@ -40,18 +47,16 @@ import {
   stopProcess,
   waitForExit,
   waitForHealthStatus,
-} from "./__tests__/registry-process.js";
-import { verifyBootstrapRegistration } from "./admission.js";
-import { initializeRegistryStorage, makeRegistryStorage } from "./storage.js";
+} from "./process.js";
 
-/* eslint-disable @typescript-eslint/naming-convention -- Closed HTTP error constructors retain their class names when bound from the service capability. */
-const { AuthenticationFailedError } = httpErrors;
-/* eslint-enable @typescript-eslint/naming-convention -- Restore variable naming after binding error constructors. */
-
+const OK_STATUS = 200;
+const UNAUTHORIZED_STATUS = 401;
+const AUTHENTICATION_FAILED_BODY = '{"error":"authentication_failed"}';
 const SERVICE_UNAVAILABLE_STATUS = 503;
 const EMPTY_BODY = "";
 const FOUND_KIND = "found";
 const REGISTERED_KIND = "registered";
+const SIGNER_MISMATCH_REASON = "signer-mismatch";
 /** Requests in each concurrency race: exactly one wins and the others are refused. */
 const CONTENDERS = 8;
 
@@ -115,7 +120,6 @@ const makePostgreSqlRegistrySetup = Effect.gen(function* () {
     environment,
     origin,
     registrySignerPublicKey,
-    signingAuthority,
   };
 });
 
@@ -192,55 +196,40 @@ it("persists across Registry restart on real PostgreSQL and reports a database o
   return Effect.runPromise(realPostgreSqlBehavior);
 }, 180_000);
 
-it.each([{ mismatch: "signer", reason: "signer-mismatch" }])(
-  "refuses a metadata $mismatch mismatch through storage and process startup",
-  ({ mismatch, reason }) => {
-    expect.hasAssertions();
-    return Effect.runPromise(
-      Effect.gen(function* () {
-        const setup = yield* makePostgreSqlRegistrySetup;
-        const sql = yield* PgClient.make({
-          url: Redacted.make(setup.container.getConnectionUri()),
-        }).pipe(Effect.provide(Reactivity.layer));
-        yield* initializeRegistryStorage({
-          sql,
-          registrySignerPublicKey: setup.registrySignerPublicKey,
-        });
-        yield* sql`UPDATE sharness_registry_metadata SET signer_thumbprint = 'different-signer'`;
-
-        const initialized = yield* initializeRegistryStorage({
-          sql,
-          registrySignerPublicKey: setup.registrySignerPublicKey,
-        }).pipe(Effect.either);
-        Either.match(initialized, {
-          onLeft: (error) => {
-            expect(error.reason).toBe(reason);
-          },
-          onRight: () => {
-            expect.fail(`Registry accepted a metadata ${mismatch} mismatch`);
-          },
-        });
-        const process = yield* managedProcess(
-          REGISTRY_BINARY,
-          [],
-          setup.environment,
-        );
-        yield* waitForExit(process).pipe(
-          Effect.timeoutFail({
-            duration: Duration.seconds(10),
-            onTimeout: () =>
-              processTestError(
-                `Registry did not refuse the metadata mismatch\n${process.logs()}`,
-              ),
-          }),
-        );
-        expect(process.child.exitCode).not.toBe(0);
-        expect(process.logs()).toContain(`storage (${reason})`);
-      }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
-    );
-  },
-  180_000,
-);
+it("refuses a signer mismatch at process startup", () => {
+  expect.hasAssertions();
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const setup = yield* makePostgreSqlRegistrySetup;
+      const sql = yield* PgClient.make({
+        url: Redacted.make(setup.container.getConnectionUri()),
+      }).pipe(Effect.provide(Reactivity.layer));
+      const first = yield* startReadyRegistry(setup.environment, setup.origin);
+      yield* stopProcess(first);
+      yield* sql`UPDATE sharness_registry_metadata SET signer_thumbprint = 'different-signer'`;
+      const process = yield* managedProcess(
+        REGISTRY_BINARY,
+        [],
+        setup.environment,
+      );
+      yield* waitForExit(process).pipe(
+        Effect.timeoutFail({
+          duration: Duration.seconds(10),
+          onTimeout: () =>
+            processTestError(
+              `Registry did not refuse the metadata mismatch\n${process.logs()}`,
+            ),
+        }),
+      );
+      expect(process.child.exitCode).not.toBe(0);
+      expect(process.logs()).toContain(SIGNER_MISMATCH_REASON);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodeHttpClient.layer),
+    ),
+  );
+}, 180_000);
 
 it(
   "refuses an occupied schema without the current ledger before changing any table",
@@ -255,23 +244,7 @@ it(
         yield* sql`INSERT INTO unrecognized_state VALUES ('unchanged')`;
         const tables =
           yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename`;
-        const initialized = yield* initializeRegistryStorage({
-          sql,
-          registrySignerPublicKey: setup.registrySignerPublicKey,
-        }).pipe(Effect.either);
         const incompatibleReason = "incompatible";
-        expect(
-          Either.match(initialized, {
-            onLeft: (error) => error.reason,
-            onRight: () => undefined,
-          }),
-        ).toBe(incompatibleReason);
-        expect(
-          yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename`,
-        ).toEqual(tables);
-        expect(yield* sql`SELECT retained FROM unrecognized_state`).toEqual([
-          { retained: "unchanged" },
-        ]);
         const process = yield* managedProcess(
           REGISTRY_BINARY,
           [],
@@ -280,6 +253,12 @@ it(
         yield* waitForExit(process);
         expect(process.child.exitCode).not.toBe(0);
         expect(process.logs()).toContain(incompatibleReason);
+        expect(
+          yield* sql`SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename`,
+        ).toEqual(tables);
+        expect(yield* sql`SELECT retained FROM unrecognized_state`).toEqual([
+          { retained: "unchanged" },
+        ]);
       }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
     ),
   180_000,
@@ -294,24 +273,9 @@ const prepareBootstrapAdmission = (origin: URL) =>
       prepared,
       WIRE_VERSION,
     ).pipe(Effect.withClock(clockAt(signedAt)));
-    const bodyBytes = yield* Match.value(signed.body).pipe(
-      Match.tag("Uint8Array", (body) => Effect.succeed(body.body)),
-      Match.orElse(() =>
-        Effect.dieMessage("bootstrap request is missing its byte body"),
-      ),
-    );
     return {
-      request: prepared.request,
       expiresAt: signedAt + BOOTSTRAP_SIGNATURE_INTERVAL_SECONDS * 1_000,
-      input: {
-        httpRequest: HttpServerRequest.fromWeb(
-          new Request(signed.url, {
-            method: signed.method,
-            headers: { ...signed.headers, host: origin.host },
-          }),
-        ),
-        bodyBytes,
-      },
+      signed,
     };
   });
 
@@ -321,45 +285,49 @@ it(
     Effect.runPromise(
       Effect.gen(function* () {
         const setup = yield* makePostgreSqlRegistrySetup;
-        const sql = yield* PgClient.make({
-          url: Redacted.make(setup.container.getConnectionUri()),
-        }).pipe(Effect.provide(Reactivity.layer));
-        yield* initializeRegistryStorage({
-          sql,
-          registrySignerPublicKey: setup.registrySignerPublicKey,
-        });
-        const storage = makeRegistryStorage({
-          sql,
-          registrySignerPublicKey: setup.registrySignerPublicKey,
-          operationTimeoutMilliseconds: 5_000,
-        });
         const prepared = yield* prepareBootstrapAdmission(setup.origin);
-        const input = {
-          ...prepared.input,
-          admissionCredential: Redacted.make(
-            setup.environment.SHARNESS_REGISTRY_ADMISSION_CREDENTIAL,
+        yield* Layer.build(registryLayer).pipe(
+          Effect.withConfigProvider(
+            ConfigProvider.fromMap(new Map(Object.entries(setup.environment))),
           ),
-          nonceCapacity: 10,
-          storage,
-        };
+          Effect.withClock(clockAt(prepared.expiresAt)),
+        );
+        const client = yield* HttpClient.HttpClient;
         const outcomes = yield* Effect.all(
           Array.from({ length: CONTENDERS }, () =>
-            verifyBootstrapRegistration(input).pipe(Effect.either),
+            client
+              .execute(prepared.signed)
+              .pipe(
+                Effect.flatMap((response) =>
+                  response.text.pipe(
+                    Effect.map((body) => ({ status: response.status, body })),
+                  ),
+                ),
+              ),
           ),
           { concurrency: CONTENDERS },
-        ).pipe(Effect.withClock(clockAt(prepared.expiresAt)));
+        );
         expect(
-          outcomes.filter(Either.isRight).map((result) => result.right),
-        ).toStrictEqual([prepared.request]);
+          outcomes.map(({ status }) => status).sort((a, b) => a - b),
+        ).toEqual([
+          OK_STATUS,
+          ...Array.from({ length: CONTENDERS - 1 }, () => UNAUTHORIZED_STATUS),
+        ]);
         expect(
-          outcomes.filter(Either.isLeft).map((result) => result.left),
-        ).toStrictEqual(
+          outcomes
+            .filter(({ status }) => status === UNAUTHORIZED_STATUS)
+            .map(({ body }) => body),
+        ).toEqual(
           Array.from(
             { length: CONTENDERS - 1 },
-            () => new AuthenticationFailedError(),
+            () => AUTHENTICATION_FAILED_BODY,
           ),
         );
-      }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(NodeFileSystem.layer),
+        Effect.provide(NodeHttpClient.layer),
+      ),
     ),
   180_000,
 );

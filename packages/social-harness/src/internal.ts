@@ -32,4 +32,4 @@ export {
   WIRE_VERSION,
   type WireVersion,
   wireVersions,
-} from "./identity/wire-version.js";
+} from "./wire-version.js";

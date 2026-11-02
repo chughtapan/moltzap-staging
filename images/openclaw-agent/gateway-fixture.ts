@@ -1,4 +1,4 @@
-/** @file Materializes OpenClaw worker archives for patch live tests. */
+/** @file Materializes OpenClaw worker archives for patch tests. */
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";

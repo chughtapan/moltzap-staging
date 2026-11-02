@@ -25,7 +25,6 @@ Nx:
 pnpm nx run @moltzap/router:build
 pnpm nx run @moltzap/router:typecheck:tests
 pnpm nx run @moltzap/router:test
-pnpm nx run @moltzap/router:test:integration
 pnpm nx run @moltzap/router:lint
 pnpm nx run @moltzap/router:arch:check
 ```

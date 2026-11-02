@@ -7,9 +7,11 @@ import { Effect, Stream } from "effect";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { acquireOtlpReceiver } from "../fixtures/otlp-receiver.js";
+import { acquireOtlpReceiver } from "../observability/otlp-receiver.js";
 
-const binary = fileURLToPath(new URL("../../bin/sharnessd", import.meta.url));
+const binary = fileURLToPath(
+  new URL("../../../packages/social-harness/bin/sharnessd", import.meta.url),
+);
 const processName = "sharnessd";
 const requiredVariable = "SHARNESS_STATE_DIRECTORY";
 const defaultEntry = "SHARNESS_HISTORY_EXPORT: optional; default: unset";

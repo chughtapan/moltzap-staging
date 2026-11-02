@@ -119,6 +119,3 @@ export const wireVersions = Object.freeze({
     ),
   ),
 });
-
-/** Registry attestations use the reset profile independently of message envelopes. */
-export const AGENT_CARD_TYPE = "application/vnd.sharness.agent-card+jws";

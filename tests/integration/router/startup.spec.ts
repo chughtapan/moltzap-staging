@@ -11,7 +11,7 @@ import { expect } from "vitest";
 /* @agent-code-guard/regression-only: each case pins a distinct process startup diagnostic or resource relationship failure. */
 
 const binary = fileURLToPath(
-  new URL("../bin/sharness-router", import.meta.url),
+  new URL("../../../packages/router/bin/sharness-router", import.meta.url),
 );
 const processName = "sharness-router";
 const requiredVariable = "SHARNESS_ROUTER_PORT";

@@ -5,8 +5,8 @@ export default defineConfig({
   resolve: { conditions: ["sharness-test", "sharness-internal"] },
   ssr: { resolve: { conditions: ["sharness-test", "sharness-internal"] } },
   test: {
-    include: ["**/*.integration.spec.ts"],
-    exclude: [...configDefaults.exclude, "mixed-release/**"],
+    include: ["**/*.spec.ts"],
+    exclude: [...configDefaults.exclude, "mixed-release/**", "images/**"],
     maxWorkers: 2,
     passWithNoTests: false,
   },

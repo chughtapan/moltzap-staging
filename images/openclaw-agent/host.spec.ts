@@ -17,8 +17,6 @@ import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { isStringArray } from "../tests/test-support.ts";
-
 const HOST = fileURLToPath(new URL("./host.sh", import.meta.url));
 const PLAN = "/run/social-harness/bootstrap/secrets-plan.json";
 const STEP_FAILURE_EXIT_CODE = 3;
@@ -500,4 +498,11 @@ function killGroupMembers(leader: number): void {
       throw cause;
     }
   }
+}
+
+/** Recorded command arguments contain only strings. */
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((part) => typeof part === "string")
+  );
 }

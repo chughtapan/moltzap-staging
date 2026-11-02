@@ -39,9 +39,6 @@ catalogs:
     '@effect/vitest':
       specifier: ^0.30.0
       version: 0.30.0
-    '@electric-sql/pglite':
-      specifier: 0.4.4
-      version: 0.4.4
     '@electric-sql/pglite-socket':
       specifier: 0.1.4
       version: 0.1.4
@@ -256,51 +253,13 @@ importers:
         specifier: workspace:*
         version: link:../../packages/social-harness
 
-  images/nanoclaw-agent:
-    devDependencies:
-      '@moltzap/integration-tests':
-        specifier: workspace:*
-        version: link:../../tests/integration
-      '@moltzap/social-harness':
-        specifier: workspace:*
-        version: link:../../packages/social-harness
-      tsx:
-        specifier: 'catalog:'
-        version: 4.21.0
+  images/nanoclaw-agent: {}
 
   images/openclaw-agent:
     devDependencies:
-      '@moltzap/integration-tests':
-        specifier: workspace:*
-        version: link:../../tests/integration
       openclaw:
         specifier: 'catalog:'
         version: 2026.10.3(@aws-sdk/credential-provider-node@3.972.29)(@cfworker/json-schema@4.1.1)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.12.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.12.0(@opentelemetry/api@1.9.1))
-      tsx:
-        specifier: 'catalog:'
-        version: 4.21.0
-
-  images/tests:
-    dependencies:
-      '@modelcontextprotocol/client':
-        specifier: 'catalog:'
-        version: 2.0.0-beta.5
-      '@moltzap/openclaw-channel':
-        specifier: workspace:*
-        version: link:../../plugins/openclaw
-      '@moltzap/social-harness':
-        specifier: workspace:*
-        version: link:../../packages/social-harness
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@moltzap/integration-tests':
-        specifier: workspace:*
-        version: link:../../tests/integration
-      tsx:
-        specifier: 'catalog:'
-        version: 4.21.0
 
   packages/registry:
     dependencies:
@@ -319,12 +278,6 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@electric-sql/pglite':
-        specifier: 'catalog:'
-        version: 0.4.4
-      '@electric-sql/pglite-socket':
-        specifier: 'catalog:'
-        version: 0.1.4(@electric-sql/pglite@0.4.4)
       '@moltzap/social-harness':
         specifier: workspace:*
         version: link:../social-harness
@@ -335,18 +288,12 @@ importers:
       '@effect/vitest':
         specifier: 'catalog:'
         version: 0.30.0(effect@3.22.1)(vitest@3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1))
-      '@testcontainers/postgresql':
-        specifier: 'catalog:'
-        version: 10.28.0
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
-      http-message-signatures:
-        specifier: 'catalog:'
-        version: 1.0.6
       typescript:
         specifier: 'catalog:'
         version: '@typescript/typescript6@6.0.2'
@@ -670,12 +617,21 @@ importers:
 
   tests/integration:
     devDependencies:
+      '@effect/experimental':
+        specifier: 'catalog:'
+        version: 0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1)
       '@effect/platform':
         specifier: 'catalog:'
         version: 0.97.0(effect@3.22.1)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 0.108.0(@effect/cluster@0.60.0(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.19.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
+      '@effect/sql-pg':
+        specifier: 'catalog:'
+        version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
+      '@effect/vitest':
+        specifier: 'catalog:'
+        version: 0.30.0(effect@3.22.1)(vitest@3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1))
       '@electric-sql/pglite-socket':
         specifier: 'catalog:'
         version: 0.1.4(@electric-sql/pglite@0.4.4)
@@ -694,6 +650,9 @@ importers:
       '@moltzap/social-harness':
         specifier: workspace:*
         version: link:../../packages/social-harness
+      '@testcontainers/postgresql':
+        specifier: 'catalog:'
+        version: 10.28.0
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
@@ -703,6 +662,9 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
+      http-message-signatures:
+        specifier: 'catalog:'
+        version: 1.0.6
       protobufjs:
         specifier: 'catalog:'
         version: 7.6.5

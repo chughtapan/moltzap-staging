@@ -36,4 +36,4 @@ jobs:
       - name: Smoke all three images
         run: pnpm nx run-many -t image:smoke --projects=@social-harness/daemon,@social-harness/openclaw-agent,@social-harness/nanoclaw-agent --parallel=1
       - name: Run stand-in live tests
-        run: pnpm nx run-many -t test:live --projects=@social-harness/image-tests,@social-harness/openclaw-agent,@social-harness/nanoclaw-agent --parallel=1
+        run: pnpm nx run @moltzap/integration-tests:test:live

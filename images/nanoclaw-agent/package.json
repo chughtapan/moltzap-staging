@@ -8,19 +8,8 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "images/nanoclaw-agent",
-          "command": "node --test --test-timeout=180000 $(find . -maxdepth 1 -name '*.spec.ts' ! -name '*.live.spec.ts' -print)"
+          "command": "node --test --test-timeout=180000 *.spec.ts"
         }
-      },
-      "test:live": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/nanoclaw-agent",
-          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 *.live.spec.ts"
-        },
-        "cache": false,
-        "dependsOn": [
-          "^build"
-        ]
       },
       "typecheck": {
         "executor": "nx:run-commands",
@@ -53,7 +42,7 @@
           "parallel": false,
           "commands": [
             "rm -rf images/.workspace",
-            "pnpm deploy --filter @social-harness/image-tests --prod --legacy images/.workspace"
+            "pnpm deploy --filter @moltzap/openclaw-channel --prod --legacy images/.workspace"
           ]
         }
       },
@@ -84,14 +73,6 @@
           "command": "node build.ts lock"
         }
       }
-    },
-    "implicitDependencies": [
-      "@social-harness/image-tests"
-    ]
-  },
-  "devDependencies": {
-    "tsx": "catalog:",
-    "@moltzap/integration-tests": "workspace:*",
-    "@moltzap/social-harness": "workspace:*"
+    }
   }
 }

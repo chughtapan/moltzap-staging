@@ -15,6 +15,7 @@ import { httpbis, type VerifyingKey } from "http-message-signatures";
 import { importJWK } from "jose";
 import { webcrypto } from "node:crypto";
 import { expect, it } from "vitest";
+import { WIRE_VERSION, WireVersions } from "../wire-version.js";
 import {
   AgentIdentityCardIssuedAt,
   authenticatedHttpLayerWithRegistry,
@@ -45,7 +46,6 @@ import {
   ed25519PublicKeyThumbprintUri,
 } from "./keys.js";
 import { RegistryError, type RegistryLookupResult } from "./registry.js";
-import { WIRE_VERSION, WireVersions } from "./wire-version.js";
 
 /* eslint-disable agent-code-guard/no-example-only-tests -- regression-only suite: each case exercises a distinct HTTP proof, replay-ordering, cache, or cancellation contract. The concurrency timelines are not an input domain to generate over. */
 

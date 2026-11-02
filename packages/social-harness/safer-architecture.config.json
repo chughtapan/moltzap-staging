@@ -19,11 +19,11 @@
       "reason": "Cryptographic key capabilities"
     },
     {
-      "file": "identity/wire-version.ts",
+      "file": "wire-version.ts",
       "reason": "Wire compatibility policy"
     },
     {
-      "file": "identity/identity.ts",
+      "file": "identity/service.ts",
       "reason": "Identity and registration service"
     },
     {
@@ -153,8 +153,7 @@
       "entrypoints": [
         "src/identity/agent.ts",
         "src/identity/keys.ts",
-        "src/identity/identity.ts",
-        "src/identity/wire-version.ts",
+        "src/identity/service.ts",
         "src/identity/authentication.ts",
         "src/identity/registry.ts",
         "src/identity/envelope.ts"
@@ -223,6 +222,26 @@
         "src/tracing.ts"
       ],
       "reason": "Shared work progress observation"
+    },
+    {
+      "name": "wire-version",
+      "roots": [
+        "src/wire-version.ts"
+      ],
+      "entrypoints": [
+        "src/wire-version.ts"
+      ],
+      "reason": "Shared protocol compatibility across services and layers"
+    },
+    {
+      "name": "launcher",
+      "roots": [
+        "src/launcher"
+      ],
+      "entrypoints": [
+        "src/launcher/index.ts"
+      ],
+      "reason": "Release installation and daemon startup"
     }
   ],
   "layers": [
@@ -267,7 +286,7 @@
   "publicTypePackages": [
     {
       "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon\u2019s shared SqlClient through its Effect environment"
+      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
     },
     {
       "package": "effect",

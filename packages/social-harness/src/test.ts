@@ -1,10 +1,7 @@
 /** @file Offline evaluation and process fixtures under the test import condition. */
 
 /** Wire-version overrides for process tests. */
-export {
-  HISTORY_WIRE_VERSIONS,
-  WireVersions,
-} from "./identity/wire-version.js";
+export { HISTORY_WIRE_VERSIONS, WireVersions } from "./wire-version.js";
 /** HTTP signing for process fixtures. */
 export { signAgentRequest } from "./identity/authentication.js";
 /** Offline firewall checks with a caller-supplied provider. */

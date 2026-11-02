@@ -30,8 +30,8 @@ import {
   AgentSigningAuthority,
   PrincipalId,
 } from "../identity/agent.js";
-import { Identity } from "../identity/identity.js";
 import { RegistrationId, Registry } from "../identity/registry.js";
+import { Identity } from "../identity/service.js";
 import {
   FirewallPolicyError,
   MAXIMUM_BEHAVIOR_BYTES,

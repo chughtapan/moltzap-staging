@@ -10,9 +10,11 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 
 const binary = fileURLToPath(
-  new URL("../bin/sharness-registry", import.meta.url),
+  new URL("../../../packages/registry/bin/sharness-registry", import.meta.url),
 );
-const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const packageRoot = fileURLToPath(
+  new URL("../../../packages/registry", import.meta.url),
+);
 const processName = "sharness-registry";
 const requiredVariable = "SHARNESS_REGISTRY_POSTGRESQL_URL";
 const defaultEntry = 'SHARNESS_REGISTRY_HOST: optional; default: "127.0.0.1"';

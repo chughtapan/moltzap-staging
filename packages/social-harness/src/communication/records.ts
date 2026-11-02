@@ -35,7 +35,7 @@ import {
   type SignedMessage as SignedMessageValue,
   type VerifiedSignedMessage,
 } from "../identity/envelope.js";
-import { wireVersions } from "../identity/wire-version.js";
+import { wireVersions } from "../wire-version.js";
 import { compareAgentIds, Content, maximumMembers, MsgId } from "./messages.js";
 import { RouterInstanceId } from "./router/api.js";
 

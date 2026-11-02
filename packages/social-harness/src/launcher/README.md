@@ -11,5 +11,5 @@ between their commits. The next start must still report whether the host needs
 to restart. Keep preparation independent of daemon internals so it can inspect
 and choose a release without acquiring that release's endpoint state.
 
-The [launcher contract](../../../../../docs/reference/services/daemon.mdx#launcher)
+The [launcher contract](../../../../docs/reference/services/daemon.mdx#launcher)
 defines the operator-visible selection and recovery rules.

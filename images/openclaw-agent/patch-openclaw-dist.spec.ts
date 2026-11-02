@@ -15,11 +15,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { prepareOpenClawDist } from "../tests/openclaw-gateway-fixture.ts";
-import { isRecord } from "../tests/test-support.ts";
+import { prepareOpenClawDist } from "./gateway-fixture.ts";
 import { applyOpenClawPatch, type Edit, EDITS } from "./patch-openclaw.ts";
 
-/** OpenClaw's dist as the catalog's `openclaw` release installs it for images/tests. */
+/** OpenClaw's dist from the image workspace's installed release. */
 const installedDist = fileURLToPath(
   new URL("node_modules/openclaw/dist/", import.meta.url),
 );
@@ -155,4 +154,9 @@ function decodeMarker(value: unknown): DecodedMarker {
       isRecord(edit) ? edit.id : undefined,
     ),
   };
+}
+
+/** Rejects null and arrays before reading a JSON object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

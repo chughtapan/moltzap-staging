@@ -50,12 +50,12 @@ import {
   AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
 } from "../../identity/agent.js";
-import { Identity, type RegistrationRequest } from "../../identity/identity.js";
 import {
   RegistrationId,
   Registry,
   RegistryError,
 } from "../../identity/registry.js";
+import { Identity, type RegistrationRequest } from "../../identity/service.js";
 import { type HarnessSettings, SocialHarness } from "../service.js";
 
 type Main = Context.Tag.Service<typeof SocialHarness>;

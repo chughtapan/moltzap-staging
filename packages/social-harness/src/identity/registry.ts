@@ -20,6 +20,7 @@ import {
   exactStruct,
 } from "../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
+import { WireVersions } from "../wire-version.js";
 import {
   AgentId,
   AgentIdentityCard,
@@ -30,7 +31,6 @@ import {
 } from "./agent.js";
 import { signHttpRequest, VersionMismatchError } from "./authentication.js";
 import { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
-import { WireVersions } from "./wire-version.js";
 
 /** Idempotency identity for a registration operation. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the public domain name they decode.
@@ -440,17 +440,6 @@ const withDeadline = <A, E>(
     }),
   );
 
-const makePost = (
-  origin: URL,
-  path: string,
-  bodyBytes: Uint8Array,
-  wireVersion: string,
-): HttpClientRequest.HttpClientRequest =>
-  HttpClientRequest.post(new URL(path, origin)).pipe(
-    HttpClientRequest.bodyUint8Array(bodyBytes, "application/json"),
-    HttpClientRequest.setHeader("sharness-version", wireVersion),
-  );
-
 const makeSignedRegistrationRequest = (
   input: RegistryClientInput,
   call: RegistryRegisterCall,
@@ -462,11 +451,8 @@ const makeSignedRegistrationRequest = (
         request: registerRequest,
       })
       .pipe(Effect.mapError(invalidResponse));
-    const httpRequest = makePost(
-      input.origin,
-      REGISTER_PATH,
-      bodyBytes,
-      yield* WireVersions.emitted,
+    const httpRequest = HttpClientRequest.post(
+      new URL(REGISTER_PATH, input.origin),
     ).pipe(
       HttpClientRequest.setHeader(
         "authorization",
@@ -564,17 +550,22 @@ function makeLookup(
   return (candidate) =>
     Effect.gen(function* () {
       const call = candidate;
+      const bodyBytes = yield* registryLookupCodec.request
+        .encode(call)
+        .pipe(Effect.mapError(invalidResponse));
+      const request = HttpClientRequest.post(
+        new URL(LOOKUP_PATH, input.origin),
+      ).pipe(
+        HttpClientRequest.bodyUint8Array(bodyBytes, "application/json"),
+        HttpClientRequest.setHeader(
+          "sharness-version",
+          yield* WireVersions.emitted,
+        ),
+      );
       const [response, responseBytes] = yield* execute({
         operation: "lookup",
         client: input.client,
-        request: makePost(
-          input.origin,
-          LOOKUP_PATH,
-          yield* registryLookupCodec.request
-            .encode(call)
-            .pipe(Effect.mapError(invalidResponse)),
-          yield* WireVersions.emitted,
-        ),
+        request,
       });
       yield* requireJsonSuccess(response);
       const result = yield* registryLookupCodec.response

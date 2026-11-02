@@ -1,7 +1,7 @@
 /** @file Optional MCP wake streams and durable signed webhook delivery use the saved inbox. */
 import { type Context, Effect, Schema, Stream } from "effect";
 import { randomUUID } from "node:crypto";
-import { Identity } from "../../identity/identity.js";
+import { Identity } from "../../identity/service.js";
 import {
   McpServerClient,
   ProtocolError,

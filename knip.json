@@ -27,14 +27,12 @@
       "entry": [
         "src/**/*.spec.ts",
         "src/**/*.types-check.ts",
-        "src/harness/launcher/index.ts",
-        "vitest*.config.ts",
-        "integration/**/*.integration.spec.ts"
+        "src/launcher/index.ts",
+        "vitest*.config.ts"
       ],
       "project": [
         "src/**/*.ts",
-        "*.ts",
-        "integration/**/*.ts"
+        "*.ts"
       ],
       "ignore": [
         "src/vendor/effect-mcp/**"
@@ -83,18 +81,15 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@electric-sql/pglite",
-        "@electric-sql/pglite-socket"
       ]
     },
     "tests/integration": {
       "entry": [
-        "**/*.integration.spec.ts",
+        "**/*.spec.ts",
         "firewall/firewall-daemon.ts",
         "daemon/launcher-provenance.ts",
-        "**/*vitest*.config.ts"
+        "**/*vitest*.config.ts",
+        "images/nanoclaw-probe.ts"
       ],
       "project": [
         "**/*.ts"
@@ -122,8 +117,7 @@
         "entrypoint.ts",
         "prepare.ts",
         "preload.ts",
-        "process-driver.ts",
-        "integration-probe.ts"
+        "process-driver.ts"
       ],
       "project": [
         "*.ts"
@@ -133,19 +127,6 @@
       "ignoreDependencies": [
         "@moltzap/social-harness",
         "@moltzap/openclaw-channel"
-      ]
-    },
-    "images/tests": {
-      "entry": [
-        "*.spec.ts"
-      ],
-      "project": [
-        "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@moltzap/openclaw-channel",
-        "@moltzap/social-harness",
-        "@modelcontextprotocol/client"
       ]
     },
     "plugins/instinct": {

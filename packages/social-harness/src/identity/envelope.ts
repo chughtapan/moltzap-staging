@@ -28,6 +28,7 @@ import {
   decodeCanonicalBase64Url,
   hasCanonicalBase64UrlLength,
 } from "../encoding/identifier.js";
+import { WIRE_VERSION, WireVersions } from "../wire-version.js";
 import {
   AgentId,
   AgentIdentityCardDigest,
@@ -46,7 +47,6 @@ import {
   snapshotRepresentation,
   x25519SealingKey,
 } from "./keys.js";
-import { WIRE_VERSION, WireVersions } from "./wire-version.js";
 
 /** Identifies one signed envelope across transport retries. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the public domain name they decode.
@@ -523,11 +523,7 @@ function verify(
     const messageMatches =
       signedMessage.senderAgentId === senderAgentId &&
       signedMessage.agentCardDigest === expectedDigest;
-    const headerMatches =
-      state.signedMessageHeader.kid === expectedKid &&
-      state.signedMessageHeader.alg === "Ed25519" &&
-      state.signedMessageHeader.typ === SIGNED_MESSAGE_TYPE;
-    if (!messageMatches || !headerMatches) {
+    if (!messageMatches || state.signedMessageHeader.kid !== expectedKid) {
       return yield* new SignedMessageVerificationError();
     }
     yield* verifySignature(state, publicKey);

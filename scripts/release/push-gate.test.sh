@@ -47,8 +47,8 @@ main() {
   mkdir "$TEMP_DIR/fixture"
   cd "$TEMP_DIR/fixture"
   git init --quiet --initial-branch=main
-  mkdir -p packages/social-harness/src/identity plugins/openclaw changelog.d
-  printf '%s\n' 'export const WIRE_VERSION = "2026.1021.3";' > packages/social-harness/src/identity/wire-version.ts
+  mkdir -p packages/social-harness/src plugins/openclaw changelog.d
+  printf '%s\n' 'export const WIRE_VERSION = "2026.1021.3";' > packages/social-harness/src/wire-version.ts
   printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1024.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
   sed 's|@moltzap/social-harness|@moltzap/openclaw-channel|' packages/social-harness/package.json > plugins/openclaw/package.json
   touch changelog.d/template.md changelog.d/consumed.Fixed.md
@@ -89,17 +89,17 @@ main() {
 
   new_case
   touch changelog.d/new.Fixed.md
-  printf '%s\n' 'export const WIRE_VERSION = "2026.1025.0";' > packages/social-harness/src/identity/wire-version.ts
+  printf '%s\n' 'export const WIRE_VERSION = "2026.1025.0";' > packages/social-harness/src/wire-version.ts
   commit_tip 'feat: reset wire'
   check 'readable wire change requires manual reset' skip 0 workflow_dispatch
-  printf '%s\n' 'export const WIRE_VERSION = "2026.1021.3";' > packages/social-harness/src/identity/wire-version.ts
+  printf '%s\n' 'export const WIRE_VERSION = "2026.1021.3";' > packages/social-harness/src/wire-version.ts
   check 'wire version comes from the gated commit despite working tree edits' skip 0 workflow_dispatch
 
   new_case
   touch changelog.d/new.Fixed.md
-  printf '%s\n' 'export const OTHER = "2026.1021.3";' > packages/social-harness/src/identity/wire-version.ts
+  printf '%s\n' 'export const OTHER = "2026.1021.3";' > packages/social-harness/src/wire-version.ts
   commit_tip 'fix: missing wire source'
-  check 'unreadable head wire fails' '' 1 packages/social-harness/src/identity/wire-version.ts
+  check 'unreadable head wire fails' '' 1 packages/social-harness/src/wire-version.ts
 
   new_case
   printf '%s\n' '{"name":"@moltzap/social-harness"}' > packages/social-harness/package.json

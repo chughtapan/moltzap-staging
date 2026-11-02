@@ -14,6 +14,7 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../../encoding/canonical-json.js";
+import { wireVersions } from "../../wire-version.js";
 import {
   AgentId,
   AgentIdentityCard,
@@ -34,7 +35,6 @@ import {
   agentSigningPrivateKey,
   ed25519PublicKeyThumbprintUri,
 } from "../keys.js";
-import { wireVersions } from "../wire-version.js";
 
 /** Whole-second UTC issuance evidence carried by an AgentIdentityCard. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the package-owned domain name they decode.

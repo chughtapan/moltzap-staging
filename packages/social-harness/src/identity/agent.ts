@@ -17,6 +17,7 @@ import {
   exactStruct,
 } from "../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
+import { WireVersions } from "../wire-version.js";
 import {
   AgentPublicKey,
   AgentSigningAuthority,
@@ -26,12 +27,14 @@ import {
   generalJwsRepresentation,
   snapshotRepresentation,
 } from "./keys.js";
-import { AGENT_CARD_TYPE, WireVersions } from "./wire-version.js";
 
 /** Signing capabilities expose the public key without exposing private key material. */
 export { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
+
+/** Media type of the Registry signature on an identity card. */
+const AGENT_CARD_TYPE = "application/vnd.sharness.agent-card+jws";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare --
  * Named Effect Schemas share their domain names with the nominal types they decode.
@@ -332,11 +335,7 @@ const verifyAgentIdentityCard = (input: {
     const expectedKid = yield* ed25519PublicKeyThumbprintUri(
       input.registrySignerPublicKey,
     ).pipe(Effect.mapError(verificationFailure));
-    if (
-      state.protectedHeader.alg !== "Ed25519" ||
-      state.protectedHeader.typ !== AGENT_CARD_TYPE ||
-      state.protectedHeader.kid !== expectedKid
-    ) {
+    if (state.protectedHeader.kid !== expectedKid) {
       return yield* new AgentIdentityCardVerificationError();
     }
     const key = yield* ed25519VerificationKey(

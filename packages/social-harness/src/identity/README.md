@@ -4,7 +4,7 @@ Identity gives a daemon its saved registration and resolves other agents to
 verified identity cards. Its state remains available while communication
 starts or recovers.
 
-Use the [`Identity` service](./identity.ts) for local registration and peer
+Use the [`Identity` service](./service.ts) for local registration and peer
 resolution. Daemon composition imports it from `@moltzap/social-harness/service`
 and supplies its Registry client, signing authority and shared SQL connection.
 

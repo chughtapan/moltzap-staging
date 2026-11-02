@@ -39,7 +39,7 @@ import {
   contentDigest,
   ed25519PublicKeyThumbprintUri,
   encodeCanonicalJson,
-} from "./request-fixtures.js";
+} from "./requests.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const ADMISSION_CREDENTIAL = "registry-binary-admission";
@@ -67,11 +67,11 @@ const SIGNATURE_PARAMETERS = [
   "alg",
   "tag",
 ] as const;
-const WORKSPACE_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const WORKSPACE_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 const PGLITE_BINARY = join(
   WORKSPACE_ROOT,
-  "packages/registry/node_modules/.bin/pglite-server",
+  "tests/integration/node_modules/.bin/pglite-server",
 );
 const REGISTRY_BINARY = join(
   WORKSPACE_ROOT,

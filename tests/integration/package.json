@@ -10,6 +10,7 @@
         "inputs": [
           "sources",
           "!{projectRoot}/mixed-release/**",
+          "!{projectRoot}/images/**",
           "!{projectRoot}/README.md",
           "!{projectRoot}/eslint.config.ts",
           "^production",
@@ -94,6 +95,17 @@
           "cwd": "tests/integration",
           "command": "tsx network.ts"
         }
+      },
+      "test:live": {
+        "cache": false,
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "^build"
+        ],
+        "options": {
+          "cwd": "tests/integration",
+          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
+        }
       }
     }
   },
@@ -111,7 +123,12 @@
     "eslint": "catalog:",
     "protobufjs": "catalog:",
     "tsx": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@effect/experimental": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
+    "http-message-signatures": "catalog:"
   },
   "exports": {
     "./process-network": "./process-network.ts",

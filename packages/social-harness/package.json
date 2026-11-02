@@ -95,17 +95,6 @@
           "cwd": "packages/social-harness",
           "command": "safer-architecture-lsp check ."
         }
-      },
-      "test:integration": {
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "build",
-          "^build"
-        ],
-        "options": {
-          "cwd": "packages/social-harness",
-          "command": "vitest run --config vitest.integration.config.ts"
-        }
       }
     }
   },

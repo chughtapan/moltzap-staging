@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { prepareOpenClawDist } from "../tests/openclaw-gateway-fixture.ts";
+import { prepareOpenClawDist } from "./gateway-fixture.ts";
 import { applyOpenClawPatch } from "./patch-openclaw.ts";
 
 /** OpenClaw's dist as the image's shared dependency installs it. */

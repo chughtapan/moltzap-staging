@@ -85,17 +85,6 @@
           "command": "vitest run --config vitest.config.ts"
         }
       },
-      "test:integration": {
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "build",
-          "^build"
-        ],
-        "options": {
-          "cwd": "packages/router",
-          "command": "vitest run --config vitest.integration.config.ts"
-        }
-      },
       "lint": {
         "executor": "nx:run-commands",
         "options": {

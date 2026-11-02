@@ -22,7 +22,7 @@ import { issueTestCard, makeTestAuthority } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { FirewallPolicyError } from "../../firewall/rules.js";
 import { Firewall } from "../../firewall/service.js";
-import { Identity } from "../../identity/identity.js";
+import { Identity } from "../../identity/service.js";
 import { InboxError } from "../inbox.js";
 import { makeMcpHttpApp } from "../mcp/index.js";
 import { SocialHarness } from "../service.js";

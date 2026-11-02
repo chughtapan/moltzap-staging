@@ -12,8 +12,8 @@ import {
   makeIdentityFixture,
 } from "./__tests__/authentication-fixtures.js";
 import { agentCardOf, AgentName, AgentSigningAuthority } from "./agent.js";
-import { Identity } from "./identity.js";
 import { RegistrationId, Registry, RegistryError } from "./registry.js";
+import { Identity } from "./service.js";
 
 function requestFor(fixture: IdentityFixture) {
   return {

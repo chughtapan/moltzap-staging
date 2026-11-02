@@ -10,6 +10,7 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../encoding/canonical-json.js";
+import { WIRE_VERSION } from "../wire-version.js";
 import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,
@@ -57,7 +58,6 @@ import {
   ed25519PublicKeyThumbprintUri,
   x25519PublicJwk,
 } from "./keys.js";
-import { WIRE_VERSION } from "./wire-version.js";
 
 const MAXIMUM_BODY_BYTES = 262_144;
 const MAXIMUM_RECIPIENTS = 128;
