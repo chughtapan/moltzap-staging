@@ -12,7 +12,7 @@ import { toolDefinitions } from "@moltzap/social-harness";
 import {
   mcpFixture,
   mcpTestCredential,
-} from "../../packages/social-harness/src/__tests__/mcp-http-fixtures.js";
+} from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
 import { acquireMcpConnection, callTool } from "./mcp.js";
 
 const entry = Schema.decodeUnknownSync(toolDefinitions.read_inbox.output)({

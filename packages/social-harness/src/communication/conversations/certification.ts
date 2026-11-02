@@ -3,22 +3,21 @@
  */
 
 import type { SqlClient } from "@effect/sql/SqlClient";
-
 import { absurd, Effect } from "effect";
-
-import type { SignedMessage } from "../../identity/envelope/signed-message.js";
-import type { SendError } from "./errors.js";
+import type { SignedMessage } from "../../identity/envelope.js";
+import type { SendError } from "../errors.js";
+import type {
+  EngineActionFold,
+  EngineConversation,
+  EngineMessageIntent,
+  EngineRuntime,
+} from "./service.js";
 import {
   ClientRepresentationError,
   decodeCanonical,
   encodeCanonical,
   equalCanonical,
 } from "../../encoding/canonical-json.js";
-import {
-  type DecodedOuterBody,
-  hashAnchor,
-  signEvidenceMessage,
-} from "../records/encoding.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -28,13 +27,14 @@ import {
   type AnchorHash,
   type CertifiedRecord,
   type ConversationId,
+  type DecodedOuterBody,
   EvidenceStatement,
   type EvidenceStatement as EvidenceStatementValue,
+  hashAnchor,
   InitialAnchorBody,
   MembershipDescriptor,
-} from "../records/schemas.js";
-import {
   quorumThreshold,
+  signEvidenceMessage,
   type VerifiedMembership,
   verifyActionCertifiedRecord,
   verifyActionProposal,
@@ -43,51 +43,39 @@ import {
   verifyMembershipDescriptor,
   verifyOuterMessage,
   verifyStableEvidence,
-} from "../records/verification.js";
+} from "../records.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
-} from "../router/connection.js";
+} from "../router/worker.js";
 import {
-  lockFirstMessageProposal,
-  lockProposal,
-} from "../store/conversations.js";
-import {
+  applyCertifiedRecord,
   type ConversationFoundation,
   type EndpointStoreError,
   isSemanticStoreRejection,
-  type ProposalLock,
-} from "../store/database.js";
-import { readRecordOutbound } from "../store/outbound.js";
-import {
-  applyCertifiedRecord,
+  lockFirstMessageProposal,
+  lockProposal,
   promoteRecord,
+  type ProposalLock,
+  readRecordOutbound,
   mergeEvidence as storedMergeEvidence,
   supersedeProposalLock,
-} from "../store/records.js";
+} from "../store.js";
 import {
+  evidenceMatchesFold,
+  type EvidenceRoute,
+  evidenceTarget,
   makeActionCertifiedRecord,
+  makeActionFold,
   makeCertifiedRecord,
   protocolEvidence,
   recordAnchorHash,
   stagedRecord,
   storedCertifiedRecord,
 } from "./log.js";
-import {
-  type EngineActionFold,
-  type EngineConversation,
-  type EngineMessageIntent,
-  type EngineRuntime,
-  evidenceMatchesFold,
-  type EvidenceRoute,
-  evidenceTarget,
-  makeActionFold,
-} from "./state.js";
 
 // safer-arch-ignore no-fat-orchestrator: One private operation owns the complete certification lifecycle inside Communication.
-
-/* eslint-disable max-lines -- Certification and certified-head updates share the same ordered fold transitions. */
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();
 
@@ -1289,5 +1277,3 @@ export const resumeEngineFolds = (
       ),
     )
     .pipe(Effect.withSpan("resumeEngineFolds"));
-
-/* eslint-enable max-lines -- Restore repository defaults. */

@@ -28,7 +28,7 @@ import {
   type VerifiedAgentIdentityCard,
   verifiedAgentIdentityCardSchema,
 } from "./agent.js";
-import { signHttpRequest, VersionMismatchError } from "./http-signatures.js";
+import { signHttpRequest, VersionMismatchError } from "./authentication.js";
 import { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 import { WireVersions } from "./wire-version.js";
 

@@ -3,14 +3,14 @@
 import { SqlClient, SqlSchema } from "@effect/sql";
 import { absurd, Effect, Encoding, Schema } from "effect";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { AgentAddress, GroupAddress } from "../communication/messages.js";
 import {
   Incoming,
   type Message,
   type MessageReference,
   type PaginatedRequest,
   PaginatedResult,
-} from "../communication/index.js";
-import { AgentAddress, GroupAddress } from "../communication/records/values.js";
+} from "../communication/service.js";
 import {
   decodeCanonical,
   encodeCanonical,

@@ -1,5 +1,6 @@
-/** @file Builds protocol records and verifies retained conversation history. */
+/** @file Verified conversation records restore the engine and supply retained history. */
 
+import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, type ParseResult, Schema } from "effect";
 import type { AgentPublicKey } from "../../identity/keys.js";
 import type {
@@ -7,7 +8,8 @@ import type {
   EngineActionFold,
   EngineCertifiedHead,
   EngineConversation,
-} from "./state.js";
+  EngineRuntime,
+} from "./service.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -16,18 +18,26 @@ import {
   sameBytes,
 } from "../../encoding/canonical-json.js";
 import { agentCardOf, type AgentId } from "../../identity/agent.js";
-import { SignedMessage } from "../../identity/envelope/signed-message.js";
-import { Message, messageFromIntent } from "../message.js";
-import { hashAnchor, hashRecord } from "../records/encoding.js";
+import {
+  SignedMessage,
+  type SignedMessage as SignedMessageValue,
+} from "../../identity/envelope.js";
+import { compareAgentIds, Message, messageFromIntent } from "../messages.js";
 import {
   type ActionCertifiedRecord,
-  type AnchorHash,
+  ActionCore,
+  type ActionHash,
+  ActionHash as ActionHashSchema,
+  AnchorHash,
   type AnchorHash as AnchorHashValue,
   type CertifiedRecord,
   CompletedReanchor,
   type CompletedReanchor as CompletedReanchorValue,
   ConversationId,
   type ConversationId as ConversationIdValue,
+  type EvidenceStatement,
+  hashAnchor,
+  hashRecord,
   InitialAnchorBody,
   type InitialAnchorBody as InitialAnchorBodyValue,
   MembershipDescriptor,
@@ -37,30 +47,36 @@ import {
   RecordHash,
   type RecordHash as RecordHashValue,
   type RouterAnchor,
-} from "../records/schemas.js";
-import { compareAgentIds } from "../records/values.js";
-import {
+  type VerifiedEvidence,
   type VerifiedMembership,
+  verifyActionCore,
   verifyCertifiedRecord,
   verifyCompletedReanchor,
   verifyMembershipDescriptor,
   verifyOuterMessage,
-} from "../records/verification.js";
+  verifyRecordCore,
+  verifyStableEvidence,
+} from "../records.js";
 import {
   RouterWorkerPersistenceError,
   RouterWorkerRecoveryError,
-} from "../router/connection.js";
-import { recoverStoredState } from "../store/conversations.js";
+} from "../router/worker.js";
 import {
   type EndpointRecovery,
   OutboxTooOldError,
   type ProtocolEvidence,
+  recoverStoredState,
   type StagedRecord,
   type CertifiedRecord as StoredCertifiedRecord,
   type StoredMembership,
   type MessageIntent as storedMessageIntent,
   type StoredOutboundMessage,
-} from "../store/database.js";
+} from "../store.js";
+
+/** A protocol fold selected by an evidence statement's signed subject. */
+export type EvidenceRoute =
+  | Readonly<{ fold: EngineActionFold; kind: "action" }>
+  | Readonly<{ fold: EngineActionFold; kind: "durability" }>;
 
 /**
  * The hash of a conversation's current anchor, which its next record binds.
@@ -250,6 +266,254 @@ export const storedCertifiedRecord = (
 export type CertificateSignatures =
   ActionCertifiedRecord["actionCertificate"]["signatures"];
 
+/** Why a stored row failed to decode or to match what it claims to hold. */
+export type StoredRowError =
+  | ClientRepresentationError
+  | ParseResult.ParseError
+  | RouterWorkerPersistenceError;
+
+/**
+ * Resolve the latest durable position for one fixed conversation.
+ * @param conversationId Private conversation identity to locate.
+ * @returns The conversation's recovery snapshot and its matching position row.
+ */
+export const durablePosition = (
+  conversationId: ConversationIdValue,
+): Effect.Effect<
+  {
+    readonly recovery: EndpointRecovery;
+    readonly position?: EndpointRecovery["positions"][number];
+  },
+  RouterWorkerPersistenceError,
+  SqlClient
+> =>
+  recoverStoredState(conversationId).pipe(
+    Effect.mapError(persistenceFailure),
+    Effect.map((recovery) => ({
+      recovery,
+      position: recovery.positions.find(
+        (candidate) => candidate.conversationId === conversationId,
+      ),
+    })),
+  );
+
+interface HistoryCursor {
+  readonly currentAnchor: EngineConversation["currentAnchor"];
+  readonly currentAnchorHash: string;
+  readonly currentRecordHash: string | null;
+  readonly anchorIndex: number;
+}
+
+interface ConversationHistory {
+  readonly position: EndpointRecovery["positions"][number];
+  readonly anchors: ReadonlyArray<EndpointRecovery["anchors"][number]>;
+  readonly records: ReadonlyArray<EndpointRecovery["certifiedRecords"][number]>;
+  readonly initial: HistoryCursor;
+}
+
+/** Complete process-local projections recovered before protocol work resumes. */
+interface RecoveredEngineState {
+  readonly conversations: Map<ConversationIdValue, EngineConversation>;
+  readonly actionFolds: Map<ActionHash, EngineActionFold>;
+  readonly recordFolds: Map<RecordHashValue, EngineActionFold>;
+  readonly completedMessages: Set<string>;
+  /** Verified pending intents retain their durable acceptance order. */
+  readonly messageIntents: ReadonlyArray<
+    Effect.Effect.Success<ReturnType<typeof readStoredMessageIntent>>
+  >;
+  readonly outboundMessages: readonly StoredOutboundMessage[];
+}
+
+/**
+ * Rebuild only state whose hashes, signatures, and cross-fields still verify.
+ * @param input Engine dependencies used to verify persisted representation.
+ * @param recovery Complete store snapshot captured before engine startup.
+ * @returns Verified conversations, folds, and durable message intents.
+ */
+export const recoverEngineState = (
+  input: EndpointEngineInput,
+  recovery: EndpointRecovery,
+): Effect.Effect<RecoveredEngineState, StoredRowError | OutboxTooOldError> =>
+  Effect.gen(function* () {
+    const verifiedMemberships = yield* verifyStoredMemberships(
+      recovery.memberships,
+      input.registrySignerPublicKey,
+    );
+    const anchors = yield* recoverEngineAnchors(recovery, verifiedMemberships);
+    const conversations = yield* recoverConversations(
+      recovery,
+      verifiedMemberships,
+      anchors.current,
+    );
+    const actionFolds = yield* recoverActionFolds(
+      recovery,
+      conversations,
+      anchors.byHash,
+    );
+    const recordFolds = yield* recoverStagedFolds(recovery, actionFolds);
+    const outboundMessages = yield* verifyStoredOutbounds(
+      input,
+      recovery.outboundMessages,
+      verifiedMemberships,
+    );
+    yield* recoverFoldEvidence(recovery, actionFolds, recordFolds);
+    yield* recoverCertifiedFolds({
+      input,
+      recovery,
+      conversations,
+      anchorsByHash: anchors.byHash,
+      actionFolds,
+      recordFolds,
+    });
+    const messageIntents = yield* Effect.forEach(
+      recovery.messageIntents,
+      (stored) => readStoredMessageIntent(stored, verifiedMemberships),
+      { concurrency: 1 },
+    );
+    const completedMessages = new Set(
+      messageIntents.flatMap((stored) =>
+        stored.completedRecordHash === undefined ? [] : [stored.intent.msgId],
+      ),
+    );
+    return {
+      conversations,
+      actionFolds,
+      recordFolds,
+      completedMessages,
+      messageIntents: messageIntents.filter(
+        (stored) => stored.completedRecordHash === undefined,
+      ),
+      outboundMessages,
+    };
+  }).pipe(Effect.withSpan("recoverEngineState"));
+
+interface RecoveredAnchors {
+  readonly current: Map<
+    ConversationIdValue,
+    EngineConversation["currentAnchor"]
+  >;
+  readonly byHash: Map<AnchorHashValue, EngineConversation["currentAnchor"]>;
+}
+
+interface CertifiedFoldRecoveryInput {
+  readonly input: EndpointEngineInput;
+  readonly recovery: EndpointRecovery;
+  readonly conversations: Map<ConversationIdValue, EngineConversation>;
+  readonly anchorsByHash: ReadonlyMap<
+    AnchorHashValue,
+    EngineConversation["currentAnchor"]
+  >;
+  readonly actionFolds: Map<ActionHash, EngineActionFold>;
+  readonly recordFolds: Map<RecordHashValue, EngineActionFold>;
+}
+
+/**
+ * Open an empty fold for one action: no evidence, and no local signature
+ * queued yet, so certification decides what to sign and send.
+ * @param conversation Conversation whose next position the action proposes.
+ * @param action Selected action the fold collects evidence for.
+ * @param actionHash Hash that action and durability evidence name.
+ * @param routerAnchor Anchor the action's record certifies against.
+ * @returns A fold the caller registers in `EngineRuntime.actionFolds`.
+ */
+export function makeActionFold(
+  conversation: EngineConversation,
+  action: ActionCore,
+  actionHash: ActionHash,
+  routerAnchor: RouterAnchor,
+): EngineActionFold {
+  return {
+    conversation,
+    action,
+    actionHash,
+    routerAnchor,
+    actionEvidence: new Map(),
+    durabilityEvidence: new Map(),
+    localActionEvidenceQueued: false,
+    localDurabilityEvidenceQueued: false,
+    certified: false,
+  };
+}
+
+/**
+ * Resolve evidence once for both recovery fencing and active certification.
+ * @param runtime Engine holding the active folds.
+ * @param statement Decoded statement whose signature has not yet been checked.
+ * @returns Its named conversation and active fold, when known.
+ */
+export function evidenceTarget(
+  runtime: EngineRuntime,
+  statement: EvidenceStatement,
+): {
+  readonly conversationId?: ConversationId;
+  readonly route?: EvidenceRoute;
+} {
+  switch (statement.kind) {
+    case "action_signature": {
+      const fold = runtime.actionFolds.get(statement.actionHash);
+      return fold === undefined
+        ? {}
+        : {
+            conversationId: fold.conversation.conversationId,
+            route: { fold, kind: "action" },
+          };
+    }
+    case "durability_vote": {
+      const fold = runtime.recordFolds.get(statement.recordHash);
+      return {
+        conversationId: statement.conversationId,
+        ...(fold === undefined
+          ? {}
+          : { route: { fold, kind: "durability" as const } }),
+      };
+    }
+    case "reanchor_vote":
+      return { conversationId: statement.reanchor.conversationId };
+    case "catch_up_attestation":
+      return { conversationId: statement.request.conversationId };
+    default: {
+      const exhaustive: never = statement;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * Bind verified evidence to the active fold selected by its signed subject.
+ * @param route Active fold and the certificate role the statement targets.
+ * @param statement Cryptographically verified evidence statement.
+ * @returns Whether all fold-specific bindings match.
+ */
+export function evidenceMatchesFold(
+  route: EvidenceRoute,
+  statement: VerifiedEvidence["statement"],
+): boolean {
+  const { fold } = route;
+  switch (route.kind) {
+    case "action":
+      return (
+        statement.kind === "action_signature" &&
+        statement.actionHash === fold.actionHash
+      );
+    case "durability":
+      if (
+        statement.kind !== "durability_vote" ||
+        fold.recordHash === undefined
+      ) {
+        return false;
+      }
+      return (
+        statement.recordHash === fold.recordHash &&
+        statement.conversationId === fold.conversation.conversationId &&
+        statement.membershipHash === fold.conversation.membership.hash
+      );
+    default: {
+      const exhaustive: never = route;
+      return exhaustive;
+    }
+  }
+}
+
 /**
  * Encode signer messages in decoded-AgentId byte order, which a certificate
  * requires and neither a fold's map nor the store's key order gives.
@@ -352,12 +616,6 @@ export function readStoredHistory(
   );
 }
 
-/** Why a stored row failed to decode or to match what it claims to hold. */
-export type StoredRowError =
-  | ClientRepresentationError
-  | ParseResult.ParseError
-  | RouterWorkerPersistenceError;
-
 /**
  * Decode one stored membership, verify it against the Registry signer, and
  * check that the row's conversation and membership hash name it.
@@ -413,37 +671,6 @@ export function readStoredRecord(
     Effect.flatMap((routerAnchor) =>
       recordFromStore(membership, stored, routerAnchor),
     ),
-  );
-}
-
-/**
- * Reconstruct one complete certified record from separately retained
- * evidence. Each evidence row must name the record's conversation, the kind
- * and subject its certificate covers, and its own signer; the signatures are
- * verified once, with the record as a whole.
- * @param membership Verified membership of the record's conversation, which a
- *     MESSAGE record names only by its hash.
- * @param stored Durable record core and signer-attributed evidence rows.
- * @param routerAnchor Verified anchor named by the durable record core.
- * @returns The complete record after all hashes and store projections match.
- */
-export function recordFromStore(
-  membership: VerifiedMembership,
-  stored: StoredCertifiedRecord,
-  routerAnchor: EngineConversation["currentAnchor"],
-): Effect.Effect<CertifiedRecord, StoredRowError> {
-  return assembleStoredRecord(stored, routerAnchor).pipe(
-    Effect.tap((record) => verifyCertifiedRecord({ record, membership })),
-    Effect.filterOrFail(
-      (record) =>
-        storedRowMatchesCore(
-          stored,
-          record.actionCertifiedRecord.recordCore,
-          membership,
-        ),
-      persistenceFailure,
-    ),
-    Effect.withSpan("recordFromStore"),
   );
 }
 
@@ -555,29 +782,6 @@ export function verifyRecoveredHistory(
 }
 
 /**
- * Check that a stored record row's columns name the record core it holds.
- * @param row Staged or certified record row.
- * @param core The row's decoded record core.
- * @param membership Verified membership of the row's conversation.
- * @returns Whether every projected column matches.
- */
-export function storedRowMatchesCore(
-  row: StagedRecord,
-  core: RecordCore,
-  membership: VerifiedMembership,
-): boolean {
-  return [
-    row.conversationId === membership.descriptor.conversationId,
-    row.membershipHash === membership.hash,
-    row.previousRecordHash === (core.action.previousRecordHash ?? undefined),
-    row.anchorHash === core.anchorHash,
-    row.actionHash === core.actionHash,
-    row.authorAgentId === core.action.messageIntent.authorAgentId,
-    row.msgId === core.action.messageIntent.msgId,
-  ].every((matches) => matches);
-}
-
-/**
  * The staged record that extends a position but holds no durability
  * certificate yet. At most one exists: its action certificate and this
  * endpoint's proposal lock select one successor per predecessor and anchor.
@@ -629,22 +833,6 @@ export function observedHeadIsResolved(
 }
 
 /**
- * Resolve the latest durable position for one fixed conversation.
- * @param conversationId Private conversation identity to locate.
- * @returns The conversation's recovery snapshot and its matching position row.
- */
-export const durablePosition = (conversationId: ConversationIdValue) =>
-  recoverStoredState(conversationId).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.map((recovery) => ({
-      recovery,
-      position: recovery.positions.find(
-        (candidate) => candidate.conversationId === conversationId,
-      ),
-    })),
-  );
-
-/**
  * Determine whether one observed anchor belongs to the retained anchor chain.
  * @param recovery Complete verified recovery snapshot.
  * @param conversationId Conversation whose anchor chain is examined.
@@ -671,7 +859,7 @@ export function observedAnchorIsResolved(
 }
 
 /** Decoded intent identity and completion are validated once by the protocol's stored reader. */
-export function readStoredMessageIntent(
+function readStoredMessageIntent(
   stored: storedMessageIntent,
   memberships: ReadonlyMap<ConversationIdValue, VerifiedMembership>,
 ) {
@@ -803,20 +991,6 @@ function conversationHistory(
   );
 }
 
-interface HistoryCursor {
-  readonly currentAnchor: EngineConversation["currentAnchor"];
-  readonly currentAnchorHash: string;
-  readonly currentRecordHash: string | null;
-  readonly anchorIndex: number;
-}
-
-interface ConversationHistory {
-  readonly position: EndpointRecovery["positions"][number];
-  readonly anchors: ReadonlyArray<EndpointRecovery["anchors"][number]>;
-  readonly records: ReadonlyArray<EndpointRecovery["certifiedRecords"][number]>;
-  readonly initial: HistoryCursor;
-}
-
 function validHistoryFoundation(
   positions: ReadonlyArray<EndpointRecovery["positions"][number]>,
   position: EndpointRecovery["positions"][number],
@@ -899,6 +1073,431 @@ function verifyStoredOutbound(
     yield* verifyOuterMessage({ message, membership });
     return outbound;
   });
+}
+
+function decodeStoredInitialAnchor(
+  membership: VerifiedMembership,
+  stored: EndpointRecovery["anchors"][number],
+): Effect.Effect<
+  EngineConversation["currentAnchor"],
+  RouterWorkerPersistenceError
+> {
+  return decodeCanonical(InitialAnchorBody, stored.canonicalAnchor).pipe(
+    Effect.flatMap((anchor) =>
+      hashAnchor(anchor).pipe(
+        Effect.flatMap((anchorHash) =>
+          storedInitialAnchorMatches(membership, stored, anchor, anchorHash)
+            ? Effect.succeed(anchor)
+            : Effect.fail(persistenceFailure()),
+        ),
+      ),
+    ),
+    Effect.mapError(persistenceFailure),
+  );
+}
+
+function storedInitialAnchorMatches(
+  membership: VerifiedMembership,
+  stored: EndpointRecovery["anchors"][number],
+  anchor: InitialAnchorBodyValue,
+  anchorHash: AnchorHashValue,
+): boolean {
+  return [
+    anchor.conversationId === stored.conversationId,
+    anchor.membershipHash === membership.hash,
+    stored.selectedRecordHash === undefined,
+    anchorHash === stored.anchorHash,
+  ].every((matches) => matches);
+}
+
+function decodeStoredReanchor(
+  membership: VerifiedMembership,
+  stored: EndpointRecovery["anchors"][number],
+): Effect.Effect<
+  EngineConversation["currentAnchor"],
+  RouterWorkerPersistenceError
+> {
+  return decodeCanonical(CompletedReanchor, stored.canonicalAnchor).pipe(
+    Effect.flatMap((completed) =>
+      verifyCompletedReanchor({ completed, membership }).pipe(
+        Effect.flatMap((anchorHash) =>
+          storedReanchorMatches(stored, completed, anchorHash)
+            ? Effect.succeed(completed)
+            : Effect.fail(persistenceFailure()),
+        ),
+      ),
+    ),
+    Effect.mapError(persistenceFailure),
+  );
+}
+
+function storedReanchorMatches(
+  stored: EndpointRecovery["anchors"][number],
+  completed: CompletedReanchorValue,
+  anchorHash: AnchorHashValue,
+): boolean {
+  return [
+    anchorHash === stored.anchorHash,
+    completed.reanchor.previousAnchorHash === stored.previousAnchorHash,
+    completed.reanchor.selectedRecordHash === stored.selectedRecordHash,
+  ].every((matches) => matches);
+}
+
+function chainContains(
+  start: string,
+  target: string,
+  parentOf: (hash: string) => string | undefined,
+): boolean {
+  for (
+    let cursor: string | undefined = start;
+    cursor !== undefined;
+    cursor = parentOf(cursor)
+  ) {
+    if (cursor === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Keeps record verification and message construction inside communication. */
+function withMessage(membership: VerifiedMembership, record: CertifiedRecord) {
+  return messageFromIntent(
+    membership.members.map(agentCardOf),
+    record.actionCertifiedRecord.recordCore.action.messageIntent,
+  ).pipe(
+    Effect.map((message) => ({
+      recordHash: record.actionCertifiedRecord.recordHash,
+      message,
+    })),
+    Effect.mapError(persistenceFailure),
+  );
+}
+
+function recoveryFailure(): RouterWorkerRecoveryError {
+  return new RouterWorkerRecoveryError();
+}
+
+function bindsAnchor(
+  record: EndpointRecovery["stagedRecords"][number],
+  anchorHash?: AnchorHashValue,
+): boolean {
+  return anchorHash === undefined || record.anchorHash === anchorHash;
+}
+
+function isCertified(
+  recovery: EndpointRecovery,
+  record: EndpointRecovery["stagedRecords"][number],
+): boolean {
+  return recovery.certifiedRecords.some(
+    (certified) =>
+      certified.conversationId === record.conversationId &&
+      certified.recordHash === record.recordHash,
+  );
+}
+
+function recoverEngineAnchors(
+  recovery: EndpointRecovery,
+  memberships: ReadonlyMap<ConversationIdValue, VerifiedMembership>,
+): Effect.Effect<RecoveredAnchors, StoredRowError> {
+  return Effect.forEach(
+    recovery.anchors,
+    (stored) =>
+      Schema.decodeUnknown(ConversationId)(stored.conversationId).pipe(
+        Effect.flatMap((conversationId) => {
+          const membership = memberships.get(conversationId);
+          if (membership === undefined) {
+            return Effect.fail(restorePersistenceFailure());
+          }
+          return decodeStoredAnchor(membership, stored).pipe(
+            Effect.zipWith(
+              Schema.decodeUnknown(AnchorHash)(stored.anchorHash),
+              (anchor, anchorHash) => ({
+                stored,
+                conversationId,
+                anchorHash,
+                anchor,
+              }),
+            ),
+          );
+        }),
+      ),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.map((entries) => {
+      const current = new Map<
+        ConversationIdValue,
+        EngineConversation["currentAnchor"]
+      >();
+      const byHash = new Map<
+        AnchorHashValue,
+        EngineConversation["currentAnchor"]
+      >();
+      for (const { stored, conversationId, anchorHash, anchor } of entries) {
+        byHash.set(anchorHash, anchor);
+        if (positionUsesAnchor(recovery, stored)) {
+          current.set(conversationId, anchor);
+        }
+      }
+      return { current, byHash };
+    }),
+  );
+}
+
+function positionUsesAnchor(
+  recovery: EndpointRecovery,
+  stored: EndpointRecovery["anchors"][number],
+): boolean {
+  return recovery.positions.some(
+    (position) =>
+      position.conversationId === stored.conversationId &&
+      position.currentAnchorHash === stored.anchorHash,
+  );
+}
+
+function recoverConversations(
+  recovery: EndpointRecovery,
+  memberships: ReadonlyMap<ConversationIdValue, VerifiedMembership>,
+  anchors: ReadonlyMap<
+    ConversationIdValue,
+    EngineConversation["currentAnchor"]
+  >,
+) {
+  return Effect.forEach(
+    recovery.positions,
+    (position) =>
+      Schema.decodeUnknown(ConversationId)(position.conversationId).pipe(
+        Effect.flatMap((conversationId) => {
+          const membership = memberships.get(conversationId);
+          const anchor = anchors.get(conversationId);
+          if (membership === undefined || anchor === undefined) {
+            return Effect.fail(restorePersistenceFailure());
+          }
+          const conversation: EngineConversation = {
+            conversationId,
+            membership,
+            currentAnchor: anchor,
+          };
+          const entry: readonly [ConversationIdValue, EngineConversation] = [
+            conversationId,
+            conversation,
+          ];
+          return Effect.succeed(entry);
+        }),
+      ),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.map(
+      (entries) => new Map<ConversationIdValue, EngineConversation>(entries),
+    ),
+  );
+}
+
+function recoverActionFolds(
+  recovery: EndpointRecovery,
+  conversations: ReadonlyMap<ConversationIdValue, EngineConversation>,
+  anchorsByHash: ReadonlyMap<AnchorHashValue, RouterAnchor>,
+) {
+  return Effect.forEach(
+    recovery.proposalLocks,
+    (lock) =>
+      Effect.gen(function* () {
+        const conversationId = yield* Schema.decodeUnknown(ConversationId)(
+          lock.conversationId,
+        );
+        const conversation = conversations.get(conversationId);
+        if (conversation === undefined) {
+          return yield* Effect.fail(restorePersistenceFailure());
+        }
+        const action = yield* decodeCanonical(
+          ActionCore,
+          lock.canonicalActionCore,
+        );
+        const actionHash = yield* Schema.decodeUnknown(ActionHashSchema)(
+          lock.actionHash,
+        );
+        const verified = yield* verifyActionCore({
+          action,
+          membership: conversation.membership,
+        });
+        if (verified.actionHash !== actionHash) {
+          return yield* Effect.fail(restorePersistenceFailure());
+        }
+        const routerAnchor = anchorsByHash.get(verified.anchorHash);
+        if (routerAnchor === undefined) {
+          return yield* Effect.fail(restorePersistenceFailure());
+        }
+        const entry: readonly [ActionHash, EngineActionFold] = [
+          actionHash,
+          makeActionFold(conversation, action, actionHash, routerAnchor),
+        ];
+        return entry;
+      }),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.map((entries) => new Map<ActionHash, EngineActionFold>(entries)),
+  );
+}
+
+function recoverStagedFolds(
+  recovery: EndpointRecovery,
+  actionFolds: Map<ActionHash, EngineActionFold>,
+): Effect.Effect<Map<RecordHashValue, EngineActionFold>, StoredRowError> {
+  return Effect.forEach(
+    recovery.stagedRecords,
+    (staged) =>
+      Effect.gen(function* () {
+        const actionHash = yield* Schema.decodeUnknown(ActionHashSchema)(
+          staged.actionHash,
+        );
+        const recordHash = yield* Schema.decodeUnknown(RecordHash)(
+          staged.recordHash,
+        );
+        const fold = actionFolds.get(actionHash);
+        if (fold === undefined) {
+          return yield* Effect.fail(restorePersistenceFailure());
+        }
+        const recordCore = yield* decodeCanonical(
+          RecordCoreSchema,
+          staged.canonicalRecordCore,
+        );
+        const verifiedHash = yield* verifyRecordCore({
+          recordCore,
+          membership: fold.conversation.membership,
+        });
+        if (!stagedRecordMatches(staged, fold, recordCore, verifiedHash)) {
+          return yield* Effect.fail(restorePersistenceFailure());
+        }
+        yield* Effect.sync(() => {
+          fold.recordHash = recordHash;
+        });
+        const entry: readonly [RecordHashValue, EngineActionFold] = [
+          recordHash,
+          fold,
+        ];
+        return entry;
+      }),
+    { concurrency: 1 },
+  ).pipe(
+    Effect.map(
+      (entries) => new Map<RecordHashValue, EngineActionFold>(entries),
+    ),
+  );
+}
+
+function stagedRecordMatches(
+  staged: EndpointRecovery["stagedRecords"][number],
+  fold: EngineActionFold,
+  recordCore: RecordCore,
+  recordHash: RecordHashValue,
+): boolean {
+  return (
+    storedRowMatchesCore(staged, recordCore, fold.conversation.membership) &&
+    recordCore.actionHash === fold.actionHash &&
+    staged.recordHash === recordHash
+  );
+}
+
+function recoverCertifiedFolds(
+  input: CertifiedFoldRecoveryInput,
+): Effect.Effect<void, StoredRowError> {
+  return Effect.forEach(
+    input.recovery.certifiedRecords,
+    (stored) => recoverCertifiedFold(input, stored),
+    { concurrency: 1, discard: true },
+  );
+}
+
+function recoverCertifiedFold(
+  input: CertifiedFoldRecoveryInput,
+  stored: EndpointRecovery["certifiedRecords"][number],
+): Effect.Effect<void, StoredRowError> {
+  return Effect.gen(function* () {
+    const context = yield* certifiedFoldContext(input, stored);
+    const record = yield* recordFromStore(
+      context.conversation.membership,
+      stored,
+      context.routerAnchor,
+    );
+    const actionHash = record.actionCertifiedRecord.recordCore.actionHash;
+    const actionEvidence = yield* certificateMessages(
+      record.actionCertifiedRecord.actionCertificate.signatures,
+    );
+    const durabilityEvidence = yield* certificateMessages(
+      record.durabilityCertificate.votes,
+    );
+    yield* Effect.sync(() => {
+      const fold =
+        input.actionFolds.get(actionHash) ??
+        makeActionFold(
+          context.conversation,
+          record.actionCertifiedRecord.recordCore.action,
+          actionHash,
+          context.routerAnchor,
+        );
+      input.actionFolds.set(actionHash, fold);
+      completeRecoveredFold(fold, record, actionEvidence, durabilityEvidence);
+      input.recordFolds.set(record.actionCertifiedRecord.recordHash, fold);
+      context.conversation.head = {
+        recordHash: record.actionCertifiedRecord.recordHash,
+        record,
+      };
+    });
+  });
+}
+
+/**
+ * Reconstruct one complete certified record from separately retained
+ * evidence. Each evidence row must name the record's conversation, the kind
+ * and subject its certificate covers, and its own signer; the signatures are
+ * verified once, with the record as a whole.
+ * @param membership Verified membership of the record's conversation, which a
+ *     MESSAGE record names only by its hash.
+ * @param stored Durable record core and signer-attributed evidence rows.
+ * @param routerAnchor Verified anchor named by the durable record core.
+ * @returns The complete record after all hashes and store projections match.
+ */
+function recordFromStore(
+  membership: VerifiedMembership,
+  stored: StoredCertifiedRecord,
+  routerAnchor: EngineConversation["currentAnchor"],
+): Effect.Effect<CertifiedRecord, StoredRowError> {
+  return assembleStoredRecord(stored, routerAnchor).pipe(
+    Effect.tap((record) => verifyCertifiedRecord({ record, membership })),
+    Effect.filterOrFail(
+      (record) =>
+        storedRowMatchesCore(
+          stored,
+          record.actionCertifiedRecord.recordCore,
+          membership,
+        ),
+      persistenceFailure,
+    ),
+    Effect.withSpan("recordFromStore"),
+  );
+}
+
+/**
+ * Check that a stored record row's columns name the record core it holds.
+ * @param row Staged or certified record row.
+ * @param core The row's decoded record core.
+ * @param membership Verified membership of the row's conversation.
+ * @returns Whether every projected column matches.
+ */
+function storedRowMatchesCore(
+  row: StagedRecord,
+  core: RecordCore,
+  membership: VerifiedMembership,
+): boolean {
+  return [
+    row.conversationId === membership.descriptor.conversationId,
+    row.membershipHash === membership.hash,
+    row.previousRecordHash === (core.action.previousRecordHash ?? undefined),
+    row.anchorHash === core.anchorHash,
+    row.actionHash === core.actionHash,
+    row.authorAgentId === core.action.messageIntent.authorAgentId,
+    row.msgId === core.action.messageIntent.msgId,
+  ].every((matches) => matches);
 }
 
 function assembleStoredRecord(
@@ -1015,127 +1614,156 @@ function restoreEvidence(
   );
 }
 
-function decodeStoredInitialAnchor(
-  membership: VerifiedMembership,
-  stored: EndpointRecovery["anchors"][number],
-): Effect.Effect<
-  EngineConversation["currentAnchor"],
-  RouterWorkerPersistenceError
-> {
-  return decodeCanonical(InitialAnchorBody, stored.canonicalAnchor).pipe(
-    Effect.flatMap((anchor) =>
-      hashAnchor(anchor).pipe(
-        Effect.flatMap((anchorHash) =>
-          storedInitialAnchorMatches(membership, stored, anchor, anchorHash)
-            ? Effect.succeed(anchor)
-            : Effect.fail(persistenceFailure()),
-        ),
-      ),
-    ),
-    Effect.mapError(persistenceFailure),
-  );
-}
-
-function storedInitialAnchorMatches(
-  membership: VerifiedMembership,
-  stored: EndpointRecovery["anchors"][number],
-  anchor: InitialAnchorBodyValue,
-  anchorHash: AnchorHashValue,
-): boolean {
-  return [
-    anchor.conversationId === stored.conversationId,
-    anchor.membershipHash === membership.hash,
-    stored.selectedRecordHash === undefined,
-    anchorHash === stored.anchorHash,
-  ].every((matches) => matches);
-}
-
-function decodeStoredReanchor(
-  membership: VerifiedMembership,
-  stored: EndpointRecovery["anchors"][number],
-): Effect.Effect<
-  EngineConversation["currentAnchor"],
-  RouterWorkerPersistenceError
-> {
-  return decodeCanonical(CompletedReanchor, stored.canonicalAnchor).pipe(
-    Effect.flatMap((completed) =>
-      verifyCompletedReanchor({ completed, membership }).pipe(
-        Effect.flatMap((anchorHash) =>
-          storedReanchorMatches(stored, completed, anchorHash)
-            ? Effect.succeed(completed)
-            : Effect.fail(persistenceFailure()),
-        ),
-      ),
-    ),
-    Effect.mapError(persistenceFailure),
-  );
-}
-
-function storedReanchorMatches(
-  stored: EndpointRecovery["anchors"][number],
-  completed: CompletedReanchorValue,
-  anchorHash: AnchorHashValue,
-): boolean {
-  return [
-    anchorHash === stored.anchorHash,
-    completed.reanchor.previousAnchorHash === stored.previousAnchorHash,
-    completed.reanchor.selectedRecordHash === stored.selectedRecordHash,
-  ].every((matches) => matches);
-}
-
-function chainContains(
-  start: string,
-  target: string,
-  parentOf: (hash: string) => string | undefined,
-): boolean {
-  for (
-    let cursor: string | undefined = start;
-    cursor !== undefined;
-    cursor = parentOf(cursor)
-  ) {
-    if (cursor === target) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Keeps record verification and message construction inside communication. */
-function withMessage(membership: VerifiedMembership, record: CertifiedRecord) {
-  return messageFromIntent(
-    membership.members.map(agentCardOf),
-    record.actionCertifiedRecord.recordCore.action.messageIntent,
-  ).pipe(
-    Effect.map((message) => ({
-      recordHash: record.actionCertifiedRecord.recordHash,
-      message,
-    })),
-    Effect.mapError(persistenceFailure),
-  );
-}
-
 function persistenceFailure(): RouterWorkerPersistenceError {
   return new RouterWorkerPersistenceError();
 }
 
-function recoveryFailure(): RouterWorkerRecoveryError {
-  return new RouterWorkerRecoveryError();
-}
-
-function bindsAnchor(
-  record: EndpointRecovery["stagedRecords"][number],
-  anchorHash?: AnchorHashValue,
-): boolean {
-  return anchorHash === undefined || record.anchorHash === anchorHash;
-}
-
-function isCertified(
-  recovery: EndpointRecovery,
-  record: EndpointRecovery["stagedRecords"][number],
-): boolean {
-  return recovery.certifiedRecords.some(
-    (certified) =>
-      certified.conversationId === record.conversationId &&
-      certified.recordHash === record.recordHash,
+function certificateMessages(
+  representations: readonly unknown[],
+): Effect.Effect<readonly SignedMessageValue[], ParseResult.ParseError> {
+  return Effect.forEach(
+    representations,
+    (representation) => Schema.decodeUnknown(SignedMessage)(representation),
+    { concurrency: 1 },
   );
+}
+
+function certifiedFoldContext(
+  input: CertifiedFoldRecoveryInput,
+  stored: EndpointRecovery["certifiedRecords"][number],
+) {
+  return Effect.all({
+    conversationId: Schema.decodeUnknown(ConversationId)(stored.conversationId),
+    anchorHash: Schema.decodeUnknown(AnchorHash)(stored.anchorHash),
+  }).pipe(
+    Effect.flatMap(({ conversationId, anchorHash }) => {
+      const conversation = input.conversations.get(conversationId);
+      const routerAnchor = input.anchorsByHash.get(anchorHash);
+      if (conversation === undefined || routerAnchor === undefined) {
+        return Effect.fail(restorePersistenceFailure());
+      }
+      return Effect.succeed({ conversation, routerAnchor });
+    }),
+  );
+}
+
+function completeRecoveredFold(
+  fold: EngineActionFold,
+  record: CertifiedRecord,
+  actionEvidence: readonly SignedMessageValue[],
+  durabilityEvidence: readonly SignedMessageValue[],
+): void {
+  for (const message of actionEvidence) {
+    fold.actionEvidence.set(message.senderAgentId, message);
+  }
+  for (const message of durabilityEvidence) {
+    fold.durabilityEvidence.set(message.senderAgentId, message);
+  }
+  fold.recordHash = record.actionCertifiedRecord.recordHash;
+  fold.certified = true;
+}
+
+/**
+ * Restore only evidence whose signer, subject, and conversation still match.
+ * @param recovery Complete endpoint-store snapshot.
+ * @param actionFolds Active folds indexed by verified action hash.
+ * @param recordFolds Active folds indexed by verified record hash.
+ * @returns Completion after every relevant row is verified and installed.
+ */
+function recoverFoldEvidence(
+  recovery: EndpointRecovery,
+  actionFolds: Map<ActionHash, EngineActionFold>,
+  recordFolds: Map<RecordHashValue, EngineActionFold>,
+): Effect.Effect<void, StoredRowError> {
+  return Effect.forEach(
+    recovery.evidence,
+    (row) => {
+      if (row.kind === "catch-up" || row.kind === "reanchor") {
+        return Effect.void;
+      }
+      return foldForEvidence(row, actionFolds, recordFolds).pipe(
+        Effect.flatMap((target) =>
+          target === undefined
+            ? Effect.fail(restorePersistenceFailure())
+            : restoreFoldEvidence(row, target),
+        ),
+      );
+    },
+    { concurrency: 1, discard: true },
+  );
+}
+
+function foldForEvidence(
+  row: ProtocolEvidence,
+  actionFolds: Map<ActionHash, EngineActionFold>,
+  recordFolds: Map<RecordHashValue, EngineActionFold>,
+): Effect.Effect<EvidenceRoute | undefined, StoredRowError> {
+  switch (row.kind) {
+    case "action":
+      return Schema.decodeUnknown(ActionHashSchema)(row.subjectId).pipe(
+        Effect.map((hash) => actionFolds.get(hash)),
+        Effect.map((fold) =>
+          fold === undefined ? undefined : { fold, kind: "action" },
+        ),
+      );
+    case "durability":
+      return Schema.decodeUnknown(RecordHash)(row.subjectId).pipe(
+        Effect.map((hash) => recordFolds.get(hash)),
+        Effect.map((fold) =>
+          fold === undefined ? undefined : { fold, kind: "durability" },
+        ),
+      );
+    case "catch-up":
+    case "reanchor":
+      return Effect.succeed(undefined);
+    default: {
+      const exhaustive: never = row.kind;
+      return exhaustive;
+    }
+  }
+}
+
+function restoreFoldEvidence(
+  row: ProtocolEvidence,
+  target: EvidenceRoute,
+): Effect.Effect<void, StoredRowError> {
+  return decodeCanonical(SignedMessage, row.canonicalEvidence).pipe(
+    Effect.flatMap((message) => Schema.encode(SignedMessage)(message)),
+    Effect.flatMap((representation) =>
+      verifyStableEvidence({
+        representation,
+        membership: target.fold.conversation.membership,
+      }),
+    ),
+    Effect.flatMap((verified) =>
+      foldEvidenceMatches(row, target, verified.statement)
+        ? Effect.sync(() => {
+            const evidence =
+              target.kind === "action"
+                ? target.fold.actionEvidence
+                : target.fold.durabilityEvidence;
+            evidence.set(verified.message.senderAgentId, verified.message);
+          })
+        : Effect.fail(restorePersistenceFailure()),
+    ),
+  );
+}
+
+function foldEvidenceMatches(
+  row: ProtocolEvidence,
+  target: EvidenceRoute,
+  statement: VerifiedEvidence["statement"],
+): boolean {
+  const subjectId =
+    target.kind === "action" ? target.fold.actionHash : target.fold.recordHash;
+  return (
+    row.conversationId === target.fold.conversation.conversationId &&
+    row.evidenceKey === statement.signerAgentId &&
+    row.subjectId === subjectId &&
+    evidenceMatchesFold(target, statement)
+  );
+}
+
+function restorePersistenceFailure(): RouterWorkerPersistenceError {
+  return new RouterWorkerPersistenceError();
 }

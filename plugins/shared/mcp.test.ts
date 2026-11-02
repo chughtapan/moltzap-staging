@@ -15,7 +15,7 @@ import {
   mcpFixture,
   loopbackMcpEndpoint,
   mcpTestCredential,
-} from "../../packages/social-harness/src/__tests__/mcp-http-fixtures.js";
+} from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
 import { toolDefinitions } from "@moltzap/social-harness";
 import {
   acquireMcpConnection,

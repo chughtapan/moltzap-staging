@@ -243,40 +243,6 @@
         "cwd": ".",
         "command": "pnpm exec typedoc"
       }
-    },
-    "generate-wire-golden": {
-      "executor": "nx:run-commands",
-      "dependsOn": [
-        {
-          "projects": [
-            "@moltzap/social-harness",
-            "@moltzap/registry"
-          ],
-          "target": "build"
-        }
-      ],
-      "cache": false,
-      "options": {
-        "cwd": ".",
-        "command": "node --conditions=sharness-internal scripts/generate-wire-golden.ts"
-      }
-    },
-    "generate-client-record-golden": {
-      "executor": "nx:run-commands",
-      "dependsOn": [
-        {
-          "projects": [
-            "@moltzap/social-harness",
-            "@moltzap/registry"
-          ],
-          "target": "build"
-        }
-      ],
-      "cache": false,
-      "options": {
-        "cwd": ".",
-        "command": "node --conditions=sharness-internal scripts/generate-client-record-golden.ts"
-      }
     }
   }
 }
