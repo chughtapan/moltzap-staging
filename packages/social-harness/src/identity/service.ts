@@ -11,7 +11,6 @@ import {
   Ref,
   Schema,
 } from "effect";
-import type { RegistrationId } from "./registry/contract.js";
 import {
   decodeCanonical,
   encodeCanonical,
@@ -27,7 +26,11 @@ import {
   type PrincipalId,
   type VerifiedAgentIdentityCard,
 } from "./agent.js";
-import { Registry, type RegistryError } from "./registry/index.js";
+import {
+  type RegistrationId,
+  Registry,
+  type RegistryError,
+} from "./registry.js";
 
 /** Local identity bytes must remain readable and agree with the configured keys. */
 export class IdentityError extends Data.TaggedError("IdentityError")<{
@@ -82,10 +85,6 @@ const readIdentityBinding = () =>
 function bindIdentity(binding: IdentityBinding) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* Schema.decodeUnknown(identityRow)({
-      agent_id: binding.agentId,
-      canonical_agent_card: binding.canonicalAgentCard,
-    }).pipe(Effect.mapError(representationFailure));
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
@@ -321,10 +320,7 @@ function registerLocal(
     );
     const result = yield* registry
       .register({
-        request: {
-          ...request,
-          publicKey: AgentSigningAuthority.publicKey(settings.signingAuthority),
-        },
+        request: { ...request },
         admissionCredential,
         signingAuthority: settings.signingAuthority,
       })
@@ -333,14 +329,6 @@ function registerLocal(
       return yield* new RegistrationError({ reason: result.kind });
     }
     const card = result.identityCard;
-    if (
-      card.agentName !== request.agentName ||
-      card.principalId !== request.principalId ||
-      card.publicKey.x !==
-        AgentSigningAuthority.publicKey(settings.signingAuthority).x
-    ) {
-      return yield* new RegistrationError({ reason: "incompatible-daemon" });
-    }
     yield* saveIdentity(card).pipe(
       Effect.catchTag("IdentityError", (error) =>
         Effect.fail(

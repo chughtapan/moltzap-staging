@@ -24,7 +24,7 @@ import {
 import { MessageAddressInput } from "../communication/records/values.js";
 import { encodeCollectiveContent } from "../communication/requests/answers.js";
 import { compareAscii } from "../encoding/identifier.js";
-import { FirewallPolicyError } from "../firewall/rules/config.js";
+import { FirewallPolicyError } from "../firewall/rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed public failure reasons are part of the service contract. */
 
@@ -462,16 +462,19 @@ it("rolls back policy decisions when publication fails and recovers both on rest
         policy,
         decorateFirewall: (firewall) => ({
           ...firewall,
-          saveDecisions: (decisions) =>
-            firewall
-              .saveDecisions(decisions)
-              .pipe(
-                Effect.zipRight(
-                  Effect.fail(
-                    new FirewallPolicyError({ reason: "persistence-failed" }),
+          checkIncoming: (value, evidence) =>
+            firewall.checkIncoming(value, evidence).pipe(
+              Effect.map((decision) => ({
+                ...decision,
+                save: decision.save.pipe(
+                  Effect.zipRight(
+                    Effect.fail(
+                      new FirewallPolicyError({ reason: "persistence-failed" }),
+                    ),
                   ),
                 ),
-              ),
+              })),
+            ),
         }),
       })
       .pipe(Scope.extend(scope));

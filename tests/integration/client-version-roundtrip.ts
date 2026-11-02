@@ -57,7 +57,6 @@ const registerVersionMismatchAgent = (
           "prn_AAAAAAAAAAAAAAAAAAAAAA",
         ),
         agentName: Schema.decodeUnknownSync(AgentName)("version-mismatch"),
-        publicKey: AgentSigningAuthority.publicKey(signingAuthority),
       },
       admissionCredential,
       signingAuthority,

@@ -7,7 +7,6 @@ import type { SqlClient } from "@effect/sql/SqlClient";
 import { absurd, Effect } from "effect";
 
 import type { SignedMessage } from "../../identity/envelope/signed-message.js";
-import type { EndpointStoreError } from "../store/database.js";
 import type { SendError } from "./errors.js";
 import {
   ClientRepresentationError,
@@ -50,7 +49,16 @@ import {
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
 } from "../router/connection.js";
-import { lockFirstMessageProposal, lockProposal } from "../store/anchors.js";
+import {
+  lockFirstMessageProposal,
+  lockProposal,
+} from "../store/conversations.js";
+import {
+  type ConversationFoundation,
+  type EndpointStoreError,
+  isSemanticStoreRejection,
+  type ProposalLock,
+} from "../store/database.js";
 import { readRecordOutbound } from "../store/outbound.js";
 import {
   applyCertifiedRecord,
@@ -58,11 +66,6 @@ import {
   mergeEvidence as storedMergeEvidence,
   supersedeProposalLock,
 } from "../store/records.js";
-import {
-  type ConversationFoundation,
-  isSemanticStoreRejection,
-  type ProposalLock,
-} from "../store/types.js";
 import {
   makeActionCertifiedRecord,
   makeCertifiedRecord,

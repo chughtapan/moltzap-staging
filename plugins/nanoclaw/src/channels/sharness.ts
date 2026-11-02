@@ -12,7 +12,6 @@ import {
   renderCollectiveResult,
   renderContent,
   renderLocalGuidance,
-  replyAddress,
   type RequestError,
   type SendError,
 } from "@moltzap/social-harness";
@@ -88,7 +87,6 @@ interface Activation {
   readonly endpoint: McpConnection;
   readonly finished: Deferred.Deferred<undefined>;
   readonly scope: Scope.CloseableScope;
-  readonly stopSignal: Deferred.Deferred<undefined>;
   state: "active" | "stopping";
 }
 
@@ -325,7 +323,6 @@ class HarnessChannelAdapter {
           finished: yield* Deferred.make<undefined>(),
           scope,
           state: "active",
-          stopSignal: yield* Deferred.make<undefined>(),
         };
         this.setupConfig = config;
         this.activation = activation;
@@ -334,7 +331,6 @@ class HarnessChannelAdapter {
             this.handleDelivery(delivery),
           )
           .pipe(
-            Effect.raceFirst(Deferred.await(activation.stopSignal)),
             Effect.ensuring(this.finishActivation(activation)),
             Effect.forkDaemon,
           );
@@ -347,7 +343,7 @@ class HarnessChannelAdapter {
     return activation === null
       ? Effect.void
       : this.beginStopping(activation).pipe(
-          Effect.zipRight(Deferred.succeed(activation.stopSignal, undefined)),
+          Effect.zipRight(Scope.close(activation.scope, Exit.void)),
           Effect.zipRight(Deferred.await(activation.finished)),
         );
   }
@@ -538,7 +534,7 @@ class HarnessChannelAdapter {
         delivery.item.kind === "collectiveRequest"
           ? renderCollectiveRequest(
               delivery.item,
-              `Send the answer once as the whole text of send_message to ${replyAddress(delivery.item.message)}.`,
+              `Send the answer once as the whole text of send_message to ${delivery.address}.`,
               delivery.guidance,
             )
           : renderLocalGuidance(delivery.guidance, {
@@ -618,7 +614,7 @@ function projectItem(
       return {
         origin: "peer",
         id: eventId,
-        address: replyAddress(item.message),
+        address: address,
         sender: `agent:${item.message.author.agentName}`,
         text: renderContent(item.message.content),
       };
@@ -626,11 +622,11 @@ function projectItem(
       return {
         origin: "peer",
         id: eventId,
-        address: replyAddress(item.message),
+        address: address,
         sender: `agent:${item.message.author.agentName}`,
         text: renderCollectiveRequest(
           item,
-          `Send the answer once as the whole text of send_message to ${replyAddress(item.message)}.`,
+          `Send the answer once as the whole text of send_message to ${address}.`,
         ),
       };
     case "collectiveResult":

@@ -22,11 +22,7 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, vi } from "vitest";
-import type { RegistryLookupResult } from "../../identity/registry/contract.js";
-import type {
-  EndpointRecovery,
-  StoredOutboundMessage,
-} from "../store/types.js";
+import type { RegistryLookupResult } from "../../identity/registry.js";
 import type { EndpointEngineInput, EngineRuntime } from "./state.js";
 import { untilLive } from "../../__tests__/advance-clock.js";
 import {
@@ -116,7 +112,11 @@ import {
   RouterWorkerDiscontinuityError,
   type RouterWorkerIngress,
 } from "../router/connection.js";
-import { initializeCommunication } from "../store/database.js";
+import {
+  type EndpointRecovery,
+  initializeCommunication,
+  type StoredOutboundMessage,
+} from "../store/database.js";
 import {
   acceptCatchUpPage,
   type CatchUpRun,

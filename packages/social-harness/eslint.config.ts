@@ -61,7 +61,7 @@ const sealingSigner = {
 
 /** Message schemas and their ordered assessment share one checking boundary. */
 const messageCheckRules = {
-  files: ["src/firewall/check.ts"],
+  files: ["src/firewall/check.ts", "src/firewall/service.ts"],
   rules: {
     "max-lines": [
       "error",
@@ -110,6 +110,8 @@ export default [
       "src/communication/requests/service.ts",
       "src/communication/records/acceptance.test.ts",
       "src/harness/launcher/installation.ts",
+      "src/communication/store/conversations.ts",
+      "src/communication/store/database.ts",
     ],
     rules: {
       "max-lines": [

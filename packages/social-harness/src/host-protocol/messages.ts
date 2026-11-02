@@ -1,20 +1,87 @@
-/** @file Host destinations select a peer or a fixed group in canonical name order. */
+/** @file Host sends name a canonical conversation and return its accepted work identity. */
 
 import { Effect, type ParseResult, Schema } from "effect";
 import { SendError } from "../communication/conversations/errors.js";
+import {
+  AcceptResponse,
+  CollectiveId,
+  DeadlineSeconds,
+  DeclineResponse,
+  RequestedSchema,
+} from "../communication/index.js";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
-  type MessageAddressInput,
+  MessageAddressInput,
+  MsgId,
+  wellFormedString,
 } from "../communication/records/values.js";
+import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
+import { checkedGuidanceSchema } from "../firewall/check.js";
+import { MessageAddress } from "../harness/inbox.js";
 import { AgentName } from "../identity/agent.js";
 
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
+
+const multicast = exactStruct({
+  op: Schema.optionalWith(Schema.Literal("multicast"), { exact: true }),
+});
+const question = exactStruct({
+  op: Schema.Literal("gather", "all_gather"),
+  deadline: DeadlineSeconds,
+  requestedSchema: RequestedSchema,
+});
+const response = Schema.Union(AcceptResponse, DeclineResponse);
+
+/** An ordinary message may explicitly select multicast. */
+export const MessageSendRequest = exactStruct({
+  to: MessageAddressInput,
+  text: wellFormedString,
+  collective: Schema.optionalWith(multicast, { exact: true }),
+});
+/** A question supplies its response form and relative deadline together. */
+export const QuestionSendRequest = exactStruct({
+  to: MessageAddressInput,
+  text: wellFormedString,
+  collective: question,
+});
+/** An answer names the request it addresses. */
+export const AnswerSendRequest = exactStruct({
+  to: MessageAddressInput,
+  collectiveResponse: response,
+});
+/** Host addresses are resolved by SocialHarness before communication preparation. */
+export const SendRequest = Schema.Union(
+  MessageSendRequest,
+  QuestionSendRequest,
+  AnswerSendRequest,
+).annotations({ identifier: "SendRequest" });
+/** Question deadlines include policy assessment time.
+ * @useDeclaredType
+ */
+export type SendRequest = typeof SendRequest.Type;
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */
+
+/* eslint-disable @typescript-eslint/naming-convention -- Effect schemas share the public names of their derived value types. */
+
+/** Accepted ordinary messages, replies and questions share one receipt shape. */
+export const SendResultSchema = Schema.Struct({
+  id: Schema.Union(MsgId, CollectiveId),
+  address: MessageAddress,
+  guidance: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
+}).annotations({ identifier: "SendResult" });
+
+/** Accepted work continues independently of the caller's lifetime. */
+export type SendResult = typeof SendResultSchema.Type;
+
+/* eslint-enable @typescript-eslint/naming-convention -- Restore ordinary symbol naming. */
+
 /** A destination in canonical form, before any Registry lookup. */
-export type CanonicalMessageAddress =
+type CanonicalMessageAddress =
   | {
       readonly kind: "direct";
       readonly address: AgentAddress;

@@ -12,7 +12,7 @@ import type {
   FirewallSettings,
   TextPolicySettings,
   TextRule,
-} from "./rules/config.js";
+} from "./rules.js";
 import {
   checkMessage,
   type DecisionProvider,
@@ -45,8 +45,7 @@ const context: typeof MessageContext.Encoded = {
     {
       ...incoming,
       id: "earlier",
-      visibility: "runtime",
-      admission: "admitted",
+      visibleToAgent: true,
     },
   ],
   facts: [

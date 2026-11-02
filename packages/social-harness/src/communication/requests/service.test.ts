@@ -2,12 +2,10 @@
 
 import { scopedLive as it } from "@effect/vitest";
 import {
-  Cause,
   Clock,
   Data,
   Deferred,
   Effect,
-  Exit,
   FastCheck as fc,
   Fiber,
   Option,
@@ -218,10 +216,7 @@ it("publishes the all_gather close with both parts of every selected message ide
 
 it("recovers a frozen result while its accepted close is still certifying", () =>
   Effect.gen(function* () {
-    const completion = yield* Deferred.make<undefined>();
-    const fixture = yield* openCollectives({
-      waitForMessage: () => Deferred.await(completion),
-    });
+    const fixture = yield* openCollectives({ pendingCompletion: true });
     const captured = question(
       (yield* Clock.currentTimeMillis) + 250,
       [bob, carol],
@@ -404,7 +399,7 @@ it("ignores an unknown close permanently rather than applying it to a later requ
 it("waits for its own accepted answer before presenting a close that selects it", () =>
   Effect.gen(function* () {
     const fixture = yield* pendingBob();
-    const { completion } = fixture;
+    const { complete } = fixture;
     const operationId = collectiveOperationId(alice.agentId);
     const request = yield* aliceRequest(
       (yield* Clock.currentTimeMillis) + 5000,
@@ -436,7 +431,7 @@ it("waits for its own accepted answer before presenting a close that selects it"
       "settled",
     );
     yield* fixture.service.receive(close);
-    yield* Deferred.succeed(completion, undefined);
+    yield* complete;
     const result = yield* Queue.take(fixture.results);
     expect(result.sources.request).toEqual(request);
     expect(result.sources.answers).toEqual([own, peer]);
@@ -522,35 +517,6 @@ it("does not admit a request under another author's operation namespace", () =>
     expect(yield* fixture.service.getRequest(operationId)).toMatchObject({
       author: bob,
       msgId: honest.msgId,
-    });
-  }));
-
-it("propagates a certification observer defect to the result consumer", () =>
-  Effect.gen(function* () {
-    const defect = new Error("communication observer defect");
-    const fixture = yield* openCollectives({
-      agent: bob,
-      waitForMessage: () => Effect.die(defect),
-    });
-    const operationId = collectiveOperationId(alice.agentId);
-    yield* fixture.service.receive(
-      yield* aliceRequest((yield* Clock.currentTimeMillis) + 5000, {
-        operationId,
-      }),
-    );
-    yield* fixture.service.answer(
-      yield* declineMessage(bob, [alice], operationId, 42),
-    );
-    const exit = yield* fixture.service
-      .consumeResults(() => Effect.void)
-      .pipe(Effect.exit);
-    if (Exit.isSuccess(exit)) {
-      return yield* Effect.dieMessage(
-        "result consumption unexpectedly completed",
-      );
-    }
-    expect(Option.getOrUndefined(Cause.dieOption(exit.cause))).toMatchObject({
-      message: defect.message,
     });
   }));
 

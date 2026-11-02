@@ -2,7 +2,7 @@
 
 import canonicalize from "canonicalize";
 import { Either, Schema } from "effect";
-import { exactStruct } from "../../encoding/exact.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
 import {
   compareAgentIds as compareAgentIdBytes,
   compareAscii,

@@ -20,7 +20,7 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect } from "vitest";
-import type { RegistryLookupResult } from "../../identity/registry/contract.js";
+import type { RegistryLookupResult } from "../../identity/registry.js";
 import type { EndpointEngineInput } from "./state.js";
 import { advanceClock, untilLive } from "../../__tests__/advance-clock.js";
 import {

@@ -1,13 +1,13 @@
 /** @file Process configuration validates exact secret files and preserves safe startup diagnostics. */
 
 import { scopedLive as it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Redacted } from "effect";
+import { ConfigProvider, Effect, Layer, Redacted, Schema } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration tests control exact secret bytes before platform services start.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect } from "vitest";
-import { AgentSigningAuthority } from "../identity/agent.js";
+import { AgentPublicKey, AgentSigningAuthority } from "../identity/agent.js";
 import {
   loadDaemonBootstrap,
   loadDaemonProcessConfiguration,
@@ -85,6 +85,23 @@ it("loads process settings and keeps private credentials redacted", () =>
     expect(JSON.stringify(bootstrap)).not.toContain(privateKey);
   }));
 
+it("accepts a valid Registry key with JSON whitespace and reordered members", () =>
+  Effect.gen(function* () {
+    const expected = yield* Schema.decodeUnknown(
+      Schema.parseJson(AgentPublicKey),
+    )(registrySigner);
+    const reordered = JSON.stringify(
+      { x: expected.x, kty: "OKP", crv: "Ed25519" },
+      null,
+      2,
+    );
+    const subject = fixture({
+      SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY: ` ${reordered} `,
+    });
+    const configuration = yield* subject.load;
+    expect(configuration.registrySignerPublicKey).toEqual(expected);
+  }));
+
 const invalidSettings: ReadonlyArray<readonly [string, string]> = [
   ["SHARNESS_STATE_DIRECTORY", ""],
   ["SHARNESS_MCP_PORT", "0"],
@@ -92,7 +109,6 @@ const invalidSettings: ReadonlyArray<readonly [string, string]> = [
   ["SHARNESS_MCP_PORT", "65536"],
   ["SHARNESS_REGISTRY_ORIGIN", "https://registry.example/private"],
   ["SHARNESS_ROUTER_ORIGIN", "ftp://router.example"],
-  ["SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY", `${registrySigner} `],
   ["SHARNESS_HISTORY_EXPORT", ""],
   ["SHARNESS_EXPERIMENT_HIDE_GROUPS", "sometimes"],
   ["SHARNESS_EXPERIMENT_HIDE_COLLECTIVES", "sometimes"],

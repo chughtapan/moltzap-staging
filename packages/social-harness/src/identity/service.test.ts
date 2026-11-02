@@ -7,12 +7,12 @@ import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Encoding, Layer, Redacted } from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { agentCardOf, AgentName, AgentSigningAuthority } from "./agent.js";
 import {
   type IdentityFixture,
   makeIdentityFixture,
-} from "./authentication/__tests__/authenticated-http-fixtures.js";
-import { RegistrationId, Registry, RegistryError } from "./registry/index.js";
+} from "./__tests__/authentication-fixtures.js";
+import { agentCardOf, AgentName, AgentSigningAuthority } from "./agent.js";
+import { RegistrationId, Registry, RegistryError } from "./registry.js";
 import { Identity } from "./service.js";
 
 function requestFor(fixture: IdentityFixture) {
@@ -114,20 +114,32 @@ it("keeps a refused registration unregistered", () =>
     expect(yield* identity.me()).toEqual({ kind: "unregistered" });
   }));
 
-it("rejects a card belonging to another retained key", () =>
+it("refuses saved registration when the configured signing key changes", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIdentityFixture;
     const other = yield* makeIdentityFixture;
-    const identity = yield* openIdentity(
-      ":memory:",
-      fixture,
-      registryFor(other),
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({
+      prefix: "sharness-identity-key-",
+    });
+    const filename = join(directory, "identity.sqlite3");
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const identity = yield* openIdentity(
+          filename,
+          fixture,
+          registryFor(fixture),
+        );
+        yield* identity.register(requestFor(fixture));
+      }),
     );
-    expect(
-      yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
-    ).toMatchObject({ reason: "incompatible-daemon" });
-    expect(yield* identity.me()).toEqual({ kind: "unregistered" });
-  }));
+    const refusal = yield* openIdentity(
+      filename,
+      { ...fixture, signingAuthority: other.signingAuthority },
+      registryFor(fixture),
+    ).pipe(Effect.flip);
+    expect(refusal).toMatchObject({ reason: "incompatible-daemon" });
+  }).pipe(Effect.provide(NodeContext.layer)));
 
 it("projects admission refusal without assigning registration", () =>
   Effect.gen(function* () {

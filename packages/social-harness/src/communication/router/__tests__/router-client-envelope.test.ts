@@ -4,7 +4,7 @@ import { Duration, Effect, Either, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { expect, it } from "vitest";
 import { AgentId } from "../../../identity/agent.js";
-import { VersionMismatchError } from "../../../identity/authentication/proof.js";
+import { VersionMismatchError } from "../../../identity/http-signatures.js";
 import { AgentSigningAuthority } from "../../../identity/keys.js";
 import { Router } from "../api.js";
 

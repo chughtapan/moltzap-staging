@@ -1,13 +1,12 @@
 /** @file Questions and result sources retain the messages selected by one collective operation. */
 
 import { Clock, Effect, Option, Schema } from "effect";
-import { exactStruct } from "../../encoding/exact.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
 import { compareAscii } from "../../encoding/identifier.js";
 import { AgentCard } from "../../identity/agent.js";
 import { CommunicationError } from "../errors.js";
 import { Message, MessageParticipants } from "../message.js";
 import { maximumMembers, wellFormedString } from "../records/values.js";
-import { DeliveryToken } from "../store/types.js";
 import {
   encodeCollectiveContent,
   mintCollectiveId,
@@ -209,7 +208,6 @@ export type ResultSources = typeof ResultSources.Type;
 /** The item and its sources use one durable result identity through retries and restart. */
 export const ResultDelivery = exactStruct({
   operationId: CollectiveId,
-  deliveryToken: DeliveryToken,
   item: Schema.Union(
     exactStruct({ kind: Schema.Literal("result"), result: RequestResult }),
     exactStruct({

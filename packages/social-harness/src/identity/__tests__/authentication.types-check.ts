@@ -4,7 +4,7 @@ import type {
   Authentication,
   AuthenticationError,
   VerifiedAgentRequest,
-} from "../service.js";
+} from "../authentication.js";
 type Expect<Value extends true> = Value;
 /** Callers handle only authentication failures and supply only Authentication. */
 export type AuthenticationChannels = Expect<

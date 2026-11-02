@@ -24,21 +24,17 @@ import type { CollectiveId, RequestError } from "./requests/contracts.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
+  exactStruct,
   sameBytes,
 } from "../encoding/canonical-json.js";
-import { exactStruct } from "../encoding/exact.js";
 import {
   agentCardOf,
   AgentIdentityCard,
   type AgentName,
   type VerifiedAgentIdentityCard,
 } from "../identity/agent.js";
-import { Registry } from "../identity/registry/index.js";
-import {
-  isTerminalSendFailure,
-  SendError,
-  sendFailureReasons,
-} from "./conversations/errors.js";
+import { Registry } from "../identity/registry.js";
+import { isTerminalSendFailure, SendError } from "./conversations/errors.js";
 import { verifyStoredMembership } from "./conversations/log.js";
 import {
   type EndpointEngine,
@@ -77,16 +73,16 @@ import {
   RouterWorkerPayloadInvalidError,
 } from "./router/connection.js";
 import {
+  failMessage,
+  readAcceptedMessage,
+  readMemberships,
+  readUnpreparedMessages,
+  acceptMessage as storedAcceptMessage,
+} from "./store/conversations.js";
+import {
   type EndpointStoreError,
   initializeCommunication,
 } from "./store/database.js";
-import {
-  failMessage,
-  readAcceptedMessage,
-  readUnpreparedMessages,
-  acceptMessage as storedAcceptMessage,
-} from "./store/messages.js";
-import { readMemberships } from "./store/reads.js";
 
 /** All conversation members, in ascending agent-name order. */
 export type Conversation = readonly [
@@ -235,8 +231,6 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
       self: agentCardOf(settings.identityCard),
       acceptMessage: (message) =>
         acceptMessage(environment, message).pipe(provideSql),
-      waitForMessage: (reference) =>
-        waitForMessage(environment, reference).pipe(provideSql),
     });
     yield* supervise(workers, Deferred.await(environment.faults), environment);
     yield* supervise(
@@ -323,14 +317,18 @@ function consumeIncoming<E, R>(
   return Effect.gen(function* () {
     const engine = yield* Deferred.await(environment.ready);
     while (true) {
-      const pending = yield* engine
-        .readPendingMessages()
-        .pipe(
-          Effect.catchTag(
-            "ListenError",
-            () => new CommunicationError({ reason: "persistence-failed" }),
-          ),
-        );
+      const pending = yield* engine.readPendingMessages().pipe(
+        Effect.catchTags({
+          EndpointStoreError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+          ClientRepresentationError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+          ParseError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+          RouterWorkerPersistenceError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+        }),
+      );
       for (const delivery of pending) {
         const classified = yield* requests.receive(delivery.message);
         if (Option.isSome(classified)) {
@@ -341,7 +339,7 @@ function consumeIncoming<E, R>(
           .acknowledgeMessage(delivery.recordHash)
           .pipe(
             Effect.catchTag(
-              "DeliveryAcknowledgeError",
+              "EndpointStoreError",
               () => new CommunicationError({ reason: "persistence-failed" }),
             ),
           );
@@ -436,15 +434,7 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
         return yield* new CommunicationError({ reason: "unknown-message" });
       }
       if (retained.failure !== undefined) {
-        const reason = yield* Schema.decodeUnknown(
-          Schema.Literal(...sendFailureReasons),
-        )(retained.failure).pipe(
-          Effect.catchTag(
-            "ParseError",
-            () => new CommunicationError({ reason: "persistence-failed" }),
-          ),
-        );
-        return yield* sendFailure(new SendError({ reason }));
+        return yield* sendFailure(new SendError({ reason: retained.failure }));
       }
       if (retained.completed) {
         yield* Deferred.await(environment.ready);
@@ -515,7 +505,6 @@ function acquireCommunication(
     );
     const worker = yield* makeRouterWorker({
       callerAgentId: card.agentId,
-      callerAgentCard: card,
       signingAuthority: environment.settings.signingAuthority,
       pinnedSenderCards: yield* pinnedSenderCards(environment, card),
       callbacks: workerCallbacks(
@@ -557,7 +546,6 @@ function workerCallbacks(
   wake: Effect.Effect<void>,
 ): RouterWorkerInput<DecodedOuterBody>["callbacks"] {
   return {
-    pinSenderCard: () => engine.pipe(Effect.asVoid),
     decodePayload: (message) =>
       decodeOuterBody({ ...reader, message }).pipe(
         Effect.catchTag(

@@ -10,7 +10,7 @@ import type { VerifiedMembership } from "../communication/records/verification.j
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
-} from "../communication/store/types.js";
+} from "../communication/store/database.js";
 import type { AgentSigningAuthority } from "../identity/keys.js";
 import type { ProtocolStore as TestStore } from "./communication-test-database.js";
 

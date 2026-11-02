@@ -1,13 +1,12 @@
 /** @file Registry-owned immutable AgentIdentityCard issuance. */
 
-import {
-  type AgentId,
-  AgentIdentityCard,
-  type AgentName,
-  type AgentPublicKey,
+import type {
+  AgentId,
+  AgentName,
+  AgentPublicKey,
   AgentSigningAuthority,
-  type PrincipalId,
-  type VerifiedAgentIdentityCard,
+  PrincipalId,
+  VerifiedAgentIdentityCard,
 } from "@moltzap/social-harness";
 import {
   agentIdentityCardSigning,
@@ -45,7 +44,7 @@ export const issueAgentIdentityCard = (
   AgentIdentityCardVerificationError
 > =>
   Effect.gen(function* () {
-    const card = yield* agentIdentityCardSigning.sign(
+    return yield* agentIdentityCardSigning.sign(
       {
         kind: "agentCard",
         sharnessVersion: yield* wireVersions.emitted,
@@ -57,10 +56,4 @@ export const issueAgentIdentityCard = (
       },
       input.registrySigningAuthority,
     );
-    return yield* AgentIdentityCard.verify({
-      identityCard: card,
-      registrySignerPublicKey: AgentSigningAuthority.publicKey(
-        input.registrySigningAuthority,
-      ),
-    });
   }).pipe(Effect.withSpan("issueAgentIdentityCard"));

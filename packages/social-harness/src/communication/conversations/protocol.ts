@@ -17,31 +17,26 @@ import type {
   RouterWorkerSendError,
 } from "../router/connection.js";
 import type { EndpointStoreError } from "../store/database.js";
+import type { SendError } from "./errors.js";
 import type {
   AcceptedMessage,
   EndpointEngineInput,
   EnginePhases,
   EngineRuntime,
 } from "./state.js";
-
 import { AgentSigningAuthority } from "../../identity/keys.js";
 import { wireVersions } from "../../identity/wire-version.js";
 import {
   consumeRecord,
   readUnconsumedRecords,
   recoverStoredState,
-} from "../store/reads.js";
+} from "../store/conversations.js";
 import {
   acceptEngineIngress,
   acceptEngineRecoveryIngress,
   resumeEngineFolds,
 } from "./certification.js";
-import {
-  DeliveryAcknowledgeError,
-  ListenError,
-  type SendError,
-} from "./errors.js";
-import { readStoredHistory } from "./log.js";
+import { readStoredHistory, type StoredRowError } from "./log.js";
 import { makeOutbox } from "./outbox.js";
 import {
   acceptEngineIngressWithRecovery,
@@ -88,11 +83,11 @@ export interface EndpointEngine {
   ) => Effect.Effect<void, SendError>;
   readonly readPendingMessages: () => Effect.Effect<
     readonly EnginePendingMessage[],
-    ListenError
+    EndpointStoreError | StoredRowError
   >;
   readonly acknowledgeMessage: (
     recordHash: RecordHash,
-  ) => Effect.Effect<void, DeliveryAcknowledgeError>;
+  ) => Effect.Effect<void, EndpointStoreError>;
   readonly acceptRouterIngress: (
     ingress: RouterWorkerIngress<DecodedOuterBody>,
   ) => Effect.Effect<RouterIngressDisposition, RouterWorkerPersistenceError>;
@@ -126,32 +121,6 @@ const initializationReasonByStoreReason = {
   persistence: "persistence",
 } as const satisfies Readonly<
   Record<EndpointStoreError["reason"], EngineInitializationError["reason"]>
->;
-
-const listenReasonByStoreReason = {
-  closed: "transport-failed",
-  conflict: "decode-failed",
-  corrupt: "decode-failed",
-  incompatible: "incompatible-daemon",
-  "invalid-continuation": "decode-failed",
-  "invalid-input": "decode-failed",
-  "not-found": "decode-failed",
-  persistence: "transport-failed",
-} as const satisfies Readonly<
-  Record<EndpointStoreError["reason"], ListenError["reason"]>
->;
-
-const acknowledgeReasonByStoreReason = {
-  closed: "persistence-failed",
-  conflict: "delivery-conflict",
-  corrupt: "persistence-failed",
-  incompatible: "persistence-failed",
-  "invalid-continuation": "persistence-failed",
-  "invalid-input": "persistence-failed",
-  "not-found": "unknown-delivery",
-  persistence: "persistence-failed",
-} as const satisfies Readonly<
-  Record<EndpointStoreError["reason"], DeliveryAcknowledgeError["reason"]>
 >;
 
 type ResumeIntentDisposition =
@@ -199,22 +168,6 @@ const outboundFailure = (error: RouterWorkerSendError): EngineOutboundError => {
     reason: error.reason === "version" ? "version" : "representation",
   });
 };
-
-function listenStoreFailure(error: EndpointStoreError): ListenError {
-  return new ListenError({ reason: listenReasonByStoreReason[error.reason] });
-}
-
-function listenRepresentationFailure(): ListenError {
-  return new ListenError({ reason: "decode-failed" });
-}
-
-function acknowledgeStoreFailure(
-  error: EndpointStoreError,
-): DeliveryAcknowledgeError {
-  return new DeliveryAcknowledgeError({
-    reason: acknowledgeReasonByStoreReason[error.reason],
-  });
-}
 
 function recoveryInitializationFailure(
   error: RecoveredStateError,
@@ -272,20 +225,23 @@ function resumeFoldFailure(): EngineInitializationError {
 
 const readPendingMessages = (
   runtime: EngineRuntime,
-): Effect.Effect<readonly EnginePendingMessage[], ListenError, SqlClient> =>
+): Effect.Effect<
+  readonly EnginePendingMessage[],
+  EndpointStoreError | StoredRowError,
+  SqlClient
+> =>
   readUnconsumedRecords().pipe(
-    Effect.mapError(listenStoreFailure),
     Effect.flatMap((history) =>
       readStoredHistory(
         runtime.input.registrySignerPublicKey,
         history,
         history.records,
-      ).pipe(Effect.mapError(listenRepresentationFailure)),
+      ),
     ),
   );
 
 const acknowledgeMessage = (recordHash: RecordHash) =>
-  consumeRecord(recordHash).pipe(Effect.mapError(acknowledgeStoreFailure));
+  consumeRecord(recordHash);
 
 const validateLocalIdentity = (
   input: EndpointEngineInput,

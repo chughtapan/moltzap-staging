@@ -9,7 +9,7 @@ import {
   ParseResult,
   Schema,
 } from "effect";
-import { exactStruct } from "../encoding/exact.js";
+import { exactStruct } from "../encoding/canonical-json.js";
 import { AgentCard } from "../identity/agent.js";
 import {
   type firewallRefusalReasonSchema,
@@ -18,7 +18,7 @@ import {
   OwnerFact,
   type TextPolicySettings,
   type TextRule,
-} from "./rules/config.js";
+} from "./rules.js";
 
 /** Captured policy data is independent of provider acquisition and durable retention. */
 export interface CheckConfiguration {
@@ -61,8 +61,6 @@ const registeredGuidanceSchema = Schema.Union(
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-const visibility = Schema.Literal("runtime", "assessor");
-
 const probability = Schema.Number.pipe(Schema.between(0, 1));
 
 const collectingOp = Schema.Literal("gather", "all_gather");
@@ -81,11 +79,10 @@ const messageOperation = Schema.Union(
     deadlineAt: Schema.Int.pipe(Schema.positive()),
   }),
   Schema.Struct({
-    kind: Schema.Literal("answer", "result"),
+    kind: Schema.Literal("answer"),
     op: collectingOp,
     operationId: identifier,
   }),
-  Schema.Struct({ kind: Schema.Literal("failure"), operationId: identifier }),
 );
 
 /**
@@ -103,13 +100,11 @@ export class Message extends Schema.Class<Message>("Message")({
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The history entry Schema shares its domain name with the value it decodes. */
 
 /**
- * One message of authorized earlier history: whether the runtime can see it,
- * and whether the endpoint admitted it or withheld it.
+ * Earlier message text and whether the local agent may read it.
  */
 export const HistoryEntry = Schema.Struct({
   ...Message.fields,
-  visibility,
-  admission: Schema.Literal("admitted", "withheld"),
+  visibleToAgent: Schema.Boolean,
 }).annotations({ identifier: "HistoryEntry" });
 
 /** One validated message of earlier history. */
@@ -325,9 +320,6 @@ interface TextCheck {
   readonly rules: readonly TextRule[];
 }
 
-/** Endpoint-authored evidence uses one sender identity across producers and rendering. */
-export const ENDPOINT_SENDER = "sharness";
-
 /** An opaque local assessment reference conveys no approval or lookup authority. */
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
@@ -342,7 +334,7 @@ const checkedGuidance = {
   subjects: Schema.Array(
     exactStruct({
       id: Schema.NonEmptyTrimmedString,
-      sender: Schema.Union(AgentCard, Schema.Literal(ENDPOINT_SENDER)),
+      sender: AgentCard,
       recipients: Schema.Array(AgentCard),
       text: Schema.String,
     }),
@@ -1438,9 +1430,7 @@ function assessmentQuestion(
 }
 
 function expectationSubjects(check: TextCheck): readonly string[] {
-  const visible = check.context.history.filter(
-    (entry) => entry.visibility === "runtime" && entry.admission === "admitted",
-  );
+  const visible = check.context.history.filter((entry) => entry.visibleToAgent);
   const references =
     check.event.direction === "incoming"
       ? [...visible, check.event.message]

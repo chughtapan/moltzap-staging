@@ -14,8 +14,8 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { parseDocument } from "yaml";
-import { exactStruct } from "../../encoding/exact.js";
-import { AgentCard } from "../../identity/agent.js";
+import { exactStruct } from "../encoding/canonical-json.js";
+import { AgentCard } from "../identity/agent.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
@@ -147,7 +147,7 @@ const firewallActivationSchema = exactStruct({
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
-  peer: Schema.NullOr(AgentCard),
+  peer: AgentCard,
   outcome: Schema.Literal("allow", "reject", "hold"),
   reason: Schema.Union(Schema.Literal("eligible"), firewallRefusalReasonSchema),
   decidedBy: Schema.Array(
@@ -488,11 +488,10 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
-/** A configured document with the decision provider it names, and its behavior sources. */
+/** A configured document with the decision provider it names, and its decision provider. */
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
   readonly provider: LoadedDecisionProvider;
-  readonly behaviorRulePaths: ReadonlyMap<string, string>;
 }
 
 /**
@@ -503,7 +502,7 @@ export interface LoadedMessagePolicy {
  * document and a missing or invalid key fail configuration naming no file content.
  * @param configuration The policy and provider file locations.
  * @param readCredential The daemon-owned secret-file reader.
- * @returns The document, its decision provider and resolved behavior sources.
+ * @returns The document and its decision provider.
  */
 export const loadMessagePolicy = (
   configuration: PolicyConfiguration,
@@ -524,8 +523,7 @@ export const loadMessagePolicy = (
     );
     const resolved = yield* resolveBehaviors(policy, dirname(path));
     return Option.some({
-      policy: resolved.policy,
-      behaviorRulePaths: resolved.behaviorRulePaths,
+      policy: resolved,
       provider: yield* loadDecisionProvider(
         policy,
         configuration,
@@ -537,7 +535,6 @@ export const loadMessagePolicy = (
 interface BehaviorState {
   readonly root: string;
   readonly ids: Set<string>;
-  readonly behaviorRulePaths: Map<string, string>;
   readonly initialRuleCount: number;
 }
 
@@ -674,10 +671,9 @@ function readBehavior(root: string, directory: string, path: string) {
 /** Initial behaviors are validated even when persisted editable rules already exist. */
 function resolveBehaviors(policy: MessagePolicy, root: string) {
   return Effect.gen(function* () {
-    const behaviorRulePaths = new Map<string, string>();
     const text = policy.text;
     if (text === undefined) {
-      return { policy, behaviorRulePaths };
+      return policy;
     }
     if (text.initialRules.length > MAXIMUM_EDITABLE_RULES) {
       return yield* policyConfigurationError(
@@ -690,7 +686,6 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
       ids: new Set(
         [...text.fixedRules, ...text.initialRules].map((rule) => rule.id),
       ),
-      behaviorRulePaths,
       initialRuleCount: text.initialRules.length,
     };
     const fixed = yield* loadBehaviors(
@@ -710,10 +705,7 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
         initialRules: [...text.initialRules, ...initial],
       },
     };
-    return {
-      policy: resolved,
-      behaviorRulePaths,
-    };
+    return resolved;
   });
 }
 
@@ -739,7 +731,6 @@ function loadBehaviors(
           }
         }
         state.ids.add(behavior.id);
-        state.behaviorRulePaths.set(behavior.id, path);
         return behavior;
       }),
     { concurrency: 1 },

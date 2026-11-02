@@ -2,12 +2,12 @@
 
 import { Effect, type ParseResult, Schema } from "effect";
 
-import type { OutboxTooOldError } from "../store/database.js";
 import type {
   EndpointRecovery,
+  OutboxTooOldError,
   ProtocolEvidence,
   StoredOutboundMessage,
-} from "../store/types.js";
+} from "../store/database.js";
 import { decodeCanonical } from "../../encoding/canonical-json.js";
 import {
   SignedMessage,

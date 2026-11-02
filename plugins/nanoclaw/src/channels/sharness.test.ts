@@ -9,7 +9,7 @@ import {
   SendError,
   type SendResult,
 } from "@moltzap/social-harness";
-import { Effect, Queue, Schema, Stream } from "effect";
+import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as McpModule from "#sharness-mcp/mcp";
 import type {
@@ -74,21 +74,28 @@ function connection() {
   const inbox = Effect.runSync(Queue.unbounded<InboxEntry>());
   const completed = vi.fn();
   const released = vi.fn();
-  const connection: McpConnection = {
-    client,
-    consumeInbox: (options, accept) =>
-      Stream.fromQueue(inbox).pipe(
-        Stream.runForEach((entry) =>
-          accept(entry).pipe(Effect.tap(() => Effect.sync(completed))),
-        ),
-        Effect.zipLeft(options.onReady ?? Effect.void),
-      ),
-  };
   boundary.acquire.mockReturnValue(
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The adapter opens and closes this fixture in its activation scope.
-    Effect.acquireRelease(Effect.succeed(connection), () =>
-      Effect.sync(released),
-    ),
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope;
+      yield* Effect.addFinalizer(() => Effect.sync(released));
+      return {
+        client,
+        consumeInbox: (options, accept) =>
+          // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The adapter opens and closes this fixture in its activation scope.
+          Effect.acquireUseRelease(
+            Stream.fromQueue(inbox).pipe(
+              Stream.runForEach((entry) =>
+                accept(entry).pipe(Effect.zipLeft(Effect.sync(completed))),
+              ),
+              Effect.zipLeft(options.onReady ?? Effect.void),
+              Effect.interruptible,
+              Effect.forkIn(scope),
+            ),
+            Fiber.join,
+            Fiber.interrupt,
+          ),
+      } satisfies McpConnection;
+    }),
   );
   return { call, inbox, completed, released };
 }

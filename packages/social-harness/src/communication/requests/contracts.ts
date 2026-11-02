@@ -1,7 +1,7 @@
 /** @file Collective operations, answers and the closed errors of a refused collective send. */
 
 import { Data, ParseResult, Schema } from "effect";
-import { exactStruct } from "../../encoding/exact.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../../encoding/identifier.js";
 import { AgentCard } from "../../identity/agent.js";
 import { issuesText } from "../conversations/errors.js";

@@ -10,7 +10,7 @@ import {
   PrincipalId,
 } from "../agent.js";
 import { EnvelopeId } from "../envelope/signed-message.js";
-import { RegistrationId } from "../registry/contract.js";
+import { RegistrationId } from "../registry.js";
 import { AgentIdentityCardIssuedAt } from "./agent-card-fixtures.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;

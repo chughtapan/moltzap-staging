@@ -2,16 +2,11 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
-import type {
-  OutboundAttempt,
-  OutboundMessageInput,
-  StoredOutboundMessage,
-  StoreMutation,
-} from "./types.js";
-
 import {
   copyBytes,
   EndpointStoreError,
+  type OutboundAttempt,
+  type OutboundMessageInput,
   readBytes,
   readInteger,
   readOptionalText,
@@ -20,10 +15,13 @@ import {
   requireEqual,
   requireSameBytes,
   requireText,
+  type StoredOutboundMessage,
+  type StoreMutation,
   storeOperation,
   StoreSignal,
   transaction,
 } from "./database.js";
+
 type OutboundDisposition = "accepted" | "discarded" | "pending";
 interface RetainedOutbound {
   readonly outbound: StoredOutboundMessage;

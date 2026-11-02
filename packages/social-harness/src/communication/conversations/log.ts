@@ -3,21 +3,11 @@
 import { Effect, type ParseResult, Schema } from "effect";
 import type { AgentPublicKey } from "../../identity/keys.js";
 import type {
-  EndpointRecovery,
-  ProtocolEvidence,
-  StagedRecord,
-  CertifiedRecord as StoredCertifiedRecord,
-  StoredMembership,
-  MessageIntent as storedMessageIntent,
-  StoredOutboundMessage,
-} from "../store/types.js";
-import type {
   EndpointEngineInput,
   EngineActionFold,
   EngineCertifiedHead,
   EngineConversation,
 } from "./state.js";
-
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -60,8 +50,17 @@ import {
   RouterWorkerPersistenceError,
   RouterWorkerRecoveryError,
 } from "../router/connection.js";
-import { OutboxTooOldError } from "../store/database.js";
-import { recoverStoredState } from "../store/reads.js";
+import { recoverStoredState } from "../store/conversations.js";
+import {
+  type EndpointRecovery,
+  OutboxTooOldError,
+  type ProtocolEvidence,
+  type StagedRecord,
+  type CertifiedRecord as StoredCertifiedRecord,
+  type StoredMembership,
+  type MessageIntent as storedMessageIntent,
+  type StoredOutboundMessage,
+} from "../store/database.js";
 
 /**
  * The hash of a conversation's current anchor, which its next record binds.

@@ -5,7 +5,7 @@ export {
   httpErrors,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
-} from "./identity/authentication/proof.js";
+} from "./identity/http-signatures.js";
 /** Registry issuance and history verification use the complete identity document. */
 export {
   type AgentIdentityCardClaims,
@@ -18,13 +18,13 @@ export {
   Authentication,
   AuthenticationError,
   type VerifiedAgentRequest,
-} from "./identity/authentication/service.js";
+} from "./identity/authentication.js";
 /** Service construction uses the same Registry client as local identity. */
-export { Registry } from "./identity/registry/index.js";
+export { Registry } from "./identity/registry.js";
 /** Router operations and their exact wire contract belong to Communication. */
 export { Router, routerContract } from "./communication/router/api.js";
 /** Registry HTTP and storage adapters share their owning wire contract. */
-export { registryContract } from "./identity/registry/contract.js";
+export { registryContract } from "./identity/registry.js";
 /** Service processes apply the installed compatibility policy. */
 export {
   HISTORY_WIRE_VERSIONS,

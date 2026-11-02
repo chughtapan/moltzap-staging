@@ -13,8 +13,8 @@ import { GeneralSign, generalVerify } from "jose";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
+  exactStruct,
 } from "../../encoding/canonical-json.js";
-import { exactStruct } from "../../encoding/exact.js";
 import {
   canonicalIdentifier,
   compareAgentIds,
@@ -37,7 +37,6 @@ import {
   snapshotRepresentation,
 } from "../keys.js";
 import { WIRE_VERSION, WireVersions } from "../wire-version.js";
-import { WIRE_PROFILES } from "./wire-profile.js";
 
 /** Identifies one signed envelope across transport retries. */
 // eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the public domain name they decode.
@@ -49,11 +48,11 @@ export const EnvelopeId = canonicalIdentifier("EnvelopeId", "env_", 16);
 // eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one boundary model.
 export type EnvelopeId = typeof EnvelopeId.Type;
 
-const SIGNED_MESSAGE_TYPE = WIRE_PROFILES[WIRE_VERSION].signedMessageType;
+const SIGNED_MESSAGE_TYPE = "application/vnd.sharness.signed-message+jws";
 /** Largest opaque body, in bytes, that one SignedMessage carries. */
-export const MAXIMUM_BODY_BYTES = WIRE_PROFILES[WIRE_VERSION].maximumBodyBytes;
+export const MAXIMUM_BODY_BYTES = 262_144;
 /** Largest recipient set that one SignedMessage names. */
-export const MAXIMUM_RECIPIENTS = WIRE_PROFILES[WIRE_VERSION].maximumRecipients;
+export const MAXIMUM_RECIPIENTS = 128;
 const ED25519_SIGNATURE_BYTES = 64;
 
 /** Complete General JWS bound, encoded from a maximal payload and fixed-width signature. */

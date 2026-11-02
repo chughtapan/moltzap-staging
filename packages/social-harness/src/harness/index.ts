@@ -4,26 +4,43 @@ import { FileSystem } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Context, Data, Duration, Effect, Layer, Option } from "effect";
+import {
+  Cause,
+  Console,
+  Context,
+  Data,
+  Duration,
+  Effect,
+  FiberSet,
+  Layer,
+  Option,
+} from "effect";
 import { join } from "node:path";
+import { Communication, CommunicationError } from "../communication/index.js";
 import { Router } from "../communication/router/api.js";
 import {
+  type LoadedMessagePolicy,
   loadMessagePolicy,
   MessagePolicyConfigurationError,
-} from "../firewall/rules/config.js";
+} from "../firewall/rules.js";
 import { Firewall, type FirewallOptions } from "../firewall/service.js";
-import { Registry } from "../identity/registry/index.js";
+import { Registry } from "../identity/registry.js";
 import { Identity, type RegistrationError } from "../identity/service.js";
+import { WIRE_VERSION } from "../identity/wire-version.js";
+import { packageVersion } from "../release.js";
 import {
+  type DaemonBootstrap,
   DaemonConfigurationError,
   type DaemonProcessConfiguration,
   loadDaemonBootstrap,
   loadDaemonProcessConfiguration,
   processHelp,
   readCredential,
+  spanExport,
 } from "./config.js";
-import { DaemonRuntimeError, runDaemonRuntime } from "./lifecycle.js";
-import { spanExport } from "./telemetry.js";
+import { LOOPBACK_HOST, makeMcpHttpApp, serveMcp } from "./mcp/index.js";
+import { makeHistoryExport, noHistoryExport } from "./message-log.js";
+import { SocialHarness } from "./service.js";
 
 /** CLI usage comes from the configuration it describes. */
 export const daemonHelp = processHelp;
@@ -122,6 +139,105 @@ function runDaemon(composed?: FirewallOptions) {
   });
 }
 
+/** The process scope owns message processing, registration and the loopback listener. */
+function runDaemonRuntime(
+  bootstrap: DaemonBootstrap,
+  source?: FirewallOptions | LoadedMessagePolicy,
+) {
+  return Effect.gen(function* () {
+    const workers = yield* FiberSet.make();
+    const policy =
+      source !== undefined && "policy" in source ? source.policy : source;
+    const historyExport =
+      bootstrap.configuration.historyExport === undefined
+        ? noHistoryExport
+        : yield* makeHistoryExport(bootstrap.configuration.historyExport).pipe(
+            Effect.provide(NodeFileSystem.layer),
+          );
+    const harness = SocialHarness.layer(
+      {
+        historyExport,
+        communication: (identityCard) =>
+          Communication.layer({
+            identityCard,
+            signingAuthority: bootstrap.signingAuthority,
+            registrySignerPublicKey:
+              bootstrap.configuration.registrySignerPublicKey,
+            maximumHistoryRecords: policy?.maximumHistoryRecords,
+          }),
+        maximumHistoryRecords: policy?.maximumHistoryRecords,
+        maximumConcurrentChecks: policy?.maximumConcurrentChecks,
+        hideGroups: bootstrap.configuration.hideGroups,
+        hideCollectives: bootstrap.configuration.hideCollectives,
+      },
+      workers,
+    );
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* SocialHarness;
+        const identity = yield* Identity;
+        if (
+          (yield* identity.me()).kind === "unregistered" &&
+          bootstrap.configuration.registration !== undefined
+        ) {
+          yield* service.register(bootstrap.configuration.registration).pipe(
+            Effect.catchTag("RegistrationError", (error) =>
+              Effect.fail(
+                new DaemonStartupError({
+                  phase: "registration",
+                  reason: error.reason,
+                }),
+              ),
+            ),
+          );
+        }
+        const app = yield* makeMcpHttpApp({
+          implementation: { name: "sharnessd", version: packageVersion },
+          credential: bootstrap.mcpCredential,
+        });
+        yield* serveMcp(bootstrap.configuration.mcpPort, app).pipe(
+          Effect.catchTag("ServeError", () =>
+            Effect.fail(new DaemonStartupError({ phase: "listener" })),
+          ),
+        );
+        yield* Console.log(
+          `sharnessd listening on http://${LOOPBACK_HOST}:${bootstrap.configuration.mcpPort}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+        );
+        return yield* Effect.never;
+      }),
+    ).pipe(
+      Effect.provide(harness),
+      Effect.raceFirst(FiberSet.join(workers)),
+      Effect.catchAllCause(stopRuntime),
+    );
+  }).pipe(Effect.withSpan("runDaemonRuntime"));
+}
+
+function stopRuntime(
+  cause: Cause.Cause<unknown>,
+): Effect.Effect<never, DaemonStartupError> {
+  if (Cause.isInterruptedOnly(cause)) {
+    return Effect.failCause(Cause.stripFailures(cause));
+  }
+  const failure = Option.getOrUndefined(Cause.failureOption(cause));
+  let error = new DaemonStartupError({ phase: "storage" });
+  if (failure instanceof DaemonStartupError) {
+    error = failure;
+  } else if (
+    failure instanceof CommunicationError &&
+    (failure.reason === "outbox-too-old" ||
+      failure.reason === "agent-not-admitted")
+  ) {
+    error = new DaemonStartupError({
+      phase: "storage",
+      reason: failure.reason,
+    });
+  }
+  return Effect.logError("Daemon stopped", cause).pipe(
+    Effect.zipRight(Effect.fail(error)),
+  );
+}
+
 /** A process-format mismatch is rejected before any owner initializes or changes its tables. */
 function databaseLayer(stateDirectory: string) {
   return Layer.scoped(
@@ -146,8 +262,8 @@ function databaseLayer(stateDirectory: string) {
         readonly count: number;
       }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`;
       if (version?.user_version === 0 && tables?.count === 0) {
-        yield* sql.unsafe("PRAGMA user_version = 1");
-      } else if (version?.user_version !== 1) {
+        yield* sql.unsafe("PRAGMA user_version = 2");
+      } else if (version?.user_version !== 2) {
         return yield* new DaemonStartupError({
           phase: "storage",
           reason: "incompatible",
@@ -196,12 +312,7 @@ function startupFailure(error: unknown): DaemonStartupError {
   if (error instanceof DaemonStartupError) {
     return error;
   }
-  return error instanceof DaemonRuntimeError
-    ? new DaemonStartupError({
-        phase: error.phase,
-        ...(error.reason === undefined ? {} : { reason: error.reason }),
-      })
-    : new DaemonStartupError({ phase: "storage" });
+  return new DaemonStartupError({ phase: "storage" });
 }
 
 /** Trusted embeddings use the same services as the process's MCP adapter. */
@@ -230,9 +341,9 @@ export {
   FirewallRefusal,
 } from "../firewall/service.js";
 /** Network services expose complete calls through their owning layers. */
-export { Registry, RegistryError } from "../identity/registry/index.js";
+export { Registry, RegistryError } from "../identity/registry.js";
 /** Authentication supplies verified attribution before operation decoding. */
-export { Authentication } from "../identity/authentication/index.js";
+export { Authentication } from "../identity/authentication.js";
 
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/check.js";

@@ -18,7 +18,7 @@ import {
 import { generateKeyPairSync } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import { FirewallPolicyError } from "../firewall/rules/config.js";
+import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
 import { InboxError } from "../harness/inbox.js";
 import { makeMcpHttpApp } from "../harness/mcp/index.js";
@@ -82,7 +82,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const firewall = Firewall.of({
     checkIncoming: unused,
     checkOutgoing: unused,
-    saveDecisions: unused,
     readPolicy: () =>
       Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
     updatePolicy: unused,

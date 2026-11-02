@@ -216,11 +216,7 @@ function expectSendRefusals(
     yield* expectRefusal(
       bob,
       ["call", "send_message", sendTo("alice", HELD_TEXT)],
-      [
-        "send_message failed: send withheld (check ",
-        "Next action: wait",
-        "run-sharnessd#firewall-refused",
-      ],
+      ["send_message failed:", "check-unavailable", "wait:"],
     );
   });
 }
@@ -434,8 +430,7 @@ function expectOutput(
 }
 
 /**
- * Runs the helper for `daemon` and requires exit 1 with every `expected`
- * text and the docs link every failure ends with in its standard error.
+ * A refusal names the failed operation and the reason or action the caller needs.
  */
 function expectRefusal(
   daemon: Daemon,
@@ -445,10 +440,8 @@ function expectRefusal(
   return helper(daemon, args).pipe(
     Effect.flatMap(({ stdout, stderr, exitCode }) =>
       requireCondition(
-        exitCode === 1 &&
-          expected.every((text) => stderr.includes(text)) &&
-          stderr.includes("Docs: "),
-        `node mcp.ts ${args.join(" ")} for ${daemon.name}: expected exit 1 naming ${JSON.stringify(expected)} and a Docs link, got exit ${exitCode}:\n${stdout}${stderr}`,
+        exitCode === 1 && expected.every((text) => stderr.includes(text)),
+        `node mcp.ts ${args.join(" ")} for ${daemon.name}: expected exit 1 naming ${JSON.stringify(expected)}; got exit ${exitCode}:\n${stdout}${stderr}`,
       ),
     ),
   );

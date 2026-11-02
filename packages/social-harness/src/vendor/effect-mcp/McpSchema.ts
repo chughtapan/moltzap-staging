@@ -3,14 +3,11 @@
  * @since 1.0.0
  */
 import * as Rpc from "@effect/rpc/Rpc";
-import type * as RpcClient from "@effect/rpc/RpcClient";
-import type { RpcClientError } from "@effect/rpc/RpcClientError";
 import * as RpcGroup from "@effect/rpc/RpcGroup";
 import * as RpcMiddleware from "@effect/rpc/RpcMiddleware";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 
 // =============================================================================
 // Common
@@ -326,17 +323,6 @@ export class McpError extends Schema.Class<McpError>(
    */
   data: Schema.optional(Schema.Unknown),
 }) {}
-
-/**
- * @since 1.0.0
- * @category Errors
- */
-export const INVALID_REQUEST_ERROR_CODE = -32600 as const;
-/**
- * @since 1.0.0
- * @category Errors
- */
-export const METHOD_NOT_FOUND_ERROR_CODE = -32601 as const;
 /**
  * @since 1.0.0
  * @category Errors
@@ -347,44 +333,6 @@ export const INVALID_PARAMS_ERROR_CODE = -32602 as const;
  * @category Errors
  */
 export const INTERNAL_ERROR_CODE = -32603 as const;
-/**
- * @since 1.0.0
- * @category Errors
- */
-export const PARSE_ERROR_CODE = -32700 as const;
-
-/**
- * @since 1.0.0
- * @category Errors
- */
-export class ParseError extends Schema.TaggedError<ParseError>()("ParseError", {
-  ...McpError.fields,
-  code: Schema.tag(PARSE_ERROR_CODE),
-}) {}
-
-/**
- * @since 1.0.0
- * @category Errors
- */
-export class InvalidRequest extends Schema.TaggedError<InvalidRequest>()(
-  "InvalidRequest",
-  {
-    ...McpError.fields,
-    code: Schema.tag(INVALID_REQUEST_ERROR_CODE),
-  },
-) {}
-
-/**
- * @since 1.0.0
- * @category Errors
- */
-export class MethodNotFound extends Schema.TaggedError<MethodNotFound>()(
-  "MethodNotFound",
-  {
-    ...McpError.fields,
-    code: Schema.tag(METHOD_NOT_FOUND_ERROR_CODE),
-  },
-) {}
 
 /**
  * @since 1.0.0
@@ -1390,165 +1338,6 @@ export class LoggingMessageNotification extends Rpc.make(
 ) {}
 
 // =============================================================================
-// Sampling
-// =============================================================================
-
-/**
- * Describes a message issued to or received from an LLM API.
- *
- * @since 1.0.0
- * @category Sampling
- */
-export class SamplingMessage extends Schema.Struct({
-  role: Role,
-  content: Schema.Union(TextContent, ImageContent, AudioContent),
-}) {}
-
-/**
- * Hints to use for model selection.
- *
- * Keys not declared here are currently left unspecified by the spec and are up
- * to the client to interpret.
- *
- * @since 1.0.0
- * @category Sampling
- */
-export class ModelHint extends Schema.Struct({
-  /**
-   * A hint for a model name.
-   *
-   * The client SHOULD treat this as a substring of a model name; for example:
-   *  - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`
-   *  - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.
-   *  - `claude` should match any Claude model
-   *
-   * The client MAY also map the string to a different provider's model name or
-   * a different model family, as long as it fills a similar niche; for example:
-   *  - `gemini-1.5-flash` could match `claude-3-haiku-20240307`
-   */
-  name: Schema.optional(Schema.String),
-}) {}
-
-/**
- * The server's preferences for model selection, requested of the client during sampling.
- *
- * Because LLMs can vary along multiple dimensions, choosing the "best" model is
- * rarely straightforward.  Different models excel in different areas—some are
- * faster but less capable, others are more capable but more expensive, and so
- * on. This interface allows servers to express their priorities across multiple
- * dimensions to help clients make an appropriate selection for their use case.
- *
- * These preferences are always advisory. The client MAY ignore them. It is also
- * up to the client to decide how to interpret these preferences and how to
- * balance them against other considerations.
- *
- * @since 1.0.0
- * @category Sampling
- */
-export class ModelPreferences extends Schema.Class<ModelPreferences>(
-  "@effect/ai/McpSchema/ModelPreferences",
-)({
-  /**
-   * Optional hints to use for model selection.
-   *
-   * If multiple hints are specified, the client MUST evaluate them in order
-   * (such that the first match is taken).
-   *
-   * The client SHOULD prioritize these hints over the numeric priorities, but
-   * MAY still use the priorities to select from ambiguous matches.
-   */
-  hints: Schema.optional(Schema.Array(ModelHint)),
-  /**
-   * How much to prioritize cost when selecting a model. A value of 0 means cost
-   * is not important, while a value of 1 means cost is the most important
-   * factor.
-   */
-  costPriority: Schema.optional(Schema.Number.pipe(Schema.between(0, 1))),
-  /**
-   * How much to prioritize sampling speed (latency) when selecting a model. A
-   * value of 0 means speed is not important, while a value of 1 means speed is
-   * the most important factor.
-   */
-  speedPriority: Schema.optional(Schema.Number.pipe(Schema.between(0, 1))),
-  /**
-   * How much to prioritize intelligence and capabilities when selecting a
-   * model. A value of 0 means intelligence is not important, while a value of 1
-   * means intelligence is the most important factor.
-   */
-  intelligencePriority: Schema.optional(
-    Schema.Number.pipe(Schema.between(0, 1)),
-  ),
-}) {}
-
-/**
- * The client's response to a sampling/create_message request from the server.
- * The client should inform the user before returning the sampled message, to
- * allow them to inspect the response (human in the loop) and decide whether to
- * allow the server to see it.
- *
- * @since 1.0.0
- * @category Sampling
- */
-export class CreateMessageResult extends Schema.Class<CreateMessageResult>(
-  "@effect/ai/McpSchema/CreateMessageResult",
-)({
-  /**
-   * The name of the model that generated the message.
-   */
-  model: Schema.String,
-  /**
-   * The reason why sampling stopped, if known.
-   */
-  stopReason: Schema.optional(Schema.String),
-}) {}
-
-/**
- * A request from the server to sample an LLM via the client. The client has
- * full discretion over which model to select. The client should also inform the
- * user before beginning sampling, to allow them to inspect the request (human
- * in the loop) and decide whether to approve it.
- *
- * @since 1.0.0
- * @category Sampling
- */
-export class CreateMessage extends Rpc.make("sampling/createMessage", {
-  success: CreateMessageResult,
-  error: McpError,
-  payload: {
-    messages: Schema.Array(SamplingMessage),
-    /**
-     * The server's preferences for which model to select. The client MAY ignore
-     * these preferences.
-     */
-    modelPreferences: Schema.optional(ModelPreferences),
-    /**
-     * An optional system prompt the server wants to use for sampling. The
-     * client MAY modify or omit this prompt.
-     */
-    systemPrompt: Schema.optional(Schema.String),
-    /**
-     * A request to include context from one or more MCP servers (including the
-     * caller), to be attached to the prompt. The client MAY ignore this request.
-     */
-    includeContext: Schema.optional(
-      Schema.Literal("none", "thisServer", "allServers"),
-    ),
-    temperature: Schema.optional(Schema.Number),
-    /**
-     * The maximum number of tokens to sample, as requested by the server. The
-     * client MAY choose to sample fewer tokens than requested.
-     */
-    maxTokens: Schema.Number,
-    stopSequences: Schema.optional(Schema.Array(Schema.String)),
-    /**
-     * Optional metadata to pass through to the LLM provider. The format of
-     * this metadata is provider-specific.
-     */
-    metadata: Schema.Unknown,
-  },
-}) {}
-
-// =============================================================================
 // Autocomplete
 // =============================================================================
 
@@ -1664,65 +1453,6 @@ export class Complete extends Rpc.make("completion/complete", {
   }),
 }) {}
 
-// =============================================================================
-// Roots
-// =============================================================================
-
-/**
- * Represents a root directory or file that the server can operate on.
- *
- * @since 1.0.0
- * @category Roots
- */
-export class Root extends Schema.Class<Root>("@effect/ai/McpSchema/Root")({
-  /**
-   * The URI identifying the root. This *must* start with file:// for now.
-   * This restriction may be relaxed in future versions of the protocol to allow
-   * other URI schemes.
-   */
-  uri: Schema.String,
-  /**
-   * An optional name for the root. This can be used to provide a human-readable
-   * identifier for the root, which may be useful for display purposes or for
-   * referencing the root in other parts of the application.
-   */
-  name: Schema.optional(Schema.String),
-}) {}
-
-/**
- * The client's response to a roots/list request from the server. This result
- * contains an array of Root objects, each representing a root directory or file
- * that the server can operate on.
- *
- * @since 1.0.0
- * @category Roots
- */
-export class ListRootsResult extends Schema.Class<ListRootsResult>(
-  "@effect/ai/McpSchema/ListRootsResult",
-)({
-  roots: Schema.Array(Root),
-}) {}
-
-/**
- * Sent from the server to request a list of root URIs from the client. Roots
- * allow servers to ask for specific directories or files to operate on. A
- * common example for roots is providing a set of repositories or directories a
- * server should operate
- * on.
- *
- * This request is typically used when the server needs to understand the file
- * system structure or access specific locations that the client has permission
- * to read from.
- *
- * @since 1.0.0
- * @category Roots
- */
-export class ListRoots extends Rpc.make("roots/list", {
-  success: ListRootsResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(RequestMeta),
-}) {}
-
 /**
  * A notification from the client to the server, informing it that the list of
  * roots has changed. This notification should be sent whenever the client adds,
@@ -1738,96 +1468,6 @@ export class RootsListChangedNotification extends Rpc.make(
     payload: Schema.UndefinedOr(NotificationMeta),
   },
 ) {}
-
-// =============================================================================
-// Elicitation
-// =============================================================================
-
-/**
- * The client's response to an elicitation request
- *
- * @since 1.0.0
- * @category Elicitation
- */
-export class ElicitAcceptResult extends Schema.Class<ElicitAcceptResult>(
-  "@effect/ai/McpSchema/ElicitAcceptResult",
-)({
-  ...ResultMeta.fields,
-  /**
-   * The user action in response to the elicitation.
-   * - "accept": User submitted the form/confirmed the action
-   * - "decline": User explicitly declined the action
-   * - "cancel": User dismissed without making an explicit choice
-   */
-  action: Schema.Literal("accept"),
-  /**
-   * The submitted form data, only present when action is "accept".
-   * Contains values matching the requested schema.
-   */
-  content: Schema.Unknown,
-}) {}
-
-/**
- * The client's response to an elicitation request
- *
- * @since 1.0.0
- * @category Elicitation
- */
-export class ElicitDeclineResult extends Schema.Class<ElicitDeclineResult>(
-  "@effect/ai/McpSchema/ElicitDeclineResult",
-)({
-  ...ResultMeta.fields,
-  /**
-   * The user action in response to the elicitation.
-   * - "accept": User submitted the form/confirmed the action
-   * - "decline": User explicitly declined the action
-   * - "cancel": User dismissed without making an explicit choice
-   */
-  action: Schema.Literal("cancel", "decline"),
-}) {}
-
-/**
- * The client's response to an elicitation request
- *
- * @since 1.0.0
- * @category Elicitation
- */
-export const ElicitResult = Schema.Union(
-  ElicitAcceptResult,
-  ElicitDeclineResult,
-);
-
-/**
- * @since 1.0.0
- * @category Elicitation
- */
-export class Elicit extends Rpc.make("elicitation/create", {
-  success: ElicitResult,
-  error: McpError,
-  payload: {
-    /**
-     * A message to display to the user, explaining what they are being
-     * elicited for.
-     */
-    message: Schema.String,
-    /**
-     * A restricted subset of JSON Schema.
-     * Only top-level properties are allowed, without nesting.
-     */
-    requestedSchema: Schema.Unknown,
-  },
-}) {}
-
-/**
- * @since 1.0.0
- * @category Elicitation
- */
-export class ElicitationDeclined extends Schema.TaggedError<ElicitationDeclined>(
-  "@effect/ai/McpSchema/ElicitationDeclined",
-)("ElicitationDeclined", {
-  request: Elicit.payloadSchema,
-  cause: Schema.optional(Schema.Defect),
-}) {}
 
 // =============================================================================
 // McpServerClient
@@ -1849,14 +1489,6 @@ export class McpServerClient extends Context.Tag(
       method: string,
       params: Record<string, unknown>,
     ) => Effect.Effect<void>;
-    readonly getClient: Effect.Effect<
-      RpcClient.RpcClient<
-        RpcGroup.Rpcs<typeof ServerRequestRpcs>,
-        RpcClientError
-      >,
-      never,
-      Scope.Scope
-    >;
   }
 >() {}
 
@@ -1870,95 +1502,6 @@ export class McpServerClientMiddleware extends RpcMiddleware.Tag<McpServerClient
     provides: McpServerClient,
   },
 ) {}
-
-// =============================================================================
-// Protocol
-// =============================================================================
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type RequestEncoded<Group extends RpcGroup.Any> =
-  RpcGroup.Rpcs<Group> extends infer Rpc
-    ? Rpc extends Rpc.Rpc<
-        infer _Tag,
-        infer _Payload,
-        infer _Success,
-        infer _Error,
-        infer _Middleware
-      >
-      ? {
-          readonly _tag: "Request";
-          readonly id: string | number;
-          readonly method: _Tag;
-          readonly payload: _Payload["Encoded"];
-        }
-      : never
-    : never;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type NotificationEncoded<Group extends RpcGroup.Any> =
-  RpcGroup.Rpcs<Group> extends infer Rpc
-    ? Rpc extends Rpc.Rpc<
-        infer _Tag,
-        infer _Payload,
-        infer _Success,
-        infer _Error,
-        infer _Middleware
-      >
-      ? {
-          readonly _tag: "Notification";
-          readonly method: _Tag;
-          readonly payload: _Payload["Encoded"];
-        }
-      : never
-    : never;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type SuccessEncoded<Group extends RpcGroup.Any> =
-  RpcGroup.Rpcs<Group> extends infer Rpc
-    ? Rpc extends Rpc.Rpc<
-        infer _Tag,
-        infer _Payload,
-        infer _Success,
-        infer _Error,
-        infer _Middleware
-      >
-      ? {
-          readonly _tag: "Success";
-          readonly id: string | number;
-          readonly result: _Success["Encoded"];
-        }
-      : never
-    : never;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type FailureEncoded<Group extends RpcGroup.Any> =
-  RpcGroup.Rpcs<Group> extends infer Rpc
-    ? Rpc extends Rpc.Rpc<
-        infer _Tag,
-        infer _Payload,
-        infer _Success,
-        infer _Error,
-        infer _Middleware
-      >
-      ? {
-          readonly _tag: "Failure";
-          readonly id: string | number;
-          readonly error: _Error["Encoded"];
-        }
-      : never
-    : never;
 
 /**
  * @since 1.0.0
@@ -2040,12 +1583,6 @@ export class ClientRequestRpcs extends RpcGroup.make(
  * @since 1.0.0
  * @category Protocol
  */
-export type ClientRequestEncoded = RequestEncoded<typeof ClientRequestRpcs>;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
 export class ClientNotificationRpcs extends RpcGroup.make(
   CancelledNotification,
   ProgressNotification,
@@ -2057,46 +1594,9 @@ export class ClientNotificationRpcs extends RpcGroup.make(
  * @since 1.0.0
  * @category Protocol
  */
-export type ClientNotificationEncoded = NotificationEncoded<
-  typeof ClientNotificationRpcs
->;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
 export class ClientRpcs extends ClientRequestRpcs.merge(
   ClientNotificationRpcs,
 ) {}
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ClientSuccessEncoded = SuccessEncoded<typeof ServerRequestRpcs>;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ClientFailureEncoded = FailureEncoded<typeof ServerRequestRpcs>;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export class ServerRequestRpcs extends RpcGroup.make(
-  Ping,
-  CreateMessage,
-  ListRoots,
-  Elicit,
-) {}
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ServerRequestEncoded = RequestEncoded<typeof ServerRequestRpcs>;
 
 /**
  * @since 1.0.0
@@ -2111,76 +1611,6 @@ export class ServerNotificationRpcs extends RpcGroup.make(
   ToolListChangedNotification,
   PromptListChangedNotification,
 ) {}
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ServerNotificationEncoded = NotificationEncoded<
-  typeof ServerNotificationRpcs
->;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ServerSuccessEncoded = SuccessEncoded<typeof ClientRequestRpcs>;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ServerFailureEncoded = FailureEncoded<typeof ClientRequestRpcs>;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type ServerResultEncoded = ServerSuccessEncoded | ServerFailureEncoded;
-
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type FromClientEncoded =
-  | ClientRequestEncoded
-  | ClientNotificationEncoded;
-/**
- * @since 1.0.0
- * @category Protocol
- */
-export type FromServerEncoded = ServerResultEncoded | ServerNotificationEncoded;
-
-/**
- * @since 1.0.0
- * @category Parameters
- */
-export const ParamAnnotation: unique symbol = Symbol.for(
-  "@effect/ai/McpSchema/ParamNameId",
-);
-
-/**
- * @since 1.0.0
- * @category Parameters
- */
-export interface Param<Id extends string, S extends Schema.Schema.Any>
-  extends Schema.Schema<S["Type"], S["Encoded"], S["Context"]> {
-  readonly [ParamAnnotation]: Id;
-}
-
-/**
- * Helper to create a param for a resource URI template.
- *
- * @since 1.0.0
- * @category Parameters
- */
-export const param = <const Id extends string, S extends Schema.Schema.Any>(
-  id: Id,
-  schema: S,
-): Param<Id, S> =>
-  schema.annotations({
-    [ParamAnnotation]: id,
-  }) as any;
 
 /** Typed protocol failures carry only the adapter's deliberately published data. */
 export class ProtocolError extends McpError {

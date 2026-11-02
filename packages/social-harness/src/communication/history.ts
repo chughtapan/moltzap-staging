@@ -43,12 +43,12 @@ import {
   maximumMembers,
   type MessageReference,
 } from "./records/values.js";
-import { hasPendingMessages } from "./store/messages.js";
 import {
+  hasPendingMessages,
   readStoredConversation as readConversation,
   readMemberships,
   readRecentConversation,
-} from "./store/reads.js";
+} from "./store/conversations.js";
 
 // safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
 

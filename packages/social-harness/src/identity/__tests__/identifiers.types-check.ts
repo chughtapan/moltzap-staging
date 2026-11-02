@@ -11,7 +11,7 @@ import type {
   PrincipalId,
 } from "../agent.js";
 import type { EnvelopeId } from "../envelope/signed-message.js";
-import type { RegistrationId } from "../registry/index.js";
+import type { RegistrationId } from "../registry.js";
 import type { AgentIdentityCardIssuedAt } from "./agent-card-fixtures.js";
 
 /**

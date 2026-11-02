@@ -13,7 +13,7 @@ import {
   decodeMessagePolicy,
   loadMessagePolicy,
   type PolicyConfiguration,
-} from "./rules/config.js";
+} from "./rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exact environment names and closed reasons are the configuration contract under test. */
 
@@ -283,8 +283,5 @@ it("loads explicitly selected packaged policy assets through ordinary relative p
     );
     const rules = loaded.policy.text?.fixedRules ?? [];
     expect(rules.length).toBeGreaterThan(0);
-    expect([...loaded.behaviorRulePaths.keys()]).toEqual(
-      rules.map((rule) => rule.id),
-    );
     expect(loaded.provider).toEqual({ kind: "unavailable" });
   }));

@@ -13,16 +13,17 @@ import {
   Ref,
   Schema,
 } from "effect";
-import type { RegistryLookupResult } from "../registry/contract.js";
-import { decodeCanonicalJson } from "../../encoding/canonical-json.js";
-import { exactStruct } from "../../encoding/exact.js";
+import type { RegistryLookupResult } from "./registry.js";
+import {
+  decodeCanonicalJson,
+  exactStruct,
+} from "../encoding/canonical-json.js";
 import {
   AgentId,
   type VerifiedAgentIdentityCard,
   verifiedAgentIdentityCardSchema,
-} from "../agent.js";
-import { type BoundedCache, makeBoundedCache } from "../bounded-cache.js";
-import { WireVersions } from "../wire-version.js";
+} from "./agent.js";
+import { type BoundedCache, makeBoundedCache } from "./bounded-cache.js";
 import {
   AuthenticationFailedError,
   MalformedRequestError,
@@ -30,7 +31,8 @@ import {
   UnavailableError,
   verifyHttpRequestSignature,
   VersionMismatchError,
-} from "./proof.js";
+} from "./http-signatures.js";
+import { WireVersions } from "./wire-version.js";
 
 /** Request body and caller identity established by Authentication. */
 export type VerifiedAgentRequest = Readonly<{

@@ -25,7 +25,6 @@ import {
   renderCollectiveResult,
   renderContent,
   renderLocalGuidance,
-  replyAddress,
   type SendRequest,
   type SendResult,
 } from "@moltzap/social-harness";
@@ -647,9 +646,7 @@ function handleInboxEntry(
             delivery.item.kind === "collectiveRequest"
               ? renderCollectiveRequest(
                   delivery.item,
-                  requestAnswerInstructions(
-                    replyAddress(delivery.item.message),
-                  ),
+                  requestAnswerInstructions(delivery.address),
                   guidance,
                 )
               : renderLocalGuidance(guidance, {
@@ -678,7 +675,7 @@ function inboundItemTurn(
 ): HostTurn {
   switch (item.kind) {
     case "multicast":
-      return multicastTurn(item.message, eventId);
+      return multicastTurn(item.message, eventId, address);
     case "collectiveRequest":
       return addressedTurn(
         {
@@ -686,11 +683,8 @@ function inboundItemTurn(
           origin: "peer",
           sender: agentSender(item.message.author),
         },
-        replyAddress(item.message),
-        renderCollectiveRequest(
-          item,
-          requestAnswerInstructions(replyAddress(item.message)),
-        ),
+        address,
+        renderCollectiveRequest(item, requestAnswerInstructions(address)),
       );
     case "collectiveResult":
       return endpointTurn(eventId, address, renderCollectiveResult(item));
@@ -706,14 +700,18 @@ function requestAnswerInstructions(to: MessageAddressInputValue): string {
   return `Send the answer once as the whole message text, with the message tool's reply action or send to ${to}.`;
 }
 
-function multicastTurn(message: Message, eventId: string): HostTurn {
+function multicastTurn(
+  message: Message,
+  eventId: string,
+  address: MessageAddressInputValue,
+): HostTurn {
   return addressedTurn(
     {
       id: eventId,
       origin: "peer",
       sender: agentSender(message.author),
     },
-    replyAddress(message),
+    address,
     renderContent(message.content),
   );
 }

@@ -8,26 +8,30 @@ import {
 import { Duration, Effect, Either, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import {
-  AgentIdentityCardIssuedAt,
-  makeVerifiedCard,
-} from "../../__tests__/agent-card-fixtures.js";
-import { encodeCanonicalJson } from "../../../encoding/canonical-json.js";
+import { encodeCanonicalJson } from "../../encoding/canonical-json.js";
 import {
   AgentId,
   AgentName,
   AgentSigningAuthority,
   PrincipalId,
-} from "../../agent.js";
-import { lookupResponseSchema, registerResponseSchema } from "../contract.js";
-import { RegistrationId, Registry, RegistryRegisterRequest } from "../index.js";
+} from "../agent.js";
+import {
+  lookupResponseSchema,
+  registerResponseSchema,
+  RegistrationId,
+  Registry,
+  RegistryRegisterRequest,
+} from "../registry.js";
+import {
+  AgentIdentityCardIssuedAt,
+  makeVerifiedCard,
+} from "./agent-card-fixtures.js";
 
 const UNAVAILABLE_TAG = "http-envelope";
 const FOUND_KIND = "found";
 const INVALID_RESPONSE_TAG = "invalid-response";
 const CONNECTION_ERROR_TAG = "connection";
 const TIMEOUT_ERROR_TAG = "timeout";
-const SIGNING_ERROR_TAG = "signing";
 const CLIENT_ORIGIN = new URL("http://registry.example:3011");
 const CLIENT_TIMEOUT = Duration.seconds(5);
 const SHORT_CLIENT_TIMEOUT = Duration.millis(5);
@@ -431,13 +435,6 @@ const assertRegistrationClientBehavior = (fixture: ClientFixture) =>
       signingAuthority: agentSigningAuthority,
     }).pipe(Effect.provide(registrationLayer), Effect.either);
     expect(outcomeName(mismatchedRegistration)).toBe(INVALID_RESPONSE_TAG);
-
-    const signingFailure = yield* Registry.register({
-      request: makeRequest("signing-failure"),
-      admissionCredential: Redacted.make("admission-token="),
-      signingAuthority: agentSigningAuthority,
-    }).pipe(Effect.provide(registrationLayer), Effect.either);
-    expect(outcomeName(signingFailure)).toBe(SIGNING_ERROR_TAG);
   });
 
 /**

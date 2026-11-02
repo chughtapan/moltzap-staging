@@ -12,12 +12,12 @@ import {
   parseDictionary,
   serializeDictionary,
 } from "structured-headers";
-import type { AgentId } from "../agent.js";
+import type { AgentId } from "./agent.js";
 import {
   encodeCanonicalJson,
   parseCanonicalJson,
-} from "../../encoding/canonical-json.js";
-import { hasCanonicalBase64UrlLength } from "../../encoding/identifier.js";
+} from "../encoding/canonical-json.js";
+import { hasCanonicalBase64UrlLength } from "../encoding/identifier.js";
 import {
   type AgentPublicKey,
   AgentSigningAuthority,
@@ -25,12 +25,12 @@ import {
   ed25519PublicKeyThumbprintUri,
   ed25519VerificationKey,
   hasCanonicalEd25519SignatureEncoding,
-} from "../keys.js";
+} from "./keys.js";
 import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION_PATTERN,
   WireVersions,
-} from "../wire-version.js";
+} from "./wire-version.js";
 
 /** The request representation is not valid for the selected operation. */
 export class MalformedRequestError extends Schema.TaggedError<MalformedRequestError>()(

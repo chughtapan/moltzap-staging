@@ -14,10 +14,9 @@ import { AgentAddress, GroupAddress } from "../communication/records/values.js";
 import {
   decodeCanonical,
   encodeCanonical,
-  sameBytes,
+  MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/limits.js";
 import {
   type IncomingDecision,
   LocalGuidance,
@@ -149,7 +148,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
     author TEXT,
     message_id TEXT,
     operation_id TEXT,
-    incoming BLOB NOT NULL,
+    incoming BLOB,
     view BLOB,
     status TEXT NOT NULL CHECK(status IN ('checking','withheld','pending','acknowledged'))
   ) STRICT`);
@@ -209,20 +208,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
       message === undefined
         ? `result:${operationId}`
         : `message:${message.author.agentId}:${message.msgId}`;
-    const existing = yield* sql<{
-      readonly incoming: Uint8Array;
-    }>`SELECT incoming FROM harness_items WHERE identity=${identity}`;
-    if (existing[0] !== undefined) {
-      if (!sameBytes(existing[0].incoming, bytes)) {
-        return yield* new InboxError({ reason: "persistence-failed" });
-      }
-      return;
-    }
     const token = DeliveryToken.make(
       `dlv_${randomBytes(32).toString("base64url")}`,
     );
     yield* sql`INSERT INTO harness_items(identity,token,address,kind,author,message_id,operation_id,incoming,status)
-      VALUES (${identity},${token},${address},${incoming.kind},${message?.author.agentId ?? null},${message?.msgId ?? null},${operationId ?? null},${bytes},'checking')`;
+      VALUES (${identity},${token},${address},${incoming.kind},${message?.author.agentId ?? null},${message?.msgId ?? null},${operationId ?? null},${bytes},'checking') ON CONFLICT(identity) DO NOTHING`;
   });
   const listInbox = Effect.fn(function* (
     request: typeof PaginatedRequest.Type = {},
@@ -303,7 +293,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         event = undefined;
       }
     }
-    yield* sql`UPDATE harness_items SET view=${view ?? null}, status=${view === undefined ? "withheld" : "pending"}
+    yield* sql`UPDATE harness_items SET incoming=NULL, view=${view ?? null}, status=${view === undefined ? "withheld" : "pending"}
       WHERE token=${item.token} AND status='checking'`;
     for (const permission of decision.visibility) {
       const visible =
@@ -336,9 +326,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
     encodeCursor: encodePage,
     decodeCursor: decodePage,
     queueIncoming: (address: MessageAddress, incoming: Incoming) =>
-      sql
-        .withTransaction(queueIncoming(address, incoming))
-        .pipe(Effect.mapError(persistenceFailure)),
+      queueIncoming(address, incoming).pipe(
+        Effect.mapError(persistenceFailure),
+      ),
     listInbox: (request?: typeof PaginatedRequest.Type) =>
       listInbox(request ?? {}).pipe(
         Effect.catchAll((error) =>
@@ -384,7 +374,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         Effect.mapError(persistenceFailure),
       ),
     retire: (token: DeliveryToken) =>
-      sql`UPDATE harness_items SET status='withheld' WHERE token=${token} AND status='checking'`.pipe(
+      sql`UPDATE harness_items SET incoming=NULL, status='withheld' WHERE token=${token} AND status='checking'`.pipe(
         Effect.asVoid,
         Effect.mapError(persistenceFailure),
       ),

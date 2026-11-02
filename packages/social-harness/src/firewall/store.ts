@@ -8,7 +8,7 @@ import {
   type firewallDecisionsSchema,
   firewallDecisionSummarySchema,
   FirewallPolicyError,
-} from "./rules/config.js";
+} from "./rules.js";
 
 const schemaSql = `
   CREATE TABLE IF NOT EXISTS firewall_checks (
@@ -133,7 +133,7 @@ export function writeFirewallPolicy(
 ): Effect.Effect<void, FirewallPolicyError, SqlClient.SqlClient> {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const document = Uint8Array.from(yield* Schema.decodeUnknown(bytes)(rules));
+    const document = rules;
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`INSERT INTO firewall_policy (singleton, canonical_rules) VALUES (1, ${document}) ON CONFLICT(singleton) DO UPDATE SET canonical_rules = excluded.canonical_rules`;
@@ -162,13 +162,7 @@ export function saveCheckDecision(
 > {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const decoded = yield* Schema.decodeUnknown(completedCheck)(completion);
-    const value = {
-      ...decoded,
-      canonicalCandidate: Uint8Array.from(decoded.canonicalCandidate),
-      canonicalInput: Uint8Array.from(decoded.canonicalInput),
-      canonicalResult: Uint8Array.from(decoded.canonicalResult),
-    };
+    const value = completion;
     const applied = value.admit ? "admitted" : "withheld";
     return yield* sql.withTransaction(
       Effect.gen(function* () {

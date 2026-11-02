@@ -1,26 +1,28 @@
-/** @file Shared canonical JSON parsing and encoding for signed and stored representations. */
+/** @file Canonical JSON bytes, closed schemas and shared representation bounds. */
 
+import type { ParseOptions } from "effect/SchemaAST";
 import canonicalize from "canonicalize";
 import { Data, Effect, Schema } from "effect";
-import { types as nodeTypes } from "node:util";
-
-import { exactParseOptions } from "./exact.js";
 
 const MAXIMUM_CONTAINER_DEPTH = 16;
-const MAXIMUM_ARRAY_INDEX = 4_294_967_294;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
-const createObject = Object.create;
-const defineProperty = Object.defineProperty;
-const freezeObject = Object.freeze;
-const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const getPrototypeOf = Object.getPrototypeOf;
-const numberFrom = Number;
-const numberIsFinite = Number.isFinite;
-const numberIsInteger = Number.isInteger;
-const ownKeys = Reflect.ownKeys;
 
-/* eslint-disable agent-code-guard/no-nullish-type-aliases -- JSON null is a value, not an optional absence, in this domain. */
+/** Reject omitted exact fields and unknown properties at closed boundaries. */
+export const exactParseOptions = {
+  exact: true,
+  onExcessProperty: "error",
+} satisfies ParseOptions;
+
+/** A closed wire struct never retains members absent from its schema. */
+export const exactStruct = <Fields extends Schema.Struct.Fields>(
+  fields: Fields,
+) => Schema.Struct(fields).annotations({ parseOptions: exactParseOptions });
+
+/** Maximum retained item or evidence window, including separate guidance bytes. */
+export const MAXIMUM_RUNTIME_ITEM_BYTES = 2 * 1024 * 1024;
+
+/* eslint-disable agent-code-guard/no-nullish-type-aliases -- JSON null is a value, not an optional absence. */
 type JsonValue =
   | null
   | boolean
@@ -28,398 +30,10 @@ type JsonValue =
   | string
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
-/* eslint-enable agent-code-guard/no-nullish-type-aliases -- Restore the absence rule outside the JSON-domain alias. */
-
-type JsonSnapshot =
-  | Readonly<{ valid: false }>
-  | Readonly<{ valid: true; value: JsonValue }>;
-
-const invalidJsonSnapshot = (): JsonSnapshot => ({ valid: false });
-
-const validJsonSnapshot = (value: JsonValue): JsonSnapshot => ({
-  valid: true,
-  value,
-});
-
-const isHighSurrogate = (codeUnit: number): boolean =>
-  codeUnit >= 0xd800 && codeUnit <= 0xdbff;
-
-const isLowSurrogate = (codeUnit: number): boolean =>
-  codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
-
-const hasWellFormedUnicode = (value: string): boolean => {
-  if (typeof value !== "string") {
-    return false;
-  }
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (isLowSurrogate(codeUnit)) {
-      return false;
-    }
-    if (!isHighSurrogate(codeUnit)) {
-      continue;
-    }
-    index += 1;
-    if (index >= value.length || !isLowSurrogate(value.charCodeAt(index))) {
-      return false;
-    }
-  }
-  return true;
-};
-
-type JsonSnapshotContext = Readonly<{
-  containerDepth: number;
-  ancestors: Set<object>;
-}>;
-
-type JsonSnapshotVisitor = (
-  value: unknown,
-  context: JsonSnapshotContext,
-) => JsonSnapshot;
-
-/**
- * The pinned canonicalizer resolves these properties from the ambient realm.
- * Recording their descriptors before any input arrives lets canonicalization
- * fail closed if in-process code replaces one of them.
- */
-type CanonicalizerDependency =
-  | Readonly<{
-      descriptorFound: false;
-      owner: object;
-      property: PropertyKey;
-    }>
-  | Readonly<{
-      descriptor: PropertyDescriptor;
-      descriptorFound: true;
-      owner: object;
-      property: PropertyKey;
-    }>;
-
-const arrayConstructor = Array;
-const arrayIsArray = Array.isArray;
-const arrayPrototype = Array.prototype;
-const jsonObject = JSON;
-const objectConstructor = Object;
-const objectPrototype = Object.prototype;
-const setConstructor = Set;
-const setPrototype = Set.prototype;
-
-const isPlainRecord = (value: object): boolean => {
-  const prototype: unknown = getPrototypeOf(value);
-  return prototype === objectPrototype || prototype === null;
-};
-
-const findArrayIteratorPrototype = (): object => {
-  const candidate: unknown = getPrototypeOf([][Symbol.iterator]());
-  if (candidate === null || typeof candidate !== "object") {
-    return objectPrototype;
-  }
-  return candidate;
-};
-const arrayIteratorPrototype = findArrayIteratorPrototype();
-
-const captureCanonicalizerDependency = (
-  owner: object,
-  property: PropertyKey,
-): CanonicalizerDependency => {
-  const descriptor = getOwnPropertyDescriptor(owner, property);
-  const dependency: CanonicalizerDependency =
-    descriptor === undefined
-      ? { descriptorFound: false, owner, property }
-      : {
-          descriptor,
-          descriptorFound: true,
-          owner,
-          property,
-        };
-  return freezeObject(dependency);
-};
-
-const canonicalizerDependencies: readonly CanonicalizerDependency[] = [
-  captureCanonicalizerDependency(globalThis, "Array"),
-  captureCanonicalizerDependency(arrayConstructor, "isArray"),
-  captureCanonicalizerDependency(arrayConstructor, "prototype"),
-  captureCanonicalizerDependency(arrayConstructor, Symbol.species),
-  captureCanonicalizerDependency(arrayPrototype, "constructor"),
-  captureCanonicalizerDependency(arrayPrototype, Symbol.iterator),
-  captureCanonicalizerDependency(arrayPrototype, "join"),
-  captureCanonicalizerDependency(arrayPrototype, "map"),
-  captureCanonicalizerDependency(arrayPrototype, "push"),
-  captureCanonicalizerDependency(arrayPrototype, "sort"),
-  captureCanonicalizerDependency(arrayIteratorPrototype, "next"),
-  captureCanonicalizerDependency(globalThis, "isFinite"),
-  captureCanonicalizerDependency(globalThis, "isNaN"),
-  captureCanonicalizerDependency(globalThis, "JSON"),
-  captureCanonicalizerDependency(jsonObject, "parse"),
-  captureCanonicalizerDependency(jsonObject, "stringify"),
-  captureCanonicalizerDependency(globalThis, "Object"),
-  captureCanonicalizerDependency(objectConstructor, "keys"),
-  captureCanonicalizerDependency(objectConstructor, "prototype"),
-  captureCanonicalizerDependency(globalThis, "Set"),
-  captureCanonicalizerDependency(setConstructor, "prototype"),
-  captureCanonicalizerDependency(setPrototype, "add"),
-  captureCanonicalizerDependency(setPrototype, "delete"),
-  captureCanonicalizerDependency(setPrototype, "has"),
-];
-
-const hasMatchingDataDescriptor = (
-  current: PropertyDescriptor,
-  expected: PropertyDescriptor,
-): boolean => {
-  if (!("value" in current) || !("value" in expected)) {
-    return false;
-  }
-  return (
-    current.value === expected.value && current.writable === expected.writable
-  );
-};
-
-const hasMatchingAccessorDescriptor = (
-  current: PropertyDescriptor,
-  expected: PropertyDescriptor,
-): boolean => {
-  if ("value" in current || "value" in expected) {
-    return false;
-  }
-  return current.get === expected.get && current.set === expected.set;
-};
-
-const hasExpectedDescriptor = (
-  dependency: CanonicalizerDependency,
-): boolean => {
-  if (!dependency.descriptorFound) {
-    return false;
-  }
-  const current = getOwnPropertyDescriptor(
-    dependency.owner,
-    dependency.property,
-  );
-  if (current === undefined) {
-    return false;
-  }
-  if (
-    current.configurable !== dependency.descriptor.configurable ||
-    current.enumerable !== dependency.descriptor.enumerable
-  ) {
-    return false;
-  }
-  return "value" in dependency.descriptor
-    ? hasMatchingDataDescriptor(current, dependency.descriptor)
-    : hasMatchingAccessorDescriptor(current, dependency.descriptor);
-};
-
-const hasExpectedCanonicalizerPrototypeChain = (): boolean => {
-  if (getOwnPropertyDescriptor(arrayPrototype, "toJSON") !== undefined) {
-    return false;
-  }
-  if (getOwnPropertyDescriptor(objectPrototype, "toJSON") !== undefined) {
-    return false;
-  }
-  if (getPrototypeOf(arrayPrototype) !== objectPrototype) {
-    return false;
-  }
-  if (getPrototypeOf(objectPrototype) !== null) {
-    return false;
-  }
-  return getPrototypeOf(setPrototype) === objectPrototype;
-};
-
-const isArrayIndexName = (key: string): boolean => {
-  const numericKey = numberFrom(key);
-  if (!numberIsInteger(numericKey)) {
-    return false;
-  }
-  if (numericKey < 0 || numericKey > MAXIMUM_ARRAY_INDEX) {
-    return false;
-  }
-  return `${numericKey}` === key;
-};
-
-const hasIndexedPrototypeProperty = (prototype: object): boolean => {
-  const keys = ownKeys(prototype);
-  let index = 0;
-  while (index < keys.length) {
-    const key = keys[index];
-    if (typeof key === "string" && isArrayIndexName(key)) {
-      return true;
-    }
-    index += 1;
-  }
-  return false;
-};
-
-/**
- * Checks ambient dependencies without using the iterators being checked.
- * Inherited index properties could intercept the canonicalizer's array writes.
- */
-const canonicalizeRuntimeIsIntact = (): boolean => {
-  let index = 0;
-  while (index < canonicalizerDependencies.length) {
-    const dependency = canonicalizerDependencies[index];
-    if (dependency === undefined || !hasExpectedDescriptor(dependency)) {
-      return false;
-    }
-    index += 1;
-  }
-  if (!hasExpectedCanonicalizerPrototypeChain()) {
-    return false;
-  }
-  if (hasIndexedPrototypeProperty(arrayPrototype)) {
-    return false;
-  }
-  return !hasIndexedPrototypeProperty(objectPrototype);
-};
-
-const readArrayLength = (value: readonly unknown[]): number | undefined => {
-  const descriptor = getOwnPropertyDescriptor(value, "length");
-  if (descriptor === undefined) {
-    return undefined;
-  }
-  if (descriptor.enumerable === true || !("value" in descriptor)) {
-    return undefined;
-  }
-  return typeof descriptor.value === "number" ? descriptor.value : undefined;
-};
-
-/** Accepts only dense arrays with their own enumerable data elements. */
-const snapshotJsonArray = (
-  value: readonly unknown[],
-  context: JsonSnapshotContext,
-  visit: JsonSnapshotVisitor,
-): JsonSnapshot => {
-  const length = readArrayLength(value);
-  if (length === undefined) {
-    return invalidJsonSnapshot();
-  }
-  if (ownKeys(value).length !== length + 1) {
-    return invalidJsonSnapshot();
-  }
-  const snapshot: JsonValue[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = getOwnPropertyDescriptor(value, String(index));
-    if (
-      descriptor === undefined ||
-      descriptor.enumerable !== true ||
-      !("value" in descriptor)
-    ) {
-      return invalidJsonSnapshot();
-    }
-    const item = visit(descriptor.value, context);
-    if (!item.valid) {
-      return invalidJsonSnapshot();
-    }
-    defineProperty(snapshot, String(index), {
-      configurable: false,
-      enumerable: true,
-      value: item.value,
-      writable: false,
-    });
-  }
-  return validJsonSnapshot(freezeObject(snapshot));
-};
-
-/** Copies data properties without relying on ambient array iteration. */
-const snapshotJsonRecord = (
-  value: object,
-  context: JsonSnapshotContext,
-  visit: JsonSnapshotVisitor,
-): JsonSnapshot => {
-  // eslint-disable-next-line agent-code-guard/require-assertion-rationale -- Object.create(null) produces the exact string-indexed record populated only through validated data descriptors below.
-  const snapshot: { [key: string]: JsonValue } = createObject(null) as {
-    [key: string]: JsonValue;
-  };
-  const keys = ownKeys(value);
-  let index = 0;
-  while (index < keys.length) {
-    const key = keys[index];
-    if (typeof key !== "string" || !hasWellFormedUnicode(key)) {
-      return invalidJsonSnapshot();
-    }
-    const descriptor = getOwnPropertyDescriptor(value, key);
-    if (
-      descriptor === undefined ||
-      descriptor.enumerable !== true ||
-      !("value" in descriptor)
-    ) {
-      return invalidJsonSnapshot();
-    }
-    const member = visit(descriptor.value, context);
-    if (!member.valid) {
-      return invalidJsonSnapshot();
-    }
-    defineProperty(snapshot, key, {
-      configurable: false,
-      enumerable: true,
-      value: member.value,
-      writable: false,
-    });
-    index += 1;
-  }
-  return validJsonSnapshot(freezeObject(snapshot));
-};
-
-/** Rejects proxies before reflection can invoke traps, and bounds depth and ancestry. */
-const snapshotJsonContainer = (
-  value: object,
-  context: JsonSnapshotContext,
-  visit: JsonSnapshotVisitor,
-): JsonSnapshot => {
-  const nextDepth = context.containerDepth + 1;
-  if (
-    nextDepth > MAXIMUM_CONTAINER_DEPTH ||
-    context.ancestors.has(value) ||
-    nodeTypes.isProxy(value)
-  ) {
-    return invalidJsonSnapshot();
-  }
-  context.ancestors.add(value);
-  const nestedContext = { ...context, containerDepth: nextDepth };
-  try {
-    if (arrayIsArray(value)) {
-      return snapshotJsonArray(value, nestedContext, visit);
-    }
-    return isPlainRecord(value)
-      ? snapshotJsonRecord(value, nestedContext, visit)
-      : invalidJsonSnapshot();
-  } finally {
-    context.ancestors.delete(value);
-  }
-};
-
-const visitJsonValue: JsonSnapshotVisitor = (value, context) => {
-  if (value === null || typeof value === "boolean") {
-    return validJsonSnapshot(value);
-  }
-  if (typeof value === "number") {
-    return numberIsFinite(value)
-      ? validJsonSnapshot(value)
-      : invalidJsonSnapshot();
-  }
-  if (typeof value === "string") {
-    return hasWellFormedUnicode(value)
-      ? validJsonSnapshot(value)
-      : invalidJsonSnapshot();
-  }
-  return typeof value === "object"
-    ? snapshotJsonContainer(value, context, visitJsonValue)
-    : invalidJsonSnapshot();
-};
-
-/** Converts caller-supplied objects into inert data or an ordinary validation failure. */
-const snapshotJsonValue = (root: unknown): JsonSnapshot => {
-  try {
-    return visitJsonValue(root, {
-      ancestors: new Set(),
-      containerDepth: 0,
-    });
-    // eslint-disable-next-line agent-code-guard/bare-catch -- The snapshot boundary converts hostile reflection into ordinary validation failure.
-  } catch {
-    return invalidJsonSnapshot();
-  }
-};
+/* eslint-enable agent-code-guard/no-nullish-type-aliases -- Restore ordinary absence rules outside JSON values. */
 
 const jsonValueSchema = Schema.Unknown.pipe(
-  Schema.filter((value) => snapshotJsonValue(value).valid, {
+  Schema.filter((value): value is JsonValue => isJsonValue(value, 0), {
     identifier: "CanonicalJsonValue",
     description:
       "JSON value with well-formed Unicode and bounded container depth",
@@ -432,81 +46,57 @@ export class CanonicalJsonError extends Data.TaggedError(
   "CanonicalJsonError",
 ) {}
 
-const canonicalJsonBytes = (
-  value: unknown,
-): Effect.Effect<Uint8Array, CanonicalJsonError> =>
-  Effect.try({
-    try: () => {
-      return canonicalizeRuntimeIsIntact() ? canonicalize(value) : undefined;
-    },
-    catch: () => new CanonicalJsonError(),
-  }).pipe(
-    Effect.flatMap((text) =>
-      text === undefined
-        ? Effect.fail(new CanonicalJsonError())
-        : Effect.succeed(utf8Encoder.encode(text)),
-    ),
-  );
+/** A Client-owned representation, hash or verification check failed. */
+export class ClientRepresentationError extends Data.TaggedError(
+  "ClientRepresentationError",
+) {}
 
-// eslint-disable-next-line @typescript-eslint/unbound-method -- Capturing the intrinsic prevents candidate arrays from replacing the comparison method.
-const everyByte = Uint8Array.prototype.every;
+/** Decoder details remain private to the owning representation boundary. */
+export const representationFailure = (): ClientRepresentationError =>
+  new ClientRepresentationError();
 
-/** Compares complete byte sequences, rejecting detached or exotic typed arrays. */
+/** Complete byte equality does not depend on a candidate's array methods. */
 export const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => {
-  try {
-    return (
-      everyByte.call(left, (byte, index) => byte === right[index]) &&
-      everyByte.call(right, (byte, index) => byte === left[index])
-    );
-    // eslint-disable-next-line agent-code-guard/bare-catch -- Detached or exotic typed arrays are non-canonical inputs, not defects.
-  } catch {
+  if (left.byteLength !== right.byteLength) {
     return false;
   }
+  for (let index = 0; index < left.byteLength; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+  return true;
 };
 
 /**
- * Parses already-bounded bytes and returns a value only when the original
- * bytes are the value's canonical UTF-8 representation.
+ * Parses bounded bytes only when their original spelling is RFC 8785 JCS.
  *
- * @param bytes Bounded candidate representation.
- * @returns The parsed JSON value.
- * @failure CanonicalJsonError when UTF-8, JSON, domain, or canonical-byte
- * validation fails.
+ * @param bytes Bounded candidate representation, captured before decoding.
+ * @returns Parsed JSON with finite numbers, valid Unicode and depth at most sixteen.
+ * @failure CanonicalJsonError when byte or JSON-domain validation fails.
  */
-export const parseCanonicalJson = (
-  bytes: Uint8Array,
-): Effect.Effect<JsonValue, CanonicalJsonError> =>
-  Effect.gen(function* () {
-    if (!canonicalizeRuntimeIsIntact()) {
-      return yield* new CanonicalJsonError();
-    }
-    const text = yield* Effect.try({
-      try: () => utf8Decoder.decode(bytes),
-      catch: () => new CanonicalJsonError(),
-    });
-    const parsed = yield* Schema.decodeUnknown(jsonTextSchema)(text).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new CanonicalJsonError()),
-      ),
-    );
-    const snapshot = snapshotJsonValue(parsed);
-    if (!snapshot.valid) {
-      return yield* new CanonicalJsonError();
-    }
-    const value = snapshot.value;
-    const encoded = yield* canonicalJsonBytes(value);
-    if (!sameBytes(bytes, encoded)) {
-      return yield* new CanonicalJsonError();
-    }
-    return value;
-  }).pipe(Effect.withSpan("parseCanonicalJson"));
+export const parseCanonicalJson = (bytes: Uint8Array) =>
+  parseJsonBytes(bytes).pipe(
+    Effect.flatMap((parsed) =>
+      Effect.try({
+        try: () => {
+          if (!sameBytes(parsed.bytes, encodeJsonValue(parsed.value))) {
+            throw new CanonicalJsonError();
+          }
+          return parsed.value;
+        },
+        catch: () => new CanonicalJsonError(),
+      }),
+    ),
+    Effect.withSpan("parseCanonicalJson"),
+  );
 
 /**
- * Decodes canonical JSON bytes through one exact domain Schema.
+ * Applies one closed domain schema after canonical-byte admission.
  *
- * @param schema Closed domain Schema.
+ * @param schema Closed domain schema.
  * @param bytes Bounded canonical JSON bytes.
- * @returns The decoded domain value.
+ * @returns The decoded value without imposing its schema's encoded defaults.
  * @failure CanonicalJsonError when representation or domain validation fails.
  */
 export const decodeCanonicalJson = <A, I, R>(
@@ -514,54 +104,45 @@ export const decodeCanonicalJson = <A, I, R>(
   bytes: Uint8Array,
 ): Effect.Effect<A, CanonicalJsonError, R> =>
   parseCanonicalJson(bytes).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknown(schema, {
-        exact: true,
-        onExcessProperty: "error",
-      }),
-    ),
+    Effect.flatMap(Schema.decodeUnknown(schema, exactParseOptions)),
     Effect.catchTag("ParseError", () => Effect.fail(new CanonicalJsonError())),
   );
 
 /**
- * Encodes a JSON-domain value as canonical UTF-8 bytes.
+ * Captures a JSON value as canonical bytes in one synchronous encoding step.
  *
- * @param value Candidate JSON-domain value.
- * @returns Canonical UTF-8 bytes.
+ * @param value JSON-domain value, with at most sixteen nested containers.
+ * @returns Fresh canonical UTF-8 bytes independent of later caller mutation.
  * @failure CanonicalJsonError when the value is outside the JSON domain.
  */
 export const encodeCanonicalJson = (
   value: unknown,
 ): Effect.Effect<Uint8Array, CanonicalJsonError> =>
-  Effect.sync(() => {
-    if (!canonicalizeRuntimeIsIntact()) {
-      return invalidJsonSnapshot();
-    }
-    return snapshotJsonValue(value);
-  }).pipe(
-    Effect.flatMap((snapshot) =>
-      snapshot.valid
-        ? canonicalJsonBytes(snapshot.value)
-        : Effect.fail(new CanonicalJsonError()),
-    ),
-  );
+  Effect.try({
+    try: () => {
+      if (!isJsonValue(value, 0)) {
+        throw new CanonicalJsonError();
+      }
+      return encodeJsonValue(value);
+    },
+    catch: () => new CanonicalJsonError(),
+  });
 
-/** A Client-owned representation, hash, or verification check failed. */
-export class ClientRepresentationError extends Data.TaggedError(
-  "ClientRepresentationError",
-) {}
-
-/** Discard decoder and encoder diagnostics at the representation boundary. */
-export const representationFailure = (): ClientRepresentationError =>
-  new ClientRepresentationError();
-
-/** Encode JSON as canonical UTF-8, rejecting values with no JSON representation. */
+/** Serializes trusted schema-owned data, including class values and omitted optional fields. */
 export const canonicalBytes = (
   value: unknown,
 ): Effect.Effect<Uint8Array, ClientRepresentationError> =>
-  canonicalJsonBytes(value).pipe(Effect.mapError(representationFailure));
+  Effect.try({
+    try: () => {
+      if (!isJsonValue(value, 0, true)) {
+        throw new CanonicalJsonError();
+      }
+      return encodeJsonValue(value);
+    },
+    catch: representationFailure,
+  });
 
-/** Encode one closed value into its unique JCS UTF-8 representation. */
+/** Encodes a schema's representation as canonical UTF-8 bytes. */
 export const encodeCanonical = <A, I, R>(
   schema: Schema.Schema<A, I, R>,
   value: A,
@@ -571,28 +152,30 @@ export const encodeCanonical = <A, I, R>(
     Effect.flatMap(canonicalBytes),
   );
 
-/** Decode one closed value only when its input bytes are already exact JCS. */
+/**
+ * Requires bytes to equal the schema's canonical encoded representation.
+ * Schema defaults and transformations therefore participate in equality.
+ */
 export const decodeCanonical = <A, I, R>(
   schema: Schema.Schema<A, I, R>,
   bytes: Uint8Array,
 ): Effect.Effect<A, ClientRepresentationError, R> =>
   Effect.gen(function* () {
-    const text = yield* Effect.try({
-      try: () => utf8Decoder.decode(bytes),
-      catch: representationFailure,
-    });
-    const decoded = yield* Schema.decodeUnknown(Schema.parseJson(schema))(
-      text,
+    const parsed = yield* parseJsonBytes(bytes).pipe(
+      Effect.mapError(representationFailure),
+    );
+    const decoded = yield* Schema.decodeUnknown(
+      schema,
       exactParseOptions,
-    ).pipe(Effect.mapError(representationFailure));
+    )(parsed.value).pipe(Effect.mapError(representationFailure));
     const canonical = yield* encodeCanonical(schema, decoded);
-    if (!sameBytes(bytes, canonical)) {
+    if (!sameBytes(parsed.bytes, canonical)) {
       return yield* representationFailure();
     }
     return decoded;
   }).pipe(Effect.withSpan("decodeCanonical"));
 
-/** Whether two values of one schema have the same canonical bytes. */
+/** Whether two schema values have the same canonical encoded bytes. */
 export const equalCanonical = <A, I, R>(
   schema: Schema.Schema<A, I, R>,
   left: A,
@@ -601,6 +184,106 @@ export const equalCanonical = <A, I, R>(
   Effect.all([
     encodeCanonical(schema, left),
     encodeCanonical(schema, right),
-  ]).pipe(
-    Effect.map(([leftBytes, rightBytes]) => sameBytes(leftBytes, rightBytes)),
-  );
+  ]).pipe(Effect.map(([a, b]) => sameBytes(a, b)));
+
+function parseJsonBytes(bytes: Uint8Array) {
+  return Effect.gen(function* () {
+    const captured = yield* Effect.try({
+      try: () => new Uint8Array(bytes),
+      catch: () => new CanonicalJsonError(),
+    });
+    const text = yield* Effect.try({
+      try: () => utf8Decoder.decode(captured),
+      catch: () => new CanonicalJsonError(),
+    });
+    const value = yield* Schema.decodeUnknown(jsonTextSchema)(text).pipe(
+      Effect.catchTag("ParseError", () =>
+        Effect.fail(new CanonicalJsonError()),
+      ),
+    );
+    return { bytes: captured, value };
+  });
+}
+
+function encodeJsonValue(value: unknown): Uint8Array {
+  const text = canonicalize(value);
+  if (text === undefined) {
+    throw new CanonicalJsonError();
+  }
+  return utf8Encoder.encode(text);
+}
+
+function isJsonValue(
+  value: unknown,
+  depth: number,
+  schemaOwned = false,
+): value is JsonValue {
+  if (value === null || typeof value === "boolean") {
+    return true;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (typeof value === "string") {
+    return hasWellFormedUnicode(value);
+  }
+  if (typeof value !== "object" || depth >= MAXIMUM_CONTAINER_DEPTH) {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    if (Object.keys(value).length !== value.length) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      if (
+        !Object.hasOwn(value, index) ||
+        !isJsonValue(value[index], depth + 1, schemaOwned)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return isJsonObject(value, depth, schemaOwned);
+}
+
+function isJsonObject(
+  value: object,
+  depth: number,
+  schemaOwned: boolean,
+): boolean {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (!schemaOwned && prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  if (!schemaOwned && Object.getOwnPropertySymbols(value).length > 0) {
+    return false;
+  }
+  return Object.entries(value).every(([key, member]) => {
+    if (!hasWellFormedUnicode(key)) {
+      return false;
+    }
+    return (
+      (schemaOwned && member === undefined) ||
+      isJsonValue(member, depth + 1, schemaOwned)
+    );
+  });
+}
+
+function hasWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+    if (codeUnit < 0xd800 || codeUnit > 0xdbff) {
+      continue;
+    }
+    index += 1;
+    const next = value.charCodeAt(index);
+    if (!(next >= 0xdc00 && next <= 0xdfff)) {
+      return false;
+    }
+  }
+  return true;
+}

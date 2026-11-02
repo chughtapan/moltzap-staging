@@ -7,27 +7,34 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
 import {
+  acceptMessage,
   applyCatchUpReanchor,
   bindMessageIntent,
   completeReanchor,
+  consumeRecord,
+  failMessage,
+  hasPendingMessages,
   lockFirstMessageProposal,
   lockProposal,
   putConversationFoundation,
+  readAcceptedMessage,
+  readMemberships,
+  readRecentConversation,
+  readStoredConversation,
+  readUnconsumedRecords,
+  readUnpreparedMessages,
+  recoverStoredState,
   restartEmptyConversation,
   stageReanchor,
-} from "../communication/store/anchors.js";
+} from "../communication/store/conversations.js";
 import {
+  decodeRuntimeValue,
+  encodeRuntimeValue,
   EndpointStoreError,
   initializeCommunication,
+  isSemanticStoreRejection,
   OutboxTooOldError,
 } from "../communication/store/database.js";
-import {
-  acceptMessage,
-  failMessage,
-  hasPendingMessages,
-  readAcceptedMessage,
-  readUnpreparedMessages,
-} from "../communication/store/messages.js";
 import {
   beginOutbound,
   completeOutbound,
@@ -36,33 +43,16 @@ import {
   readRecordOutbound,
 } from "../communication/store/outbound.js";
 import {
-  consumeRecord,
-  readMemberships,
-  readRecentConversation,
-  readStoredConversation,
-  readUnconsumedRecords,
-  recoverStoredState,
-} from "../communication/store/reads.js";
-import {
   applyCertifiedRecord,
   mergeEvidence,
   promoteRecord,
   stageRecordAndOutbound,
   supersedeProposalLock,
 } from "../communication/store/records.js";
-import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-} from "../communication/store/runtime-codec.js";
-import {
-  DeliveryToken,
-  isSemanticStoreRejection,
-} from "../communication/store/types.js";
 
 /** Protocol fixtures use only the owning communication operations. */
 export const protocolStore = {
   EndpointStoreError,
-  DeliveryToken,
   isSemanticStoreRejection,
   decodeRuntimeValue,
   encodeRuntimeValue,

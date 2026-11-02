@@ -16,21 +16,19 @@ import {
 } from "effect";
 import { createHash } from "node:crypto";
 
-import type { AgentSigningAuthority } from "../../identity/keys.js";
-import type { StoredOutboundMessage } from "../store/types.js";
-
-import { decodeCanonical } from "../../encoding/canonical-json.js";
-import {
-  type AgentId,
-  AgentIdentityCard,
-  type VerifiedAgentIdentityCard,
+import type {
+  AgentId,
+  VerifiedAgentIdentityCard,
 } from "../../identity/agent.js";
+import type { AgentSigningAuthority } from "../../identity/keys.js";
+import type { StoredOutboundMessage } from "../store/database.js";
+import { decodeCanonical } from "../../encoding/canonical-json.js";
 import {
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
 } from "../../identity/envelope/signed-message.js";
-import { Registry } from "../../identity/registry/index.js";
+import { Registry } from "../../identity/registry.js";
 import { beginOutbound, completeOutbound } from "../store/outbound.js";
 import {
   type PollCursor,
@@ -172,9 +170,6 @@ export interface RouterWorkerRecovery {
 
 /** Private endpoint callbacks around the Router worker's ordering boundary. */
 interface RouterWorkerCallbacks<Payload> {
-  readonly pinSenderCard: (
-    card: VerifiedAgentIdentityCard,
-  ) => Effect.Effect<void, RouterWorkerPersistenceError>;
   readonly decodePayload: (
     message: LiveSignedMessage & VerifiedSignedMessage,
   ) => Effect.Effect<Payload, RouterWorkerPayloadInvalidError>;
@@ -194,7 +189,6 @@ interface RouterWorkerCallbacks<Payload> {
 /** Complete private construction input for one registered endpoint. */
 export interface RouterWorkerInput<Payload> {
   readonly callerAgentId: AgentId;
-  readonly callerAgentCard: VerifiedAgentIdentityCard;
   /** Durable membership cards available before Registry connectivity. */
   readonly pinnedSenderCards: readonly VerifiedAgentIdentityCard[];
   readonly signingAuthority: AgentSigningAuthority;
@@ -410,14 +404,13 @@ export function makeRouterWorker<Payload>(
   Registry | Router | SqlClient
 > {
   return Effect.gen(function* () {
-    if (input.callerAgentCard.agentId !== input.callerAgentId) {
-      return yield* Effect.fail(new RouterWorkerProtocolError());
-    }
     const services = {
       router: yield* Router,
       registry: yield* Registry,
     };
-    const cards = yield* seedPinnedCards(input);
+    const cards = new Map(
+      input.pinnedSenderCards.map((card) => [card.agentId, card]),
+    );
     const runtime: RouterWorkerRuntime<Payload> = {
       ...services,
       input,
@@ -494,45 +487,6 @@ function anchorFromOmittedResult(
         pollCursor: result.pollCursor,
       })
     : Effect.fail(new RouterWorkerProtocolError());
-}
-
-function seedPinnedCards<Payload>(
-  input: RouterWorkerInput<Payload>,
-): Effect.Effect<
-  Map<AgentId, VerifiedAgentIdentityCard>,
-  RouterWorkerProtocolError
-> {
-  return Effect.gen(function* () {
-    const cards = new Map<AgentId, VerifiedAgentIdentityCard>();
-    const representations = new Map<AgentId, string>();
-    for (const card of input.pinnedSenderCards) {
-      const representation = yield* Schema.encode(AgentIdentityCard)(card).pipe(
-        Effect.map(JSON.stringify),
-        Effect.catchTag("ParseError", () =>
-          Effect.fail(new RouterWorkerProtocolError()),
-        ),
-      );
-      const retained = representations.get(card.agentId);
-      if (retained !== undefined && retained !== representation) {
-        return yield* Effect.fail(new RouterWorkerProtocolError());
-      }
-      cards.set(card.agentId, card);
-      representations.set(card.agentId, representation);
-    }
-    const local = representations.get(input.callerAgentId);
-    const canonicalLocal = yield* Schema.encode(AgentIdentityCard)(
-      input.callerAgentCard,
-    ).pipe(
-      Effect.map(JSON.stringify),
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new RouterWorkerProtocolError()),
-      ),
-    );
-    if (local === undefined || local !== canonicalLocal) {
-      return yield* Effect.fail(new RouterWorkerProtocolError());
-    }
-    return cards;
-  });
 }
 
 function activeAnchor(
@@ -808,7 +762,6 @@ function resolveSenderCard<Payload>(
         ? Effect.succeed(result.identityCard)
         : Effect.fail(new RouterWorkerAuthenticationError()),
     ),
-    Effect.tap(runtime.input.callbacks.pinSenderCard),
     Effect.tap((card) => Effect.sync(() => runtime.cards.set(agentId, card))),
     Effect.interruptible,
   );

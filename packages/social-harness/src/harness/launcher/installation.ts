@@ -186,19 +186,6 @@ export function compareVersions(
   return 0;
 }
 
-/** Succeeds when `verifyAs` accepts the bundle for {@link RELEASE_IDENTITY}. */
-export function signedByReleaseIdentity(
-  verifyAs: (identity: string) => Effect.Effect<unknown, unknown>,
-  refuse: (why: string) => LauncherError,
-): Effect.Effect<void, LauncherError> {
-  return verifyAs(RELEASE_IDENTITY).pipe(
-    Effect.asVoid,
-    Effect.mapError(() =>
-      refuse(`its provenance is not signed by ${RELEASE_IDENTITY}`),
-    ),
-  );
-}
-
 /** The text of the archive's manifest entry, walking ustar headers. */
 function manifestText(archive: Uint8Array): string | undefined {
   const decoder = new TextDecoder();
@@ -660,17 +647,16 @@ function signedPayload(
     if (!isBundleWithDsseEnvelope(bundle)) {
       return yield* refuse("its provenance carries no envelope");
     }
-    yield* signedByReleaseIdentity(
-      (identity) =>
-        Effect.tryPromise(() =>
-          verify(bundleToJSON(bundle), {
-            certificateIssuer: RELEASE_ISSUER,
-            certificateIdentityURI: identity,
-            tufCachePath: options.tufCachePath,
-          }),
-        ),
-      refuse,
-    );
+    yield* Effect.tryPromise({
+      try: () =>
+        verify(bundleToJSON(bundle), {
+          certificateIssuer: RELEASE_ISSUER,
+          certificateIdentityURI: RELEASE_IDENTITY,
+          tufCachePath: options.tufCachePath,
+        }),
+      catch: () =>
+        refuse(`its provenance is not signed by ${RELEASE_IDENTITY}`),
+    });
     return yield* Schema.decodeUnknown(Schema.parseJson(statement))(
       bundle.content.dsseEnvelope.payload.toString("utf8"),
     ).pipe(

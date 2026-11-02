@@ -7,10 +7,10 @@ import {
   decodeCanonical,
   encodeCanonical,
   equalCanonical,
+  exactParseOptions,
   representationFailure,
   sameBytes,
 } from "../../encoding/canonical-json.js";
-import { exactParseOptions } from "../../encoding/exact.js";
 import { isStrictlyAscending } from "../../encoding/identifier.js";
 import {
   type AgentId,

@@ -8,8 +8,9 @@ import { AgentId } from "../../identity/agent.js";
 import { Message, messageInterpretation } from "../message.js";
 import { maximumMembers, MessageReference } from "../records/values.js";
 import {
+  decodeRuntimeValue,
+  encodeRuntimeValue,
   EndpointStoreError,
-  mintDeliveryToken,
   readBytes,
   readInteger,
   readOptionalBytes,
@@ -18,11 +19,6 @@ import {
   storeOperation,
   transaction,
 } from "../store/database.js";
-import {
-  decodeRuntimeValue,
-  encodeRuntimeValue,
-} from "../store/runtime-codec.js";
-import { DeliveryToken } from "../store/types.js";
 import { CollectiveId } from "./contracts.js";
 import { Request, ResultDelivery } from "./index.js";
 
@@ -33,7 +29,6 @@ interface OperationState {
   readonly operationId: CollectiveId;
   readonly deadlineAt: number;
   readonly phase: "collecting" | "finalizing" | "completed";
-  readonly deliveryToken: DeliveryToken;
   readonly close?: CloseValue;
   readonly result?: {
     readonly item: ResultDelivery["item"];
@@ -61,6 +56,16 @@ export interface StoredCollectiveMessage {
   readonly destination: string;
   readonly reference: MessageReference;
 }
+
+/** Results become available only after their required close certifies. */
+export const readNextCollectiveResult = () =>
+  readOperations(
+    " WHERE phase='completed' AND delivered=0 AND canonical_result IS NOT NULL ORDER BY rowid LIMIT 1",
+    [],
+  ).pipe(
+    Effect.map((rows) => rows[0]),
+    Effect.withSpan("readNextCollectiveResult"),
+  );
 
 /** A repeated operation must preserve its original request and authority. */
 export function putCollectiveOperation(
@@ -105,35 +110,18 @@ export function putCollectiveOperation(
         }
         return;
       }
-      const deliveryToken = yield* mintDeliveryToken((token) =>
-        sql
-          .unsafe(
-            "SELECT 1 FROM collective_operations WHERE delivery_token=?",
-            [token],
-          )
-          .pipe(Effect.map((rows) => rows.length > 0)),
-      );
       yield* sql.unsafe(
-        "INSERT INTO collective_operations(operation_id,creator_agent_id,origin,canonical_request,deadline_at,delivery_token) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO collective_operations(operation_id,creator_agent_id,origin,canonical_request,deadline_at) VALUES(?,?,?,?,?)",
         [
           operationId,
           input.request.author.agentId,
           input.origin,
           canonicalRequest,
           deadlineAt,
-          deliveryToken,
         ],
       );
     }),
   ).pipe(storeOperation, Effect.withSpan("putCollectiveOperation"));
-}
-
-/** Stored requests and their identifiers are validated before business operations receive them. */
-export function readCollectiveOperation(operationId: CollectiveId) {
-  return readOperations(" WHERE operation_id=?", [operationId]).pipe(
-    Effect.map((rows) => rows[0]),
-    Effect.withSpan("readCollectiveOperation"),
-  );
 }
 
 /** Workers load each operation's content inside its completion transaction. */
@@ -154,16 +142,6 @@ export function readCollectiveOperationIds(
     );
   }).pipe(storeOperation, Effect.withSpan("readCollectiveOperationIds"));
 }
-
-/** Results become available only after their required close certifies. */
-export const readNextCollectiveResult = () =>
-  readOperations(
-    " WHERE phase='completed' AND delivered=0 AND canonical_result IS NOT NULL ORDER BY rowid LIMIT 1",
-    [],
-  ).pipe(
-    Effect.map((rows) => rows[0]),
-    Effect.withSpan("readNextCollectiveResult"),
-  );
 
 /** Role uniqueness and Communication acceptance commit in the same caller transaction. */
 export function putCollectiveMessage(input: StoredCollectiveMessage) {
@@ -199,44 +177,25 @@ export function putCollectiveMessage(input: StoredCollectiveMessage) {
   ).pipe(storeOperation, Effect.withSpan("putCollectiveMessage"));
 }
 
-/** An operation reads all associations; startup reads only unfinished response and close observations. */
-export function readCollectiveMessages(operationId?: CollectiveId) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT operation_id,role,destination,author_agent_id,msg_id FROM collective_messages" +
-        (operationId === undefined
-          ? " WHERE role IN ('response','close') AND operation_id IN (SELECT operation_id FROM collective_operations WHERE phase!='completed') ORDER BY rowid"
-          : " WHERE operation_id=? ORDER BY rowid"),
-      operationId === undefined ? [] : [operationId],
-    );
-    return yield* Effect.forEach(
-      rows,
-      (row) =>
-        Effect.gen(function* () {
-          const role = readText(row, "role");
-          if (role !== "request" && role !== "response" && role !== "close") {
-            return yield* new EndpointStoreError({ reason: "corrupt" });
-          }
-          return {
-            operationId: yield* decodeValue(
-              CollectiveId,
-              readText(row, "operation_id"),
-            ),
-            role,
-            destination: yield* decodeValue(
-              Schema.String,
-              readText(row, "destination"),
-            ),
-            reference: yield* decodeValue(MessageReference, {
-              authorAgentId: readText(row, "author_agent_id"),
-              msgId: readText(row, "msg_id"),
-            }),
-          } satisfies StoredCollectiveMessage;
-        }),
-      { concurrency: 1 },
-    );
-  }).pipe(storeOperation, Effect.withSpan("readCollectiveMessages"));
+/** An operation's accepted messages retain their role and fixed identity. */
+export function readCollectiveMessages(operationId: CollectiveId) {
+  return readMessageRows(
+    "WHERE message.operation_id=? ORDER BY message.rowid",
+    [operationId],
+  );
+}
+
+/** One bounded worker observes only durable completion or terminal failure. */
+export function readReadyCollectiveMessages() {
+  return readMessageRows(
+    `JOIN collective_operations AS operation ON operation.operation_id=message.operation_id
+   JOIN message_intents AS intent ON intent.author_agent_id=message.author_agent_id AND intent.msg_id=message.msg_id
+   WHERE operation.phase!='completed' AND message.role IN ('response','close')
+    AND (intent.completed_record_hash IS NOT NULL OR (intent.failure_reason IS NOT NULL AND (message.role='close' OR operation.phase='finalizing')))
+    AND (message.role='close' OR NOT EXISTS (SELECT 1 FROM collective_answers AS answer WHERE answer.operation_id=message.operation_id AND answer.member=message.author_agent_id))
+   ORDER BY message.rowid`,
+    [],
+  );
 }
 
 /** Only the collector's first accepted answer before its deadline is selectable. */
@@ -273,6 +232,14 @@ export function recordCollectiveAnswer(
       return true;
     }),
   ).pipe(storeOperation, Effect.withSpan("recordCollectiveAnswer"));
+}
+
+/** Stored requests and their identifiers are validated before business operations receive them. */
+export function readCollectiveOperation(operationId: CollectiveId) {
+  return readOperations(" WHERE operation_id=?", [operationId]).pipe(
+    Effect.map((rows) => rows[0]),
+    Effect.withSpan("readCollectiveOperation"),
+  );
 }
 
 /** First-answer messages are decoded once at their persistence boundary. */
@@ -374,6 +341,43 @@ export function retireCollectiveOperation(operationId: CollectiveId) {
   }).pipe(storeOperation, Effect.withSpan("retireCollectiveOperation"));
 }
 
+function readMessageRows(suffix: string, parameters: readonly string[]) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
+      "SELECT message.operation_id,message.role,message.destination,message.author_agent_id,message.msg_id FROM collective_messages AS message " +
+        suffix,
+      parameters,
+    );
+    return yield* Effect.forEach(
+      rows,
+      (row) =>
+        Effect.gen(function* () {
+          const role = readText(row, "role");
+          if (role !== "request" && role !== "response" && role !== "close") {
+            return yield* new EndpointStoreError({ reason: "corrupt" });
+          }
+          return {
+            operationId: yield* decodeValue(
+              CollectiveId,
+              readText(row, "operation_id"),
+            ),
+            role,
+            destination: yield* decodeValue(
+              Schema.String,
+              readText(row, "destination"),
+            ),
+            reference: yield* decodeValue(MessageReference, {
+              authorAgentId: readText(row, "author_agent_id"),
+              msgId: readText(row, "msg_id"),
+            }),
+          } satisfies StoredCollectiveMessage;
+        }),
+      { concurrency: 1 },
+    );
+  }).pipe(storeOperation, Effect.withSpan("readCollectiveMessages"));
+}
+
 function readOperations(where: string, parameters: readonly string[]) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -424,10 +428,6 @@ function readOperation(
       operationId,
       phase,
       deadlineAt: readInteger(row, "deadline_at"),
-      deliveryToken: yield* decodeValue(
-        DeliveryToken,
-        readText(row, "delivery_token"),
-      ),
       ...(close === undefined ? {} : { close: close.value }),
       ...(result === undefined ? {} : { result }),
     };
@@ -500,6 +500,7 @@ function readPart(
   { readonly message: Message; readonly value: OperationValue },
   EndpointStoreError
 >;
+
 function readPart(
   bytes: Uint8Array,
   kind: "close",
@@ -507,6 +508,7 @@ function readPart(
   { readonly message: Message; readonly value: CloseValue },
   EndpointStoreError
 >;
+
 function readPart(bytes: Uint8Array, kind: "operation" | "close") {
   return Effect.gen(function* () {
     const message = yield* decodeRuntimeValue(Message, bytes);

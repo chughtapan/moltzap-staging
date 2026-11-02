@@ -1,18 +1,6 @@
 /** @file Optional MCP wake streams and durable signed webhook delivery use the saved inbox. */
 import { type Context, Effect, Schema, Stream } from "effect";
 import { randomUUID } from "node:crypto";
-import {
-  eventListInput,
-  eventStreamInput,
-  eventSubscribeInput,
-  eventUnsubscribeInput,
-  type HarnessWebhookEvents,
-} from "../../host-protocol/event-schemas.js";
-import {
-  INBOX_ITEM_EVENT,
-  INBOX_PENDING_EVENT,
-} from "../../host-protocol/names.js";
-import { itemEventDataJsonSchema } from "../../host-protocol/operations.js";
 import { Identity } from "../../identity/service.js";
 import {
   McpServerClient,
@@ -20,6 +8,16 @@ import {
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { McpServer } from "../../vendor/effect-mcp/McpServer.js";
 import { SocialHarness } from "../service.js";
+import {
+  eventListInput,
+  eventStreamInput,
+  eventSubscribeInput,
+  eventUnsubscribeInput,
+  type HarnessWebhookEvents,
+  INBOX_ITEM_EVENT,
+  INBOX_PENDING_EVENT,
+  itemEventDataJsonSchema,
+} from "./contracts.js";
 import { makeWebhookEvents } from "./webhook.js";
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>

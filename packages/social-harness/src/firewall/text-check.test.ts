@@ -25,7 +25,7 @@ import {
   decodeMessagePolicy,
   type TextPolicySettings,
   type TextRule,
-} from "./rules/config.js";
+} from "./rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed judgments, stages and next actions are the public contract under test. */
 const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";
@@ -49,8 +49,7 @@ const context: typeof MessageContext.Encoded = {
       sender: "participant-agent",
       recipients: ["organizer-agent"],
       text: "I am free Tuesday.",
-      visibility: "runtime",
-      admission: "admitted",
+      visibleToAgent: true,
     },
   ],
   facts: [
@@ -611,14 +610,12 @@ it("projects incoming advice using only admitted visible subjects", () =>
             {
               ...message,
               id: "private-history",
-              visibility: "assessor",
-              admission: "admitted",
+              visibleToAgent: false,
             },
             {
               ...message,
               id: "withheld-history",
-              visibility: "runtime",
-              admission: "withheld",
+              visibleToAgent: false,
             },
           ],
         },
@@ -770,8 +767,7 @@ const longHistory: MessageContext["history"] = EffectArray.makeBy(
   (index) => ({
     ...draft,
     id: `visible-${index}`,
-    visibility: "runtime",
-    admission: "admitted",
+    visibleToAgent: true,
   }),
 );
 it.each([false, true])(
@@ -837,8 +833,7 @@ it("bounds large policy-history products without submitting partial requests", (
           ...draft,
           id: `visible-${index}`,
           text: "Earlier conversation. ".repeat(100),
-          visibility: "runtime",
-          admission: "admitted",
+          visibleToAgent: true,
         })),
       },
     });

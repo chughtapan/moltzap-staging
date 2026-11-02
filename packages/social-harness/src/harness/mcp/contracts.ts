@@ -1,35 +1,407 @@
-/** @file Canonical MCP tool names, argument schemas and published result schemas. */
-import { Schema } from "effect";
+/** @file Canonical MCP tools, Events and wire errors share their owning schemas. */
+
+import { Effect, JSONSchema, type ParseResult, Schema } from "effect";
+import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
+import {
+  type SendError,
+  sendFailureReasons,
+} from "../../communication/conversations/errors.js";
+import {
+  CollectiveId,
+  decodeCollectiveFailure,
+  Message,
+  MessageReference,
+  PaginatedRequest,
+  PaginatedResult,
+  type RequestError,
+} from "../../communication/index.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
+import {
+  compareAscii,
+  isStrictlyAscending,
+} from "../../encoding/identifier.js";
+import { checkedGuidanceSchema } from "../../firewall/check.js";
 import {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
   FirewallPolicyError,
+  firewallRefusalReasonSchema,
+  nextActionSchema,
   policyReadSchema,
   policyUpdateResultSchema,
   policyUpdateSchema,
-} from "../../firewall/rules/config.js";
+} from "../../firewall/rules.js";
 import {
-  managementReadConversationRequestSchema,
-  managementReadConversationResultSchema,
-  managementRegisterRequestSchema,
-  managementRegisterResultSchema,
-  managementSearchConversationsRequestSchema,
-  managementSearchConversationsResultSchema,
-  managementStatusResultSchema,
-} from "../../host-protocol/daemon-tools.js";
-import { webhookStatusSchema } from "../../host-protocol/event-schemas.js";
+  type FirewallRefusal,
+  LocalGuidance,
+  PermittedItem,
+} from "../../firewall/service.js";
+import { SendRequest, SendResultSchema } from "../../host-protocol/messages.js";
 import {
-  harnessAcknowledgeDeliveryRequestSchema,
-  harnessSendArgumentsSchema,
-  inboxRequestSchema,
-  inboxResultSchema,
-  readEventRequestSchema,
-  readEventResultSchema,
-} from "../../host-protocol/operations.js";
-import { SendResultSchema } from "../../host-protocol/send-result.js";
+  AgentIdentityCard,
+  AgentName,
+  PrincipalId,
+} from "../../identity/agent.js";
+import { RegistrationId } from "../../identity/registry.js";
 import { RegistrationError } from "../../identity/service.js";
-import { DeliveryAcknowledgeError, InboxError } from "../inbox.js";
+import {
+  DeliveryAcknowledgeError,
+  DeliveryToken,
+  InboxError,
+  InboxEvent,
+  InboxPage,
+  MessageAddress,
+} from "../inbox.js";
 import { HistoryError } from "../service.js";
+
+/** Maximum complete UTF-8 callback body accepted by the event transport. */
+export const maximumEventBytes = 256 * 1024;
+
+/** Callback failures expose no upstream response or destination details. */
+export const callbackReasons = [
+  "connection_refused",
+  "timeout",
+  "tls_error",
+  "http_4xx",
+  "http_5xx",
+  "challenge_failed",
+] as const;
+/** Owner-visible diagnostics omit callback addresses and signing authority. */
+const webhookStatusSchema = Schema.Struct({
+  mode: Schema.Literal("none", "webhook"),
+  id: Schema.optional(Schema.String),
+  refreshBefore: Schema.optional(Schema.String),
+  stalled: Schema.optional(
+    Schema.NullOr(Schema.Literal("callback", "terminal")),
+  ),
+  lastError: Schema.optional(Schema.NullOr(Schema.Literal(...callbackReasons))),
+});
+
+/** Secret-free diagnostics shared with the MCP tool. */
+export type WebhookStatus = typeof webhookStatusSchema.Type;
+
+const emptyArguments = Schema.Record({
+  key: Schema.String,
+  value: Schema.Never,
+});
+/** An absent cursor has the draft's explicit null meaning. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
+export const eventStreamInput = Schema.Struct({
+  name: Schema.String,
+  arguments: emptyArguments,
+  cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
+  maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+});
+/** Catalog pagination uses its own cursor rather than event replay state. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
+export const eventListInput = Schema.Struct({
+  cursor: Schema.optionalWith(Schema.String, { exact: true }),
+});
+/** Delivery policy checks follow SDK shape validation. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
+export const eventSubscribeInput = Schema.Struct({
+  ...eventStreamInput.fields,
+  delivery: Schema.Struct({
+    mode: Schema.String,
+    url: Schema.String,
+    secret: Schema.String,
+  }),
+  ttlMs: Schema.optionalWith(Schema.NullOr(Schema.NonNegativeInt), {
+    exact: true,
+  }),
+});
+/** Cleanup identifies the registration without disclosing its signing secret. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
+export const eventUnsubscribeInput = Schema.Struct({
+  name: Schema.String,
+  arguments: emptyArguments,
+  delivery: Schema.Struct({ url: Schema.String }),
+});
+
+/** Validated webhook subscription parameters before authorization and URL checks. */
+export type EventSubscribeInput = typeof eventSubscribeInput.Type;
+/** Exact subscription key supplied for eager webhook cleanup. */
+type EventUnsubscribeInput = typeof eventUnsubscribeInput.Type;
+/** Server grant for one webhook registration. */
+interface EventSubscriptionGrant {
+  readonly id: string;
+  readonly refreshBefore: string;
+  readonly cursor: null;
+  readonly truncated: boolean;
+}
+
+/** Durable callback delivery for the daemon's authenticated clients. */
+export interface HarnessWebhookEvents {
+  readonly subscribe: (
+    input: EventSubscribeInput,
+    authorize?: Effect.Effect<void, ProtocolError>,
+  ) => Effect.Effect<EventSubscriptionGrant, ProtocolError>;
+  readonly unsubscribe: (
+    input: EventUnsubscribeInput,
+  ) => Effect.Effect<void, ProtocolError>;
+  readonly observe: () => Effect.Effect<void, ProtocolError>;
+  readonly status: Effect.Effect<WebhookStatus, ProtocolError>;
+  readonly revoke: Effect.Effect<void, ProtocolError>;
+  readonly resume: Effect.Effect<void, ProtocolError>;
+}
+
+/** A content-free wakeup to read the pending inbox. */
+export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
+
+/** Signed callbacks carry saved content or its lookup reference. */
+export const INBOX_ITEM_EVENT = "org.social-harness/inbox.item";
+
+/** Refusals disclose the check and registered feedback without assessment evidence. */
+const firewallRefusalSchema = exactStruct({
+  checkId: checkedGuidanceSchema.fields.checkId,
+  refusal: firewallRefusalReasonSchema,
+  feedback: Schema.Array(
+    exactStruct({
+      nextAction: nextActionSchema,
+      text: Schema.NonEmptyString,
+    }),
+  ),
+});
+
+const savedItemSchema = Schema.typeSchema(PermittedItem);
+
+const encodedAgentCard = Schema.encodedBoundSchema(AgentIdentityCard);
+
+const historyRecord = Schema.Union(
+  Schema.Struct({
+    kind: Schema.Literal("sent"),
+    message: Schema.typeSchema(Message),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("received"),
+    address: MessageAddress,
+    message: MessageReference,
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("result"),
+    address: MessageAddress,
+    deliveryToken: DeliveryToken,
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+);
+
+/** Closed local registration input; configured secrets are never tool fields. */
+const managementRegisterRequestSchema = exactStruct({
+  operationId: Schema.propertySignature(RegistrationId).annotations({
+    description:
+      "Registration retry identity (opn_ plus canonical base64url for 16 bytes); reuse it for the same registration attempt.",
+  }),
+  principalId: Schema.propertySignature(PrincipalId).annotations({
+    description:
+      "Principal represented by this agent (prn_ plus canonical base64url for 16 bytes).",
+  }),
+  agentName: Schema.propertySignature(AgentName).annotations({
+    description:
+      "Immutable Registry-wide handle: 3 to 32 lowercase letters, digits, or single separating hyphens.",
+  }),
+});
+
+/** The signed identity document returned after successful registration. */
+const managementRegisterResultSchema = encodedAgentCard;
+
+/** Saved identity is visible while communication activation proceeds. */
+const managementStatusResultSchema = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("unregistered") }),
+  Schema.Struct({
+    kind: Schema.Literal("registered"),
+    identityCard: encodedAgentCard,
+  }),
+);
+
+/** Canonically ordered local-conversation page selector. */
+export const managementSearchConversationsRequestSchema = exactStruct({
+  ...PaginatedRequest.fields,
+});
+
+/** At most fifty canonical addresses and an opaque position for the next page. */
+export const managementSearchConversationsResultSchema = Schema.Struct({
+  addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
+  ...PaginatedResult.fields,
+}).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
+
+/** Keeps one conversation address while following its opaque history cursor. */
+const managementReadConversationRequestSchema = exactStruct({
+  address: MessageAddress,
+  ...PaginatedRequest.fields,
+});
+
+/** Saved messages and results at the traversal's fixed history boundaries. */
+const managementReadConversationResultSchema = Schema.Struct({
+  records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
+  ...PaginatedResult.fields,
+});
+
+const itemEventDataSchema = Schema.Union(
+  exactStruct({
+    kind: Schema.Literal("item"),
+    address: MessageAddress,
+    item: savedItemSchema,
+    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+  }),
+  exactStruct({
+    kind: Schema.Literal("reference"),
+    itemKind: Schema.Literal(
+      "multicast",
+      "collectiveRequest",
+      "collectiveResult",
+      "operationFailed",
+    ),
+    bytes: Schema.NonNegativeInt,
+  }),
+);
+/** Callback data uses the same saved payload returned by read_event. */
+export const itemEventDataJsonSchema = JSONSchema.make(itemEventDataSchema, {
+  target: "jsonSchema2020-12",
+});
+
+/** Read-only content lookup never acknowledges or retries delivery. */
+const readEventRequestSchema = exactStruct({
+  eventId: Schema.propertySignature(DeliveryToken).annotations({
+    description:
+      "The eventId of an org.social-harness/inbox.item event, or one a host's wakeup carries from an inbox item; retained content remains readable after acknowledgment.",
+  }),
+});
+/** The original classified payload, including after its handoff. */
+const readEventResultSchema = Schema.typeSchema(InboxEvent);
+
+/** A delivery acknowledgment names the delivery it retires. */
+const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
+  deliveryToken: Schema.propertySignature(DeliveryToken).annotations({
+    description:
+      "Stable delivery token from the inbox item accepted by the host.",
+  }),
+});
+
+/** The model-visible arguments of one send. */
+const harnessSendArgumentsSchema = exactStruct({
+  input: Schema.propertySignature(SendRequest).annotations({
+    description:
+      "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
+  }),
+});
+
+/** One page request over the classified inbox. */
+const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
+/** One page of classified deliveries and the cursor after it. */
+const inboxResultSchema = Schema.typeSchema(InboxPage);
+/** Validation diagnostics remain decodable as a send refusal at the runtime edge. */
+const invocationValidationErrorSchema = Schema.Struct({
+  reason: Schema.Literal("content-invalid"),
+  detail: Schema.optionalWith(Schema.String, { exact: true }),
+  issues: Schema.Array(
+    Schema.Struct({
+      path: Schema.Array(Schema.Union(Schema.String, Schema.Number)),
+      message: Schema.String,
+    }),
+  ),
+});
+
+/**
+ * The JSON-RPC error data of a refused `send_message`: a `SendError` reason
+ * with the detail naming its specific cause, or a refused collective send
+ * with its selected operationId and the failure naming each
+ * unreachable member or failing field, which `decodeCollectiveFailure`
+ * validates. Named-request refusals disclose no unrelated request or
+ * conversation. Fields a newer daemon adds are ignored; a firewall or
+ * collective refusal that misses its own fields never decodes as a plain
+ * reason.
+ */
+const harnessSendErrorDataSchema = Schema.Union(
+  invocationValidationErrorSchema,
+  Schema.Struct({
+    reason: Schema.Literal("firewall-refused"),
+    ...firewallRefusalSchema.fields,
+  }),
+  Schema.Struct({
+    reason: Schema.Literal("collective-failed"),
+    operationId: Schema.optionalWith(CollectiveId, { exact: true }),
+    failure: Schema.Unknown,
+  }),
+  Schema.Struct({
+    reason: Schema.Literal(...sendFailureReasons),
+    detail: Schema.optionalWith(Schema.String, { exact: true }),
+  }),
+);
+
+/**
+ * Decoded error data of one refused `send_message` call.
+ * @inline
+ */
+type HarnessSendErrorData =
+  | typeof invocationValidationErrorSchema.Type
+  | (typeof firewallRefusalSchema.Type & {
+      readonly reason: "firewall-refused";
+    })
+  | Readonly<{ reason: SendError["reason"]; detail?: string }>
+  | Readonly<{
+      reason: "collective-failed";
+      operationId?: CollectiveId;
+      failure: Effect.Effect.Success<
+        ReturnType<typeof decodeCollectiveFailure>
+      >;
+    }>;
+
+/**
+ * The error data a refused send carries across the daemon boundary: a
+ * collective failure keeps its operationId and the members or fields it names, and a
+ * send failure keeps the detail naming its cause, so the receiving side
+ * rebuilds the same typed error and message.
+ * @param error The refused send's typed error.
+ * @returns The JSON error data.
+ */
+export function sendErrorData(
+  error: SendError | RequestError | FirewallRefusal,
+): HarnessSendErrorData {
+  if (error._tag === "FirewallRefusal") {
+    return {
+      reason: "firewall-refused",
+      checkId: error.checkId,
+      refusal: error.refusal,
+      feedback: error.feedback,
+    };
+  }
+  if (error._tag === "RequestError") {
+    return {
+      reason: "collective-failed",
+      ...(error.operationId === undefined
+        ? {}
+        : { operationId: error.operationId }),
+      failure: error.failure,
+    };
+  }
+  if (error.detail === undefined) {
+    return { reason: error.reason };
+  }
+  return { reason: error.reason, detail: error.detail };
+}
+
+/**
+ * Decode the error data of one refused `send_message` call.
+ * @param value Untrusted JSON-RPC error data.
+ * @returns The collective failure or send reason it carries.
+ */
+export function decodeHarnessSendErrorData(
+  value: unknown,
+): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> {
+  return Schema.decodeUnknown(harnessSendErrorDataSchema)(value).pipe(
+    Effect.flatMap(
+      (data): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> =>
+        "failure" in data
+          ? decodeCollectiveFailure(data.failure).pipe(
+              Effect.map((failure) => ({ ...data, failure })),
+            )
+          : Effect.succeed(data),
+    ),
+  );
+}
 
 const policyFailure = Schema.Struct({
   reason: FirewallPolicyError.fields.reason,
@@ -187,3 +559,7 @@ export const toolFailureSchemas = {
   policy_update: policyFailure,
   firewall_decisions: policyFailure,
 } as const;
+
+function addressesAreOrdered(addresses: readonly string[]): boolean {
+  return isStrictlyAscending(addresses, compareAscii);
+}

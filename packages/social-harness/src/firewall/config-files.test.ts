@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { readCredential } from "../harness/config.js";
-import { loadMessagePolicy, MAXIMUM_BEHAVIOR_BYTES } from "./rules/config.js";
+import { loadMessagePolicy, MAXIMUM_BEHAVIOR_BYTES } from "./rules.js";
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0)) {

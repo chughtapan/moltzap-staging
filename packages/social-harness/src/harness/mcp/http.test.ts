@@ -11,7 +11,7 @@ import { Effect, Exit, Scope, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import { serveMcp } from "./http.js";
+import { serveMcp } from "./index.js";
 
 const boundPort = Effect.gen(function* () {
   const server = yield* NodeHttpServer.make(createServer, {

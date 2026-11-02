@@ -14,8 +14,8 @@ import { createHash } from "node:crypto";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
+  exactStruct,
 } from "../encoding/canonical-json.js";
-import { exactStruct } from "../encoding/exact.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
 import {
   AgentPublicKey,
@@ -441,7 +441,10 @@ interface CardSigning {
   readonly sign: (
     payload: AgentIdentityCardClaims,
     authority: AgentSigningAuthority,
-  ) => Effect.Effect<AgentIdentityCard, AgentIdentityCardVerificationError>;
+  ) => Effect.Effect<
+    VerifiedAgentIdentityCard,
+    AgentIdentityCardVerificationError
+  >;
 }
 
 /** Card signing retains private key access and wire-profile details inside Identity. */
@@ -454,7 +457,10 @@ export const agentIdentityCardSigning: CardSigning = Object.freeze({
 function signCardPayload(
   payload: AgentIdentityCardClaims,
   authority: AgentSigningAuthority,
-): Effect.Effect<AgentIdentityCard, AgentIdentityCardVerificationError> {
+): Effect.Effect<
+  VerifiedAgentIdentityCard,
+  AgentIdentityCardVerificationError
+> {
   return Effect.gen(function* () {
     const failure = () => new AgentIdentityCardVerificationError();
     const bytes = yield* encodeCanonicalJson(payload).pipe(
@@ -475,8 +481,10 @@ function signCardPayload(
           .sign(),
       catch: failure,
     });
-    return yield* Schema.decodeUnknown(AgentIdentityCard)(representation).pipe(
-      Effect.mapError(failure),
-    );
+    const card = yield* Schema.decodeUnknown(AgentIdentityCard)(
+      representation,
+    ).pipe(Effect.mapError(failure));
+    verifiedCards.add(card);
+    return brandVerifiedAgentIdentityCard(card);
   }).pipe(Effect.withSpan("agentIdentityCardSigning"));
 }

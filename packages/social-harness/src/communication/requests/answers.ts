@@ -17,7 +17,7 @@ import { randomBytes } from "node:crypto";
 
 import type { AnswerOutcome } from "./index.js";
 
-import { exactStruct } from "../../encoding/exact.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
 import { AgentId } from "../../identity/agent.js";
 import { WIRE_VERSION } from "../../identity/wire-version.js";
 import { Content, MessageReference, wireProfiles } from "../records/values.js";

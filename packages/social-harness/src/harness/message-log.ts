@@ -4,9 +4,9 @@ import { FileSystem } from "@effect/platform";
 import { DateTime, Effect, Schema } from "effect";
 import { CollectiveId } from "../communication/index.js";
 import { MsgId } from "../communication/records/values.js";
-import { exactStruct } from "../encoding/exact.js";
+import { exactStruct } from "../encoding/canonical-json.js";
 import { PermittedItem } from "../firewall/service.js";
-import { SendRequest } from "../host-protocol/send-request.js";
+import { SendRequest } from "../host-protocol/messages.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 

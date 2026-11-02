@@ -15,37 +15,35 @@ import { httpbis, type VerifyingKey } from "http-message-signatures";
 import { importJWK } from "jose";
 import { webcrypto } from "node:crypto";
 import { expect, it } from "vitest";
-import type { RegistryLookupResult } from "../../registry/contract.js";
-import { AgentId, type VerifiedAgentIdentityCard } from "../../agent.js";
+import { AgentId, type VerifiedAgentIdentityCard } from "../agent.js";
+import { AuthenticationError } from "../authentication.js";
+import {
+  contentDigest,
+  verifyHttpRequestSignature,
+} from "../http-signatures.js";
 import {
   AgentSigningAuthority,
   ed25519PublicKeyThumbprintUri,
-} from "../../keys.js";
-import { RegistryError } from "../../registry/index.js";
-import { WIRE_VERSION, WireVersions } from "../../wire-version.js";
-import { contentDigest, verifyHttpRequestSignature } from "../proof.js";
-import { AuthenticationError } from "../service.js";
-import {
-  type IdentityFixture,
-  makeIdentityFixture,
-  retainedIdentityFixture,
-} from "./authenticated-http-fixtures.js";
+} from "../keys.js";
+import { RegistryError, type RegistryLookupResult } from "../registry.js";
+import { WIRE_VERSION, WireVersions } from "../wire-version.js";
 import {
   authenticatedHttpLayerWithRegistry,
   clockAt,
+  type IdentityFixture,
+  makeIdentityFixture,
+  NORMAL_FIELDS,
   type PreparedRequest,
   prepareRequest,
   registryWithLookup,
+  resignWithVersion,
+  retainedIdentityFixture,
+  SIGNATURE_PARAMETERS,
   signatureExpiry,
   unreadable,
   verifyAgentRequest,
   verifyThroughLookupResult,
-} from "./authenticated-http-requests.js";
-import {
-  NORMAL_FIELDS,
-  resignWithVersion,
-  SIGNATURE_PARAMETERS,
-} from "./authenticated-http-signing.js";
+} from "./authentication-fixtures.js";
 
 /* eslint-disable agent-code-guard/no-example-only-tests -- regression-only suite: each case exercises a distinct HTTP proof, replay-ordering, cache, or cancellation contract. The concurrency timelines are not an input domain to generate over. */
 

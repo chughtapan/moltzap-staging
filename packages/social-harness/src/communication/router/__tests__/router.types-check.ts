@@ -13,6 +13,7 @@
 import type { HttpClient } from "@effect/platform";
 import type { Duration, Effect, Layer, Types } from "effect";
 import type { AgentId } from "../../../identity/agent.js";
+import type { LiveSignedMessage } from "../../../identity/envelope/signed-message.js";
 import type {
   AgentSigningError,
   AuthenticationFailedError,
@@ -25,8 +26,7 @@ import type {
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../../identity/authentication/proof.js";
-import type { LiveSignedMessage } from "../../../identity/envelope/signed-message.js";
+} from "../../../identity/http-signatures.js";
 import type { AgentSigningAuthority } from "../../../identity/keys.js";
 import type * as RouterPackage from "../api.js";
 

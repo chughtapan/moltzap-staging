@@ -1,4 +1,4 @@
-/** @file The closed errors of sending, listening and acknowledging delivery. */
+/** @file Closed reasons distinguish refused sends from recoverable accepted work. */
 
 import { Data } from "effect";
 
@@ -103,45 +103,5 @@ export class SendError extends Data.TaggedError("SendError")<{
     return this.issues === undefined || this.issues.length === 0
       ? `send failed: ${cause}`
       : `send failed: ${cause}: ${issuesText(this.issues)}`;
-  }
-}
-
-/** @inline */
-type ListenFailure =
-  | "already-listening"
-  | "consumer-revoked"
-  | "incompatible-daemon"
-  | "transport-failed"
-  | "decode-failed";
-
-/** The endpoint's sole inbound subscription failed. */
-export class ListenError extends Data.TaggedError("ListenError")<{
-  readonly reason: ListenFailure;
-}> {
-  override get message(): string {
-    return this.reason === "consumer-revoked"
-      ? "listen failed: consumer-revoked. Reacquire the subscription. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer"
-      : `listen failed: ${this.reason}`;
-  }
-}
-
-/** Why one delivery acknowledgment failed. */
-export type DeliveryAcknowledgeFailure =
-  | "consumer-revoked"
-  | "unknown-delivery"
-  | "delivery-conflict"
-  | "persistence-failed"
-  | "transport-failed";
-
-/** Transport acknowledgment could not complete for one delivery. */
-export class DeliveryAcknowledgeError extends Data.TaggedError(
-  "DeliveryAcknowledgeError",
-)<{
-  readonly reason: DeliveryAcknowledgeFailure;
-}> {
-  override get message(): string {
-    return this.reason === "consumer-revoked"
-      ? "delivery acknowledgment failed: consumer-revoked. Recover unread work through a new subscription. Docs: https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/host/receiving.md#polling-consumer"
-      : `delivery acknowledgment failed: ${this.reason}`;
   }
 }

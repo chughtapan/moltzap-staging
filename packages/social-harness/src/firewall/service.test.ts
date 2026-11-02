@@ -18,6 +18,10 @@ import { expect } from "vitest";
 import type { DecisionProvider } from "./check.js";
 import { Message } from "../communication/message.js";
 import {
+  type IdentityFixture,
+  makeIdentityFixture,
+} from "../identity/__tests__/authentication-fixtures.js";
+import {
   AgentCard,
   agentCardOf,
   AgentId,
@@ -25,11 +29,7 @@ import {
   AgentSigningAuthority,
   PrincipalId,
 } from "../identity/agent.js";
-import {
-  type IdentityFixture,
-  makeIdentityFixture,
-} from "../identity/authentication/__tests__/authenticated-http-fixtures.js";
-import { RegistrationId, Registry } from "../identity/registry/index.js";
+import { RegistrationId, Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
 import {
   FirewallPolicyError,
@@ -37,7 +37,7 @@ import {
   MAXIMUM_EDITABLE_RULES,
   type policyUpdateSchema,
   type TextRule,
-} from "./rules/config.js";
+} from "./rules.js";
 import {
   Firewall,
   type FirewallEvidence,
@@ -178,7 +178,7 @@ it("reads a refused message's saved policy and advice after restart without conf
             evidence,
           );
           expect(decision.kind).toBe("refused");
-          yield* firewall.saveDecisions(decision.decisions);
+          yield* decision.save;
           return (yield* firewall.readDecisions({})).decisions;
         }),
       Firewall.layer(policy([privacy])),
@@ -226,10 +226,10 @@ it("keeps the original summary and save time when a completed decision is saved 
             yield* outgoing(self),
             evidence,
           );
-          yield* firewall.saveDecisions(decision.decisions);
+          yield* decision.save;
           const before = yield* firewall.readDecisions({});
           yield* Effect.sleep(Duration.millis(5));
-          yield* firewall.saveDecisions(decision.decisions);
+          yield* decision.save;
           expect(yield* firewall.readDecisions({})).toEqual(before);
         }),
       Firewall.layer(policy([privacy])),
@@ -251,20 +251,18 @@ it("rolls back a completed decision with the enclosing handoff transaction", () 
           );
           const aborted = yield* sql
             .withTransaction(
-              firewall
-                .saveDecisions(decision.decisions)
-                .pipe(
-                  Effect.zipRight(
-                    Effect.fail(
-                      new FirewallPolicyError({ reason: "persistence-failed" }),
-                    ),
+              decision.save.pipe(
+                Effect.zipRight(
+                  Effect.fail(
+                    new FirewallPolicyError({ reason: "persistence-failed" }),
                   ),
                 ),
+              ),
             )
             .pipe(Effect.either);
           expect(aborted._tag).toBe("Left");
           expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
-          yield* firewall.saveDecisions(decision.decisions);
+          yield* decision.save;
           expect((yield* firewall.readDecisions({})).decisions).toHaveLength(2);
         }),
       Firewall.layer(policy([privacy])),
@@ -293,7 +291,7 @@ it("retains activation metadata and historical advice after a rule is removed", 
             yield* outgoing(self),
             evidence,
           );
-          yield* firewall.saveDecisions(decision.decisions);
+          yield* decision.save;
           const saved = (yield* firewall.readDecisions({})).decisions;
           yield* firewall.updatePolicy({ remove: [privacy.id] });
           const feed = yield* firewall.readDecisions({});

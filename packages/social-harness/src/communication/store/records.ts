@@ -2,26 +2,32 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
-import type {
-  CertifiedRecord,
-  OutboundMessageInput,
-  ProposalLock,
-  ProtocolEvidence,
-  StagedRecord,
-  StoredOutboundMessage,
-  StoreMutation,
-} from "./types.js";
-
 import {
+  type CertifiedRecord,
   copyBytes,
   EndpointStoreError,
+  findProposalLock,
+  findStagedReanchor,
+  findStagedRecord,
+  FIRST_MESSAGE_PREDECESSOR,
+  lockProposalInTransaction,
+  type OutboundMessageInput,
+  type ProposalLock,
+  type ProtocolEvidence,
   readBytes,
   readOptionalText,
+  readStoredIdentity,
+  readStoredPosition,
   readText,
+  releaseProposalLock,
   requireBytes,
   requireEqual,
   requireSameBytes,
+  requireSameRecord,
   requireText,
+  type StagedRecord,
+  type StoredOutboundMessage,
+  type StoreMutation,
   storeOperation,
   StoreSignal,
   transaction,
@@ -30,17 +36,6 @@ import {
   enqueueOutboundInTransaction,
   readRecordOutbound,
 } from "./outbound.js";
-import {
-  findProposalLock,
-  findStagedReanchor,
-  findStagedRecord,
-  FIRST_MESSAGE_PREDECESSOR,
-  lockProposalInTransaction,
-  readStoredIdentity,
-  readStoredPosition,
-  releaseProposalLock,
-  requireSameRecord,
-} from "./rows.js";
 /** A record and its exact signed dissemination envelope commit before a durability vote. */
 export function stageRecordAndOutbound(
   record: StagedRecord,

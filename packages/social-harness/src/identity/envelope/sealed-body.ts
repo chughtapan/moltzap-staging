@@ -8,8 +8,8 @@ import { generalDecrypt, GeneralEncrypt } from "jose";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
+  exactStruct,
 } from "../../encoding/canonical-json.js";
-import { exactStruct } from "../../encoding/exact.js";
 import {
   compareAgentIds,
   decodeCanonicalBase64Url,
@@ -23,7 +23,6 @@ import {
   SEALED_BODY_KEY_MANAGEMENT_ALGORITHM,
   x25519SealingKey,
 } from "../keys.js";
-import { WIRE_VERSION } from "../wire-version.js";
 import {
   EnvelopeId,
   isParsedSignedMessage,
@@ -31,12 +30,11 @@ import {
   MAXIMUM_RECIPIENTS,
   type VerifiedSignedMessage,
 } from "./signed-message.js";
-import { WIRE_PROFILES } from "./wire-profile.js";
 
 const CONTENT_ENCRYPTION_ALGORITHM = "A256GCM";
-const COMMITMENT_HEADER = WIRE_PROFILES[WIRE_VERSION].commitmentHeader;
-const ENVELOPE_ID_HEADER = WIRE_PROFILES[WIRE_VERSION].envelopeIdHeader;
-const SENDER_HEADER = WIRE_PROFILES[WIRE_VERSION].senderHeader;
+const COMMITMENT_HEADER = "org.social-harness/commitment";
+const ENVELOPE_ID_HEADER = "org.social-harness/envelope-id";
+const SENDER_HEADER = "org.social-harness/sender";
 const COMMITMENT_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;

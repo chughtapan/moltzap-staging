@@ -2,22 +2,20 @@
 
 import { Array, Effect, Encoding, Ref, Schema } from "effect";
 import { expect, it } from "vitest";
-import type { Authentication } from "../service.js";
+import type { Authentication } from "../authentication.js";
+import { AgentId, AgentName } from "../agent.js";
 import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,
-} from "../../__tests__/agent-card-fixtures.js";
-import { AgentId, AgentName } from "../../agent.js";
-import {
-  type IdentityFixture,
-  makeIdentityFixture,
-} from "./authenticated-http-fixtures.js";
+} from "./agent-card-fixtures.js";
 import {
   authenticatedHttpLayerWithRegistry,
+  type IdentityFixture,
+  makeIdentityFixture,
   prepareRequest,
   registryWithLookup,
   verifyAgentRequest,
-} from "./authenticated-http-requests.js";
+} from "./authentication-fixtures.js";
 
 const makeDistinctFixture = (index: number) =>
   Effect.gen(function* () {

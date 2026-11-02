@@ -1,4 +1,4 @@
-/** @file Host destinations identify one peer or a canonical group that includes the sender. */
+/** @file Canonical host destinations select the intended conversation. */
 
 import { live as it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
@@ -7,7 +7,7 @@ import {
   maximumMembers,
   MessageAddressInput,
 } from "../communication/records/values.js";
-import { canonicalMessageAddress } from "./address.js";
+import { canonicalMessageAddress } from "./messages.js";
 
 it.each([
   { input: "agent:agent-2", expected: "agent:agent-2" },

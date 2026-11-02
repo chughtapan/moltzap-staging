@@ -1,29 +1,12 @@
 /** @file Collective service scenarios use real SQL and a Message-only communication boundary. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import {
-  Clock,
-  type Context,
-  Deferred,
-  Effect,
-  Exit,
-  Queue,
-  Schema,
-  Scope,
-} from "effect";
+import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../identity/agent.js";
-import {
-  type Communication,
-  CommunicationError,
-} from "../communication/index.js";
-import {
-  type Message,
-  messageFromParticipants,
-} from "../communication/message.js";
-import {
-  type MessageReference,
-  MsgId,
-} from "../communication/records/values.js";
+import { CommunicationError } from "../communication/index.js";
+import { Message, messageFromParticipants } from "../communication/message.js";
+import { deriveConversationId } from "../communication/records/encoding.js";
+import { compareAgentIds, MsgId } from "../communication/records/values.js";
 import {
   type CollectiveValue,
   encodeCollectiveContent,
@@ -33,6 +16,8 @@ import {
   type ResultDelivery,
 } from "../communication/requests/index.js";
 import { makeRequests } from "../communication/requests/service.js";
+import { acceptMessage } from "../communication/store/conversations.js";
+import { encodeCanonical } from "../encoding/canonical-json.js";
 import { digest, testAgentView } from "./agent-card-fixtures.js";
 import { collectiveOperationId } from "./collective-id-fixtures.js";
 import {
@@ -43,11 +28,7 @@ import {
 interface FixtureInput {
   readonly database?: TestDatabase;
   readonly agent?: AgentCard;
-  readonly waitForMessage?: (
-    reference: Parameters<
-      Context.Tag.Service<typeof Communication>["waitForMessage"]
-    >[0],
-  ) => Effect.Effect<void, CommunicationError>;
+  readonly pendingCompletion?: boolean;
   readonly send?: (message: Message) => Effect.Effect<void, CommunicationError>;
 }
 
@@ -67,16 +48,9 @@ export const form = {
   required: ["slot"],
 } as const;
 
-/** A pending certification lets the same accepted own answer survive service scope closure. */
+/** A pending own answer survives service scope closure without a second submission. */
 export function pendingBob() {
-  return Effect.gen(function* () {
-    const completion = yield* Deferred.make<undefined>();
-    const fixture = yield* openCollectives({
-      agent: bob,
-      waitForMessage: () => Deferred.await(completion),
-    });
-    return { ...fixture, completion };
-  }).pipe(Effect.withSpan("pendingBob"));
+  return openCollectives({ agent: bob, pendingCompletion: true });
 }
 
 /** Separate service scopes share one database to exercise restart and pending handoffs. */
@@ -89,6 +63,16 @@ export function openCollectives(input: FixtureInput = {}) {
     yield* database.run(database.store.initializeCommunication(agent));
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const complete = database
+      .run(
+        database.sql.unsafe(
+          "UPDATE message_intents SET completed_record_hash=msg_id WHERE completed_record_hash IS NULL AND failure_reason IS NULL",
+        ),
+      )
+      .pipe(Effect.asVoid);
+    if (!input.pendingCompletion) {
+      yield* complete;
+    }
     const transport = createTransport(input, sent, database);
     const requests = yield* makeRequests({ self: agent, ...transport }).pipe(
       Effect.provideService(SqlClient, database.sql),
@@ -115,6 +99,7 @@ export function openCollectives(input: FixtureInput = {}) {
     };
     return {
       database,
+      complete,
       service,
       sent,
       results,
@@ -222,32 +207,52 @@ export function question(
   });
 }
 
-const retainedMessages = new WeakMap<TestDatabase, Map<string, Message>>();
-
+/** The transport double records accepted payloads and projects certification; protocol suites exercise the real certificates. */
 function createTransport(
   input: FixtureInput,
   sent: Queue.Queue<Message>,
   database: TestDatabase,
 ) {
-  const messages = retainedMessages.get(database) ?? new Map<string, Message>();
-  retainedMessages.set(database, messages);
   return {
     acceptMessage: (message: Message) =>
       Effect.gen(function* () {
         yield* input.send?.(message) ?? Effect.void;
-        messages.set(`${message.author.agentId}:${message.msgId}`, message);
-        yield* Queue.offer(sent, message);
-      }),
-    waitForMessage: (reference: MessageReference) =>
-      Effect.gen(function* () {
-        yield* input.waitForMessage?.(reference) ?? Effect.void;
-        const message = messages.get(
-          `${reference.authorAgentId}:${reference.msgId}`,
+        const members: [
+          AgentCard["agentId"],
+          AgentCard["agentId"],
+          ...Array<AgentCard["agentId"]>,
+        ] = [
+          message.author.agentId,
+          message.recipients[0].agentId,
+          ...message.recipients.slice(1).map((member) => member.agentId),
+        ];
+        const conversationId = yield* deriveConversationId(
+          members.sort(compareAgentIds),
         );
-        if (message === undefined) {
-          return yield* new CommunicationError({ reason: "unknown-message" });
+        yield* acceptMessage({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+          conversationId,
+          canonicalMessage: yield* encodeCanonical(Message, message),
+        });
+        if (!input.pendingCompletion) {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "UPDATE message_intents SET completed_record_hash=msg_id WHERE author_agent_id=? AND msg_id=?",
+            [message.author.agentId, message.msgId],
+          );
         }
-        return message;
-      }),
+        yield* Queue.offer(sent, message);
+      }).pipe(
+        Effect.catchTags({
+          EndpointStoreError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+          ClientRepresentationError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+          SqlError: () =>
+            new CommunicationError({ reason: "persistence-failed" }),
+        }),
+        database.run,
+      ),
   };
 }

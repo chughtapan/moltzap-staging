@@ -24,6 +24,7 @@ import {
   hasCanonicalBase64UrlLength,
 } from "../../encoding/identifier.js";
 import { AgentId } from "../../identity/agent.js";
+import { SignedMessage } from "../../identity/envelope/signed-message.js";
 import {
   AgentSigningError,
   AuthenticationFailedError,
@@ -37,8 +38,7 @@ import {
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../identity/authentication/proof.js";
-import { SignedMessage } from "../../identity/envelope/signed-message.js";
+} from "../../identity/http-signatures.js";
 import { LIVE_WIRE_VERSIONS } from "../../identity/wire-version.js";
 
 /** Exact Router send target. */

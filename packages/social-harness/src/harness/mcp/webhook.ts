@@ -4,18 +4,18 @@ import { HttpClient } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
 import { type Clock, Effect, Schema } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import {
-  callbackReasons,
-  type EventSubscribeInput,
-  type HarnessWebhookEvents,
-  maximumEventBytes,
-  type WebhookStatus,
-} from "../../host-protocol/event-schemas.js";
-import { INBOX_ITEM_EVENT } from "../../host-protocol/names.js";
 import { retryPending, retrySettled } from "../../tracing.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import { DeliveryToken, type InboxEntry } from "../inbox.js";
 import { SocialHarness } from "../service.js";
+import {
+  callbackReasons,
+  type EventSubscribeInput,
+  type HarnessWebhookEvents,
+  INBOX_ITEM_EVENT,
+  maximumEventBytes,
+  type WebhookStatus,
+} from "./contracts.js";
 import {
   readWebhookChallenge,
   sendWebhook,
@@ -30,7 +30,6 @@ const maximumLease = 24 * 60 * 60_000;
 const verificationLifetime = 10 * 60_000;
 const outboxSchema = Schema.Struct({
   deliveryToken: DeliveryToken,
-  id: Schema.String,
   body: Schema.String,
   attempts: Schema.NonNegativeInt,
   firstAttemptAt: Schema.NonNegativeInt,
@@ -127,7 +126,7 @@ function waitingDelivery(runtime: WebhookRuntime): string | undefined {
   }
   const occurrence = registration.outbox;
   return active(runtime) && occurrence !== null && occurrence.attempts > 0
-    ? occurrence.id
+    ? occurrence.deliveryToken
     : undefined;
 }
 
@@ -145,7 +144,9 @@ function waitOutcome(
   if (registration === null) {
     return "interrupted";
   }
-  return registration.outbox?.id === marked ? "gave-up" : "delivered";
+  return registration.outbox?.deliveryToken === marked
+    ? "gave-up"
+    : "delivered";
 }
 
 /**
@@ -455,7 +456,7 @@ const deliver = (runtime: WebhookRuntime, registration: Registration) => {
     url: registration.url,
     secret: registration.secret,
     subscriptionId: registration.id,
-    messageId: occurrence.id,
+    messageId: occurrence.deliveryToken,
     body: occurrence.body,
     timestamp: now(runtime),
   }).pipe(
@@ -525,7 +526,6 @@ const prepareOccurrence = (runtime: WebhookRuntime) =>
         ...registration,
         outbox: {
           deliveryToken: entry.deliveryToken,
-          id: entry.deliveryToken,
           body,
           attempts: 0,
           firstAttemptAt: timestamp,

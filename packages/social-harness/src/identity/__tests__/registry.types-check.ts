@@ -1,10 +1,11 @@
 /** @file Registry results expose verified identity cards and one closed failure channel. */
 import type { Effect, Types } from "effect";
 import type {
+  Registry,
+  RegistryError,
   RegistryLookupResult,
   RegistryRegisterResult,
-} from "../contract.js";
-import type { Registry, RegistryError } from "../index.js";
+} from "../registry.js";
 type Expect<Value extends true> = Value;
 /** Both operations require only their captured Registry service. */
 export type RegistryChannels = [

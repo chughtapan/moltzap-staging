@@ -17,8 +17,6 @@ import {
   Scope,
   Stream,
 } from "effect";
-import type { SendRequest } from "../host-protocol/send-request.js";
-import type { SendResult } from "../host-protocol/send-result.js";
 import { SendError } from "../communication/conversations/errors.js";
 import {
   Answer,
@@ -38,15 +36,19 @@ import {
   GroupAddress,
   type MessageAddressInput,
 } from "../communication/records/values.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/limits.js";
 import {
   Firewall,
   type FirewallEvidence,
   type FirewallRefusal,
   type ResultEvidence,
 } from "../firewall/service.js";
-import { canonicalMessageAddress } from "../host-protocol/address.js";
+import {
+  canonicalMessageAddress,
+  type SendRequest,
+  type SendResult,
+} from "../host-protocol/messages.js";
 import {
   type AgentCard,
   agentCardOf,
@@ -73,7 +75,7 @@ import {
 import { type HistoryExportPort, noHistoryExport } from "./message-log.js";
 
 /** Host input is resolved before a communication value is constructed. */
-export type { SendRequest } from "../host-protocol/send-request.js";
+export type { SendRequest } from "../host-protocol/messages.js";
 /** Start a live conversation-list traversal by omitting cursor. */
 export interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
@@ -467,13 +469,11 @@ function makeHarness<R>(
                   Effect.fail(new SendError({ reason: "content-invalid" })),
                 ),
               );
-            yield* firewall
-              .saveDecisions(decision.decisions)
-              .pipe(
-                Effect.catchTag("FirewallPolicyError", () =>
-                  Effect.fail(new SendError({ reason: "persistence-failed" })),
-                ),
-              );
+            yield* decision.save.pipe(
+              Effect.catchTag("FirewallPolicyError", () =>
+                Effect.fail(new SendError({ reason: "persistence-failed" })),
+              ),
+            );
             if (decision.kind === "refused") {
               return yield* decision.refusal;
             }
@@ -796,9 +796,9 @@ function checkIncoming(
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
     const sql = yield* SqlClient.SqlClient;
     const saved = yield* sql.withTransaction(
-      firewall
-        .saveDecisions(decision.decisions)
-        .pipe(Effect.zipRight(inbox.publish(entry, decision, expired))),
+      decision.save.pipe(
+        Effect.zipRight(inbox.publish(entry, decision, expired)),
+      ),
     );
     if (saved !== undefined) {
       yield* historyExport.record({

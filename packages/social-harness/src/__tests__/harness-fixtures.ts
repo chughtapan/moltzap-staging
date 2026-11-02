@@ -42,6 +42,10 @@ import {
   makeVerifiedCard,
 } from "../identity/__tests__/agent-card-fixtures.js";
 import {
+  type IdentityFixture,
+  makeIdentityFixture,
+} from "../identity/__tests__/authentication-fixtures.js";
+import {
   type AgentCard,
   agentCardOf,
   type AgentName,
@@ -49,14 +53,10 @@ import {
   type VerifiedAgentIdentityCard,
 } from "../identity/agent.js";
 import {
-  type IdentityFixture,
-  makeIdentityFixture,
-} from "../identity/authentication/__tests__/authenticated-http-fixtures.js";
-import {
   RegistrationId,
   Registry,
   RegistryError,
-} from "../identity/registry/index.js";
+} from "../identity/registry.js";
 import { Identity, type RegistrationRequest } from "../identity/service.js";
 import { testAgentView } from "./agent-card-fixtures.js";
 

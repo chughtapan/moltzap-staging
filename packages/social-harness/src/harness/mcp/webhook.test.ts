@@ -25,7 +25,7 @@ import {
   token,
   url,
 } from "../../__tests__/webhook-fixtures.js";
-import { maximumEventBytes } from "../../host-protocol/event-schemas.js";
+import { maximumEventBytes } from "./contracts.js";
 import {
   isPublicWebhookAddress,
   sendWebhook,

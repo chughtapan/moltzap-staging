@@ -4,11 +4,11 @@ import type { SqlClient } from "@effect/sql/SqlClient";
 import { Deferred, Duration, Effect, Exit, Schedule, Schema } from "effect";
 
 import type { RouterWorkerUnavailableError } from "../router/connection.js";
-import type { EndpointStoreError } from "../store/database.js";
 import type {
   ConversationFoundation,
+  EndpointStoreError,
   MessageIntent as StoredMessageIntent,
-} from "../store/types.js";
+} from "../store/database.js";
 import type {
   AcceptedMessage,
   EngineConversation,
@@ -43,8 +43,7 @@ import {
   type VerifiedMembership,
   verifyMembershipDescriptor,
 } from "../records/verification.js";
-import { bindMessageIntent } from "../store/anchors.js";
-import { failMessage } from "../store/messages.js";
+import { bindMessageIntent, failMessage } from "../store/conversations.js";
 import { isTerminalSendFailure, SendError } from "./errors.js";
 import { anchorHashAtHead } from "./log.js";
 import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";

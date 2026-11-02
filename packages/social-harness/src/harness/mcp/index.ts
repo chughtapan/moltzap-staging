@@ -1,9 +1,11 @@
-/** @file MCP tools bind SocialHarness, Identity and Firewall directly. */
+/** @file MCP binds the harness services and owns its loopback HTTP listener. */
+
 import {
   type HttpApp,
   HttpServerRequest,
   HttpServerResponse,
 } from "@effect/platform";
+import { NodeHttpServer } from "@effect/platform-node";
 import {
   Cause,
   type Context,
@@ -15,10 +17,10 @@ import {
   type Scope,
 } from "effect";
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { HarnessWebhookEvents } from "../../host-protocol/event-schemas.js";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
+import { createServer } from "node:http";
 import { Firewall } from "../../firewall/service.js";
-import { sendErrorData } from "../../host-protocol/operations.js";
-import { validationIssues } from "../../host-protocol/validation-errors.js";
+import { validationIssues } from "../../host-protocol/render.js";
 import { AgentIdentityCard } from "../../identity/agent.js";
 import { Identity } from "../../identity/service.js";
 import {
@@ -29,7 +31,11 @@ import {
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
 import { SocialHarness } from "../service.js";
-import { toolDefinitions } from "./contracts.js";
+import {
+  type HarnessWebhookEvents,
+  sendErrorData,
+  toolDefinitions,
+} from "./contracts.js";
 import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 interface ServerSettings {
@@ -93,9 +99,6 @@ function safeLocalUrl(value: string): boolean {
     loopback(url.value.hostname)
   );
 }
-
-/** The platform owns HTTP requests, sockets and shutdown. */
-export { LOOPBACK_HOST, serveMcp } from "./http.js";
 
 function installMessageTools(
   server: Context.Tag.Service<typeof McpServer>,
@@ -418,3 +421,24 @@ function openObjects(value: unknown): unknown {
     ),
   );
 }
+
+/** The listener and advertised MCP URL use the same literal loopback address. */
+export const LOOPBACK_HOST = "127.0.0.1";
+
+/** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
+export const serveMcp = Effect.fn("Mcp.serve")(function* (
+  port: number,
+  app: HttpApp.Default<never, Scope.Scope>,
+) {
+  const listener = yield* Effect.sync(createServer);
+  const server = yield* NodeHttpServer.make(() => listener, {
+    host: LOOPBACK_HOST,
+    port,
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      listener.closeAllConnections();
+    }),
+  );
+  yield* server.serve(app);
+});

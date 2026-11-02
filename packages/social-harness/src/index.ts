@@ -10,19 +10,16 @@ export {
   type ToolResult,
 } from "./harness/mcp/contracts.js";
 /** Clients distinguish a refused send from an unknown outcome using this decoder. */
-export { decodeHarnessSendErrorData } from "./host-protocol/operations.js";
+export { decodeHarnessSendErrorData } from "./harness/mcp/contracts.js";
 /** Host syntax is decoded once before resolving its destination. */
-export { SendRequest } from "./host-protocol/send-request.js";
+export { SendRequest } from "./host-protocol/messages.js";
 /** Native hosts can translate a text command through the same request grammar. */
-export {
-  MessageTextError,
-  parseMessageText,
-} from "./host-protocol/message-text.js";
+export { MessageTextError, parseMessageText } from "./host-protocol/render.js";
 /** Host-neutral display keeps local advice separate from peer content. */
 export {
   type GuidanceBodyOrigin,
   renderLocalGuidance,
-} from "./host-protocol/advice.js";
+} from "./host-protocol/render.js";
 /** Presentation helpers use the delivered content and its saved policy view. */
 export {
   groupMembers,
@@ -40,14 +37,11 @@ export {
   Withheld,
 } from "./firewall/service.js";
 /** Policy failures retain actionable reasons and bounded field information. */
-export { FirewallPolicyError } from "./firewall/rules/config.js";
+export { FirewallPolicyError } from "./firewall/rules.js";
 /** Guidance contains only the source text local policy permits the agent to read. */
 export type { CheckedGuidance } from "./firewall/check.js";
 /** Accepted sends have one receipt shape for messages, replies and questions. */
-export {
-  type SendResult,
-  SendResultSchema,
-} from "./host-protocol/send-result.js";
+export { type SendResult, SendResultSchema } from "./host-protocol/messages.js";
 /** Inbox items retain their content and token after acknowledgment. */
 export {
   DeliveryAcknowledgeError,
@@ -125,4 +119,4 @@ export { LIVE_WIRE_VERSIONS, WIRE_VERSION } from "./identity/wire-version.js";
 /** Clients report the shipped core release without another version copy. */
 export { packageVersion } from "./release.js";
 /** Native notifications signal that the client should traverse its inbox again. */
-export { INBOX_PENDING_EVENT } from "./host-protocol/names.js";
+export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";

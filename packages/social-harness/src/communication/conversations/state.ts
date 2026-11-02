@@ -16,7 +16,7 @@ import type {
   AgentPublicKey,
   AgentSigningAuthority,
 } from "../../identity/keys.js";
-import type { Registry } from "../../identity/registry/index.js";
+import type { Registry } from "../../identity/registry.js";
 import type { Message } from "../message.js";
 import type { DecodedOuterBody } from "../records/encoding.js";
 import type {
@@ -42,8 +42,7 @@ import type {
   RouterWorkerPersistenceError,
   RouterWorkerSendError,
 } from "../router/connection.js";
-import type { EndpointStoreError } from "../store/database.js";
-import type { StagedRecord } from "../store/types.js";
+import type { EndpointStoreError, StagedRecord } from "../store/database.js";
 import type { SendError } from "./errors.js";
 
 /** RouterWorker operations consumed by the engine's outbound queue. */

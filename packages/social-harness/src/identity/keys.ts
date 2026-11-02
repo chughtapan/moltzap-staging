@@ -19,7 +19,7 @@ import {
   importPKCS8,
   type JWK,
 } from "jose";
-import { exactStruct } from "../encoding/exact.js";
+import { exactStruct } from "../encoding/canonical-json.js";
 import { decodeCanonicalBase64Url } from "../encoding/identifier.js";
 import { type BoundedCache, makeBoundedCache } from "./bounded-cache.js";
 

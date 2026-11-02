@@ -41,7 +41,7 @@ import {
   type LiveSignedMessage,
   SignedMessage,
 } from "../identity/envelope/signed-message.js";
-import { Registry, RegistryError } from "../identity/registry/index.js";
+import { Registry, RegistryError } from "../identity/registry.js";
 import {
   Answer,
   Communication,

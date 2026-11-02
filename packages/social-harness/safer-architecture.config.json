@@ -3,20 +3,12 @@
   "maxFolderCycles": 3,
   "facadeFiles": [
     {
-      "file": "encoding/exact.ts",
-      "reason": "Shared schema composition at serialization boundaries"
-    },
-    {
       "file": "encoding/canonical-json.ts",
-      "reason": "Canonical JSON for signed and retained data"
+      "reason": "Shared schema composition at serialization boundaries"
     },
     {
       "file": "encoding/identifier.ts",
       "reason": "Canonical identifiers at input boundaries"
-    },
-    {
-      "file": "encoding/limits.ts",
-      "reason": "Shared resource limits"
     },
     {
       "file": "identity/agent.ts",
@@ -35,20 +27,16 @@
       "reason": "Identity and registration service"
     },
     {
-      "file": "identity/authentication/index.ts",
+      "file": "identity/authentication.ts",
       "reason": "Request authentication service"
     },
     {
-      "file": "identity/authentication/proof.ts",
+      "file": "identity/http-signatures.ts",
       "reason": "Authenticated request signatures"
     },
     {
-      "file": "identity/registry/index.ts",
+      "file": "identity/registry.ts",
       "reason": "Registry service"
-    },
-    {
-      "file": "identity/registry/contract.ts",
-      "reason": "Registry HTTP grammar"
     },
     {
       "file": "identity/envelope/signed-message.ts",
@@ -57,10 +45,6 @@
     {
       "file": "identity/envelope/sealed-body.ts",
       "reason": "Encrypted message bodies"
-    },
-    {
-      "file": "identity/envelope/wire-profile.ts",
-      "reason": "Envelope representation"
     },
     {
       "file": "communication/index.ts",
@@ -107,12 +91,8 @@
       "reason": "Standalone assessment types for test entry"
     },
     {
-      "file": "firewall/rules/config.ts",
+      "file": "firewall/rules.ts",
       "reason": "Policy configuration and failures"
-    },
-    {
-      "file": "firewall/rules/service.ts",
-      "reason": "Policy construction options"
     },
     {
       "file": "harness/index.ts",
@@ -135,36 +115,12 @@
       "reason": "Canonical MCP tool contracts"
     },
     {
-      "file": "host-protocol/send-request.ts",
+      "file": "host-protocol/messages.ts",
       "reason": "Typed send requests"
-    },
-    {
-      "file": "host-protocol/send-result.ts",
-      "reason": "Send receipts"
     },
     {
       "file": "host-protocol/render.ts",
       "reason": "Host-independent content rendering"
-    },
-    {
-      "file": "host-protocol/operations.ts",
-      "reason": "Inbox and delivery values"
-    },
-    {
-      "file": "host-protocol/daemon-tools.ts",
-      "reason": "Status and registration values"
-    },
-    {
-      "file": "host-protocol/names.ts",
-      "reason": "MCP tool names"
-    },
-    {
-      "file": "host-protocol/event-schemas.ts",
-      "reason": "Event delivery grammar"
-    },
-    {
-      "file": "host-protocol/advice.ts",
-      "reason": "Safe advice rendering"
     },
     {
       "file": "release.ts",
@@ -195,10 +151,6 @@
     {
       "path": "src/harness/index.ts",
       "reason": "Process database and network construction"
-    },
-    {
-      "path": "src/harness/lifecycle.ts",
-      "reason": "Scoped service and MCP composition"
     }
   ],
   "domains": [
@@ -208,10 +160,8 @@
         "src/encoding"
       ],
       "entrypoints": [
-        "src/encoding/exact.ts",
         "src/encoding/canonical-json.ts",
-        "src/encoding/identifier.ts",
-        "src/encoding/limits.ts"
+        "src/encoding/identifier.ts"
       ],
       "reason": "Shared encoding at external boundaries"
     },
@@ -225,13 +175,11 @@
         "src/identity/keys.ts",
         "src/identity/service.ts",
         "src/identity/wire-version.ts",
-        "src/identity/authentication/index.ts",
-        "src/identity/authentication/proof.ts",
-        "src/identity/registry/index.ts",
-        "src/identity/registry/contract.ts",
+        "src/identity/authentication.ts",
+        "src/identity/http-signatures.ts",
+        "src/identity/registry.ts",
         "src/identity/envelope/signed-message.ts",
-        "src/identity/envelope/sealed-body.ts",
-        "src/identity/envelope/wire-profile.ts"
+        "src/identity/envelope/sealed-body.ts"
       ],
       "reason": "Identity, authentication and Registry services"
     },
@@ -256,7 +204,7 @@
       "entrypoints": [
         "src/firewall/service.ts",
         "src/firewall/check.ts",
-        "src/firewall/rules/config.ts"
+        "src/firewall/rules.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },
@@ -273,11 +221,8 @@
         "src/harness/inbox.ts",
         "src/harness/message-log.ts",
         "src/host-protocol/render.ts",
-        "src/host-protocol/advice.ts",
-        "src/host-protocol/send-request.ts",
-        "src/host-protocol/send-result.ts",
-        "src/harness/mcp/contracts.ts",
-        "src/host-protocol/names.ts"
+        "src/host-protocol/messages.ts",
+        "src/harness/mcp/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
     },

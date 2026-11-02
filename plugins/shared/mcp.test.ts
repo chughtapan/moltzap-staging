@@ -148,6 +148,7 @@ describe("credential transport", () => {
           expect(fetch).not.toHaveBeenCalled();
         }),
       ),
+      Effect.asVoid,
       Effect.runPromise,
     );
   });
@@ -173,6 +174,7 @@ describe("credential transport", () => {
           );
         }),
       ),
+      Effect.asVoid,
       Effect.runPromise,
     );
   });
@@ -199,6 +201,7 @@ describe("send outcomes", () => {
           expect(called).toHaveBeenCalledTimes(1);
         }),
       ),
+      Effect.asVoid,
       Effect.runPromise,
     );
   });
@@ -218,13 +221,18 @@ describe("send outcomes", () => {
           expect(failure).toMatchObject({ reason: "outcome-unknown" }),
         ),
       ),
+      Effect.asVoid,
       Effect.runPromise,
     );
   });
 });
 
 describe("management failures", () => {
-  it.each([
+  const failures: readonly {
+    readonly request: import("@moltzap/social-harness").ToolRequest;
+    readonly data: { readonly reason: string };
+    readonly tag: string;
+  }[] = [
     {
       request: {
         name: "read_event",
@@ -263,11 +271,8 @@ describe("management failures", () => {
       data: { reason: "approval-refused" },
       tag: "FirewallPolicyError",
     },
-  ] satisfies readonly {
-    readonly request: import("@moltzap/social-harness").ToolRequest;
-    readonly data: { readonly reason: string };
-    readonly tag: string;
-  }[])(
+  ];
+  it.each(failures)(
     "reconstructs $tag from the owning wire schema",
     ({ request, data, tag }) => {
       const client = new Client(implementation);
@@ -282,6 +287,7 @@ describe("management failures", () => {
             expect(String(failure)).not.toContain("private transport detail");
           }),
         ),
+        Effect.asVoid,
         Effect.runPromise,
       );
     },

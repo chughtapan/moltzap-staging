@@ -1,7 +1,7 @@
 /** @file Messages retain their authors, recipients and content across delivery and recovery. */
 
 import { Effect, Either, Option, ParseResult, Schema, SchemaAST } from "effect";
-import { exactStruct } from "../encoding/exact.js";
+import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { AgentCard, type AgentId } from "../identity/agent.js";
 import { CommunicationError } from "./errors.js";

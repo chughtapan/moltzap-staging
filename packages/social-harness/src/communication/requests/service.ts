@@ -1,20 +1,13 @@
 /** @file One private runtime accepts requests, records replies and publishes recoverable results. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import {
-  Cause,
-  Clock,
-  Deferred,
-  Effect,
-  Option,
-  Queue,
-  Schema,
-  Scope,
-} from "effect";
+import { Cause, Clock, Deferred, Effect, Option, Schema, Scope } from "effect";
 
 import type { MessageReference } from "../records/values.js";
-import { encodeCanonical } from "../../encoding/canonical-json.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../../encoding/limits.js";
+import {
+  encodeCanonical,
+  MAXIMUM_RUNTIME_ITEM_BYTES,
+} from "../../encoding/canonical-json.js";
 import { AgentCard } from "../../identity/agent.js";
 import { CommunicationError } from "../errors.js";
 import {
@@ -24,8 +17,8 @@ import {
   messageMembers,
 } from "../message.js";
 import { mintMsgId } from "../records/encoding.js";
-import { EndpointStoreError } from "../store/database.js";
-import { encodeRuntimeValue } from "../store/runtime-codec.js";
+import { readAcceptedMessage } from "../store/conversations.js";
+import { encodeRuntimeValue, EndpointStoreError } from "../store/database.js";
 import {
   collectiveRequesterOf,
   type CollectiveValue,
@@ -57,6 +50,7 @@ import {
   readCollectiveOperation,
   readCollectiveOperationIds,
   readNextCollectiveResult,
+  readReadyCollectiveMessages,
   recordCollectiveAnswer,
   retireCollectiveOperation,
   retireCollectiveResult,
@@ -79,16 +73,12 @@ export const makeRequests = Effect.fn("Communication.requests")(
     readonly acceptMessage: (
       message: Message,
     ) => Effect.Effect<void, CommunicationError>;
-    readonly waitForMessage: (
-      reference: MessageReference,
-    ) => Effect.Effect<Message, CommunicationError>;
   }) {
     const environment: Environment = {
       ...input,
       sql: yield* SqlClient,
       scope: yield* Scope.Scope,
       failed: yield* Deferred.make<never, RequestError | CommunicationError>(),
-      observations: yield* Queue.unbounded<StoredCollectiveMessage>(),
     };
     yield* start(environment, runWorker(environment));
     const capture = <A, E, R>(
@@ -112,19 +102,15 @@ export const makeRequests = Effect.fn("Communication.requests")(
   },
 );
 
-/** One service scope supervises deadlines and certification observations. */
+/** One service scope supervises deadlines and retained message completions. */
 interface Environment {
   readonly sql: SqlClient;
   readonly self: AgentCard;
   readonly acceptMessage: (
     message: Message,
   ) => Effect.Effect<void, CommunicationError>;
-  readonly waitForMessage: (
-    reference: MessageReference,
-  ) => Effect.Effect<Message, CommunicationError>;
   readonly scope: Scope.Scope;
   readonly failed: Deferred.Deferred<never, RequestError | CommunicationError>;
-  readonly observations: Queue.Queue<StoredCollectiveMessage>;
 }
 
 type Closure = typeof collectiveClosure.Type;
@@ -240,7 +226,7 @@ function answer(environment: Environment, message: Message) {
     ) {
       return yield* new CommunicationError({ reason: "content-invalid" });
     }
-    const inserted = yield* transaction(
+    yield* transaction(
       Effect.gen(function* () {
         const operation = yield* readCollectiveOperation(response.operationId);
         if (operation === undefined || operation.origin !== "remote") {
@@ -308,17 +294,6 @@ function answer(environment: Environment, message: Message) {
         );
       }),
     );
-    if (inserted) {
-      yield* Queue.offer(environment.observations, {
-        operationId: response.operationId,
-        role: "response",
-        destination: outgoingAddress(message),
-        reference: {
-          authorAgentId: message.author.agentId,
-          msgId: message.msgId,
-        },
-      });
-    }
   }).pipe(Effect.withSpan("Requests.acceptAnswer"));
 }
 
@@ -451,10 +426,7 @@ function receiveAnswer(
       yield* Clock.currentTimeMillis,
     );
     if (recorded && operation.origin === "local") {
-      const close = yield* finishLocal(environment, operation.operationId);
-      if (close !== undefined) {
-        yield* Queue.offer(environment.observations, close);
-      }
+      yield* finishLocal(environment, operation.operationId);
     }
   });
 }
@@ -484,12 +456,6 @@ function receiveClose(
     }
     yield* saveRemoteClose(value.operationId, message);
     yield* finishRemote(environment, value.operationId);
-    const own = (yield* readCollectiveMessages(value.operationId)).find(
-      (entry) => entry.role === "response",
-    );
-    if (own !== undefined) {
-      yield* Queue.offer(environment.observations, own);
-    }
   });
 }
 
@@ -555,7 +521,6 @@ function deliverNextResult<E, R>(
     };
     const result: ResultDelivery = {
       operationId: operation.operationId,
-      deliveryToken: operation.deliveryToken,
       item: operation.result.item,
       sources,
     };
@@ -569,30 +534,23 @@ function deliverNextResult<E, R>(
   });
 }
 
-/** Startup restores observers once; the periodic pass visits only local collecting operations. */
+/** One worker reconciles persisted completions and request deadlines after every restart. */
 function runWorker(environment: Environment) {
-  return resume(environment).pipe(
-    Effect.zipRight(
-      Effect.all(
-        [
-          localDeadlines(environment).pipe(
-            Effect.zipRight(Effect.sleep("100 millis")),
-            Effect.forever,
-          ),
-          Queue.take(environment.observations).pipe(
-            Effect.flatMap((saved) =>
-              start(environment, observeMessage(environment, saved)),
-            ),
-            Effect.forever,
-          ),
-        ],
-        { concurrency: 2, discard: true },
-      ),
-    ),
-  );
+  return Effect.gen(function* () {
+    for (const saved of yield* readReadyCollectiveMessages()) {
+      yield* observeMessage(environment, saved);
+    }
+    for (const operationId of yield* readCollectiveOperationIds(
+      "remote",
+      "finalizing",
+    )) {
+      yield* finishRemote(environment, operationId);
+    }
+    yield* localDeadlines(environment);
+  }).pipe(Effect.zipRight(Effect.sleep("100 millis")), Effect.forever);
 }
 
-/** Only service-owned workers launch observations, outside caller transaction contexts. */
+/** The scoped worker runs outside caller transaction contexts and reports failures to consumers. */
 function start(
   environment: Environment,
   work: Effect.Effect<
@@ -627,51 +585,39 @@ function start(
   );
 }
 
-/** A saved role observes Communication's retained Message without taking payload custody or resending. */
+/** Certification state is read from Communication's retained message in the same local database. */
 function observeMessage(
   environment: Environment,
   saved: StoredCollectiveMessage,
 ) {
-  return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(saved.operationId);
-    if (
-      operation === undefined ||
-      operation.phase === "completed" ||
-      !(yield* readCollectiveMessages(saved.operationId)).some(
-        (entry) =>
-          entry.role === saved.role &&
-          entry.destination === saved.destination &&
-          entry.reference.authorAgentId === saved.reference.authorAgentId &&
-          entry.reference.msgId === saved.reference.msgId,
-      )
-    ) {
-      return;
-    }
-    const message = yield* environment
-      .waitForMessage(saved.reference)
-      .pipe(
-        Effect.catchTag("CommunicationError", (error) =>
-          failOperationMessage(saved, error.reason).pipe(Effect.as(undefined)),
-        ),
-      );
-    if (message === undefined) {
-      return;
-    }
-    yield* transaction(
-      Effect.gen(function* () {
-        if (saved.role === "response") {
-          yield* recordCollectiveAnswer(
-            saved.operationId,
-            message,
-            yield* Clock.currentTimeMillis,
-          );
-          yield* finishRemote(environment, saved.operationId);
-        } else if (saved.role === "close") {
-          yield* completeCollectiveOperation(saved.operationId);
-        }
-      }),
-    );
-  });
+  return transaction(
+    Effect.gen(function* () {
+      const operation = yield* readCollectiveOperation(saved.operationId);
+      if (operation === undefined || operation.phase === "completed") {
+        return;
+      }
+      const accepted = yield* readAcceptedMessage(saved.reference);
+      if (accepted === undefined) {
+        return yield* new EndpointStoreError({ reason: "corrupt" });
+      }
+      if (accepted.failure !== undefined) {
+        return yield* failOperationMessage(saved, accepted.failure);
+      }
+      if (!accepted.completed) {
+        return;
+      }
+      if (saved.role === "response") {
+        yield* recordCollectiveAnswer(
+          saved.operationId,
+          accepted.message,
+          yield* Clock.currentTimeMillis,
+        );
+        yield* finishRemote(environment, saved.operationId);
+      } else if (saved.role === "close") {
+        yield* completeCollectiveOperation(saved.operationId);
+      }
+    }),
+  );
 }
 
 function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
@@ -694,21 +640,7 @@ function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
   });
 }
 
-function resume(environment: Environment) {
-  return Effect.gen(function* () {
-    for (const saved of yield* readCollectiveMessages()) {
-      yield* Queue.offer(environment.observations, saved);
-    }
-    for (const operationId of yield* readCollectiveOperationIds(
-      "remote",
-      "finalizing",
-    )) {
-      yield* finishRemote(environment, operationId);
-    }
-  });
-}
-
-/** Close and own-answer events advance remote completion without a periodic scan. */
+/** A certified close and the selected answers complete the same retained result. */
 function finishRemote(environment: Environment, operationId: CollectiveId) {
   return transaction(
     Effect.gen(function* () {
@@ -825,10 +757,7 @@ function localDeadlines(environment: Environment) {
     )) {
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          const close = yield* finishLocal(environment, operationId);
-          if (close !== undefined) {
-            yield* Queue.offer(environment.observations, close);
-          }
+          yield* finishLocal(environment, operationId);
         }),
       );
     }
@@ -895,15 +824,6 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         content,
       );
       yield* saveMessage(environment, operationId, "close", close);
-      return {
-        operationId,
-        role: "close" as const,
-        destination: outgoingAddress(close),
-        reference: {
-          authorAgentId: close.author.agentId,
-          msgId: close.msgId,
-        },
-      };
     }),
   ).pipe(Effect.withSpan("finishLocal"));
 }

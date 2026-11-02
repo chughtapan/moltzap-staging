@@ -1,7 +1,7 @@
 /** @file Exact closed schemas for every Client-owned conversation value. */
 
 import { Schema } from "effect";
-import { exactStruct } from "../../encoding/exact.js";
+import { exactStruct } from "../../encoding/canonical-json.js";
 import { isCanonicalIdentifier } from "../../encoding/identifier.js";
 import { AgentId, AgentIdentityCard } from "../../identity/agent.js";
 import { SignedMessage } from "../../identity/envelope/signed-message.js";

@@ -22,7 +22,7 @@ import {
   AgentId,
   type AgentId as AgentIdValue,
 } from "../../../identity/agent.js";
-import { AgentSigningError } from "../../../identity/authentication/proof.js";
+import { AgentSigningError } from "../../../identity/http-signatures.js";
 import {
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,

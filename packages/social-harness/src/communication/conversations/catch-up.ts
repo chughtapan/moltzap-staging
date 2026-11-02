@@ -8,7 +8,7 @@ import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
 
 import type { AgentId } from "../../identity/agent.js";
-import type { EndpointRecovery, StagedRecord } from "../store/types.js";
+import type { EndpointRecovery, StagedRecord } from "../store/database.js";
 import type { EngineActionFold, EngineRuntime } from "./state.js";
 
 import {
@@ -49,7 +49,7 @@ import {
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
 } from "../router/connection.js";
-import { recoverStoredState } from "../store/reads.js";
+import { recoverStoredState } from "../store/conversations.js";
 import {
   decodeStoredAnchor,
   durablePosition,

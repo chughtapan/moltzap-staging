@@ -133,8 +133,7 @@
     "yaml": "catalog:",
     "@effect/sql": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
-    "@effect/rpc": "catalog:",
-    "find-my-way-ts": "catalog:"
+    "@effect/rpc": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

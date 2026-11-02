@@ -57,18 +57,18 @@ import {
 import {
   applyCatchUpReanchor,
   completeReanchor,
+  recoverStoredState,
   restartEmptyConversation,
   stageReanchor,
-} from "../store/anchors.js";
-import { recoverStoredState } from "../store/reads.js";
-import { mergeEvidence } from "../store/records.js";
+} from "../store/conversations.js";
 import {
   type ConversationFoundation,
   type EndpointRecovery,
   isSemanticStoreRejection,
   type StagedRecord,
   type MessageIntent as StoredMessageIntent,
-} from "../store/types.js";
+} from "../store/database.js";
+import { mergeEvidence } from "../store/records.js";
 import {
   anchorRouterInstanceId,
   durablePosition,

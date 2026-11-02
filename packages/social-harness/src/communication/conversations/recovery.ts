@@ -18,7 +18,7 @@ import type { SignedMessage } from "../../identity/envelope/signed-message.js";
 import type {
   EndpointRecovery,
   StoredOutboundMessage,
-} from "../store/types.js";
+} from "../store/database.js";
 
 import {
   ClientRepresentationError,
@@ -58,8 +58,8 @@ import {
   type RouterWorkerRecovery,
   RouterWorkerRecoveryError,
 } from "../router/connection.js";
+import { recoverStoredState } from "../store/conversations.js";
 import { discardOutbound } from "../store/outbound.js";
-import { recoverStoredState } from "../store/reads.js";
 import {
   acceptCatchUpIncomplete,
   acceptCatchUpPage,
