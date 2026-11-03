@@ -7,6 +7,7 @@ import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Encoding, Layer, Redacted } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
+import { migrateDaemon } from "../database/migrations.js";
 import {
   type IdentityFixture,
   makeIdentityFixture,
@@ -46,22 +47,68 @@ function openIdentity(
   filename: string,
   fixture: IdentityFixture,
   registry: Context.Tag.Service<typeof Registry>,
-  admissionCredential?: Effect.Effect<Redacted.Redacted>,
+  options: {
+    readonly admissionCredential?: Effect.Effect<Redacted.Redacted>;
+    readonly agentKey?: string;
+  } = {},
 ) {
   return Layer.build(
     Identity.layer({
+      agentKey: options.agentKey ?? filename,
       signingAuthority: fixture.signingAuthority,
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         fixture.registryAuthority,
       ),
       admissionCredential:
-        admissionCredential ?? Effect.succeed(Redacted.make("test-admission")),
+        options.admissionCredential ??
+        Effect.succeed(Redacted.make("test-admission")),
     }).pipe(
       Layer.provide(Layer.succeed(Registry, registry)),
-      Layer.provide(SqliteClient.layer({ filename })),
+      Layer.provide(
+        Layer.effectDiscard(migrateDaemon).pipe(
+          Layer.provideMerge(SqliteClient.layer({ filename })),
+        ),
+      ),
     ),
   ).pipe(Effect.map((context) => Context.get(context, Identity)));
 }
+
+it("keeps two agents' saved identity cards separate in one database", () =>
+  Effect.gen(function* () {
+    const first = yield* makeIdentityFixture;
+    const second = yield* makeIdentityFixture;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped();
+    const filename = join(directory, "shared.sqlite3");
+    const firstIdentity = yield* openIdentity(
+      filename,
+      first,
+      registryFor(first),
+      { agentKey: "first" },
+    );
+    const secondIdentity = yield* openIdentity(
+      filename,
+      second,
+      registryFor(second),
+      { agentKey: "second" },
+    );
+    yield* firstIdentity.register(requestFor(first));
+    yield* secondIdentity.register(requestFor(second));
+    const reopenedFirst = yield* openIdentity(
+      filename,
+      first,
+      registryFor(first),
+      { agentKey: "first" },
+    );
+    const reopenedSecond = yield* openIdentity(
+      filename,
+      second,
+      registryFor(second),
+      { agentKey: "second" },
+    );
+    expect(yield* reopenedFirst.me()).toEqual(yield* firstIdentity.me());
+    expect(yield* reopenedSecond.me()).toEqual(yield* secondIdentity.me());
+  }).pipe(Effect.provide(NodeContext.layer)));
 
 describe("Identity", () => {
   // @agent-code-guard/regression-only: Real SQLite exercises saved registration, restart and closed refusal behavior.
@@ -96,7 +143,11 @@ describe("Identity", () => {
             filename,
             fixture,
             registryFor(fixture),
-            Effect.dieMessage("saved registration does not read admission"),
+            {
+              admissionCredential: Effect.dieMessage(
+                "saved registration does not read admission",
+              ),
+            },
           );
           expect(yield* identity.me()).toEqual({
             kind: "registered",

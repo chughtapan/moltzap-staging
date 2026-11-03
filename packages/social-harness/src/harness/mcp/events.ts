@@ -48,11 +48,16 @@ const requireEvent = (
 };
 
 /** Registers Events wake streams and webhook delivery with the protocol engine. */
-export const installEvents = Effect.fn("installEvents")(function* () {
+export const installEvents = Effect.fn("installEvents")(function* (
+  agentKey: string,
+) {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;
   const server = yield* McpServer;
-  const webhook = yield* makeWebhookEvents(yield* Effect.makeSemaphore(1));
+  const webhook = yield* makeWebhookEvents(
+    agentKey,
+    yield* Effect.makeSemaphore(1),
+  );
   const registered = identity
     .me()
     .pipe(

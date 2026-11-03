@@ -6,6 +6,7 @@ import { layer as sqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
+import { migrateDaemon } from "../../database/migrations.js";
 import * as Store from "../store.js";
 
 /** The scope closes SQLite before its temporary state directory is removed. */
@@ -24,6 +25,7 @@ export const openTestDatabase = (directory?: string) =>
       }),
     );
     const sql = Context.get(services, SqlClient);
+    yield* migrateDaemon.pipe(Effect.provideService(SqlClient, sql));
     return {
       directory: selected,
       sql,

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 import type { DecisionProvider } from "./check.js";
 import { Message } from "../communication/messages.js";
+import { migrateDaemon } from "../database/migrations.js";
 import {
   type IdentityFixture,
   makeIdentityFixture,
@@ -99,6 +100,7 @@ function withFirewall<A, E, R>(
   layer: ReturnType<typeof Firewall.layer>,
 ) {
   const identity = Identity.layer({
+    agentKey: filename,
     signingAuthority: fixture.signingAuthority,
     registrySignerPublicKey: AgentSigningAuthority.publicKey(
       fixture.registryAuthority,
@@ -121,7 +123,11 @@ function withFirewall<A, E, R>(
   );
   const services = layer.pipe(
     Layer.provideMerge(identity),
-    Layer.provideMerge(SqliteClient.layer({ filename })),
+    Layer.provideMerge(
+      Layer.effectDiscard(migrateDaemon).pipe(
+        Layer.provideMerge(SqliteClient.layer({ filename })),
+      ),
+    ),
   );
   return Effect.scoped(
     Effect.gen(function* () {

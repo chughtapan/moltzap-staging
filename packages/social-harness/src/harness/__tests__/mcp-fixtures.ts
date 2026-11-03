@@ -90,6 +90,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const app = yield* makeMcpHttpApp({
+    agentKey: database.directory,
     ...(options.authentication ?? { credential: mcpTestCredential }),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(

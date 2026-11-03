@@ -136,6 +136,7 @@ export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
  */
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
+  agentKey?: string,
 ) {
   const gate = yield* Effect.makeSemaphore(1);
   let status = 200;
@@ -168,7 +169,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     onEvent: (effect: Effect.Effect<void>) => {
       onEvent = effect;
     },
-    acquire: makeWebhookEvents(gate).pipe(
+    acquire: makeWebhookEvents(agentKey ?? store.directory, gate).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.provideService(SocialHarness, store.harness),
       Effect.provideService(SqlClient.SqlClient, store.sql),

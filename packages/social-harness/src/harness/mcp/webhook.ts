@@ -4,6 +4,8 @@ import { HttpClient } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
 import { type Clock, Effect, Schema } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { executeQuery, makeQueries } from "../../database/sql.js";
+import { withAgentTransaction } from "../../database/transactions.js";
 import { retryPending, retrySettled } from "../../tracing.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import { DeliveryToken, type InboxEntry } from "../inbox.js";
@@ -62,7 +64,13 @@ const subscriptionId = (url: string) =>
     .update(JSON.stringify([url, INBOX_ITEM_EVENT, {}]))
     .digest("hex")}`;
 
+type WebhookTables = Record<
+  "mcp_webhook_state",
+  Record<"agent_key" | "state", string>
+>;
+
 interface WebhookRuntime {
+  readonly agentKey: string;
   readonly sql: SqlClient.SqlClient;
   readonly harness: SocialHarness["Type"];
   readonly client: HttpClient.HttpClient;
@@ -579,27 +587,45 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
   resume: runtime.gate.withPermits(1)(resume(runtime)),
 });
 
-function writeState(runtime: Pick<WebhookRuntime, "sql">, state: State) {
-  return Schema.encode(Schema.parseJson(stateSchema))(state).pipe(
-    Effect.flatMap(
-      (bytes) =>
-        runtime.sql`INSERT INTO mcp_webhook_state (singleton, state) VALUES (1, ${bytes}) ON CONFLICT(singleton) DO UPDATE SET state = excluded.state`,
-    ),
-    Effect.asVoid,
-  );
+function writeState(
+  runtime: Pick<WebhookRuntime, "sql" | "agentKey">,
+  state: State,
+) {
+  return Effect.gen(function* () {
+    const bytes = yield* Schema.encode(Schema.parseJson(stateSchema))(state);
+    const queries = yield* makeQueries<WebhookTables>();
+    yield* withAgentTransaction(
+      runtime.agentKey,
+      executeQuery(
+        queries
+          .insertInto("mcp_webhook_state")
+          .values({ agent_key: runtime.agentKey, state: bytes })
+          .onConflict((conflict) =>
+            conflict.column("agent_key").doUpdateSet({ state: bytes }),
+          ),
+      ),
+    );
+  }).pipe(Effect.provideService(SqlClient.SqlClient, runtime.sql));
 }
 
 /** Preserves exact callback bytes and joins successful receipts to the inbox acknowledgment. */
-export const makeWebhookEvents = (gate: Effect.Semaphore) =>
+export const makeWebhookEvents = (agentKey: string, gate: Effect.Semaphore) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const harness = yield* SocialHarness;
     const client = (yield* HttpClient.HttpClient).pipe(
       HttpClient.withTracerDisabledWhen(() => true),
     );
-    yield* sql`CREATE TABLE IF NOT EXISTS mcp_webhook_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), state TEXT NOT NULL)`;
-    const rows =
-      yield* sql`SELECT state FROM mcp_webhook_state WHERE singleton = 1`;
+    const queries = yield* makeQueries<WebhookTables>();
+    const rows = yield* withAgentTransaction(
+      agentKey,
+      executeQuery(
+        queries
+          .selectFrom("mcp_webhook_state")
+          .select("state")
+          .where("agent_key", "=", agentKey),
+      ),
+    );
     const row = rows[0];
     const state =
       row === undefined
@@ -608,6 +634,7 @@ export const makeWebhookEvents = (gate: Effect.Semaphore) =>
             Schema.Struct({ state: Schema.parseJson(stateSchema) }),
           )(row).pipe(Effect.map((value) => value.state));
     const runtime: WebhookRuntime = {
+      agentKey,
       sql,
       harness,
       client,

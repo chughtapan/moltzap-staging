@@ -11,6 +11,9 @@ import {
   Ref,
   Schema,
 } from "effect";
+
+import { executeQuery, makeQueries } from "../database/sql.js";
+import { withAgentTransaction } from "../database/transactions.js";
 import {
   decodeCanonical,
   encodeCanonical,
@@ -59,59 +62,70 @@ interface IdentityBinding {
   readonly canonicalAgentCard: Uint8Array;
 }
 
-const readIdentityBinding = () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const row = (yield* sql
-      .unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT agent_id, canonical_agent_card FROM identity_binding WHERE singleton = 1",
-      )
-      .pipe(Effect.mapError(persistenceFailure)))[0];
-    if (row === undefined) {
-      return undefined;
-    }
-    const decoded = yield* Schema.decodeUnknown(identityRow)(row).pipe(
-      Effect.mapError(representationFailure),
-    );
-    return {
-      agentId: decoded.agent_id,
-      canonicalAgentCard: Uint8Array.from(decoded.canonical_agent_card),
-    };
-  }).pipe(Effect.withSpan("readIdentityBinding"));
+type IdentityTables = Record<
+  "identity_binding",
+  typeof identityRow.Type & Record<"agent_key", string>
+>;
+
+const readIdentityBinding = (agentKey: string) =>
+  withAgentTransaction(
+    agentKey,
+    Effect.gen(function* () {
+      const queries = yield* makeQueries<IdentityTables>();
+      const row = (yield* executeQuery(
+        queries
+          .selectFrom("identity_binding")
+          .select(["agent_id", "canonical_agent_card"])
+          .where("agent_key", "=", agentKey),
+      ).pipe(Effect.mapError(persistenceFailure)))[0];
+      if (row === undefined) {
+        return undefined;
+      }
+      const decoded = yield* Schema.decodeUnknown(identityRow)(row).pipe(
+        Effect.mapError(representationFailure),
+      );
+      return {
+        agentId: decoded.agent_id,
+        canonicalAgentCard: Uint8Array.from(decoded.canonical_agent_card),
+      };
+    }),
+  ).pipe(
+    Effect.catchTag("SqlError", () => persistenceFailure()),
+    Effect.withSpan("readIdentityBinding"),
+  );
 
 /** An atomic retry accepts identical bytes and refuses replacement of the saved identity. */
-function bindIdentity(binding: IdentityBinding) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    return yield* sql
-      .withTransaction(
-        Effect.gen(function* () {
-          const existing = yield* readIdentityBinding();
-          if (existing !== undefined) {
-            if (
-              existing.agentId !== binding.agentId ||
-              !sameBytes(
-                existing.canonicalAgentCard,
-                binding.canonicalAgentCard,
-              )
-            ) {
-              return yield* representationFailure();
-            }
-            return;
-          }
-          yield* sql
-            .unsafe(
-              "INSERT INTO identity_binding (singleton, agent_id, canonical_agent_card) VALUES (1, ?, ?)",
-              [binding.agentId, Uint8Array.from(binding.canonicalAgentCard)],
-            )
-            .pipe(Effect.mapError(persistenceFailure));
+function bindIdentity(agentKey: string, binding: IdentityBinding) {
+  return withAgentTransaction(
+    agentKey,
+    Effect.gen(function* () {
+      const existing = yield* readIdentityBinding(agentKey);
+      if (existing !== undefined) {
+        if (
+          existing.agentId !== binding.agentId ||
+          !sameBytes(existing.canonicalAgentCard, binding.canonicalAgentCard)
+        ) {
+          return yield* representationFailure();
+        }
+        return;
+      }
+      const queries = yield* makeQueries<IdentityTables>();
+      yield* executeQuery(
+        queries.insertInto("identity_binding").values({
+          agent_key: agentKey,
+          agent_id: binding.agentId,
+          canonical_agent_card: Uint8Array.from(binding.canonicalAgentCard),
         }),
-      )
-      .pipe(Effect.catchTag("SqlError", () => persistenceFailure()));
-  }).pipe(Effect.withSpan("bindIdentity"));
+      ).pipe(Effect.mapError(persistenceFailure));
+    }),
+  ).pipe(
+    Effect.catchTag("SqlError", () => persistenceFailure()),
+    Effect.withSpan("bindIdentity"),
+  );
 }
 
 function readSavedIdentity(input: {
+  readonly agentKey: string;
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly agentPublicKey: AgentPublicKey;
 }): Effect.Effect<
@@ -120,7 +134,7 @@ function readSavedIdentity(input: {
   SqlClient.SqlClient
 > {
   return Effect.gen(function* () {
-    const row = yield* readIdentityBinding();
+    const row = yield* readIdentityBinding(input.agentKey);
     if (row === undefined) {
       return undefined;
     }
@@ -143,12 +157,13 @@ function readSavedIdentity(input: {
 }
 
 function saveIdentity(
+  agentKey: string,
   card: VerifiedAgentIdentityCard,
 ): Effect.Effect<void, IdentityError, SqlClient.SqlClient> {
   return encodeCanonical(AgentIdentityCard, card).pipe(
     Effect.mapError(representationFailure),
     Effect.flatMap((canonicalAgentCard) =>
-      bindIdentity({ agentId: card.agentId, canonicalAgentCard }),
+      bindIdentity(agentKey, { agentId: card.agentId, canonicalAgentCard }),
     ),
     Effect.asVoid,
   );
@@ -205,6 +220,7 @@ export class Identity extends Context.Tag("SocialHarness/Identity")<
 }
 
 interface IdentitySettings {
+  readonly agentKey: string;
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly signingAuthority: AgentSigningAuthority;
   readonly admissionCredential: Effect.Effect<Redacted.Redacted, unknown>;
@@ -216,17 +232,10 @@ function identityLayer(
   return Layer.effect(
     Identity,
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql
-        .unsafe(`CREATE TABLE IF NOT EXISTS identity_binding (
-      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-      agent_id TEXT NOT NULL,
-      canonical_agent_card BLOB NOT NULL
-    )`)
-        .pipe(Effect.mapError(persistenceFailure));
       const current = yield* Ref.make(
         Option.fromNullable(
           yield* readSavedIdentity({
+            agentKey: settings.agentKey,
             registrySignerPublicKey: settings.registrySignerPublicKey,
             agentPublicKey: AgentSigningAuthority.publicKey(
               settings.signingAuthority,
@@ -324,7 +333,7 @@ function registerLocal(
       return yield* new RegistrationError({ reason: result.kind });
     }
     const card = result.identityCard;
-    yield* saveIdentity(card).pipe(
+    yield* saveIdentity(settings.agentKey, card).pipe(
       Effect.catchTag("IdentityError", (error) =>
         Effect.fail(
           new RegistrationError({

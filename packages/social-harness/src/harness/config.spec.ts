@@ -1,9 +1,18 @@
 /** @file Process configuration validates exact secret files and preserves safe startup diagnostics. */
 
+import { SqlClient } from "@effect/sql";
+import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { scopedLive as it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Redacted, Schema } from "effect";
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration tests control exact secret bytes before platform services start.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect } from "vitest";
@@ -92,6 +101,47 @@ function fixture(overrides: Readonly<Record<string, string>> = {}) {
 }
 
 // @agent-code-guard/regression-only: Exact process settings, secret bytes and startup diagnostics are finite boundary cases.
+it("rejects the prior storage format before changing its saved records", () =>
+  Effect.gen(function* () {
+    const subject = fixture();
+    mkdirSync(subject.values.SHARNESS_STATE_DIRECTORY);
+    const database = SqliteClient.layer({
+      filename: join(
+        subject.values.SHARNESS_STATE_DIRECTORY,
+        "sharnessd.sqlite3",
+      ),
+    });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = Context.get(
+          yield* Layer.build(database),
+          SqlClient.SqlClient,
+        );
+        yield* sql.unsafe("PRAGMA user_version = 2");
+        yield* sql`CREATE TABLE identity_binding(singleton INTEGER PRIMARY KEY, marker TEXT NOT NULL)`;
+        yield* sql`INSERT INTO identity_binding(singleton, marker) VALUES(1, 'retained')`;
+      }),
+    );
+    const error = yield* Layer.build(daemonLayer).pipe(
+      Effect.scoped,
+      Effect.withConfigProvider(subject.provider),
+      Effect.flip,
+    );
+    expect(error).toMatchObject({ phase: "storage", reason: "incompatible" });
+    expect(error.message).toContain("fresh state directory");
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = Context.get(
+          yield* Layer.build(database),
+          SqlClient.SqlClient,
+        );
+        expect(yield* sql`SELECT marker FROM identity_binding`).toEqual([
+          { marker: "retained" },
+        ]);
+      }),
+    );
+  }));
+
 it("loads process settings and keeps private credentials redacted", () =>
   Effect.gen(function* () {
     const subject = fixture({

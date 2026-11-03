@@ -191,6 +191,7 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
 
 /** Supplies communication and inbox processing limits for one agent. */
 export interface HarnessSettings<R> {
+  readonly agentKey: string;
   /** Builds communication after registration or saved identity loading. */
   readonly communication: (
     identityCard: VerifiedAgentIdentityCard,
@@ -211,7 +212,7 @@ function makeHarness<R>(
     const firewall = yield* Firewall;
     const scope = yield* Scope.Scope;
     const environment = yield* Effect.context<R>();
-    const inbox = yield* makeInbox();
+    const inbox = yield* makeInbox(settings.agentKey);
     const ready = yield* Deferred.make<
       CommunicationService,
       CommunicationError

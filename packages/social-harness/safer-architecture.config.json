@@ -222,6 +222,19 @@
         "src/launcher/index.ts"
       ],
       "reason": "Release installation and daemon startup"
+    },
+    {
+      "name": "database",
+      "roots": [
+        "src/database"
+      ],
+      "entrypoints": [
+        "src/database/sql.ts",
+        "src/database/transactions.ts",
+        "src/database/secrets.ts",
+        "src/database/migrations.ts"
+      ],
+      "reason": "SQL connections, typed query compilation, transaction context and credential persistence shared by daemon domains"
     }
   ],
   "layers": [
@@ -260,12 +273,19 @@
         "encoding"
       ],
       "reason": "Shared serialization primitives"
+    },
+    {
+      "name": "database",
+      "folders": [
+        "database"
+      ],
+      "reason": "Database support depends on runtime libraries without importing identity, communication, firewall or harness services"
     }
   ],
   "publicTypePackages": [
     {
       "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
+      "reason": "The firewall acquires the daemon\u2019s shared SqlClient through its Effect environment"
     },
     {
       "package": "effect",

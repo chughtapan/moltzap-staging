@@ -3,7 +3,6 @@
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import {
   Cause,
   Console,
@@ -14,10 +13,14 @@ import {
   FiberSet,
   Layer,
   Option,
+  Redacted,
 } from "effect";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Router } from "../communication/router/client.js";
 import { Communication, CommunicationError } from "../communication/service.js";
+import { daemonDatabaseFormat, migrateDaemon } from "../database/migrations.js";
+import { databaseConnection } from "../database/sql.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
@@ -119,6 +122,7 @@ function runDaemon(composed?: FirewallOptions) {
     );
     const database = databaseLayer(configuration.stateDirectory);
     const local = Identity.layer({
+      agentKey: configuration.stateDirectory,
       signingAuthority: bootstrap.signingAuthority,
       registrySignerPublicKey: configuration.registrySignerPublicKey,
       admissionCredential: bootstrap.admissionCredential,
@@ -154,6 +158,7 @@ function runDaemonRuntime(
           );
     const harness = SocialHarness.layer(
       {
+        agentKey: bootstrap.configuration.stateDirectory,
         historyExport,
         communication: (identityCard) =>
           Communication.layer({
@@ -190,6 +195,7 @@ function runDaemonRuntime(
           );
         }
         const app = yield* makeMcpHttpApp({
+          agentKey: bootstrap.configuration.stateDirectory,
           implementation: { name: "sharnessd", version: packageVersion },
           ...bootstrap.authentication,
         }).pipe(
@@ -257,7 +263,11 @@ function databaseLayer(stateDirectory: string) {
       yield* filesystem.chmod(stateDirectory, 0o700);
       const filename = join(stateDirectory, "sharnessd.sqlite3");
       const context = yield* Layer.build(
-        SqliteClient.layer({ filename, disableWAL: true }),
+        databaseConnection(
+          Redacted.make(
+            pathToFileURL(filename).href.replace(/^file:/u, "sqlite:"),
+          ),
+        ),
       );
       const sql = Context.get(context, SqlClient.SqlClient);
       // eslint-disable-next-line @typescript-eslint/naming-convention -- SQLite names the PRAGMA result field.
@@ -267,9 +277,10 @@ function databaseLayer(stateDirectory: string) {
       const [tables] = yield* sql<{
         readonly count: number;
       }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`;
-      if (version?.user_version === 0 && tables?.count === 0) {
-        yield* sql.unsafe("PRAGMA user_version = 2");
-      } else if (version?.user_version !== 2) {
+      if (
+        !(version?.user_version === 0 && tables?.count === 0) &&
+        version?.user_version !== daemonDatabaseFormat
+      ) {
         return yield* new DaemonStartupError({
           phase: "storage",
           reason: "incompatible",
@@ -280,6 +291,9 @@ function databaseLayer(stateDirectory: string) {
       yield* sql.unsafe("PRAGMA busy_timeout = 0");
       yield* sql.unsafe("PRAGMA journal_mode = WAL");
       yield* sql.unsafe("PRAGMA synchronous = FULL");
+      yield* migrateDaemon.pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
       yield* filesystem.chmod(filename, 0o600);
       return sql;
     }).pipe(

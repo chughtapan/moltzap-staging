@@ -47,6 +47,7 @@ import {
 import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 type ServerSettings = McpAuthentication & {
+  readonly agentKey: string;
   readonly implementation: { readonly name: string; readonly version: string };
 };
 
@@ -72,7 +73,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   const registered = identity
     .me()
     .pipe(Effect.map((state) => state.kind === "registered"));
-  const callback = yield* installEvents().pipe(
+  const callback = yield* installEvents(settings.agentKey).pipe(
     Effect.provideService(McpServer, server),
     Effect.provide(webhookHttpClientLayer),
   );

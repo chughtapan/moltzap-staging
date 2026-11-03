@@ -80,6 +80,25 @@ function stateDirectory() {
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals, sonarjs/no-hardcoded-ip -- Protocol codes and deliberately unsafe IP fixtures pin the callback trust boundary. */
 
+it("keeps each agent's webhook registration and revocation separate in one database", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const store = yield* openCallbackInbox(stateDirectory());
+      const first = yield* scriptedWebhook(store, "first");
+      const second = yield* scriptedWebhook(store, "second");
+      const firstEvents = yield* first.acquire;
+      const secondEvents = yield* second.acquire;
+      yield* firstEvents.subscribe(input);
+      expect((yield* secondEvents.status).mode).toBe("none");
+      yield* secondEvents.subscribe(input);
+      yield* firstEvents.revoke;
+      const recoveredFirst = yield* first.acquire;
+      const recoveredSecond = yield* second.acquire;
+      expect((yield* recoveredFirst.status).mode).toBe("none");
+      expect((yield* recoveredSecond.status).mode).toBe("webhook");
+    }),
+  ));
+
 /** Moves the clock of a scenario that runs `onSteppedClock`. */
 class SteppedClock extends Context.Tag("SteppedClock")<
   SteppedClock,

@@ -35,6 +35,7 @@ import {
   ReceivedRequest,
   RequestError,
 } from "../../communication/service.js";
+import { migrateDaemon } from "../../database/migrations.js";
 import { compareAscii } from "../../encoding/identifier.js";
 import { Firewall, type FirewallOptions } from "../../firewall/service.js";
 import {
@@ -182,7 +183,8 @@ interface Network {
   cursorId: number;
   sendFailure?: CommunicationError;
 }
-interface OpenOptions extends Omit<HarnessSettings<never>, "communication"> {
+interface OpenOptions
+  extends Omit<HarnessSettings<never>, "communication" | "agentKey"> {
   readonly registerOnStart?: boolean;
   readonly policy?: FirewallOptions;
   readonly beforeRegistration?: Effect.Effect<undefined>;
@@ -279,6 +281,7 @@ function openHarness(
   return Effect.gen(function* () {
     const workers = yield* FiberSet.make();
     const identity = Identity.layer({
+      agentKey: environment.filename,
       signingAuthority: environment.identity.signingAuthority,
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         environment.identity.registryAuthority,
@@ -287,7 +290,11 @@ function openHarness(
     }).pipe(
       Layer.provideMerge(registryFor(environment, options)),
       Layer.provideMerge(
-        SqliteClient.layer({ filename: environment.filename }),
+        Layer.effectDiscard(migrateDaemon).pipe(
+          Layer.provideMerge(
+            SqliteClient.layer({ filename: environment.filename }),
+          ),
+        ),
       ),
     );
     const services = yield* Layer.build(
@@ -301,6 +308,7 @@ function openHarness(
     const context = yield* Layer.build(
       SocialHarness.layer(
         {
+          agentKey: environment.filename,
           maximumHistoryRecords: options.maximumHistoryRecords,
           maximumConcurrentChecks: options.maximumConcurrentChecks,
           historyExport: options.historyExport,

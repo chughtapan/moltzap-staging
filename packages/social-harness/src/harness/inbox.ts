@@ -12,6 +12,13 @@ import {
   PaginatedResult,
 } from "../communication/service.js";
 import {
+  type Compilable,
+  executeQuery,
+  type Generated,
+  makeQueries,
+} from "../database/sql.js";
+import { withAgentTransaction } from "../database/transactions.js";
+import {
   decodeCanonical,
   encodeCanonical,
   MAXIMUM_RUNTIME_ITEM_BYTES,
@@ -131,53 +138,68 @@ export interface PendingItem {
   readonly incoming: Incoming;
 }
 
+type InboxTables = Record<
+  "harness_items",
+  Record<"agent_key" | "identity" | "token" | "address" | "kind", string> &
+    Record<"author" | "message_id" | "operation_id", string | null> &
+    Record<"incoming" | "view", Uint8Array | null> &
+    Record<"sequence", Generated<number>> &
+    Record<"status", "checking" | "withheld" | "pending" | "acknowledged">
+> &
+  Record<
+    "harness_visibility",
+    Record<"agent_key" | "author" | "message_id", string> &
+      Record<"visible", number>
+  >;
+
 /** Captures the database and scopes opaque cursors to this inbox instance. */
-export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
+export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
+  agentKey: string,
+) {
   const sql = yield* SqlClient.SqlClient;
+  const queries = yield* makeQueries<InboxTables>();
+  const run = <Row extends object>(query: Compilable<Row>) =>
+    withAgentTransaction(agentKey, executeQuery(query)).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
+  const storedItems = () =>
+    queries.selectFrom("harness_items").where("agent_key", "=", agentKey);
   const cursorKey = randomBytes(32);
   const encodePage = <A, I>(schema: Schema.Schema<A, I>, value: NoInfer<A>) =>
     encodeCursor(schema, value, cursorKey);
   const decodePage = <A, I>(schema: Schema.Schema<A, I>, value: string) =>
     decodeCursor(schema, value, cursorKey);
-  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS harness_items (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-    identity TEXT NOT NULL UNIQUE,
-    token TEXT NOT NULL UNIQUE,
-    address TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    author TEXT,
-    message_id TEXT,
-    operation_id TEXT,
-    incoming BLOB,
-    view BLOB,
-    status TEXT NOT NULL CHECK(status IN ('checking','withheld','pending','acknowledged'))
-  ) STRICT`);
-  yield* sql.unsafe(
-    "CREATE INDEX IF NOT EXISTS harness_pending ON harness_items(status, sequence)",
-  );
-  yield* sql.unsafe(
-    "CREATE INDEX IF NOT EXISTS harness_conversation ON harness_items(address, sequence)",
-  );
-  yield* sql.unsafe(
-    "CREATE INDEX IF NOT EXISTS harness_message ON harness_items(author, message_id)",
-  );
-  yield* sql.unsafe(
-    "CREATE INDEX IF NOT EXISTS harness_request ON harness_items(operation_id)",
-  );
-  yield* sql.unsafe(`CREATE TABLE IF NOT EXISTS harness_visibility (
-    author TEXT NOT NULL, message_id TEXT NOT NULL, visible INTEGER NOT NULL,
-    PRIMARY KEY(author, message_id)
-  ) STRICT`);
   const pendingRows = SqlSchema.findAll({
     Request: Schema.Number,
     Result: queuedRow,
-    execute: (
-      limit,
-    ) => sql`SELECT sequence, token, address, incoming FROM harness_items item
-      WHERE status='checking' AND NOT EXISTS (
-        SELECT 1 FROM harness_items previous
-        WHERE previous.address=item.address AND previous.status='checking' AND previous.sequence<item.sequence
-      ) ORDER BY sequence LIMIT ${limit}`,
+    execute: (limit) =>
+      run(
+        queries
+          .selectFrom("harness_items as item")
+          .select([
+            "item.sequence",
+            "item.token",
+            "item.address",
+            "item.incoming",
+          ])
+          .where("item.agent_key", "=", agentKey)
+          .where("item.status", "=", "checking")
+          .where((eb) =>
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom("harness_items as previous")
+                  .select("previous.sequence")
+                  .whereRef("previous.agent_key", "=", "item.agent_key")
+                  .whereRef("previous.address", "=", "item.address")
+                  .where("previous.status", "=", "checking")
+                  .whereRef("previous.sequence", "<", "item.sequence"),
+              ),
+            ),
+          )
+          .orderBy("item.sequence")
+          .limit(limit),
+      ),
   });
   const queueIncoming = Effect.fn(function* (
     address: MessageAddress,
@@ -211,8 +233,26 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
     const token = DeliveryToken.make(
       `dlv_${randomBytes(32).toString("base64url")}`,
     );
-    yield* sql`INSERT INTO harness_items(identity,token,address,kind,author,message_id,operation_id,incoming,status)
-      VALUES (${identity},${token},${address},${incoming.kind},${message?.author.agentId ?? null},${message?.msgId ?? null},${operationId ?? null},${bytes},'checking') ON CONFLICT(identity) DO NOTHING`;
+    yield* run(
+      queries
+        .insertInto("harness_items")
+        .values({
+          agent_key: agentKey,
+          identity,
+          token,
+          address,
+          kind: incoming.kind,
+          author: message?.author.agentId ?? null,
+          message_id: message?.msgId ?? null,
+          operation_id: operationId ?? null,
+          incoming: bytes,
+          view: null,
+          status: "checking",
+        })
+        .onConflict((conflict) =>
+          conflict.columns(["agent_key", "identity"]).doNothing(),
+        ),
+    );
   });
   const listInbox = Effect.fn(function* (
     request: typeof PaginatedRequest.Type = {},
@@ -224,9 +264,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
     const rows = yield* SqlSchema.findAll({
       Request: Schema.Void,
       Result: savedRow,
-      execute: () => sql`SELECT sequence,token,address,view FROM harness_items
-        WHERE status='pending' AND sequence>${position.after} AND sequence<=${position.through}
-        ORDER BY sequence LIMIT 51`,
+      execute: () =>
+        run(
+          storedItems()
+            .select(["sequence", "token", "address", "view"])
+            .where("status", "=", "pending")
+            .where("sequence", ">", position.after)
+            .where("sequence", "<=", position.through)
+            .orderBy("sequence")
+            .limit(51),
+        ),
     })(undefined);
     const items: InboxEntry[] = [];
     let bytes = 0;
@@ -258,7 +305,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
       Request: DeliveryToken,
       Result: savedRow,
       execute: (token) =>
-        sql`SELECT sequence,token,address,view FROM harness_items WHERE token=${token} AND view IS NOT NULL`,
+        run(
+          storedItems()
+            .select(["sequence", "token", "address", "view"])
+            .where("token", "=", token)
+            .where("view", "is not", null),
+        ),
     })(token);
     const row = rows[0];
     return row === undefined
@@ -293,34 +345,78 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         event = undefined;
       }
     }
-    yield* sql`UPDATE harness_items SET incoming=NULL, view=${view ?? null}, status=${view === undefined ? "withheld" : "pending"}
-      WHERE token=${item.token} AND status='checking'`;
+    yield* run(
+      queries
+        .updateTable("harness_items")
+        .set({
+          incoming: null,
+          view: view ?? null,
+          status: view === undefined ? "withheld" : "pending",
+        })
+        .where("agent_key", "=", agentKey)
+        .where("token", "=", item.token)
+        .where("status", "=", "checking"),
+    );
     for (const permission of decision.visibility) {
       const visible =
         !expired && view !== undefined && permission.visibleToAgent;
-      yield* sql`INSERT INTO harness_visibility(author,message_id,visible)
-        VALUES (${permission.message.authorAgentId},${permission.message.msgId},${visible ? 1 : 0})
-        ON CONFLICT(author,message_id) DO UPDATE SET visible=MAX(visible,excluded.visible)`;
+      yield* run(
+        queries
+          .insertInto("harness_visibility")
+          .values({
+            agent_key: agentKey,
+            author: permission.message.authorAgentId,
+            message_id: permission.message.msgId,
+            visible: visible ? 1 : 0,
+          })
+          .onConflict((conflict) =>
+            conflict
+              .columns(["agent_key", "author", "message_id"])
+              .doUpdateSet((eb) => ({
+                // eslint-disable-next-line agent-code-guard/then-chain -- Kysely CASE branches compile SQL; this is not Promise chaining.
+                visible: eb
+                  .case()
+                  .when(
+                    "excluded.visible",
+                    ">",
+                    eb.ref("harness_visibility.visible"),
+                  )
+                  .then(eb.ref("excluded.visible"))
+                  .else(eb.ref("harness_visibility.visible"))
+                  .end(),
+              })),
+          ),
+      );
     }
     return event;
   });
   const acknowledgeDelivery = Effect.fn(function* (token: DeliveryToken) {
-    const rows = yield* sql<{
-      readonly status: string;
-    }>`SELECT status FROM harness_items WHERE token=${token} AND view IS NOT NULL`;
+    const rows = yield* run(
+      storedItems()
+        .select("status")
+        .where("token", "=", token)
+        .where("view", "is not", null),
+    );
     if (rows[0] === undefined) {
       return yield* new DeliveryAcknowledgeError({
         reason: "unknown-delivery",
       });
     }
-    yield* sql`UPDATE harness_items SET status='acknowledged' WHERE token=${token} AND status='pending'`;
+    yield* run(
+      queries
+        .updateTable("harness_items")
+        .set({ status: "acknowledged" })
+        .where("agent_key", "=", agentKey)
+        .where("token", "=", token)
+        .where("status", "=", "pending"),
+    );
   });
   function head() {
-    return sql<{
-      readonly head: number;
-    }>`SELECT COALESCE(MAX(sequence),0) AS head FROM harness_items`.pipe(
-      Effect.map((rows) => rows[0]?.head ?? 0),
-    );
+    return run(
+      storedItems().select((eb) =>
+        eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
+      ),
+    ).pipe(Effect.map((rows) => rows[0]?.head ?? 0));
   }
   return {
     encodeCursor: encodePage,
@@ -374,14 +470,23 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         Effect.mapError(persistenceFailure),
       ),
     retire: (token: DeliveryToken) =>
-      sql`UPDATE harness_items SET incoming=NULL, status='withheld' WHERE token=${token} AND status='checking'`.pipe(
-        Effect.asVoid,
-        Effect.mapError(persistenceFailure),
-      ),
+      run(
+        queries
+          .updateTable("harness_items")
+          .set({ incoming: null, status: "withheld" })
+          .where("agent_key", "=", agentKey)
+          .where("token", "=", token)
+          .where("status", "=", "checking"),
+      ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
     isRequestVisible: (operationId: string) =>
-      sql<{
-        readonly found: number;
-      }>`SELECT 1 AS found FROM harness_items WHERE kind='request' AND operation_id=${operationId} AND view IS NOT NULL LIMIT 1`.pipe(
+      run(
+        storedItems()
+          .select("sequence")
+          .where("kind", "=", "request")
+          .where("operation_id", "=", operationId)
+          .where("view", "is not", null)
+          .limit(1),
+      ).pipe(
         Effect.map((rows) => rows.length !== 0),
         Effect.mapError(persistenceFailure),
       ),
@@ -389,9 +494,14 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
       Effect.forEach(
         messages,
         (message) =>
-          sql<{
-            readonly visible: number;
-          }>`SELECT visible FROM harness_visibility WHERE author=${message.author.agentId} AND message_id=${message.msgId}`.pipe(
+          run(
+            queries
+              .selectFrom("harness_visibility")
+              .select("visible")
+              .where("agent_key", "=", agentKey)
+              .where("author", "=", message.author.agentId)
+              .where("message_id", "=", message.msgId),
+          ).pipe(
             Effect.map((rows) => ({
               message,
               visibleToAgent: rows[0]?.visible === 1,
@@ -400,20 +510,31 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         { concurrency: 1 },
       ).pipe(Effect.mapError(persistenceFailure)),
     historyView: (reference: MessageReference) =>
-      sql<{
-        readonly view: Uint8Array;
-      }>`SELECT view FROM harness_items WHERE author=${reference.authorAgentId} AND message_id=${reference.msgId} AND view IS NOT NULL LIMIT 1`.pipe(
+      run(
+        storedItems()
+          .select("view")
+          .where("author", "=", reference.authorAgentId)
+          .where("message_id", "=", reference.msgId)
+          .where("view", "is not", null)
+          .limit(1),
+      ).pipe(
         Effect.flatMap((rows) =>
-          rows[0] === undefined
+          rows[0]?.view == null
             ? Effect.succeed(undefined)
             : decodeCanonical(InboxEvent, rows[0].view),
         ),
         Effect.mapError(persistenceFailure),
       ),
     resultHead: (address: string) =>
-      sql<{
-        readonly head: number;
-      }>`SELECT COALESCE(MAX(sequence),0) AS head FROM harness_items WHERE address=${address} AND kind IN ('result','request-failed') AND view IS NOT NULL`.pipe(
+      run(
+        storedItems()
+          .select((eb) =>
+            eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
+          )
+          .where("address", "=", address)
+          .where("kind", "in", ["result", "request-failed"])
+          .where("view", "is not", null),
+      ).pipe(
         Effect.map((rows) => rows[0]?.head ?? 0),
         Effect.mapError(persistenceFailure),
       ),
@@ -427,7 +548,17 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         Request: Schema.Void,
         Result: savedRow,
         execute: () =>
-          sql`SELECT sequence,token,address,view FROM harness_items WHERE address=${address} AND sequence>${after} AND sequence<=${through} AND kind IN ('result','request-failed') AND view IS NOT NULL ORDER BY sequence LIMIT ${limit + 1}`,
+          run(
+            storedItems()
+              .select(["sequence", "token", "address", "view"])
+              .where("address", "=", address)
+              .where("sequence", ">", after)
+              .where("sequence", "<=", through)
+              .where("kind", "in", ["result", "request-failed"])
+              .where("view", "is not", null)
+              .orderBy("sequence")
+              .limit(limit + 1),
+          ),
       })(undefined).pipe(
         Effect.flatMap((rows) =>
           Effect.forEach(
@@ -446,7 +577,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* () {
         Request: Schema.Void,
         Result: Schema.Struct({ address: MessageAddress }),
         execute: () =>
-          sql`SELECT DISTINCT address FROM harness_items WHERE address>${after} AND kind IN ('result','request-failed') AND view IS NOT NULL ORDER BY address LIMIT 51`,
+          run(
+            storedItems()
+              .select("address")
+              .distinct()
+              .where("address", ">", after)
+              .where("kind", "in", ["result", "request-failed"])
+              .where("view", "is not", null)
+              .orderBy("address")
+              .limit(51),
+          ),
       })(undefined).pipe(
         Effect.map((rows) => rows.map((row) => row.address)),
         Effect.mapError(persistenceFailure),
