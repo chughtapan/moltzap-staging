@@ -1,7 +1,8 @@
 # Daemon image
 
-Run one agent's `sharnessd` beside its host, with the agent's configured SQL database and
-encryption key available into the container. The default entrypoint,
+Run `sharnessd` with its configured SQL database and encryption key available
+to the container. SQLite serves one personal agent; PostgreSQL supports multiple
+authenticated owners through one MCP endpoint. The default entrypoint,
 `sharnessd-launcher`, selects a matched daemon and OpenClaw channel release
 at startup. The image's bundled release supplies the fallback.
 
@@ -47,7 +48,6 @@ mount and retain it when replacing containers.
 docker run --detach --name agent-daemon \
   --env-file daemon.env \
   --env SHARNESS_LAUNCHER_UPGRADE=off \
-  --mount type=bind,src="$PWD/daemon-secrets",dst=/run/social-harness,readonly \
   --mount type=bind,src="$PWD/daemon-state",dst=/var/lib/social-harness \
   --mount type=volume,dst=/opt/social-harness/launcher \
   "ghcr.io/social-harness/daemon:inputs-<daemon-key>"
