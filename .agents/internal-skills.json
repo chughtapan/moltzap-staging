@@ -1,14 +1,16 @@
 {
   "repository": "social-harness/docs-internal",
-  "revision": "50da9b8420d58fa348341634d07509cb598d19c6",
+  "revision": "81b8875a026ec50e2c82b70054acf2345dc09ae5",
   "files": {
-    ".agents/skills/checklist/SKILL.md": "16e2ba186f83fb5b25ea465addcb9340a70362e5f5e5818dfd676600bb5f0009",
-    ".claude/skills/checklist/SKILL.md": "16e2ba186f83fb5b25ea465addcb9340a70362e5f5e5818dfd676600bb5f0009",
+    ".agents/skills/checklist/SKILL.md": "d4d460bda1aa78b4c6cf7a023f849ca2284f853b5f2ffd3c82bf26b6553aaf1c",
+    ".claude/skills/checklist/SKILL.md": "d4d460bda1aa78b4c6cf7a023f849ca2284f853b5f2ffd3c82bf26b6553aaf1c",
     ".agents/skills/delivery/SKILL.md": "2cbaf8be68ad77f63fe1c418be429f2be120edee8a9fcf52f5565cd7b30a9d75",
     ".claude/skills/delivery/SKILL.md": "2cbaf8be68ad77f63fe1c418be429f2be120edee8a9fcf52f5565cd7b30a9d75",
     ".agents/skills/records/SKILL.md": "c6c3f7618691f67cb3cb7e2a5089df3e1ced1fc739260f786a05ab746e827f83",
     ".claude/skills/records/SKILL.md": "c6c3f7618691f67cb3cb7e2a5089df3e1ced1fc739260f786a05ab746e827f83",
-    ".agents/skills/shared-sdlc/SKILL.md": "df7cf9a2015ce9eec891972e6d81f9482100c91063ebcb4e101ba92ff3fa58e3",
-    ".claude/skills/shared-sdlc/SKILL.md": "df7cf9a2015ce9eec891972e6d81f9482100c91063ebcb4e101ba92ff3fa58e3"
+    ".agents/skills/shared-sdlc/SKILL.md": "fa5e8db66de08b9b5f9ba0e434b825ba4c37dbd83694c79027784cc0ef7445ab",
+    ".claude/skills/shared-sdlc/SKILL.md": "fa5e8db66de08b9b5f9ba0e434b825ba4c37dbd83694c79027784cc0ef7445ab",
+    ".agents/skills/simplify/SKILL.md": "df31d357dfe8be5ba0aadc8666aade0468febe137dfb6c2e3a7e2c1adf287e90",
+    ".claude/skills/simplify/SKILL.md": "df31d357dfe8be5ba0aadc8666aade0468febe137dfb6c2e3a7e2c1adf287e90"
   }
 }

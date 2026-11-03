@@ -21,6 +21,9 @@ All these paths are relative to `DOCS_INTERNAL_ROOT`, not the code checkout.
 
 Every design and change follows the project checklist (`.agents/skills/checklist/SKILL.md`).
 
+For code simplification, API cleanup or module organization, load the `simplify`
+skill. It is shared through the same pinned skill installation.
+
 Before verifying, merging or releasing, or briefing another agent to, load the delivery skill (`.agents/skills/delivery/SKILL.md`).
 Before running or analysing an evaluation batch, read
 `data/evals/reference/running-studies.md`.
