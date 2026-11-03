@@ -405,8 +405,7 @@ const communicationSchema = Effect.gen(function* () {
   });
 });
 
-/** Effect's migration ledger commits each schema change with its recorded version. */
-export const migrateDaemon = Migrator.make({})({
+const runMigrations = Migrator.make({})({
   loader: Migrator.fromRecord({
     "0001_ownership": ownershipSchema,
     "0002_agent_state": agentStateSchema,
@@ -414,3 +413,12 @@ export const migrateDaemon = Migrator.make({})({
     "0004_communication": communicationSchema,
   }),
 });
+
+/** SQLite's reset guard requires ledger creation to roll back with a failed first migration. */
+export const migrateDaemon = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql.onDialectOrElse({
+    sqlite: () => sql.withTransaction(runMigrations),
+    orElse: () => runMigrations,
+  });
+}).pipe(Effect.withSpan("migrateDaemon"));

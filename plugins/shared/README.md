@@ -36,3 +36,10 @@ dependencies; it needs no package installation on the remote host. Keep the
 symlinks within that directory when transferring it, and run the installed
 candidate's host qualification before publishing. This contributor workflow does
 not provision a daemon or complete native OAuth consent.
+
+When transferring from macOS, exclude filesystem metadata from the archive so
+AppleDouble files do not enter the installed skill directories:
+
+```sh
+COPYFILE_DISABLE=1 tar --no-xattrs -czf <artifact-archive>.tar.gz -C <artifact-directory> .
+```

@@ -8,8 +8,9 @@ import {
   databaseAccess,
   databaseConnection,
   loadDaemonSettings,
+  migrateDaemon,
 } from "@moltzap/social-harness/test";
-import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
+import { ConfigProvider, Context, Effect, Exit, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -216,4 +217,24 @@ it("rejects an older SQLite file without migrating or replacing its contents", (
         yield* sql`SELECT name FROM sqlite_schema WHERE type = 'table'`,
       ).toEqual([{ name: "retained" }]);
     }).pipe(Effect.provide(databaseConnection(test.access.locator)));
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("retries first configuration after a rolled-back SQLite migration", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE firewall_checks (value TEXT NOT NULL)`;
+      yield* sql`INSERT INTO firewall_checks VALUES ('retained obstruction')`;
+      expect(Exit.isFailure(yield* Effect.exit(migrateDaemon))).toBe(true);
+      expect(yield* sql`SELECT * FROM firewall_checks`).toEqual([
+        { value: "retained obstruction" },
+      ]);
+      yield* sql`DROP TABLE firewall_checks`;
+    }).pipe(Effect.provide(databaseConnection(test.access.locator)));
+    yield* test.configure;
+    const saved = yield* loadDaemonSettings(test.access.unlockKey).pipe(
+      Effect.provide(databaseConnection(test.access.locator)),
+    );
+    expect(saved.port).toBe(settings.port);
   }).pipe(Effect.provide(NodeContext.layer)));
