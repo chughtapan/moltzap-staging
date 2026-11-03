@@ -50,7 +50,7 @@ test("every agent of a cohort that registers at once sends and receives through 
       {
         kind: "multicast",
         message: {
-          sender: sender.agent,
+          author: sender.agent,
           content: [{ type: "text", text: TEXT }],
         },
       },
