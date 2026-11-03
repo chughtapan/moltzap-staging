@@ -20,6 +20,7 @@ import type {
   AgentPublicKey,
   AgentSigningAuthority,
 } from "../identity/keys.js";
+import { withAgentTransaction } from "../database/transactions.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -221,6 +222,7 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
 
 /** Signing and Registry authority belong to the one configured local agent. */
 interface CommunicationSettings {
+  readonly agentKey: string;
   readonly identityCard: VerifiedAgentIdentityCard;
   readonly maximumHistoryRecords?: number;
   readonly signingAuthority: AgentSigningAuthority;
@@ -300,11 +302,15 @@ const membershipRow = Schema.Struct({
 
 const listConversations = Effect.fn("Communication.listConversations")(
   function* (
+    agentKey: string,
     query: ConversationQuery,
-    local: VerifiedAgentIdentityCard,
-    signer: agentAgentPublicKey,
-    session: string,
+    reader: {
+      readonly local: VerifiedAgentIdentityCard;
+      readonly signer: agentAgentPublicKey;
+      readonly session: string;
+    },
   ) {
+    const { local, signer, session } = reader;
     let after = "";
     if (query.cursor !== undefined) {
       const cursor = yield* decodeCursor(conversationCursor, query.cursor);
@@ -314,13 +320,14 @@ const listConversations = Effect.fn("Communication.listConversations")(
       after = cursor.after;
     }
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `
-    SELECT membership.conversation_id, membership.membership_hash, membership.canonical_membership, membership.sort_key
-    FROM memberships AS membership JOIN conversation_state AS state USING(conversation_id)
-    WHERE state.head_record_hash IS NOT NULL AND membership.sort_key > ?
-    ORDER BY membership.sort_key LIMIT 51`,
-      [after],
+    const rows = yield* withAgentTransaction(
+      agentKey,
+      sql<Readonly<Record<string, unknown>>>`
+      SELECT membership.conversation_id,membership.membership_hash,membership.canonical_membership,membership.sort_key
+      FROM memberships AS membership JOIN conversation_state AS state
+        ON state.agent_key=membership.agent_key AND state.conversation_id=membership.conversation_id
+      WHERE membership.agent_key=${agentKey} AND state.head_record_hash IS NOT NULL AND membership.sort_key > ${after}
+      ORDER BY membership.sort_key LIMIT 51`,
     );
     const selected = rows.slice(0, 50);
     const conversations = yield* Effect.forEach(
@@ -346,6 +353,7 @@ const listConversations = Effect.fn("Communication.listConversations")(
 );
 
 const getConversation = Effect.fn("Communication.getConversation")(function* (
+  agentKey: string,
   names: readonly AgentName[],
   local: VerifiedAgentIdentityCard,
   signer: agentAgentPublicKey,
@@ -359,12 +367,13 @@ const getConversation = Effect.fn("Communication.getConversation")(function* (
     return yield* new CommunicationError({ reason: "membership-invalid" });
   }
   const sql = yield* SqlClient;
-  const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-    `
-    SELECT membership.conversation_id, membership.membership_hash, membership.canonical_membership, membership.sort_key
-    FROM memberships AS membership JOIN conversation_state AS state USING(conversation_id)
-    WHERE state.head_record_hash IS NOT NULL AND membership.sort_key = ?`,
-    [conversationNameKey(names, local.agentName)],
+  const [row] = yield* withAgentTransaction(
+    agentKey,
+    sql<Readonly<Record<string, unknown>>>`
+    SELECT membership.conversation_id,membership.membership_hash,membership.canonical_membership,membership.sort_key
+    FROM memberships AS membership JOIN conversation_state AS state
+      ON state.agent_key=membership.agent_key AND state.conversation_id=membership.conversation_id
+    WHERE membership.agent_key=${agentKey} AND state.head_record_hash IS NOT NULL AND membership.sort_key=${conversationNameKey(names, local.agentName)}`,
   );
   return row === undefined
     ? undefined
@@ -373,6 +382,7 @@ const getConversation = Effect.fn("Communication.getConversation")(function* (
 
 /** History returns only application messages, preserving one fixed private-log boundary. */
 const readHistory = Effect.fn("Communication.readHistory")(function* (
+  agentKey: string,
   query: HistoryQuery,
   reader: {
     readonly local: VerifiedAgentIdentityCard;
@@ -404,13 +414,13 @@ const readHistory = Effect.fn("Communication.readHistory")(function* (
   ) {
     return yield* invalidCursor();
   }
-  const [stored] = yield* readMemberships(conversationId);
+  const [stored] = yield* readMemberships(agentKey, conversationId);
   if (stored === undefined) {
     if (query.order === "newest" && query.beforeMessage === undefined) {
       return {
         entries: [],
         earlierMessagesOmitted: false,
-        pendingOutgoing: yield* hasPendingMessages(conversationId),
+        pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
       };
     }
     return yield* historyGap();
@@ -428,8 +438,8 @@ const readHistory = Effect.fn("Communication.readHistory")(function* (
   }
   const page =
     query.order === "newest"
-      ? yield* readNewest(query, conversationId, signer)
-      : yield* readOldest(query, {
+      ? yield* readNewest(agentKey, query, conversationId, signer)
+      : yield* readOldest(agentKey, query, {
           conversationId,
           signer,
           session,
@@ -437,7 +447,7 @@ const readHistory = Effect.fn("Communication.readHistory")(function* (
         });
   return {
     ...page,
-    pendingOutgoing: yield* hasPendingMessages(conversationId),
+    pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
   } satisfies HistoryPage;
 }, mapHistoryErrors);
 
@@ -470,8 +480,10 @@ export {
 
 /** Construction captures one registered identity and owns all worker resources. */
 function makeCommunicationLayer(settings: CommunicationSettings) {
+  const agentKey = settings.agentKey;
+
   return Effect.gen(function* () {
-    yield* initializeCommunication(settings.identityCard).pipe(
+    yield* initializeCommunication(agentKey, settings.identityCard).pipe(
       Effect.catchTag(
         "EndpointStoreError",
         () => new CommunicationError({ reason: "persistence-failed" }),
@@ -493,7 +505,7 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
     };
     yield* acquireCommunication(environment, settings.identityCard, workers);
     const provideSql = Effect.provideService(SqlClient, environment.sql);
-    const requests = yield* makeRequests({
+    const requests = yield* makeRequests(agentKey, {
       self: agentCardOf(settings.identityCard),
       acceptMessage: (message) =>
         acceptMessage(environment, message).pipe(provideSql),
@@ -523,6 +535,7 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
       getConversation: (names) =>
         capture(
           getConversation(
+            agentKey,
             names,
             settings.identityCard,
             settings.registrySignerPublicKey,
@@ -530,16 +543,15 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
         ),
       listConversations: (query = {}) =>
         capture(
-          listConversations(
-            query,
-            settings.identityCard,
-            settings.registrySignerPublicKey,
-            environment.session,
-          ),
+          listConversations(agentKey, query, {
+            local: settings.identityCard,
+            signer: settings.registrySignerPublicKey,
+            session: environment.session,
+          }),
         ),
       readHistory: (query) =>
         capture(
-          readHistory(query, {
+          readHistory(agentKey, query, {
             local: settings.identityCard,
             signer: settings.registrySignerPublicKey,
             session: environment.session,
@@ -632,6 +644,8 @@ function consumeIncoming<E, R>(
 }
 
 function acceptMessage(environment: Environment, message: Message) {
+  const agentKey = environment.settings.agentKey;
+
   return Effect.gen(function* () {
     const local = agentCardOf(environment.settings.identityCard);
     if (
@@ -653,7 +667,7 @@ function acceptMessage(environment: Environment, message: Message) {
       second,
       ...rest,
     ]);
-    yield* storedAcceptMessage({
+    yield* storedAcceptMessage(agentKey, {
       authorAgentId: message.author.agentId,
       msgId: message.msgId,
       conversationId,
@@ -678,13 +692,15 @@ function acceptMessage(environment: Environment, message: Message) {
 }
 
 function waitForMessage(environment: Environment, reference: MessageReference) {
+  const agentKey = environment.settings.agentKey;
+
   return Effect.gen(function* () {
     const card = environment.settings.identityCard;
     if (reference.authorAgentId !== card.agentId) {
       return yield* new CommunicationError({ reason: "unknown-message" });
     }
     while (true) {
-      const retained = yield* readAcceptedMessage(reference).pipe(
+      const retained = yield* readAcceptedMessage(agentKey, reference).pipe(
         Effect.catchTag(
           "EndpointStoreError",
           () => new CommunicationError({ reason: "persistence-failed" }),
@@ -706,14 +722,17 @@ function waitForMessage(environment: Environment, reference: MessageReference) {
 }
 
 function prepareAcceptedMessages(environment: Environment) {
+  const agentKey = environment.settings.agentKey;
+
   return Effect.gen(function* () {
     const engine = yield* Deferred.await(environment.ready);
-    for (const accepted of yield* readUnpreparedMessages()) {
+    for (const accepted of yield* readUnpreparedMessages(agentKey)) {
       const { message } = accepted;
       yield* engine.prepareMessage(accepted).pipe(
         Effect.catchTag("SendError", (error) =>
           isTerminalSendFailure(error.reason)
             ? failMessage(
+                agentKey,
                 {
                   authorAgentId: message.author.agentId,
                   msgId: message.msgId,
@@ -764,6 +783,7 @@ function acquireCommunication(
       Effect.asVoid,
     );
     const worker = yield* makeRouterWorker({
+      agentKey: environment.settings.agentKey,
       callerAgentId: card.agentId,
       signingAuthority: environment.settings.signingAuthority,
       pinnedSenderCards: yield* pinnedSenderCards(environment, card),
@@ -781,6 +801,7 @@ function acquireCommunication(
       Effect.provideService(Router, environment.router),
     );
     const engine = yield* makeEndpointEngine({
+      agentKey: environment.settings.agentKey,
       localAgentCard: card,
       signingAuthority: environment.settings.signingAuthority,
       registrySignerPublicKey: environment.settings.registrySignerPublicKey,
@@ -836,8 +857,10 @@ function pinnedSenderCards(
   environment: Environment,
   local: VerifiedAgentIdentityCard,
 ) {
+  const agentKey = environment.settings.agentKey;
+
   return Effect.gen(function* () {
-    const memberships = yield* readMemberships().pipe(
+    const memberships = yield* readMemberships(agentKey).pipe(
       Effect.provideService(SqlClient, environment.sql),
     );
     const cards = new Map([[local.agentId, local]]);
@@ -988,6 +1011,7 @@ function historyConversationId(
 }
 
 function readOldest(
+  agentKey: string,
   query: Extract<HistoryQuery, { readonly order?: "oldest" }>,
   reader: {
     readonly conversationId: string;
@@ -1018,6 +1042,7 @@ function readOldest(
                 ? {}
                 : {
                     afterRecordHash: yield* boundaryRecord(
+                      agentKey,
                       conversationId,
                       query.afterMessage,
                     ),
@@ -1025,7 +1050,7 @@ function readOldest(
               maximumRecords: 50 - entries.length,
             }
           : { continuation: position, maximumRecords: 50 - entries.length };
-      const page = yield* readConversation(request);
+      const page = yield* readConversation(agentKey, request);
       const records = yield* readStoredHistory(signer, page, page.records);
       entries.push(...(yield* applicationEntries(records)));
       position = page.continuation ?? undefined;
@@ -1035,7 +1060,7 @@ function readOldest(
     }
     if (
       position !== undefined &&
-      !(yield* hasLaterApplicationMessage(position, signer))
+      !(yield* hasLaterApplicationMessage(agentKey, position, signer))
     ) {
       position = undefined;
     }
@@ -1059,6 +1084,7 @@ function readOldest(
 
 /** A continuation is present only when an application message remains in its fixed window. */
 function hasLaterApplicationMessage(
+  agentKey: string,
   initialPosition: string,
   signer: agentAgentPublicKey,
 ) {
@@ -1066,7 +1092,7 @@ function hasLaterApplicationMessage(
     let position: string | undefined = initialPosition;
     while (position !== undefined) {
       const page: Effect.Effect.Success<ReturnType<typeof readConversation>> =
-        yield* readConversation({ continuation: position });
+        yield* readConversation(agentKey, { continuation: position });
       const records = yield* readStoredHistory(signer, page, page.records);
       for (const record of records) {
         if (yield* isApplicationMessage(record.message)) {
@@ -1080,6 +1106,7 @@ function hasLaterApplicationMessage(
 }
 
 function readNewest(
+  agentKey: string,
   query: Extract<HistoryQuery, { readonly order: "newest" }>,
   conversationId: string,
   signer: agentAgentPublicKey,
@@ -1088,13 +1115,13 @@ function readNewest(
     let before =
       query.beforeMessage === undefined
         ? undefined
-        : yield* boundaryRecord(conversationId, query.beforeMessage);
+        : yield* boundaryRecord(agentKey, conversationId, query.beforeMessage);
     const entries: Array<{
       readonly message: Message;
       readonly messageBytes: number;
     }> = [];
     while (entries.length <= query.limit) {
-      const snapshot = yield* readRecentConversation({
+      const snapshot = yield* readRecentConversation(agentKey, {
         conversationId,
         maximumRecords: Math.min(50, query.limit + 1 - entries.length),
         ...(before === undefined ? {} : { candidateRecordHash: before }),
@@ -1155,12 +1182,19 @@ function isApplicationMessage(message: Message) {
   );
 }
 
-function boundaryRecord(conversationId: string, reference: MessageReference) {
+function boundaryRecord(
+  agentKey: string,
+  conversationId: string,
+  reference: MessageReference,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT staged.record_hash FROM staged_records AS staged JOIN certified_records AS certified USING(conversation_id,record_hash) WHERE staged.conversation_id=? AND staged.author_agent_id=? AND staged.msg_id=?`,
-      [conversationId, reference.authorAgentId, reference.msgId],
+    const [row] = yield* withAgentTransaction(
+      agentKey,
+      sql<Readonly<Record<string, unknown>>>`
+      SELECT staged.record_hash FROM staged_records AS staged JOIN certified_records AS certified
+        ON certified.agent_key=staged.agent_key AND certified.conversation_id=staged.conversation_id AND certified.record_hash=staged.record_hash
+      WHERE staged.agent_key=${agentKey} AND staged.conversation_id=${conversationId} AND staged.author_agent_id=${reference.authorAgentId} AND staged.msg_id=${reference.msgId}`,
     );
     if (row === undefined) {
       return yield* historyGap();

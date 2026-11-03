@@ -243,8 +243,9 @@ const proposalAction = (
 export const proposeIntent = (
   runtime: EngineRuntime,
   localIntent: EngineMessageIntent,
-): Effect.Effect<ActionHash, SendError, SqlClient> =>
-  Effect.gen(function* () {
+): Effect.Effect<ActionHash, SendError, SqlClient> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const conversation = runtime.conversations.get(
       localIntent.intent.conversationId,
     );
@@ -269,6 +270,7 @@ export const proposeIntent = (
     Effect.tapError((error) =>
       isTerminalSendFailure(error.reason)
         ? failMessage(
+            agentKey,
             {
               authorAgentId: localIntent.intent.authorAgentId,
               msgId: localIntent.intent.msgId,
@@ -287,6 +289,7 @@ export const proposeIntent = (
     ),
     Effect.withSpan("proposeIntent"),
   );
+};
 
 interface LocalProposal {
   readonly conversation: EngineConversation;
@@ -588,6 +591,8 @@ function bindPreparedIntent(
   runtime: EngineRuntime,
   prepared: PreparedIntent,
 ): Effect.Effect<void, SendError, SqlClient> {
+  const agentKey = runtime.input.agentKey;
+
   return Effect.gen(function* () {
     const intent = storedIntent(prepared);
     const retained = runtime.conversations.get(prepared.intent.conversationId);
@@ -595,7 +600,7 @@ function bindPreparedIntent(
       if (retained.membership.hash !== prepared.membership.hash) {
         return yield* new SendError({ reason: "certification-unavailable" });
       }
-      return yield* bindMessageIntent({
+      return yield* bindMessageIntent(agentKey, {
         kind: "existing-conversation",
         intent,
       }).pipe(
@@ -606,7 +611,7 @@ function bindPreparedIntent(
       );
     }
     const created = yield* createConversation(runtime, prepared.membership);
-    yield* bindMessageIntent({
+    yield* bindMessageIntent(agentKey, {
       kind: "new-conversation",
       foundation: created.foundation,
       intent,

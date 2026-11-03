@@ -179,8 +179,9 @@ const readPendingMessages = (
   readonly EnginePendingMessage[],
   EndpointStoreError | StoredRowError,
   SqlClient
-> =>
-  readUnconsumedRecords().pipe(
+> => {
+  const agentKey = runtime.input.agentKey;
+  return readUnconsumedRecords(agentKey).pipe(
     Effect.flatMap((history) =>
       readStoredHistory(
         runtime.input.registrySignerPublicKey,
@@ -189,9 +190,10 @@ const readPendingMessages = (
       ),
     ),
   );
+};
 
-const acknowledgeMessage = (recordHash: RecordHash) =>
-  consumeRecord(recordHash);
+const acknowledgeMessage = (agentKey: string, recordHash: RecordHash) =>
+  consumeRecord(agentKey, recordHash);
 
 const validateLocalIdentity = (
   input: EndpointEngineInput,
@@ -216,8 +218,9 @@ const enginePhases = {
 export const makeOutbox = (
   input: EndpointEngineInput,
   retained: readonly string[],
-): Effect.Effect<ReturnType<typeof bindOutbox>> =>
-  Effect.gen(function* () {
+): Effect.Effect<ReturnType<typeof bindOutbox>> => {
+  const agentKey = input.agentKey;
+  return Effect.gen(function* () {
     const state: OutboxState = {
       input,
       queued: [...retained],
@@ -227,8 +230,9 @@ export const makeOutbox = (
     if (state.queued.length > 0) {
       yield* Queue.offer(state.signal, undefined);
     }
-    return bindOutbox(state);
+    return bindOutbox(agentKey, state);
   }).pipe(Effect.withSpan("makeOutbox"));
+};
 
 const makeRuntime = (
   input: EndpointEngineInput,
@@ -265,10 +269,11 @@ const initializeRuntime = (
   EngineRuntime,
   EngineInitializationError,
   Scope.Scope | SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = input.agentKey;
+  return Effect.gen(function* () {
     yield* validateLocalIdentity(input);
-    const recovery = yield* recoverStoredState().pipe(
+    const recovery = yield* recoverStoredState(agentKey).pipe(
       Effect.mapError(initializationStoreFailure),
     );
     const recovered = yield* recoverEngineState(input, recovery).pipe(
@@ -276,6 +281,7 @@ const initializeRuntime = (
     );
     return yield* makeRuntime(input, recovered, yield* Effect.scope);
   });
+};
 
 const resumeRuntime = (runtime: EngineRuntime) =>
   Effect.gen(function* () {
@@ -314,13 +320,15 @@ const abandonVolatileFolds = (
     .pipe(Effect.withSpan("abandonVolatileFolds", { attributes: { reason } }));
 
 const endpointEngine = (runtime: EngineRuntime, sql: SqlClient) => {
+  const agentKey = runtime.input.agentKey;
+
   const provideSql = Effect.provideService(SqlClient, sql);
   return Object.freeze({
     prepareMessage: (accepted: AcceptedMessage) =>
       prepareMessage(runtime, accepted).pipe(provideSql),
     readPendingMessages: () => readPendingMessages(runtime).pipe(provideSql),
     acknowledgeMessage: (recordHash: RecordHash) =>
-      acknowledgeMessage(recordHash).pipe(provideSql),
+      acknowledgeMessage(agentKey, recordHash).pipe(provideSql),
     acceptRouterIngress: (ingress: RouterWorkerIngress<DecodedOuterBody>) =>
       acceptEngineIngressWithRecovery(runtime, ingress).pipe(provideSql),
     recoverCertifiedHistory: (recovery: RouterWorkerRecovery) =>
@@ -365,6 +373,7 @@ type EngineRouterPort = Pick<
 
 /** Stable private dependencies for one endpoint protocol engine. */
 export interface EndpointEngineInput {
+  readonly agentKey: string;
   readonly localAgentCard: VerifiedAgentIdentityCard;
   readonly signingAuthority: AgentSigningAuthority;
   readonly registrySignerPublicKey: AgentPublicKey;
@@ -514,17 +523,20 @@ function resumeFoldFailure(): EngineInitializationError {
   return new EngineInitializationError({ reason: "persistence" });
 }
 
-function bindOutbox(state: OutboxState) {
+function bindOutbox(agentKey: string, state: OutboxState) {
   return {
     sign: (membership: VerifiedMembership, body: DecodedOuterBody) =>
       sign(state, membership, body),
     queuePacket: (conversation: EngineConversation, packet: DirectPacket) =>
-      queueBody(state, conversation, { kind: "direct", packet }),
+      queueBody(agentKey, state, conversation, { kind: "direct", packet }),
     queueEvidence: (
       conversation: EngineConversation,
       evidence: SignedMessage,
     ) =>
-      queueBody(state, conversation, { kind: "evidence", message: evidence }),
+      queueBody(agentKey, state, conversation, {
+        kind: "evidence",
+        message: evidence,
+      }),
     stageRecord: (
       conversation: EngineConversation,
       packet: ActionCertifiedRecord,
@@ -532,6 +544,7 @@ function bindOutbox(state: OutboxState) {
     ) =>
       Effect.gen(function* () {
         const retained = yield* readRecordOutbound(
+          agentKey,
           conversation.conversationId,
           record.recordHash,
         );
@@ -547,7 +560,7 @@ function bindOutbox(state: OutboxState) {
           SignedMessage,
           message,
         );
-        const outbound = yield* stageRecordAndOutbound(record, {
+        const outbound = yield* stageRecordAndOutbound(agentKey, record, {
           conversationId: conversation.conversationId,
           envelopeId: message.envelopeId,
           wireVersion: SignedMessage.wireVersion(message),
@@ -556,7 +569,7 @@ function bindOutbox(state: OutboxState) {
         yield* push(state, [outbound.envelopeId]);
       }),
     enqueueSigned: (conversationId: ConversationId, message: SignedMessage) =>
-      enqueueSigned(state, conversationId, message),
+      enqueueSigned(agentKey, state, conversationId, message),
     resume: (envelopeIds: readonly string[]) => push(state, envelopeIds),
     clear: () => {
       state.queued.length = 0;
@@ -568,13 +581,14 @@ function bindOutbox(state: OutboxState) {
 }
 
 function queueBody(
+  agentKey: string,
   state: OutboxState,
   conversation: EngineConversation,
   body: DecodedOuterBody,
 ): Effect.Effect<void, EngineOutboxError, SqlClient> {
   return sign(state, conversation.membership, body).pipe(
     Effect.flatMap((message) =>
-      enqueueSigned(state, conversation.conversationId, message),
+      enqueueSigned(agentKey, state, conversation.conversationId, message),
     ),
   );
 }
@@ -595,6 +609,7 @@ function sign(
 }
 
 function enqueueSigned(
+  agentKey: string,
   state: OutboxState,
   conversationId: ConversationId,
   message: SignedMessage,
@@ -607,7 +622,7 @@ function enqueueSigned(
         wireVersion: SignedMessage.wireVersion(message),
         canonicalSignedMessage,
       };
-      return enqueueOutbound(input);
+      return enqueueOutbound(agentKey, input);
     }),
     Effect.flatMap((outbound) => push(state, [outbound.envelopeId])),
   );

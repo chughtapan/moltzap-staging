@@ -59,43 +59,51 @@ type IncomingItem =
   | { readonly kind: "request"; readonly message: ReceivedRequest };
 
 /** Construction captures shared resources without creating another public service. */
-export const makeRequests = Effect.fn("Communication.requests")(
-  function* (input: {
+export const makeRequests = Effect.fn("Communication.requests")(function* (
+  agentKey: string,
+  input: {
     readonly self: AgentCard;
     readonly acceptMessage: (
       message: Message,
     ) => Effect.Effect<void, CommunicationError>;
-  }) {
-    const environment: Environment = {
-      ...input,
-      sql: yield* SqlClient,
-      scope: yield* Scope.Scope,
-      failed: yield* Deferred.make<never, RequestError | CommunicationError>(),
-    };
-    yield* start(environment, runWorker(environment));
-    const capture = <A, E, R>(
-      effect: Effect.Effect<A, E | EndpointStoreError, R>,
-    ) =>
-      effect.pipe(
-        Effect.catchTag(
-          "EndpointStoreError",
-          () => new CommunicationError({ reason: "persistence-failed" }),
-        ),
-      );
-    return {
-      accept: (request: Request) => capture(ask(environment, request)),
-      answer: (message: Message) => capture(answer(environment, message)),
-      getRequest: (operationId: CollectiveId) =>
-        capture(getRequest(operationId)),
-      receive: (message: Message) => capture(receive(environment, message)),
-      deliverNextResult,
-      failed: Deferred.await(environment.failed),
-    };
   },
-);
+) {
+  const environment: Environment = {
+    agentKey,
+    ...input,
+    sql: yield* SqlClient,
+    scope: yield* Scope.Scope,
+    failed: yield* Deferred.make<never, RequestError | CommunicationError>(),
+  };
+  yield* start(environment, runWorker(environment));
+  const capture = <A, E, R>(
+    effect: Effect.Effect<A, E | EndpointStoreError, R>,
+  ) =>
+    effect.pipe(
+      Effect.catchTag(
+        "EndpointStoreError",
+        () => new CommunicationError({ reason: "persistence-failed" }),
+      ),
+    );
+  return {
+    accept: (request: Request) => capture(ask(environment, request)),
+    answer: (message: Message) => capture(answer(environment, message)),
+    getRequest: (operationId: CollectiveId) =>
+      capture(getRequest(agentKey, operationId)),
+    receive: (message: Message) => capture(receive(environment, message)),
+    deliverNextResult: <E, R>(
+      handle: (
+        result: ResultDelivery,
+        operation: StoredCollectiveOperation,
+      ) => Effect.Effect<void, E, R>,
+    ) => deliverNextResult(agentKey, handle),
+    failed: Deferred.await(environment.failed),
+  };
+});
 
 /** One service scope supervises deadlines and retained message completions. */
 interface Environment {
+  readonly agentKey: string;
   readonly sql: SqlClient;
   readonly self: AgentCard;
   readonly acceptMessage: (
@@ -111,6 +119,8 @@ type Close = Extract<CollectiveValue, { readonly kind: "close" }>;
 
 /** Fixed request identity and every fanout message enter storage in one transaction. */
 function ask(environment: Environment, request: Request) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     if (
       !Schema.equivalence(AgentCard)(request.author, environment.self) ||
@@ -121,7 +131,10 @@ function ask(environment: Environment, request: Request) {
     }
     yield* transaction(
       Effect.gen(function* () {
-        const existing = yield* readCollectiveOperation(request.operationId);
+        const existing = yield* readCollectiveOperation(
+          agentKey,
+          request.operationId,
+        );
         if (
           existing === undefined &&
           request.deadlineAt <= (yield* Clock.currentTimeMillis)
@@ -131,7 +144,7 @@ function ask(environment: Environment, request: Request) {
             failure: { kind: "deadline-passed" },
           });
         }
-        yield* putCollectiveOperation({ origin: "local", request });
+        yield* putCollectiveOperation(agentKey, { origin: "local", request });
         if (existing !== undefined) {
           return;
         }
@@ -175,9 +188,9 @@ function ask(environment: Environment, request: Request) {
 }
 
 /** Looking up a request reserves nothing and reports its current answer eligibility. */
-function getRequest(operationId: CollectiveId) {
+function getRequest(agentKey: string, operationId: CollectiveId) {
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(operationId);
+    const operation = yield* readCollectiveOperation(agentKey, operationId);
     if (operation === undefined || operation.origin !== "remote") {
       return yield* new RequestError({
         operationId,
@@ -185,7 +198,7 @@ function getRequest(operationId: CollectiveId) {
       });
     }
     if (
-      (yield* readCollectiveMessages(operationId)).some(
+      (yield* readCollectiveMessages(agentKey, operationId)).some(
         (entry) => entry.role === "response",
       )
     ) {
@@ -212,6 +225,8 @@ function getRequest(operationId: CollectiveId) {
 
 /** The response claim and original Message acceptance commit together, including retries. */
 function answer(environment: Environment, message: Message) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     const response = message.operation;
     if (
@@ -222,7 +237,10 @@ function answer(environment: Environment, message: Message) {
     }
     yield* transaction(
       Effect.gen(function* () {
-        const operation = yield* readCollectiveOperation(response.operationId);
+        const operation = yield* readCollectiveOperation(
+          agentKey,
+          response.operationId,
+        );
         if (operation === undefined || operation.origin !== "remote") {
           return yield* new RequestError({
             operationId: response.operationId,
@@ -248,6 +266,7 @@ function answer(environment: Environment, message: Message) {
           }
         }
         const prior = (yield* readCollectiveMessages(
+          agentKey,
           response.operationId,
         )).find((entry) => entry.role === "response");
         if (prior !== undefined) {
@@ -350,6 +369,8 @@ function receiveRequest(
   message: Message,
   value: Extract<CollectiveValue, { readonly kind: "operation" }>,
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     const local = yield* self(environment);
     if (
@@ -362,7 +383,10 @@ function receiveRequest(
     ) {
       return Option.none<IncomingItem>();
     }
-    const existing = yield* readCollectiveOperation(value.operationId);
+    const existing = yield* readCollectiveOperation(
+      agentKey,
+      value.operationId,
+    );
     if (existing !== undefined) {
       if (existing.origin !== "remote") {
         return Option.none<IncomingItem>();
@@ -372,7 +396,7 @@ function receiveRequest(
         ? Option.fromNullable(requestItem(message))
         : Option.none<IncomingItem>();
     }
-    yield* putCollectiveOperation({
+    yield* putCollectiveOperation(agentKey, {
       origin: "remote",
       request: message,
       value,
@@ -393,8 +417,13 @@ function receiveAnswer(
   message: Message,
   response: ResponseValue,
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(response.operationId);
+    const operation = yield* readCollectiveOperation(
+      agentKey,
+      response.operationId,
+    );
     if (operation === undefined || operation.phase === "completed") {
       return;
     }
@@ -415,6 +444,7 @@ function receiveAnswer(
       return;
     }
     const recorded = yield* recordCollectiveAnswer(
+      agentKey,
       response.operationId,
       message,
       yield* Clock.currentTimeMillis,
@@ -430,8 +460,13 @@ function receiveClose(
   message: Message,
   value: Extract<CollectiveValue, { readonly kind: "close" }>,
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(value.operationId);
+    const operation = yield* readCollectiveOperation(
+      agentKey,
+      value.operationId,
+    );
     if (
       operation === undefined ||
       operation.origin !== "remote" ||
@@ -448,7 +483,7 @@ function receiveClose(
     ) {
       return;
     }
-    yield* saveRemoteClose(value.operationId, message);
+    yield* saveRemoteClose(agentKey, value.operationId, message);
     yield* finishRemote(environment, value.operationId);
   });
 }
@@ -485,13 +520,14 @@ function requestEligible(
 }
 
 function deliverNextResult<E, R>(
+  agentKey: string,
   handle: (
     result: ResultDelivery,
     operation: StoredCollectiveOperation,
   ) => Effect.Effect<void, E, R>,
 ) {
   return Effect.gen(function* () {
-    const operation = yield* readNextCollectiveResult();
+    const operation = yield* readNextCollectiveResult(agentKey);
     if (operation === undefined) {
       return false;
     }
@@ -499,7 +535,7 @@ function deliverNextResult<E, R>(
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     const answers = answersFor(
-      yield* readCollectiveAnswers(operation.operationId),
+      yield* readCollectiveAnswers(agentKey, operation.operationId),
       operation.result.answers,
     );
     if (answers.length !== operation.result.answers.length) {
@@ -521,7 +557,9 @@ function deliverNextResult<E, R>(
     yield* checkResultSize(result);
     yield* transaction(
       handle(result, operation).pipe(
-        Effect.zipRight(retireCollectiveResult(operation.operationId)),
+        Effect.zipRight(
+          retireCollectiveResult(agentKey, operation.operationId),
+        ),
       ),
     );
     return true;
@@ -530,11 +568,14 @@ function deliverNextResult<E, R>(
 
 /** One worker reconciles persisted completions and request deadlines after every restart. */
 function runWorker(environment: Environment) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
-    for (const saved of yield* readReadyCollectiveMessages()) {
+    for (const saved of yield* readReadyCollectiveMessages(agentKey)) {
       yield* observeMessage(environment, saved);
     }
     for (const operationId of yield* readCollectiveOperationIds(
+      agentKey,
       "remote",
       "finalizing",
     )) {
@@ -584,40 +625,53 @@ function observeMessage(
   environment: Environment,
   saved: StoredCollectiveMessage,
 ) {
+  const agentKey = environment.agentKey;
+
   return transaction(
     Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(saved.operationId);
+      const operation = yield* readCollectiveOperation(
+        agentKey,
+        saved.operationId,
+      );
       if (operation === undefined || operation.phase === "completed") {
         return;
       }
-      const accepted = yield* readAcceptedMessage(saved.reference);
+      const accepted = yield* readAcceptedMessage(agentKey, saved.reference);
       if (accepted === undefined) {
         return yield* new EndpointStoreError({ reason: "corrupt" });
       }
       if (accepted.failure !== undefined) {
-        return yield* failOperationMessage(saved, accepted.failure);
+        return yield* failOperationMessage(agentKey, saved, accepted.failure);
       }
       if (!accepted.completed) {
         return;
       }
       if (saved.role === "response") {
         yield* recordCollectiveAnswer(
+          agentKey,
           saved.operationId,
           accepted.message,
           yield* Clock.currentTimeMillis,
         );
         yield* finishRemote(environment, saved.operationId);
       } else if (saved.role === "close") {
-        yield* completeCollectiveOperation(saved.operationId);
+        yield* completeCollectiveOperation(agentKey, saved.operationId);
       }
     }),
   );
 }
 
-function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
+function failOperationMessage(
+  agentKey: string,
+  saved: StoredCollectiveMessage,
+  reason: string,
+) {
   return Effect.gen(function* () {
     if (saved.role === "close") {
-      const operation = yield* readCollectiveOperation(saved.operationId);
+      const operation = yield* readCollectiveOperation(
+        agentKey,
+        saved.operationId,
+      );
       if (operation === undefined) {
         return yield* new EndpointStoreError({ reason: "corrupt" });
       }
@@ -627,18 +681,22 @@ function failOperationMessage(saved: StoredCollectiveMessage, reason: string) {
         error: `The request result could not be shared: ${reason}`,
       };
       yield* checkResultSize({ item, sources: { answers: [] } });
-      yield* transaction(failCollectiveClose(saved.operationId, item));
+      yield* transaction(
+        failCollectiveClose(agentKey, saved.operationId, item),
+      );
     } else if (saved.role === "response") {
-      yield* retireUnusableClose(saved);
+      yield* retireUnusableClose(agentKey, saved);
     }
   });
 }
 
 /** A certified close and the selected answers complete the same retained result. */
 function finishRemote(environment: Environment, operationId: CollectiveId) {
+  const agentKey = environment.agentKey;
+
   return transaction(
     Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(operationId);
+      const operation = yield* readCollectiveOperation(agentKey, operationId);
       if (
         operation === undefined ||
         operation.origin !== "remote" ||
@@ -655,7 +713,7 @@ function finishRemote(environment: Environment, operationId: CollectiveId) {
           closedBy: value.closedBy,
         });
         yield* checkResultSize(result);
-        yield* saveCollectiveResult({
+        yield* saveCollectiveResult(agentKey, {
           operationId,
           item: result.item,
           answers: value.included,
@@ -671,15 +729,17 @@ function selectAnswers(
   operationId: CollectiveId,
   close: Close,
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     if (
       new Set(close.included.map((reference) => reference.authorAgentId))
         .size !== close.included.length
     ) {
-      yield* retireCollectiveOperation(operationId);
+      yield* retireCollectiveOperation(agentKey, operationId);
       return Option.none<readonly Message[]>();
     }
-    const answers = yield* readCollectiveAnswers(operationId);
+    const answers = yield* readCollectiveAnswers(agentKey, operationId);
     const selected = answersFor(answers, close.included);
     if (selected.length === close.included.length) {
       return Option.some(selected);
@@ -689,7 +749,7 @@ function selectAnswers(
     ) {
       return Option.none<readonly Message[]>();
     }
-    yield* retireCollectiveOperation(operationId);
+    yield* retireCollectiveOperation(agentKey, operationId);
     return Option.none<readonly Message[]>();
   });
 }
@@ -714,6 +774,8 @@ function ownAnswerPending(
   answers: readonly Message[],
   included: readonly MessageReference[],
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     const local = yield* self(environment);
     const own = included.find(
@@ -729,7 +791,7 @@ function ownAnswerPending(
     ) {
       return false;
     }
-    return (yield* readCollectiveMessages(operationId)).some(
+    return (yield* readCollectiveMessages(agentKey, operationId)).some(
       (entry) =>
         entry.role === "response" &&
         entry.reference.authorAgentId === own.authorAgentId &&
@@ -744,8 +806,11 @@ function self(environment: Environment) {
 }
 
 function localDeadlines(environment: Environment) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
     for (const operationId of yield* readCollectiveOperationIds(
+      agentKey,
       "local",
       "collecting",
     )) {
@@ -760,9 +825,11 @@ function localDeadlines(environment: Environment) {
 
 /** Final fields and the close are accepted in the same transaction. */
 function finishLocal(environment: Environment, operationId: CollectiveId) {
+  const agentKey = environment.agentKey;
+
   return transaction(
     Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(operationId);
+      const operation = yield* readCollectiveOperation(agentKey, operationId);
       if (
         operation === undefined ||
         operation.origin !== "local" ||
@@ -771,7 +838,7 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         return undefined;
       }
       const participants = operationParticipants(operation);
-      const answers = yield* readCollectiveAnswers(operationId);
+      const answers = yield* readCollectiveAnswers(agentKey, operationId);
       const now = yield* Clock.currentTimeMillis;
       if (
         answers.length < participants.members.length &&
@@ -792,7 +859,7 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         authorAgentId: answer.author.agentId,
         msgId: answer.msgId,
       }));
-      yield* saveCollectiveResult({
+      yield* saveCollectiveResult(agentKey, {
         operationId,
         item: result.item,
         answers: included,
@@ -829,8 +896,10 @@ function saveMessage(
   role: "request" | "response" | "close",
   message: Message,
 ) {
+  const agentKey = environment.agentKey;
+
   return Effect.gen(function* () {
-    const inserted = yield* putCollectiveMessage({
+    const inserted = yield* putCollectiveMessage(agentKey, {
       operationId,
       role,
       destination: outgoingAddress(message),
@@ -984,10 +1053,13 @@ function sourceRequest(
     : new EndpointStoreError({ reason: "corrupt" });
 }
 
-function retireUnusableClose(saved: StoredCollectiveMessage) {
+function retireUnusableClose(agentKey: string, saved: StoredCollectiveMessage) {
   return transaction(
     Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(saved.operationId);
+      const operation = yield* readCollectiveOperation(
+        agentKey,
+        saved.operationId,
+      );
       if (
         operation?.origin === "remote" &&
         operation.phase === "finalizing" &&
@@ -997,7 +1069,7 @@ function retireUnusableClose(saved: StoredCollectiveMessage) {
             reference.msgId === saved.reference.msgId,
         )
       ) {
-        yield* retireCollectiveOperation(saved.operationId);
+        yield* retireCollectiveOperation(agentKey, saved.operationId);
       }
     }),
   );

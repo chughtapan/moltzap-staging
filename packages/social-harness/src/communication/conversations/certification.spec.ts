@@ -160,7 +160,7 @@ function prepareAndObserve(
     yield* untilLive(
       store
         .run(
-          testStore.readAcceptedMessage({
+          testStore.readAcceptedMessage(store.agentKey, {
             authorAgentId: message.author.agentId,
             msgId: message.msgId,
           }),
@@ -189,7 +189,7 @@ function prepareAcceptedMessage(
     );
     yield* store
       .run(
-        testStore.acceptMessage({
+        testStore.acceptMessage(store.agentKey, {
           authorAgentId: message.author.agentId,
           msgId: message.msgId,
           conversationId: harness.membership.descriptor.conversationId,
@@ -357,6 +357,8 @@ function restartMember(
   store: TestDatabase,
 ) {
   return makeEndpointEngine({
+    agentKey: store.agentKey,
+
     localAgentCard: identity.card,
     signingAuthority: identity.authority,
     registrySignerPublicKey: harness.registrySignerPublicKey,
@@ -505,31 +507,36 @@ function makeProtocolHarness(
         requireAt(stores, index, "endpoint store").pipe(
           Effect.flatMap((store) => {
             const ports = index === 0 ? authorPorts : memberPorts;
-            return store.run(initializeCommunication(identity.card)).pipe(
-              Effect.zipRight(
-                makeEndpointEngine({
-                  localAgentCard: identity.card,
-                  signingAuthority: identity.authority,
-                  registrySignerPublicKey,
-                  registry,
-                  reportStorageFault: ports.reportStorageFault,
-                  routerWorker: scriptedRouterWorker(
-                    store,
-                    outbound,
-                    ports.attachment,
-                    ports.authorSend,
-                  ),
-                })
-                  .pipe(Effect.provideService(SqlClient, store.sql))
-                  .pipe(
-                    Effect.provideService(WireVersions, {
-                      emitted: options.emittedVersions?.[index] ?? WIRE_VERSION,
-                      live: options.emittedVersions ?? LIVE_WIRE_VERSIONS,
-                      history: options.emittedVersions ?? LIVE_WIRE_VERSIONS,
-                    }),
-                  ),
-              ),
-            );
+            return store
+              .run(initializeCommunication(store.agentKey, identity.card))
+              .pipe(
+                Effect.zipRight(
+                  makeEndpointEngine({
+                    agentKey: store.agentKey,
+
+                    localAgentCard: identity.card,
+                    signingAuthority: identity.authority,
+                    registrySignerPublicKey,
+                    registry,
+                    reportStorageFault: ports.reportStorageFault,
+                    routerWorker: scriptedRouterWorker(
+                      store,
+                      outbound,
+                      ports.attachment,
+                      ports.authorSend,
+                    ),
+                  })
+                    .pipe(Effect.provideService(SqlClient, store.sql))
+                    .pipe(
+                      Effect.provideService(WireVersions, {
+                        emitted:
+                          options.emittedVersions?.[index] ?? WIRE_VERSION,
+                        live: options.emittedVersions ?? LIVE_WIRE_VERSIONS,
+                        history: options.emittedVersions ?? LIVE_WIRE_VERSIONS,
+                      }),
+                    ),
+                ),
+              );
           }),
         ),
       { concurrency: 1 },
@@ -743,7 +750,7 @@ function certifiedRecordCounts(
   return Effect.forEach(
     harness.stores,
     (store) =>
-      store.run(testStore.recoverStoredState()).pipe(
+      store.run(testStore.recoverStoredState(store.agentKey)).pipe(
         Effect.orDie,
         Effect.map(({ certifiedRecords }) => certifiedRecords.length),
       ),
@@ -806,7 +813,7 @@ function certifyFirstMessageOf(
     yield* Fiber.join(sending).pipe(Effect.orDie);
     const authorStore = yield* requireAt(harness.stores, 0, "author store");
     const retained = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
     const record = yield* requireAt(
       retained.certifiedRecords,
@@ -977,7 +984,7 @@ function restartOverPersistedDurabilityVote(
     }).pipe(Effect.orDie);
     yield* authorStore
       .run(
-        testStore.mergeEvidence({
+        testStore.mergeEvidence(authorStore.agentKey, {
           conversationId: harness.membership.descriptor.conversationId,
           kind: "durability",
           subjectId: actionRecord.recordHash,
@@ -1066,7 +1073,7 @@ function adoptsAnActionCertificateOverItsOwnLock() {
       [{ type: "text", text: "winner" }],
     ]);
     const recovered = yield* laggingStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(laggingStore.agentKey))
       .pipe(Effect.orDie);
     expect(recovered.certifiedRecords).toHaveLength(3);
     const releasedSignature = yield* messagesOfKind(
@@ -1112,7 +1119,9 @@ function certifiedRecordPacket(
   return Effect.gen(function* () {
     const index = harness.identities.indexOf(author);
     const store = yield* requireAt(harness.stores, index, "endpoint store");
-    const recovery = yield* store.run(testStore.recoverStoredState());
+    const recovery = yield* store.run(
+      testStore.recoverStoredState(store.agentKey),
+    );
     const stored = recovery.certifiedRecords
       .filter(({ previousRecordHash }) => previousRecordHash !== undefined)
       .at(-1);
@@ -1204,7 +1213,7 @@ function adoptsACertifiedRecordOverItsOwnLock() {
       [{ type: "text", text: "winner" }],
     ]);
     const recovered = yield* laggingStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(laggingStore.agentKey))
       .pipe(Effect.orDie);
     expect(recovered.certifiedRecords).toHaveLength(3);
   });
@@ -1369,7 +1378,7 @@ function refusesASecondCertificateOverAStagedAction() {
     yield* harness.drain();
     yield* takeQueued(harness);
     const beforeRefusal = yield* stagingStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(stagingStore.agentKey))
       .pipe(Effect.orDie);
     const staged = beforeRefusal.stagedRecords.filter(
       ({ actionHash }) => actionHash === stagedActionHash,
@@ -1402,7 +1411,7 @@ function refusesASecondCertificateOverAStagedAction() {
       (message) => message.senderAgentId === staging.card.agentId,
     );
     const locks = (yield* stagingStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(stagingStore.agentKey))
       .pipe(Effect.orDie)).proposalLocks;
 
     expect(staged).toHaveLength(1);
@@ -1647,7 +1656,7 @@ function certifiesOrdinaryN4Message() {
     ).toBe(true);
 
     const staged = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
     expect(
       staged.stagedRecords.some(
@@ -1690,7 +1699,7 @@ function certifiesOrdinaryN4Message() {
     ).toEqual(["ignored", "ignored"]);
 
     const afterHostileVotes = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
     expect(
       afterHostileVotes.certifiedRecords.some(
@@ -1722,7 +1731,7 @@ function certifiesOrdinaryN4Message() {
       "accepted",
     ]);
     const afterFirstRemoteVote = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
     expect(
       afterFirstRemoteVote.certifiedRecords.some(
@@ -1735,7 +1744,7 @@ function certifiesOrdinaryN4Message() {
     ]);
     yield* Fiber.join(sending).pipe(Effect.orDie);
     const certified = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
     const storedMessage = certified.certifiedRecords.find(
       ({ recordHash }) => recordHash === actionRecord.recordHash,
@@ -1844,7 +1853,7 @@ function ordersCompetingProposalsBeforeActionVotes(input: {
     expect(new Set(signatureHashes)).toEqual(new Set([firstActionHash]));
 
     const recovery = yield* observingStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(observingStore.agentKey))
       .pipe(Effect.orDie);
     const successorLocks = recovery.proposalLocks.filter(
       ({ previousRecordHash }) =>
@@ -1930,7 +1939,7 @@ function sendReturnsTheStoredCertifiedRecordHash() {
     const authorStore = yield* requireAt(harness.stores, 0, "store");
 
     const recovery = yield* authorStore
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(authorStore.agentKey))
       .pipe(Effect.orDie);
 
     expect(
@@ -1986,12 +1995,14 @@ function reappendedOuterMessagesYieldOneMessage() {
     ]);
     yield* Fiber.join(sending).pipe(Effect.orDie);
     const authorStore = yield* requireAt(harness.stores, 0, "author store");
-    const sent = yield* authorStore.run(testStore.recoverStoredState()).pipe(
-      Effect.orDie,
-      Effect.flatMap((state) =>
-        requireAt(state.certifiedRecords, 1, "second certified record"),
-      ),
-    );
+    const sent = yield* authorStore
+      .run(testStore.recoverStoredState(authorStore.agentKey))
+      .pipe(
+        Effect.orDie,
+        Effect.flatMap((state) =>
+          requireAt(state.certifiedRecords, 1, "second certified record"),
+        ),
+      );
 
     yield* pump(harness, transcript);
 
@@ -2262,7 +2273,10 @@ function concurrentFirstSends(firstVersion: string, secondVersion: string) {
     yield* Fiber.join(secondSend).pipe(Effect.orDie);
     const recoveries = yield* Effect.forEach(
       harness.stores,
-      (store) => store.run(testStore.recoverStoredState()).pipe(Effect.orDie),
+      (store) =>
+        store
+          .run(testStore.recoverStoredState(store.agentKey))
+          .pipe(Effect.orDie),
       { concurrency: 1 },
     );
     expect(recoveries[0]?.certifiedRecords).toEqual(
@@ -2548,6 +2562,8 @@ function coldStartWithPendingOutboundLeavesOutboundLoopAlive(): Effect.Effect<
     const attached = yield* Deferred.make<RouterTailAnchor>();
     const attempts = yield* Ref.make(0);
     const restarted = yield* makeEndpointEngine({
+      agentKey: store.agentKey,
+
       localAgentCard: identity.card,
       signingAuthority: identity.authority,
       registrySignerPublicKey: harness.registrySignerPublicKey,
@@ -2589,7 +2605,7 @@ function blackHolesFirstTransmit(
   const beginThenHang = (envelopeId: string) =>
     Deferred.await(store).pipe(
       Effect.flatMap((author) =>
-        author.run(testStore.beginOutbound(envelopeId)),
+        author.run(testStore.beginOutbound(author.agentKey, envelopeId)),
       ),
       Effect.orDie,
       Effect.zipRight(Effect.never),
@@ -2628,7 +2644,7 @@ function retriesAnInterruptedTransmit(): Effect.Effect<
     const draining = yield* author.drainOutbound.pipe(Effect.fork);
     yield* untilLive(Ref.get(transmits).pipe(Effect.map((count) => count > 0)));
     const [held] = (yield* store
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(store.agentKey))
       .pipe(Effect.orDie)).outboundMessages;
     if (held === undefined) {
       return yield* Effect.dieMessage("The begun envelope was not retained");
@@ -2644,8 +2660,9 @@ function retriesAnInterruptedTransmit(): Effect.Effect<
       ),
     ).toHaveLength(1);
     expect(
-      (yield* store.run(testStore.recoverStoredState()).pipe(Effect.orDie))
-        .outboundMessages,
+      (yield* store
+        .run(testStore.recoverStoredState(store.agentKey))
+        .pipe(Effect.orDie)).outboundMessages,
     ).toEqual([]);
     expect(yield* Deferred.poll(fatal)).toEqual(Option.none());
   });
@@ -2729,7 +2746,7 @@ function concurrentDrainsSendEachOutboxOnce(): Effect.Effect<
       Ref.get(transmits).pipe(Effect.map((count) => count >= 2)),
     );
     const [held] = (yield* store
-      .run(testStore.recoverStoredState())
+      .run(testStore.recoverStoredState(store.agentKey))
       .pipe(Effect.orDie)).outboundMessages;
     if (held === undefined) {
       return yield* Effect.dieMessage("the raced envelope was not stored");
@@ -2742,8 +2759,9 @@ function concurrentDrainsSendEachOutboxOnce(): Effect.Effect<
       held.envelopeId,
     ]);
     expect(
-      (yield* store.run(testStore.recoverStoredState()).pipe(Effect.orDie))
-        .outboundMessages,
+      (yield* store
+        .run(testStore.recoverStoredState(store.agentKey))
+        .pipe(Effect.orDie)).outboundMessages,
     ).toEqual([]);
     expect(yield* Deferred.poll(fatal)).toEqual(Option.none());
     yield* Fiber.interrupt(sending);
@@ -2948,8 +2966,9 @@ function failedRecoveryEndsTheOutboundLoop(): Effect.Effect<
     expect(ended.reason).toBe(expectedReason);
     const store = yield* requireAt(harness.stores, 0, "endpoint store");
     expect(
-      (yield* store.run(testStore.recoverStoredState()).pipe(Effect.orDie))
-        .messageIntents,
+      (yield* store
+        .run(testStore.recoverStoredState(store.agentKey))
+        .pipe(Effect.orDie)).messageIntents,
     ).toHaveLength(1);
   });
 }

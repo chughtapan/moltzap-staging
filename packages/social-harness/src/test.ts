@@ -26,3 +26,18 @@ export { withAgentTransaction } from "./database/transactions.js";
 export { makeInbox } from "./harness/inbox.js";
 /** Concurrent admission tests retain production ownership and key generation. */
 export { getOrCreateOwnedAgent } from "./harness/ownership.js";
+
+/** Database qualification drives the daemon's acceptance and request recovery operations. */
+export {
+  acceptMessage,
+  encodeRuntimeValue,
+  failMessage,
+  initializeCommunication,
+  putCollectiveOperation,
+  readAcceptedMessage,
+  readCollectiveOperation,
+  readCollectiveOperationIds,
+  readUnpreparedMessages,
+  retireCollectiveOperation,
+  transaction,
+} from "./communication/store.js";

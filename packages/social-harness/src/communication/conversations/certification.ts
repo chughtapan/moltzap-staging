@@ -214,22 +214,24 @@ const lockAction = (
   void,
   EndpointStoreError | RouterWorkerPersistenceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const lock = yield* proposalLock(conversation, action, actionHash);
     if (
       action.kind === "FIRST_MESSAGE" &&
       !runtime.conversations.has(action.conversationId)
     ) {
       const foundation = yield* firstMessageFoundation(conversation, action);
-      yield* lockFirstMessageProposal(foundation, lock);
+      yield* lockFirstMessageProposal(agentKey, foundation, lock);
       yield* Effect.sync(() => {
         runtime.conversations.set(action.conversationId, conversation);
       });
       return;
     }
-    yield* lockProposal(lock);
+    yield* lockProposal(agentKey, lock);
   });
+};
 
 const foldFor = (
   runtime: EngineRuntime,
@@ -256,6 +258,7 @@ const foldFor = (
 type LocalEvidenceRole = "action" | "durability";
 
 const mergeEvidence = (
+  agentKey: string,
   fold: EngineActionFold,
   role: LocalEvidenceRole,
   message: SignedMessage,
@@ -275,7 +278,7 @@ const mergeEvidence = (
       subjectId,
       message,
     ).pipe(Effect.mapError(localRepresentationFailure));
-    yield* storedMergeEvidence(row);
+    yield* storedMergeEvidence(agentKey, row);
     const evidence =
       role === "action" ? fold.actionEvidence : fold.durabilityEvidence;
     yield* Effect.sync(() => {
@@ -296,12 +299,13 @@ const completeLocalEvidence = (
   void,
   EndpointStoreError | RouterWorkerPersistenceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const retained =
       role === "action" ? fold.actionEvidence : fold.durabilityEvidence;
     if (!retained.has(runtime.input.localAgentCard.agentId)) {
-      yield* mergeEvidence(fold, role, evidence);
+      yield* mergeEvidence(agentKey, fold, role, evidence);
     }
     yield* Effect.uninterruptible(
       runtime.outbox.queueEvidence(fold.conversation, evidence).pipe(
@@ -323,6 +327,7 @@ const completeLocalEvidence = (
       ),
     );
   });
+};
 
 const localActionEvidence = (
   runtime: EngineRuntime,
@@ -541,15 +546,16 @@ const promote = (
   void,
   EndpointStoreError | RouterWorkerPersistenceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const stored = yield* certifiedRecordRows(
       record,
       fold.actionEvidence.values(),
       fold.durabilityEvidence.values(),
     );
     yield* Effect.uninterruptible(
-      promoteRecord(stored).pipe(
+      promoteRecord(agentKey, stored).pipe(
         Effect.zipRight(completePromotion(runtime, fold, record)),
       ),
     );
@@ -559,6 +565,7 @@ const promote = (
       fold.conversation.conversationId,
     );
   });
+};
 
 const maybePromote = (
   runtime: EngineRuntime,
@@ -711,8 +718,9 @@ const acceptEvidence = (
   RouterIngressDisposition,
   ProtocolAcceptanceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const { route } = evidenceTarget(runtime, statement);
     if (route === undefined) {
       return "ignored";
@@ -726,10 +734,11 @@ const acceptEvidence = (
     if (!evidenceMatchesFold(route, evidence.statement)) {
       return "ignored";
     }
-    yield* mergeEvidence(route.fold, route.kind, evidence.message);
+    yield* mergeEvidence(agentKey, route.fold, route.kind, evidence.message);
     yield* advanceEvidenceFold(runtime, route);
     return "accepted";
   });
+};
 
 function advanceEvidenceFold(
   runtime: EngineRuntime,
@@ -802,6 +811,7 @@ const ensureConversation = (
 };
 
 const mergeActionCertificate = (
+  agentKey: string,
   fold: EngineActionFold,
   signatures: readonly unknown[],
 ): Effect.Effect<void, ProtocolAcceptanceError, SqlClient> =>
@@ -817,7 +827,9 @@ const mergeActionCertificate = (
             evidenceMatchesFold({ fold, kind: "action" }, statement),
           () => new ClientRepresentationError(),
         ),
-        Effect.flatMap(({ message }) => mergeEvidence(fold, "action", message)),
+        Effect.flatMap(({ message }) =>
+          mergeEvidence(agentKey, fold, "action", message),
+        ),
       ),
     { concurrency: 1, discard: true },
   );
@@ -832,8 +844,9 @@ const supersedeLock = (
   runtime: EngineRuntime,
   conversation: EngineConversation,
   record: ActionCertifiedRecord,
-): Effect.Effect<void, ProtocolAcceptanceError, SqlClient> =>
-  Effect.gen(function* () {
+): Effect.Effect<void, ProtocolAcceptanceError, SqlClient> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const { action, actionHash } = record.recordCore;
     const lock = yield* proposalLock(conversation, action, actionHash);
     const signatures = yield* Effect.forEach(
@@ -856,7 +869,7 @@ const supersedeLock = (
         ),
       { concurrency: 1 },
     );
-    yield* supersedeProposalLock(lock, certificate).pipe(
+    yield* supersedeProposalLock(agentKey, lock, certificate).pipe(
       Effect.zipRight(
         Effect.sync(() => {
           dropFoldsAtPredecessor(runtime, conversation, action, actionHash);
@@ -869,6 +882,7 @@ const supersedeLock = (
       Effect.uninterruptible,
     );
   });
+};
 
 function dropFoldsAtPredecessor(
   runtime: EngineRuntime,
@@ -899,8 +913,9 @@ const prepareRecordFold = (
   EngineActionFold | undefined,
   ProtocolAcceptanceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     yield* verifyOuterMessage({
       message: ingress.message,
       membership,
@@ -928,9 +943,14 @@ const prepareRecordFold = (
       action,
       record.recordCore.actionHash,
     );
-    yield* mergeActionCertificate(fold, record.actionCertificate.signatures);
+    yield* mergeActionCertificate(
+      agentKey,
+      fold,
+      record.actionCertificate.signatures,
+    );
     return fold;
   });
+};
 
 const acceptActionCertifiedRecord = (
   runtime: EngineRuntime,
@@ -979,8 +999,9 @@ const acceptCertifiedRecord = (
   RouterIngressDisposition,
   ProtocolAcceptanceError,
   SqlClient
-> =>
-  Effect.gen(function* () {
+> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const membership = yield* ingressMembership(
       runtime,
       record.actionCertifiedRecord.recordCore.action,
@@ -1004,7 +1025,7 @@ const acceptCertifiedRecord = (
       votes,
     );
     yield* Effect.uninterruptible(
-      applyCertifiedRecord(stored).pipe(
+      applyCertifiedRecord(agentKey, stored).pipe(
         Effect.zipRight(
           retainCertifiedFold(runtime, fold, actionRecord, votes),
         ),
@@ -1018,6 +1039,7 @@ const acceptCertifiedRecord = (
     );
     return "accepted";
   });
+};
 
 function acceptPacket(
   runtime: EngineRuntime,
@@ -1130,8 +1152,9 @@ export const acceptEngineRecoveryIngress = (
 const resumeFold = (
   runtime: EngineRuntime,
   fold: EngineActionFold,
-): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> =>
-  Effect.gen(function* () {
+): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> => {
+  const agentKey = runtime.input.agentKey;
+  return Effect.gen(function* () {
     const retainedRecord =
       fold.recordHash === undefined
         ? undefined
@@ -1142,6 +1165,7 @@ const resumeFold = (
     if (
       retainedRecord !== undefined &&
       (yield* readRecordOutbound(
+        agentKey,
         fold.conversation.conversationId,
         retainedRecord.recordHash,
       )) !== undefined
@@ -1184,6 +1208,7 @@ const resumeFold = (
         : Effect.fail(persistenceFailure()),
     ),
   );
+};
 
 /**
  * Resumes durable evidence obligations for one conversation, or all when

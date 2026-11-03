@@ -1,4 +1,4 @@
-/** @file Qualifies ownership transactions and RLS with a real non-owner PostgreSQL login. */
+/** @file Qualifies shared-agent persistence on SQLite and restricted-role PostgreSQL. */
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
@@ -7,6 +7,8 @@ import {
   AgentSigningAuthority,
   InboxEvent,
   Message,
+  Request,
+  RequestedSchema,
 } from "@moltzap/social-harness";
 import {
   Firewall,
@@ -15,11 +17,22 @@ import {
   Registry,
 } from "@moltzap/social-harness/service";
 import {
+  acceptMessage,
   databaseConnection,
   DecisionProviderError,
+  encodeRuntimeValue,
+  failMessage,
   getOrCreateOwnedAgent,
+  initializeCommunication,
   makeInbox,
   migrateDaemon,
+  putCollectiveOperation,
+  readAcceptedMessage,
+  readCollectiveOperation,
+  readCollectiveOperationIds,
+  readUnpreparedMessages,
+  retireCollectiveOperation,
+  transaction,
   withAgentTransaction,
 } from "@moltzap/social-harness/test";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
@@ -34,7 +47,7 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
 const testAgentCard = (name: string) =>
@@ -170,6 +183,110 @@ const qualifyInbox = (keys: readonly string[]) =>
     return keys;
   });
 
+const qualifyProtocol = (keys: readonly string[]) =>
+  Effect.gen(function* () {
+    const author = testAgentCard("protocol-author");
+    const recipient = testAgentCard("protocol-recipient");
+    const message = yield* Message.create({
+      author,
+      recipients: [recipient],
+      content: [{ type: "text", text: "Shared-store acceptance" }],
+    });
+    const canonicalMessage = yield* encodeRuntimeValue(
+      yield* Schema.encode(Message)(message),
+    );
+    const reference = { authorAgentId: author.agentId, msgId: message.msgId };
+    const request = yield* Request.create({
+      author,
+      recipients: [recipient],
+      op: "gather",
+      question: "Acknowledge receipt",
+      deadline: 60,
+      requestedSchema: yield* Schema.decodeUnknown(RequestedSchema)({
+        type: "object",
+        properties: { received: { type: "boolean" } },
+        required: ["received"],
+      }),
+    });
+    for (const key of keys) {
+      yield* initializeCommunication(key, author);
+      yield* acceptMessage(key, {
+        authorAgentId: author.agentId,
+        msgId: message.msgId,
+        conversationId: "qualification",
+        canonicalMessage,
+      });
+      expect((yield* readAcceptedMessage(key, reference))?.message).toEqual(
+        message,
+      );
+      expect(
+        (yield* readUnpreparedMessages(key)).map((item) => item.message),
+      ).toEqual([message]);
+      yield* Effect.all(
+        Array.from({ length: 8 }, () =>
+          putCollectiveOperation(key, { origin: "local", request }),
+        ),
+        { concurrency: 8 },
+      );
+      expect(
+        (yield* readCollectiveOperation(key, request.operationId))?.deadlineAt,
+      ).toBe(request.deadlineAt);
+    }
+    const first = keys[0];
+    const second = keys[1];
+    if (first === undefined || second === undefined) {
+      return yield* Effect.dieMessage("Expected two isolated protocol owners");
+    }
+    const failure = "membership-invalid";
+    yield* failMessage(first, reference, failure);
+    const before = yield* readCollectiveOperation(first, request.operationId);
+    const phases = yield* Effect.all(
+      Array.from({ length: 2 }, () =>
+        transaction(
+          first,
+          Effect.gen(function* () {
+            const state = yield* readCollectiveOperation(
+              first,
+              request.operationId,
+            );
+            yield* Effect.sleep("10 millis");
+            yield* retireCollectiveOperation(first, request.operationId);
+            return state?.phase;
+          }),
+        ),
+      ),
+      { concurrency: 2 },
+    );
+    expect(phases.filter((phase) => phase === before?.phase)).toHaveLength(1);
+    expect(new Set(phases).size).toBe(2);
+    expect((yield* readAcceptedMessage(first, reference))?.failure).toBe(
+      failure,
+    );
+    expect(
+      (yield* readAcceptedMessage(second, reference))?.failure,
+    ).toBeUndefined();
+    expect(yield* readUnpreparedMessages(first)).toHaveLength(0);
+    expect(yield* readUnpreparedMessages(second)).toHaveLength(1);
+    expect(
+      yield* readCollectiveOperationIds(first, "local", "completed"),
+    ).toEqual([request.operationId]);
+    expect(
+      yield* readCollectiveOperationIds(second, "local", "collecting"),
+    ).toEqual([request.operationId]);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.onDialectOrElse({
+      pg: () =>
+        Effect.gen(function* () {
+          expect(yield* sql`SELECT * FROM message_intents`).toHaveLength(0);
+          expect(yield* sql`SELECT * FROM collective_operations`).toHaveLength(
+            0,
+          );
+        }),
+      orElse: () => Effect.void,
+    });
+    return keys;
+  });
+
 const qualifyFirewall = (keys: readonly string[]) =>
   Effect.gen(function* () {
     const authority = yield* AgentSigningAuthority.fromPkcs8(
@@ -290,6 +407,7 @@ it(
       schemaUrl.password = runtimePassword;
       const keys = yield* qualifyTenants.pipe(
         Effect.flatMap(qualifyInbox),
+        Effect.flatMap(qualifyProtocol),
         Effect.flatMap(qualifyFirewall),
         Effect.provide(databaseConnection(Redacted.make(schemaUrl.href))),
       );
@@ -302,3 +420,11 @@ it(
     }).pipe(Effect.scoped),
   { timeout: 120_000 },
 );
+
+it("isolates accepted messages and requests between SQLite agents", () =>
+  Effect.gen(function* () {
+    yield* migrateDaemon;
+    yield* qualifyProtocol([randomUUID(), randomUUID()]);
+  }).pipe(
+    Effect.provide(databaseConnection(Redacted.make("sqlite::memory:"))),
+  ));

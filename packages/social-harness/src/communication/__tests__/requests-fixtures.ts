@@ -71,7 +71,10 @@ export function openCollectives(input: FixtureInput = {}) {
       yield* complete;
     }
     const transport = createTransport(input, sent, database);
-    const requests = yield* makeRequests({ self: agent, ...transport }).pipe(
+    const requests = yield* makeRequests(database.agentKey, {
+      self: agent,
+      ...transport,
+    }).pipe(
       Effect.provideService(SqlClient, database.sql),
       Scope.extend(scope),
     );
@@ -226,7 +229,7 @@ function createTransport(
         const conversationId = yield* deriveConversationId(
           members.sort(compareAgentIds),
         );
-        yield* acceptMessage({
+        yield* acceptMessage(database.agentKey, {
           authorAgentId: message.author.agentId,
           msgId: message.msgId,
           conversationId,

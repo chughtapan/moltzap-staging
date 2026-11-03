@@ -164,6 +164,7 @@ function runDaemonRuntime(
         historyExport,
         communication: (identityCard) =>
           Communication.layer({
+            agentKey: bootstrap.configuration.stateDirectory,
             identityCard,
             signingAuthority: bootstrap.signingAuthority,
             registrySignerPublicKey:

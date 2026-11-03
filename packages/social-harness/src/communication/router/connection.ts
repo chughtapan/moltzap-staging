@@ -188,6 +188,7 @@ interface RouterWorkerCallbacks<Payload> {
 
 /** Complete private construction input for one registered endpoint. */
 export interface RouterWorkerInput<Payload> {
+  readonly agentKey: string;
   readonly callerAgentId: AgentId;
   /** Durable membership cards available before Registry connectivity. */
   readonly pinnedSenderCards: readonly VerifiedAgentIdentityCard[];
@@ -899,7 +900,9 @@ function transmitOutbound<Payload>(
   envelopeId: string,
   instance: RouterInstanceId,
 ): Effect.Effect<RouterWorkerSendOutcome, OutboundTransportError, SqlClient> {
-  return beginOutbound(envelopeId).pipe(
+  const agentKey = runtime.input.agentKey;
+
+  return beginOutbound(agentKey, envelopeId).pipe(
     Effect.mapError(mapPersistenceError),
     Effect.flatMap((attempt) => {
       switch (attempt.kind) {
@@ -933,9 +936,11 @@ function interpretSendResult<Payload>(
   input: TransmitInput,
   result: RouterSendResult,
 ): Effect.Effect<RouterWorkerSendOutcome, OutboundTransportError, SqlClient> {
+  const agentKey = runtime.input.agentKey;
+
   switch (result.kind) {
     case "accepted":
-      return completeAcceptedOutbound(input, result);
+      return completeAcceptedOutbound(agentKey, input, result);
     case "router_restarted":
       return Effect.succeed({ kind: "restarted" });
     case "retry_identity_unknown":
@@ -1013,6 +1018,7 @@ function transmitOuter<Payload>(
 }
 
 function completeAcceptedOutbound(
+  agentKey: string,
   input: TransmitInput,
   result: Extract<RouterSendResult, { readonly kind: "accepted" }>,
 ): Effect.Effect<RouterWorkerSendOutcome, OutboundTransportError, SqlClient> {
@@ -1026,7 +1032,7 @@ function completeAcceptedOutbound(
     if (result.signedMessageDigest !== expectedDigest) {
       return yield* Effect.fail(new RouterWorkerProtocolError());
     }
-    yield* completeOutbound(input.outbound).pipe(
+    yield* completeOutbound(agentKey, input.outbound).pipe(
       Effect.mapError(mapPersistenceError),
     );
     return { kind: "accepted" };

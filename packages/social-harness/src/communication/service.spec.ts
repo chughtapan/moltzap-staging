@@ -202,6 +202,7 @@ function openCommunication(
     );
     const context = yield* Layer.build(
       Communication.layer({
+        agentKey: subject.directory,
         identityCard: subject.local.card,
         signingAuthority: subject.local.authority,
         registrySignerPublicKey: subject.signer,

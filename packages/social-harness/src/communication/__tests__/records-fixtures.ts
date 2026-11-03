@@ -6,11 +6,11 @@
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
 import type { AgentSigningAuthority } from "../../identity/keys.js";
-import type * as Store from "../store.js";
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
 } from "../store.js";
+import type { TestDatabase } from "./store-fixtures.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
   agentCardOf,
@@ -41,7 +41,7 @@ import {
   type VerifiedMembership,
 } from "../records.js";
 
-type TestStore = typeof Store;
+type TestStore = TestDatabase["store"];
 
 /** One member's verified card and the authority that signs as it. */
 export interface SigningIdentity {

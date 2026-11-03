@@ -304,13 +304,15 @@ export function recoverCertifiedHistory(
   runtime: EngineRuntime,
   recoveryInput: RouterWorkerRecovery,
 ): Effect.Effect<void, RouterWorkerRecoveryError, SqlClient> {
+  const agentKey = runtime.input.agentKey;
+
   return Effect.gen(function* () {
     const barrier = currentRecoveryBarrier(runtime);
     if (barrier === undefined) {
       return yield* Effect.fail(recoveryFailure());
     }
     yield* endRun(runtime);
-    const recovered = yield* recoverStoredState().pipe(
+    const recovered = yield* recoverStoredState(agentKey).pipe(
       Effect.mapError(recoveryFailure),
     );
     const memberships = yield* recoverMemberships(runtime, recovered);
@@ -950,6 +952,8 @@ function prepareRecoveryOutbox(
   RouterWorkerRecoveryError,
   SqlClient
 > {
+  const agentKey = runtime.input.agentKey;
+
   return verifyStoredOutbounds(
     runtime.input,
     snapshot.outboundMessages,
@@ -958,6 +962,7 @@ function prepareRecoveryOutbox(
     Effect.mapError(recoveryFailure),
     Effect.flatMap((outbounds) =>
       discardRestartedOutbounds(
+        agentKey,
         outbounds.filter((outbound) =>
           reanchoring.has(outbound.conversationId),
         ),
@@ -975,13 +980,15 @@ function prepareRecoveryOutbox(
 
 /**
  * Retire verified envelopes whose conversations require a new Router anchor.
- * @param outbounds Envelopes bound to the replaced Router instance.
+ *@param agentKey Immutable storage owner for this operation.
+ *  @param outbounds Envelopes bound to the replaced Router instance.
  * @returns Completion once the stale envelopes are inactive.
  */
 function discardRestartedOutbounds(
+  agentKey: string,
   outbounds: readonly StoredOutboundMessage[],
 ): Effect.Effect<void, RouterWorkerRecoveryError, SqlClient> {
-  return discardOutbound(outbounds).pipe(
+  return discardOutbound(agentKey, outbounds).pipe(
     Effect.mapError(recoveryFailure),
     Effect.asVoid,
   );

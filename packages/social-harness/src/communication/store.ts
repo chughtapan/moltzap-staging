@@ -2,6 +2,7 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
+import { withAgentTransaction } from "../database/transactions.js";
 import {
   canonicalBytes,
   decodeCanonical,
@@ -43,161 +44,7 @@ class StoreSignal extends Error {
 /** Only an empty database or the current stored format can be opened. */
 export type StoreOpening = "create" | "reopen";
 
-const SCHEMA_VERSION = 22;
-
-const collectiveSchemaSql = `
-  CREATE TABLE collective_operations (
-    operation_id TEXT PRIMARY KEY,
-    creator_agent_id TEXT NOT NULL,
-    origin TEXT NOT NULL CHECK(origin IN ('local','remote')),
-    canonical_request BLOB NOT NULL,
-    deadline_at INTEGER NOT NULL,
-    phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','finalizing','completed')),
-    canonical_close BLOB,
-    canonical_result BLOB,
-    canonical_answer_refs BLOB,
-    delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1))
-  ) STRICT;
-  CREATE TABLE collective_messages (
-    operation_id TEXT NOT NULL REFERENCES collective_operations(operation_id),
-    role TEXT NOT NULL CHECK(role IN ('request','response','close')),
-    destination TEXT NOT NULL,
-    author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL,
-    PRIMARY KEY(operation_id,role,destination),
-    UNIQUE(author_agent_id,msg_id)
-  ) STRICT;
-  CREATE UNIQUE INDEX collective_one_response ON collective_messages(operation_id) WHERE role='response';
-  CREATE UNIQUE INDEX collective_one_close ON collective_messages(operation_id) WHERE role='close';
-  CREATE INDEX collective_pending_results ON collective_operations(delivered) WHERE phase='completed' AND delivered=0;
-  CREATE TABLE collective_answers (
-    operation_id TEXT NOT NULL REFERENCES collective_operations(operation_id),
-    member TEXT NOT NULL,
-    canonical_message BLOB NOT NULL,
-    PRIMARY KEY(operation_id,member)
-  ) STRICT;
-`;
-
-const schemaSql = `
-  CREATE TABLE message_intents (
-    author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL,
-    conversation_id TEXT NOT NULL,
-    membership_hash TEXT,
-    canonical_message BLOB NOT NULL,
-    canonical_intent BLOB,
-    completed_record_hash TEXT,
-    failure_reason TEXT,
-    PRIMARY KEY (author_agent_id, msg_id),
-    FOREIGN KEY (conversation_id, membership_hash)
-      REFERENCES memberships(conversation_id, membership_hash)
-  ) STRICT;
-  CREATE INDEX message_intents_unresolved ON message_intents(conversation_id)
-    WHERE completed_record_hash IS NULL;
-  CREATE TABLE memberships (
-    conversation_id TEXT PRIMARY KEY,
-    membership_hash TEXT NOT NULL,
-    canonical_membership BLOB NOT NULL,
-    sort_key TEXT NOT NULL UNIQUE,
-    UNIQUE (conversation_id, membership_hash)
-  ) STRICT;
-  CREATE TABLE anchors (
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    anchor_hash TEXT NOT NULL,
-    previous_anchor_hash TEXT,
-    selected_record_hash TEXT,
-    canonical_anchor BLOB NOT NULL,
-    PRIMARY KEY (conversation_id, anchor_hash)
-  ) STRICT;
-  CREATE TABLE conversation_state (
-    conversation_id TEXT PRIMARY KEY REFERENCES memberships(conversation_id),
-    membership_hash TEXT NOT NULL,
-    current_anchor_hash TEXT NOT NULL,
-    head_record_hash TEXT,
-    head_ordinal INTEGER NOT NULL CHECK (head_ordinal >= -1),
-    FOREIGN KEY (conversation_id, current_anchor_hash)
-      REFERENCES anchors(conversation_id, anchor_hash)
-  ) STRICT;
-  CREATE TABLE proposal_locks (
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    predecessor_key TEXT NOT NULL,
-    previous_record_hash TEXT,
-    action_hash TEXT NOT NULL,
-    canonical_action_core BLOB NOT NULL,
-    PRIMARY KEY (conversation_id, predecessor_key),
-    CHECK (
-      (previous_record_hash IS NULL AND predecessor_key = '') OR
-      (previous_record_hash IS NOT NULL AND predecessor_key = previous_record_hash)
-    )
-  ) STRICT;
-  CREATE TABLE staged_records (
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    record_hash TEXT NOT NULL,
-    previous_record_hash TEXT,
-    membership_hash TEXT NOT NULL,
-    anchor_hash TEXT NOT NULL,
-    action_hash TEXT NOT NULL,
-    author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL,
-    canonical_record_core BLOB NOT NULL,
-    PRIMARY KEY (conversation_id, record_hash),
-    FOREIGN KEY (conversation_id, anchor_hash)
-      REFERENCES anchors(conversation_id, anchor_hash)
-  ) STRICT;
-  CREATE TABLE protocol_evidence (
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    evidence_kind TEXT NOT NULL CHECK (
-      evidence_kind IN ('action', 'durability', 'catch-up', 'reanchor')
-    ),
-    subject_id TEXT NOT NULL,
-    evidence_key TEXT NOT NULL,
-    canonical_evidence BLOB NOT NULL,
-    PRIMARY KEY (conversation_id, evidence_kind, subject_id, evidence_key)
-  ) STRICT;
-  CREATE TABLE certified_records (
-    conversation_id TEXT NOT NULL,
-    record_hash TEXT NOT NULL,
-    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0,1)),
-    PRIMARY KEY (conversation_id, record_hash),
-    UNIQUE (conversation_id, ordinal),
-    FOREIGN KEY (conversation_id, record_hash)
-      REFERENCES staged_records(conversation_id, record_hash)
-  ) STRICT;
-  CREATE INDEX certified_records_by_hash ON certified_records(record_hash);
-  CREATE TABLE reanchors (
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    anchor_hash TEXT NOT NULL,
-    previous_anchor_hash TEXT NOT NULL,
-    router_instance_id TEXT NOT NULL,
-    selected_record_hash TEXT NOT NULL,
-    canonical_body BLOB NOT NULL,
-    canonical_completed_reanchor BLOB,
-    PRIMARY KEY (conversation_id, anchor_hash),
-    UNIQUE (conversation_id, previous_anchor_hash, router_instance_id),
-    FOREIGN KEY (conversation_id, previous_anchor_hash)
-      REFERENCES anchors(conversation_id, anchor_hash),
-    FOREIGN KEY (conversation_id, selected_record_hash)
-      REFERENCES certified_records(conversation_id, record_hash)
-  ) STRICT;
-  CREATE TABLE outbound_messages (
-    outbound_sequence INTEGER PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES memberships(conversation_id),
-    envelope_id TEXT NOT NULL UNIQUE,
-    record_hash TEXT,
-    canonical_signed_message BLOB NOT NULL,
-    wire_version TEXT NOT NULL,
-    attempted INTEGER NOT NULL CHECK (attempted IN (0, 1)),
-    disposition TEXT NOT NULL CHECK (
-      disposition IN ('pending', 'accepted', 'discarded')
-    ),
-    FOREIGN KEY (conversation_id, record_hash) REFERENCES staged_records(conversation_id, record_hash)
-  ) STRICT;
-  CREATE UNIQUE INDEX outbound_current_record ON outbound_messages(conversation_id,record_hash)
-    WHERE record_hash IS NOT NULL AND disposition<>'discarded';
-`;
-
-/** Closed storage failures that never expose SQLite diagnostics. */
+/** Closed storage failures that never expose database diagnostics. */
 export type EndpointStoreFailure =
   | "closed"
   | "conflict"
@@ -427,14 +274,14 @@ const decodeRuntimeValue = <A, I>(
 
 const HISTORY_PAGE_SIZE = 50;
 
-const historySelect = `
-  SELECT certified.rowid AS sequence, staged.conversation_id, staged.record_hash,
+const historySelect = (sql: SqlClient) => sql`
+  SELECT certified.sequence AS sequence, staged.conversation_id, staged.record_hash,
          staged.previous_record_hash, staged.membership_hash,
          staged.anchor_hash, staged.action_hash, staged.author_agent_id,
          staged.msg_id, staged.canonical_record_core
   FROM certified_records AS certified
   JOIN staged_records AS staged
-    ON staged.conversation_id = certified.conversation_id
+    ON staged.agent_key=certified.agent_key AND staged.conversation_id = certified.conversation_id
    AND staged.record_hash = certified.record_hash
 `;
 
@@ -496,39 +343,29 @@ export interface StoredCollectiveMessage {
 }
 
 /** Results become available only after their required close certifies. */
-export const readNextCollectiveResult = () =>
-  readOperations(
-    " WHERE phase='completed' AND delivered=0 AND canonical_result IS NOT NULL ORDER BY rowid LIMIT 1",
-    [],
-  ).pipe(
+export const readNextCollectiveResult = (agentKey: string) =>
+  readOperations(agentKey).pipe(
     Effect.map((rows) => rows[0]),
     Effect.withSpan("readNextCollectiveResult"),
   );
 
 /** Each construction checks the captured agent before touching retained protocol work. */
-export function initializeCommunication(identity: {
-  readonly agentId: string;
-}) {
+export function initializeCommunication(
+  agentKey: string,
+  identity: { readonly agentId: string },
+) {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
-      const opening = yield* inspectStoreState();
       const sql = yield* SqlClient;
-      if (opening === "create") {
-        yield* createCommunicationTables();
-        yield* sql.unsafe(
-          "CREATE TABLE communication_metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, agent_id TEXT NOT NULL) STRICT",
-        );
-        yield* sql.unsafe(
-          "INSERT INTO communication_metadata(singleton,version,agent_id) VALUES(1,?,?)",
-          [SCHEMA_VERSION, identity.agentId],
-        );
-      } else {
-        const [row] = yield* sql.unsafe<{ readonly agentId: string }>(
-          'SELECT agent_id AS "agentId" FROM communication_metadata WHERE singleton=1',
-        );
-        if (row?.agentId !== identity.agentId) {
-          return yield* new EndpointStoreError({ reason: "conflict" });
-        }
+      yield* sql`INSERT INTO communication_metadata(agent_key,agent_id)
+      VALUES(${agentKey},${identity.agentId}) ON CONFLICT(agent_key) DO NOTHING`;
+      const [row] = yield* sql<{
+        readonly agentId: string;
+      }>`SELECT agent_id AS "agentId"
+      FROM communication_metadata WHERE agent_key=${agentKey}`;
+      if (row?.agentId !== identity.agentId) {
+        return yield* new EndpointStoreError({ reason: "conflict" });
       }
     }),
   ).pipe(Effect.withSpan("initializeCommunication"));
@@ -547,30 +384,38 @@ export function isSemanticStoreRejection(error: EndpointStoreError): boolean {
 /**
  * Durably binds one author-scoped message to its immutable canonical intent.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param binding Canonical message recovery identity and optional new foundation.
  * @returns Whether the same binding was inserted or already durable.
  */
 export function bindMessageIntent(
+  agentKey: string,
   binding: MessageIntentBinding,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateMessageIntentBinding(binding);
-    return yield* transaction(bindIntentWithFoundation(binding));
-  }).pipe(storeOperation, Effect.withSpan("bindMessageIntent"));
+    return yield* transaction(
+      agentKey,
+      bindIntentWithFoundation(agentKey, binding),
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("bindMessageIntent"));
 }
 
 /**
  * Atomically persists the immutable membership and initial Router anchor.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param foundation Verified immutable conversation foundation.
  * @returns Whether the same foundation was inserted or already durable.
  */
 export function putConversationFoundation(
+  agentKey: string,
   foundation: ConversationFoundation,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
-  return transaction(putConversationFoundationInTransaction(foundation)).pipe(
-    storeOperation,
-  );
+  return transaction(
+    agentKey,
+    putConversationFoundationInTransaction(agentKey, foundation),
+  ).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -579,22 +424,28 @@ export function putConversationFoundation(
  * or an identical existing lock.
  */
 export function lockProposal(
+  agentKey: string,
   proposal: ProposalLock,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateProposalLock(proposal);
-    return yield* transaction(lockProposalInTransaction(proposal));
-  }).pipe(storeOperation, Effect.withSpan("lockProposal"));
+    return yield* transaction(
+      agentKey,
+      lockProposalInTransaction(agentKey, proposal),
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("lockProposal"));
 }
 
 /**
  * Atomically retains a verified FIRST_MESSAGE foundation and its first-candidate lock.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param foundation Verified immutable membership and Router anchor.
  * @param proposal Verified gap-free FIRST_MESSAGE action selected in Router order.
  * @returns Whether either exact durable component was inserted.
  */
 export function lockFirstMessageProposal(
+  agentKey: string,
   foundation: ConversationFoundation,
   proposal: ProposalLock,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
@@ -607,17 +458,24 @@ export function lockFirstMessageProposal(
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
         const retainedFoundation =
-          yield* putConversationFoundationInTransaction(foundation);
-        const retainedProposal = yield* lockProposalInTransaction(proposal);
+          yield* putConversationFoundationInTransaction(agentKey, foundation);
+        const retainedProposal = yield* lockProposalInTransaction(
+          agentKey,
+          proposal,
+        );
         return retainedFoundation === "inserted" ||
           retainedProposal === "inserted"
           ? "inserted"
           : "existing";
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("lockFirstMessageProposal"));
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("lockFirstMessageProposal"),
+  );
 }
 
 /**
@@ -626,24 +484,39 @@ export function lockFirstMessageProposal(
  * and retained immutable intents.
  */
 export function restartEmptyConversation(
+  agentKey: string,
   restart: EmptyConversationRestart,
 ): Effect.Effect<RestartedEmptyConversation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateEmptyConversationRestart(restart);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        yield* requireEmptyConversationPosition(restart.expectedFoundation);
-        yield* clearIncompleteConversationState(restart.expectedFoundation);
-        yield* installReplacementFoundation(restart.replacementFoundation);
+        yield* requireEmptyConversationPosition(
+          agentKey,
+          restart.expectedFoundation,
+        );
+        yield* clearIncompleteConversationState(
+          agentKey,
+          restart.expectedFoundation,
+        );
+        yield* installReplacementFoundation(
+          agentKey,
+          restart.replacementFoundation,
+        );
         return Object.freeze({
           foundation: copyFoundation(restart.replacementFoundation),
           messageIntents: yield* readConversationMessageIntents(
+            agentKey,
             restart.replacementFoundation.conversationId,
           ),
         });
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("restartEmptyConversation"));
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("restartEmptyConversation"),
+  );
 }
 
 /**
@@ -651,27 +524,36 @@ export function restartEmptyConversation(
  * to leave a head with a staged successor under that anchor.
  */
 export function stageReanchor(
+  agentKey: string,
   reanchor: StagedReanchor,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateStagedReanchor(reanchor);
-    return yield* transaction(stageReanchorInTransaction(reanchor, "vote"));
-  }).pipe(storeOperation, Effect.withSpan("stageReanchor"));
+    return yield* transaction(
+      agentKey,
+      stageReanchorInTransaction(agentKey, reanchor, "vote"),
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("stageReanchor"));
 }
 
 /**
  * Atomically makes a staged threshold-complete Router anchor current.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param reanchor Verified completed re-anchor and threshold evidence.
  * @returns Whether completion advanced the current anchor or was idempotent.
  */
 export function completeReanchor(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCompletedReanchor(reanchor);
-    return yield* transaction(completeReanchorInTransaction(reanchor));
-  }).pipe(storeOperation, Effect.withSpan("completeReanchor"));
+    return yield* transaction(
+      agentKey,
+      completeReanchorInTransaction(agentKey, reanchor),
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("completeReanchor"));
 }
 
 /**
@@ -680,68 +562,84 @@ export function completeReanchor(
  * in one scope would require an honest member to vote twice.
  */
 export function applyCatchUpReanchor(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCompletedReanchor(reanchor);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        yield* retireSupersededCandidates(reanchor);
-        const staged = yield* stageReanchorInTransaction(reanchor, "adopted");
-        const completed = yield* completeReanchorInTransaction(reanchor);
+        yield* retireSupersededCandidates(agentKey, reanchor);
+        const staged = yield* stageReanchorInTransaction(
+          agentKey,
+          reanchor,
+          "adopted",
+        );
+        const completed = yield* completeReanchorInTransaction(
+          agentKey,
+          reanchor,
+        );
         return staged === "inserted" || completed === "inserted"
           ? "inserted"
           : "existing";
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("applyCatchUpReanchor"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("applyCatchUpReanchor"));
 }
 
 /**
  * Recovers all durable endpoint state needed to resume protocol work.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Restrict protocol rows to one conversation when provided.
  * @returns A detached snapshot of the selected durable endpoint protocol state.
  */
 export function recoverStoredState(
+  agentKey: string,
   conversationId?: string,
 ): Effect.Effect<EndpointRecovery, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const identity = yield* readStoredIdentity();
+    const identity = yield* readStoredIdentity(agentKey);
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze({
       ...(identity === undefined ? {} : { identity }),
-      messageIntents: yield* readMessageIntents(conversationId),
-      memberships: yield* readMemberships(conversationId),
-      anchors: yield* readAnchors(conversationId),
-      positions: yield* readPositions(conversationId),
+      messageIntents: yield* readMessageIntents(agentKey, conversationId),
+      memberships: yield* readMemberships(agentKey, conversationId),
+      anchors: yield* readAnchors(agentKey, conversationId),
+      positions: yield* readPositions(agentKey, conversationId),
       proposalLocks: Object.freeze(
-        (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-          `SELECT conversation_id, previous_record_hash, action_hash,
-                  canonical_action_core
-           FROM proposal_locks ${conversationId === undefined ? "" : "WHERE conversation_id = ?"} ORDER BY conversation_id, predecessor_key`,
-          [...(conversationId === undefined ? [] : [conversationId])],
-        )).map(readProposalLock),
+        (yield* database<
+          Readonly<Record<string, unknown>>
+        >`SELECT conversation_id,previous_record_hash,action_hash,canonical_action_core FROM proposal_locks WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id,predecessor_key`).map(
+          readProposalLock,
+        ),
       ),
       stagedRecords: Object.freeze(
-        (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-          `SELECT conversation_id, record_hash, previous_record_hash,
-                  membership_hash, anchor_hash, action_hash, author_agent_id,
-                  msg_id, canonical_record_core
-           FROM staged_records ${conversationId === undefined ? "" : "WHERE conversation_id = ?"} ORDER BY conversation_id, rowid`,
-          [...(conversationId === undefined ? [] : [conversationId])],
-        )).map(readStagedRecord),
+        (yield* database<
+          Readonly<Record<string, unknown>>
+        >`SELECT conversation_id,record_hash,previous_record_hash,membership_hash,anchor_hash,action_hash,author_agent_id,msg_id,canonical_record_core FROM staged_records WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id,sequence`).map(
+          readStagedRecord,
+        ),
       ),
-      evidence: yield* readEvidence(conversationId),
-      certifiedRecords: yield* readAllCertifiedRecords(conversationId),
-      stagedReanchors: yield* readReanchors(conversationId),
-      outboundMessages: yield* readPendingOutbound(conversationId),
+      evidence: yield* readEvidence(agentKey, conversationId),
+      certifiedRecords: yield* readAllCertifiedRecords(
+        agentKey,
+        conversationId,
+      ),
+      stagedReanchors: yield* readReanchors(agentKey, conversationId),
+      outboundMessages: yield* readPendingOutbound(agentKey, conversationId),
     });
-  }).pipe(storeOperation, Effect.withSpan("recoverStoredState"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("recoverStoredState"));
 }
 
 /** Pages stop at the original certified head and can be replayed after restart. */
 export function readStoredConversation(
+  agentKey: string,
   request:
     | Readonly<{
         conversationId: string;
@@ -754,20 +652,23 @@ export function readStoredConversation(
       }>,
 ): Effect.Effect<HistoryPage, EndpointStoreError, SqlClient> {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const { conversationId, after, through, throughRecordHash } =
-        yield* resolveHistoryWindow(request);
+        yield* resolveHistoryWindow(agentKey, request);
       const maximumRecords = request.maximumRecords ?? HISTORY_PAGE_SIZE;
-      const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        historySelect +
-          " WHERE certified.conversation_id=? AND certified.ordinal>? AND certified.ordinal<=? ORDER BY certified.ordinal LIMIT ?",
-        [conversationId, after, through, maximumRecords + 1],
-      );
+      const rows = yield* sql<
+        Readonly<Record<string, unknown>>
+      >`${historySelect(sql)} WHERE certified.agent_key=${agentKey} AND certified.conversation_id=${conversationId} AND certified.ordinal>${after} AND certified.ordinal<=${through} ORDER BY certified.ordinal LIMIT ${maximumRecords + 1}`;
       const selected = rows.slice(0, maximumRecords);
-      const records = yield* Effect.forEach(selected, readCertifiedRecord, {
-        concurrency: 1,
-      });
+      const records = yield* Effect.forEach(
+        selected,
+        (row) => readCertifiedRecord(agentKey, row),
+        {
+          concurrency: 1,
+        },
+      );
       const last = selected.at(-1);
       const continuation =
         rows.length > maximumRecords && last !== undefined
@@ -781,8 +682,8 @@ export function readStoredConversation(
           : null;
       return {
         records,
-        memberships: yield* readMemberships(conversationId),
-        anchors: yield* readAnchors(conversationId, [
+        memberships: yield* readMemberships(agentKey, conversationId),
+        anchors: yield* readAnchors(agentKey, conversationId, [
           ...new Set(records.map((record) => record.anchorHash)),
         ]),
         continuation,
@@ -792,41 +693,35 @@ export function readStoredConversation(
 }
 
 /** Recent certified rows and their verification dependencies share the caller's snapshot. */
-export function readRecentConversation(input: {
-  readonly conversationId: string;
-  readonly maximumRecords: number;
-  readonly candidateRecordHash?: string;
-}) {
+export function readRecentConversation(
+  agentKey: string,
+  input: {
+    readonly conversationId: string;
+    readonly maximumRecords: number;
+    readonly candidateRecordHash?: string;
+  },
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      historySelect +
-        " WHERE certified.conversation_id=? AND (? = '' OR certified.ordinal < (SELECT ordinal FROM certified_records WHERE conversation_id=? AND record_hash=?)) ORDER BY certified.ordinal DESC LIMIT ?",
-      [
-        input.conversationId,
-        input.candidateRecordHash ?? "",
-        input.conversationId,
-        input.candidateRecordHash ?? "",
-        input.maximumRecords + 1,
-      ],
-    );
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`${historySelect(sql)} WHERE certified.agent_key=${agentKey} AND certified.conversation_id=${input.conversationId} AND (${input.candidateRecordHash ?? ""}='' OR certified.ordinal < (SELECT ordinal FROM certified_records WHERE agent_key=${agentKey} AND conversation_id=${input.conversationId} AND record_hash=${input.candidateRecordHash ?? ""})) ORDER BY certified.ordinal DESC LIMIT ${input.maximumRecords + 1}`;
     const candidateRows =
       input.candidateRecordHash === undefined
         ? []
-        : yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-            historySelect +
-              " WHERE certified.conversation_id=? AND certified.record_hash=?",
-            [input.conversationId, input.candidateRecordHash],
-          );
+        : yield* sql<
+            Readonly<Record<string, unknown>>
+          >`${historySelect(sql)} WHERE certified.agent_key=${agentKey} AND certified.conversation_id=${input.conversationId} AND certified.record_hash=${input.candidateRecordHash}`;
     const records = yield* Effect.forEach(
       [...rows, ...candidateRows],
-      readCertifiedRecord,
+      (row) => readCertifiedRecord(agentKey, row),
       { concurrency: 1 },
     );
     return {
       records,
-      memberships: yield* readMemberships(input.conversationId),
+      memberships: yield* readMemberships(agentKey, input.conversationId),
       anchors: yield* readAnchors(
+        agentKey,
         input.conversationId,
         records.map((record) => record.anchorHash),
       ),
@@ -835,89 +730,84 @@ export function readRecentConversation(input: {
         sequence: readInteger(row, "sequence"),
       })),
     };
-  }).pipe(storeOperation, Effect.withSpan("readRecentConversation"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readRecentConversation"));
 }
 
 /** Reads remote certified records in their durable local commit order until consumed. */
-export function readUnconsumedRecords() {
+export function readUnconsumedRecords(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
     const records = yield* Effect.forEach(
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        historySelect +
-          ` WHERE certified.consumed=0
-          AND staged.author_agent_id<>(SELECT agent_id FROM communication_metadata WHERE singleton=1)
-          ORDER BY certified.rowid`,
-      ),
-      readCertifiedRecord,
+      yield* sql<
+        Readonly<Record<string, unknown>>
+      >`${historySelect(sql)} WHERE certified.agent_key=${agentKey} AND certified.consumed=0 AND staged.author_agent_id<>(SELECT agent_id FROM communication_metadata WHERE agent_key=${agentKey}) ORDER BY certified.sequence`,
+      (row) => readCertifiedRecord(agentKey, row),
       { concurrency: 1 },
     );
     return {
       records,
-      memberships: yield* readMemberships(),
-      anchors: yield* readAnchors(),
+      memberships: yield* readMemberships(agentKey),
+      anchors: yield* readAnchors(agentKey),
     };
-  }).pipe(storeOperation, Effect.withSpan("readUnconsumedRecords"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readUnconsumedRecords"));
 }
 
 /** A successful handler retires only its exact certified record, retaining history. */
-export function consumeRecord(recordHash: string) {
+export function consumeRecord(agentKey: string, recordHash: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "UPDATE certified_records SET consumed=1 WHERE record_hash=? RETURNING record_hash",
-      [recordHash],
-    );
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`UPDATE certified_records SET consumed=1 WHERE agent_key=${agentKey} AND record_hash=${recordHash} RETURNING record_hash`;
     if (rows.length !== 1) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-  }).pipe(storeOperation, Effect.withSpan("consumeRecord"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("consumeRecord"));
 }
 
 /** Protocol startup needs each retained membership, including conversations without a certified head. */
 export function readMemberships(
+  agentKey: string,
   conversationId?: string,
 ): Effect.Effect<readonly StoredMembership[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, membership_hash, canonical_membership
-         FROM memberships ${conversationId === undefined ? "" : "WHERE conversation_id = ?"} ORDER BY conversation_id`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map(readMembership),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,membership_hash,canonical_membership FROM memberships WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id`).map(
+        readMembership,
+      ),
     );
-  }).pipe(storeOperation, Effect.withSpan("readMemberships"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readMemberships"));
 }
 
 /** Acceptance stays in the caller's SQL transaction and performs no network work. */
-export function acceptMessage(input: {
-  readonly authorAgentId: string;
-  readonly msgId: string;
-  readonly conversationId: string;
-  readonly canonicalMessage: Uint8Array;
-}) {
+export function acceptMessage(
+  agentKey: string,
+  input: {
+    readonly authorAgentId: string;
+    readonly msgId: string;
+    readonly conversationId: string;
+    readonly canonicalMessage: Uint8Array;
+  },
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const identity = yield* readStoredIdentity();
+    const identity = yield* readStoredIdentity(agentKey);
     if (identity === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireEqual(identity.agentId, input.authorAgentId);
-    yield* sql.unsafe(
-      `INSERT INTO message_intents(author_agent_id,msg_id,conversation_id,canonical_message)
-       VALUES(?,?,?,?) ON CONFLICT(author_agent_id,msg_id) DO NOTHING`,
-      [
-        input.authorAgentId,
-        input.msgId,
-        input.conversationId,
-        input.canonicalMessage,
-      ],
-    );
-    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT conversation_id,canonical_message FROM message_intents WHERE author_agent_id=? AND msg_id=?",
-      [input.authorAgentId, input.msgId],
-    );
+    yield* sql`INSERT INTO message_intents(agent_key,author_agent_id,msg_id,conversation_id,canonical_message)
+       VALUES(${agentKey},${input.authorAgentId},${input.msgId},${input.conversationId},${input.canonicalMessage}) ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING`;
+    const [row] = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id,canonical_message FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${input.authorAgentId} AND msg_id=${input.msgId}`;
     if (row === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
@@ -926,119 +816,124 @@ export function acceptMessage(input: {
       readBytes(row, "canonical_message"),
       input.canonicalMessage,
     );
-  }).pipe(storeOperation, Effect.withSpan("acceptMessage"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("acceptMessage"));
 }
 
 /** The owning reader returns the retained Message and durable terminal outcome. */
-export function readAcceptedMessage(reference: MessageReference) {
+export function readAcceptedMessage(
+  agentKey: string,
+  reference: MessageReference,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason FROM message_intents WHERE author_agent_id=? AND msg_id=?",
-      [reference.authorAgentId, reference.msgId],
-    );
+    const [row] = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
     return row === undefined ? undefined : yield* readAcceptedRow(row);
-  }).pipe(storeOperation, Effect.withSpan("readAcceptedMessage"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readAcceptedMessage"));
 }
 
 /** Each conversation prepares its earliest accepted message before offering the next. */
-export function readUnpreparedMessages() {
+export function readUnpreparedMessages(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
     return yield* Effect.forEach(
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason
-         FROM message_intents WHERE rowid IN (
-           SELECT MIN(rowid) FROM message_intents
-           WHERE canonical_intent IS NULL AND completed_record_hash IS NULL AND failure_reason IS NULL
-           GROUP BY conversation_id
-         ) ORDER BY rowid`,
-      ),
+      yield* sql<
+        Readonly<Record<string, unknown>>
+      >`SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason FROM message_intents WHERE agent_key=${agentKey} AND sequence IN (SELECT MIN(sequence) FROM message_intents WHERE agent_key=${agentKey} AND canonical_intent IS NULL AND completed_record_hash IS NULL AND failure_reason IS NULL GROUP BY conversation_id) ORDER BY sequence`,
       readAcceptedRow,
       { concurrency: 1 },
     );
-  }).pipe(storeOperation, Effect.withSpan("readUnpreparedMessages"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readUnpreparedMessages"));
 }
 
 /** Terminal preparation failures remain observable after the process restarts. */
-export function failMessage(reference: MessageReference, reason: SendFailure) {
+export function failMessage(
+  agentKey: string,
+  reference: MessageReference,
+  reason: SendFailure,
+) {
   return Effect.gen(function* () {
     requireText(reason);
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      `UPDATE message_intents SET failure_reason=COALESCE(failure_reason,?)
-       WHERE author_agent_id=? AND msg_id=? AND completed_record_hash IS NULL`,
-      [reason, reference.authorAgentId, reference.msgId],
-    );
-  }).pipe(storeOperation, Effect.withSpan("failMessage"));
+    yield* sql`UPDATE message_intents SET failure_reason=COALESCE(failure_reason,${reason})
+       WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId} AND completed_record_hash IS NULL`;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("failMessage"));
 }
 
 /** Pending status includes accepted messages whose membership is not prepared yet. */
-export function hasPendingMessages(conversationId: string) {
+export function hasPendingMessages(agentKey: string, conversationId: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe(
-      "SELECT 1 FROM message_intents WHERE conversation_id=? AND completed_record_hash IS NULL AND failure_reason IS NULL LIMIT 1",
-      [conversationId],
-    );
+    const rows =
+      yield* sql`SELECT 1 FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND completed_record_hash IS NULL AND failure_reason IS NULL LIMIT 1`;
     return rows.length > 0;
-  }).pipe(storeOperation, Effect.withSpan("hasPendingMessages"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("hasPendingMessages"));
 }
 
 /** A record and its exact signed dissemination envelope commit before a durability vote. */
 export function stageRecordAndOutbound(
+  agentKey: string,
   record: StagedRecord,
   outbound: OutboundMessageInput,
 ): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
       validateStagedRecord(record);
       requireEqual(record.conversationId, outbound.conversationId);
       if (
-        (yield* findStagedRecord(record.conversationId, record.recordHash)) ===
-        undefined
+        (yield* findStagedRecord(
+          agentKey,
+          record.conversationId,
+          record.recordHash,
+        )) === undefined
       ) {
-        yield* requireNoReanchorAwayFrom(record);
+        yield* requireNoReanchorAwayFrom(agentKey, record);
       }
-      yield* stageRecordInTransaction(record);
+      yield* stageRecordInTransaction(agentKey, record);
       const retained = yield* readRecordOutbound(
+        agentKey,
         record.conversationId,
         record.recordHash,
       );
       return retained !== undefined && retained.disposition !== "discarded"
         ? retained.outbound
-        : yield* enqueueOutboundInTransaction({
+        : yield* enqueueOutboundInTransaction(agentKey, {
             ...outbound,
             recordHash: record.recordHash,
           });
     }),
-  ).pipe(storeOperation, Effect.withSpan("stageRecordAndOutbound"));
+  ).pipe(agentOperation(agentKey), Effect.withSpan("stageRecordAndOutbound"));
 }
 
 /**
  * Merges one stable evidence item without replacing a conflicting value.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param evidence Verified evidence with its canonical merge key.
  * @returns Whether the evidence was inserted or already durable.
  */
 export function mergeEvidence(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateEvidence(evidence);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        yield* requireEvidenceSubject(evidence);
-        const existing = yield* findEvidence(evidence);
+        yield* requireEvidenceSubject(agentKey, evidence);
+        const existing = yield* findEvidence(agentKey, evidence);
         if (existing !== undefined) {
           requireSameBytes(existing, evidence.canonicalEvidence);
           return "existing";
         }
-        yield* requireLocalEvidenceLock(evidence);
-        return yield* mergeEvidenceInTransaction(evidence);
+        yield* requireLocalEvidenceLock(agentKey, evidence);
+        return yield* mergeEvidenceInTransaction(agentKey, evidence);
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("mergeEvidence"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("mergeEvidence"));
 }
 
 /**
@@ -1048,6 +943,7 @@ export function mergeEvidence(
  * quorums beyond the fault bound.
  */
 export function supersedeProposalLock(
+  agentKey: string,
   lock: ProposalLock,
   certificate: readonly ProtocolEvidence[],
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
@@ -1058,41 +954,48 @@ export function supersedeProposalLock(
       subjectId: lock.actionHash,
     });
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
         const held = yield* findProposalLock(
+          agentKey,
           lock.conversationId,
           lock.previousRecordHash ?? FIRST_MESSAGE_PREDECESSOR,
         );
         if (held !== undefined && held.actionHash !== lock.actionHash) {
-          if (yield* hasStagedAction(held)) {
+          if (yield* hasStagedAction(agentKey, held)) {
             return yield* new EndpointStoreError({ reason: "conflict" });
           }
-          yield* releaseProposalLock(held);
+          yield* releaseProposalLock(agentKey, held);
         }
-        const mutation = yield* lockProposalInTransaction(lock);
+        const mutation = yield* lockProposalInTransaction(agentKey, lock);
         for (const evidence of certificate) {
-          yield* mergeEvidenceInTransaction(evidence);
+          yield* mergeEvidenceInTransaction(agentKey, evidence);
         }
         return mutation;
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("supersedeProposalLock"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("supersedeProposalLock"));
 }
 
 /**
  * Atomically promotes a complete record, advances its head, and retains its
  * local message completion.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param record Verified complete certified record.
  * @returns Whether any durable state was inserted.
  */
 export function promoteRecord(
+  agentKey: string,
   record: CertifiedRecord,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
-    return yield* transaction(promoteRecordInTransaction(record));
-  }).pipe(storeOperation, Effect.withSpan("promoteRecord"));
+    return yield* transaction(
+      agentKey,
+      promoteRecordInTransaction(agentKey, record),
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("promoteRecord"));
 }
 
 /**
@@ -1102,62 +1005,68 @@ export function promoteRecord(
  * an earlier local signature, and may cross a pending re-anchor.
  */
 export function applyCertifiedRecord(
+  agentKey: string,
   record: CertifiedRecord,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateCertifiedRecord(record);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        const staged = yield* stageRecordInTransaction(record);
-        const promoted = yield* promoteRecordInTransaction(record);
+        const staged = yield* stageRecordInTransaction(agentKey, record);
+        const promoted = yield* promoteRecordInTransaction(agentKey, record);
         return staged === "inserted" || promoted === "inserted"
           ? "inserted"
           : "existing";
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("applyCertifiedRecord"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("applyCertifiedRecord"));
 }
 
 /**
  * Stages one complete outer envelope before it can reach Router transport.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param message Canonical complete signed envelope.
  * @returns The retained envelope under its envelope identity.
  */
 export function enqueueOutbound(
+  agentKey: string,
   message: OutboundMessageInput,
 ): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
-  return transaction(enqueueOutboundInTransaction(message)).pipe(
-    storeOperation,
-    Effect.withSpan("enqueueOutbound"),
-  );
+  return transaction(
+    agentKey,
+    enqueueOutboundInTransaction(agentKey, message),
+  ).pipe(storeOperation, Effect.withSpan("enqueueOutbound"));
 }
 
 /**
  * Selects the exact durable envelope and retry mode for one Router attempt.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param envelopeId Stable identity of the signed envelope.
  * @returns The current stored bytes, or an inactive terminal disposition.
  */
 export function beginOutbound(
+  agentKey: string,
   envelopeId: string,
 ): Effect.Effect<OutboundAttempt, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     requireText(envelopeId);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        const retained = yield* requireOutbound(envelopeId);
+        const retained = yield* requireOutbound(agentKey, envelopeId);
         if (retained.disposition !== "pending") {
           return Object.freeze({ kind: "inactive" });
         }
         const mode = retained.attempted ? "retry" : "initial";
         if (!retained.attempted) {
-          yield* database.unsafe<Readonly<Record<string, unknown>>>(
-            `UPDATE outbound_messages SET attempted = 1
-           WHERE envelope_id = ? AND disposition = 'pending'`,
-            [envelopeId],
-          );
+          yield* database<
+            Readonly<Record<string, unknown>>
+          >`UPDATE outbound_messages SET attempted = 1
+           WHERE agent_key=${agentKey} AND envelope_id = ${envelopeId} AND disposition = 'pending'`;
         }
         return Object.freeze({
           kind: "pending",
@@ -1166,24 +1075,27 @@ export function beginOutbound(
         });
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("beginOutbound"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("beginOutbound"));
 }
 
 /**
  * Marks one exact stored envelope complete after Router accepts its bytes.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param outbound Exact envelope whose Router digest was verified.
  * @returns Whether this call recorded acceptance or observed it already.
  */
 export function completeOutbound(
+  agentKey: string,
   outbound: StoredOutboundMessage,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     validateMessageInput(outbound);
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
-        const retained = yield* requireOutbound(outbound.envelopeId);
+        const retained = yield* requireOutbound(agentKey, outbound.envelopeId);
         requireSameOutbound(retained.outbound, outbound);
         switch (retained.disposition) {
           case "accepted":
@@ -1191,11 +1103,10 @@ export function completeOutbound(
           case "discarded":
             return yield* new EndpointStoreError({ reason: "conflict" });
           case "pending":
-            yield* database.unsafe<Readonly<Record<string, unknown>>>(
-              `UPDATE outbound_messages SET disposition = 'accepted'
-             WHERE envelope_id = ? AND disposition = 'pending'`,
-              [outbound.envelopeId],
-            );
+            yield* database<
+              Readonly<Record<string, unknown>>
+            >`UPDATE outbound_messages SET disposition = 'accepted'
+             WHERE agent_key=${agentKey} AND envelope_id = ${outbound.envelopeId} AND disposition = 'pending'`;
             return "inserted";
           default: {
             const exhaustive: never = retained.disposition;
@@ -1204,16 +1115,18 @@ export function completeOutbound(
         }
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("completeOutbound"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("completeOutbound"));
 }
 
 /**
  * Atomically invalidates exact pending envelopes before protocol regeneration.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param outbounds Complete expected envelopes to invalidate.
  * @returns Whether at least one pending envelope became inactive.
  */
 export function discardOutbound(
+  agentKey: string,
   outbounds: readonly StoredOutboundMessage[],
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
@@ -1227,10 +1140,11 @@ export function discardOutbound(
       distinctIds.add(outbound.envelopeId);
     }
     return yield* transaction(
+      agentKey,
       Effect.gen(function* () {
         const retained = [];
         for (const outbound of outbounds) {
-          const row = yield* requireOutbound(outbound.envelopeId);
+          const row = yield* requireOutbound(agentKey, outbound.envelopeId);
           requireSameOutbound(row.outbound, outbound);
           if (row.disposition === "accepted") {
             return yield* new EndpointStoreError({ reason: "conflict" });
@@ -1242,35 +1156,38 @@ export function discardOutbound(
         );
         for (const outbound of retained) {
           if (outbound.disposition === "pending") {
-            yield* database.unsafe<Readonly<Record<string, unknown>>>(
-              `UPDATE outbound_messages SET disposition = 'discarded'
-             WHERE envelope_id = ? AND disposition = 'pending'`,
-              [outbound.outbound.envelopeId],
-            );
+            yield* database<
+              Readonly<Record<string, unknown>>
+            >`UPDATE outbound_messages SET disposition = 'discarded'
+             WHERE agent_key=${agentKey} AND envelope_id = ${outbound.outbound.envelopeId} AND disposition = 'pending'`;
           }
         }
         return inserted ? "inserted" : "existing";
       }),
     );
-  }).pipe(storeOperation, Effect.withSpan("discardOutbound"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("discardOutbound"));
 }
 
 /** The outbox itself owns the exact signed envelope for one staged record. */
-export function readRecordOutbound(conversationId: string, recordHash: string) {
+export function readRecordOutbound(
+  agentKey: string,
+  conversationId: string,
+  recordHash: string,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const [row] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
-       FROM outbound_messages WHERE conversation_id=? AND record_hash=?
-       ORDER BY disposition='discarded',outbound_sequence DESC LIMIT 1`,
-      [conversationId, recordHash],
-    );
+    const [row] = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition
+       FROM outbound_messages WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND record_hash=${recordHash}
+       ORDER BY disposition='discarded',outbound_sequence DESC LIMIT 1`;
     return row === undefined ? undefined : readOutbound(row);
-  }).pipe(storeOperation, Effect.withSpan("readRecordOutbound"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readRecordOutbound"));
 }
 
 /** A repeated operation must preserve its original request and authority. */
 export function putCollectiveOperation(
+  agentKey: string,
   input:
     | { readonly origin: "local"; readonly request: Request }
     | {
@@ -1280,6 +1197,7 @@ export function putCollectiveOperation(
       },
 ) {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const operationId =
@@ -1293,10 +1211,9 @@ export function putCollectiveOperation(
       const canonicalRequest = yield* input.origin === "local"
         ? encodeCanonical(Request, input.request)
         : encodeCanonical(Message, input.request);
-      const [existing] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT canonical_request,origin,creator_agent_id,deadline_at FROM collective_operations WHERE operation_id=?",
-        [operationId],
-      );
+      const [existing] = yield* sql<
+        Readonly<Record<string, unknown>>
+      >`SELECT canonical_request,origin,creator_agent_id,deadline_at FROM collective_operations WHERE agent_key=${agentKey} AND operation_id=${operationId}`;
       if (existing !== undefined) {
         requireSameBytes(
           readBytes(existing, "canonical_request"),
@@ -1312,48 +1229,45 @@ export function putCollectiveOperation(
         }
         return;
       }
-      yield* sql.unsafe(
-        "INSERT INTO collective_operations(operation_id,creator_agent_id,origin,canonical_request,deadline_at) VALUES(?,?,?,?,?)",
-        [
-          operationId,
-          input.request.author.agentId,
-          input.origin,
-          canonicalRequest,
-          deadlineAt,
-        ],
-      );
+      yield* sql`INSERT INTO collective_operations(agent_key,operation_id,creator_agent_id,origin,canonical_request,deadline_at) VALUES(${agentKey},${operationId},${input.request.author.agentId},${input.origin},${canonicalRequest},${deadlineAt})`;
     }),
-  ).pipe(storeOperation, Effect.withSpan("putCollectiveOperation"));
+  ).pipe(agentOperation(agentKey), Effect.withSpan("putCollectiveOperation"));
 }
 
 /** Workers load each operation's content inside its completion transaction. */
 export function readCollectiveOperationIds(
+  agentKey: string,
   origin: StoredCollectiveOperation["origin"],
   phase: StoredCollectiveOperation["phase"],
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT operation_id FROM collective_operations WHERE origin=? AND phase=? ORDER BY rowid",
-      [origin, phase],
-    );
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT operation_id FROM collective_operations WHERE agent_key=${agentKey} AND origin=${origin} AND phase=${phase} ORDER BY sequence`;
     return yield* Effect.forEach(
       rows,
       (row) => decodeValue(CollectiveId, readText(row, "operation_id")),
       { concurrency: 1 },
     );
-  }).pipe(storeOperation, Effect.withSpan("readCollectiveOperationIds"));
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("readCollectiveOperationIds"),
+  );
 }
 
 /** Role uniqueness and Communication acceptance commit in the same caller transaction. */
-export function putCollectiveMessage(input: StoredCollectiveMessage) {
+export function putCollectiveMessage(
+  agentKey: string,
+  input: StoredCollectiveMessage,
+) {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const prior = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT author_agent_id,msg_id FROM collective_messages WHERE operation_id=? AND role=? AND destination=?",
-        [input.operationId, input.role, input.destination],
-      ))[0];
+      const prior = (yield* sql<
+        Readonly<Record<string, unknown>>
+      >`SELECT author_agent_id,msg_id FROM collective_messages WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND role=${input.role} AND destination=${input.destination}`)[0];
       if (prior !== undefined) {
         if (
           readText(prior, "author_agent_id") !==
@@ -1364,52 +1278,60 @@ export function putCollectiveMessage(input: StoredCollectiveMessage) {
         }
         return false;
       }
-      yield* sql.unsafe(
-        "INSERT INTO collective_messages(operation_id,role,destination,author_agent_id,msg_id) VALUES(?,?,?,?,?)",
-        [
-          input.operationId,
-          input.role,
-          input.destination,
-          input.reference.authorAgentId,
-          input.reference.msgId,
-        ],
-      );
+      yield* sql`INSERT INTO collective_messages(agent_key,operation_id,role,destination,author_agent_id,msg_id) VALUES(${agentKey},${input.operationId},${input.role},${input.destination},${input.reference.authorAgentId},${input.reference.msgId})`;
       return true;
     }),
-  ).pipe(storeOperation, Effect.withSpan("putCollectiveMessage"));
+  ).pipe(agentOperation(agentKey), Effect.withSpan("putCollectiveMessage"));
 }
 
 /** An operation's accepted messages retain their role and fixed identity. */
-export function readCollectiveMessages(operationId: CollectiveId) {
-  return readMessageRows(
-    "WHERE message.operation_id=? ORDER BY message.rowid",
-    [operationId],
-  );
+export function readCollectiveMessages(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT operation_id,role,destination,author_agent_id,msg_id
+      FROM collective_messages WHERE agent_key=${agentKey} AND operation_id=${operationId} ORDER BY sequence`;
+    return yield* readMessageRows(agentKey, rows);
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveMessages"));
 }
 
 /** One bounded worker observes only durable completion or terminal failure. */
-export function readReadyCollectiveMessages() {
-  return readMessageRows(
-    `JOIN collective_operations AS operation ON operation.operation_id=message.operation_id
-   JOIN message_intents AS intent ON intent.author_agent_id=message.author_agent_id AND intent.msg_id=message.msg_id
-   WHERE operation.phase!='completed' AND message.role IN ('response','close')
-    AND (intent.completed_record_hash IS NOT NULL OR (intent.failure_reason IS NOT NULL AND (message.role='close' OR operation.phase='finalizing')))
-    AND (message.role='close' OR NOT EXISTS (SELECT 1 FROM collective_answers AS answer WHERE answer.operation_id=message.operation_id AND answer.member=message.author_agent_id))
-   ORDER BY message.rowid`,
-    [],
+export function readReadyCollectiveMessages(agentKey: string) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT message.operation_id,message.role,message.destination,message.author_agent_id,message.msg_id
+      FROM collective_messages AS message
+      JOIN collective_operations AS operation ON operation.agent_key=message.agent_key AND operation.operation_id=message.operation_id
+      JOIN message_intents AS intent ON intent.agent_key=message.agent_key AND intent.author_agent_id=message.author_agent_id AND intent.msg_id=message.msg_id
+      WHERE message.agent_key=${agentKey} AND operation.phase<>'completed' AND message.role IN ('response','close')
+      AND (intent.completed_record_hash IS NOT NULL OR (intent.failure_reason IS NOT NULL AND (message.role='close' OR operation.phase='finalizing')))
+      AND (message.role='close' OR NOT EXISTS (SELECT 1 FROM collective_answers AS answer WHERE answer.agent_key=message.agent_key AND answer.operation_id=message.operation_id AND answer.member=message.author_agent_id))
+      ORDER BY message.sequence`;
+    return yield* readMessageRows(agentKey, rows);
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("readReadyCollectiveMessages"),
   );
 }
 
 /** Only the collector's first accepted answer before its deadline is selectable. */
 export function recordCollectiveAnswer(
+  agentKey: string,
   operationId: CollectiveId,
   message: Message,
   now: number,
 ) {
   return transaction(
+    agentKey,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const operation = yield* readCollectiveOperation(operationId);
+      const operation = yield* readCollectiveOperation(agentKey, operationId);
       if (operation === undefined || operation.phase === "completed") {
         return false;
       }
@@ -1420,171 +1342,147 @@ export function recordCollectiveAnswer(
         return false;
       }
       const member = message.author.agentId;
-      const prior = yield* sql.unsafe(
-        "SELECT 1 FROM collective_answers WHERE operation_id=? AND member=?",
-        [operationId, member],
-      );
+      const prior =
+        yield* sql`SELECT 1 FROM collective_answers WHERE agent_key=${agentKey} AND operation_id=${operationId} AND member=${member}`;
       if (prior.length > 0) {
         return false;
       }
-      yield* sql.unsafe(
-        "INSERT INTO collective_answers(operation_id,member,canonical_message) VALUES(?,?,?)",
-        [operationId, member, yield* encodeCanonical(Message, message)],
-      );
+      yield* sql`INSERT INTO collective_answers(agent_key,operation_id,member,canonical_message) VALUES(${agentKey},${operationId},${member},${yield* encodeCanonical(Message, message)})`;
       return true;
     }),
-  ).pipe(storeOperation, Effect.withSpan("recordCollectiveAnswer"));
+  ).pipe(agentOperation(agentKey), Effect.withSpan("recordCollectiveAnswer"));
 }
 
 /** Related domain writes use the driver's connection and transaction context. */
 export function transaction<A, E, R>(
+  agentKey: string,
   operation: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, EndpointStoreError, R | SqlClient> {
-  return Effect.flatMap(SqlClient, (sql) =>
-    sql.withTransaction(operation),
-  ).pipe(storeOperation);
+  return withAgentTransaction(agentKey, operation).pipe(
+    agentOperation(agentKey),
+  );
 }
 
 /** Stored requests and their identifiers are validated before business operations receive them. */
-export function readCollectiveOperation(operationId: CollectiveId) {
-  return readOperations(" WHERE operation_id=?", [operationId]).pipe(
+export function readCollectiveOperation(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
+  return readOperations(agentKey, operationId).pipe(
     Effect.map((rows) => rows[0]),
     Effect.withSpan("readCollectiveOperation"),
   );
 }
 
 /** First-answer messages are decoded once at their persistence boundary. */
-export function readCollectiveAnswers(operationId: CollectiveId) {
+export function readCollectiveAnswers(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT canonical_message FROM collective_answers WHERE operation_id=? ORDER BY rowid",
-      [operationId],
-    );
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT canonical_message FROM collective_answers WHERE agent_key=${agentKey} AND operation_id=${operationId} ORDER BY sequence`;
     return yield* Effect.forEach(
       rows,
       (row) => decodeRuntimeValue(Message, readBytes(row, "canonical_message")),
       { concurrency: 1 },
     );
-  }).pipe(storeOperation, Effect.withSpan("readCollectiveAnswers"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveAnswers"));
 }
 
 /** The first authenticated remote close remains available while an own answer certifies. */
-export function saveRemoteClose(operationId: CollectiveId, message: Message) {
+export function saveRemoteClose(
+  agentKey: string,
+  operationId: CollectiveId,
+  message: Message,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET phase='finalizing',canonical_close=? WHERE operation_id=? AND origin='remote' AND phase='collecting'",
-      [yield* encodeCanonical(Message, message), operationId],
-    );
-  }).pipe(storeOperation, Effect.withSpan("saveRemoteClose"));
+    yield* sql`UPDATE collective_operations SET phase='finalizing',canonical_close=${yield* encodeCanonical(Message, message)} WHERE agent_key=${agentKey} AND operation_id=${operationId} AND origin='remote' AND phase='collecting'`;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("saveRemoteClose"));
 }
 
 /**
  * Freezes final bytes and exact source identities. Close certification
  * changes only their visibility.
  */
-export function saveCollectiveResult(input: {
-  readonly operationId: CollectiveId;
-  readonly item: ResultDelivery["item"];
-  readonly answers: readonly MessageReference[];
-  readonly complete: boolean;
-}) {
+export function saveCollectiveResult(
+  agentKey: string,
+  input: {
+    readonly operationId: CollectiveId;
+    readonly item: ResultDelivery["item"];
+    readonly answers: readonly MessageReference[];
+    readonly complete: boolean;
+  },
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET phase=?,canonical_result=?,canonical_answer_refs=? WHERE operation_id=? AND phase<>'completed' AND canonical_result IS NULL",
-      [
-        input.complete ? "completed" : "finalizing",
-        yield* encodeCanonical(ResultDelivery.fields.item, input.item),
-        yield* encodeRuntimeValue(input.answers),
-        input.operationId,
-      ],
-    );
-  }).pipe(storeOperation, Effect.withSpan("saveCollectiveResult"));
+    yield* sql`UPDATE collective_operations SET phase=${input.complete ? "completed" : "finalizing"},canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, input.item)},canonical_answer_refs=${yield* encodeRuntimeValue(input.answers)} WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND phase<>'completed' AND canonical_result IS NULL`;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("saveCollectiveResult"));
 }
 
 /** A selected result becomes deliverable without rebuilding its content or sources. */
-export function completeCollectiveOperation(operationId: CollectiveId) {
+export function completeCollectiveOperation(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET phase='completed' WHERE operation_id=? AND canonical_result IS NOT NULL",
-      [operationId],
-    );
-  }).pipe(storeOperation, Effect.withSpan("completeCollectiveOperation"));
+    yield* sql`UPDATE collective_operations SET phase='completed' WHERE agent_key=${agentKey} AND operation_id=${operationId} AND canonical_result IS NOT NULL`;
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("completeCollectiveOperation"),
+  );
 }
 
 /** A terminal close failure replaces only an unpublished result. */
 export function failCollectiveClose(
+  agentKey: string,
   operationId: CollectiveId,
   item: ResultDelivery["item"],
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET phase='completed',canonical_result=?,canonical_answer_refs=? WHERE operation_id=? AND phase='finalizing' AND delivered=0",
-      [
-        yield* encodeCanonical(ResultDelivery.fields.item, item),
-        yield* encodeRuntimeValue([]),
-        operationId,
-      ],
-    );
-  }).pipe(storeOperation, Effect.withSpan("failCollectiveClose"));
+    yield* sql`UPDATE collective_operations SET phase='completed',canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, item)},canonical_answer_refs=${yield* encodeRuntimeValue([])} WHERE agent_key=${agentKey} AND operation_id=${operationId} AND phase='finalizing' AND delivered=0`;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("failCollectiveClose"));
 }
 
 /** Successful handling retires the same result while keeping its content readable. */
-export function retireCollectiveResult(operationId: CollectiveId) {
+export function retireCollectiveResult(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET delivered=1 WHERE operation_id=? AND phase='completed'",
-      [operationId],
-    );
-  }).pipe(storeOperation, Effect.withSpan("retireCollectiveResult"));
+    yield* sql`UPDATE collective_operations SET delivered=1 WHERE agent_key=${agentKey} AND operation_id=${operationId} AND phase='completed'`;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("retireCollectiveResult"));
 }
 
 /** An invalid close consumes protocol state without inventing a result. */
-export function retireCollectiveOperation(operationId: CollectiveId) {
+export function retireCollectiveOperation(
+  agentKey: string,
+  operationId: CollectiveId,
+) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql.unsafe(
-      "UPDATE collective_operations SET phase='completed',delivered=1 WHERE operation_id=?",
-      [operationId],
-    );
-  }).pipe(storeOperation, Effect.withSpan("retireCollectiveOperation"));
-}
-
-/** Driver failures and invalid stored values stay inside the closed persistence boundary. */
-function storeOperation<A, E, R>(
-  operation: Effect.Effect<A, E, R>,
-): Effect.Effect<A, EndpointStoreError, R> {
-  return operation.pipe(
-    Effect.catchAllCause((cause) => {
-      if (Cause.isInterruptedOnly(cause)) {
-        return Effect.failCause(Cause.stripFailures(cause));
-      }
-      const failure = Cause.failureOption(cause);
-      const defect = Cause.dieOption(cause);
-      return Effect.fail(
-        mapStoreFailure(
-          Option.getOrElse(failure, () =>
-            Option.getOrElse(defect, () => undefined),
-          ),
-          "persistence",
-        ),
-      );
-    }),
+    yield* sql`UPDATE collective_operations SET phase='completed',delivered=1 WHERE agent_key=${agentKey} AND operation_id=${operationId}`;
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("retireCollectiveOperation"),
   );
 }
 
 /**
  * Inserts one first-candidate lock inside a caller-owned transaction, or
  * confirms the same lock is already durable.
+ * @param agentKey Immutable storage owner for this operation.
  * @param proposal Verified gap-free action selected at its predecessor.
  * @returns Whether the lock was inserted or already durable.
  */
 function lockProposalInTransaction(
+  agentKey: string,
   proposal: ProposalLock,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
@@ -1592,6 +1490,7 @@ function lockProposalInTransaction(
     const predecessorKey =
       proposal.previousRecordHash ?? FIRST_MESSAGE_PREDECESSOR;
     const existing = yield* findProposalLock(
+      agentKey,
       proposal.conversationId,
       predecessorKey,
     );
@@ -1599,29 +1498,28 @@ function lockProposalInTransaction(
       requireSameProposalLock(existing, proposal);
       return "existing";
     }
-    const position = yield* readStoredPosition(proposal.conversationId);
-    requireEqual(position.headRecordHash, proposal.previousRecordHash);
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO proposal_locks
-        (conversation_id, predecessor_key, previous_record_hash,
-         action_hash, canonical_action_core)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        proposal.conversationId,
-        predecessorKey,
-        proposal.previousRecordHash ?? null,
-        proposal.actionHash,
-        copyBytes(proposal.canonicalActionCore),
-      ],
+    const position = yield* readStoredPosition(
+      agentKey,
+      proposal.conversationId,
     );
+    requireEqual(position.headRecordHash, proposal.previousRecordHash);
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO proposal_locks
+        (agent_key,conversation_id, predecessor_key, previous_record_hash,
+         action_hash, canonical_action_core)
+       VALUES (${agentKey},${proposal.conversationId}, ${predecessorKey}, ${proposal.previousRecordHash ?? null}, ${proposal.actionHash}, ${copyBytes(proposal.canonicalActionCore)})`;
     return "inserted";
-  }).pipe(storeOperation, Effect.withSpan("lockProposalInTransaction"));
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("lockProposalInTransaction"),
+  );
 }
 
 /**
  * Projects one stable evidence value.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached protocol evidence.
  */
 function readProtocolEvidence(
@@ -1639,7 +1537,7 @@ function readProtocolEvidence(
 /**
  * Projects one staged or completed recoverable re-anchor.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached recoverable re-anchor.
  */
 function readRecoveredReanchor(
@@ -1654,82 +1552,6 @@ function readRecoveredReanchor(
     ...(canonicalCompletedReanchor === undefined
       ? {}
       : { canonicalCompletedReanchor }),
-  });
-}
-
-/** Protocol metadata allows other owners to initialize their own tables independently. */
-function inspectStoreState(): Effect.Effect<
-  StoreOpening,
-  EndpointStoreError,
-  SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const tables = yield* sql.unsafe<{
-      readonly name: string;
-    }>(
-      "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('communication_metadata','memberships')",
-    );
-    if (!tables.some((row) => row.name === "communication_metadata")) {
-      if (tables.length !== 0) {
-        return yield* new EndpointStoreError({ reason: "incompatible" });
-      }
-      return "create";
-    }
-    const [metadata] = yield* sql.unsafe<{
-      readonly version: number;
-    }>("SELECT version FROM communication_metadata WHERE singleton=1");
-    if (metadata?.version !== SCHEMA_VERSION) {
-      return yield* new EndpointStoreError({ reason: "incompatible" });
-    }
-    const checks =
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-        "PRAGMA quick_check",
-      );
-    if (
-      checks.length !== 1 ||
-      checks[0] === undefined ||
-      readText(checks[0], "quick_check") !== "ok"
-    ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    return "reopen";
-  }).pipe(storeOperation, Effect.withSpan("inspectCommunicationState"));
-}
-
-/** Fresh databases receive the current protocol layout inside daemon startup's transaction. */
-function createCommunicationTables(): Effect.Effect<
-  void,
-  EndpointStoreError,
-  SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    for (const statement of (schemaSql + collectiveSchemaSql)
-      .split(";")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0)) {
-      yield* sql.unsafe<Readonly<Record<string, unknown>>>(statement);
-    }
-  }).pipe(storeOperation, Effect.withSpan("createCommunicationTables"));
-}
-
-/**
- * Maps every internal failure to the store's closed error channel.
- *
- * @param failure Internal failure or closed control-flow signal.
- * @param fallback Closed category for unexpected implementation failures.
- * @returns A non-diagnostic endpoint-store error.
- */
-function mapStoreFailure(
-  failure: unknown,
-  fallback: EndpointStoreFailure,
-): EndpointStoreError {
-  if (failure instanceof EndpointStoreError) {
-    return failure;
-  }
-  return new EndpointStoreError({
-    reason: failure instanceof StoreSignal ? failure.reason : fallback,
   });
 }
 
@@ -1776,19 +1598,26 @@ function validateMessageIntentBinding(binding: MessageIntentBinding): void {
 }
 
 function bindIntentWithFoundation(
+  agentKey: string,
   binding: MessageIntentBinding,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const intent = binding.intent;
     const foundation =
       binding.kind === "new-conversation"
-        ? yield* putConversationFoundationInTransaction(binding.foundation)
-        : yield* requireConversationFoundation(intent);
-    const messageIntent = yield* bindMessageIntentInTransaction(intent);
+        ? yield* putConversationFoundationInTransaction(
+            agentKey,
+            binding.foundation,
+          )
+        : yield* requireConversationFoundation(agentKey, intent);
+    const messageIntent = yield* bindMessageIntentInTransaction(
+      agentKey,
+      intent,
+    );
     return foundation === "inserted" || messageIntent === "inserted"
       ? "inserted"
       : "existing";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function validateProposalLock(proposal: ProposalLock): void {
@@ -1801,20 +1630,20 @@ function validateProposalLock(proposal: ProposalLock): void {
 }
 
 function bindMessageIntentInTransaction(
+  agentKey: string,
   intent: MessageIntent,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const identity = yield* readStoredIdentity();
+    const identity = yield* readStoredIdentity(agentKey);
     if (identity === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireEqual(identity.agentId, intent.authorAgentId);
-    const existing = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, membership_hash, canonical_intent, canonical_message
-       FROM message_intents WHERE author_agent_id = ? AND msg_id = ?`,
-      [intent.authorAgentId, intent.msgId],
-    ))[0];
+    const existing = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, membership_hash, canonical_intent, canonical_message
+       FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id = ${intent.authorAgentId} AND msg_id = ${intent.msgId}`)[0];
     if (existing === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
@@ -1834,83 +1663,83 @@ function bindMessageIntentInTransaction(
       );
       return "existing";
     }
-    yield* database.unsafe(
-      `UPDATE message_intents SET membership_hash=?,canonical_intent=?
-       WHERE author_agent_id=? AND msg_id=?`,
-      [
-        intent.membershipHash,
-        intent.canonicalIntent,
-        intent.authorAgentId,
-        intent.msgId,
-      ],
-    );
+    yield* database`UPDATE message_intents SET membership_hash=${intent.membershipHash},canonical_intent=${intent.canonicalIntent}
+       WHERE agent_key=${agentKey} AND author_agent_id=${intent.authorAgentId} AND msg_id=${intent.msgId}`;
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
  * Inserts or validates one complete membership and initial anchor in an
  * existing transaction.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param foundation Verified immutable conversation foundation.
  * @returns Whether this transaction inserted the foundation.
  */
 function putConversationFoundationInTransaction(
+  agentKey: string,
   foundation: ConversationFoundation,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     validateFoundation(foundation);
-    const existing = yield* readFoundation(foundation.conversationId);
+    const existing = yield* readFoundation(agentKey, foundation.conversationId);
     if (existing !== undefined) {
       requireSameFoundation(existing, foundation);
       return "existing";
     }
-    yield* insertFoundation(foundation);
+    yield* insertFoundation(agentKey, foundation);
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireConversationFoundation(
+  agentKey: string,
   intent: MessageIntent,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const foundation = yield* readFoundation(intent.conversationId);
+    const foundation = yield* readFoundation(agentKey, intent.conversationId);
     if (foundation === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireEqual(foundation.membershipHash, intent.membershipHash);
     return yield* Effect.succeed<StoreMutation>("existing");
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireEmptyConversationPosition(
+  agentKey: string,
   expected: ConversationFoundation,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const retained = yield* readFoundation(expected.conversationId);
+    const retained = yield* readFoundation(agentKey, expected.conversationId);
     if (retained === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireSameFoundation(retained, expected);
-    const position = yield* readStoredPosition(expected.conversationId);
+    const position = yield* readStoredPosition(
+      agentKey,
+      expected.conversationId,
+    );
     requireEqual(position.membershipHash, expected.membershipHash);
     requireEqual(position.currentAnchorHash, expected.anchorHash);
     requireEqual(position.headRecordHash, undefined);
     requireEqual(position.headOrdinal, -1);
     if (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM certified_records
-         WHERE conversation_id = ? LIMIT 1`,
-        [expected.conversationId],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM certified_records
+         WHERE agent_key=${agentKey} AND conversation_id = ${expected.conversationId} LIMIT 1`)[0] !==
+      undefined
     ) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readFoundation(
+  agentKey: string,
   conversationId: string,
 ): Effect.Effect<
   ConversationFoundation | undefined,
@@ -1919,16 +1748,9 @@ function readFoundation(
 > {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT membership.membership_hash, membership.canonical_membership,
-              anchor.anchor_hash, anchor.canonical_anchor
-       FROM memberships AS membership
-       JOIN anchors AS anchor
-         ON anchor.conversation_id = membership.conversation_id
-        AND anchor.previous_anchor_hash IS NULL
-       WHERE membership.conversation_id = ?`,
-      [conversationId],
-    ))[0];
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT membership.membership_hash,membership.canonical_membership,anchor.anchor_hash,anchor.canonical_anchor FROM memberships AS membership JOIN anchors AS anchor ON anchor.agent_key=membership.agent_key AND anchor.conversation_id=membership.conversation_id AND anchor.previous_anchor_hash IS NULL WHERE membership.agent_key=${agentKey} AND membership.conversation_id=${conversationId}`)[0];
     return row === undefined
       ? undefined
       : Object.freeze({
@@ -1938,10 +1760,11 @@ function readFoundation(
           anchorHash: readText(row, "anchor_hash"),
           canonicalAnchor: readBytes(row, "canonical_anchor"),
         });
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function insertFoundation(
+  agentKey: string,
   foundation: ConversationFoundation,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
@@ -1962,41 +1785,21 @@ function insertFoundation(
         ),
       { concurrency: 1 },
     );
-    const local = yield* readStoredIdentity();
+    const local = yield* readStoredIdentity(agentKey);
     if (local === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO memberships
-        (conversation_id, membership_hash, canonical_membership, sort_key)
-       VALUES (?, ?, ?, ?)`,
-      [
-        foundation.conversationId,
-        foundation.membershipHash,
-        copyBytes(foundation.canonicalMembership),
-        conversationSortKey(members, local.agentId),
-      ],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO anchors
-        (conversation_id, anchor_hash, canonical_anchor) VALUES (?, ?, ?)`,
-      [
-        foundation.conversationId,
-        foundation.anchorHash,
-        copyBytes(foundation.canonicalAnchor),
-      ],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO conversation_state
-        (conversation_id, membership_hash, current_anchor_hash, head_ordinal)
-       VALUES (?, ?, ?, -1)`,
-      [
-        foundation.conversationId,
-        foundation.membershipHash,
-        foundation.anchorHash,
-      ],
-    );
-  }).pipe(storeOperation);
+    yield* database<Readonly<Record<string, unknown>>>`INSERT INTO memberships
+        (agent_key,conversation_id, membership_hash, canonical_membership, sort_key)
+       VALUES (${agentKey},${foundation.conversationId}, ${foundation.membershipHash}, ${copyBytes(foundation.canonicalMembership)}, ${conversationSortKey(members, local.agentId)})`;
+    yield* database<Readonly<Record<string, unknown>>>`INSERT INTO anchors
+        (agent_key,conversation_id, anchor_hash, canonical_anchor) VALUES (${agentKey},${foundation.conversationId}, ${foundation.anchorHash}, ${copyBytes(foundation.canonicalAnchor)})`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO conversation_state
+        (agent_key,conversation_id, membership_hash, current_anchor_hash, head_ordinal)
+       VALUES (${agentKey},${foundation.conversationId}, ${foundation.membershipHash}, ${foundation.anchorHash}, -1)`;
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -2004,11 +1807,13 @@ function insertFoundation(
  * completed member anchor casts no local vote and may do so.
  */
 function stageReanchorInTransaction(
+  agentKey: string,
   reanchor: StagedReanchor,
   purpose: "vote" | "adopted",
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const existing = yield* findStagedReanchor(
+      agentKey,
       reanchor.conversationId,
       reanchor.anchorHash,
     );
@@ -2016,21 +1821,23 @@ function stageReanchorInTransaction(
       requireSameReanchor(existing, reanchor);
       return "existing";
     }
-    yield* requireUnclaimedReanchorScope(reanchor);
-    yield* requireReanchorPosition(reanchor);
+    yield* requireUnclaimedReanchorScope(agentKey, reanchor);
+    yield* requireReanchorPosition(agentKey, reanchor);
     if (purpose === "vote") {
-      yield* requireNoStagedSuccessor(reanchor);
+      yield* requireNoStagedSuccessor(agentKey, reanchor);
     }
-    yield* insertStagedReanchor(reanchor);
+    yield* insertStagedReanchor(agentKey, reanchor);
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function completeReanchorInTransaction(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const staged = yield* findStagedReanchor(
+      agentKey,
       reanchor.conversationId,
       reanchor.anchorHash,
     );
@@ -2038,14 +1845,16 @@ function completeReanchorInTransaction(
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireSameReanchor(staged, reanchor);
-    if (yield* hasAnchor(reanchor.conversationId, reanchor.anchorHash)) {
+    if (
+      yield* hasAnchor(agentKey, reanchor.conversationId, reanchor.anchorHash)
+    ) {
       return "existing";
     }
-    yield* requireReanchorPosition(reanchor);
-    yield* insertCompletedReanchor(reanchor);
-    yield* releaseSupersededProposal(reanchor);
+    yield* requireReanchorPosition(agentKey, reanchor);
+    yield* insertCompletedReanchor(agentKey, reanchor);
+    yield* releaseSupersededProposal(agentKey, reanchor);
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -2073,17 +1882,19 @@ function requireSameReanchor(
  * the completed anchor's quorum leaves too few members to certify it.
  */
 function releaseSupersededProposal(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const lock = yield* findProposalLock(
+      agentKey,
       reanchor.conversationId,
       reanchor.selectedRecordHash,
     );
     if (lock !== undefined) {
-      yield* releaseProposalLock(lock);
+      yield* releaseProposalLock(agentKey, lock);
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -2092,96 +1903,74 @@ function releaseSupersededProposal(
  * certify because orphaned rows would fail startup verification.
  */
 function releaseProposalLock(
+  agentKey: string,
   lock: ProposalLock,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const staged = `SELECT record_hash FROM staged_records
-    WHERE conversation_id = ?1 AND action_hash = ?2`;
+    const staged = database`SELECT record_hash FROM staged_records
+      WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId} AND action_hash=${lock.actionHash}`;
     for (const statement of [
-      `UPDATE outbound_messages SET record_hash=NULL,
-       disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END
-       WHERE conversation_id=?1 AND record_hash IN (${staged})`,
-      `DELETE FROM protocol_evidence
-     WHERE conversation_id = ?1 AND evidence_kind = 'durability'
-       AND subject_id IN (${staged})`,
-      `DELETE FROM staged_records
-     WHERE conversation_id = ?1 AND action_hash = ?2`,
-      `DELETE FROM protocol_evidence
-     WHERE conversation_id = ?1 AND evidence_kind = 'action'
-       AND subject_id = ?2`,
-      `DELETE FROM proposal_locks
-     WHERE conversation_id = ?1 AND action_hash = ?2`,
+      database`UPDATE outbound_messages SET record_hash=NULL,
+        disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END
+        WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId} AND record_hash IN (${staged})`,
+      database`DELETE FROM protocol_evidence WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId}
+        AND evidence_kind='durability' AND subject_id IN (${staged})`,
+      database`DELETE FROM staged_records WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId} AND action_hash=${lock.actionHash}`,
+      database`DELETE FROM protocol_evidence WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId}
+        AND evidence_kind='action' AND subject_id=${lock.actionHash}`,
+      database`DELETE FROM proposal_locks WHERE agent_key=${agentKey} AND conversation_id=${lock.conversationId} AND action_hash=${lock.actionHash}`,
     ]) {
-      yield* database.unsafe<Readonly<Record<string, unknown>>>(statement, [
-        { 1: lock.conversationId, 2: lock.actionHash },
-      ]);
+      yield* statement;
     }
-  }).pipe(storeOperation, Effect.withSpan("releaseProposalLock"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("releaseProposalLock"));
 }
 
 /**
  * Delete this endpoint's uncompleted candidates in a completed re-anchor's
  * scope that the completion does not select, with their re-anchor votes.
+ * @param agentKey Immutable storage owner for this operation.
  * @param reanchor Verified completed re-anchor that supersedes them.
  */
 function retireSupersededCandidates(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const scope = [
-      reanchor.conversationId,
-      reanchor.previousAnchorHash,
-      reanchor.routerInstanceId,
-      reanchor.anchorHash,
-    ] as const;
-    const superseded = (yield* database.unsafe<
+    const superseded = (yield* database<
       Readonly<Record<string, unknown>>
-    >(
-      `SELECT anchor_hash FROM reanchors
-       WHERE conversation_id = ? AND previous_anchor_hash = ?
-         AND router_instance_id = ? AND anchor_hash <> ?
-         AND canonical_completed_reanchor IS NULL`,
-      [...scope],
-    )).map((row) => readText(row, "anchor_hash"));
-    for (const anchorHash of superseded) {
-      yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `DELETE FROM protocol_evidence
-         WHERE conversation_id = ? AND evidence_kind = 'reanchor'
-           AND subject_id = ?`,
-        [reanchor.conversationId, anchorHash],
-      );
-    }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `DELETE FROM reanchors
-       WHERE conversation_id = ? AND previous_anchor_hash = ?
-         AND router_instance_id = ? AND anchor_hash <> ?
-         AND canonical_completed_reanchor IS NULL`,
-      [...scope],
+    >`SELECT anchor_hash FROM reanchors WHERE agent_key=${agentKey} AND conversation_id=${reanchor.conversationId} AND previous_anchor_hash=${reanchor.previousAnchorHash} AND router_instance_id=${reanchor.routerInstanceId} AND anchor_hash<>${reanchor.anchorHash} AND canonical_completed_reanchor IS NULL`).map(
+      (row) => readText(row, "anchor_hash"),
     );
-  }).pipe(storeOperation);
+    for (const anchorHash of superseded) {
+      yield* database<
+        Readonly<Record<string, unknown>>
+      >`DELETE FROM protocol_evidence
+         WHERE agent_key=${agentKey} AND conversation_id = ${reanchor.conversationId} AND evidence_kind = 'reanchor'
+           AND subject_id = ${anchorHash}`;
+    }
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`DELETE FROM reanchors WHERE agent_key=${agentKey} AND conversation_id=${reanchor.conversationId} AND previous_anchor_hash=${reanchor.previousAnchorHash} AND router_instance_id=${reanchor.routerInstanceId} AND anchor_hash<>${reanchor.anchorHash} AND canonical_completed_reanchor IS NULL`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireUnclaimedReanchorScope(
+  agentKey: string,
   reanchor: StagedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const scoped = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT anchor_hash FROM reanchors
-       WHERE conversation_id = ? AND previous_anchor_hash = ?
-         AND router_instance_id = ?`,
-      [
-        reanchor.conversationId,
-        reanchor.previousAnchorHash,
-        reanchor.routerInstanceId,
-      ],
-    ))[0];
+    const scoped = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT anchor_hash FROM reanchors
+       WHERE agent_key=${agentKey} AND conversation_id = ${reanchor.conversationId} AND previous_anchor_hash = ${reanchor.previousAnchorHash}
+         AND router_instance_id = ${reanchor.routerInstanceId}`)[0];
     if (scoped !== undefined) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -2189,109 +1978,85 @@ function requireUnclaimedReanchorScope(
  * the same anchor.
  */
 function requireNoStagedSuccessor(
+  agentKey: string,
   reanchor: StagedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const successor = (yield* database.unsafe<
+    const successor = (yield* database<
       Readonly<Record<string, unknown>>
-    >(
-      `SELECT 1 AS staged FROM staged_records
-       WHERE conversation_id = ? AND anchor_hash = ?
-         AND previous_record_hash = ? LIMIT 1`,
-      [
-        reanchor.conversationId,
-        reanchor.previousAnchorHash,
-        reanchor.selectedRecordHash,
-      ],
-    ))[0];
+    >`SELECT 1 AS staged FROM staged_records
+       WHERE agent_key=${agentKey} AND conversation_id = ${reanchor.conversationId} AND anchor_hash = ${reanchor.previousAnchorHash}
+         AND previous_record_hash = ${reanchor.selectedRecordHash} LIMIT 1`)[0];
     if (successor !== undefined) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireReanchorPosition(
+  agentKey: string,
   reanchor: StagedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const position = yield* readStoredPosition(reanchor.conversationId);
+    const position = yield* readStoredPosition(
+      agentKey,
+      reanchor.conversationId,
+    );
     requireEqual(position.currentAnchorHash, reanchor.previousAnchorHash);
     requireEqual(position.headRecordHash, reanchor.selectedRecordHash);
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function insertStagedReanchor(
+  agentKey: string,
   reanchor: StagedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO reanchors
-        (conversation_id, anchor_hash, previous_anchor_hash,
+    yield* database<Readonly<Record<string, unknown>>>`INSERT INTO reanchors
+        (agent_key,conversation_id, anchor_hash, previous_anchor_hash,
          router_instance_id, selected_record_hash, canonical_body)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        reanchor.conversationId,
-        reanchor.anchorHash,
-        reanchor.previousAnchorHash,
-        reanchor.routerInstanceId,
-        reanchor.selectedRecordHash,
-        copyBytes(reanchor.canonicalBody),
-      ],
-    );
-  }).pipe(storeOperation);
+       VALUES (${agentKey},${reanchor.conversationId}, ${reanchor.anchorHash}, ${reanchor.previousAnchorHash}, ${reanchor.routerInstanceId}, ${reanchor.selectedRecordHash}, ${copyBytes(reanchor.canonicalBody)})`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function insertCompletedReanchor(
+  agentKey: string,
   reanchor: CompletedReanchor,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO anchors
-        (conversation_id, anchor_hash, previous_anchor_hash,
+    yield* database<Readonly<Record<string, unknown>>>`INSERT INTO anchors
+        (agent_key,conversation_id, anchor_hash, previous_anchor_hash,
          selected_record_hash, canonical_anchor)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        reanchor.conversationId,
-        reanchor.anchorHash,
-        reanchor.previousAnchorHash,
-        reanchor.selectedRecordHash,
-        copyBytes(reanchor.canonicalCompletedReanchor),
-      ],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE reanchors SET canonical_completed_reanchor = ?
-       WHERE conversation_id = ? AND anchor_hash = ?`,
-      [
-        copyBytes(reanchor.canonicalCompletedReanchor),
-        reanchor.conversationId,
-        reanchor.anchorHash,
-      ],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE conversation_state SET current_anchor_hash = ?
-       WHERE conversation_id = ?`,
-      [reanchor.anchorHash, reanchor.conversationId],
-    );
-  }).pipe(storeOperation);
+       VALUES (${agentKey},${reanchor.conversationId}, ${reanchor.anchorHash}, ${reanchor.previousAnchorHash}, ${reanchor.selectedRecordHash}, ${copyBytes(reanchor.canonicalCompletedReanchor)})`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`UPDATE reanchors SET canonical_completed_reanchor = ${copyBytes(reanchor.canonicalCompletedReanchor)}
+       WHERE agent_key=${agentKey} AND conversation_id = ${reanchor.conversationId} AND anchor_hash = ${reanchor.anchorHash}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`UPDATE conversation_state SET current_anchor_hash = ${reanchor.anchorHash}
+       WHERE agent_key=${agentKey} AND conversation_id = ${reanchor.conversationId}`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function hasAnchor(
+  agentKey: string,
   conversationId: string,
   anchorHash: string,
 ): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM anchors
-         WHERE conversation_id = ? AND anchor_hash = ?`,
-        [conversationId, anchorHash],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM anchors
+         WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND anchor_hash = ${anchorHash}`)[0] !==
+      undefined
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function validateEmptyConversationRestart(
@@ -2328,90 +2093,70 @@ function validateFoundation(foundation: ConversationFoundation): void {
 }
 
 function clearIncompleteConversationState(
+  agentKey: string,
   expected: ConversationFoundation,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     const conversationId = expected.conversationId;
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "UPDATE outbound_messages SET record_hash=NULL, disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END WHERE conversation_id=?",
-      [conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM protocol_evidence WHERE conversation_id = ?",
-      [conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM proposal_locks WHERE conversation_id = ?",
-      [conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM staged_records WHERE conversation_id = ?",
-      [conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      "DELETE FROM reanchors WHERE conversation_id = ?",
-      [conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE outbound_messages SET disposition = 'discarded'
-       WHERE conversation_id = ? AND disposition = 'pending'`,
-      [conversationId],
-    );
-  }).pipe(storeOperation);
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`UPDATE outbound_messages SET record_hash=NULL, disposition=CASE WHEN disposition='pending' THEN 'discarded' ELSE disposition END WHERE agent_key=${agentKey} AND conversation_id=${conversationId}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`DELETE FROM protocol_evidence WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`DELETE FROM proposal_locks WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`DELETE FROM staged_records WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`DELETE FROM reanchors WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`;
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`UPDATE outbound_messages SET disposition = 'discarded'
+       WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND disposition = 'pending'`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function installReplacementFoundation(
+  agentKey: string,
   replacement: ConversationFoundation,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const retainedReplacement = (yield* database.unsafe<
+    const retainedReplacement = (yield* database<
       Readonly<Record<string, unknown>>
-    >(
-      `SELECT 1 AS retained FROM anchors
-       WHERE conversation_id = ? AND anchor_hash = ?`,
-      [replacement.conversationId, replacement.anchorHash],
-    ))[0];
+    >`SELECT 1 AS retained FROM anchors
+       WHERE agent_key=${agentKey} AND conversation_id = ${replacement.conversationId} AND anchor_hash = ${replacement.anchorHash}`)[0];
     if (retainedReplacement !== undefined) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO anchors
-        (conversation_id, anchor_hash, canonical_anchor) VALUES (?, ?, ?)`,
-      [
-        replacement.conversationId,
-        replacement.anchorHash,
-        copyBytes(replacement.canonicalAnchor),
-      ],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE conversation_state
-       SET current_anchor_hash = ?, head_record_hash = NULL, head_ordinal = -1
-       WHERE conversation_id = ?`,
-      [replacement.anchorHash, replacement.conversationId],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `DELETE FROM anchors
-       WHERE conversation_id = ? AND anchor_hash <> ?`,
-      [replacement.conversationId, replacement.anchorHash],
-    );
-  }).pipe(storeOperation);
+    yield* database<Readonly<Record<string, unknown>>>`INSERT INTO anchors
+        (agent_key,conversation_id, anchor_hash, canonical_anchor) VALUES (${agentKey},${replacement.conversationId}, ${replacement.anchorHash}, ${copyBytes(replacement.canonicalAnchor)})`;
+    yield* database<Readonly<Record<string, unknown>>>`UPDATE conversation_state
+       SET current_anchor_hash = ${replacement.anchorHash}, head_record_hash = NULL, head_ordinal = -1
+       WHERE agent_key=${agentKey} AND conversation_id = ${replacement.conversationId}`;
+    yield* database<Readonly<Record<string, unknown>>>`DELETE FROM anchors
+       WHERE agent_key=${agentKey} AND conversation_id = ${replacement.conversationId} AND anchor_hash <> ${replacement.anchorHash}`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function readConversationMessageIntents(
+  agentKey: string,
   conversationId: string,
 ): Effect.Effect<readonly MessageIntent[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id, membership_hash, author_agent_id, msg_id,
                 canonical_intent, canonical_message, completed_record_hash
-         FROM message_intents WHERE conversation_id = ? AND canonical_intent IS NOT NULL AND failure_reason IS NULL
-         ORDER BY rowid`,
-        [conversationId],
-      )).map((row) => {
+         FROM message_intents WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND canonical_intent IS NOT NULL AND failure_reason IS NULL
+         ORDER BY sequence`).map((row) => {
         const completedRecordHash = readOptionalText(
           row,
           "completed_record_hash",
@@ -2427,7 +2172,7 @@ function readConversationMessageIntents(
         });
       }),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function copyFoundation(
@@ -2465,49 +2210,57 @@ function requireSameFoundation(
   requireSameBytes(left.canonicalAnchor, right.canonicalAnchor);
 }
 
-function readPositions(conversationId?: string) {
+function readPositions(agentKey: string, conversationId?: string) {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, membership_hash, current_anchor_hash,
-                  head_record_hash FROM conversation_state
-           ${conversationId === undefined ? "" : "WHERE conversation_id = ?"}
-           ORDER BY conversation_id`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map(readConversationPosition),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,membership_hash,current_anchor_hash,head_record_hash FROM conversation_state WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id`).map(
+        readConversationPosition,
+      ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readMessageIntents(
+  agentKey: string,
   conversationId?: string,
 ): Effect.Effect<readonly MessageIntent[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, membership_hash, author_agent_id, msg_id,
-                canonical_intent, canonical_message, completed_record_hash
-         FROM message_intents WHERE canonical_intent IS NOT NULL AND failure_reason IS NULL ${conversationId === undefined ? "" : "AND conversation_id = ?"} ORDER BY rowid`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map((row) => {
-        const completedRecordHash = readOptionalText(
-          row,
-          "completed_record_hash",
-        );
-        return Object.freeze({
-          conversationId: readText(row, "conversation_id"),
-          membershipHash: readText(row, "membership_hash"),
-          authorAgentId: readText(row, "author_agent_id"),
-          msgId: readText(row, "msg_id"),
-          canonicalIntent: readBytes(row, "canonical_intent"),
-          canonicalMessage: readBytes(row, "canonical_message"),
-          ...(completedRecordHash === undefined ? {} : { completedRecordHash }),
-        });
-      }),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,membership_hash,author_agent_id,msg_id,canonical_intent,canonical_message,completed_record_hash FROM message_intents WHERE agent_key=${agentKey} AND canonical_intent IS NOT NULL AND failure_reason IS NULL ${conversation} ORDER BY sequence`).map(
+        (row) => {
+          const completedRecordHash = readOptionalText(
+            row,
+            "completed_record_hash",
+          );
+          return Object.freeze({
+            conversationId: readText(row, "conversation_id"),
+            membershipHash: readText(row, "membership_hash"),
+            authorAgentId: readText(row, "author_agent_id"),
+            msgId: readText(row, "msg_id"),
+            canonicalIntent: readBytes(row, "canonical_intent"),
+            canonicalMessage: readBytes(row, "canonical_message"),
+            ...(completedRecordHash === undefined
+              ? {}
+              : { completedRecordHash }),
+          });
+        },
+      ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readMembership(
@@ -2521,6 +2274,7 @@ function readMembership(
 }
 
 function readAnchors(
+  agentKey: string,
   conversationId?: string,
   anchorHashes?: readonly string[],
 ): Effect.Effect<readonly StoredAnchor[], EndpointStoreError, SqlClient> {
@@ -2529,91 +2283,100 @@ function readAnchors(
       return Object.freeze([]);
     }
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
+    const anchors =
+      anchorHashes === undefined
+        ? database``
+        : database`AND anchor_hash IN ${database.in(anchorHashes)}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, anchor_hash, previous_anchor_hash,
-                selected_record_hash, canonical_anchor
-         FROM anchors WHERE ${conversationId === undefined ? "1" : "conversation_id = ?"}
-         ${anchorHashes === undefined ? "" : `AND anchor_hash IN (${anchorHashes.map(() => "?").join(", ")})`}
-         ORDER BY conversation_id, rowid`,
-        [
-          ...(conversationId === undefined ? [] : [conversationId]),
-          ...(anchorHashes ?? []),
-        ],
-      )).map((row) => {
-        const previousAnchorHash = readOptionalText(
-          row,
-          "previous_anchor_hash",
-        );
-        const selectedRecordHash = readOptionalText(
-          row,
-          "selected_record_hash",
-        );
-        return Object.freeze({
-          conversationId: readText(row, "conversation_id"),
-          anchorHash: readText(row, "anchor_hash"),
-          ...(previousAnchorHash === undefined ? {} : { previousAnchorHash }),
-          ...(selectedRecordHash === undefined ? {} : { selectedRecordHash }),
-          canonicalAnchor: readBytes(row, "canonical_anchor"),
-        });
-      }),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,anchor_hash,previous_anchor_hash,selected_record_hash,canonical_anchor FROM anchors WHERE agent_key=${agentKey} ${conversation} ${anchors} ORDER BY conversation_id,sequence`).map(
+        (row) => {
+          const previousAnchorHash = readOptionalText(
+            row,
+            "previous_anchor_hash",
+          );
+          const selectedRecordHash = readOptionalText(
+            row,
+            "selected_record_hash",
+          );
+          return Object.freeze({
+            conversationId: readText(row, "conversation_id"),
+            anchorHash: readText(row, "anchor_hash"),
+            ...(previousAnchorHash === undefined ? {} : { previousAnchorHash }),
+            ...(selectedRecordHash === undefined ? {} : { selectedRecordHash }),
+            canonicalAnchor: readBytes(row, "canonical_anchor"),
+          });
+        },
+      ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
-function readEvidence(conversationId?: string) {
+function readEvidence(agentKey: string, conversationId?: string) {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, evidence_kind, subject_id,
-                evidence_key, canonical_evidence
-         FROM protocol_evidence
-         ${conversationId === undefined ? "" : "WHERE conversation_id = ?"}
-         ORDER BY conversation_id, evidence_kind, subject_id, evidence_key`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map(readProtocolEvidence),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,evidence_kind,subject_id,evidence_key,canonical_evidence FROM protocol_evidence WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id,evidence_kind,subject_id,evidence_key`).map(
+        readProtocolEvidence,
+      ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readAllCertifiedRecords(
+  agentKey: string,
   conversationId?: string,
 ): Effect.Effect<readonly CertifiedRecord[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND certified.conversation_id=${conversationId}`;
     return Object.freeze(
       yield* Effect.forEach(
-        yield* database.unsafe<Readonly<Record<string, unknown>>>(
-          `${historySelect}
-         ${conversationId === undefined ? "" : "WHERE certified.conversation_id = ?"}
-         ORDER BY certified.conversation_id, certified.ordinal`,
-          [...(conversationId === undefined ? [] : [conversationId])],
-        ),
-        (row) => readCertifiedRecord(row),
+        yield* database<
+          Readonly<Record<string, unknown>>
+        >`${historySelect(database)} WHERE certified.agent_key=${agentKey} ${conversation} ORDER BY certified.conversation_id,certified.ordinal`,
+        (row) => readCertifiedRecord(agentKey, row),
         { concurrency: 1 },
       ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
  * Projects one complete certified record and its separate evidence maps.
  *
- * @param row SQLite result row for the certified record core.
+ * @param agentKey Immutable storage owner for this operation.
+ * @param row SQL result row for the certified record core.
  * @returns The detached complete certified record.
  */
 function readCertifiedRecord(
+  agentKey: string,
   row: Readonly<Record<string, unknown>>,
 ): Effect.Effect<CertifiedRecord, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const staged = readStagedRecord(row);
     const actionEvidence = yield* readEvidenceForSubject(
+      agentKey,
       staged.conversationId,
       "action",
       staged.actionHash,
     );
     const durabilityEvidence = yield* readEvidenceForSubject(
+      agentKey,
       staged.conversationId,
       "durability",
       staged.recordHash,
@@ -2626,47 +2389,54 @@ function readCertifiedRecord(
       actionEvidence,
       durabilityEvidence,
     });
-  }).pipe(storeOperation, Effect.withSpan("readCertifiedRecord"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readCertifiedRecord"));
 }
 
 /** Returns detached signer evidence in stored signer-key order. */
 function readEvidenceForSubject(
+  agentKey: string,
   conversationId: string,
   kind: ProtocolEvidence["kind"],
   subjectId: string,
 ): Effect.Effect<readonly ProtocolEvidence[], EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const collation = database.onDialectOrElse({
+      pg: () => database`COLLATE "C"`,
+      orElse: () => database`COLLATE BINARY`,
+    });
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, evidence_kind, subject_id,
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id, evidence_kind, subject_id,
                 evidence_key, canonical_evidence
          FROM protocol_evidence
-         WHERE conversation_id = ? AND evidence_kind = ? AND subject_id = ?
-         ORDER BY evidence_key COLLATE BINARY`,
-        [conversationId, kind, subjectId],
-      )).map(readProtocolEvidence),
+         WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND evidence_kind = ${kind} AND subject_id = ${subjectId}
+         ORDER BY evidence_key ${collation}`).map(readProtocolEvidence),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
-function readReanchors(conversationId?: string) {
+function readReanchors(agentKey: string, conversationId?: string) {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, anchor_hash, previous_anchor_hash,
-                router_instance_id, selected_record_hash, canonical_body,
-                canonical_completed_reanchor
-         FROM reanchors ${conversationId === undefined ? "" : "WHERE conversation_id = ?"} ORDER BY conversation_id, rowid`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map(readRecoveredReanchor),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,anchor_hash,previous_anchor_hash,router_instance_id,selected_record_hash,canonical_body,canonical_completed_reanchor FROM reanchors WHERE agent_key=${agentKey} ${conversation} ORDER BY conversation_id,sequence`).map(
+        readRecoveredReanchor,
+      ),
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function resolveHistoryWindow(
-  request: Parameters<typeof readStoredConversation>[0],
+  agentKey: string,
+  request: Parameters<typeof readStoredConversation>[1],
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -2675,10 +2445,9 @@ function resolveHistoryWindow(
     if (conversationId.length === 0) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }
-    const [head] = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT record_hash,ordinal FROM certified_records WHERE conversation_id=? ORDER BY ordinal DESC LIMIT 1",
-      [conversationId],
-    );
+    const [head] = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT record_hash,ordinal FROM certified_records WHERE agent_key=${agentKey} AND conversation_id=${conversationId} ORDER BY ordinal DESC LIMIT 1`;
     if (head === undefined) {
       return yield* new EndpointStoreError({
         reason: selected.resumed ? "invalid-continuation" : "not-found",
@@ -2687,6 +2456,7 @@ function resolveHistoryWindow(
     const throughRecordHash =
       selected.throughRecordHash ?? readText(head, "record_hash");
     const through = yield* historyPosition(
+      agentKey,
       conversationId,
       throughRecordHash,
       selected.resumed,
@@ -2695,6 +2465,7 @@ function resolveHistoryWindow(
       selected.afterRecordHash === undefined
         ? -1
         : yield* historyPosition(
+            agentKey,
             conversationId,
             selected.afterRecordHash,
             selected.resumed,
@@ -2707,7 +2478,7 @@ function resolveHistoryWindow(
 }
 
 function resolveHistoryRequest(
-  request: Parameters<typeof readStoredConversation>[0],
+  request: Parameters<typeof readStoredConversation>[1],
 ): Effect.Effect<
   {
     readonly conversationId: string;
@@ -2747,23 +2518,23 @@ function decodeHistoryCursor(value: string) {
 }
 
 function historyPosition(
+  agentKey: string,
   conversationId: string,
   recordHash: string,
   continuation: boolean,
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const row = (yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT ordinal FROM certified_records WHERE conversation_id=? AND record_hash=?",
-      [conversationId, recordHash],
-    ))[0];
+    const row = (yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT ordinal FROM certified_records WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND record_hash=${recordHash}`)[0];
     if (row === undefined) {
       return yield* new EndpointStoreError({
         reason: continuation ? "invalid-continuation" : "not-found",
       });
     }
     return readInteger(row, "ordinal");
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
@@ -2790,15 +2561,18 @@ function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
 
 /**
  * Retain one verified record core without authorizing a local signature.
+ * @param agentKey Immutable storage owner for this operation.
  * @param record Verified record core and private bindings.
  * @returns Whether the record was inserted or already staged.
  */
 function stageRecordInTransaction(
+  agentKey: string,
   record: StagedRecord,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     const existing = yield* findStagedRecord(
+      agentKey,
       record.conversationId,
       record.recordHash,
     );
@@ -2806,34 +2580,25 @@ function stageRecordInTransaction(
       requireSameRecord(existing, record);
       return "existing";
     }
-    yield* requireRecordPosition(record);
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO staged_records
-        (conversation_id, record_hash, previous_record_hash,
+    yield* requireRecordPosition(agentKey, record);
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO staged_records
+        (agent_key,conversation_id, record_hash, previous_record_hash,
          membership_hash, anchor_hash, action_hash, author_agent_id, msg_id,
          canonical_record_core)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        record.conversationId,
-        record.recordHash,
-        record.previousRecordHash ?? null,
-        record.membershipHash,
-        record.anchorHash,
-        record.actionHash,
-        record.authorAgentId,
-        record.msgId,
-        copyBytes(record.canonicalRecordCore),
-      ],
-    );
+       VALUES (${agentKey},${record.conversationId}, ${record.recordHash}, ${record.previousRecordHash ?? null}, ${record.membershipHash}, ${record.anchorHash}, ${record.actionHash}, ${record.authorAgentId}, ${record.msgId}, ${copyBytes(record.canonicalRecordCore)})`;
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function promoteRecordInTransaction(
+  agentKey: string,
   record: CertifiedRecord,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const staged = yield* findStagedRecord(
+      agentKey,
       record.conversationId,
       record.recordHash,
     );
@@ -2841,17 +2606,23 @@ function promoteRecordInTransaction(
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     requireSameRecord(staged, record);
-    const evidenceMutation = yield* mergeCertifiedEvidence(record);
-    if (yield* hasCertifiedRecord(record.conversationId, record.recordHash)) {
+    const evidenceMutation = yield* mergeCertifiedEvidence(agentKey, record);
+    if (
+      yield* hasCertifiedRecord(
+        agentKey,
+        record.conversationId,
+        record.recordHash,
+      )
+    ) {
       return evidenceMutation;
     }
-    const position = yield* readStoredPosition(record.conversationId);
+    const position = yield* readStoredPosition(agentKey, record.conversationId);
     requireEqual(position.currentAnchorHash, record.anchorHash);
     requireEqual(position.headRecordHash, record.previousRecordHash);
-    yield* insertCertifiedRecord(record, position.headOrdinal + 1);
-    yield* completeLocalMessageIntent(record);
+    yield* insertCertifiedRecord(agentKey, record, position.headOrdinal + 1);
+    yield* completeLocalMessageIntent(agentKey, record);
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
@@ -2873,6 +2644,7 @@ function requireSameRecord(left: StagedRecord, right: StagedRecord): void {
 }
 
 function mergeCertifiedEvidence(
+  agentKey: string,
   record: CertifiedRecord,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
@@ -2881,77 +2653,76 @@ function mergeCertifiedEvidence(
       ...record.actionEvidence,
       ...record.durabilityEvidence,
     ]) {
-      if ((yield* mergeEvidenceInTransaction(evidence)) === "inserted") {
+      if (
+        (yield* mergeEvidenceInTransaction(agentKey, evidence)) === "inserted"
+      ) {
         mutation = "inserted";
       }
     }
     return mutation;
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function mergeEvidenceInTransaction(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<StoreMutation, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    yield* requireEvidenceSubject(evidence);
-    const existing = yield* findEvidence(evidence);
+    yield* requireEvidenceSubject(agentKey, evidence);
+    const existing = yield* findEvidence(agentKey, evidence);
     if (existing !== undefined) {
       requireSameBytes(existing, evidence.canonicalEvidence);
       return "existing";
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO protocol_evidence
-        (conversation_id, evidence_kind, subject_id,
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO protocol_evidence
+        (agent_key,conversation_id, evidence_kind, subject_id,
          evidence_key, canonical_evidence)
-       VALUES (?, ?, ?, ?, ?)`,
-      [
-        evidence.conversationId,
-        evidence.kind,
-        evidence.subjectId,
-        evidence.evidenceKey,
-        copyBytes(evidence.canonicalEvidence),
-      ],
-    );
+       VALUES (${agentKey},${evidence.conversationId}, ${evidence.kind}, ${evidence.subjectId}, ${evidence.evidenceKey}, ${copyBytes(evidence.canonicalEvidence)})`;
     return "inserted";
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireRecordPosition(
+  agentKey: string,
   record: StagedRecord,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const position = yield* readStoredPosition(record.conversationId);
+    const position = yield* readStoredPosition(agentKey, record.conversationId);
     requireEqual(position.membershipHash, record.membershipHash);
     requireEqual(position.currentAnchorHash, record.anchorHash);
     requireEqual(position.headRecordHash, record.previousRecordHash);
     const proposalLock = yield* findProposalLock(
+      agentKey,
       record.conversationId,
       record.previousRecordHash ?? FIRST_MESSAGE_PREDECESSOR,
     );
     if (proposalLock !== undefined) {
       requireEqual(proposalLock.actionHash, record.actionHash);
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
  * Reads a required conversation position.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Opaque conversation identity.
  * @returns Its durable anchor, head, and local ordinal.
  */
 function readStoredPosition(
+  agentKey: string,
   conversationId: string,
 ): Effect.Effect<InternalPosition, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, membership_hash, current_anchor_hash,
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, membership_hash, current_anchor_hash,
               head_record_hash, head_ordinal
-       FROM conversation_state WHERE conversation_id = ?`,
-      [conversationId],
-    ))[0];
+       FROM conversation_state WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`)[0];
     if (row === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
@@ -2959,13 +2730,13 @@ function readStoredPosition(
       ...readConversationPosition(row),
       headOrdinal: readInteger(row, "head_ordinal"),
     });
-  }).pipe(storeOperation, Effect.withSpan("readStoredPosition"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readStoredPosition"));
 }
 
 /**
  * Projects one durable position row without its local ordinal.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached conversation position.
  */
 function readConversationPosition(
@@ -2981,81 +2752,82 @@ function readConversationPosition(
 }
 
 function findEvidence(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<Uint8Array | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT canonical_evidence FROM protocol_evidence
-       WHERE conversation_id = ? AND evidence_kind = ?
-         AND subject_id = ? AND evidence_key = ?`,
-      [
-        evidence.conversationId,
-        evidence.kind,
-        evidence.subjectId,
-        evidence.evidenceKey,
-      ],
-    ))[0];
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT canonical_evidence FROM protocol_evidence
+       WHERE agent_key=${agentKey} AND conversation_id = ${evidence.conversationId} AND evidence_kind = ${evidence.kind}
+         AND subject_id = ${evidence.subjectId} AND evidence_key = ${evidence.evidenceKey}`)[0];
     return row === undefined ? undefined : readBytes(row, "canonical_evidence");
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireEvidenceSubject(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    yield* requireMembership(evidence.conversationId);
+    yield* requireMembership(agentKey, evidence.conversationId);
     if (evidence.kind === "action") {
-      if (!(yield* hasActionSubject(evidence))) {
+      if (!(yield* hasActionSubject(agentKey, evidence))) {
         return yield* new EndpointStoreError({ reason: "not-found" });
       }
     }
     if (
       evidence.kind === "durability" &&
-      (yield* findStagedRecord(evidence.conversationId, evidence.subjectId)) ===
-        undefined
-    ) {
-      return yield* new EndpointStoreError({ reason: "not-found" });
-    }
-    if (
-      evidence.kind === "reanchor" &&
-      (yield* findStagedReanchor(
+      (yield* findStagedRecord(
+        agentKey,
         evidence.conversationId,
         evidence.subjectId,
       )) === undefined
     ) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-  }).pipe(storeOperation);
+    if (
+      evidence.kind === "reanchor" &&
+      (yield* findStagedReanchor(
+        agentKey,
+        evidence.conversationId,
+        evidence.subjectId,
+      )) === undefined
+    ) {
+      return yield* new EndpointStoreError({ reason: "not-found" });
+    }
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
  * Reads an optional staged re-anchor by stable body hash.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Opaque conversation identity.
  * @param anchorHash Stable private anchor hash.
  * @returns The detached staged re-anchor when present.
  */
 function findStagedReanchor(
+  agentKey: string,
   conversationId: string,
   anchorHash: string,
 ): Effect.Effect<StagedReanchor | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, anchor_hash, previous_anchor_hash,
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, anchor_hash, previous_anchor_hash,
               router_instance_id, selected_record_hash, canonical_body
-       FROM reanchors WHERE conversation_id = ? AND anchor_hash = ?`,
-      [conversationId, anchorHash],
-    ))[0];
+       FROM reanchors WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND anchor_hash = ${anchorHash}`)[0];
     return row === undefined ? undefined : readStagedReanchor(row);
-  }).pipe(storeOperation, Effect.withSpan("findStagedReanchor"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("findStagedReanchor"));
 }
 
 /**
  * Projects one staged re-anchor body.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached staged re-anchor.
  */
 function readStagedReanchor(
@@ -3072,30 +2844,33 @@ function readStagedReanchor(
 }
 
 function requireLocalEvidenceLock(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const identity = yield* readStoredIdentity();
+    const identity = yield* readStoredIdentity(agentKey);
     if (identity === undefined || evidence.evidenceKey !== identity.agentId) {
       return;
     }
     if (evidence.kind === "action") {
-      if (!(yield* hasProposalAction(evidence))) {
+      if (!(yield* hasProposalAction(agentKey, evidence))) {
         return yield* new EndpointStoreError({ reason: "not-found" });
       }
       return;
     }
     if (evidence.kind === "durability") {
-      yield* requireLocalDurabilityEvidenceLock(evidence);
+      yield* requireLocalDurabilityEvidenceLock(agentKey, evidence);
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function requireLocalDurabilityEvidenceLock(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const record = yield* findStagedRecord(
+      agentKey,
       evidence.conversationId,
       evidence.subjectId,
     );
@@ -3103,6 +2878,7 @@ function requireLocalDurabilityEvidenceLock(
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     const proposalLock = yield* findProposalLock(
+      agentKey,
       record.conversationId,
       record.previousRecordHash ?? FIRST_MESSAGE_PREDECESSOR,
     );
@@ -3112,38 +2888,39 @@ function requireLocalDurabilityEvidenceLock(
     ) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-    yield* requireNoReanchorAwayFrom(record);
-  }).pipe(storeOperation);
+    yield* requireNoReanchorAwayFrom(agentKey, record);
+  }).pipe(agentOperation(agentKey));
 }
 
 /**
  * Reads an optional proposal lock for one predecessor.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Opaque conversation identity.
  * @param predecessorKey Exact predecessor or the first message sentinel.
  * @returns The detached proposal lock when present.
  */
 function findProposalLock(
+  agentKey: string,
   conversationId: string,
   predecessorKey: string,
 ): Effect.Effect<ProposalLock | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, previous_record_hash, action_hash,
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, previous_record_hash, action_hash,
               canonical_action_core
        FROM proposal_locks
-       WHERE conversation_id = ? AND predecessor_key = ?`,
-      [conversationId, predecessorKey],
-    ))[0];
+       WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND predecessor_key = ${predecessorKey}`)[0];
     return row === undefined ? undefined : readProposalLock(row);
-  }).pipe(storeOperation, Effect.withSpan("findProposalLock"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("findProposalLock"));
 }
 
 /**
  * Projects one durable proposal lock.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached proposal lock.
  */
 function readProposalLock(
@@ -3161,31 +2938,32 @@ function readProposalLock(
 /**
  * Reads an optional staged record by stable private hash.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Opaque conversation identity.
  * @param recordHash Stable private record hash.
  * @returns The detached staged record when present.
  */
 function findStagedRecord(
+  agentKey: string,
   conversationId: string,
   recordHash: string,
 ): Effect.Effect<StagedRecord | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, record_hash, previous_record_hash,
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, record_hash, previous_record_hash,
               membership_hash, anchor_hash, action_hash, author_agent_id,
               msg_id, canonical_record_core
-       FROM staged_records WHERE conversation_id = ? AND record_hash = ?`,
-      [conversationId, recordHash],
-    ))[0];
+       FROM staged_records WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND record_hash = ${recordHash}`)[0];
     return row === undefined ? undefined : readStagedRecord(row);
-  }).pipe(storeOperation, Effect.withSpan("findStagedRecord"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("findStagedRecord"));
 }
 
 /**
  * Projects one exact staged record core.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @returns The detached staged record.
  */
 function readStagedRecord(
@@ -3211,111 +2989,101 @@ function readStagedRecord(
  * sign both leaving a head and certifying its successor.
  */
 function requireNoReanchorAwayFrom(
+  agentKey: string,
   record: StagedRecord,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const left = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT 1 AS staged FROM reanchors
-       WHERE conversation_id = ? AND previous_anchor_hash = ? LIMIT 1`,
-      [record.conversationId, record.anchorHash],
-    ))[0];
+    const left = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT 1 AS staged FROM reanchors
+       WHERE agent_key=${agentKey} AND conversation_id = ${record.conversationId} AND previous_anchor_hash = ${record.anchorHash} LIMIT 1`)[0];
     if (left !== undefined) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function hasProposalAction(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM proposal_locks
-         WHERE conversation_id = ? AND action_hash = ? LIMIT 1`,
-        [evidence.conversationId, evidence.subjectId],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM proposal_locks
+         WHERE agent_key=${agentKey} AND conversation_id = ${evidence.conversationId} AND action_hash = ${evidence.subjectId} LIMIT 1`)[0] !==
+      undefined
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function hasStagedAction(
+  agentKey: string,
   lock: ProposalLock,
 ): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS staged FROM staged_records
-         WHERE conversation_id = ? AND action_hash = ? LIMIT 1`,
-        [lock.conversationId, lock.actionHash],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS staged FROM staged_records
+         WHERE agent_key=${agentKey} AND conversation_id = ${lock.conversationId} AND action_hash = ${lock.actionHash} LIMIT 1`)[0] !==
+      undefined
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function hasActionSubject(
+  agentKey: string,
   evidence: ProtocolEvidence,
 ): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM proposal_locks
-         WHERE conversation_id = ? AND action_hash = ?
-         UNION ALL
-         SELECT 1 AS retained FROM staged_records
-         WHERE conversation_id = ? AND action_hash = ?
-         LIMIT 1`,
-        [
-          evidence.conversationId,
-          evidence.subjectId,
-          evidence.conversationId,
-          evidence.subjectId,
-        ],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM proposal_locks WHERE agent_key=${agentKey} AND conversation_id=${evidence.conversationId} AND action_hash=${evidence.subjectId} UNION ALL SELECT 1 AS retained FROM staged_records WHERE agent_key=${agentKey} AND conversation_id=${evidence.conversationId} AND action_hash=${evidence.subjectId} LIMIT 1`)[0] !==
+      undefined
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function insertCertifiedRecord(
+  agentKey: string,
   record: CertifiedRecord,
   ordinal: number,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO certified_records (conversation_id, record_hash, ordinal)
-       VALUES (?, ?, ?)`,
-      [record.conversationId, record.recordHash, ordinal],
-    );
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE conversation_state
-       SET head_record_hash = ?, head_ordinal = ? WHERE conversation_id = ?`,
-      [record.recordHash, ordinal, record.conversationId],
-    );
-  }).pipe(storeOperation);
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO certified_records (agent_key,conversation_id, record_hash, ordinal)
+       VALUES (${agentKey},${record.conversationId}, ${record.recordHash}, ${ordinal})`;
+    yield* database<Readonly<Record<string, unknown>>>`UPDATE conversation_state
+       SET head_record_hash = ${record.recordHash}, head_ordinal = ${ordinal} WHERE agent_key=${agentKey} AND conversation_id = ${record.conversationId}`;
+  }).pipe(agentOperation(agentKey));
 }
 
 function completeLocalMessageIntent(
+  agentKey: string,
   record: CertifiedRecord,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const identity = yield* readStoredIdentity();
+    const identity = yield* readStoredIdentity(agentKey);
     if (identity === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     if (record.authorAgentId !== identity.agentId) {
       return;
     }
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, membership_hash, completed_record_hash
-       FROM message_intents WHERE author_agent_id = ? AND msg_id = ?`,
-      [record.authorAgentId, record.msgId],
-    ))[0];
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, membership_hash, completed_record_hash
+       FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id = ${record.authorAgentId} AND msg_id = ${record.msgId}`)[0];
     if (row === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
@@ -3325,21 +3093,20 @@ function completeLocalMessageIntent(
     if (completed !== undefined && completed !== record.recordHash) {
       return yield* new EndpointStoreError({ reason: "conflict" });
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `UPDATE message_intents SET completed_record_hash = ?
-       WHERE author_agent_id = ? AND msg_id = ?`,
-      [record.recordHash, record.authorAgentId, record.msgId],
-    );
-  }).pipe(storeOperation);
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`UPDATE message_intents SET completed_record_hash = ${record.recordHash}
+       WHERE agent_key=${agentKey} AND author_agent_id = ${record.authorAgentId} AND msg_id = ${record.msgId}`;
+  }).pipe(agentOperation(agentKey));
 }
 
 /** The communication owner binds one immutable agent identity to its protocol state. */
-function readStoredIdentity() {
+function readStoredIdentity(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const [row] = yield* sql.unsafe<{ readonly agentId: string }>(
-      'SELECT agent_id AS "agentId" FROM communication_metadata WHERE singleton=1',
-    );
+    const [row] = yield* sql<{
+      readonly agentId: string;
+    }>`SELECT agent_id AS "agentId" FROM communication_metadata WHERE agent_key=${agentKey}`;
     return row === undefined
       ? undefined
       : {
@@ -3360,35 +3127,37 @@ function readStoredIdentity() {
 }
 
 function requireMembership(
+  agentKey: string,
   conversationId: string,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     if (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        "SELECT 1 AS retained FROM memberships WHERE conversation_id = ?",
-        [conversationId],
-      ))[0] === undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM memberships WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`)[0] ===
+      undefined
     ) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function hasCertifiedRecord(
+  agentKey: string,
   conversationId: string,
   recordHash: string,
 ): Effect.Effect<boolean, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     return (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM certified_records
-         WHERE conversation_id = ? AND record_hash = ?`,
-        [conversationId, recordHash],
-      ))[0] !== undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM certified_records
+         WHERE agent_key=${agentKey} AND conversation_id = ${conversationId} AND record_hash = ${recordHash}`)[0] !==
+      undefined
     );
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function validateCertifiedRecord(record: CertifiedRecord): void {
@@ -3455,17 +3224,19 @@ function validateEvidence(evidence: ProtocolEvidence): void {
 /**
  * The caller's transaction keeps lookup and insertion on one leased connection.
  * Repeated envelope identities retain the same complete bytes and conversation.
+ * @param agentKey Immutable storage owner for this operation.
  * @param message Canonical complete signed envelope.
  * @returns The retained envelope under its envelope identity.
  */
 function enqueueOutboundInTransaction(
+  agentKey: string,
   message: OutboundMessageInput,
 ): Effect.Effect<StoredOutboundMessage, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     validateMessageInput(message);
-    yield* requireConversation(message.conversationId);
-    const existing = yield* findOutbound(message.envelopeId);
+    yield* requireConversation(agentKey, message.conversationId);
+    const existing = yield* findOutbound(agentKey, message.envelopeId);
     if (existing !== undefined) {
       requireEqual(existing.outbound.conversationId, message.conversationId);
       requireEqual(existing.outbound.wireVersion, message.wireVersion);
@@ -3475,30 +3246,28 @@ function enqueueOutboundInTransaction(
       );
       return existing.outbound;
     }
-    yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `INSERT INTO outbound_messages
-        (conversation_id, envelope_id,
+    yield* database<
+      Readonly<Record<string, unknown>>
+    >`INSERT INTO outbound_messages
+        (agent_key,conversation_id, envelope_id,
          canonical_signed_message, wire_version, record_hash, attempted, disposition)
-       VALUES (?, ?, ?, ?, ?, 0, 'pending')`,
-      [
-        message.conversationId,
-        message.envelopeId,
-        copyBytes(message.canonicalSignedMessage),
-        message.wireVersion,
-        message.recordHash ?? null,
-      ],
-    );
+       VALUES (${agentKey},${message.conversationId}, ${message.envelopeId}, ${copyBytes(message.canonicalSignedMessage)}, ${message.wireVersion}, ${message.recordHash ?? null}, 0, 'pending')`;
     return copyOutbound(message);
-  }).pipe(storeOperation, Effect.withSpan("enqueueOutboundInTransaction"));
+  }).pipe(
+    agentOperation(agentKey),
+    Effect.withSpan("enqueueOutboundInTransaction"),
+  );
 }
 
 /**
  * Reads every pending stored envelope in durable insertion order.
  *
+ * @param agentKey Immutable storage owner for this operation.
  * @param conversationId Restrict the read to this conversation when provided.
  * @returns Detached pending envelopes, excluding accepted and discarded rows.
  */
 function readPendingOutbound(
+  agentKey: string,
   conversationId?: string,
 ): Effect.Effect<
   readonly StoredOutboundMessage[],
@@ -3507,43 +3276,46 @@ function readPendingOutbound(
 > {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
+    const conversation =
+      conversationId === undefined
+        ? database``
+        : database`AND conversation_id=${conversationId}`;
     return Object.freeze(
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT conversation_id, envelope_id,
-                canonical_signed_message, wire_version, record_hash, attempted, disposition
-         FROM outbound_messages WHERE disposition = 'pending' ${conversationId === undefined ? "" : "AND conversation_id = ?"}
-         ORDER BY outbound_sequence`,
-        [...(conversationId === undefined ? [] : [conversationId])],
-      )).map((row) => readOutbound(row).outbound),
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT conversation_id,envelope_id,canonical_signed_message,wire_version,record_hash,attempted,disposition FROM outbound_messages WHERE agent_key=${agentKey} AND disposition='pending' ${conversation} ORDER BY outbound_sequence`).map(
+        (row) => readOutbound(row).outbound,
+      ),
     );
-  }).pipe(storeOperation, Effect.withSpan("readPendingOutbound"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readPendingOutbound"));
 }
 
 function requireOutbound(
+  agentKey: string,
   envelopeId: string,
 ): Effect.Effect<RetainedOutbound, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
-    const retained = yield* findOutbound(envelopeId);
+    const retained = yield* findOutbound(agentKey, envelopeId);
     if (retained === undefined) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
     return retained;
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function findOutbound(
+  agentKey: string,
   envelopeId: string,
 ): Effect.Effect<RetainedOutbound | undefined, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
-    const row = (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-      `SELECT conversation_id, envelope_id,
+    const row = (yield* database<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id, envelope_id,
               canonical_signed_message, wire_version, record_hash, attempted, disposition
-       FROM outbound_messages WHERE envelope_id = ?`,
-      [envelopeId],
-    ))[0];
+       FROM outbound_messages WHERE agent_key=${agentKey} AND envelope_id = ${envelopeId}`)[0];
     return row === undefined ? undefined : readOutbound(row);
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readOutbound(
@@ -3568,9 +3340,9 @@ function readOutbound(
 }
 
 /**
- * Reads one nullable nonempty SQLite TEXT.
+ * Reads one nullable nonempty SQL text.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @param key Selected column name.
  * @returns The exact text, or undefined for SQL NULL.
  */
@@ -3600,20 +3372,21 @@ function readDisposition(
 }
 
 function requireConversation(
+  agentKey: string,
   conversationId: string,
 ): Effect.Effect<void, EndpointStoreError, SqlClient> {
   return Effect.gen(function* () {
     const database = yield* SqlClient;
     if (
-      (yield* database.unsafe<Readonly<Record<string, unknown>>>(
-        `SELECT 1 AS retained FROM conversation_state
-         WHERE conversation_id = ?`,
-        [conversationId],
-      ))[0] === undefined
+      (yield* database<
+        Readonly<Record<string, unknown>>
+      >`SELECT 1 AS retained FROM conversation_state
+         WHERE agent_key=${agentKey} AND conversation_id = ${conversationId}`)[0] ===
+      undefined
     ) {
       return yield* new EndpointStoreError({ reason: "not-found" });
     }
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function validateMessageInput(message: OutboundMessageInput): void {
@@ -3686,14 +3459,11 @@ function copyOutbound(outbound: StoredOutboundMessage): StoredOutboundMessage {
   });
 }
 
-function readMessageRows(suffix: string, parameters: readonly string[]) {
+function readMessageRows(
+  agentKey: string,
+  rows: ReadonlyArray<Readonly<Record<string, unknown>>>,
+) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT message.operation_id,message.role,message.destination,message.author_agent_id,message.msg_id FROM collective_messages AS message " +
-        suffix,
-      parameters,
-    );
     return yield* Effect.forEach(
       rows,
       (row) =>
@@ -3720,18 +3490,23 @@ function readMessageRows(suffix: string, parameters: readonly string[]) {
         }),
       { concurrency: 1 },
     );
-  }).pipe(storeOperation, Effect.withSpan("readCollectiveMessages"));
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveMessages"));
 }
 
-function readOperations(where: string, parameters: readonly string[]) {
+function readOperations(agentKey: string, operationId?: CollectiveId) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows = yield* sql.unsafe<Readonly<Record<string, unknown>>>(
-      "SELECT * FROM collective_operations" + where,
-      parameters,
-    );
+    const selection =
+      operationId === undefined
+        ? sql`AND phase='completed' AND delivered=0 AND canonical_result IS NOT NULL`
+        : sql`AND operation_id=${operationId}`;
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT * FROM collective_operations WHERE agent_key=${agentKey}
+      ${selection}
+      ORDER BY sequence LIMIT 1`;
     return yield* Effect.forEach(rows, readOperation, { concurrency: 1 });
-  }).pipe(storeOperation);
+  }).pipe(agentOperation(agentKey));
 }
 
 function readOperation(
@@ -3806,9 +3581,9 @@ function readOperation(
 }
 
 /**
- * Reads one safe SQLite INTEGER.
+ * Reads one safe SQL integer.
  *
- * @param row SQLite result row when one was selected.
+ * @param row SQL result row when one was selected.
  * @param key Selected column name.
  * @returns The exact safe integer.
  */
@@ -3816,7 +3591,11 @@ function readInteger(
   row: Readonly<Record<string, unknown>>,
   key: string,
 ): number {
-  const value = row[key];
+  const stored = row[key];
+  const value =
+    typeof stored === "string" && /^-?\d+$/u.test(stored)
+      ? Number(stored)
+      : stored;
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new StoreSignal("corrupt");
   }
@@ -3824,9 +3603,9 @@ function readInteger(
 }
 
 /**
- * Reads one required nonempty SQLite TEXT.
+ * Reads one required nonempty SQL text.
  *
- * @param row SQLite result row when one was selected.
+ * @param row SQL result row when one was selected.
  * @param key Selected column name.
  * @returns The exact nonempty text.
  */
@@ -3874,7 +3653,7 @@ function readResult(
 /**
  * Reads and copies one nullable SQLite BLOB.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @param key Selected column name.
  * @returns An isolated byte copy, or undefined for SQL NULL.
  */
@@ -3892,7 +3671,7 @@ function readOptionalBytes(
 /**
  * Reads and copies one required SQLite BLOB.
  *
- * @param row SQLite result row.
+ * @param row SQL result row.
  * @param key Selected column name.
  * @returns An isolated nonempty byte copy.
  */
@@ -3911,7 +3690,7 @@ function readBytes(
  * Returns an isolated copy of canonical bytes.
  *
  * @param value Canonical bytes crossing the storage boundary.
- * @returns A detached copy suitable for SQLite or a caller.
+ * @returns A detached copy suitable for the database or a caller.
  */
 function copyBytes(value: Uint8Array): Uint8Array {
   return new Uint8Array(value);
@@ -3956,4 +3735,69 @@ function decodeValue<A, I>(schema: Schema.Schema<A, I>, value: unknown) {
       () => new EndpointStoreError({ reason: "corrupt" }),
     ),
   );
+}
+
+/**
+ * The protocol identity row serializes one agent's transactions on PostgreSQL,
+ * matching SQLite's connection serialization. Nested calls retain the lock
+ * until the enclosing transaction commits; other agents use their own rows.
+ * Store operations perform no network or model work.
+ */
+function agentOperation(agentKey: string) {
+  return <A, E, R>(work: Effect.Effect<A, E, R>) =>
+    withAgentTransaction(
+      agentKey,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        yield* sql.onDialectOrElse({
+          pg: () =>
+            sql`SELECT agent_key FROM communication_metadata WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
+              Effect.asVoid,
+            ),
+          orElse: () => Effect.void,
+        });
+        return yield* work;
+      }),
+    ).pipe(storeOperation);
+}
+
+function storeOperation<A, E, R>(
+  operation: Effect.Effect<A, E, R>,
+): Effect.Effect<A, EndpointStoreError, R> {
+  return operation.pipe(
+    Effect.catchAllCause((cause) => {
+      if (Cause.isInterruptedOnly(cause)) {
+        return Effect.failCause(Cause.stripFailures(cause));
+      }
+      const failure = Cause.failureOption(cause);
+      const defect = Cause.dieOption(cause);
+      return Effect.fail(
+        mapStoreFailure(
+          Option.getOrElse(failure, () =>
+            Option.getOrElse(defect, () => undefined),
+          ),
+          "persistence",
+        ),
+      );
+    }),
+  );
+}
+
+/**
+ * Maps every internal failure to the store's closed error channel.
+ *
+ * @param failure Internal failure or closed control-flow signal.
+ * @param fallback Closed category for unexpected implementation failures.
+ * @returns A non-diagnostic endpoint-store error.
+ */
+function mapStoreFailure(
+  failure: unknown,
+  fallback: EndpointStoreFailure,
+): EndpointStoreError {
+  if (failure instanceof EndpointStoreError) {
+    return failure;
+  }
+  return new EndpointStoreError({
+    reason: failure instanceof StoreSignal ? failure.reason : fallback,
+  });
 }

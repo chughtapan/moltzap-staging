@@ -134,10 +134,11 @@ export function makeCatchUpState(): CatchUpState {
 export const requestCertifiedHistory = (
   run: CatchUpRun,
   conversationId: ConversationIdValue,
-): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> =>
-  queueCatchUpRequest(run, conversationId, "restart").pipe(
+): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> => {
+  return queueCatchUpRequest(run, conversationId, "restart").pipe(
     Effect.withSpan("requestCertifiedHistory"),
   );
+};
 
 /**
  * Retries at the current durable position. Answers already held for that
@@ -146,10 +147,11 @@ export const requestCertifiedHistory = (
 export const resendCertifiedHistoryRequest = (
   run: CatchUpRun,
   conversationId: ConversationIdValue,
-): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> =>
-  queueCatchUpRequest(run, conversationId, "keep").pipe(
+): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> => {
+  return queueCatchUpRequest(run, conversationId, "keep").pipe(
     Effect.withSpan("resendCertifiedHistoryRequest"),
   );
+};
 
 /**
  * Allows quorum settlement when retries expire. Call from the ending retry
@@ -424,6 +426,8 @@ function queueCatchUpRequest(
   conversationId: ConversationIdValue,
   held: HeldAttestations,
 ): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
+  const agentKey = run.runtime.input.agentKey;
+
   return Effect.gen(function* () {
     const membership = run.membership(conversationId);
     if (!run.isActive() || membership === undefined) {
@@ -437,7 +441,10 @@ function queueCatchUpRequest(
     ) {
       return yield* run.queue(membership, { kind: "direct", packet: pending });
     }
-    const { position, recovery } = yield* durablePosition(conversationId);
+    const { position, recovery } = yield* durablePosition(
+      agentKey,
+      conversationId,
+    );
     if (position === undefined) {
       return yield* Effect.fail(persistenceFailure());
     }
@@ -508,11 +515,14 @@ function respondToCatchUp(
     routerInstanceId: RouterWorkerIngress<DecodedOuterBody>["routerInstanceId"];
   }>,
 ): Effect.Effect<void, RouterWorkerPersistenceError, SqlClient> {
+  const agentKey = responder.runtime.input.agentKey;
+
   const { request } = delivered;
   return Effect.gen(function* () {
-    const recovery = yield* recoverStoredState(request.conversationId).pipe(
-      Effect.mapError(persistenceFailure),
-    );
+    const recovery = yield* recoverStoredState(
+      agentKey,
+      request.conversationId,
+    ).pipe(Effect.mapError(persistenceFailure));
     const successor = yield* decodeCatchUpSuccessor(
       membership,
       recovery,

@@ -243,10 +243,12 @@ export type StoredRowError =
 
 /**
  * Resolve the latest durable position for one fixed conversation.
+ * @param agentKey Immutable storage owner for recovered protocol state.
  * @param conversationId Private conversation identity to locate.
  * @returns The conversation's recovery snapshot and its matching position row.
  */
 export const durablePosition = (
+  agentKey: string,
   conversationId: ConversationIdValue,
 ): Effect.Effect<
   {
@@ -256,7 +258,7 @@ export const durablePosition = (
   RouterWorkerPersistenceError,
   SqlClient
 > =>
-  recoverStoredState(conversationId).pipe(
+  recoverStoredState(agentKey, conversationId).pipe(
     Effect.mapError(persistenceFailure),
     Effect.map((recovery) => ({
       recovery,

@@ -547,7 +547,12 @@ it("publishes independent results while incoming handlers share SQL transactions
     yield* Effect.forEach(
       responses,
       (message) =>
-        fixture.database.run(transaction(fixture.service.receive(message))),
+        fixture.database.run(
+          transaction(
+            fixture.database.agentKey,
+            fixture.service.receive(message),
+          ),
+        ),
       { concurrency: 2 },
     );
     const results = [

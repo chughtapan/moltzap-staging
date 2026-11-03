@@ -46,7 +46,6 @@ import {
   verifyMembershipDescriptor,
 } from "../records.js";
 import { RouterInstanceId } from "../router/client.js";
-import * as Store from "../store.js";
 import { pollCursor } from "./router-fixtures.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
 
@@ -75,6 +74,7 @@ export const conversationIdentityFixture = Effect.gen(function* () {
     third,
     membership,
     directory,
+    agentKey: directory,
     store,
     sql,
     run,
@@ -169,7 +169,7 @@ export function forwardStoredOutbound(
   transit?: Duration.DurationInput,
 ): Effect.Effect<void> {
   return store.run(
-    Store.beginOutbound(envelopeId).pipe(
+    store.store.beginOutbound(envelopeId).pipe(
       Effect.flatMap((attempt) => {
         switch (attempt.kind) {
           case "inactive":
@@ -183,9 +183,9 @@ export function forwardStoredOutbound(
                 transit === undefined ? Effect.void : Effect.sleep(transit),
               ),
               Effect.flatMap((message) =>
-                Store.completeOutbound(attempt.outbound).pipe(
-                  Effect.zipRight(Queue.offer(outbound, message)),
-                ),
+                store.store
+                  .completeOutbound(attempt.outbound)
+                  .pipe(Effect.zipRight(Queue.offer(outbound, message))),
               ),
               Effect.asVoid,
             );
