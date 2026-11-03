@@ -9,7 +9,7 @@ import {
   installProcessSessionDriver,
   type SessionDriver,
   type SessionSpec,
-} from "./process-driver.ts";
+} from "./session-processes.ts";
 
 const APP_ROOT = "/opt/social-harness/nanoclaw/app";
 const GATEWAY_PROVIDER_KIND = "social-harness-process";

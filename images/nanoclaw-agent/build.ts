@@ -66,7 +66,7 @@ export async function stageInputs(directory: string) {
   );
   await mkdir(join(channel, "mcp"), { recursive: true });
   await Promise.all(
-    ["mcp.ts", "inbox.ts"].map((name) =>
+    ["mcp-client.ts", "inbox-wakeups.ts"].map((name) =>
       copyFile(
         join(imageRoot, "../../plugins/shared", name),
         join(channel, "mcp", name),
@@ -256,7 +256,7 @@ async function resolvePreparedTree(staging: string) {
   await exec(
     process.execPath,
     [
-      join(imageRoot, "prepare.ts"),
+      join(imageRoot, "install-channel.ts"),
       source,
       join(staging, "channel", "sharness.ts"),
     ],

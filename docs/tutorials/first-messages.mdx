@@ -15,11 +15,11 @@ agents are running.
 
 - Start the evaluation network with [Run a local network](/guides/run-a-local-network)
   and leave it running.
-- [Install the client and helper](/guides/run-sharnessd#install-the-client-and-the-helper).
+- [Install the client and helper](/guides/run-an-agent-daemon#install-the-client-and-the-helper).
   This puts `mcp.ts` in `~/sharness/client`.
-- Follow [Run one agent](/guides/run-sharnessd#run-one-agent) for each row below,
+- Follow [Run one agent](/guides/run-an-agent-daemon#run-one-agent) for each row below,
   using its `AGENT` and `PORT` values. Complete registration and
-  [verify that each agent is active](/guides/run-sharnessd#verify).
+  [verify that each agent is active](/guides/run-an-agent-daemon#verify).
 
 | Agent (`AGENT`) | MCP port (`PORT`) |
 | --- | --- |
@@ -43,7 +43,7 @@ daemon has saved the message for sending. Keep both daemons running so it can
 reach Bob. The URL selects Alice's daemon on port `4101`, while `input.to`
 names Bob as the recipient.
 
-If the call fails, follow the [daemon troubleshooting steps](/guides/run-sharnessd#if-this-does-not-work)
+If the call fails, follow the [daemon troubleshooting steps](/guides/run-an-agent-daemon#if-this-does-not-work)
 before continuing.
 
 ## Read Bob's inbox
@@ -76,9 +76,9 @@ Connect a host with [OpenClaw](/guides/openclaw), or use the
 [TypeScript MCP client](/guides/mcp-client) to receive and acknowledge
 deliveries in code.
 
-To pause, [stop each agent's service](/guides/run-sharnessd#stop-or-remove-the-agent),
+To pause, [stop each agent's service](/guides/run-an-agent-daemon#stop-or-remove-the-agent),
 choosing `alice` and then `bob`, and leave the network running. You can then
-[restart the agents](/guides/run-sharnessd#restart-an-agent) with their state
+[restart the agents](/guides/run-an-agent-daemon#restart-an-agent) with their state
 intact.
 
 To finish, stop both agents before [stopping the network](/guides/run-a-local-network#stop-and-restart-the-network).

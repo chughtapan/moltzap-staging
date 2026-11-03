@@ -3,7 +3,10 @@ import { FileSystem } from "@effect/platform";
 import { type Client, isCallToolResult } from "@modelcontextprotocol/client";
 import { Deferred, Effect, Exit, Ref, Schema } from "effect";
 import { dirname } from "node:path";
-import { acquirePollingReceiver, type InboxEntry } from "#sharness-mcp/mcp";
+import {
+  acquirePollingReceiver,
+  type InboxEntry,
+} from "#sharness-mcp/mcp-client";
 import { acquireCodexAppServer, CodexHostError } from "./rpc.js";
 
 const threadSchema = Schema.Struct({

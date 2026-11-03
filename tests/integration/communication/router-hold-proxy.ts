@@ -10,10 +10,7 @@ import {
 import { NodeHttpClient } from "@effect/platform-node";
 import { Deferred, Effect, Option, Ref, Schema } from "effect";
 import { Buffer } from "node:buffer";
-import {
-  LOOPBACK_HOST,
-  ProcessTestError,
-} from "../daemon/daemon-process-harness.js";
+import { LOOPBACK_HOST, ProcessTestError } from "../daemon/daemon-fixture.js";
 import {
   acquireLoopbackServer,
   type IncomingMessage,

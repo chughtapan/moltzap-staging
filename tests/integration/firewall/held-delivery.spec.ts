@@ -22,7 +22,8 @@ import {
   acquireMcpConnection,
   callTool,
   type McpConnection,
-} from "../../../plugins/shared/mcp.js";
+} from "../../../plugins/shared/mcp-client.js";
+import { registerFixture } from "../agent-fixture.js";
 import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
@@ -34,11 +35,10 @@ import {
   type DaemonProcessFixture,
   type FirewallMode,
   makeDaemonProcessFixture,
-} from "../daemon/daemon-process-harness.js";
+} from "../daemon/daemon-fixture.js";
 import { inboxStream } from "../mcp-inbox.js";
-import { registerFixture } from "../participants.js";
-import { processTrace } from "../process-trace.js";
 import { historyMessage } from "../saved-history.js";
+import { processTrace } from "../scenario-fixture.js";
 
 /**
  * The test starts PGlite, the Registry, the Router, a hold proxy and two

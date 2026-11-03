@@ -4,14 +4,14 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { absurd, Effect } from "effect";
-import type { SignedMessage } from "../../identity/envelope.js";
+import type { SignedMessage } from "../../identity/message-security.js";
 import type { SendError } from "../errors.js";
 import type {
   EngineActionFold,
   EngineConversation,
   EngineMessageIntent,
   EngineRuntime,
-} from "./service.js";
+} from "./conversation.js";
 import {
   ClientRepresentationError,
   decodeCanonical,
@@ -48,7 +48,7 @@ import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
-} from "../router/worker.js";
+} from "../router/connection.js";
 import {
   applyCertifiedRecord,
   type ConversationFoundation,
@@ -73,8 +73,9 @@ import {
   recordAnchorHash,
   stagedRecord,
   storedCertifiedRecord,
-} from "./log.js";
+} from "./history.js";
 
+// safer-arch-ignore no-module-cycle: Conversation state imports are type-only; runtime dependencies point into the algorithms.
 // safer-arch-ignore no-fat-orchestrator: One private operation owns the complete certification lifecycle inside Communication.
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();

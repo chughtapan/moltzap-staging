@@ -20,7 +20,7 @@ import {
   exactStruct,
 } from "../encoding/canonical-json.js";
 import { canonicalIdentifier } from "../encoding/identifier.js";
-import { WireVersions } from "../wire-version.js";
+import { WireVersions } from "../version.js";
 import {
   AgentId,
   AgentIdentityCard,
@@ -28,8 +28,11 @@ import {
   PrincipalId,
   type VerifiedAgentIdentityCard,
   verifiedAgentIdentityCardSchema,
-} from "./agent.js";
-import { signHttpRequest, VersionMismatchError } from "./authentication.js";
+} from "./agent-cards.js";
+import {
+  signHttpRequest,
+  VersionMismatchError,
+} from "./http-authentication.js";
 import { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 
 /** Idempotency identity for a registration operation. */

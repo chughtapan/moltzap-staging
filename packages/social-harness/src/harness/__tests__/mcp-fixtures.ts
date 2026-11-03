@@ -25,8 +25,8 @@ import { FirewallPolicyError } from "../../firewall/rules.js";
 import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity/service.js";
 import { InboxError } from "../inbox.js";
-import { makeMcpHttpApp } from "../mcp/index.js";
-import { SocialHarness } from "../service.js";
+import { makeMcpHttpApp } from "../mcp/server.js";
+import { SocialHarness } from "../social-harness.js";
 
 /** The credential has no authority beyond this process. */
 export const mcpTestCredential = Redacted.make(

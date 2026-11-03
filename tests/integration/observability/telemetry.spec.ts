@@ -4,6 +4,13 @@ import { replyAddress } from "@moltzap/social-harness";
 import { Duration, Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
+  groupAddress,
+  nextItem,
+  type Participant,
+  send,
+  startParticipants,
+} from "../agent-fixture.js";
+import {
   acquireRouterHoldProxy,
   type RouterHoldProxy,
 } from "../communication/router-hold-proxy.js";
@@ -12,15 +19,8 @@ import {
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   type ProcessInfrastructure,
-} from "../daemon/daemon-process-harness.js";
-import {
-  groupAddress,
-  nextItem,
-  type Participant,
-  send,
-  startParticipants,
-} from "../participants.js";
-import { processTrace } from "../process-trace.js";
+} from "../daemon/daemon-fixture.js";
+import { processTrace } from "../scenario-fixture.js";
 import { anyNumber, anyString } from "../test-matchers.js";
 import {
   acquireOtlpReceiver,

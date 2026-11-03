@@ -49,7 +49,7 @@ function receive(directory: string) {
     const [{ acquireMcpConnection }, { packageVersion }] = yield* Effect.all(
       [
         Effect.tryPromise({
-          try: () => import("#sharness-mcp/mcp"),
+          try: () => import("#sharness-mcp/mcp-client"),
           catch: () => new MuseWakeError({ reason: "invalid-configuration" }),
         }),
         Effect.tryPromise({

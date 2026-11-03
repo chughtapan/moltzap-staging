@@ -46,17 +46,17 @@ import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent.js";
-import { SignedMessage } from "../../identity/envelope.js";
+} from "../../identity/agent-cards.js";
 import {
   AgentPublicKey,
   type AgentSigningAuthority,
 } from "../../identity/keys.js";
+import { SignedMessage } from "../../identity/message-security.js";
 import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
   WireVersions,
-} from "../../wire-version.js";
+} from "../../version.js";
 import { SendError } from "../errors.js";
 import { Content, Message, messageFromIntent, mintMsgId } from "../messages.js";
 import {
@@ -81,7 +81,7 @@ import {
   type VerifiedMembership,
   verifyMembershipDescriptor,
 } from "../records.js";
-import { RouterInstanceId } from "../router/api.js";
+import { RouterInstanceId } from "../router/client.js";
 import {
   type RouterIngressDisposition,
   type RouterTailAnchor,
@@ -92,17 +92,17 @@ import {
   type RouterWorkerSendError,
   RouterWorkerTransportError,
   RouterWorkerUnavailableError,
-} from "../router/worker.js";
+} from "../router/connection.js";
 import * as testStore from "../store.js";
 import { initializeCommunication } from "../store.js";
-import { readStoredRecord } from "./log.js";
 import {
   type EndpointEngine,
   type EndpointEngineInput,
   EngineInitializationError,
   type EngineOutboundError,
   makeEndpointEngine,
-} from "./service.js";
+} from "./conversation.js";
+import { readStoredRecord } from "./history.js";
 
 /* eslint-disable max-lines, max-lines-per-function -- The full protocol traces share one four-endpoint harness and keep controlled Router phases beside durable assertions. */
 

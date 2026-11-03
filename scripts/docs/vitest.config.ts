@@ -10,10 +10,7 @@ const WORKSPACE_ROOT = resolve(SCRIPT_DIR, "..", "..");
 const config = defineConfig({
   root: WORKSPACE_ROOT,
   test: {
-    include: [
-      "scripts/docs/__tests__/mermaid-extract.spec.ts",
-      "scripts/docs/__tests__/mermaid-gate.spec.ts",
-    ],
+    include: ["scripts/docs/mermaid-lint.spec.ts"],
   },
 });
 

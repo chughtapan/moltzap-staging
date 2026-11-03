@@ -60,7 +60,7 @@ import {
   callTool,
   type InboxEntry,
   type McpConnection,
-} from "#sharness-mcp/mcp";
+} from "#sharness-mcp/mcp-client";
 
 /** The sender OpenClaw records for a turn the endpoint itself emitted. */
 const ENDPOINT_SENDER_NAME = "Social Harness";
@@ -505,7 +505,7 @@ function acquireAccountEndpoint() {
       catch: () =>
         new OpenClawConfigurationError({
           detail:
-            "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#mcp-credential-file",
+            "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
         }),
     });
     return yield* acquireMcpConnection(

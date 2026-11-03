@@ -2,9 +2,10 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
-import type { AgentCard } from "../../identity/agent.js";
+import type { AgentCard } from "../../identity/agent-cards.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
+import { makeRequests } from "../collectives.js";
 import {
   type CollectiveValue,
   compareAgentIds,
@@ -16,7 +17,6 @@ import {
   type ResultDelivery,
 } from "../messages.js";
 import { deriveConversationId } from "../records.js";
-import { makeRequests } from "../requests.js";
 import { CommunicationError } from "../service.js";
 import { acceptMessage } from "../store.js";
 import { collectiveOperationId } from "./request-ids.js";

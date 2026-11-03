@@ -5,12 +5,12 @@ import { identifier } from "../../__tests__/agents.js";
 import {
   type LiveSignedMessage,
   SignedMessage,
-} from "../../identity/envelope.js";
+} from "../../identity/message-security.js";
 import {
   PollCursor,
   RouterInstanceId,
   type RouterPollResult,
-} from "../router/api.js";
+} from "../router/client.js";
 
 /**
  * Construct a deterministic test RouterInstanceId.

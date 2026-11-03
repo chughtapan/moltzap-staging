@@ -29,7 +29,7 @@ import {
   AgentName,
   AgentSigningAuthority,
   PrincipalId,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import { RegistrationId, Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
 import {

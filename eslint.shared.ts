@@ -189,6 +189,7 @@ export function packageEslintConfig(options: PackageEslintOptions) {
 /**
  * Flat configuration for the workspace root: root modules, the `images/`
  * helper, and the Node-run scripts under `scripts/`.
+ * Owner specs stay together as their behavior coverage grows.
  */
 export function rootEslintConfig(tsconfigRootDir: string) {
   const languageOptions = makeTsLanguageOptions(tsconfigRootDir, [
@@ -214,6 +215,10 @@ export function rootEslintConfig(tsconfigRootDir: string) {
     ),
     makeEslintDisableCommentRules(languageOptions),
     configModuleRules,
+    {
+      files: ["scripts/**/*.spec.ts"],
+      rules: { "max-lines": "off" },
+    },
   ];
 }
 

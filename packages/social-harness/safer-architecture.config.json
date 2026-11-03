@@ -11,7 +11,7 @@
       "reason": "Canonical identifiers at input boundaries"
     },
     {
-      "file": "identity/agent.ts",
+      "file": "identity/agent-cards.ts",
       "reason": "Agent cards, immutable identity cards and signing authority"
     },
     {
@@ -19,15 +19,15 @@
       "reason": "Cryptographic key capabilities"
     },
     {
-      "file": "wire-version.ts",
-      "reason": "Wire compatibility policy"
+      "file": "version.ts",
+      "reason": "Package version and protocol compatibility"
     },
     {
       "file": "identity/service.ts",
       "reason": "Identity and registration service"
     },
     {
-      "file": "identity/authentication.ts",
+      "file": "identity/http-authentication.ts",
       "reason": "Request authentication service"
     },
     {
@@ -35,7 +35,7 @@
       "reason": "Registry service"
     },
     {
-      "file": "identity/envelope.ts",
+      "file": "identity/message-security.ts",
       "reason": "Signed message envelopes"
     },
     {
@@ -51,7 +51,7 @@
       "reason": "Closed communication failures"
     },
     {
-      "file": "communication/router/api.ts",
+      "file": "communication/router/client.ts",
       "reason": "Opaque Router operations used by server composition"
     },
     {
@@ -67,11 +67,11 @@
       "reason": "Policy configuration and failures"
     },
     {
-      "file": "harness/index.ts",
+      "file": "harness/startup.ts",
       "reason": "Process construction and trusted embedding services"
     },
     {
-      "file": "harness/service.ts",
+      "file": "harness/social-harness.ts",
       "reason": "Sending, inbox and history"
     },
     {
@@ -79,7 +79,7 @@
       "reason": "Saved inbox item grammar"
     },
     {
-      "file": "harness/message-log.ts",
+      "file": "harness/traffic-export.ts",
       "reason": "Optional message export values"
     },
     {
@@ -87,16 +87,8 @@
       "reason": "Canonical MCP tool contracts"
     },
     {
-      "file": "host-protocol/messages.ts",
-      "reason": "Typed send requests"
-    },
-    {
-      "file": "host-protocol/render.ts",
-      "reason": "Host-independent content rendering"
-    },
-    {
-      "file": "release.ts",
-      "reason": "Release metadata"
+      "file": "harness/message-format.ts",
+      "reason": "Host request grammar and agent text"
     },
     {
       "file": "tracing.ts",
@@ -129,7 +121,7 @@
       "reason": "Library entry resolution"
     },
     {
-      "path": "src/harness/index.ts",
+      "path": "src/harness/startup.ts",
       "reason": "Process database and network construction"
     }
   ],
@@ -151,12 +143,12 @@
         "src/identity"
       ],
       "entrypoints": [
-        "src/identity/agent.ts",
+        "src/identity/agent-cards.ts",
         "src/identity/keys.ts",
         "src/identity/service.ts",
-        "src/identity/authentication.ts",
+        "src/identity/http-authentication.ts",
         "src/identity/registry.ts",
-        "src/identity/envelope.ts"
+        "src/identity/message-security.ts"
       ],
       "reason": "Identity, authentication and Registry services"
     },
@@ -169,7 +161,7 @@
         "src/communication/service.ts",
         "src/communication/messages.ts",
         "src/communication/errors.ts",
-        "src/communication/router/api.ts"
+        "src/communication/router/client.ts"
       ],
       "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
     },
@@ -189,29 +181,17 @@
       "name": "harness",
       "roots": [
         "src/harness",
-        "src/host-protocol",
         "src/vendor"
       ],
       "entrypoints": [
-        "src/harness/index.ts",
-        "src/harness/service.ts",
+        "src/harness/startup.ts",
+        "src/harness/social-harness.ts",
         "src/harness/inbox.ts",
-        "src/harness/message-log.ts",
-        "src/host-protocol/render.ts",
-        "src/host-protocol/messages.ts",
+        "src/harness/traffic-export.ts",
+        "src/harness/message-format.ts",
         "src/harness/mcp/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
-    },
-    {
-      "name": "release",
-      "roots": [
-        "src/release.ts"
-      ],
-      "entrypoints": [
-        "src/release.ts"
-      ],
-      "reason": "Release metadata"
     },
     {
       "name": "tracing",
@@ -224,14 +204,14 @@
       "reason": "Shared work progress observation"
     },
     {
-      "name": "wire-version",
+      "name": "version",
       "roots": [
-        "src/wire-version.ts"
+        "src/version.ts"
       ],
       "entrypoints": [
-        "src/wire-version.ts"
+        "src/version.ts"
       ],
-      "reason": "Shared protocol compatibility across services and layers"
+      "reason": "Package identity and shared protocol compatibility"
     },
     {
       "name": "launcher",
@@ -249,7 +229,6 @@
       "name": "harness",
       "folders": [
         "harness",
-        "host-protocol",
         "vendor"
       ],
       "reason": "Host calls coordinate lower services"

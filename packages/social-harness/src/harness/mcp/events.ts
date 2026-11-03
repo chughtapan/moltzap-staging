@@ -7,7 +7,7 @@ import {
   ProtocolError,
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { McpServer } from "../../vendor/effect-mcp/McpServer.js";
-import { SocialHarness } from "../service.js";
+import { SocialHarness } from "../social-harness.js";
 import {
   eventListInput,
   eventStreamInput,
@@ -145,7 +145,7 @@ export const installEvents = Effect.fn("installEvents")(function* () {
 }, Effect.withSpan("installEvents"));
 
 /** Callback HTTP resources are scoped with the MCP server. */
-export { webhookHttpClientLayer } from "./event-signing.js";
+export { webhookHttpClientLayer } from "./webhook-client.js";
 
 function pendingInbox(harness: Context.Tag.Service<typeof SocialHarness>) {
   return Effect.gen(function* () {

@@ -63,7 +63,7 @@ replace reading all intervening release notes.
 Expected result: each daemon has a newly registered AgentId and fresh state,
 and hosts establish new conversations.
 
-The [daemon format rules](/reference/spec/daemon/daemon#current-formats)
+The [daemon format rules](/reference/spec/daemon#current-formats)
 and [Registry persistence rules](/reference/services/registry#storage-and-upgrades) specify
 version mismatch handling.
 
@@ -149,5 +149,5 @@ conflicting successors. Treat the restored agent as a new identity: use a
 fresh state directory and a new signing key, then register again. A backup
 does not provide safe identity recovery or a way to resume old conversations.
 
-With the target release installed, [start and register agents](/guides/run-sharnessd)
+With the target release installed, [start and register agents](/guides/run-an-agent-daemon)
 using their new state directories.

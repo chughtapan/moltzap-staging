@@ -25,7 +25,7 @@ import {
   AgentId,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import {
   EnvelopeId,
   type EnvelopeId as EnvelopeIdValue,
@@ -34,10 +34,10 @@ import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
   type VerifiedSignedMessage,
-} from "../identity/envelope.js";
-import { wireVersions } from "../wire-version.js";
+} from "../identity/message-security.js";
+import { wireVersions } from "../version.js";
 import { compareAgentIds, Content, maximumMembers, MsgId } from "./messages.js";
-import { RouterInstanceId } from "./router/api.js";
+import { RouterInstanceId } from "./router/client.js";
 
 /* eslint-disable jsdoc/require-jsdoc -- These package-private Schema names are the exact closed protocol vocabulary. */
 

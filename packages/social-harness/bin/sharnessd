@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { NodeRuntime } from "@effect/platform-node";
 import { ConfigProvider, Console, Effect, Layer } from "effect";
-import { daemonHelp, daemonLayer } from "../dist/harness/index.js";
+import { daemonHelp, daemonLayer } from "../dist/harness/startup.js";
 
 const program = process.argv.includes("--help")
   ? Console.log(daemonHelp)

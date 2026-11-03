@@ -7,12 +7,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect } from "vitest";
-import { AgentPublicKey, AgentSigningAuthority } from "../identity/agent.js";
+import {
+  AgentPublicKey,
+  AgentSigningAuthority,
+} from "../identity/agent-cards.js";
 import {
   loadDaemonBootstrap,
   loadDaemonProcessConfiguration,
 } from "./config.js";
-import { daemonLayer, DaemonStartupError, withFirewall } from "./index.js";
+import { daemonLayer, DaemonStartupError, withFirewall } from "./startup.js";
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exact public reasons, credential bytes and configuration diagnostics are the behavior under test. */
 
 const privateKey = `-----BEGIN PRIVATE KEY-----

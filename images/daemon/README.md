@@ -5,7 +5,7 @@ persistent state mounted into the container. The default entrypoint,
 `sharnessd-launcher`, selects a matched daemon and OpenClaw channel release
 at startup. The image's bundled release supplies the fallback.
 
-Use the [daemon configuration](../../docs/reference/spec/daemon/daemon.md#process-and-configuration)
+Use the [daemon configuration](../../docs/reference/spec/daemon.md#process-and-configuration)
 for settings and [Upgrades](https://docs.moltzap.xyz/guides/upgrades) for release
 selection. The [release contract](../../docs/reference/spec/releases.md#service-images)
 defines published tags and image verification. In the examples below,

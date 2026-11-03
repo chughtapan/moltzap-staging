@@ -7,6 +7,7 @@ import {
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
   EnvelopeId,
+  LIVE_WIRE_VERSIONS,
   type LiveSignedMessage,
   PrincipalId,
   SignedMessage,
@@ -19,17 +20,11 @@ import {
   Router,
   type routerContract,
 } from "@moltzap/social-harness/internal";
-import { signAgentRequest } from "@moltzap/social-harness/test";
-import { Effect, Encoding, Redacted, Schema } from "effect";
+import { signAgentRequest, WireVersions } from "@moltzap/social-harness/test";
+import { Duration, Effect, Encoding, Layer, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  makeRegistryRunner,
-  makeRouterRunner,
-  type RegistryInfrastructure,
-  testVersionMismatchRoundTrips,
-} from "../client-version-roundtrip.js";
 import {
   acquireDaemonManagementClient,
   acquireDaemonProcesses,
@@ -49,9 +44,13 @@ import {
   serviceReady,
   startPgliteRegistry,
   stopProcess,
-} from "../daemon/daemon-process-harness.js";
+} from "../daemon/daemon-fixture.js";
 import { acquireLoopbackServer } from "../loopback-server.js";
-import { processTrace } from "../process-trace.js";
+import {
+  makeRegistryRunner,
+  type RegistryRunner,
+} from "../registry/registry-fixture.js";
+import { processTrace } from "../scenario-fixture.js";
 const ADMISSION_CREDENTIAL = "registry-router-e2e-admission";
 const REGISTERED_KIND = "registered";
 const FOUND_KIND = "found";
@@ -70,6 +69,11 @@ const OVERLOADED_BODY = '{"error":"overloaded"}';
 const AUTHENTICATION_FAILED_BODY = '{"error":"authentication_failed"}';
 const UNAVAILABLE_BODY = '{"error":"unavailable"}';
 const BATCH_BODY_FRAGMENT = '"kind":"batch"';
+const outsideWireWindow = {
+  emitted: "1900.101.0",
+  live: ["1900.101.0"],
+  history: ["1900.101.0"],
+};
 interface RegisteredAgent {
   readonly signingAuthority: AgentSigningAuthorityValue;
   readonly identityCard: VerifiedAgentIdentityCard;
@@ -82,7 +86,11 @@ interface RegisteredAgents {
   readonly nonRecipient: RegisteredAgent;
 }
 
-interface Infrastructure extends RegistryInfrastructure {
+interface Infrastructure {
+  readonly registryOrigin: URL;
+  readonly registrySignerPublicKey: ReturnType<
+    typeof AgentSigningAuthority.publicKey
+  >;
   readonly registryProcess: RunningProcess;
   readonly routerOrigin: URL;
   readonly routerPort: number;
@@ -98,9 +106,6 @@ type RouterSendResult = typeof routerContract.RouterSendResult.Type;
 
 type BatchResult = Extract<RouterPollResult, { readonly kind: "batch" }>;
 type AcceptedResult = Extract<RouterSendResult, { readonly kind: "accepted" }>;
-type RegistryRunner = <A, E>(
-  effect: Effect.Effect<A, E, Registry>,
-) => Effect.Effect<A, E>;
 type RouterRunner = <A, E>(
   effect: Effect.Effect<A, E, Router>,
 ) => Effect.Effect<A, E>;
@@ -136,6 +141,16 @@ const makePrincipalId = () =>
 
 const makeEnvelopeId = () =>
   Schema.decodeUnknownSync(EnvelopeId)(`env_${randomIdentifierPayload()}`);
+
+/** Process requests use the production HTTP transport with bounded poll and send waits. */
+const makeRouterRunner = (origin: URL): RouterRunner => {
+  const routerLayer = Router.layer({
+    origin,
+    sendTimeout: Duration.seconds(5),
+    pollTimeout: Duration.seconds(35),
+  }).pipe(Layer.provide(NodeHttpClient.layer));
+  return (effect) => effect.pipe(Effect.provide(routerLayer));
+};
 
 const signAuthenticatedRequest = (
   origin: URL,
@@ -883,12 +898,75 @@ it(
   120_000,
 );
 
-testVersionMismatchRoundTrips(
-  {
-    registry: startRegistryInfrastructure,
-    router: startInfrastructure.pipe(Effect.tap(startRouter)),
-  },
-  Redacted.make(ADMISSION_CREDENTIAL),
+it(
+  "returns the live versions from the real Router through the public client",
+  processTrace(
+    Effect.gen(function* () {
+      const infrastructure = yield* startInfrastructure;
+      yield* startRouter(infrastructure);
+      const { signingAuthority, identityCard } = yield* registerAgent(
+        "version-mismatch",
+        makeRegistryRunner(
+          infrastructure.registryOrigin,
+          infrastructure.registrySignerPublicKey,
+        ),
+      );
+      const error = yield* Router.poll({
+        request: {},
+        callerAgentId: identityCard.agentId,
+        signingAuthority,
+      }).pipe(
+        Effect.provide(
+          Router.layer({
+            origin: infrastructure.routerOrigin,
+            sendTimeout: Duration.seconds(5),
+            pollTimeout: Duration.seconds(5),
+          }),
+        ),
+        Effect.provideService(WireVersions, outsideWireWindow),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "VersionMismatchError",
+        supported: LIVE_WIRE_VERSIONS,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodeHttpClient.layer),
+    ),
+  ),
+  60_000,
+);
+
+it(
+  "reports a Registry version refusal through the closed public client error",
+  processTrace(
+    Effect.gen(function* () {
+      const infrastructure = yield* startRegistryInfrastructure;
+      const runRegistry = makeRegistryRunner(
+        infrastructure.registryOrigin,
+        infrastructure.registrySignerPublicKey,
+      );
+      const error = yield* runRegistry(
+        Registry.lookup({
+          agentName: Schema.decodeUnknownSync(AgentName)("version-mismatch"),
+        }),
+      ).pipe(
+        Effect.provideService(WireVersions, outsideWireWindow),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "RegistryError",
+        reason: "http-envelope",
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodeHttpClient.layer),
+    ),
+  ),
+  60_000,
 );
 
 /**

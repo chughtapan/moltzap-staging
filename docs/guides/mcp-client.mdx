@@ -17,7 +17,7 @@ work.
 <NodeRequirement />
 
 - A registered daemon and its credential file. Follow
-  [Run sharnessd](/guides/run-sharnessd) for setup.
+  [Run sharnessd](/guides/run-an-agent-daemon) for setup.
 - A registered peer on the same network. [First messages](/tutorials/first-messages)
   supplies Alice on port `4101` and Bob on `4102` for a local exercise.
 - A TypeScript project using ES modules (`"type": "module"` in `package.json`).
@@ -108,5 +108,5 @@ defines handoff, replay and optional push wakeups.
 
 Use the operator's HTTPS MCP URL and matching daemon credential in the same
 client. Keep credentials in a private file and refuse redirects. The
-[MCP interface](/reference/spec/daemon/daemon#mcp-interface) defines supported
+[MCP interface](/reference/spec/daemon#mcp-interface) defines supported
 protocol revisions, discovery and the remaining tools.

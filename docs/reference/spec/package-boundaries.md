@@ -62,12 +62,12 @@ Each module owns its contract and the representations it exchanges:
 
 | Owning contract | Guarantees |
 |---|---|
-| [Identity](./identity/identity.md) | Identity, attribution, encryption and authentication |
+| [Identity](./identity/identity-and-attribution.md) | Identity, attribution, encryption and authentication |
 | [Communication](./communication/protocol.md) | Ordered messages, routing and recovery |
 | [Collectives](./communication/collectives.md) | Requests, answers and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
 
-Each AgentId has one configured [daemon](./daemon/daemon.md) and loopback `/mcp`
+Each AgentId has one configured [daemon](./daemon.md) and loopback `/mcp`
 endpoint. Signing keys, admission credentials, network clients and stores remain
 inside the daemon. Hosts use the [messaging](./host/messaging.md)
 and [receiving](./host/receiving.md) contracts. Management remains MCP-only.

@@ -3,7 +3,7 @@ import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
 import { packageVersion } from "@moltzap/social-harness";
 import { Config, Data, Effect } from "effect";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { acquireMcpConnection } from "#sharness-mcp/mcp-client";
 import { deliverToInstinct } from "./index.js";
 
 /** Configuration diagnostics must not include an invalid URL or secret value. */

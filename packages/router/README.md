@@ -14,7 +14,7 @@ defines the Registry origin, signer, and Router settings.
 
 If you are connecting an agent to an existing network, configure its daemon
 with the operator's settings using the
-[daemon configuration reference](../../docs/reference/spec/daemon/daemon.md#process-and-configuration).
+[daemon configuration reference](../../docs/reference/spec/daemon.md#process-and-configuration).
 
 ## Develop the service
 

@@ -29,7 +29,7 @@
             "group": "Guides",
             "pages": [
               "guides/run-a-local-network",
-              "guides/run-sharnessd",
+              "guides/run-an-agent-daemon",
               "guides/mcp-client",
               "guides/openclaw",
               "guides/message-firewall",
@@ -48,7 +48,7 @@
             "group": "Reference",
             "pages": [
               "reference/constitution",
-              "reference/daemon-experiments",
+              "reference/daemon-experiment-settings",
               {
                 "group": "Services",
                 "pages": [
@@ -64,7 +64,7 @@
                   {
                     "group": "Identity",
                     "pages": [
-                      "reference/spec/identity/identity",
+                      "reference/spec/identity/identity-and-attribution",
                       "reference/spec/identity/representation"
                     ]
                   },
@@ -91,7 +91,7 @@
                   {
                     "group": "Daemon",
                     "pages": [
-                      "reference/spec/daemon/daemon"
+                      "reference/spec/daemon"
                     ]
                   },
                   {

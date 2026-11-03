@@ -10,7 +10,7 @@ import {
   Schema,
 } from "effect";
 import { exactStruct } from "../encoding/canonical-json.js";
-import { AgentCard } from "../identity/agent.js";
+import { AgentCard } from "../identity/agent-cards.js";
 import {
   type firewallRefusalReasonSchema,
   type FirewallSettings,

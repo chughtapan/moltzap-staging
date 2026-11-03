@@ -134,8 +134,8 @@ errors name failing members or fields and include `operationId` for known
 operations. Other tool failures preserve their domain reason. Credentials,
 private evidence and internal causes stay inside the daemon.
 
-[Catalog compatibility](../daemon/daemon.md#mcp-interface) governs results.
-[Experiment switches](../../daemon-experiments.mdx#experiment-switches) apply to
+[Catalog compatibility](../daemon.md#mcp-interface) governs results.
+[Experiment switches](../../daemon-experiment-settings.mdx#experiment-switches) apply to
 every send. Native model sends use their adapter.
 
 ## Local guidance

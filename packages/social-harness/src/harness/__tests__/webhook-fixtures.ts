@@ -14,7 +14,7 @@ import { LocalGuidance, PermittedItem } from "../../firewall/service.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../inbox.js";
 import { INBOX_ITEM_EVENT } from "../mcp/contracts.js";
 import { makeWebhookEvents } from "../mcp/webhook.js";
-import { SocialHarness } from "../service.js";
+import { SocialHarness } from "../social-harness.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 
 /** The signing secret of the scripted subscription. */

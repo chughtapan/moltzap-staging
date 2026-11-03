@@ -15,9 +15,9 @@ requests. Objects accept exactly the fields shown. [Canonical JSON](#canonical-j
 
 ### Payload
 
-The [agent identity card](./identity.md#agent-identity-card) payload follows this shape.
+The [agent identity card](./identity-and-attribution.md#agent-identity-card) payload follows this shape.
 `WIRE_VERSION` denotes the emitted version. Readers follow the
-[live and history rules](./identity.md#wire-versions).
+[live and history rules](./identity-and-attribution.md#wire-versions).
 
 ```json
 {
@@ -70,7 +70,7 @@ General JWS's UTF-8 JCS bytes.
 
 ### Payload
 
-A [SignedMessage](./identity.md#signed-messages) contains:
+A [SignedMessage](./identity-and-attribution.md#signed-messages) contains:
 
 ```json
 {
@@ -107,7 +107,7 @@ must identify that card. The complete JWS is at most 471,677 UTF-8 JCS bytes.
 
 ## SealedBody
 
-A [sealed body](./identity.md#sealed-bodies) is RFC 7516 General JWE in UTF-8 JCS,
+A [sealed body](./identity-and-attribution.md#sealed-bodies) is RFC 7516 General JWE in UTF-8 JCS,
 using `ECDH-ES+A256KW` over X25519 and `A256GCM`. For two or more recipients:
 
 ```json
@@ -147,7 +147,7 @@ Its sender and envelope-id must match the verified SignedMessage. Encrypt a
 fresh random 32-byte salt followed by plaintext. The commitment is SHA-256 of
 those salted bytes. Opening rejects a digest mismatch or fewer than 32 decrypted
 bytes and returns the unsalted plaintext. This enforces
-[plaintext agreement](./identity.md#plaintext-agreement-and-confidentiality)
+[plaintext agreement](./identity-and-attribution.md#plaintext-agreement-and-confidentiality)
 without confirming guesses about content.
 
 For one recipient, its entry contains only `encrypted_key` and its `epk` moves
@@ -264,7 +264,7 @@ Content-Digest: sha-256=:<RFC 8941 base64 of SHA-256(body octets)>:
 Reject duplicate covered fields, combined alternate values and extra digest
 algorithms. JSON responses use `Content-Type: application/json` and JCS bytes.
 Responses are unsigned. Deployment owns schemes, TLS and
-[channel integrity](./identity.md#deployment-channel).
+[channel integrity](./identity-and-attribution.md#deployment-channel).
 
 ## HTTP message signatures
 

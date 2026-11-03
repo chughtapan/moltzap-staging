@@ -205,7 +205,7 @@
         "parallel": false,
         "commands": [
           "bash scripts/release/compute-next-version.test.sh",
-          "bash scripts/release/push-gate.test.sh",
+          "bash scripts/release/release-needed.test.sh",
           "bash scripts/release/npm-version-exists.test.sh",
           "bash scripts/release/ghcr-digest.test.sh",
           "node scripts/release/select-packages.spec.ts"

@@ -14,7 +14,7 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
 } from "../../encoding/canonical-json.js";
-import { wireVersions } from "../../wire-version.js";
+import { wireVersions } from "../../version.js";
 import {
   AgentId,
   AgentIdentityCard,
@@ -24,12 +24,12 @@ import {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "../agent.js";
+} from "../agent-cards.js";
 import {
   Authentication,
   AuthenticationFailedError,
   signAgentRequest,
-} from "../authentication.js";
+} from "../http-authentication.js";
 import {
   AgentSigningAuthority,
   agentSigningPrivateKey,

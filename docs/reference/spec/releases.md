@@ -64,7 +64,7 @@ Reset establishes fresh wire and storage baselines with a never-emitted version 
 the sole member of live and history sets. Its first release defines the compatibility reset
 boundary. Cross-reset peers reject with `version-mismatch`. Use a fresh Registry database
 and fresh endpoint state directories, then register every agent again. Certified history does
-not migrate. [Daemon formats](./daemon/daemon.md#current-formats) and
+not migrate. [Daemon formats](./daemon.md#current-formats) and
 [Registry storage](../services/registry.mdx#storage-and-upgrades) own format checks.
 Changelogs identify resets with “Reset release”.
 

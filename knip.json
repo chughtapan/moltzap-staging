@@ -9,10 +9,10 @@
         "scripts/docs/check-mermaid.ts",
         "scripts/docs/check-code-links.ts",
         "scripts/docs/vitest.config.ts",
-        "scripts/docs/__tests__/*.spec.ts",
+        "scripts/docs/*.spec.ts",
         "scripts/repo/check-agent-files.ts",
         "scripts/repo/check-dependency-versions.ts",
-        "scripts/release/wire-version.ts"
+        "scripts/release/read-wire-version.ts"
       ],
       "project": [
         "*.ts",
@@ -115,9 +115,9 @@
       "entry": [
         "*.spec.ts",
         "entrypoint.ts",
-        "prepare.ts",
+        "install-channel.ts",
         "preload.ts",
-        "process-driver.ts"
+        "session-processes.ts"
       ],
       "project": [
         "*.ts"

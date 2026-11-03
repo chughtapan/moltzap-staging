@@ -15,7 +15,10 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { acquireMcpConnection, type InboxEntry } from "#sharness-mcp/mcp";
+import {
+  acquireMcpConnection,
+  type InboxEntry,
+} from "#sharness-mcp/mcp-client";
 
 /** Host failures expose neither credentials nor admitted peer text. */
 class OpenCodeTriggerError extends Data.TaggedError("OpenCodeTriggerError")<{

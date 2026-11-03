@@ -13,7 +13,7 @@ import {
   mcpFixture,
   mcpTestCredential,
 } from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
-import { acquireMcpConnection, callTool } from "./mcp.js";
+import { acquireMcpConnection, callTool } from "./mcp-client.js";
 
 const entry = Schema.decodeUnknownSync(toolDefinitions.read_inbox.output)({
   items: [

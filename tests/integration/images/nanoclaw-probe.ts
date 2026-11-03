@@ -167,7 +167,7 @@ function decodeInbound(value: unknown): ExpectedInbound {
 /**
  * Lay out a fresh NanoClaw project directory, make it the working
  * directory, and provision the image's agent group in it with the image's
- * own `provision.ts`.
+ * own `initialize-agent-group.ts`.
  */
 async function provisionStateRoot(): Promise<undefined> {
   const stateRoot = await mkdtemp(join(tmpdir(), "nanoclaw-send-probe-"));
@@ -184,7 +184,9 @@ async function provisionStateRoot(): Promise<undefined> {
   );
   process.chdir(stateRoot);
 
-  const provision = await importModule(`${NANOCLAW_ROOT}/provision.ts`);
+  const provision = await importModule(
+    `${NANOCLAW_ROOT}/initialize-agent-group.ts`,
+  );
   await call(
     provision,
     "provisionNanoClaw",

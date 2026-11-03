@@ -39,7 +39,7 @@ import {
   isPublicWebhookAddress,
   sendWebhook,
   webhookHttpClientLayer,
-} from "./event-signing.js";
+} from "./webhook-client.js";
 
 /** The peer text and registered instruction travel separately through every runtime view. */
 function localGuidance(byte: number): CheckedGuidance {

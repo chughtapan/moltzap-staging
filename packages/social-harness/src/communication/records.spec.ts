@@ -21,13 +21,17 @@ import {
   AgentIdentityCard,
   AgentName,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent.js";
-import { EnvelopeId, SealedBody, SignedMessage } from "../identity/envelope.js";
+} from "../identity/agent-cards.js";
 import {
   AgentPublicKey,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
 } from "../identity/keys.js";
-import { WIRE_VERSION, WireVersions } from "../wire-version.js";
+import {
+  EnvelopeId,
+  SealedBody,
+  SignedMessage,
+} from "../identity/message-security.js";
+import { WIRE_VERSION, WireVersions } from "../version.js";
 import {
   Content,
   type Content as ContentValue,
@@ -75,7 +79,7 @@ import {
   verifyMembershipDescriptor,
   verifyStableEvidence,
 } from "./records.js";
-import { RouterInstanceId } from "./router/api.js";
+import { RouterInstanceId } from "./router/client.js";
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();

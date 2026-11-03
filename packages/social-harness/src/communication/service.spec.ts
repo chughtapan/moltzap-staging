@@ -21,13 +21,13 @@ import {
   agentCardOf,
   AgentName,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import {
   EnvelopeId,
   type LiveSignedMessage,
   SealedBody,
   SignedMessage,
-} from "../identity/envelope.js";
+} from "../identity/message-security.js";
 import { Registry, RegistryError } from "../identity/registry.js";
 import {
   conversationIdentityFixture,
@@ -48,7 +48,7 @@ import {
   mintMsgId,
 } from "./messages.js";
 import { DirectPacket, signOuterPacket } from "./records.js";
-import { Router } from "./router/api.js";
+import { Router } from "./router/client.js";
 import {
   Answer,
   Communication,

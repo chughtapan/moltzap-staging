@@ -20,11 +20,11 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { hostCodeHashOfDirectories } from "./loaded-plugin-code-hash.ts";
 import {
   contentHashOfDirectory,
   contentHashOfTarball,
-} from "./content-hash.ts";
-import { hostCodeHashOfDirectories } from "./host-code-hash.ts";
+} from "./package-content-hash.ts";
 import {
   classifyNpmView,
   type Manifest,

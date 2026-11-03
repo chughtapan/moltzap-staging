@@ -25,7 +25,7 @@ import {
   AgentSigningAuthority,
   type PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "./agent.js";
+} from "./agent-cards.js";
 import {
   type RegistrationId,
   Registry,

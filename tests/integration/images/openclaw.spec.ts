@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { type Network, startNetwork } from "../process-network.ts";
+import { type Network, startNetwork } from "../process-network-fixture.ts";
 import { fakeClaude } from "./claude-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
@@ -28,7 +28,7 @@ const docker = promisify(execFile);
 /** Fixture state is copied before the normal host entrypoint secures its directories. */
 const HOST_BOOTSTRAP = [
   "cp -R /probe/state /home/node/test-state",
-  "exec bash /opt/social-harness/agent/host.sh",
+  "exec bash /opt/social-harness/agent/entrypoint.sh",
 ].join(" && ");
 const image = process.env.OPENCLAW_INTEGRATION_IMAGE;
 const skip =

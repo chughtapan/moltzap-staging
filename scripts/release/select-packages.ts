@@ -21,7 +21,7 @@ import {
   CONTENT_HASH_FIELD,
   contentHashOfPackage,
   type PackFailure,
-} from "./content-hash.ts";
+} from "./package-content-hash.ts";
 
 /** One package manifest as the selection reads it. */
 export interface Manifest {

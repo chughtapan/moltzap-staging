@@ -3,10 +3,7 @@
 import type { Buffer } from "node:buffer";
 import { Cause, Duration, Effect, Ref, Schema, type Scope } from "effect";
 import protobuf from "protobufjs";
-import {
-  LOOPBACK_HOST,
-  ProcessTestError,
-} from "../daemon/daemon-process-harness.js";
+import { LOOPBACK_HOST, ProcessTestError } from "../daemon/daemon-fixture.js";
 import {
   acquireLoopbackServer,
   type IncomingMessage,

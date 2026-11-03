@@ -48,8 +48,8 @@ RUN node /opt/social-harness/agent/patch-openclaw.ts /app/dist \
     --marker /opt/social-harness/agent/openclaw-patch.json
 RUN mkdir -p /app/node_modules/@openai \
   && ln -s /app/dist/extensions/codex/node_modules/@openai/codex /app/node_modules/@openai/codex
-COPY host.sh configure-channel.ts /opt/social-harness/agent/
+COPY entrypoint.sh configure-channel.ts /opt/social-harness/agent/
 ENV NODE_ENV=production
 WORKDIR /app
 USER node
-ENTRYPOINT ["bash", "/opt/social-harness/agent/host.sh"]
+ENTRYPOINT ["bash", "/opt/social-harness/agent/entrypoint.sh"]

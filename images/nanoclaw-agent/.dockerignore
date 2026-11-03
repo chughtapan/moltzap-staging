@@ -1,10 +1,10 @@
 # The build context carries only the files the Dockerfile copies.
 *
 !entrypoint.ts
-!gateway.ts
+!cli-gateway.ts
 !nanoclaw-v2.3.0.patch
 !pnpm-lock.yaml
 !preload.ts
-!prepare.ts
-!process-driver.ts
-!provision.ts
+!install-channel.ts
+!session-processes.ts
+!initialize-agent-group.ts

@@ -38,18 +38,19 @@ import {
   AgentIdentityCard,
   type AgentName,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import { Registry } from "../identity/registry.js";
-import {
-  readStoredHistory,
-  verifyStoredMembership,
-} from "./conversations/log.js";
+import { makeRequests } from "./collectives.js";
 import {
   type EndpointEngine,
   type EngineInitializationError,
   type EngineOutboundError,
   makeEndpointEngine,
-} from "./conversations/service.js";
+} from "./conversations/conversation.js";
+import {
+  readStoredHistory,
+  verifyStoredMembership,
+} from "./conversations/history.js";
 import {
   CommunicationError,
   isTerminalSendFailure,
@@ -80,14 +81,13 @@ import {
   type OuterBodyReader,
   RecordHash,
 } from "./records.js";
-import { makeRequests } from "./requests.js";
-import { Router } from "./router/api.js";
+import { Router } from "./router/client.js";
 import {
   makeRouterWorker,
   type RouterWorker,
   type RouterWorkerInput,
   RouterWorkerPayloadInvalidError,
-} from "./router/worker.js";
+} from "./router/connection.js";
 import {
   type EndpointStoreError,
   failMessage,

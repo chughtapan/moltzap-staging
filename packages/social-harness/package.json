@@ -33,8 +33,8 @@
       "import": "./dist/index.js"
     },
     "./service": {
-      "types": "./dist/harness/index.d.ts",
-      "import": "./dist/harness/index.js"
+      "types": "./dist/harness/startup.d.ts",
+      "import": "./dist/harness/startup.js"
     },
     "./test": {
       "sharness-test": {

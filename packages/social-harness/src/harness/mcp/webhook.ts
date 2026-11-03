@@ -7,7 +7,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { retryPending, retrySettled } from "../../tracing.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import { DeliveryToken, type InboxEntry } from "../inbox.js";
-import { SocialHarness } from "../service.js";
+import { SocialHarness } from "../social-harness.js";
 import {
   callbackReasons,
   type EventSubscribeInput,
@@ -23,7 +23,7 @@ import {
   type WebhookCallbackError,
   type WebhookFailureReason,
   webhookUrl,
-} from "./event-signing.js";
+} from "./webhook-client.js";
 
 const maximumRetryDelay = 5 * 60_000;
 const maximumLease = 24 * 60 * 60_000;

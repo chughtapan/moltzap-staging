@@ -1,6 +1,9 @@
 /** @file Process tests accept inbox entries before making assertions on them. */
 import { Effect, Stream } from "effect";
-import { callTool, type McpConnection } from "../../plugins/shared/mcp.js";
+import {
+  callTool,
+  type McpConnection,
+} from "../../plugins/shared/mcp-client.js";
 
 /** Polls the public inbox and acknowledges each accepted entry before yielding it. */
 export function inboxStream(connection: McpConnection) {
