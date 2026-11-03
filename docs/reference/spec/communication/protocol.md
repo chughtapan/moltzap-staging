@@ -274,7 +274,7 @@ unsigned responses against network tampering within its threat model.
 Router verifies senders and addressing without interpreting bodies or enforcing
 encryption. Endpoints encrypt conversation bodies for their members. Router sees
 addressing and sizes. Every send and poll uses
-[registered-agent authentication](../identity/identity.md#authenticated-service-requests).
+[registered-agent authentication](../identity/identity-and-attribution.md#authenticated-service-requests).
 Verified cached callers continue during Registry outages. Unfamiliar callers
 require resolution. Recipients need no Router-side lookup.
 

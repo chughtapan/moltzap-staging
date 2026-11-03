@@ -11,12 +11,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "yaml";
 import {
-  byteOrder,
-  digestOf,
-  sortedJson,
-  UNHASHED_FIELDS,
-} from "./content-hash.ts";
-import {
   admittedContext,
   dockerContextInputs,
   type DockerRuntime,
@@ -37,11 +31,17 @@ import {
   runtimeModule,
 } from "./module-graph.ts";
 import {
+  byteOrder,
+  digestOf,
+  sortedJson,
+  UNHASHED_FIELDS,
+} from "./package-content-hash.ts";
+import {
   compiledSources,
   includedCopy,
   packedFile,
 } from "./packed-package-inputs.ts";
-import { readsManifestVersion } from "./runtime-version-reads.ts";
+import { readsManifestVersion } from "./release-version-usage.ts";
 import { compilerLayout, configInputs } from "./typescript-config.ts";
 /** Typed refusal shared by image key callers. */
 export { ImageInputError } from "./image-input-tree.ts";

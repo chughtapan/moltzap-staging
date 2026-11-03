@@ -24,12 +24,12 @@ import {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "../agent.js";
+} from "../agent-cards.js";
 import {
   Authentication,
   AuthenticationFailedError,
   signAgentRequest,
-} from "../authentication.js";
+} from "../http-authentication.js";
 import {
   AgentSigningAuthority,
   agentSigningPrivateKey,

@@ -17,7 +17,7 @@ import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const HOST = fileURLToPath(new URL("./host.sh", import.meta.url));
+const HOST = fileURLToPath(new URL("./entrypoint.sh", import.meta.url));
 const PLAN = "/run/social-harness/bootstrap/secrets-plan.json";
 const STEP_FAILURE_EXIT_CODE = 3;
 /** Unlike 128 plus any signal number, so it can only be the gateway's own exit. */

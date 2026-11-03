@@ -17,12 +17,12 @@ import {
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
-} from "../daemon/daemon-process-harness.js";
+} from "../daemon/daemon-fixture.js";
 import {
   messagePolicyFileSetting,
   unavailablePolicyRemedy,
 } from "../expected-contracts.js";
-import { processTrace } from "../process-trace.js";
+import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
 
 const FORMAT = "org.social-harness/message-policy/v2";

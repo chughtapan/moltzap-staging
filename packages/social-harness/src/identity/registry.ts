@@ -28,8 +28,11 @@ import {
   PrincipalId,
   type VerifiedAgentIdentityCard,
   verifiedAgentIdentityCardSchema,
-} from "./agent.js";
-import { signHttpRequest, VersionMismatchError } from "./authentication.js";
+} from "./agent-cards.js";
+import {
+  signHttpRequest,
+  VersionMismatchError,
+} from "./http-authentication.js";
 import { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 
 /** Idempotency identity for a registration operation. */

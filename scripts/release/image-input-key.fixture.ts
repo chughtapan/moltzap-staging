@@ -271,10 +271,10 @@ function agentFiles(): Record<string, string> {
     "plugins/openclaw/bin/loader": "#!/usr/bin/env node\nconsole.log('load');",
     "plugins/openclaw/skills/connect/SKILL.md": "Connect to the daemon.",
     "images/openclaw-agent/Dockerfile":
-      "FROM upstream@sha256:host\nCOPY host.sh /host.sh\n",
+      "FROM upstream@sha256:host\nCOPY entrypoint.sh /entrypoint.sh\n",
     "images/openclaw-agent/.dockerignore":
-      "*\n!host.sh\n!patch-openclaw.ts\n!configure-channel.ts\n",
-    "images/openclaw-agent/host.sh": "exec openclaw gateway\n",
+      "*\n!entrypoint.sh\n!patch-openclaw.ts\n!configure-channel.ts\n",
+    "images/openclaw-agent/entrypoint.sh": "exec openclaw gateway\n",
     "images/openclaw-agent/README.md": "Run the host.\n",
   };
 }

@@ -9,18 +9,18 @@ import {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "../agent.js";
-import {
-  EnvelopeId,
-  SealedBody,
-  SignedMessage,
-  type VerifiedSignedMessage,
-} from "../envelope.js";
+} from "../agent-cards.js";
 import {
   type AgentPublicKey,
   AgentSigningAuthority,
   x25519PublicJwk,
 } from "../keys.js";
+import {
+  EnvelopeId,
+  SealedBody,
+  SignedMessage,
+  type VerifiedSignedMessage,
+} from "../message-security.js";
 import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,

@@ -181,7 +181,7 @@ jobs:
               exit 0
             fi
             # Assigned first, so a failing gate fails the step instead of reading as a release.
-            DECISION=$(GATE_COMMIT=$GATED_COMMIT scripts/release/push-gate.sh)
+            DECISION=$(GATE_COMMIT=$GATED_COMMIT scripts/release/release-needed.sh)
             if [ "$DECISION" = skip ]; then
               echo "::notice::The release gate skipped $GATED_COMMIT; no new version will be released."
               echo "mode=skip" >> "$GITHUB_OUTPUT"
@@ -241,7 +241,7 @@ jobs:
           if [ "$MODE" = "resume" ]; then
             for pkg in $RESUME_PACKAGES; do
               RECORDED=$(jq -r '.sharnessContentHash // ""' "$pkg/package.json")
-              ACTUAL=$(node scripts/release/content-hash.ts "$pkg")
+              ACTUAL=$(node scripts/release/package-content-hash.ts "$pkg")
               [ "$RECORDED" = "$ACTUAL" ] || {
                 echo "ERROR: $pkg rebuilt to $ACTUAL, but the release commit recorded '$RECORDED'"
                 exit 1
@@ -258,7 +258,7 @@ jobs:
           fi
           echo "Releasing $VERSION for: $SELECTED"
           if [[ " $SELECTED " == *" plugins/openclaw "* ]]; then
-            HOST_CODE_HASH=$(node scripts/release/host-code-hash.ts plugins/openclaw)
+            HOST_CODE_HASH=$(node scripts/release/loaded-plugin-code-hash.ts plugins/openclaw)
             jq --arg h "$HOST_CODE_HASH" '.sharnessHostCodeHash = $h' \
               plugins/openclaw/package.json > tmp.json
             mv tmp.json plugins/openclaw/package.json
@@ -562,7 +562,7 @@ jobs:
               exit 1
             }
             RECORDED=$(jq -r '.sharnessContentHash // ""' <<<"$RELEASED")
-            ACTUAL=$(node scripts/release/content-hash.ts --tarball "$OUT/$FILE")
+            ACTUAL=$(node scripts/release/package-content-hash.ts --tarball "$OUT/$FILE")
             [ -n "$RECORDED" ] && [ "$RECORDED" = "$ACTUAL" ] || {
               echo "ERROR: $FILE hashes to $ACTUAL, but the release commit recorded '$RECORDED'"
               exit 1

@@ -34,7 +34,7 @@ import {
   MAXIMUM_RUNTIME_ITEM_BYTES,
   sameBytes,
 } from "../encoding/canonical-json.js";
-import { AgentCard, agentCardOf } from "../identity/agent.js";
+import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
 import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {

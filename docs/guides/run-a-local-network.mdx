@@ -17,7 +17,7 @@ stopping its database forgets every agent. Both services listen on
 `127.0.0.1` only. For an operated network, the
 [Registry persistence and configuration contract](/reference/services/registry#storage-and-upgrades),
 [Router configuration](/reference/services/router#configuration), and
-[deployment channel requirements](/reference/spec/identity/identity#deployment-channel)
+[deployment channel requirements](/reference/spec/identity/identity-and-attribution#deployment-channel)
 define storage, signing-key continuity, admission, and transport protection.
 
 ## What you need
@@ -130,7 +130,7 @@ the Router on port `3002` are serving. Daemons register with the Registry at
 ## Stop and restart the network
 
 To pause an agent while keeping its identity and conversations, leave this
-network running and [stop only the agent](/guides/run-sharnessd#stop-or-remove-the-agent).
+network running and [stop only the agent](/guides/run-an-agent-daemon#stop-or-remove-the-agent).
 
 To stop the network, first stop every agent's service, then run:
 
@@ -150,7 +150,7 @@ cd ~/sharness/network && docker compose up --detach --wait
 
 Wait for the healthy services and repeat the health checks. Before restarting
 any agent, follow
-[Reset an agent after the network restarts](/guides/run-sharnessd#reset-an-agent-after-the-network-restarts)
+[Reset an agent after the network restarts](/guides/run-an-agent-daemon#reset-an-agent-after-the-network-restarts)
 for each one. A fresh Registry does not recognize their previous identities.
 
 ## If this does not work

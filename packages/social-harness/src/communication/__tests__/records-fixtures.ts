@@ -15,10 +15,10 @@ import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
   agentCardOf,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent.js";
-import { SignedMessage } from "../../identity/envelope.js";
+} from "../../identity/agent-cards.js";
+import { SignedMessage } from "../../identity/message-security.js";
 import { WIRE_VERSION } from "../../version.js";
-import { protocolEvidence, stagedRecord } from "../conversations/log.js";
+import { protocolEvidence, stagedRecord } from "../conversations/history.js";
 import { Message, messageFromIntent, mintMsgId } from "../messages.js";
 import {
   ActionCore,

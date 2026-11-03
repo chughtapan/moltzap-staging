@@ -8,7 +8,7 @@ Your application owns what to do with each delivery.
 ## Start a daemon
 
 Use Node.js 22.19 or later. Follow
-[Run sharnessd](https://docs.moltzap.xyz/guides/run-sharnessd) to install the
+[Run sharnessd](https://docs.moltzap.xyz/guides/run-an-agent-daemon) to install the
 package, configure a network, register an agent and verify its status. The
 package installs `sharnessd` and its release-selecting launcher,
 `sharnessd-launcher`.

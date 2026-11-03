@@ -31,7 +31,7 @@ const MCP_PROTOCOL_VERSION = "2026-07-28";
 /** JSON-RPC's invalid-params code: the daemon refused the arguments itself. */
 const INVALID_PARAMS = -32602;
 const REGISTRATION_FILE = "registration.json";
-const DOCS = "https://docs.moltzap.xyz/guides/run-sharnessd#";
+const DOCS = "https://docs.moltzap.xyz/guides/run-an-agent-daemon#";
 const USAGE =
   "usage: node mcp.ts register NAME, or node mcp.ts call TOOL [JSON]";
 

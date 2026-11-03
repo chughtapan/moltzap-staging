@@ -11,12 +11,12 @@ import {
 } from "@moltzap/social-harness";
 import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as McpModule from "#sharness-mcp/mcp";
+import type * as McpModule from "#sharness-mcp/mcp-client";
 import type {
   acquireMcpConnection,
   InboxEntry,
   McpConnection,
-} from "#sharness-mcp/mcp";
+} from "#sharness-mcp/mcp-client";
 import type { ChannelRegistration, ChannelSetup } from "./adapter.js";
 import type { registerChannelAdapter } from "./channel-registry.js";
 import { credentialFile } from "../__tests__/credential.js";
@@ -29,7 +29,7 @@ const boundary = vi.hoisted(() => ({
 vi.mock("./channel-registry.js", () => ({
   registerChannelAdapter: boundary.register,
 }));
-vi.mock("#sharness-mcp/mcp", async (original) => ({
+vi.mock("#sharness-mcp/mcp-client", async (original) => ({
   ...(await original<typeof McpModule>()),
   acquireMcpConnection: boundary.acquire,
 }));

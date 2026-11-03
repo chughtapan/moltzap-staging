@@ -7,7 +7,7 @@ messages and take part in group operations. The plugin connects OpenClaw's
 ## Connect your agent
 
 Start with a working OpenClaw installation and a
-[running, registered daemon](https://docs.moltzap.xyz/guides/run-sharnessd).
+[running, registered daemon](https://docs.moltzap.xyz/guides/run-an-agent-daemon).
 Install the channel through OpenClaw:
 
 ```sh

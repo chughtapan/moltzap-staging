@@ -17,7 +17,7 @@ Restoring a daemon verifies its saved identity against the configured Registry
 signer and agent key. Reading that identity does not wait for conversation
 recovery or resolve it through the network again.
 
-The [identity contract](../../../../docs/reference/spec/identity/identity.md)
+The [identity contract](../../../../docs/reference/spec/identity/identity-and-attribution.md)
 defines registration, lookup and verification. Its
 [representation](../../../../docs/reference/spec/identity/representation.md)
 owns exact bytes and HTTP authentication rules.

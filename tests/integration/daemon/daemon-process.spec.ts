@@ -22,7 +22,7 @@ import {
   acquireMcpConnection,
   callTool,
   type McpConnection,
-} from "../../../plugins/shared/mcp.js";
+} from "../../../plugins/shared/mcp-client.js";
 import {
   agentNotAdmittedReason,
   agentNotAdmittedRemedy,
@@ -35,8 +35,8 @@ import {
   storageStartupPhase,
 } from "../expected-contracts.js";
 import { inboxStream } from "../mcp-inbox.js";
-import { processTrace } from "../process-trace.js";
 import { historyMessage } from "../saved-history.js";
+import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining } from "../test-matchers.js";
 import {
   acquireDaemonManagementClient,
@@ -52,7 +52,7 @@ import {
   type RunningProcess,
   stopProcess,
   waitForExit,
-} from "./daemon-process-harness.js";
+} from "./daemon-fixture.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
   readonly agent: AgentCard;

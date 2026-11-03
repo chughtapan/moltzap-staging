@@ -3,13 +3,16 @@
 import type { AgentCard, InboxEntry } from "@moltzap/social-harness";
 import { Deferred, Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
-import { acquireMcpConnection, callTool } from "../../../plugins/shared/mcp.js";
+import {
+  acquireMcpConnection,
+  callTool,
+} from "../../../plugins/shared/mcp-client.js";
 import {
   acquireDaemonManagementClient,
   ProcessTestError,
-} from "../daemon/daemon-process-harness.js";
+} from "../daemon/daemon-fixture.js";
 import { inboxStream } from "../mcp-inbox.js";
-import { processTrace } from "../process-trace.js";
+import { processTrace } from "../scenario-fixture.js";
 import {
   acquireGroupScenario,
   acquireScenario,
@@ -36,7 +39,7 @@ import {
   registerOpenClawChannel,
   requireRequest,
   startOpenClawGateway,
-} from "./adapter-daemon-fixture.js";
+} from "./openclaw-daemon-fixture.js";
 
 const SLOT_SCHEMA = {
   type: "object",

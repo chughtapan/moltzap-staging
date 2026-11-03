@@ -14,7 +14,7 @@ RUN apt-get update \
 
 COPY --from=nanoclaw-source . /opt/social-harness/nanoclaw/app
 COPY --from=social-harness-channel . /opt/social-harness/nanoclaw/channel/
-COPY nanoclaw-v2.3.0.patch prepare.ts pnpm-lock.yaml /opt/social-harness/nanoclaw/
+COPY nanoclaw-v2.3.0.patch install-channel.ts pnpm-lock.yaml /opt/social-harness/nanoclaw/
 
 # The install takes every dependency, with its integrity hash, from the
 # committed pnpm-lock.yaml that `build.ts lock` resolved for this patched
@@ -23,7 +23,7 @@ COPY --from=social-harness-workspace . /opt/social-harness/workspace/
 WORKDIR /opt/social-harness/nanoclaw/app
 RUN git apply --check /opt/social-harness/nanoclaw/nanoclaw-v2.3.0.patch \
   && git apply /opt/social-harness/nanoclaw/nanoclaw-v2.3.0.patch \
-  && node /opt/social-harness/nanoclaw/prepare.ts \
+  && node /opt/social-harness/nanoclaw/install-channel.ts \
     /opt/social-harness/nanoclaw/app \
     /opt/social-harness/nanoclaw/channel/sharness.ts \
   && cp /opt/social-harness/nanoclaw/pnpm-lock.yaml pnpm-lock.yaml \
@@ -53,7 +53,7 @@ COPY --from=builder /opt/social-harness/nanoclaw/app /opt/social-harness/nanocla
 # changing NanoClaw's source.
 COPY --from=social-harness-workspace node_modules/@moltzap/social-harness/skills/ /opt/social-harness/nanoclaw/app/container/skills/
 COPY entrypoint.ts /opt/social-harness/nanoclaw/entrypoint.ts
-COPY gateway.ts preload.ts process-driver.ts provision.ts /opt/social-harness/nanoclaw/
+COPY cli-gateway.ts preload.ts session-processes.ts initialize-agent-group.ts /opt/social-harness/nanoclaw/
 
 # Bun resolves the mounted runner from /app, while Node resolves the host from
 # its extracted tree. The links give both processes the same patched packages.

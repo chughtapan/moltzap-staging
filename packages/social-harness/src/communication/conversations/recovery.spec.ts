@@ -56,9 +56,9 @@ import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent.js";
-import { SignedMessage } from "../../identity/envelope.js";
+} from "../../identity/agent-cards.js";
 import { AgentPublicKey } from "../../identity/keys.js";
+import { SignedMessage } from "../../identity/message-security.js";
 import { WIRE_VERSION } from "../../version.js";
 import {
   compareAgentIds,
@@ -104,30 +104,20 @@ import {
   verifyCompletedReanchor,
   verifyMembershipDescriptor,
 } from "../records.js";
-import { RouterInstanceId } from "../router/api.js";
+import { RouterInstanceId } from "../router/client.js";
 import {
   type RouterDiscontinuityReason,
   type RouterIngressDisposition,
   RouterWorkerDiscontinuityError,
   type RouterWorkerIngress,
-} from "../router/worker.js";
+} from "../router/connection.js";
 import * as testStore from "../store.js";
 import {
   type EndpointRecovery,
   initializeCommunication,
   type StoredOutboundMessage,
 } from "../store.js";
-import {
-  acceptCatchUpPage,
-  type CatchUpRun,
-  makeCatchUpState,
-  requestCertifiedHistory,
-  resendCertifiedHistoryRequest,
-  waitBehindEarlierReanchor,
-} from "./catch-up.js";
 import { acceptEngineRecoveryIngress } from "./certification.js";
-import { recoverEngineState } from "./log.js";
-import { catchUpRetryAttempts } from "./recovery.js";
 import {
   type EndpointEngine,
   type EndpointEngineInput,
@@ -135,7 +125,17 @@ import {
   type EngineRuntime,
   makeEndpointEngine,
   makeOutbox,
-} from "./service.js";
+} from "./conversation.js";
+import {
+  acceptCatchUpPage,
+  type CatchUpRun,
+  makeCatchUpState,
+  requestCertifiedHistory,
+  resendCertifiedHistoryRequest,
+  waitBehindEarlierReanchor,
+} from "./history-sync.js";
+import { recoverEngineState } from "./history.js";
+import { catchUpRetryAttempts } from "./recovery.js";
 
 /* eslint-disable max-lines, max-lines-per-function -- One exact cryptographic trace keeps protocol order and assertions together. */
 

@@ -15,7 +15,7 @@ import {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { WIRE_VERSION } from "../version.js";
 

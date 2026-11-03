@@ -47,7 +47,7 @@ import {
   stopProcess,
   waitForExit,
   waitForHealthStatus,
-} from "./process.js";
+} from "./registry-fixture.js";
 
 const OK_STATUS = 200;
 const UNAUTHORIZED_STATUS = 401;

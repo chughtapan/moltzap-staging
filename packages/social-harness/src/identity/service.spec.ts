@@ -11,7 +11,11 @@ import {
   type IdentityFixture,
   makeIdentityFixture,
 } from "./__tests__/authentication-fixtures.js";
-import { agentCardOf, AgentName, AgentSigningAuthority } from "./agent.js";
+import {
+  agentCardOf,
+  AgentName,
+  AgentSigningAuthority,
+} from "./agent-cards.js";
 import { RegistrationId, Registry, RegistryError } from "./registry.js";
 import { Identity } from "./service.js";
 

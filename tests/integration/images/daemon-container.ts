@@ -12,7 +12,7 @@ import {
   type DaemonProcessFixture,
   managedProcess,
   processTestError,
-} from "../daemon/daemon-process-harness.ts";
+} from "../daemon/daemon-fixture.ts";
 
 const docker = promisify(execFile);
 

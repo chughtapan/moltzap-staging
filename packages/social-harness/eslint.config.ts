@@ -15,7 +15,7 @@ const testFiles = ["src/**/*.spec.ts", "src/**/__tests__/**"];
 const soleOuterSigner = {
   files: ["src/**/*.ts"],
   ignores: [
-    "src/communication/conversations/service.ts",
+    "src/communication/conversations/conversation.ts",
     "src/communication/records.ts",
     ...testFiles,
   ],
@@ -86,11 +86,11 @@ export default [
   }),
   {
     files: [
-      "src/identity/authentication.ts",
-      "src/identity/authentication.spec.ts",
-      "src/identity/envelope.spec.ts",
+      "src/identity/http-authentication.ts",
+      "src/identity/http-authentication.spec.ts",
+      "src/identity/message-security.spec.ts",
       "src/communication/conversations/certification.ts",
-      "src/identity/envelope.ts",
+      "src/identity/message-security.ts",
       "src/communication/messages.ts",
       "src/communication/records.ts",
       "src/communication/service.ts",
@@ -125,7 +125,7 @@ export default [
   messageCheckRules,
   {
     files: [
-      "src/harness/service.ts",
+      "src/harness/social-harness.ts",
       "src/harness/inbox.ts",
       "src/firewall/service.ts",
     ],
@@ -146,11 +146,11 @@ export default [
     files: [
       "src/communication/conversations/reanchor.ts",
       "src/communication/conversations/recovery.ts",
-      "src/communication/router/worker.ts",
-      "src/communication/requests.ts",
+      "src/communication/router/connection.ts",
+      "src/communication/collectives.ts",
       "src/communication/records.spec.ts",
       "src/launcher/installation.ts",
-      "src/communication/conversations/log.ts",
+      "src/communication/conversations/history.ts",
     ],
     rules: {
       "max-lines": [

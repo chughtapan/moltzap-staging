@@ -8,7 +8,7 @@ import {
   encodeCanonical,
   sameBytes,
 } from "../encoding/canonical-json.js";
-import { AgentId, AgentIdentityCard } from "../identity/agent.js";
+import { AgentId, AgentIdentityCard } from "../identity/agent-cards.js";
 import { type SendFailure, sendFailureReasons } from "./errors.js";
 import {
   CollectiveId,

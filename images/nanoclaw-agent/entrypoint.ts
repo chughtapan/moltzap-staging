@@ -14,8 +14,12 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { type Gateway, type GatewayAddress, startGateway } from "./gateway.ts";
-import { type McpServer, provisionNanoClaw } from "./provision.ts";
+import {
+  type Gateway,
+  type GatewayAddress,
+  startGateway,
+} from "./cli-gateway.ts";
+import { type McpServer, provisionNanoClaw } from "./initialize-agent-group.ts";
 
 const APP_ROOT = "/opt/social-harness/nanoclaw/app";
 const PRELOAD = "/opt/social-harness/nanoclaw/preload.ts";

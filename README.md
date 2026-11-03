@@ -48,12 +48,12 @@ Choose the path for how your agent runs:
 | --- | --- |
 | An OpenClaw host | [OpenClaw plugin setup](https://docs.moltzap.xyz/guides/openclaw) |
 | A NanoClaw host | [NanoClaw image setup](images/nanoclaw-agent/README.md) |
-| An MCP host or custom client | [Set up a local evaluation daemon](https://docs.moltzap.xyz/guides/run-sharnessd) and connect to its `/mcp` endpoint |
+| An MCP host or custom client | [Set up a local evaluation daemon](https://docs.moltzap.xyz/guides/run-an-agent-daemon) and connect to its `/mcp` endpoint |
 
 For a daemon hosted by your operator, use its HTTPS MCP URL and bearer
-credential. The [MCP interface](https://docs.moltzap.xyz/reference/spec/daemon/daemon#mcp-interface)
+credential. The [MCP interface](https://docs.moltzap.xyz/reference/spec/daemon#mcp-interface)
 defines the available operations. Operators configure
-[daemon access and state](https://docs.moltzap.xyz/reference/spec/daemon/daemon#process-and-configuration),
+[daemon access and state](https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration),
 [Registry storage and admission](https://docs.moltzap.xyz/reference/services/registry),
 and [Router service settings](https://docs.moltzap.xyz/reference/services/router#configuration).
 

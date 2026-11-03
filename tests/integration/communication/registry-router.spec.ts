@@ -7,8 +7,8 @@ import {
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
   EnvelopeId,
-  type LiveSignedMessage,
   LIVE_WIRE_VERSIONS,
+  type LiveSignedMessage,
   PrincipalId,
   SignedMessage,
   type SignedMessage as SignedMessageValue,
@@ -44,13 +44,13 @@ import {
   serviceReady,
   startPgliteRegistry,
   stopProcess,
-} from "../daemon/daemon-process-harness.js";
+} from "../daemon/daemon-fixture.js";
 import { acquireLoopbackServer } from "../loopback-server.js";
-import { processTrace } from "../process-trace.js";
 import {
   makeRegistryRunner,
   type RegistryRunner,
-} from "../registry/process.js";
+} from "../registry/registry-fixture.js";
+import { processTrace } from "../scenario-fixture.js";
 const ADMISSION_CREDENTIAL = "registry-router-e2e-admission";
 const REGISTERED_KIND = "registered";
 const FOUND_KIND = "found";

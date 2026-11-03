@@ -48,8 +48,8 @@ import {
   waitForExit,
   waitForHealthStatus,
   waitForPgliteListening,
-} from "./process.js";
-import { contentDigest, encodeCanonicalJson } from "./requests.js";
+} from "./registry-fixture.js";
+import { contentDigest, encodeCanonicalJson } from "./signed-requests.js";
 
 const REGISTERED_KIND = "registered";
 const NOT_FOUND_KIND = "not_found";

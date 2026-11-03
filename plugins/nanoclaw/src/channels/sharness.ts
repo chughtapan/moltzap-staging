@@ -37,7 +37,7 @@ import {
   type InboxEntry,
   type McpConnectError,
   type McpConnection,
-} from "#sharness-mcp/mcp";
+} from "#sharness-mcp/mcp-client";
 import type { ChannelSetup, InboundMessage } from "./adapter.js";
 import { registerChannelAdapter } from "./channel-registry.js";
 
@@ -383,7 +383,7 @@ class HarnessChannelAdapter {
               Effect.fail(
                 new ChannelError({
                   reason:
-                    "SHARNESS_MCP_CREDENTIAL_FILE is required. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#mcp-credential-file",
+                    "SHARNESS_MCP_CREDENTIAL_FILE is required. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
                 }),
               ),
             ),
@@ -393,7 +393,7 @@ class HarnessChannelAdapter {
             catch: () =>
               new ChannelError({
                 reason:
-                  "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-sharnessd#mcp-credential-file",
+                  "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
               }),
           });
           return yield* acquireMcpConnection(

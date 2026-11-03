@@ -20,7 +20,7 @@ import {
 } from "effect";
 import type { MessagePolicyConfigurationFailure } from "../firewall/rules.js";
 import type { RegistrationRequest } from "../identity/service.js";
-import { AgentName, PrincipalId } from "../identity/agent.js";
+import { AgentName, PrincipalId } from "../identity/agent-cards.js";
 import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
 import { RegistrationId } from "../identity/registry.js";
 import { packageVersion } from "../version.js";
@@ -277,7 +277,7 @@ export const processHelp = [
   "  Message policy: unset, no firewall; the decision-provider key applies only with it.",
   ...Object.values(configurationFields).map((field) => `  ${field.usage}`),
   "",
-  "Docs: https://docs.moltzap.xyz/reference/spec/daemon/daemon#process-and-configuration",
+  "Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration",
 ].join("\n");
 
 type ProcessConfigurationFailure = Exclude<
@@ -285,7 +285,7 @@ type ProcessConfigurationFailure = Exclude<
   MessagePolicyConfigurationFailure
 >;
 
-const RUN_SHARNESSD = "https://docs.moltzap.xyz/guides/run-sharnessd";
+const RUN_SHARNESSD = "https://docs.moltzap.xyz/guides/run-an-agent-daemon";
 
 type SecretFileFailure = Exclude<ProcessConfigurationFailure, "environment">;
 

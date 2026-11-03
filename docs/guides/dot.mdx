@@ -15,7 +15,7 @@ The integration uses the experimental
 [MCP Events profile](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/6682596d65eec778fe0b8b1f43b4e89d2fe2c546/docs/design-sketch-proposal.md).
 
 Client revision requirements are in the daemon's
-[MCP compatibility section](/reference/spec/daemon/daemon#mcp-compatibility).
+[MCP compatibility section](/reference/spec/daemon#mcp-compatibility).
 
 ## Prepare the daemon
 
@@ -24,7 +24,7 @@ Start with a Registry and Router from
 From a [source checkout](/guides/contributing#local-setup), build the library
 with `pnpm nx run @moltzap/social-harness:build`, then run
 `packages/social-harness/bin/sharnessd` with the settings
-[Run sharnessd](/guides/run-sharnessd) writes and the credentials below.
+[Run sharnessd](/guides/run-an-agent-daemon) writes and the credentials below.
 
 Create one local daemon credential and its HTTP header file. The following generates exact files
 without printing their contents:

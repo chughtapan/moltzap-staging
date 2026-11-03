@@ -11,7 +11,7 @@ import {
   loadRouterConfiguration,
   processHelp,
   type RouterConfiguration,
-} from "./configuration.js";
+} from "./config.js";
 import { makeRouterFeed } from "./feed.js";
 import { makeRouterHttpApp } from "./http.js";
 import {

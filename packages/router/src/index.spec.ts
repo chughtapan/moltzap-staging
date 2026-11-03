@@ -38,10 +38,7 @@ import {
   type Server as NetServer,
 } from "node:net";
 import { describe, expect } from "vitest";
-import {
-  configurationMessage,
-  loadRouterConfiguration,
-} from "./configuration.js";
+import { configurationMessage, loadRouterConfiguration } from "./config.js";
 import { makeRouterFeedAtOrder, maximumPrivateOrder } from "./feed.js";
 import { RouterServer } from "./index.js";
 import { makePollWaiters } from "./poll.js";

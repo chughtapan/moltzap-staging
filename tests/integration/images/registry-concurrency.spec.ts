@@ -11,7 +11,7 @@ import {
   type Endpoint,
   type Network,
   startNetwork,
-} from "../process-network.ts";
+} from "../process-network-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 /**

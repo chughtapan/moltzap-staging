@@ -25,12 +25,12 @@ import {
   type AgentCard,
   agentCardOf,
   AgentIdentityCard,
-} from "../../identity/agent.js";
+} from "../../identity/agent-cards.js";
+import { AgentPublicKey } from "../../identity/keys.js";
 import {
   SignedMessage,
   type SignedMessageVerificationError,
-} from "../../identity/envelope.js";
-import { AgentPublicKey } from "../../identity/keys.js";
+} from "../../identity/message-security.js";
 import { WIRE_VERSION } from "../../version.js";
 import {
   type Content,
@@ -45,7 +45,7 @@ import {
   MembershipDescriptor,
   verifyMembershipDescriptor,
 } from "../records.js";
-import { RouterInstanceId } from "../router/api.js";
+import { RouterInstanceId } from "../router/client.js";
 import * as Store from "../store.js";
 import { pollCursor } from "./router-fixtures.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";

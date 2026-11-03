@@ -3,7 +3,7 @@ import { FetchHttpClient } from "@effect/platform";
 import { NodeRuntime } from "@effect/platform-node";
 import { packageVersion } from "@moltzap/social-harness";
 import { Config, Data, Effect } from "effect";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { acquireMcpConnection } from "#sharness-mcp/mcp-client";
 import { deliverToGrokBot, validateGrokRoutine } from "./index.js";
 
 /** Configuration errors contain neither the private routine destination nor credentials. */

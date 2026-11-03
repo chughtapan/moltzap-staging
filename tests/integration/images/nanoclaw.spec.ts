@@ -11,7 +11,7 @@ import {
   type Network,
   type Endpoint as NetworkEndpoint,
   startNetwork,
-} from "../process-network.ts";
+} from "../process-network-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";

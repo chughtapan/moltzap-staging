@@ -1,7 +1,7 @@
 /** @file Signing authority exposes opaque capability values and exact Effect channels. */
 
 import type { Effect, Redacted, Types } from "effect";
-import type { AgentPublicKey, AgentSigningAuthority } from "./agent.js";
+import type { AgentPublicKey, AgentSigningAuthority } from "./agent-cards.js";
 import type { InvalidAgentPrivateKeyError } from "./keys.js";
 
 type Expect<Value extends true> = Value;

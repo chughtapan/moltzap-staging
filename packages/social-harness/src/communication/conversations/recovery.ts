@@ -11,13 +11,13 @@ import {
   Schedule,
   Scope,
 } from "effect";
-import type { AgentId } from "../../identity/agent.js";
-import type { SignedMessage } from "../../identity/envelope.js";
+import type { AgentId } from "../../identity/agent-cards.js";
+import type { SignedMessage } from "../../identity/message-security.js";
 import type {
   EngineActionFold,
   EngineConversation,
   EngineRuntime,
-} from "./service.js";
+} from "./conversation.js";
 import {
   ClientRepresentationError,
   decodeCanonical,
@@ -54,7 +54,7 @@ import {
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
   RouterWorkerRecoveryError,
-} from "../router/worker.js";
+} from "../router/connection.js";
 import {
   discardOutbound,
   type EndpointRecovery,
@@ -74,7 +74,7 @@ import {
   sentByOtherMember,
   settleOnQuorum,
   waitBehindEarlierReanchor,
-} from "./catch-up.js";
+} from "./history-sync.js";
 import {
   anchorHashAtHead,
   durableRouterInstanceId,
@@ -82,7 +82,7 @@ import {
   verifyRecoveredHistory,
   verifyStoredMemberships,
   verifyStoredOutbounds,
-} from "./log.js";
+} from "./history.js";
 import {
   acceptCompletedReanchor,
   acceptReanchorVote,

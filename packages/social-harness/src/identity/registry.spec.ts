@@ -18,7 +18,7 @@ import {
   AgentName,
   AgentSigningAuthority,
   PrincipalId,
-} from "./agent.js";
+} from "./agent-cards.js";
 import {
   lookupResponseSchema,
   registerResponseSchema,

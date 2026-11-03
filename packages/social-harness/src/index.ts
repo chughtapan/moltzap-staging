@@ -25,7 +25,7 @@ export {
   SendRequest,
   type SendResult,
   SendResultSchema,
-} from "./host-protocol.js";
+} from "./harness/message-format.js";
 /** Results and policy feedback that a host may show its agent. */
 export {
   CollectiveResult,
@@ -56,11 +56,11 @@ export {
   type ListConversationsResult,
   type ReadHistoryRequest,
   type ReadHistoryResult,
-} from "./harness/service.js";
+} from "./harness/social-harness.js";
 /** Registration failures are distinct from communication startup. */
 export { RegistrationError } from "./identity/service.js";
 /** Optional traffic export records admitted incoming content and completed sends. */
-export { HistoryExportRecord } from "./harness/message-log.js";
+export { HistoryExportRecord } from "./harness/traffic-export.js";
 /** Message, question, answer and collective result values. */
 export {
   Answer,
@@ -100,7 +100,7 @@ export {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "./identity/agent.js";
+} from "./identity/agent-cards.js";
 /** Signing authority exposes no private key bytes. */
 export { AgentPublicKey, AgentSigningAuthority } from "./identity/keys.js";
 /** Signed network messages and their verification results. */
@@ -109,7 +109,7 @@ export {
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
-} from "./identity/envelope.js";
+} from "./identity/message-security.js";
 /** Installed package version and the wire versions this release emits and accepts. */
 export { LIVE_WIRE_VERSIONS, packageVersion, WIRE_VERSION } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */

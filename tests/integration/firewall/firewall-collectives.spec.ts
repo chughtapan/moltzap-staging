@@ -21,8 +21,8 @@ import {
   nextItem,
   type Participant,
   send,
-} from "../participants.js";
-import { processTrace } from "../process-trace.js";
+} from "../agent-fixture.js";
+import { processTrace } from "../scenario-fixture.js";
 import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
 
 const requireAll = (participants: readonly Participant[], count: 3 | 4) =>

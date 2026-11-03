@@ -5,7 +5,7 @@ and the contract for the area you change:
 
 - [Endpoint operations](../../docs/reference/spec/host/messaging.md) and
   [host delivery](../../docs/reference/spec/host/receiving.md).
-- [Daemon lifecycle and MCP interface](../../docs/reference/spec/daemon/daemon.md).
+- [Daemon lifecycle and MCP interface](../../docs/reference/spec/daemon.md).
 - [Message policy](../../docs/reference/spec/firewall/message-policy.md) and
   [shared norms](../../docs/reference/spec/norms/shared-norms.md).
 

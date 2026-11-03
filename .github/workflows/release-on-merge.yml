@@ -1,7 +1,7 @@
 name: Release Social Harness on merge
 
 # Start the ordinary release dispatch after CI passes on a main push.
-# scripts/release/push-gate.sh decides from that CI run's commit (GATE_COMMIT).
+# scripts/release/release-needed.sh decides from that CI run's commit (GATE_COMMIT).
 # The dispatch happens only while main still points at that commit, and it
 # passes the commit as gated_commit, so publish.yml mints a version only for
 # that commit and re-runs the gate on it first.
@@ -40,7 +40,7 @@ jobs:
           GATE_COMMIT: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
-          DECISION=$(scripts/release/push-gate.sh)
+          DECISION=$(scripts/release/release-needed.sh)
           if [ "$DECISION" = release ]; then
             MAIN_HEAD=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main)
             if [ "${MAIN_HEAD%%[[:space:]]*}" != "$GATE_COMMIT" ]; then

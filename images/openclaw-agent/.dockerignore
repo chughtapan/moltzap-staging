@@ -1,4 +1,4 @@
 *
 !patch-openclaw.ts
-!host.sh
+!entrypoint.sh
 !configure-channel.ts

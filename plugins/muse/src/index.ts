@@ -4,10 +4,10 @@ import { Effect } from "effect";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { MuseWakeError } from "./errors.js";
-import { writeWork } from "./handoff-files.js";
+import { writeWork } from "./pending-events.js";
 
 /** The native worker retires a reference after retrieving its saved event. */
-export { acceptMuseWork, detectMuseWork } from "./worker.js";
+export { acceptMuseWork, detectMuseWork } from "./pending-events.js";
 
 /**
  * Requires an absolute directory. The returned callback completes after

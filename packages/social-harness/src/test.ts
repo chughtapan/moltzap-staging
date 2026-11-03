@@ -3,7 +3,7 @@
 /** Wire-version overrides for process tests. */
 export { HISTORY_WIRE_VERSIONS, WireVersions } from "./version.js";
 /** HTTP signing for process fixtures. */
-export { signAgentRequest } from "./identity/authentication.js";
+export { signAgentRequest } from "./identity/http-authentication.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
   CheckInputError,

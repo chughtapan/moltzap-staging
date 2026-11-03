@@ -33,7 +33,7 @@ import {
   AgentCard,
   AgentId,
   AgentName,
-} from "../identity/agent.js";
+} from "../identity/agent-cards.js";
 import {
   CommunicationError,
   communicationFailure,

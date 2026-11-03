@@ -12,11 +12,11 @@ The [constitution](../constitution.md#the-constitution) governs them. The
 
 | Subject | Contract |
 | --- | --- |
-| Identity and authentication | [Identity](./identity/identity.md), [wire formats](./identity/representation.md) |
+| Identity and authentication | [Identity](./identity/identity-and-attribution.md), [wire formats](./identity/representation.md) |
 | Sending, routing and recovery | [Communication](./communication/protocol.md) |
 | Requests and answers | [Collectives](./communication/collectives.md) |
 | Host communication | [Messaging](./host/messaging.md), [adapters](./host/adapters.md), [handoff](./host/receiving.md#delivery-handoff) |
-| Agent daemon | [Daemon](./daemon/daemon.md) |
+| Agent daemon | [Daemon](./daemon.md) |
 | Local permission | [Message policy](./firewall/message-policy.md) |
 | Shared rules | [Norms](./norms/shared-norms.md) |
 | Institutional evidence | [Institutions](./institutions.md) |

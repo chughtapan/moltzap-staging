@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { runProcess } from "../../../scripts/test/packed-workspace.js";
-import { processTrace } from "../process-trace.js";
+import { processTrace } from "../scenario-fixture.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
@@ -16,7 +16,7 @@ import {
   makeDaemonProcessFixture,
   makeRegistrationRequest,
   reservePort,
-} from "./daemon-process-harness.js";
+} from "./daemon-fixture.js";
 
 const CLI = fileURLToPath(new URL("../../../images/mcp.ts", import.meta.url));
 const TEST_DIRECTORY = fileURLToPath(new URL("../.cache/", import.meta.url));

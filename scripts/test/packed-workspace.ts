@@ -11,7 +11,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { WIRE_VERSION } from "../../packages/social-harness/src/version.ts";
-import { recordPackedWireVersion } from "../release/content-hash.ts";
+import { recordPackedWireVersion } from "../release/package-content-hash.ts";
 import { workspacePackages } from "../repo/packages.ts";
 
 /** Services every pack gate step runs against. */

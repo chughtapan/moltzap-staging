@@ -36,12 +36,11 @@ import {
   LocalGuidance,
   PermittedItem,
 } from "../../firewall/service.js";
-import { SendRequest, SendResultSchema } from "../../host-protocol.js";
 import {
   AgentIdentityCard,
   AgentName,
   PrincipalId,
-} from "../../identity/agent.js";
+} from "../../identity/agent-cards.js";
 import { RegistrationId } from "../../identity/registry.js";
 import { RegistrationError } from "../../identity/service.js";
 import {
@@ -52,7 +51,8 @@ import {
   InboxPage,
   MessageAddress,
 } from "../inbox.js";
-import { HistoryError } from "../service.js";
+import { SendRequest, SendResultSchema } from "../message-format.js";
+import { HistoryError } from "../social-harness.js";
 
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
 export const maximumEventBytes = 256 * 1024;

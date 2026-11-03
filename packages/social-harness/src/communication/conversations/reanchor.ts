@@ -2,8 +2,8 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../identity/agent.js";
-import type { EngineActionFold, EngineRuntime } from "./service.js";
+import type { AgentId } from "../../identity/agent-cards.js";
+import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -13,7 +13,7 @@ import {
 import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../identity/envelope.js";
+} from "../../identity/message-security.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,
@@ -46,7 +46,7 @@ import {
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
-} from "../router/worker.js";
+} from "../router/connection.js";
 import {
   applyCatchUpReanchor,
   completeReanchor,
@@ -68,7 +68,7 @@ import {
   orderedSignatures,
   protocolEvidence,
   stagedSuccessor,
-} from "./log.js";
+} from "./history.js";
 
 const acceptedDisposition: RouterIngressDisposition = "accepted";
 

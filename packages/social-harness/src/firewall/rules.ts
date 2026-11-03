@@ -15,7 +15,7 @@ import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { parseDocument } from "yaml";
 import { exactStruct } from "../encoding/canonical-json.js";
-import { AgentCard } from "../identity/agent.js";
+import { AgentCard } from "../identity/agent-cards.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 

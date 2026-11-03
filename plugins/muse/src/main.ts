@@ -4,7 +4,7 @@ import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
 import { packageVersion } from "@moltzap/social-harness";
 import { Config, Console, Effect, Layer } from "effect";
 import { isAbsolute } from "node:path";
-import { acquireMcpConnection } from "#sharness-mcp/mcp";
+import { acquireMcpConnection } from "#sharness-mcp/mcp-client";
 import { MuseWakeError } from "./errors.js";
 import { acceptMuseWork, detectMuseWork, makeMuseWakeup } from "./index.js";
 
