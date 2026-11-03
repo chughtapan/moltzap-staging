@@ -6,17 +6,19 @@ import type {
   ChannelMessageActionContext,
   ChannelRuntimeSurface,
 } from "openclaw/plugin-sdk/channel-contract";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import type {
+  ChannelOutboundSessionRouteParams,
+  OpenClawConfig,
+} from "openclaw/plugin-sdk/channel-core";
 import type { ChannelInboundTurnPlan } from "openclaw/plugin-sdk/channel-inbound";
 import { live as it } from "@effect/vitest";
 import {
   AgentAddress,
   CollectiveError,
   FirewallSendError,
-  type HarnessEndpoint,
   type InboundDelivery,
   InboundItem,
-  InboundMessage,
+  type InboundMessage,
   ListenError,
   MessageAddressInput,
   parseMessageText,
@@ -29,8 +31,18 @@ import {
 } from "@moltzap/social-harness";
 import { Effect, Either, Encoding, Fiber, Schema, Stream } from "effect";
 import { join } from "node:path";
+import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { beforeAll, describe, expect, vi, it as vitestIt } from "vitest";
 import { openClawTestStateDirectory } from "../vitest.setup.js";
+import {
+  directMessage,
+  type FakeHarnessEndpoint,
+  groupMessage,
+  makeEndpoint,
+  makeInboundEndpoint,
+  makeListeningEndpoint,
+  multicast,
+} from "./__tests__/endpoint.js";
 import { testAgentView, testGuidance } from "./__tests__/guidance-fixtures.js";
 import {
   ACCOUNT_ID,
@@ -61,10 +73,6 @@ const SLOT_SCHEMA = {
 };
 
 type Plugin = ReturnType<typeof createChannelPlugin>;
-interface FakeHarnessEndpoint {
-  readonly endpoint: HarnessEndpoint;
-  readonly sends: readonly SendInput[];
-}
 
 /**
  * OpenClaw lazily loads its inbound session-recording runtime on the first turn.
@@ -88,6 +96,10 @@ describe("OpenClaw HarnessEndpoint adapter", () => {
   it(
     "runs private inbound turns in the host-resolved peer session",
     privateModeUsesHostResolvedPeerSession,
+  );
+  it(
+    "records a send in the session its recipient's turns use, in shared and private mode",
+    sendSharesRecipientSession,
   );
   it(
     "leaves a Client delivery pending when the host turn fails",
@@ -330,6 +342,87 @@ function privateModeUsesHostResolvedPeerSession() {
     expectGroupProjection(requireDispatchCall(calls, 0), message, sessionKey);
     expect(events).toContain(`record:${message.postId}:${sessionKey}`);
   });
+}
+
+/**
+ * OpenClaw's own route resolver and key builder decide both sessions here, so
+ * the check holds for the keys a real host computes.
+ */
+function sendSharesRecipientSession() {
+  return Effect.forEach(
+    ["shared", "private"] as const,
+    (mode) =>
+      Effect.gen(function* () {
+        const message = directMessage();
+        const fake = makeInboundEndpoint([multicast(message)], []);
+        const plans: ChannelInboundTurnPlan[] = [];
+        const runtime = {
+          ...makeObservedRuntime({
+            events: [],
+            calls: [],
+            plans,
+            routePeers: [],
+          }),
+          routing: { resolveAgentRoute },
+        };
+        const plugin = createChannelPlugin({
+          harnessEndpointForAccount: () => fake.endpoint,
+        });
+        const cfg = hostRoutedConfig(mode);
+
+        yield* startAccount(plugin, {
+          ...gatewayContext(
+            new AbortController().signal,
+            runtime,
+            undefined,
+            mode,
+          ),
+          cfg,
+        });
+        const turn = requireTurnPlan(plans, 0);
+        const send = yield* resolveSendRoute(plugin, {
+          cfg,
+          agentId: turn.route.agentId,
+          accountId: ACCOUNT_ID,
+          target: message.address,
+        });
+
+        expect(send?.sessionKey).toBe(turn.route.sessionKey);
+      }),
+    { concurrency: 1, discard: true },
+  );
+}
+
+function resolveSendRoute(
+  plugin: Plugin,
+  params: ChannelOutboundSessionRouteParams,
+) {
+  const resolve = plugin.messaging?.resolveOutboundSessionRoute;
+  if (resolve === undefined) {
+    return Effect.fail(
+      testError("resolveOutboundSessionRoute", "missing outbound route"),
+    );
+  }
+  return Effect.tryPromise({
+    try: () => Promise.resolve(resolve(params)),
+    catch: (cause) => testError("resolveOutboundSessionRoute", cause),
+  });
+}
+
+/**
+ * A configuration whose sole agent is the observed runtime's, so OpenClaw's
+ * resolver routes to the agent the suite's first turn already warmed. Private
+ * mode adds OpenClaw's per-peer DM scope, as an evaluation host configures it.
+ */
+function hostRoutedConfig(mode: "shared" | "private"): OpenClawConfig {
+  const base = makeConfig(mode);
+  return {
+    ...base,
+    agents: { entries: { primary: {} } },
+    ...(mode === "private"
+      ? { session: { ...base.session, dmScope: "per-account-channel-peer" } }
+      : {}),
+  };
 }
 
 function failedHostTurnPreservesDelivery() {
@@ -1037,104 +1130,6 @@ function inboundStreamFailureDisconnects() {
     );
     yield* proactiveSendFailsWhenDisconnected(plugin, fake, 0);
   });
-}
-
-function directMessage(id = 1): InboundMessage {
-  return Schema.decodeUnknownSync(InboundMessage)({
-    kind: "direct",
-    postId: postId(id),
-    address: "agent:alice",
-    sender: testAgentView("alice"),
-    content: [
-      { type: "text", text: "hello" },
-      { type: "data", value: { count: 2 } },
-    ],
-  });
-}
-
-function groupMessage(): InboundMessage {
-  return Schema.decodeUnknownSync(InboundMessage)({
-    kind: "group",
-    postId: postId(2),
-    address: "group:alice,bob,carol",
-    sender: testAgentView("bob"),
-    members: [
-      testAgentView("alice"),
-      testAgentView("bob"),
-      testAgentView("carol"),
-    ],
-    content: [{ type: "text", text: "group message" }],
-  });
-}
-
-function multicast(message: InboundMessage): InboundItem {
-  return { kind: "multicast", message };
-}
-
-/** The turn id OpenClaw sees for an item, which the fake acknowledgment logs. */
-function itemTurnId(item: InboundItem): string {
-  switch (item.kind) {
-    case "multicast":
-      return item.message.postId;
-    case "collectiveRequest":
-      return item.postId;
-    case "collectiveResult":
-      return `${item.id}:result`;
-    case "operationFailed":
-      return `${item.id}:failed`;
-    default:
-      return item satisfies never;
-  }
-}
-
-function makeInboundEndpoint(
-  items: readonly InboundItem[],
-  events: string[],
-): FakeHarnessEndpoint {
-  const deliveries = items.map(
-    (item): InboundDelivery => ({
-      item,
-      eventId: "unused-event-reference",
-      acknowledge: Effect.sync(() => {
-        events.push(`ack:${itemTurnId(item)}`);
-      }),
-    }),
-  );
-  return makeEndpoint(Stream.fromIterable(deliveries), events);
-}
-
-function makeListeningEndpoint(): FakeHarnessEndpoint {
-  return makeEndpoint(Stream.never, []);
-}
-
-/**
- * A fake endpoint that records each send and answers it with `respond`, by
- * default the endpoint's own result for that send.
- */
-function makeEndpoint(
-  messages: HarnessEndpoint["messages"],
-  events: string[],
-  respond: (
-    input: SendInput,
-    index: number,
-  ) => Effect.Effect<
-    SendResult,
-    SendError | CollectiveError | FirewallSendError
-  > = endpointResult,
-): FakeHarnessEndpoint {
-  const sends: SendInput[] = [];
-  return {
-    sends,
-    endpoint: {
-      send: (input) =>
-        Effect.sync(() => {
-          sends.push(input);
-          events.push(`send:${JSON.stringify(input)}`);
-          return sends.length - 1;
-        }).pipe(Effect.flatMap((index) => respond(input, index))),
-      messages,
-    },
-  };
 }
 
 function gatewayContext(
