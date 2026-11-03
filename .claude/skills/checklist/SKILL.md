@@ -65,11 +65,10 @@ for the Internet", is the goal plans and docs serve (audit rule 11.5):
 - [ ] Public never depends on private. A public repository clones, builds,
   tests and runs without access to private ones. Teammates gain capability
   through credentials and cluster access, never through a build dependency.
-- [ ] Give each layer that has code one folder, and each concept inside it (a
-  group of types and the operations on them, such as signing keys) one
-  subfolder. Keep few top-level folders, each named for what it does, and no
-  catch-all folders. Add a layer's folder with its first code. A package's
-  folder carries the package's name, and a rename moves both.
+- [ ] Keep few top-level folders, each named for its responsibility. Add a
+  layer's folder with its first code. Use the `software-architecture` skill
+  to organize modules within it. A package's folder carries the package's
+  name, and a rename moves both.
 - [ ] Dependencies point down. A lower layer never imports a higher one; when
   it needs something from above, it declares an interface and the higher layer
   implements it. Parts are wired together only where a process starts.
@@ -213,7 +212,6 @@ directly; these items do not restate them.
   defaults, rendered output or wording only where they are part of this
   repository's public contract. When a dependency or vendor bump forces a test
   edit, the test is wrong.
-- [ ] Write no test that only checks something is absent.
 - [ ] Integration tests use real systems, and fakes pass the same contract
   tests as the real thing.
 - [ ] Evaluations state what should happen and keep safety cases in their own

@@ -12,6 +12,7 @@ session or checking its hash does not load its instructions.
 | --- | --- |
 | Plan, design, write, review or land any change | `.agents/skills/checklist/SKILL.md` |
 | Plan a change or prepare a handoff | `.agents/skills/shared-sdlc/SKILL.md` |
+| Design, implement or review software | `.agents/skills/software-architecture/SKILL.md` |
 | Verify, merge or release a change, or brief another agent to | `.agents/skills/delivery/SKILL.md` |
 | Find, file or review an internal record | `.agents/skills/records/SKILL.md` |
 | Write or edit public documentation | `.agents/skills/docs/SKILL.md` |
