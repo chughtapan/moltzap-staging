@@ -14,6 +14,7 @@ import {
   Effect,
   Encoding,
   Fiber,
+  Redacted,
 } from "effect";
 import { createHmac } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Restart scenarios retain the same test directory across independent Effect scopes.
@@ -96,6 +97,21 @@ it("keeps each agent's webhook registration and revocation separate in one datab
       const recoveredSecond = yield* second.acquire;
       expect((yield* recoveredFirst.status).mode).toBe("none");
       expect((yield* recoveredSecond.status).mode).toBe("webhook");
+      const retained = yield* store.sql<
+        Record<"state", string>
+      >`SELECT state FROM mcp_webhook_state`;
+      expect(JSON.stringify(retained)).not.toContain(secret);
+      expect(JSON.stringify(retained)).not.toContain(url);
+      yield* store.sql`UPDATE mcp_webhook_state SET state = (SELECT state FROM mcp_webhook_state WHERE agent_key = 'second') WHERE agent_key = 'first'`;
+      expect(yield* first.acquire.pipe(Effect.isFailure)).toBe(true);
+      const wrongKey = yield* scriptedWebhook(
+        store,
+        "second",
+        Redacted.make(new Uint8Array(32).fill(9)),
+      );
+      expect(yield* wrongKey.acquire.pipe(Effect.isFailure)).toBe(true);
+      const unaffected = yield* second.acquire;
+      expect((yield* unaffected.status).mode).toBe("webhook");
     }),
   ));
 

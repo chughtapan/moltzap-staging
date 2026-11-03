@@ -172,6 +172,7 @@ function makeRunningAgent(
     }
     const app = yield* makeAgentMcpApp({
       agentKey,
+      unlockKey,
       implementation: { name: "sharnessd", version: packageVersion },
     }).pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(

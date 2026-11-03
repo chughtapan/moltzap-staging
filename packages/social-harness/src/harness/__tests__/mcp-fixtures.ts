@@ -15,7 +15,7 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { McpAuthentication } from "../mcp/authentication.js";
@@ -91,6 +91,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   });
   const agentApp = yield* makeAgentMcpApp({
     agentKey: database.directory,
+    unlockKey: Redacted.make(randomBytes(32)),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

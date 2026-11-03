@@ -14,6 +14,7 @@ import {
   JSONSchema,
   Match,
   Option,
+  type Redacted,
   Schema,
   type Scope,
   Stream,
@@ -49,6 +50,7 @@ import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 interface AgentServerSettings {
   readonly agentKey: string;
+  readonly unlockKey: Redacted.Redacted<Uint8Array>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
 
@@ -74,7 +76,10 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const registered = identity
     .me()
     .pipe(Effect.map((state) => state.kind === "registered"));
-  const callback = yield* installEvents(settings.agentKey).pipe(
+  const callback = yield* installEvents(
+    settings.agentKey,
+    settings.unlockKey,
+  ).pipe(
     Effect.provideService(McpServer, server),
     Effect.provide(webhookHttpClientLayer),
   );

@@ -96,6 +96,7 @@ export function runPolicyRuntime(policy: FirewallOptions) {
       }
       const agent = yield* makeAgentMcpApp({
         agentKey: profile.agent_key,
+        unlockKey: access.unlockKey,
         implementation: { name: "policy-integration", version: "1" },
       }).pipe(Effect.provide(services));
       const app = yield* makeMcpHttpApp(

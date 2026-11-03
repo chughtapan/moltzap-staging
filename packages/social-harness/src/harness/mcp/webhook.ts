@@ -2,8 +2,9 @@
 
 import { HttpClient } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
-import { type Clock, Effect, Schema } from "effect";
+import { type Clock, Effect, Redacted, Schema } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { openCredential, sealCredential } from "../../database/secrets.js";
 import { executeQuery, makeQueries } from "../../database/sql.js";
 import { withAgentTransaction } from "../../database/transactions.js";
 import { retryPending, retrySettled } from "../../tracing.js";
@@ -71,6 +72,7 @@ type WebhookTables = Record<
 
 interface WebhookRuntime {
   readonly agentKey: string;
+  readonly unlockKey: Redacted.Redacted<Uint8Array>;
   readonly sql: SqlClient.SqlClient;
   readonly harness: SocialHarness["Type"];
   readonly client: HttpClient.HttpClient;
@@ -588,20 +590,25 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
 });
 
 function writeState(
-  runtime: Pick<WebhookRuntime, "sql" | "agentKey">,
+  runtime: Pick<WebhookRuntime, "sql" | "agentKey" | "unlockKey">,
   state: State,
 ) {
   return Effect.gen(function* () {
     const bytes = yield* Schema.encode(Schema.parseJson(stateSchema))(state);
+    const sealed = yield* sealCredential(
+      Redacted.make(bytes),
+      `webhook/${runtime.agentKey}`,
+      runtime.unlockKey,
+    );
     const queries = yield* makeQueries<WebhookTables>();
     yield* withAgentTransaction(
       runtime.agentKey,
       executeQuery(
         queries
           .insertInto("mcp_webhook_state")
-          .values({ agent_key: runtime.agentKey, state: bytes })
+          .values({ agent_key: runtime.agentKey, state: sealed })
           .onConflict((conflict) =>
-            conflict.column("agent_key").doUpdateSet({ state: bytes }),
+            conflict.column("agent_key").doUpdateSet({ state: sealed }),
           ),
       ),
     );
@@ -609,7 +616,11 @@ function writeState(
 }
 
 /** Preserves exact callback bytes and joins successful receipts to the inbox acknowledgment. */
-export const makeWebhookEvents = (agentKey: string, gate: Effect.Semaphore) =>
+export const makeWebhookEvents = (
+  agentKey: string,
+  gate: Effect.Semaphore,
+  unlockKey: Redacted.Redacted<Uint8Array>,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const harness = yield* SocialHarness;
@@ -630,11 +641,20 @@ export const makeWebhookEvents = (agentKey: string, gate: Effect.Semaphore) =>
     const state =
       row === undefined
         ? { registration: null }
-        : yield* Schema.decodeUnknown(
-            Schema.Struct({ state: Schema.parseJson(stateSchema) }),
-          )(row).pipe(Effect.map((value) => value.state));
+        : yield* openCredential(
+            row.state,
+            `webhook/${agentKey}`,
+            unlockKey,
+          ).pipe(
+            Effect.flatMap((value) =>
+              Schema.decodeUnknown(Schema.parseJson(stateSchema))(
+                Redacted.value(value),
+              ),
+            ),
+          );
     const runtime: WebhookRuntime = {
       agentKey,
+      unlockKey,
       sql,
       harness,
       client,

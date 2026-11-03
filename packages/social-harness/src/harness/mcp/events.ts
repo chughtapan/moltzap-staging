@@ -1,5 +1,5 @@
 /** @file Optional MCP wake streams and durable signed webhook delivery use the saved inbox. */
-import { type Context, Effect, Schema, Stream } from "effect";
+import { type Context, Effect, type Redacted, Schema, Stream } from "effect";
 import { randomUUID } from "node:crypto";
 import { Identity } from "../../identity/service.js";
 import {
@@ -50,6 +50,7 @@ const requireEvent = (
 /** Registers Events wake streams and webhook delivery with the protocol engine. */
 export const installEvents = Effect.fn("installEvents")(function* (
   agentKey: string,
+  unlockKey: Redacted.Redacted<Uint8Array>,
 ) {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;
@@ -57,6 +58,7 @@ export const installEvents = Effect.fn("installEvents")(function* (
   const webhook = yield* makeWebhookEvents(
     agentKey,
     yield* Effect.makeSemaphore(1),
+    unlockKey,
   );
   const registered = identity
     .me()
