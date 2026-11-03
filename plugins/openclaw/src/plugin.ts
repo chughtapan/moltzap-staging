@@ -42,6 +42,8 @@ import {
 import { absurd } from "effect/Function";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
 import {
+  buildChannelOutboundSessionRoute,
+  type ChannelOutboundSessionRouteParams,
   type ChannelPlugin,
   createChannelPluginBase,
   defineChannelPluginEntry,
@@ -309,7 +311,38 @@ function createMessagingSection() {
         );
       },
     },
+    resolveOutboundSessionRoute,
   };
+}
+
+/**
+ * The session OpenClaw records the agent's own send in: the one the
+ * recipient's turns route to, built from the same peer facts by OpenClaw's
+ * stock key builder. OpenClaw's fallback route keeps the `agent:` prefix in
+ * its peer id, so in private mode a conversation's sends and replies would
+ * otherwise sit in two sessions.
+ */
+function resolveOutboundSessionRoute(
+  params: ChannelOutboundSessionRouteParams,
+) {
+  const target = normalizeMessageTarget(params.target);
+  if (target === null) {
+    return null;
+  }
+  const peer = routePeer(
+    target.kind === "group" ? "group" : "direct",
+    target.to,
+  );
+  return buildChannelOutboundSessionRoute({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: CHANNEL_ID,
+    accountId: params.accountId,
+    peer,
+    chatType: peer.kind,
+    from: `${CHANNEL_ID}:${target.to}`,
+    to: target.to,
+  });
 }
 
 function createConfigSection() {
@@ -916,11 +949,13 @@ function inboundConversationFacts(turn: HostTurn) {
 }
 
 function inboundRoutePeer(turn: HostTurn) {
-  const prefix = turn.kind === "group" ? "group:" : "agent:";
-  return {
-    kind: turn.kind,
-    id: turn.address.slice(prefix.length),
-  };
+  return routePeer(turn.kind, turn.address);
+}
+
+/** The peer one conversation's turns and sends both route by. */
+function routePeer(kind: HostTurn["kind"], address: string) {
+  const prefix = kind === "group" ? "group:" : "agent:";
+  return { kind, id: address.slice(prefix.length) };
 }
 
 function inboundReplyFacts(turn: HostTurn) {

@@ -46,7 +46,9 @@ use [structured input](./messaging.md#mcp-projection) directly.
 ## OpenClaw session and output contract
 
 By default, direct and group conversations use the configured agent's main
-session. Private mode isolates those sessions for evaluation. The
+session. Private mode isolates those sessions for evaluation. Each private
+session holds both sides of one conversation: the peer's messages and the
+agent's sends to that peer. The
 [available-history contract](../firewall/message-policy.md#available-history) explains
 how shared host context can exceed the firewall's conversation evidence.
 
