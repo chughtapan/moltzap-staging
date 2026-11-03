@@ -49,7 +49,11 @@ const bindingRow = Schema.Struct({
 type OwnershipTables = Record<"owner_bindings", typeof bindingRow.Type> &
   Record<"agent_profiles", typeof profileRow.Type>;
 
-/** Persistence failures retain existing records and do not disclose keys or account claims. */
+/**
+ * Persistence failures retain existing records and do not disclose keys or account claims.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class OwnershipError extends Data.TaggedError("OwnershipError") {}
 
 const freshKey = Effect.gen(function* () {
@@ -64,19 +68,23 @@ const freshKey = Effect.gen(function* () {
 /** Reconfiguration may repeat the original seed, but cannot silently replace a saved identity. */
 function verifySeed(
   profile: typeof profileRow.Type,
-  seed: RegistrationSeed | undefined,
   unlockKey: Redacted.Redacted<Uint8Array>,
+  seed?: RegistrationSeed,
 ) {
-  if (seed === undefined) return Effect.void;
+  if (seed === undefined) {
+    return Effect.void;
+  }
   return openCredential(profile.private_key, profile.agent_key, unlockKey).pipe(
-    Effect.flatMap((key) =>
-      profile.agent_name === seed.agentName &&
-      profile.principal_id === seed.principalId &&
-      profile.registration_operation_id === seed.operationId &&
-      Redacted.value(key) === Redacted.value(seed.privateKey)
+    Effect.flatMap((key) => {
+      const sameRegistration =
+        profile.agent_name === seed.agentName &&
+        profile.principal_id === seed.principalId &&
+        profile.registration_operation_id === seed.operationId;
+      return sameRegistration &&
+        Redacted.value(key) === Redacted.value(seed.privateKey)
         ? Effect.void
-        : Effect.fail(new OwnershipError()),
-    ),
+        : Effect.fail(new OwnershipError());
+    }),
   );
 }
 
@@ -107,7 +115,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
             .where("agent_key", "=", agentKey),
         ).pipe(
           Effect.flatMap((rows) => Schema.decodeUnknown(profileRow)(rows[0])),
-          Effect.tap((profile) => verifySeed(profile, seed, unlockKey)),
+          Effect.tap((profile) => verifySeed(profile, unlockKey, seed)),
         ),
       );
     const existing = (yield* lookup())[0];

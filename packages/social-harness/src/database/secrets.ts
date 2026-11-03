@@ -12,7 +12,11 @@ const sealedCredential = Schema.parseJson(
   }),
 );
 
-/** Invalid unlock material or changed ciphertext never exposes plaintext or provider errors. */
+/**
+ * Invalid unlock material or changed ciphertext never exposes plaintext or provider errors.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class StoredCredentialError extends Data.TaggedError(
   "StoredCredentialError",
 ) {}

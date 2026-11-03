@@ -41,9 +41,6 @@ class StoreSignal extends Error {
   }
 }
 
-/** Only an empty database or the current stored format can be opened. */
-export type StoreOpening = "create" | "reopen";
-
 /** Closed storage failures that never expose database diagnostics. */
 export type EndpointStoreFailure =
   | "closed"

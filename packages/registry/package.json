@@ -98,6 +98,7 @@
     }
   },
   "dependencies": {
+    "@electric-sql/pglite-socket": "catalog:",
     "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",

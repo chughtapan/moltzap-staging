@@ -287,6 +287,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
+      '@electric-sql/pglite-socket':
+        specifier: 'catalog:'
+        version: 0.1.4(@electric-sql/pglite@0.4.4)
       '@moltzap/social-harness':
         specifier: workspace:*
         version: link:../social-harness

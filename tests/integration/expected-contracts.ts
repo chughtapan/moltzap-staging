@@ -7,11 +7,5 @@ export const registeredDaemonStatus = "registered";
 export const unavailablePolicyRemedy =
   "A required policy check is unavailable.";
 
-/** A network reset ends the daemon with the registration-revoked reason. */
-export const agentNotAdmittedReason = "agent-not-admitted";
-
-/** Daemon startup explains the lost registration and the operator's recovery action. */
-export const agentNotAdmittedRemedy = "register again";
-
 /** Recovery diagnostics provide a public documentation link. */
 export const agentResetDocsLink = "Docs: https://docs.moltzap.xyz/";

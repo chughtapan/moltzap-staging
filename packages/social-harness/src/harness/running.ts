@@ -32,7 +32,11 @@ import {
 import { SocialHarness } from "./social-harness.js";
 import { type HistoryExport, makeHistoryExport } from "./traffic-export.js";
 
-/** A failed agent cannot stop unrelated contexts or disclose its state through HTTP. */
+/**
+ * A failed agent cannot stop unrelated contexts or disclose its state through HTTP.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class RunningAgentError extends Data.TaggedError("RunningAgentError") {}
 
 interface RunningAgent {

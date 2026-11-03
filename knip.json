@@ -73,6 +73,7 @@
       ]
     },
     "packages/registry": {
+      "ignoreDependencies": ["@electric-sql/pglite-socket"],
       "entry": [
         "src/**/*.spec.ts",
         "src/**/*.types-check.ts",

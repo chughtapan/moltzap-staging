@@ -50,7 +50,11 @@ export const executeQuery = <Row extends object>(query: Compilable<Row>) =>
     return sql.unsafe<Row>(compiled.sql, compiled.parameters);
   });
 
-/** The rejected locator remains private because PostgreSQL URLs can contain credentials. */
+/**
+ * The rejected locator remains private because PostgreSQL URLs can contain credentials.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class DatabaseLocatorError extends Data.TaggedError(
   "DatabaseLocatorError",
 ) {}
