@@ -66,9 +66,9 @@ for the Internet", is the goal plans and docs serve (audit rule 11.5):
   tests and runs without access to private ones. Teammates gain capability
   through credentials and cluster access, never through a build dependency.
 - [ ] Keep few top-level folders, each named for its responsibility. Add a
-  layer's folder with its first code. Use the `simplify` skill to organize
-  modules within it. A package's folder carries the package's name, and a
-  rename moves both.
+  layer's folder with its first code. Use the `software-architecture` skill
+  to organize modules within it. A package's folder carries the package's
+  name, and a rename moves both.
 - [ ] Dependencies point down. A lower layer never imports a higher one; when
   it needs something from above, it declares an interface and the higher layer
   implements it. Parts are wired together only where a process starts.
