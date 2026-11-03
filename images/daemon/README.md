@@ -139,8 +139,8 @@ spec:
 
 The regular `launcher-prepare` init container upgrades once per Pod, before the
 host loads its channel. The daemon sidecar keeps that release on restarts.
-With startup registration configured, the probe passes after registration and
-activation. With no registration settings, it can pass before registration.
+The probe checks listener readiness. Agent registration and restoration run
+asynchronously, so a passing probe does not establish that an agent is ready.
 Persist state for the lifetime of its signing key. Add the host's own writable
 state and provider configuration.
 The host mounts the public launcher tree and only the MCP credential from the
