@@ -130,7 +130,9 @@ function runDaemon(composed?: FirewallOptions) {
       Layer.provideMerge(networkLayer(configuration)),
       Layer.provideMerge(database),
     );
-    const services = Firewall.layer(source).pipe(Layer.provideMerge(local));
+    const services = Firewall.layer(configuration.stateDirectory, source).pipe(
+      Layer.provideMerge(local),
+    );
     return yield* Effect.gen(function* () {
       if ((yield* (yield* Identity).me()).kind === "unregistered") {
         yield* bootstrap.admissionCredential.pipe(

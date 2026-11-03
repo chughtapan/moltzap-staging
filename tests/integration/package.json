@@ -27,6 +27,9 @@
           },
           {
             "env": "SHARNESS_MCP_URL"
+          },
+          {
+            "env": "SHARNESS_PG_TEST_URL"
           }
         ],
         "options": {
@@ -130,7 +133,8 @@
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@testcontainers/postgresql": "catalog:",
-    "http-message-signatures": "catalog:"
+    "http-message-signatures": "catalog:",
+    "@effect/sql": "catalog:"
   },
   "exports": {
     "./process-network": "./process-network-fixture.ts",

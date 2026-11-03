@@ -1,14 +1,12 @@
 /** @file Owns local message policy, assessments, permitted content and retained decisions. */
 
 import { SqlClient } from "@effect/sql";
-import { findAll, findOne } from "@effect/sql/SqlSchema";
 import {
   Clock,
   Context,
   Data,
   Effect,
   Layer,
-  Option,
   Schedule,
   Schema,
   Struct,
@@ -26,6 +24,8 @@ import {
   RequestOperation,
   type ResultSources,
 } from "../communication/service.js";
+import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
+import { withAgentTransaction } from "../database/transactions.js";
 import {
   canonicalBytes,
   decodeCanonical,
@@ -274,15 +274,19 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   FirewallService
 >() {
   /** Policy resources are fixed for this scope. Registration supplies immutable local attribution. */
-  static readonly layer = (source?: FirewallOptions | LoadedMessagePolicy) =>
+  static readonly layer = (
+    agentKey: string,
+    source?: FirewallOptions | LoadedMessagePolicy,
+  ) =>
     Layer.effect(
       Firewall,
       Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
         const identity = yield* Identity;
-        yield* createFirewallTables();
+        const store = yield* makeFirewallStore(agentKey);
         const policy =
-          source === undefined ? undefined : yield* initialPolicy(source);
+          source === undefined
+            ? undefined
+            : yield* initialPolicy(store, source);
         const localAgent = Effect.gen(function* () {
           const state = yield* identity.me();
           if (state.kind !== "registered") {
@@ -306,13 +310,8 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               ? Effect.fail(
                   new FirewallPolicyError({ reason: "not-configured" }),
                 )
-              : updatePolicy(policy, request).pipe(
-                  Effect.provideService(SqlClient.SqlClient, sql),
-                ),
-          readDecisions: (request) =>
-            readSavedDecisions(request).pipe(
-              Effect.provideService(SqlClient.SqlClient, sql),
-            ),
+              : updatePolicy(policy, request),
+          readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (value, evidence) =>
             Effect.gen(function* () {
               if (policy === undefined) {
@@ -331,7 +330,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               if (checked === undefined) {
                 return yield* new CheckInputError({ reason: "message" });
               }
-              const save = saveDecisions(sql, [checked.completion]);
+              const save = store.saveDecisions([checked.completion]);
               return checked.completion.admit
                 ? ({
                     kind: "allowed",
@@ -367,7 +366,13 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               }
               const agent = yield* localAgent;
               if (value.kind === "result") {
-                return yield* checkResult(sql, agent, value, evidence, policy);
+                return yield* checkResult(
+                  store,
+                  agent,
+                  value,
+                  evidence,
+                  policy,
+                );
               }
               if (evidence === undefined || "answers" in evidence) {
                 return yield* new CheckInputError({ reason: "context" });
@@ -394,7 +399,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               if (checked === undefined) {
                 return yield* new CheckInputError({ reason: "message" });
               }
-              const save = saveDecisions(sql, [checked.completion]);
+              const save = store.saveDecisions([checked.completion]);
               const visibility = [
                 {
                   message: reference,
@@ -468,7 +473,7 @@ type CapturedCheck = Effect.Effect.Success<ReturnType<typeof capturePrepared>>;
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 function checkResult(
-  sql: SqlClient.SqlClient,
+  store: FirewallStore,
   self: AgentCard,
   incoming: ReplyResult,
   evidence?: FirewallEvidence | ResultEvidence,
@@ -591,10 +596,7 @@ function checkResult(
       kind: "allowed",
       item,
       visibility: resultVisibility(item, sources),
-      save: saveDecisions(
-        sql,
-        checks.map((check) => check.completion),
-      ),
+      save: store.saveDecisions(checks.map((check) => check.completion)),
       ...(guidance === undefined ? {} : { guidance }),
     } satisfies IncomingDecision;
   });
@@ -823,7 +825,10 @@ function referenceId(value: string): string {
   return `msg_${createHash("sha256").update(value).digest("hex")}`;
 }
 
-function initialPolicy(source: FirewallOptions | LoadedMessagePolicy) {
+function initialPolicy(
+  store: FirewallStore,
+  source: FirewallOptions | LoadedMessagePolicy,
+) {
   return Effect.gen(function* () {
     const options = "policy" in source ? configuredOptions(source) : source;
     const captured = yield* captureOptions(options).pipe(
@@ -835,16 +840,17 @@ function initialPolicy(source: FirewallOptions | LoadedMessagePolicy) {
       ),
     );
     const fixed = captured.text?.fixedRules ?? [];
-    const { stored, rules } = yield* loadRules(captured);
+    const { stored, rules } = yield* loadRules(store, captured);
     yield* validateIds(
       rules,
       fixed.map((rule) => rule.id),
     );
     const active = yield* buildPolicy(captured, rules);
     if (stored === undefined) {
-      yield* persistRules(rules);
+      yield* persistRules(store, rules);
     }
     return {
+      store,
       options: captured,
       active,
       edits: yield* Effect.makeSemaphore(1),
@@ -855,9 +861,9 @@ function initialPolicy(source: FirewallOptions | LoadedMessagePolicy) {
   });
 }
 
-function loadRules(options: CapturedOptions) {
+function loadRules(store: FirewallStore, options: CapturedOptions) {
   return Effect.gen(function* () {
-    const stored = yield* readFirewallPolicy();
+    const stored = yield* store.readPolicy();
     const rules =
       stored === undefined
         ? (options.text?.initialRules ?? [])
@@ -1238,13 +1244,15 @@ function updatePolicy(policy: Policy, request: typeof policyUpdateSchema.Type) {
       yield* policy.options.approvePolicyUpdate(captured);
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          yield* persistRules(next, {
+          yield* persistRules(policy.store, next, {
             time: yield* Clock.currentTimeMillis,
             activeRevision: replacement.configurationDigest,
             addedRuleIds: change.add.map((rule) => rule.id),
             removedRuleIds: change.remove,
           });
-          policy.active = replacement;
+          yield* Effect.sync(() => {
+            policy.active = replacement;
+          });
           return { activeRevision: replacement.configurationDigest };
         }),
       );
@@ -1307,11 +1315,12 @@ function digest(value: unknown) {
 }
 
 function persistRules(
+  store: FirewallStore,
   rules: readonly TextRule[],
   activation?: FirewallActivation,
 ) {
   return canonicalBytes({ format: storedPolicyFormat, rules }).pipe(
-    Effect.flatMap((bytes) => writeFirewallPolicy(bytes, activation)),
+    Effect.flatMap((bytes) => store.writePolicy(bytes, activation)),
     Effect.catchTag("ClientRepresentationError", () =>
       Effect.fail(persistenceFailure()),
     ),
@@ -1412,50 +1421,6 @@ function invalidRule(
   return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
 }
 
-function saveDecisions(
-  sql: SqlClient.SqlClient,
-  decisions: readonly FirewallCompletion[],
-) {
-  return sql
-    .withTransaction(
-      Effect.forEach(decisions, (decision) => saveCheckDecision(decision), {
-        discard: true,
-        concurrency: 1,
-      }),
-    )
-    .pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-      Effect.catchTag("SqlError", () =>
-        Effect.fail(new FirewallPolicyError({ reason: "persistence-failed" })),
-      ),
-    );
-}
-
-const schemaSql = `
-  CREATE TABLE IF NOT EXISTS firewall_checks (
-    check_id TEXT PRIMARY KEY,
-    direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
-    canonical_candidate BLOB NOT NULL,
-    canonical_input BLOB NOT NULL,
-    canonical_result BLOB NOT NULL,
-    decided_at INTEGER NOT NULL,
-    disposition TEXT NOT NULL CHECK(disposition IN ('admitted','withheld'))
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS firewall_policy (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    canonical_rules BLOB NOT NULL
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS firewall_activations (
-    sequence INTEGER PRIMARY KEY,
-    activated_at INTEGER NOT NULL,
-    active_revision TEXT NOT NULL,
-    added_rule_ids TEXT NOT NULL,
-    removed_rule_ids TEXT NOT NULL
-  ) STRICT;
-  CREATE INDEX IF NOT EXISTS firewall_activations_time ON firewall_activations(activated_at);
-  CREATE INDEX IF NOT EXISTS firewall_decisions_time ON firewall_checks(decided_at);
-`;
-
 const bytes = Schema.Uint8ArrayFromSelf.pipe(
   Schema.filter((value) => value.byteLength > 0),
 );
@@ -1464,8 +1429,16 @@ const time = Schema.Int.pipe(
   Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
 );
 const ruleIds = Schema.parseJson(Schema.Array(Schema.NonEmptyString));
-const activationRow = Schema.Struct({
+const storedTime = Schema.Union(
   time,
+  Schema.NumberFromString.pipe(
+    Schema.int(),
+    Schema.nonNegative(),
+    Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+  ),
+);
+const activationRow = Schema.Struct({
+  time: storedTime,
   activeRevision: Schema.NonEmptyString,
   addedRuleIds: ruleIds,
   removedRuleIds: ruleIds,
@@ -1490,7 +1463,7 @@ const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
   canonicalResult: bytes,
   disposition,
-  time,
+  time: storedTime,
 });
 const savedSummary = Schema.parseJson(
   Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
@@ -1500,171 +1473,202 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 type FirewallActivation = typeof activationRow.Type;
 type FirewallCompletion = typeof completedCheck.Type;
 
-/** Initialization joins the process's existing database transaction. */
-function createFirewallTables(): Effect.Effect<
-  void,
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql.withTransaction(
-      Effect.forEach(
-        schemaSql.split(";").filter((statement) => statement.trim().length > 0),
-        (statement) => sql.unsafe(statement),
-        { discard: true, concurrency: 1 },
-      ),
-    );
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("createFirewallTables"),
-  );
+type FirewallStore = Effect.Effect.Success<
+  ReturnType<typeof makeFirewallStore>
+>;
+
+/* eslint-disable @typescript-eslint/naming-convention -- These properties name physical SQL tables and columns. */
+interface FirewallTables {
+  readonly firewall_policy: {
+    readonly agent_key: string;
+    readonly canonical_rules: Uint8Array;
+  };
+  readonly firewall_checks: {
+    readonly agent_key: string;
+    readonly sequence: Generated<number>;
+    readonly check_id: string;
+    readonly direction: typeof completedCheck.Type.direction;
+    readonly canonical_candidate: Uint8Array;
+    readonly canonical_input: Uint8Array;
+    readonly canonical_result: Uint8Array;
+    readonly decided_at: number;
+    readonly disposition: typeof disposition.Type;
+  };
+  readonly firewall_activations: {
+    readonly agent_key: string;
+    readonly sequence: Generated<number>;
+    readonly activated_at: number;
+    readonly active_revision: string;
+    readonly added_rule_ids: string;
+    readonly removed_rule_ids: string;
+  };
 }
 
-/** A missing row distinguishes unseeded policy from an explicitly empty rule set. */
-function readFirewallPolicy(): Effect.Effect<
-  Uint8Array | undefined,
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const read = findOne({
-      Request: Schema.Void,
-      Result: Schema.Struct({ rules: bytes }),
-      execute: () =>
-        sql`SELECT canonical_rules AS rules FROM firewall_policy WHERE singleton = 1`,
-    });
-    const row = yield* read(undefined);
-    return Option.isNone(row) ? undefined : Uint8Array.from(row.value.rules);
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("readFirewallPolicy"),
-  );
-}
+/* eslint-enable @typescript-eslint/naming-convention -- Restore naming outside physical SQL types. */
 
-/** The editable document and its activation commit together. */
-function writeFirewallPolicy(
-  rules: Uint8Array,
-  activation?: FirewallActivation,
-): Effect.Effect<void, FirewallPolicyError, SqlClient.SqlClient> {
+/** Captured ownership scopes policy, evidence and activations on every database operation. */
+function makeFirewallStore(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const document = rules;
-    yield* sql.withTransaction(
+    const queries = yield* makeQueries<FirewallTables>();
+    const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+      withAgentTransaction(agentKey, work).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.mapError(persistenceFailure),
+      );
+    const policy = queries
+      .selectFrom("firewall_policy")
+      .select("canonical_rules as rules")
+      .where("agent_key", "=", agentKey);
+    const checks = queries
+      .selectFrom("firewall_checks")
+      .where("agent_key", "=", agentKey);
+    const activations = queries
+      .selectFrom("firewall_activations")
+      .where("agent_key", "=", agentKey);
+    const saveDecision = (value: FirewallCompletion) =>
       Effect.gen(function* () {
-        yield* sql`INSERT INTO firewall_policy (singleton, canonical_rules) VALUES (1, ${document}) ON CONFLICT(singleton) DO UPDATE SET canonical_rules = excluded.canonical_rules`;
-        if (activation !== undefined) {
-          const added = yield* Schema.encode(ruleIds)(activation.addedRuleIds);
-          const removed = yield* Schema.encode(ruleIds)(
-            activation.removedRuleIds,
-          );
-          yield* sql`INSERT INTO firewall_activations (activated_at, active_revision, added_rule_ids, removed_rule_ids) VALUES (${activation.time}, ${activation.activeRevision}, ${added}, ${removed})`;
+        const applied = value.admit ? "admitted" : "withheld";
+        yield* executeQuery(
+          queries
+            .insertInto("firewall_checks")
+            .values({
+              agent_key: agentKey,
+              check_id: value.checkId,
+              direction: value.direction,
+              canonical_candidate: value.canonicalCandidate,
+              canonical_input: value.canonicalInput,
+              canonical_result: value.canonicalResult,
+              disposition: applied,
+              decided_at: yield* Clock.currentTimeMillis,
+            })
+            .onConflict((conflict) =>
+              conflict.columns(["agent_key", "check_id"]).doNothing(),
+            ),
+        );
+        const prior = yield* executeQuery(
+          checks
+            .select([
+              "direction",
+              "canonical_candidate as canonicalCandidate",
+              "canonical_input as canonicalInput",
+              "canonical_result as canonicalResult",
+              "disposition",
+            ])
+            .where("check_id", "=", value.checkId),
+        ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
+        const saved = prior[0];
+        if (saved === undefined) {
+          return yield* persistenceFailure();
         }
-      }),
-    );
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("writeFirewallPolicy"),
-  );
-}
-
-/** Repeating an exact save retains its original database timestamp and evidence. */
-function saveCheckDecision(
-  completion: FirewallCompletion,
-): Effect.Effect<
-  typeof disposition.Type,
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const value = completion;
-    const applied = value.admit ? "admitted" : "withheld";
-    return yield* sql.withTransaction(
-      Effect.gen(function* () {
-        const read = findOne({
-          Request: Schema.NonEmptyString,
-          Result: storedCheck,
-          execute: (checkId) =>
-            sql`SELECT direction, canonical_candidate AS canonicalCandidate, canonical_input AS canonicalInput, canonical_result AS canonicalResult, disposition FROM firewall_checks WHERE check_id = ${checkId}`,
-        });
-        const prior = yield* read(value.checkId);
-        if (Option.isSome(prior)) {
-          const saved = prior.value;
-          const sameEvidence =
-            sameBytes(saved.canonicalCandidate, value.canonicalCandidate) &&
-            sameBytes(saved.canonicalInput, value.canonicalInput) &&
-            sameBytes(saved.canonicalResult, value.canonicalResult);
-          if (
-            saved.direction !== value.direction ||
-            saved.disposition !== applied ||
-            !sameEvidence
-          ) {
-            return yield* persistenceFailure();
-          }
-          return applied;
+        const sameEvidence =
+          sameBytes(saved.canonicalCandidate, value.canonicalCandidate) &&
+          sameBytes(saved.canonicalInput, value.canonicalInput) &&
+          sameBytes(saved.canonicalResult, value.canonicalResult);
+        if (
+          saved.direction !== value.direction ||
+          saved.disposition !== applied ||
+          !sameEvidence
+        ) {
+          return yield* persistenceFailure();
         }
-        yield* sql`INSERT INTO firewall_checks (check_id, direction, canonical_candidate, canonical_input, canonical_result, disposition, decided_at) VALUES (${value.checkId}, ${value.direction}, ${value.canonicalCandidate}, ${value.canonicalInput}, ${value.canonicalResult}, ${applied}, CAST(unixepoch('subsec') * 1000 AS INTEGER))`;
-        return applied;
-      }),
-    );
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("saveCheckDecision"),
-  );
-}
-
-function readSavedDecisions(request: {
-  readonly since?: number;
-}): Effect.Effect<
-  typeof firewallDecisionsSchema.Type,
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const read = findAll({
-      Request: time,
-      Result: decisionRow,
-      execute: (since) =>
-        sql`SELECT check_id AS checkId, canonical_result AS canonicalResult, disposition, decided_at AS time FROM firewall_checks WHERE decided_at >= ${since} ORDER BY decided_at DESC, rowid DESC LIMIT 100`,
-    });
-    const rows = yield* read(request.since ?? 0);
-    const summaries = yield* Effect.forEach(rows, decodeDecisionSummaries, {
-      concurrency: 1,
-    });
+      });
     return {
-      decisions: summaries.flat(),
-      activations: yield* readFirewallActivations(request),
+      readPolicy: () =>
+        run(
+          executeQuery(policy).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknown(
+                Schema.Array(Schema.Struct({ rules: bytes })),
+              ),
+            ),
+            Effect.map((rows) => rows[0]?.rules),
+          ),
+        ),
+      writePolicy: (rules: Uint8Array, activation?: FirewallActivation) =>
+        run(
+          Effect.gen(function* () {
+            yield* executeQuery(
+              queries
+                .insertInto("firewall_policy")
+                .values({
+                  agent_key: agentKey,
+                  canonical_rules: rules,
+                })
+                .onConflict((conflict) =>
+                  conflict
+                    .column("agent_key")
+                    .doUpdateSet({ canonical_rules: rules }),
+                ),
+            );
+            if (activation !== undefined) {
+              yield* executeQuery(
+                queries.insertInto("firewall_activations").values({
+                  agent_key: agentKey,
+                  activated_at: activation.time,
+                  active_revision: activation.activeRevision,
+                  added_rule_ids: yield* Schema.encode(ruleIds)(
+                    activation.addedRuleIds,
+                  ),
+                  removed_rule_ids: yield* Schema.encode(ruleIds)(
+                    activation.removedRuleIds,
+                  ),
+                }),
+              );
+            }
+          }),
+        ),
+      saveDecisions: (decisions: readonly FirewallCompletion[]) =>
+        run(
+          Effect.forEach(decisions, saveDecision, {
+            discard: true,
+            concurrency: 1,
+          }),
+        ),
+      readDecisions: (request: { readonly since?: number }) =>
+        run(
+          Effect.gen(function* () {
+            const since = request.since ?? 0;
+            const rows = yield* executeQuery(
+              checks
+                .select([
+                  "check_id as checkId",
+                  "canonical_result as canonicalResult",
+                  "disposition",
+                  "decided_at as time",
+                ])
+                .where("decided_at", ">=", since)
+                .orderBy("decided_at", "desc")
+                .orderBy("sequence", "desc")
+                .limit(100),
+            ).pipe(
+              Effect.flatMap(Schema.decodeUnknown(Schema.Array(decisionRow))),
+            );
+            const summaries = yield* Effect.forEach(
+              rows,
+              decodeDecisionSummaries,
+              { concurrency: 1 },
+            );
+            const edits = yield* executeQuery(
+              activations
+                .select([
+                  "activated_at as time",
+                  "active_revision as activeRevision",
+                  "added_rule_ids as addedRuleIds",
+                  "removed_rule_ids as removedRuleIds",
+                ])
+                .where("activated_at", ">=", since)
+                .orderBy("activated_at", "desc")
+                .orderBy("sequence", "desc")
+                .limit(100),
+            ).pipe(
+              Effect.flatMap(Schema.decodeUnknown(Schema.Array(activationRow))),
+            );
+            return { decisions: summaries.flat(), activations: edits };
+          }),
+        ),
     };
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("readDecisions"),
-  );
-}
-
-/** Recent edits use reverse insertion order when their activation times match. */
-function readFirewallActivations(request: {
-  readonly since?: number;
-}): Effect.Effect<
-  readonly FirewallActivation[],
-  FirewallPolicyError,
-  SqlClient.SqlClient
-> {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const read = findAll({
-      Request: time,
-      Result: activationRow,
-      execute: (since) =>
-        sql`SELECT activated_at AS time, active_revision AS activeRevision, added_rule_ids AS addedRuleIds, removed_rule_ids AS removedRuleIds FROM firewall_activations WHERE activated_at >= ${since} ORDER BY activated_at DESC, sequence DESC LIMIT 100`,
-    });
-    return yield* read(request.since ?? 0);
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("readFirewallActivations"),
-  );
+  });
 }
 
 function decodeDecisionSummaries(row: typeof decisionRow.Type) {

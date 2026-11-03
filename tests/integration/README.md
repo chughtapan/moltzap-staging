@@ -21,3 +21,8 @@ permission to bind sockets. PostgreSQL and image scenarios require Docker.
 
 The published-package lane requires npm access and reports a skip when no eligible
 previous release exists.
+
+Daemon PostgreSQL qualification runs in `daemon/postgresql.spec.ts`. It starts a
+disposable PostgreSQL container by default. Set `SHARNESS_PG_TEST_URL` to use an
+existing disposable database whose login can create schemas and roles. The test
+creates an isolated schema and restricted login and removes them afterward.

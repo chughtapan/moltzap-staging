@@ -298,7 +298,9 @@ function openHarness(
       ),
     );
     const services = yield* Layer.build(
-      Firewall.layer(options.policy).pipe(Layer.provideMerge(identity)),
+      Firewall.layer(environment.filename, options.policy).pipe(
+        Layer.provideMerge(identity),
+      ),
     );
     const firewall = Context.get(services, Firewall);
     const provided =

@@ -91,16 +91,18 @@ const judgments: DecisionProvider = {
 };
 
 function withFirewall<A, E, R>(
-  filename: string,
+  storage: string | { readonly filename: string; readonly agentKey: string },
   fixture: IdentityFixture,
   use: (
     firewall: Context.Tag.Service<typeof Firewall>,
     self: AgentCard,
   ) => Effect.Effect<A, E, R>,
-  layer: ReturnType<typeof Firewall.layer>,
+  configure: (agentKey: string) => ReturnType<typeof Firewall.layer>,
 ) {
+  const filename = typeof storage === "string" ? storage : storage.filename;
+  const agentKey = typeof storage === "string" ? storage : storage.agentKey;
   const identity = Identity.layer({
-    agentKey: filename,
+    agentKey,
     signingAuthority: fixture.signingAuthority,
     registrySignerPublicKey: AgentSigningAuthority.publicKey(
       fixture.registryAuthority,
@@ -121,6 +123,7 @@ function withFirewall<A, E, R>(
       ),
     ),
   );
+  const layer = configure(agentKey);
   const services = layer.pipe(
     Layer.provideMerge(identity),
     Layer.provideMerge(
@@ -303,6 +306,57 @@ function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
   };
 }
 
+it("isolates saved decisions and editable policy between agents sharing a database", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeIdentityFixture;
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem.makeTempDirectoryScoped({
+      prefix: "sharness-policy-",
+    });
+    const filename = join(directory, "harness.sqlite3");
+    const first = { filename, agentKey: "first" };
+    const second = { filename, agentKey: "second" };
+    const saved = yield* withFirewall(
+      first,
+      fixture,
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const decision = yield* firewall.checkOutgoing(
+            yield* outgoing(self),
+            evidence,
+          );
+          yield* decision.save;
+          yield* firewall.updatePolicy({ remove: [privacy.id] });
+          expect((yield* firewall.readPolicy()).rules).toEqual([]);
+          return yield* firewall.readDecisions({});
+        }),
+      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+    );
+    yield* withFirewall(
+      second,
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          expect((yield* firewall.readPolicy()).rules).toEqual([privacy]);
+          expect(yield* firewall.readDecisions({})).toEqual({
+            decisions: [],
+            activations: [],
+          });
+        }),
+      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+    );
+    yield* withFirewall(
+      first,
+      fixture,
+      (firewall) =>
+        Effect.gen(function* () {
+          expect((yield* firewall.readPolicy()).rules).toEqual([]);
+          expect(yield* firewall.readDecisions({})).toEqual(saved);
+        }),
+      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
+
 describe("Firewall.readDecisions", () => {
   // @agent-code-guard/regression-only: Public policy operations exercise real SQLite edits, retained evidence and transaction rollback.
   it("reads a refused message's saved policy and advice after restart without configuration", () =>
@@ -326,7 +380,7 @@ describe("Firewall.readDecisions", () => {
             yield* decision.save;
             return (yield* firewall.readDecisions({})).decisions;
           }),
-        Firewall.layer(policy([privacy])),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
       );
       expect(saved).toMatchObject([
         {
@@ -355,13 +409,13 @@ describe("Firewall.readDecisions", () => {
             });
             return (yield* firewall.readDecisions({})).decisions;
           }),
-        Firewall.layer(),
+        Firewall.layer,
       );
       expect(reopened).toEqual(saved);
       expect(JSON.stringify(reopened)).not.toContain(privateProviderResponse);
     }).pipe(Effect.provide(NodeContext.layer)));
 
-  it("keeps the original summary and save time when a completed decision is saved twice", () =>
+  it("keeps the original summary and save time across concurrent and repeated saves", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
@@ -373,13 +427,15 @@ describe("Firewall.readDecisions", () => {
               yield* outgoing(self),
               evidence,
             );
-            yield* decision.save;
+            yield* Effect.all([decision.save, decision.save], {
+              concurrency: 2,
+            });
             const before = yield* firewall.readDecisions({});
             yield* Effect.sleep(Duration.millis(5));
             yield* decision.save;
             expect(yield* firewall.readDecisions({})).toEqual(before);
           }),
-        Firewall.layer(policy([privacy])),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
       );
     }));
 });
@@ -416,7 +472,7 @@ describe("Firewall.checkOutgoing", () => {
               2,
             );
           }),
-        Firewall.layer(policy([privacy])),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
       );
     }));
 
@@ -452,7 +508,7 @@ describe("Firewall.checkOutgoing", () => {
               { addedRuleIds: [privacy.id], removedRuleIds: [] },
             ]);
           }),
-        Firewall.layer(policy()),
+        (agentKey) => Firewall.layer(agentKey, policy()),
       );
     }));
 });
@@ -479,7 +535,7 @@ describe("Firewall.updatePolicy", () => {
             expect(yield* firewall.readPolicy()).toEqual(before);
             expect((yield* firewall.readDecisions({})).activations).toEqual([]);
           }),
-        Firewall.layer(configuration),
+        (agentKey) => Firewall.layer(agentKey, configuration),
       );
     }));
 
@@ -502,7 +558,7 @@ describe("Firewall.updatePolicy", () => {
                 [],
               );
             }),
-          Firewall.layer(editablePolicy()),
+          (agentKey) => Firewall.layer(agentKey, editablePolicy()),
         );
       }),
   );
@@ -526,7 +582,7 @@ describe("Firewall.updatePolicy", () => {
               feedback: { text: "Hold the slot first.", nextAction: "revise" },
             });
           }),
-        Firewall.layer(editablePolicy()),
+        (agentKey) => Firewall.layer(agentKey, editablePolicy()),
       );
     }));
 });
@@ -552,7 +608,7 @@ describe("Firewall.layer", () => {
           fixture,
           (firewall) =>
             firewall.updatePolicy({ remove: [initial.id], add: [replacement] }),
-          Firewall.layer(policy([initial])),
+          (agentKey) => Firewall.layer(agentKey, policy([initial])),
         );
         yield* withFirewall(
           filename,
@@ -568,7 +624,8 @@ describe("Firewall.layer", () => {
                 { addedRuleIds: [initial.id], removedRuleIds: [initial.id] },
               ]);
             }),
-          Firewall.layer(policy([{ ...initial, id: "new-seed" }])),
+          (agentKey) =>
+            Firewall.layer(agentKey, policy([{ ...initial, id: "new-seed" }])),
         );
       }).pipe(Effect.provide(NodeContext.layer)),
     { fastCheck: { numRuns: 24 } },
@@ -601,7 +658,7 @@ describe("Firewall.layer", () => {
             ).toBe("refused");
             return installed;
           }),
-        Firewall.layer(policy([privacy])),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
       );
       yield* withFirewall(
         filename,
@@ -611,7 +668,7 @@ describe("Firewall.layer", () => {
             expect(yield* firewall.readPolicy()).toEqual(before);
             expect((yield* firewall.readDecisions({})).activations).toEqual([]);
           }),
-        Firewall.layer(policy([initial])),
+        (agentKey) => Firewall.layer(agentKey, policy([initial])),
       );
     }).pipe(Effect.provide(NodeContext.layer)));
 });

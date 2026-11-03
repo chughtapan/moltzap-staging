@@ -95,14 +95,6 @@
           "cwd": "packages/social-harness",
           "command": "safer-architecture-lsp check ."
         }
-      },
-      "test:postgres": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": "packages/social-harness",
-          "command": "vitest run --config vitest.postgres.config.ts"
-        }
       }
     }
   },
