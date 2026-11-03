@@ -16,12 +16,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
-import { readCredential } from "../harness/config.js";
 import {
   decodeMessagePolicy,
   loadMessagePolicy,
   MAXIMUM_BEHAVIOR_BYTES,
   type PolicyConfiguration,
+  readPolicyCredential as readCredential,
 } from "./rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Rule fields, settings and closed configuration failures are the owner policy contract. */
@@ -157,7 +157,7 @@ describe("policy documents", () => {
         readCredential,
       ).pipe(Effect.flip);
       expect(error.reason).toBe("message-policy");
-      expect(error.message).toContain("SHARNESS_MESSAGE_POLICY_FILE");
+      expect(error.message).toContain("messagePolicyFile");
       expect(error.message).toContain("mode");
       expect(error.message).not.toContain("private-mode-value");
     }));

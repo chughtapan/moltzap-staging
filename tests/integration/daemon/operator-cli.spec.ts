@@ -12,6 +12,7 @@ import { processTrace } from "../scenario-fixture.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
@@ -26,7 +27,7 @@ const registrationFile = (fixture: DaemonProcessFixture) =>
 // @agent-code-guard/regression-only: Operator retries must use saved registration identity, recover a lost reply, and discard a final name conflict.
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exit codes, tool status and closed failure reasons are the CLI's public contract. */
 it(
-  "uses a saved request, recovers its identity and permits a new name after refusal",
+  "reports the saved identity, clears an obsolete request and refuses a different name",
   processTrace(
     Effect.gen(function* () {
       const infrastructure = yield* acquireProcessInfrastructure;
@@ -50,7 +51,7 @@ it(
       const registered = yield* operator(alice, ["register", alice.agentName]);
       expect(registered.exitCode, registered.stderr).toBe(0);
       expect(registered.stdout.trim()).toBe(
-        `registered agent:${alice.agentName}`,
+        `already registered: agent:${alice.agentName}`,
       );
       expect((yield* identity(alice)).principalId).toBe(request.principalId);
 
@@ -67,7 +68,9 @@ it(
 
       const refused = yield* operator(other, ["register", alice.agentName]);
       expect(refused.exitCode).toBe(1);
-      expect(refused.stderr).toContain("name_taken");
+      expect(refused.stderr).toContain(
+        `already registered as agent:${other.agentName}`,
+      );
       expect(refused.stderr).toContain("Docs: ");
       const changed = yield* operator(other, ["register", other.agentName]);
       expect(changed.exitCode).toBe(0);
@@ -77,7 +80,7 @@ it(
   120_000,
 );
 
-// @agent-code-guard/regression-only: A transient Registry failure must retain the request across daemon restart so the retry keeps its principal.
+// @agent-code-guard/regression-only: A failed first registration must reuse the SQL identity after its dependency is repaired.
 it(
   "reuses the saved registration after a dependency failure and daemon restart",
   processTrace(
@@ -87,13 +90,9 @@ it(
         infrastructure,
         "cli-retry",
       );
-      const unavailable = {
-        ...fixture,
-        environment: {
-          ...fixture.environment,
-          SHARNESS_REGISTRY_ORIGIN: `http://127.0.0.1:${yield* reservePort}`,
-        },
-      };
+      const unavailable = yield* configureDaemonFixture(fixture, {
+        registryOrigin: `http://127.0.0.1:${yield* reservePort}`,
+      });
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* acquireDaemonProcess(unavailable);
@@ -102,24 +101,18 @@ it(
             fixture.agentName,
           ]);
           expect(failed.exitCode).toBe(1);
-          expect(failed.stderr, failed.stderr).toContain(
-            "dependency-unavailable",
-          );
+          expect(failed.stderr).toContain("could not connect");
         }),
       );
-      const fs = yield* FileSystem.FileSystem;
-      const saved = yield* fs
-        .readFileString(registrationFile(fixture))
-        .pipe(
-          Effect.flatMap(
-            Schema.decode(Schema.parseJson(toolDefinitions.register.input)),
-          ),
-        );
-
+      yield* configureDaemonFixture(fixture, {
+        registryOrigin: infrastructure.registryOrigin.origin,
+      });
       yield* acquireDaemonProcess(fixture);
       const retried = yield* operator(fixture, ["register", fixture.agentName]);
       expect(retried.exitCode).toBe(0);
-      expect((yield* identity(fixture)).principalId).toBe(saved.principalId);
+      expect((yield* identity(fixture)).principalId).toBe(
+        fixture.registration.principalId,
+      );
     }),
   ),
   120_000,

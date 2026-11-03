@@ -5834,11 +5834,12 @@ const takeRetriedCatchUpRequest = (outbound: Queue.Queue<SignedMessage>) =>
     Effect.flatMap(decodeCatchUpRequest),
   );
 
+/** Send fixtures stop before their enclosing scope releases the SQL connection. */
 const forkSend = (
   store: TestDatabase,
   engine: EndpointEngine,
   message: Message,
-) => Effect.fork(prepareAndObserve(store, engine, message));
+) => Effect.forkScoped(prepareAndObserve(store, engine, message));
 
 /** Each protocol trace starts with a durably accepted immutable Message. */
 function prepareAndObserve(

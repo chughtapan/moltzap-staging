@@ -1,13 +1,14 @@
 /** @file Owner bindings preserve registration identity across reconnects and interrupted setup. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
+import {
+  databaseConnection,
+  getOrCreateOwnedAgent,
+  loadAgentRegistration,
+  migrateDaemon,
+} from "@moltzap/social-harness/test";
 import { Effect, Exit, Redacted } from "effect";
 import { expect } from "vitest";
-import { migrateDaemon } from "../database/migrations.js";
-import { openCredential } from "../database/secrets.js";
-import { databaseConnection } from "../database/sql.js";
-import { AgentSigningAuthority } from "../identity/keys.js";
-import { getOrCreateOwnedAgent } from "./ownership.js";
 
 const unlockKey = Redacted.make(new Uint8Array(32).fill(7));
 const owner = { issuer: "https://issuer.example", subject: "owner" };
@@ -27,12 +28,11 @@ it("reuses identity material for concurrent and repeated connections", () =>
     }
     const reopened = yield* getOrCreateOwnedAgent(owner, unlockKey);
     expect(reopened).toEqual(profiles[0]);
-    const privateKey = yield* openCredential(
-      reopened.private_key,
+    const hydrated = yield* loadAgentRegistration(
       reopened.agent_key,
       unlockKey,
     );
-    yield* AgentSigningAuthority.fromPkcs8(privateKey);
+    expect(hydrated.registration.agentName).toBe(reopened.agent_name);
     const sql = yield* SqlClient.SqlClient;
     const bindings = yield* sql`SELECT * FROM owner_bindings`;
     expect(bindings).toHaveLength(1);
@@ -88,16 +88,31 @@ it("rejects a credential substituted from another agent or unlocked with another
       { ...owner, subject: "another" },
       unlockKey,
     );
-    const substituted = yield* openCredential(
-      first.private_key,
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE agent_profiles SET private_key = ${first.private_key} WHERE agent_key = ${second.agent_key}`;
+    const substituted = yield* loadAgentRegistration(
       second.agent_key,
       unlockKey,
     ).pipe(Effect.exit);
-    const wrongKey = yield* openCredential(
-      first.private_key,
+    const wrongKey = yield* loadAgentRegistration(
       first.agent_key,
       Redacted.make(new Uint8Array(32).fill(9)),
     ).pipe(Effect.exit);
     expect(Exit.isFailure(substituted)).toBeTruthy();
     expect(Exit.isFailure(wrongKey)).toBeTruthy();
+  }).pipe(Effect.provide(database)));
+
+it("rejects attempts to replace the saved identity", () =>
+  Effect.gen(function* () {
+    yield* migrateDaemon;
+    const profile = yield* getOrCreateOwnedAgent(owner, unlockKey);
+    const hydrated = yield* loadAgentRegistration(profile.agent_key, unlockKey);
+    const sql = yield* SqlClient.SqlClient;
+    const before = yield* sql`SELECT * FROM agent_profiles`;
+    const changed = yield* getOrCreateOwnedAgent(owner, unlockKey, {
+      ...hydrated.registration,
+      privateKey: Redacted.make("replacement"),
+    }).pipe(Effect.exit);
+    expect(Exit.isFailure(changed)).toBe(true);
+    expect(yield* sql`SELECT * FROM agent_profiles`).toEqual(before);
   }).pipe(Effect.provide(database)));

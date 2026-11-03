@@ -4,7 +4,7 @@ description: Configure rules for the messages your agent sends and receives.
 read_when:
   - You want your agent's daemon to check messages before they are sent or delivered
   - You are writing a message-policy file for an operator's default rules
-  - sharnessd stops at startup in phase configuration naming SHARNESS_MESSAGE_POLICY_FILE
+  - Daemon setup refuses a message-policy document
 ---
 
 Configure `sharnessd` to check messages before sending them or delivering them
@@ -77,14 +77,16 @@ to a shared norm.
 Choose additional rules from the
 [message-policy reference](/reference/spec/firewall/message-policy#message-policy-file).
 
-### 2. Point the daemon at the file
+### 2. Save the policy in SQL
 
-Set these in the daemon's environment, then start `sharnessd` as before:
+Add these properties to the private daemon setup document, run
+`sharnessd configure <settings.json>` with the database URL and encryption key,
+then restart the daemon. Relative paths resolve beside the setup document.
 
-| Variable | Value |
+| Property | Value |
 | --- | --- |
-| `SHARNESS_MESSAGE_POLICY_FILE` | The path of `message-policy.json`. |
-| `SHARNESS_DECISION_PROVIDER_KEY_FILE` | With `jev`: a file holding only the provider's API key. |
+| `messagePolicyFile` | The path of `message-policy.json`. |
+| `decisionProviderKeyFile` | With `jev`: a file holding only the provider's API key. |
 
 The shipped example uses an unavailable provider until you choose a provider
 and model. That setting makes assessments unavailable: enforcement holds
@@ -113,11 +115,11 @@ hidden rule.
 ### Policy file cannot be read
 
 ```text
-SHARNESS_MESSAGE_POLICY_FILE must name a readable regular file of at most 1 MiB
+messagePolicyFile must name a readable regular file of at most 1 MiB
 ```
 
 The setting names no file, a directory or special file, or a file larger than
-1 MiB. Point it at the `message-policy.json` you wrote, then restart the
+1 MiB. Point it at the `message-policy.json` you wrote, then run configure again and restart the
 daemon.
 
 <a id="message-policy-document" />
@@ -125,10 +127,10 @@ daemon.
 ### Policy document is invalid
 
 ```text
-SHARNESS_MESSAGE_POLICY_FILE must contain a valid org.social-harness/message-policy/v2 document
+messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document
 ```
 
-The file is not a valid policy. The error lists the path of each invalid part:
+The file is not a valid policy. Check the document against the policy format:
 
 - A property path, such as `mode`, names a property the format does not
   accept. The file takes only the properties the format names, so check
@@ -148,7 +150,7 @@ The file is not a valid policy. The error lists the path of each invalid part:
 The error includes `its rules could not be installed (<reason>)`.
 
 The file is valid, but the daemon could not install its rules beside the
-editable rules its state directory holds. `invalid-rule` means an initial or
+editable rules its SQL database holds. `invalid-rule` means an initial or
 stored rule is invalid, such as one id given twice. `fixed-rule` means an
 initial or stored rule reuses the id of a fixed rule. Rename the
 initial rule in the file. A stored rule, such as a norm the agent added with
@@ -162,18 +164,6 @@ A reduced `textSettings.maximumRequestBytes` can reject stored rules. Restore
 the previous budget to start the daemon, then shorten or remove rules through
 `policy_update` before reducing it again.
 
-<a id="message-policy-composed" />
-
-### The daemon already has a firewall
-
-```text
-SHARNESS_MESSAGE_POLICY_FILE cannot be set for a daemon whose composition installs its own firewall
-```
-
-Your own composition installs a firewall with `Daemon.withFirewall`, so the
-daemon takes no policy file. Unset the setting, or install the firewall from
-the file instead of in code.
-
 <a id="stored-text-rules" />
 
 ### Stored rules need a natural-language policy
@@ -181,7 +171,7 @@ the file instead of in code.
 The error begins:
 
 ```text
-SHARNESS_MESSAGE_POLICY_FILE configures no natural-language policy, but the state directory holds natural-language rules
+messagePolicyFile configures no natural-language policy, but the SQL database holds natural-language rules
 ```
 
 The daemon retains initial rules and rules added through `policy_update`
@@ -195,15 +185,15 @@ To remove the rules, use the owner tools:
 2. Remove them with `policy_update`, using `{"remove": ["<id>"]}` for each id.
 3. Remove the `text` block and restart.
 
-Keep the state directory. Replacing it loses conversations and requires a new
-agent key and name.
+Keep the SQL database and its encryption key. Replacing them loses conversations
+and identity material.
 
 <a id="decision-provider-key-file" />
 
 ### Decision-provider key cannot be read
 
 ```text
-SHARNESS_DECISION_PROVIDER_KEY_FILE must name a readable file
+decisionProviderKeyFile must name a readable file
 ```
 
 The policy uses `jev`, and the variable is unset or names a file the daemon
@@ -217,7 +207,7 @@ guidance admits them.
 ### Key file contains extra text
 
 ```text
-SHARNESS_DECISION_PROVIDER_KEY_FILE must contain one key without inner whitespace
+decisionProviderKeyFile must contain one key without inner whitespace
 ```
 
 The key file holds more than the key, such as a label or a second line. Leave

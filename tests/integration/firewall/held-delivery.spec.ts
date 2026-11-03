@@ -32,6 +32,7 @@ import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  configureDaemonFixture,
   type DaemonProcessFixture,
   type FirewallMode,
   makeDaemonProcessFixture,
@@ -144,7 +145,7 @@ const acquireHeldPair = (firewalls: {
       ] as const,
       { concurrency: 2 },
     );
-    const targetFixture = throughProxy(directFixture, proxy.origin);
+    const targetFixture = yield* throughProxy(directFixture, proxy.origin);
     yield* Effect.all(
       [
         acquireDaemonProcess(senderFixture),
@@ -208,17 +209,8 @@ it(
 );
 
 /** Points one daemon's Router traffic at the hold proxy instead of the Router. */
-function throughProxy(
-  fixture: DaemonProcessFixture,
-  routerOrigin: URL,
-): DaemonProcessFixture {
-  return {
-    ...fixture,
-    environment: {
-      ...fixture.environment,
-      SHARNESS_ROUTER_ORIGIN: routerOrigin.origin,
-    },
-  };
+function throughProxy(fixture: DaemonProcessFixture, routerOrigin: URL) {
+  return configureDaemonFixture(fixture, { routerOrigin: routerOrigin.origin });
 }
 
 function waitForHeldDelivery(pair: HeldPair) {

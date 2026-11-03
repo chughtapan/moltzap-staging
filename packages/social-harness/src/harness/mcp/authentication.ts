@@ -4,6 +4,7 @@ import { FetchHttpClient, HttpClient } from "@effect/platform";
 import { Data, Effect, Redacted, Schema } from "effect";
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { localOwner, type OwnerAccount } from "../ownership.js";
 
 const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
   new URL(
@@ -11,11 +12,10 @@ const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
     resource.origin,
   ).href;
 
-/** Fixed provider metadata and owner authority for one public daemon. */
+/** Fixed provider metadata for the daemon's OAuth resource. */
 export interface DaemonOAuth {
   readonly resource: URL;
   readonly issuer: string;
-  readonly ownerSubject: string;
   readonly scope: string;
   readonly allowedOrigins: readonly string[];
 }
@@ -24,6 +24,12 @@ export interface DaemonOAuth {
 export type McpAuthentication =
   | { readonly credential: Redacted.Redacted; readonly oauth?: never }
   | { readonly credential?: never; readonly oauth: DaemonOAuth };
+
+/** The verified account selects an agent; expiry bounds the admitted response stream. */
+export interface McpAdmission {
+  readonly owner: OwnerAccount;
+  readonly expiresAt?: number;
+}
 
 /** Admission failures expose no bearer, provider response or identity claims. */
 export class AuthenticationRefused extends Data.TaggedError(
@@ -50,9 +56,7 @@ export const protectedResourceResponse = (oauth: DaemonOAuth): Response =>
 export function makeRequestAdmission(
   authentication: McpAuthentication,
 ): Effect.Effect<
-  (
-    request: Request,
-  ) => Effect.Effect<number | undefined, AuthenticationRefused>,
+  (request: Request) => Effect.Effect<McpAdmission, AuthenticationRefused>,
   AuthenticationRefused
 > {
   if (authentication.oauth === undefined) {
@@ -73,8 +77,13 @@ export function makeRequestAdmission(
           catch: () => new AuthenticationRefused(),
         }).pipe(
           Effect.flatMap(({ payload }) =>
-            ownsPayload(payload, oauth) && typeof payload.exp === "number"
-              ? Effect.succeed(payload.exp * 1000)
+            ownsPayload(payload, oauth) &&
+            typeof payload.exp === "number" &&
+            typeof payload.sub === "string"
+              ? Effect.succeed({
+                  owner: { issuer: oauth.issuer, subject: payload.sub },
+                  expiresAt: payload.exp * 1000,
+                })
               : Effect.fail(new AuthenticationRefused()),
           ),
         ),
@@ -107,15 +116,16 @@ function bearer(request: Request): string {
 function bearerAdmission(credential: Redacted.Redacted) {
   return (
     request: Request,
-  ): Effect.Effect<number | undefined, AuthenticationRefused> =>
+  ): Effect.Effect<McpAdmission, AuthenticationRefused> =>
     timingSafeEqual(digest(bearer(request)), digest(Redacted.value(credential)))
-      ? Effect.succeed(undefined)
+      ? Effect.succeed({ owner: localOwner })
       : Effect.fail(new AuthenticationRefused());
 }
 
 function ownsPayload(payload: JWTPayload, oauth: DaemonOAuth): boolean {
   return (
-    payload.sub === oauth.ownerSubject &&
+    typeof payload.sub === "string" &&
+    payload.sub.length > 0 &&
     scopeIncludes(payload.scope, oauth.scope)
   );
 }

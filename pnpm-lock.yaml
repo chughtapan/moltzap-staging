@@ -733,6 +733,9 @@ importers:
       http-message-signatures:
         specifier: 'catalog:'
         version: 1.0.6
+      jose:
+        specifier: 'catalog:'
+        version: 6.2.5
       protobufjs:
         specifier: 'catalog:'
         version: 7.6.5

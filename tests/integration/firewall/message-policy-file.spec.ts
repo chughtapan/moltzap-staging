@@ -13,13 +13,13 @@ import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
   acquireProcessInfrastructure,
-  awaitDaemonStartupFailure,
+  configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
 } from "../daemon/daemon-fixture.js";
 import {
-  messagePolicyFileSetting,
+  registeredDaemonStatus,
   unavailablePolicyRemedy,
 } from "../expected-contracts.js";
 import { processTrace } from "../scenario-fixture.js";
@@ -68,9 +68,10 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
     }),
     { mode: 0o600 },
   );
-  const alice = withPolicy(stock, {
-    SHARNESS_MESSAGE_POLICY_FILE: policyFile,
+  const alice = yield* configureDaemonFixture(stock, {
+    messagePolicyFile: policyFile,
   });
+  yield* fs.remove(policyFile);
   yield* acquireDaemonProcess(alice);
   const management = yield* acquireDaemonManagementClient(alice);
   yield* management.register(makeRegistrationRequest(alice));
@@ -128,11 +129,13 @@ const invalidDocument = Effect.gen(function* () {
       mode: 0o600,
     },
   );
-  const failure = yield* awaitDaemonStartupFailure(
-    withPolicy(stock, { SHARNESS_MESSAGE_POLICY_FILE: policyFile }),
-  );
-  expect(failure.exitCode).not.toBe(0);
-  expect(failure.logs).toContain(messagePolicyFileSetting);
+  const failure = yield* configureDaemonFixture(stock, {
+    messagePolicyFile: policyFile,
+  }).pipe(Effect.flip);
+  expect(failure).toMatchObject({ reason: "policy" });
+  yield* acquireDaemonProcess(stock);
+  const management = yield* acquireDaemonManagementClient(stock);
+  expect((yield* management.status()).kind).toBe(registeredDaemonStatus);
 });
 
 describe("stock sharnessd with a message-policy file", () => {
@@ -149,7 +152,7 @@ describe("stock sharnessd with a message-policy file", () => {
   );
 
   it(
-    "stops startup on an invalid document",
+    "rejects an invalid setup document and retains the prior configuration",
     processTrace(invalidDocument.pipe(Effect.scoped)),
     60_000,
   );
@@ -173,17 +176,6 @@ function expectUnavailableSendHeld(client: Client) {
     }).pipe(Effect.flip);
     expect(JSON.stringify(refused)).toContain(unavailablePolicyRemedy);
   });
-}
-
-/** The fixture with its message-policy settings added to its environment. */
-function withPolicy(
-  fixture: DaemonProcessFixture,
-  settings: Readonly<Record<string, string>>,
-): DaemonProcessFixture {
-  return {
-    ...fixture,
-    environment: { ...fixture.environment, ...settings },
-  };
 }
 
 function connect(fixture: DaemonProcessFixture, negotiation = CURRENT_CLIENT) {

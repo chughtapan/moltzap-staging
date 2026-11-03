@@ -1,6 +1,7 @@
 /** @file Two real daemons certify, deliver, and recover multicast operations. */
 
-import { FileSystem } from "@effect/platform";
+import { FileSystem, HttpClient } from "@effect/platform";
+import { NodeHttpClient } from "@effect/platform-node";
 import { ProtocolErrorCode } from "@modelcontextprotocol/client";
 import {
   AgentAddress,
@@ -13,7 +14,15 @@ import {
   WIRE_VERSION,
 } from "@moltzap/social-harness";
 import { WireVersions } from "@moltzap/social-harness/test";
-import { Effect, Fiber, Option, Schema, Stream } from "effect";
+import {
+  Effect,
+  Fiber,
+  Option,
+  Redacted,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -23,17 +32,7 @@ import {
   callTool,
   type McpConnection,
 } from "../../../plugins/shared/mcp-client.js";
-import {
-  agentNotAdmittedReason,
-  agentNotAdmittedRemedy,
-  agentResetDocsLink,
-  configurationStartupPhase,
-  outboxTooOldReason,
-  outboxTooOldRemedy,
-  registeredDaemonStatus,
-  resetReleaseDocsAnchor,
-  storageStartupPhase,
-} from "../expected-contracts.js";
+import { agentResetDocsLink } from "../expected-contracts.js";
 import { inboxStream } from "../mcp-inbox.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
@@ -43,6 +42,7 @@ import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
   awaitDaemonStartupFailure,
+  daemonListening,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
@@ -51,7 +51,6 @@ import {
   ProcessTestError,
   type RunningProcess,
   stopProcess,
-  waitForExit,
 } from "./daemon-fixture.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
@@ -62,7 +61,7 @@ const registerFixture = (fixture: DaemonProcessFixture) =>
   Effect.scoped(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.status()).toEqual({ kind: "unregistered" });
+      expect(yield* management.status()).toMatchObject({ kind: "registered" });
 
       const registered = yield* management.register(
         makeRegistrationRequest(fixture),
@@ -156,11 +155,6 @@ interface ProcessScenario {
   readonly targetDaemon: RunningProcess;
   readonly callerAddress: AgentAddress;
   readonly targetAddress: AgentAddress;
-}
-
-interface AdmissionScenario {
-  readonly registeredFixture: DaemonProcessFixture;
-  readonly unregisteredFixture: DaemonProcessFixture;
 }
 
 const acquireRestartPair = Effect.gen(function* () {
@@ -269,17 +263,6 @@ function expectRetiredConversationIdentifierRefused(
   });
 }
 
-const withoutAdmissionCredential = (
-  fixture: DaemonProcessFixture,
-): DaemonProcessFixture => ({
-  ...fixture,
-  environment: Object.fromEntries(
-    Object.entries(fixture.environment).filter(
-      ([name]) => name !== "SHARNESS_ADMISSION_CREDENTIAL_FILE",
-    ),
-  ),
-});
-
 const readActiveStatus = (fixture: DaemonProcessFixture) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -287,39 +270,6 @@ const readActiveStatus = (fixture: DaemonProcessFixture) =>
       return yield* management.status();
     }),
   );
-
-const withMissingAdmissionCredential = (
-  fixture: DaemonProcessFixture,
-): DaemonProcessFixture => ({
-  ...fixture,
-  environment: {
-    ...fixture.environment,
-    SHARNESS_ADMISSION_CREDENTIAL_FILE: `${fixture.stateDirectory}.absent-admission`,
-  },
-});
-
-const withAdmissionCredentialFile = (
-  fixture: DaemonProcessFixture,
-  path: string,
-): DaemonProcessFixture => ({
-  ...fixture,
-  environment: {
-    ...fixture.environment,
-    SHARNESS_ADMISSION_CREDENTIAL_FILE: path,
-  },
-});
-
-const acquireAdmissionFixtures = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const [registeredFixture, unregisteredFixture] = yield* Effect.all(
-    [
-      makeDaemonProcessFixture(infrastructure, "admission-registered"),
-      makeDaemonProcessFixture(infrastructure, "admission-unregistered"),
-    ] as const,
-    { concurrency: 2 },
-  );
-  return { registeredFixture, unregisteredFixture };
-});
 
 /**
  * Each test starts PGlite, the Registry, the Router and two daemons; two of
@@ -431,93 +381,38 @@ const processBehavior = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-/** `fixture` configured with `other`'s agent key in place of its own. */
-const withAgentKeyOf = (
-  fixture: DaemonProcessFixture,
-  other: DaemonProcessFixture,
-): DaemonProcessFixture => ({
-  ...fixture,
-  environment: {
-    ...fixture.environment,
-    SHARNESS_AGENT_PRIVATE_KEY_FILE: other.agentPrivateKeyFile,
-  },
-});
-
-/** Starts `fixture`'s daemon and expects it to stop in `phase` before it listens. */
-const expectStartupFailure = (
-  fixture: DaemonProcessFixture,
-  phase: typeof configurationStartupPhase | typeof storageStartupPhase,
-) =>
-  awaitDaemonStartupFailure(fixture).pipe(
-    Effect.tap((failure) =>
-      Effect.sync(() => {
-        expect(failure.exitCode).not.toBe(0);
-        expect(failure.logs).toContain(
-          `sharnessd startup failed in phase ${phase}`,
-        );
-      }),
-    ),
-  );
-
-/**
- * A registered daemon restarts without its admission credential, whether the
- * credential is unset, missing, empty or invalid. Started with another
- * agent's key, it refuses its identity row and stops in phase storage before
- * it listens. An unregistered daemon without the credential stops in phase
- * configuration.
- */
-const admissionLifetimeBehavior = Effect.gen(function* () {
-  const scenario = yield* acquireAdmissionFixtures;
-  yield* registerAndExpectSingleStartupAnnouncement(scenario.registeredFixture);
-  yield* expectRegisteredRestartWithoutAdmission(
-    scenario.registeredFixture,
-    withoutAdmissionCredential(scenario.registeredFixture),
-  );
-  yield* expectRegisteredRestartWithoutAdmission(
-    scenario.registeredFixture,
-    withMissingAdmissionCredential(scenario.registeredFixture),
-  );
-  yield* expectRegisteredRestartWithoutAdmission(
-    scenario.registeredFixture,
-    withAdmissionCredentialFile(scenario.registeredFixture, ""),
-  );
-  yield* expectRegisteredRestartWithoutAdmission(
-    scenario.registeredFixture,
-    withAdmissionCredentialFile(
-      scenario.registeredFixture,
-      scenario.registeredFixture.agentPrivateKeyFile,
-    ),
-  );
-  yield* expectIdentityAndAdmissionFailures(scenario);
-}).pipe(Effect.scoped);
-
-function registerAndExpectSingleStartupAnnouncement(
-  registeredFixture: DaemonProcessFixture,
-) {
-  return Effect.gen(function* () {
-    const firstRun = yield* acquireDaemonProcess(registeredFixture);
-    yield* registerFixture(registeredFixture);
-    yield* stopProcess(firstRun);
-    expect(firstRun.logs()).toContain(
-      `sharnessd listening on ${registeredFixture.endpoint}`,
+/** Self-hosted recovery reads only SQL state and the retained unlock key. */
+const admissionLifetimeBehavior = Effect.scoped(
+  Effect.gen(function* () {
+    const infrastructure = yield* acquireProcessInfrastructure;
+    const fixture = yield* makeDaemonProcessFixture(
+      infrastructure,
+      "saved-configuration",
     );
-    expect(firstRun.logs()).toMatch(/\(package \S+; WIRE_VERSION \S+\)/u);
-    expect(firstRun.logs().match(/sharnessd listening on/gu)).toHaveLength(1);
-  });
-}
-
-function expectRegisteredRestartWithoutAdmission(
-  fixture: DaemonProcessFixture,
-  configured: DaemonProcessFixture,
-) {
-  return Effect.gen(function* () {
-    const running = yield* acquireDaemonProcess(configured);
-    expect((yield* readActiveStatus(fixture)).kind).toBe(
-      registeredDaemonStatus,
+    const original = yield* acquireDaemonProcess(fixture);
+    const before = yield* readActiveStatus(fixture);
+    yield* stopProcess(original);
+    const filesystem = yield* FileSystem.FileSystem;
+    yield* filesystem.remove(fixture.agentPrivateKeyFile);
+    yield* filesystem.remove(fixture.admissionCredentialFile);
+    yield* filesystem.remove(fixture.mcpCredentialFile);
+    yield* filesystem.remove(
+      join(dirname(fixture.agentPrivateKeyFile), "setup.json"),
     );
-    yield* stopProcess(running);
-  });
-}
+    const recovered = yield* acquireDaemonProcess(fixture);
+    expect(yield* readActiveStatus(fixture)).toEqual(before);
+    yield* stopProcess(recovered);
+    const failure = yield* awaitDaemonStartupFailure({
+      ...fixture,
+      environment: {
+        ...fixture.environment,
+        SHARNESS_DATABASE_KEY: "A".repeat(43),
+      },
+    });
+    expect(failure.exitCode).not.toBe(0);
+    expect(failure.logs).toContain(agentResetDocsLink);
+  }),
+);
 
 /**
  * A release with an empty live window refuses this binary's retained outbound
@@ -567,18 +462,26 @@ const refusesStaleOutbox = Effect.scoped(
       local.environment,
       dirname(fileURLToPath(import.meta.url)),
     );
-    yield* waitForExit(failed);
-    expect(failed.child.exitCode).not.toBe(0);
-    expect(failed.logs()).toContain(outboxTooOldReason);
-    expect(failed.logs()).toContain(outboxTooOldRemedy);
-    expect(failed.logs()).toContain(resetReleaseDocsAnchor);
+    yield* daemonListening(failed, local.endpoint).pipe(
+      Effect.repeat({
+        until: (ready) => ready,
+        schedule: Schedule.spaced("25 millis"),
+      }),
+      Effect.timeout("10 seconds"),
+    );
+    yield* expectAgentUnavailable(local).pipe(
+      Effect.retry(Schedule.spaced("50 millis")),
+      Effect.timeout("20 seconds"),
+    );
+    expect(failed.child.exitCode).toBeNull();
+    yield* stopProcess(failed);
     const after = yield* readStoredDatabase(local.stateDirectory);
     expect(after).toEqual(before);
   }),
 );
 
 it(
-  "exits with the agent reset remedy after the network loses its registrations",
+  "keeps the daemon listening when its network registration is revoked",
   processTrace(
     Effect.scoped(
       Effect.gen(function* () {
@@ -589,14 +492,12 @@ it(
         );
         const daemon = yield* acquireDaemonProcess(local);
         yield* registerFixture(local);
-
         yield* infrastructure.resetNetwork;
-        yield* waitForExit(daemon);
-
-        expect(daemon.child.exitCode).toBe(1);
-        expect(daemon.stderr()).toContain(agentNotAdmittedReason);
-        expect(daemon.stderr()).toContain(agentNotAdmittedRemedy);
-        expect(daemon.stderr()).toContain(agentResetDocsLink);
+        yield* expectAgentUnavailable(local).pipe(
+          Effect.retry(Schedule.spaced("50 millis")),
+          Effect.timeout("20 seconds"),
+        );
+        expect(daemon.child.exitCode).toBeNull();
       }),
     ),
   ),
@@ -610,7 +511,7 @@ it(
 );
 
 it(
-  "restarts a registered daemon without the admission credential but not under another agent's key",
+  "recovers a self-hosted agent without setup files and refuses a different unlock key",
   processTrace(admissionLifetimeBehavior),
   PROCESS_TEST_TIMEOUT_MS,
 );
@@ -636,7 +537,7 @@ it(
 );
 
 it(
-  "reports outbox-too-old at the process boundary without changing retained state",
+  "isolates a retired outbox from the listener and preserves retained state",
   processTrace(refusesStaleOutbox),
   PROCESS_TEST_TIMEOUT_MS,
 );
@@ -840,24 +741,6 @@ function restartRecipientAndExpectRetainedHistory({
   });
 }
 
-function expectIdentityAndAdmissionFailures(state: AdmissionScenario) {
-  return Effect.gen(function* () {
-    const { registeredFixture, unregisteredFixture } = state;
-    yield* expectStartupFailure(
-      withAgentKeyOf(registeredFixture, unregisteredFixture),
-      storageStartupPhase,
-    );
-    yield* expectStartupFailure(
-      withoutAdmissionCredential(unregisteredFixture),
-      configurationStartupPhase,
-    );
-    yield* expectStartupFailure(
-      withMissingAdmissionCredential(unregisteredFixture),
-      configurationStartupPhase,
-    );
-  });
-}
-
 function directAddress(agentName: AgentName): AgentAddress {
   return Schema.decodeUnknownSync(AgentAddress)(`agent:${agentName}`);
 }
@@ -931,9 +814,40 @@ function markStoredOutboundPending(directory: string) {
   }).pipe(Effect.zipRight(readStoredDatabase(directory)));
 }
 
-/** A refused startup must leave the retained database byte for byte unchanged. */
+/** Reopening a database may checkpoint WAL pages, so compare retained records rather than file bytes. */
 function readStoredDatabase(directory: string) {
-  return FileSystem.FileSystem.pipe(
-    Effect.flatMap((fs) => fs.readFile(join(directory, "sharnessd.sqlite3"))),
-  );
+  return Effect.try({
+    try: () => {
+      const database = new DatabaseSync(join(directory, "sharnessd.sqlite3"));
+      try {
+        return database
+          .prepare("SELECT * FROM outbound_messages ORDER BY outbound_sequence")
+          .all();
+      } finally {
+        database.close();
+      }
+    },
+    catch: (cause) =>
+      new ProcessTestError({
+        message: "could not read retained outbound records",
+        cause,
+      }),
+  });
+}
+
+/** Unavailable agent state refuses authenticated work without stopping the shared listener. */
+function expectAgentUnavailable(fixture: DaemonProcessFixture) {
+  return Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.post(fixture.endpoint.href, {
+      headers: {
+        authorization: `Bearer ${Redacted.value(fixture.mcpCredential)}`,
+      },
+    });
+    if (response.status !== 503) {
+      return yield* new ProcessTestError({
+        message: "agent remains available",
+      });
+    }
+  }).pipe(Effect.provide(NodeHttpClient.layer));
 }

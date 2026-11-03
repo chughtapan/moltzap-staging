@@ -74,7 +74,8 @@ separate from persistent daemon state. Docker also gives each daemon container
 a fresh launcher volume and never reuses one across image versions.
 
 The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`
-over shared loopback. Mount the same MCP credential file into the daemon and
-host and set `SHARNESS_MCP_CREDENTIAL_FILE` in both. With automatic registration, listening also establishes completed
-registration and activation. Without it, the daemon may listen unregistered.
+over shared loopback. The host reads its private bearer file through
+`SHARNESS_MCP_CREDENTIAL_FILE`; the daemon reads the same bearer from its saved
+SQL configuration. Listening establishes endpoint availability. The selected
+agent may still be registering, or return HTTP 503 if its context cannot start.
 Container runtimes own startup order, lifecycle and signals.

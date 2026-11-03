@@ -13,10 +13,11 @@ const binary = fileURLToPath(
   new URL("../../../packages/social-harness/bin/sharnessd", import.meta.url),
 );
 const processName = "sharnessd";
-const requiredVariable = "SHARNESS_STATE_DIRECTORY";
-const defaultEntry = "SHARNESS_HISTORY_EXPORT: optional; default: unset";
+const requiredVariable = "SHARNESS_DATABASE_URL";
+const defaultEntry =
+  "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key";
 const secret = "secret-path-value";
-const invalidVariable = "SHARNESS_MCP_PORT";
+const invalidVariable = "SHARNESS_DATABASE_KEY";
 
 /** An empty environment makes missing-variable behavior independent of the test runner. */
 function runProcess(
@@ -61,9 +62,11 @@ it(
         [invalidVariable]: secret,
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(`Usage: ${processName} [--help]`);
       expect(result.stdout).toContain(
-        `${requiredVariable}: required; default: none`,
+        `Usage: ${processName} configure <settings.json>`,
+      );
+      expect(result.stdout).toContain(
+        `${requiredVariable}: sqlite file URL or PostgreSQL connection URL`,
       );
       expect(result.stdout).toContain(defaultEntry);
       expect(result.stdout).not.toContain(secret);
@@ -78,7 +81,7 @@ it(
     Effect.gen(function* () {
       const result = yield* runProcess([]);
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(`${requiredVariable} is required`);
+      expect(result.stderr).toContain(`Set ${requiredVariable}`);
       expect(result.stdout).toBe("");
     }),
   15_000,
@@ -142,7 +145,7 @@ it(
         OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
       });
       expect(result.stderr).not.toContain(protocolRefusal);
-      expect(result.stderr).toContain(`${requiredVariable} is required`);
+      expect(result.stderr).toContain(`Set ${requiredVariable}`);
     }),
   15_000,
 );
@@ -187,7 +190,7 @@ it(
         OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
       });
       expect(result.stderr).not.toContain(protocolRefusal);
-      expect(result.stderr).toContain(`${requiredVariable} is required`);
+      expect(result.stderr).toContain(`Set ${requiredVariable}`);
     }),
   15_000,
 );

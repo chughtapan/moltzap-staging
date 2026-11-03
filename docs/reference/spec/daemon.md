@@ -1,80 +1,119 @@
 ---
 title: Agent daemon
-description: Run the process that preserves one agent's identity, communication and local policy.
+description: Configure a daemon and recover authenticated agents from SQLite or PostgreSQL.
 read_when:
   - You need the daemon's startup and recovery guarantees
   - You need its state, credential or management boundaries
 ---
 
-The Social Harness daemon (`sharnessd`) manages an agent's identity, communication and firewall policies. It connects to the Registry and Router services, and serves an MCP server the agent host connects to. The daemon receives and sends messages, and manages conversation history across restarts.
+The Social Harness daemon (`sharnessd`) serves MCP and preserves each agent's
+identity, communication, inbox and firewall policy. Self-hosted deployments use
+SQLite for one personal agent. A hosted deployment uses PostgreSQL and admits
+multiple authenticated owners through the same endpoint.
 
 ## Process and configuration
 
-`sharnessd` runs with an agent's key, persistent state and network settings.
+Run `sharnessd configure <settings.json>` once to validate and save configuration.
+The command creates the database schema and encrypts the saved settings and
+agent signing keys. It exits successfully only after the configuration commits.
+Invalid input does not replace a prior configuration. Keep setup documents
+private because they may contain credentials; normal startup does not read them.
 
-The daemon requires these environment settings:
+Both configuration and normal startup require:
 
-| Setting | Accepted value |
+| Environment setting | Accepted value |
 | --- | --- |
-| `SHARNESS_STATE_DIRECTORY` | Directory holding identity, history and delivery state |
-| `SHARNESS_MCP_PORT` | Decimal integer from 1 to 65535, without leading zeros, sign, whitespace or exponent |
-| `SHARNESS_REGISTRY_ORIGIN` | HTTP(S) origin, such as `https://registry.example.com` |
-| `SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY` | Ed25519 public JWK as JSON with exactly `crv`, `kty` and `x` |
-| `SHARNESS_ROUTER_ORIGIN` | HTTP(S) origin in the same form as the Registry origin |
-| `SHARNESS_AGENT_PRIVATE_KEY_FILE` | Readable file containing the agent's unencrypted Ed25519 PKCS#8 PEM key |
+| `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
+| `SHARNESS_DATABASE_KEY` | Base64url encoding of the 32-byte encryption key; retain it with the database backup |
 
-MCP serves `/mcp` on `SHARNESS_MCP_BIND_HOST` (default `127.0.0.1`) and
-`SHARNESS_MCP_PORT`. Choose one authentication mode:
+Start the configured service with `sharnessd`. Standard `OTEL_*` environment
+settings configure tracing. Ordinary daemon configuration is read from SQL.
+A missing configuration, incompatible SQLite file or incorrect encryption key
+refuses startup. PostgreSQL runtime credentials need data access, but schema
+changes run only through the configure command.
 
-- Local: set `SHARNESS_MCP_CREDENTIAL_FILE` to the file containing the MCP bearer
-  credential. This mode requires the default loopback bind address.
-- Public OAuth: terminate HTTPS at the deployment ingress and supply the
-  settings below. Do not set `SHARNESS_MCP_CREDENTIAL_FILE` in this mode.
+The setup JSON document takes these properties. Unknown properties are refused.
 
-| Public OAuth setting | Accepted value |
+| Property | Requirement/default |
 | --- | --- |
-| `SHARNESS_MCP_BIND_HOST` | Listener bind address, such as `0.0.0.0` behind the ingress |
-| `SHARNESS_MCP_PUBLIC_URL` | Canonical HTTPS URL ending in `/mcp`, without credentials, query or fragment |
-| `SHARNESS_OAUTH_ISSUER` | HTTPS issuer URL used for discovery and JWT validation |
-| `SHARNESS_OAUTH_OWNER_SUBJECT` | Exact owner subject allowed to use this installation |
-| `SHARNESS_OAUTH_REQUIRED_SCOPE` | Required scope in the access token |
-| `SHARNESS_OAUTH_ALLOWED_ORIGINS` | JSON array of allowed HTTPS browser origins; defaults to `[]` |
+| `port` | Required integer from 1 to 65535 |
+| `host` | Required listener address |
+| `authentication` | Required local bearer or OAuth configuration, below |
+| `registryOrigin`, `routerOrigin` | Required serialized HTTP(S) origins, without path or trailing slash |
+| `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
+| `admissionCredential` | Network admission credential used when registering an agent |
+| `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
+| `messagePolicyFile` | Optional policy file, resolved relative to the setup document |
+| `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
+| `historyExport` | Optional path for traffic export |
+| `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
-Public requests require the configured resource Host. Requests with an Origin
-header require an allowed origin. Protected-resource metadata is available at
-`/.well-known/oauth-protected-resource/mcp`; it advertises the authorization
-server without granting tool access. Access tokens must be signed with RS256,
-match the issuer, resource audience and owner subject, include the required
-scope, and remain unexpired. An admitted Events stream closes when its token
-expires. Clients must obtain fresh authorization before reconnecting.
+Policy documents, selected rule files and provider credentials are resolved
+during configuration and saved in SQL. Restart to activate a new configuration.
+Each agent retains its own editable rules. Repeating a seed is allowed;
+replacing an existing identity with a different seed is refused.
 
-Both modes expose the same operations and firewall policy.
+### MCP authentication
 
-The origin must equal its serialized URL origin, without a path, trailing slash, query, fragment or credentials. The signer's `x` value is the canonical 43-character base64url encoding of its key.
-Missing or invalid settings stop startup.
+Local authentication is `{"kind":"local","credential":"<bearer>"}` and
+requires `host` to be `127.0.0.1`. The bearer contains 32 to 512 characters from
+the HTTP bearer credential alphabet. It selects the database's personal agent.
 
-An unregistered daemon accepts `register` and `status`. Automatic registration
-runs before listening and requires all three settings below:
+OAuth authentication takes these properties:
 
-| Setting | Value |
+| Property | Requirement |
 | --- | --- |
-| `SHARNESS_REGISTRATION_AGENT_NAME` | The agent's immutable name |
-| `SHARNESS_REGISTRATION_OPERATION_ID` | The registration retry identity, an `opn_` identifier |
-| `SHARNESS_REGISTRATION_PRINCIPAL_ID` | The principal's `prn_` identifier |
+| `kind` | `"oauth"` |
+| `resource` | Canonical HTTPS URL whose path is exactly `/mcp`, without credentials, query or fragment |
+| `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
+| `scope` | Required access-token scope |
+| `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
-Status reports the saved identity. Registration returns when that identity is
-saved. Canceling the request does not undo a registration that succeeds.
+Terminate HTTPS at the ingress and use `host: "0.0.0.0"` when the ingress must
+reach the listener. Requests require the configured resource Host. Requests
+with an Origin header require a listed origin. Protected-resource metadata at
+`/.well-known/oauth-protected-resource/mcp` advertises the authorization server
+without granting access or creating an agent.
+
+Access tokens require RS256 signatures, the configured issuer and resource
+audience, a nonempty subject, the required scope and an unexpired expiry claim.
+The exact issuer and subject select one durable personal agent. Email addresses
+and caller-supplied agent identifiers do not select installations. A first
+admitted MCP request creates the identity and registers it with the network;
+repeated requests recover it. OAuth setup itself creates no owner or agent.
+An admitted Events stream closes when its token expires; clients renew their
+authorization before reconnecting.
+
+### Recovery
+
+Agent workers survive MCP disconnection. Startup restores known agents from
+SQL, and authenticated requests acquire the same retained context. An agent
+that cannot start or whose worker stops receives HTTP 503; other agents keep
+serving. A stopped worker context requires a daemon restart to recover.
+
+Self-hosted identity seeds are optional. Without one, the daemon saves generated
+registration inputs. Network registration reuses the same operation and signing
+key after interruption. `status` reports the saved identity, while `register`
+remains available to trusted embeddings. Canceling a request does not undo a
+registration that succeeds.
 
 ## Firewalls
 
-`SHARNESS_MESSAGE_POLICY_FILE` installs the message firewall before host calls are accepted. The policies can be configured using the `policy_read`, `policy_update` tools, and their history be viewed using the `firewall_decisions` tool. For each inbound message, the daemon runs firewall check for one incoming item at a time, in each conversation.  A withheld item finishes that check so later items can proceed. Other conversations can continue independently. A request that expires before checking retires without a check. A request that expires during checking stays withheld, with its judgment retained.
+The configured message policy applies before host calls are accepted. Agents
+use `policy_read`, `policy_update` and `firewall_decisions` through their own
+MCP context. Each conversation checks one incoming item at a time. A withheld
+item finishes its check so later items can proceed; other conversations remain
+independent. A request expiring before checking retires without a check. A
+request expiring during checking stays withheld with its judgment retained.
 
 <a id="persistence"></a>
 
-## State directory
+## Persistence
 
-The state directory holds this agent's state. Each module restores the state
-its work needs.
+SQLite and PostgreSQL retain the same logical state. Identity, protocol work,
+inbox acknowledgments and editable policy belong to an agent. Every operation
+uses its selected agent; PostgreSQL also enforces row policies on scoped
+transactions. Hosted service operators administer the shared database.
 
 ## MCP compatibility
 
@@ -97,7 +136,7 @@ does not establish human confirmation.
 
 ### Local policy and diagnostics
 
-`SHARNESS_HISTORY_EXPORT` appends JSON lines for published incoming items and
+The configured `historyExport` path appends JSON lines for published incoming items and
 completed send invocations. Incoming items are logged when their permitted content is saved. Sends record
 the captured input and result or refusal.
 Export adds no delivery or management authority. On an append failure, the

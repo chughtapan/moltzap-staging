@@ -1,5 +1,10 @@
 /** @file Owner policy changes through a running public daemon and its MCP boundary. */
 
+import type {
+  DecisionProvider,
+  DecisionRequest,
+  FirewallOptions,
+} from "@moltzap/social-harness/service";
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import {
@@ -7,17 +12,10 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
-  type DecisionProvider,
-  type DecisionRequest,
-  type FirewallOptions,
-  withFirewall,
-} from "@moltzap/social-harness/service";
-import {
   ConfigProvider,
   Deferred,
   Effect,
   Fiber,
-  Layer,
   Redacted,
   Schedule,
   Schema,
@@ -28,12 +26,14 @@ import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
+import { runPolicyRuntime } from "./policy-runtime.js";
 
 const pair = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
@@ -234,9 +234,10 @@ const authenticatedPolicyEdits = Effect.gen(function* () {
   const token = "agent-policy-test-token-".repeat(3);
   const credentialPath = join(alice.stateDirectory, "agent-credential");
   yield* fs.writeFileString(credentialPath, token);
-  yield* start(alice, options, {
-    SHARNESS_MCP_CREDENTIAL_FILE: credentialPath,
+  yield* configureDaemonFixture(alice, {
+    authentication: { kind: "local", credential: token },
   });
+  yield* start(alice, options);
   const client = yield* connect(alice, token);
   yield* register(client, alice);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
@@ -320,16 +321,10 @@ function answer(request: DecisionRequest) {
   };
 }
 
-function start(
-  fixture: DaemonProcessFixture,
-  policy: FirewallOptions,
-  extra: Readonly<Record<string, string>> = {},
-) {
-  return Layer.launch(withFirewall(policy)).pipe(
+function start(fixture: DaemonProcessFixture, policy: FirewallOptions) {
+  return runPolicyRuntime(policy).pipe(
     Effect.withConfigProvider(
-      ConfigProvider.fromMap(
-        new Map(Object.entries({ ...fixture.environment, ...extra })),
-      ),
+      ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
     ),
     Effect.forkScoped,
   );

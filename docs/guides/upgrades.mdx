@@ -51,19 +51,18 @@ replace reading all intervening release notes.
 1. Stop agent hosts, every `sharnessd`, `sharness-router`, and `sharness-registry`.
 2. Install the target release across Registry, Router, daemons, and adapters.
 3. Configure `sharness-registry` with a fresh PostgreSQL database and each
-   `sharnessd` with a fresh `SHARNESS_STATE_DIRECTORY`. Certified history from
+   `sharnessd` with a fresh SQL database. Certified history from
    before the reset is not carried forward. There is no supported migration
    across the reset.
    Router keeps no persistent store.
-4. Start Registry and Router, then the daemons. Supply each daemon's Registry
-   admission credential through `SHARNESS_ADMISSION_CREDENTIAL_FILE` and
-   register every agent again before starting its host. Registration issues
+4. Start Registry and Router, then the daemons. Run `sharnessd configure` with each daemon's Registry admission credential
+   and new identity seed, then start the daemon before its host. Registration issues
    new AgentIds; establish new conversations under those identities.
 
 Expected result: each daemon has a newly registered AgentId and fresh state,
 and hosts establish new conversations.
 
-The [daemon format rules](/reference/spec/daemon#current-formats)
+The [daemon format rules](/reference/spec/daemon#persistence)
 and [Registry persistence rules](/reference/services/registry#storage-and-upgrades) specify
 version mismatch handling.
 
@@ -78,7 +77,8 @@ window, and never applies a reset release on its own. The
 
    ```bash
    SHARNESS_LAUNCHER_DIRECTORY=/var/lib/social-harness/alice/launcher \
-   SHARNESS_STATE_DIRECTORY=/var/lib/social-harness/alice/state \
+   SHARNESS_DATABASE_URL=sqlite:///var/lib/social-harness/alice/daemon.sqlite3 \
+   SHARNESS_DATABASE_KEY="<saved-encryption-key>" \
    npx sharnessd-launcher
    ```
 

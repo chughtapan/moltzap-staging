@@ -25,7 +25,7 @@ import { FirewallPolicyError } from "../../firewall/rules.js";
 import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity/service.js";
 import { InboxError } from "../inbox.js";
-import { makeMcpHttpApp } from "../mcp/server.js";
+import { makeAgentMcpApp, makeMcpHttpApp } from "../mcp/server.js";
 import { SocialHarness } from "../social-harness.js";
 
 /** The credential has no authority beyond this process. */
@@ -89,9 +89,8 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     updatePolicy: unused,
     readDecisions: unused,
   });
-  const app = yield* makeMcpHttpApp({
+  const agentApp = yield* makeAgentMcpApp({
     agentKey: database.directory,
-    ...(options.authentication ?? { credential: mcpTestCredential }),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),
@@ -99,8 +98,19 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     Effect.provideService(Firewall, firewall),
     Effect.provideService(SqlClient.SqlClient, database.sql),
   );
+  const owners = yield* Ref.make<
+    ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
+  >([]);
+  const app = yield* makeMcpHttpApp(
+    options.authentication ?? { credential: mcpTestCredential },
+    (owner) =>
+      Ref.update(owners, (values) => [...values, owner]).pipe(
+        Effect.as(agentApp),
+      ),
+  );
   return {
     app,
+    owners,
     fetch: HttpApp.toWebHandler(app),
     harness,
     identity,

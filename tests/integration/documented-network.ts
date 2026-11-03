@@ -3,7 +3,7 @@
  * Client and the `images/` helper install from tarballs and npm,
  * `images/compose.yaml` starts the images tagged `SHARNESS_NETWORK_VERSION`
  * from a `.env` written as Run a local network writes it, three `sharnessd`
- * daemons start unregistered, and `images/mcp.ts` registers them and sends a
+ * daemons register their saved identities, and `images/mcp.ts` confirms them and sends a
  * message. Bob's daemon runs an explicit text policy with an unavailable
  * provider, so a held send shows its check and the next action.
  * The gate passes when each step prints what the guides say it prints and
@@ -23,7 +23,7 @@ import {
 import { createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { createConnection, createServer } from "node:net";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type Finished,
   type GateError,
@@ -171,15 +171,23 @@ function ownNetworkPath(
     yield* expectOutput(
       alice,
       ["register", "alice"],
-      ["registered agent:alice"],
+      ["already registered: agent:alice"],
     );
     yield* expectOutput(
       alice,
       ["register", "alice"],
       ["already registered: agent:alice"],
     );
-    yield* expectOutput(bob, ["register", "bob"], ["registered agent:bob"]);
-    yield* expectRefusal(carol, ["register", "alice"], ["name_taken"]);
+    yield* expectOutput(
+      bob,
+      ["register", "bob"],
+      ["already registered: agent:bob"],
+    );
+    yield* expectRefusal(
+      carol,
+      ["register", "alice"],
+      ["already registered as agent:carol"],
+    );
     yield* expectOutput(alice, ["call", "status"], ['"kind": "registered"']);
 
     yield* expectOutput(alice, ["call", "send_message", sendTo("bob")], ["{"]);
@@ -311,7 +319,7 @@ function writeNetworkFiles(
 }
 
 /**
- * Starts one unregistered `sharnessd` from the installed Client for the
+ * Starts one configured `sharnessd` from the installed Client for the
  * enclosing scope. Returns once its MCP port accepts connections, and fails
  * with the daemon's output when it exits first.
  * @param consumerRoot Directory holding the installed packages.
@@ -329,11 +337,19 @@ function startDaemon(
   return Effect.gen(function* () {
     const directory = join(consumerRoot, "agents", name);
     const port = yield* freePort();
-    const environment = yield* writeAgentFiles(
-      directory,
-      network,
+    const environment = yield* writeAgentFiles(directory, network, {
       port,
+      name,
       policy,
+    });
+    const configured = yield* runProcess(
+      join(consumerRoot, "node_modules", ".bin", "sharnessd"),
+      ["configure", join(directory, "setup.json")],
+      { env: environment },
+    );
+    yield* requireCondition(
+      configured.exitCode === 0,
+      "daemon configuration failed",
     );
     const child = yield* Command.make(
       join(consumerRoot, "node_modules", ".bin", "sharnessd"),
@@ -367,21 +383,26 @@ function startDaemon(
 /**
  * Writes the agent's private key and credentials beside its state directory.
  * A configured policy is saved as `message-policy.json` and named in
- * `SHARNESS_MESSAGE_POLICY_FILE`, as Turn on the message firewall does.
+ * the setup document, as Turn on the message firewall does.
  */
 function writeAgentFiles(
   directory: string,
   network: Network,
-  port: number,
-  policy?: string,
+  input: {
+    readonly port: number;
+    readonly name: string;
+    readonly policy?: string;
+  },
 ): Effect.Effect<Record<string, string>, GateError, FileSystem.FileSystem> {
+  const { port, name, policy } = input;
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(join(directory, "state"), { recursive: true });
     const keyFile = join(directory, "agent-key.pem");
     const admissionFile = join(directory, "admission-credential");
     const mcpCredentialFile = join(directory, MCP_CREDENTIAL_FILE);
-    yield* fs.writeFileString(keyFile, makePrivateKeyPem(), { mode: 0o600 });
+    const privateKey = makePrivateKeyPem();
+    yield* fs.writeFileString(keyFile, privateKey, { mode: 0o600 });
     yield* fs.writeFileString(admissionFile, network.admissionCredential, {
       mode: 0o600,
     });
@@ -394,18 +415,34 @@ function writeAgentFiles(
     if (policy !== undefined) {
       yield* fs.writeFileString(policyFile, policy);
     }
+    const bearer = yield* fs.readFileString(mcpCredentialFile);
+    yield* fs.writeFileString(
+      join(directory, "setup.json"),
+      JSON.stringify({
+        port,
+        host: HOST,
+        authentication: { kind: "local", credential: bearer },
+        registryOrigin: network.registryOrigin,
+        registrySignerPublicKey: yield* Schema.decodeUnknown(
+          Schema.parseJson(Schema.Unknown),
+        )(network.registrySigner),
+        routerOrigin: network.routerOrigin,
+        admissionCredential: network.admissionCredential,
+        agent: {
+          agentName: name,
+          principalId: `prn_${randomBytes(16).toString("base64url")}`,
+          operationId: `opn_${randomBytes(16).toString("base64url")}`,
+          privateKey,
+        },
+        ...(policy === undefined ? {} : { messagePolicyFile: policyFile }),
+      }),
+      { mode: 0o600 },
+    );
     return {
-      ...(policy === undefined
-        ? {}
-        : { SHARNESS_MESSAGE_POLICY_FILE: policyFile }),
-      SHARNESS_MCP_PORT: String(port),
-      SHARNESS_MCP_CREDENTIAL_FILE: mcpCredentialFile,
-      SHARNESS_STATE_DIRECTORY: join(directory, "state"),
-      SHARNESS_REGISTRY_ORIGIN: network.registryOrigin,
-      SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY: network.registrySigner,
-      SHARNESS_ROUTER_ORIGIN: network.routerOrigin,
-      SHARNESS_AGENT_PRIVATE_KEY_FILE: keyFile,
-      SHARNESS_ADMISSION_CREDENTIAL_FILE: admissionFile,
+      SHARNESS_DATABASE_URL: pathToFileURL(
+        join(directory, "state/daemon.sqlite3"),
+      ).href.replace(/^file:/u, "sqlite:"),
+      SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
     };
   });
 }

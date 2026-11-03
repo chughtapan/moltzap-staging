@@ -3,7 +3,7 @@ import { Duration, Effect } from "effect";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   acquireDaemonProcess,
@@ -41,6 +41,21 @@ export const startDaemonContainer = (fixture: DaemonProcessFixture) => {
       executeDocker(["volume", "create", volume]),
       () => executeDocker(["volume", "rm", volume]).pipe(Effect.orDie),
     );
+    yield* executeDocker([
+      "run",
+      "--rm",
+      "--user",
+      "0",
+      "--entrypoint",
+      "sh",
+      "--volume",
+      `${fixture.stateDirectory}:/source:ro`,
+      "--mount",
+      `type=volume,src=${volume},dst=/state`,
+      image,
+      "-c",
+      "cp /source/sharnessd.sqlite3 /state/sharnessd.sqlite3 && chown 1000:1000 /state /state/sharnessd.sqlite3",
+    ]);
     // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- startNetwork owns the enclosing scope and removes the container after its attached process stops.
     yield* Effect.acquireRelease(
       executeDocker(containerArguments(fixture, image, container, volume)),
@@ -73,7 +88,8 @@ function prepareDaemonMount(fixture: DaemonProcessFixture) {
     try: async () => {
       await chmod(dirname(directory), 0o755);
       await chmod(directory, 0o755);
-      await chmod(fixture.agentPrivateKeyFile, 0o644);
+      await chmod(fixture.stateDirectory, 0o755);
+      await chmod(join(fixture.stateDirectory, "sharnessd.sqlite3"), 0o644);
       await chmod(fixture.admissionCredentialFile, 0o644);
       await chmod(fixture.mcpCredentialFile, 0o644);
     },
@@ -104,7 +120,7 @@ function containerArguments(
       `${name}=${value}`,
     ]),
     "--env",
-    "SHARNESS_STATE_DIRECTORY=/home/node/sharness-state",
+    "SHARNESS_DATABASE_URL=sqlite:///home/node/sharnessd.sqlite3",
     image,
   ];
 }

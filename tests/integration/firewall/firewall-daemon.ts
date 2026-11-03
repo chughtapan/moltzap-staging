@@ -2,7 +2,7 @@
  * @file A real daemon process with a firewall installed, for the integration
  * traces that run collective operations under one.
  *
- * The daemon runs `withFirewall` with a text policy and deterministic provider in
+ * The fixture composes domain services with a text policy and deterministic provider in
  * the mode `SHARNESS_TEST_FIREWALL_MODE` names, so a trace decides each check
  * by the text it sends: the policy rejects an incoming text that carries
  * `[in]` and an outgoing text that carries `[out]`, asks the agent to
@@ -12,13 +12,13 @@
  * Every other `SHARNESS_*` setting is read as `sharnessd` reads it.
  */
 
-import { NodeRuntime } from "@effect/platform-node";
-import {
-  type DecisionProvider,
-  type DecisionRequest,
-  withFirewall,
+import type {
+  DecisionProvider,
+  DecisionRequest,
 } from "@moltzap/social-harness/service";
-import { Config, ConfigProvider, Effect, Layer, Schema } from "effect";
+import { NodeRuntime } from "@effect/platform-node";
+import { Config, ConfigProvider, Effect, Schema } from "effect";
+import { runPolicyRuntime } from "./policy-runtime.js";
 
 /** The marker an incoming text carries to be withheld. */
 const INCOMING_HOLD = "[in]";
@@ -92,41 +92,40 @@ const program = Config.literal(
   "enforcement",
 )("SHARNESS_TEST_FIREWALL_MODE").pipe(
   Effect.flatMap((mode) =>
-    Layer.launch(
-      withFirewall({
-        mode,
-        settings: {
-          timeoutMilliseconds: 10_000,
-          maximumInputBytes: 1_000_000,
-          maximumResultBytes: 100_000,
-        },
-        facts: [],
-        text: {
-          provider,
-          fixedRules: [
-            {
-              id: "marked",
-              applies: "both",
-              text: "Reject incoming messages containing [in] and outgoing messages containing [out]. Respond to incoming messages containing [guide].",
-              guidance: "Respond to the marked message.",
-              feedback: {
-                nextAction: "revise",
-                text: "Remove the marked text.",
-              },
+    runPolicyRuntime({
+      mode,
+      settings: {
+        timeoutMilliseconds: 10_000,
+        maximumInputBytes: 1_000_000,
+        maximumResultBytes: 100_000,
+      },
+      facts: [],
+      text: {
+        provider,
+        fixedRules: [
+          {
+            id: "marked",
+            applies: "both",
+            text: "Reject incoming messages containing [in] and outgoing messages containing [out]. Respond to incoming messages containing [guide].",
+            guidance: "Respond to the marked message.",
+            feedback: {
+              nextAction: "revise",
+              text: "Remove the marked text.",
             },
-          ],
-          settings: {
-            minimumProbability: 0.5,
-            maximumRequestBytes: 1_000_000,
-            timeoutMilliseconds: 8_000,
           },
+        ],
+        settings: {
+          minimumProbability: 0.5,
+          maximumRequestBytes: 1_000_000,
+          timeoutMilliseconds: 8_000,
         },
-      }),
-    ),
+      },
+    }),
   ),
 );
 
 program.pipe(
+  Effect.scoped,
   Effect.withConfigProvider(ConfigProvider.fromEnv()),
   NodeRuntime.runMain,
 );

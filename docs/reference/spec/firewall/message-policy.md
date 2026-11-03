@@ -189,8 +189,9 @@ surrounding messages.
 
 ## Message-policy file
 
-`SHARNESS_MESSAGE_POLICY_FILE` names a readable regular JSON file, at most 1 MiB.
-Startup loads fixed rules, owner facts, settings and provider before serving.
+The daemon setup document's `messagePolicyFile` names a readable regular JSON
+file, at most 1 MiB. `sharnessd configure` resolves fixed rules, owner facts,
+settings and provider credentials into SQL; startup restores them before serving.
 Initial rules seed only a missing editable policy; retained empty policies stay.
 
 | Property | Requirement/default |
@@ -210,7 +211,7 @@ supply its own provider and fixed text rules. The generated API reference owns
 those callable types.
 
 Jev is an optional TypeSafe service. It trims the key from
-`SHARNESS_DECISION_PROVIDER_KEY_FILE` and retries connectivity, rate-limit and
+the setup document's `decisionProviderKeyFile` and retries connectivity, rate-limit and
 server errors twice within each stage timeout. `unavailable` makes text checks
 unavailable: enforcement holds, guidance admits. Without `text`, no provider/key
 is used. Oversized catalog/history requests hold without dropping required

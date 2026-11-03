@@ -1,13 +1,6 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import {
-  Data,
-  Effect,
-  Option,
-  ParseResult,
-  type Redacted,
-  Schema,
-} from "effect";
+import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -263,7 +256,6 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
 export type MessagePolicyConfigurationFailure =
   | "message-policy-file"
   | "message-policy"
-  | "message-policy-composed"
   | "decision-provider-key-file"
   | "decision-provider-key";
 
@@ -310,23 +302,19 @@ const failureMessages: Readonly<
   >
 > = {
   "message-policy-file": {
-    text: "SHARNESS_MESSAGE_POLICY_FILE must name a readable regular file of at most 1 MiB",
+    text: "messagePolicyFile must name a readable regular file of at most 1 MiB",
     docs: `${FIREWALL_GUIDE}#message-policy-file`,
   },
   "message-policy": {
-    text: "SHARNESS_MESSAGE_POLICY_FILE must contain a valid org.social-harness/message-policy/v2 document",
+    text: "messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document",
     docs: `${FIREWALL_GUIDE}#message-policy-document`,
   },
-  "message-policy-composed": {
-    text: "SHARNESS_MESSAGE_POLICY_FILE cannot be set for a daemon whose composition installs its own firewall",
-    docs: `${FIREWALL_GUIDE}#message-policy-composed`,
-  },
   "decision-provider-key-file": {
-    text: "SHARNESS_DECISION_PROVIDER_KEY_FILE must name a readable file for the message policy's jev decision provider",
+    text: "decisionProviderKeyFile must name a readable file for the message policy's jev decision provider",
     docs: `${FIREWALL_GUIDE}#decision-provider-key-file`,
   },
   "decision-provider-key": {
-    text: "SHARNESS_DECISION_PROVIDER_KEY_FILE must contain one key without inner whitespace",
+    text: "decisionProviderKeyFile must contain one key without inner whitespace",
     docs: `${FIREWALL_GUIDE}#decision-provider-key`,
   },
 };
@@ -459,15 +447,50 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
+/** SQL configuration retains resolved rules and redacts the provider credential. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with persisted daemon configuration.
+export const installedMessagePolicy = Schema.Struct({
+  policy: MessagePolicy,
+  provider: Schema.Union(
+    Schema.Struct({ kind: Schema.Literal("unavailable") }),
+    Schema.Struct({
+      kind: Schema.Literal("jev"),
+      model: Schema.String,
+      apiKey: Schema.Redacted(decisionProviderKey),
+    }),
+  ),
+});
+
 /** Contains validated policy and the provider parameters it selects. */
-export interface LoadedMessagePolicy {
-  readonly policy: MessagePolicy;
-  readonly provider: LoadedDecisionProvider;
+export type LoadedMessagePolicy = typeof installedMessagePolicy.Type;
+
+/** Setup reads bounded UTF-8 credential files before validating the provider's token grammar. */
+export function readPolicyCredential(
+  path: Redacted.Redacted,
+  grammar: Schema.Schema<string>,
+) {
+  return readBoundedFile(Redacted.value(path), 16_384, () =>
+    policyConfigurationError("decision-provider-key-file"),
+  ).pipe(
+    Effect.mapError(() => ({ stage: "file" as const })),
+    Effect.flatMap((bytes) =>
+      Effect.try({
+        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        catch: () => ({ stage: "file" as const }),
+      }),
+    ),
+    Effect.flatMap((value) =>
+      Schema.decodeUnknown(grammar)(value).pipe(
+        Effect.mapError(() => ({ stage: "value" as const })),
+      ),
+    ),
+    Effect.map(Redacted.make),
+  );
 }
 
 /**
- * Loads `SHARNESS_MESSAGE_POLICY_FILE`, returning none when unset. Only Jev
- * reads `SHARNESS_DECISION_PROVIDER_KEY_FILE` through the supplied credential
+ * Resolves the configured policy during setup, returning none when unset. Only Jev
+ * reads `decisionProviderKeyFile` through the supplied credential
  * reader. Invalid documents or keys fail without exposing file contents.
  */
 export const loadMessagePolicy = (

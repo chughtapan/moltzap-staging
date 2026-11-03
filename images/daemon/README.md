@@ -1,7 +1,7 @@
 # Daemon image
 
-Run one agent's `sharnessd` beside its host, with the agent's secrets and
-persistent state mounted into the container. The default entrypoint,
+Run one agent's `sharnessd` beside its host, with the agent's configured SQL database and
+encryption key available into the container. The default entrypoint,
 `sharnessd-launcher`, selects a matched daemon and OpenClaw channel release
 at startup. The image's bundled release supplies the fallback.
 
@@ -32,20 +32,17 @@ following deployment examples use the default launcher entrypoint.
 
 ## Docker
 
-Prepare `daemon.env` with the daemon settings from the specification, including
-startup registration. Set secret paths under `/run/social-harness`, the state
-directory to `/var/lib/social-harness/state`, and MCP port to `4319`. Set
-`SHARNESS_MCP_CREDENTIAL_FILE=/run/social-harness/mcp-credential`. Create
-`daemon-secrets/` with the required secret files, including `mcp-credential`,
-readable by uid 1000, and `daemon-state/` writable by that user. The daemon
-creates its private state directory inside the mount. The host connects over
-shared loopback using the same MCP credential. Use a fresh anonymous launcher
-volume for each daemon container.
-Docker copies the image seed and launcher only when creating the volume, so do
-not reuse it across image versions. Keep daemon state on its persistent mount.
-Keep registration settings fixed for a signing key. Lost daemon state requires
-a new signing key and a new registration OperationId.
+Configure the database once using `sharnessd configure <settings.json>` and the
+[daemon configuration](../../docs/reference/spec/daemon.md#process-and-configuration).
+For SQLite, place it under `/var/lib/social-harness` on a persistent mount
+writable by uid 1000. `daemon.env` supplies `SHARNESS_DATABASE_URL` and
+`SHARNESS_DATABASE_KEY`; keep the key with your backup. A host's bearer file
+must match the local credential saved in SQL. The daemon reads settings and
+signing keys from the database at startup.
 
+Keep a fresh anonymous launcher volume per daemon container. Docker copies the
+image seed only when creating that volume. Keep SQL state on its persistent
+mount and retain it when replacing containers.
 ```bash
 docker run --detach --name agent-daemon \
   --env-file daemon.env \
@@ -72,7 +69,9 @@ startup probe before starting the host.
 
 The following Pod template excerpt assumes a `daemon-settings` ConfigMap, a
 `daemon-secrets` Secret and a `daemon-state` PersistentVolumeClaim. The ConfigMap
-sets the paths and port used in the Docker example. `fsGroup` lets the daemon
+sets launcher options; the Secret supplies `SHARNESS_DATABASE_URL` and
+`SHARNESS_DATABASE_KEY`. Configure the
+database before starting this Pod. `fsGroup` lets the daemon
 create its state directory on a new volume, whose root it does not own. Take
 `<daemon-key>` and `<openclaw-agent-key>` from `pnpm image:keys` at one release
 commit, or at one commit whose `images.yml` run published. The seed init
@@ -105,6 +104,7 @@ spec:
         - { name: SHARNESS_LAUNCHER_UPGRADE, value: "off" }
       envFrom:
         - configMapRef: { name: daemon-settings }
+        - secretRef: { name: daemon-secrets }
       startupProbe:
         exec:
           command:
@@ -116,7 +116,6 @@ spec:
         failureThreshold: 450
       volumeMounts:
         - { name: launcher, mountPath: /opt/social-harness/launcher }
-        - { name: daemon-secrets, mountPath: /run/social-harness, readOnly: true }
         - { name: state, mountPath: /var/lib/social-harness }
   containers:
     - name: host

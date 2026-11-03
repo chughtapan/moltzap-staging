@@ -20,6 +20,7 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { OwnerAccount } from "../ownership.js";
 import { Firewall } from "../../firewall/service.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
@@ -46,10 +47,10 @@ import {
 } from "./contracts.js";
 import { installEvents, webhookHttpClientLayer } from "./events.js";
 
-type ServerSettings = McpAuthentication & {
+interface AgentServerSettings {
   readonly agentKey: string;
   readonly implementation: { readonly name: string; readonly version: string };
-};
+}
 
 const reasonError = (error: { readonly reason: string }) =>
   new ProtocolError(
@@ -62,9 +63,9 @@ const reasonError = (error: { readonly reason: string }) =>
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
-/** Serves the agent's MCP catalog using the supplied bearer credential. */
-export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
-  settings: ServerSettings,
+/** One retained agent context owns its tools, inbox and notification subscribers. */
+export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
+  settings: AgentServerSettings,
 ) {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;
@@ -89,8 +90,18 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
   );
-  const admit = yield* makeRequestAdmission(settings);
-  return guardMcp(app, settings, admit);
+  return app;
+});
+
+/** Authentication selects the account before any agent context or tool is acquired. */
+export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
+  authentication: McpAuthentication,
+  selectApp: (
+    owner: OwnerAccount,
+  ) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>,
+) {
+  const admit = yield* makeRequestAdmission(authentication);
+  return guardMcp(selectApp, authentication, admit);
 });
 
 function safeLocalUrl(value: string): boolean {
@@ -359,7 +370,9 @@ function bind<A, I, B, J, E>(
 }
 
 function guardMcp(
-  app: HttpApp.Default<never, Scope.Scope>,
+  selectApp: (
+    owner: OwnerAccount,
+  ) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>,
   authentication: McpAuthentication,
   admit: Effect.Effect.Success<ReturnType<typeof makeRequestAdmission>>,
 ) {
@@ -408,9 +421,15 @@ function guardMcp(
           Effect.succeed(
             HttpServerResponse.fromWeb(authenticationChallenge(authentication)),
           ),
-        onSuccess: (expiresAt) =>
-          app.pipe(
+        onSuccess: ({ owner, expiresAt }) =>
+          selectApp(owner).pipe(
+            Effect.flatMap((app) => app),
             Effect.flatMap((response) => expireResponse(response, expiresAt)),
+            Effect.catchAll(() =>
+              Effect.succeed(
+                HttpServerResponse.text("Agent unavailable", { status: 503 }),
+              ),
+            ),
           ),
       }),
     );

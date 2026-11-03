@@ -2,7 +2,7 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Ref } from "effect";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
 import { createServer } from "node:http";
@@ -39,7 +39,6 @@ const fixture = Effect.gen(function* () {
   const oauth: DaemonOAuth = {
     resource,
     issuer,
-    ownerSubject: owner,
     scope,
     allowedOrigins: [],
   };
@@ -119,19 +118,31 @@ it("admits the owner through the actual MCP initialize path", () =>
     expect(response.status).toBe(200);
   }));
 
+it("selects each authenticated subject under its verified issuer", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const other = "another-owner";
+    expect((yield* test.call(yield* test.token())).status).toBe(200);
+    expect(
+      (yield* test.call(yield* test.token({ subject: other }))).status,
+    ).toBe(200);
+    expect(yield* Ref.get(test.owners)).toEqual([
+      { issuer: test.oauth.issuer, subject: owner },
+      { issuer: test.oauth.issuer, subject: other },
+    ]);
+  }));
+
 it.each([
-  { subject: "another-owner" },
+  { subject: "" },
   { audience: "https://another-resource.example/mcp" },
   { scope: "another-scope" },
   { expiresAt: 1 },
-])(
-  "refuses a token outside the installation's owner authority: %j",
-  (changes) =>
-    Effect.gen(function* () {
-      const test = yield* fixture;
-      const response = yield* test.call(yield* test.token(changes));
-      expect(response.status).toBe(401);
-    }),
+])("refuses a token outside the resource authority: %j", (changes) =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const response = yield* test.call(yield* test.token(changes));
+    expect(response.status).toBe(401);
+  }),
 );
 
 it("rejects a different Host even for the correct owner's token", () =>

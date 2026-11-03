@@ -20,8 +20,12 @@ import {
   type ToolRequest,
   type ToolResult,
 } from "@moltzap/social-harness";
-import { WireVersions } from "@moltzap/social-harness/test";
 import {
+  configureDaemon as configure,
+  WireVersions,
+} from "@moltzap/social-harness/test";
+import {
+  ConfigProvider,
   Console,
   Data,
   Duration,
@@ -38,7 +42,7 @@ import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type ManagementRegisterRequest = ToolRequest<"register">["arguments"];
 
@@ -98,6 +102,7 @@ export interface ProcessInfrastructure {
  */
 export interface DaemonProcessFixture {
   readonly agentName: AgentName;
+  readonly registration: ManagementRegisterRequest;
   readonly endpoint: URL;
   readonly environment: Readonly<Record<string, string>>;
   readonly stateDirectory: string;
@@ -345,9 +350,9 @@ export const managedProcess = (
       startProcess(executable, processArguments, environment, cwd),
     ),
     (running, exit) =>
-      Exit.isInterrupted(exit)
+      Exit.isFailure(exit)
         ? Console.error(
-            `${basename(executable)} (pid ${running.child.pid}) output when interrupted:\n${running.logs()}`,
+            `${basename(executable)} (pid ${running.child.pid}) output when the trace failed:\n${running.logs()}`,
           ).pipe(Effect.zipRight(stopProcess(running)))
         : stopProcess(running),
   );
@@ -638,11 +643,15 @@ export const acquireProcessInfrastructure = acquireProcessInfrastructureFrom({
   router: ROUTER_BINARY,
 });
 
+const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
+  `${prefix}${randomBytes(16).toString("base64url")}`;
+
 /** Creates one independent daemon key, credential file, and durable state path. */
 export const makeDaemonProcessFixture = (
   infrastructure: ProcessInfrastructure,
   name: string,
   firewall?: FirewallMode,
+  setupChanges: Readonly<Record<string, unknown>> = {},
 ): Effect.Effect<DaemonProcessFixture, ProcessTestError> =>
   Effect.gen(function* () {
     const agentName = yield* Schema.decodeUnknown(AgentName)(name).pipe(
@@ -650,44 +659,116 @@ export const makeDaemonProcessFixture = (
         processTestError("invalid test agent name", cause),
       ),
     );
-    const port = yield* reservePort;
+    const port =
+      typeof setupChanges.port === "number"
+        ? setupChanges.port
+        : yield* reservePort;
     const directory = join(infrastructure.temporaryDirectory, name);
     const stateDirectory = join(directory, "state");
     const keyPath = join(directory, "agent-key.pem");
     const credentialPath = join(directory, "admission.txt");
     yield* makeDirectory(stateDirectory);
     const credentials = yield* makeMcpCredential(directory);
+    const privateKey = makePrivateKeyPem();
+    const registration = Schema.decodeUnknownSync(
+      toolDefinitions.register.input,
+    )({
+      operationId: makeIdentifier("opn_"),
+      principalId: makeIdentifier("prn_"),
+      agentName,
+    });
+    const environment = {
+      SHARNESS_DATABASE_URL: pathToFileURL(
+        join(stateDirectory, "sharnessd.sqlite3"),
+      ).href.replace(/^file:/u, "sqlite:"),
+      SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
+      ...(firewall === undefined
+        ? {}
+        : { SHARNESS_TEST_FIREWALL_MODE: firewall }),
+    };
+    const setupFile = join(directory, "setup.json");
+    yield* writePrivateFile(
+      setupFile,
+      JSON.stringify({
+        port,
+        host: LOOPBACK_HOST,
+        authentication: {
+          kind: "local",
+          credential: Redacted.value(credentials.mcpCredential),
+        },
+        registryOrigin: infrastructure.registryOrigin.origin,
+        registrySignerPublicKey: Schema.decodeUnknownSync(
+          Schema.parseJson(AgentPublicKey),
+        )(infrastructure.registrySignerPublicKeyJson),
+        routerOrigin: infrastructure.routerOrigin.origin,
+        admissionCredential: ADMISSION_CREDENTIAL,
+        agent: { ...registration, privateKey },
+        ...setupChanges,
+      }),
+    );
+    yield* configure(setupFile).pipe(
+      Effect.provide(NodeFileSystem.layer),
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(environment))),
+      ),
+      Effect.mapError((cause) =>
+        processTestError("daemon configuration failed", cause),
+      ),
+    );
     yield* Effect.all(
       [
-        writePrivateFile(keyPath, makePrivateKeyPem()),
+        writePrivateFile(keyPath, privateKey),
         writePrivateFile(credentialPath, ADMISSION_CREDENTIAL),
       ] as const,
       { concurrency: 2, discard: true },
     );
     return {
       agentName,
+      registration,
       endpoint: new URL(`http://${LOOPBACK_HOST}:${port}/mcp`),
       stateDirectory,
       agentPrivateKeyFile: keyPath,
       admissionCredentialFile: credentialPath,
       ...credentials,
-      environment: {
-        SHARNESS_STATE_DIRECTORY: stateDirectory,
-        SHARNESS_MCP_PORT: String(port),
-        SHARNESS_MCP_CREDENTIAL_FILE: credentials.mcpCredentialFile,
-        SHARNESS_REGISTRY_ORIGIN: infrastructure.registryOrigin.origin,
-        SHARNESS_REGISTRY_SIGNER_PUBLIC_KEY:
-          infrastructure.registrySignerPublicKeyJson,
-        SHARNESS_ROUTER_ORIGIN: infrastructure.routerOrigin.origin,
-        SHARNESS_AGENT_PRIVATE_KEY_FILE: keyPath,
-        SHARNESS_ADMISSION_CREDENTIAL_FILE: credentialPath,
-        ...(firewall === undefined
-          ? {}
-          : { SHARNESS_TEST_FIREWALL_MODE: firewall }),
-      },
+      environment,
       ...(firewall === undefined ? {} : { firewall }),
     };
   }).pipe(Effect.withSpan("makeDaemonProcessFixture"));
+
+/** Re-runs the real setup operation with explicit document changes before starting a process. */
+export function configureDaemonFixture(
+  fixture: DaemonProcessFixture,
+  changes: Readonly<Record<string, unknown>>,
+) {
+  return Effect.gen(function* () {
+    const filesystem = yield* FileSystem.FileSystem;
+    const filename = join(dirname(fixture.agentPrivateKeyFile), "setup.json");
+    const current = yield* filesystem
+      .readFileString(filename)
+      .pipe(
+        Effect.flatMap(
+          Schema.decodeUnknown(
+            Schema.parseJson(
+              Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+            ),
+          ),
+        ),
+      );
+    yield* filesystem.writeFileString(
+      filename,
+      JSON.stringify({ ...current, ...changes }),
+    );
+    yield* configure(filename).pipe(
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
+      ),
+    );
+    return fixture;
+  }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.withSpan("configureDaemonFixture"),
+  );
+}
 
 function makeMcpCredential(directory: string) {
   return Effect.gen(function* () {
@@ -704,7 +785,15 @@ const daemonCommand = (
 ): readonly [string, readonly string[]] =>
   fixture.firewall === undefined
     ? [DAEMON_BINARY, []]
-    : [process.execPath, ["--import", require.resolve("tsx"), FIREWALL_DAEMON]];
+    : [
+        process.execPath,
+        [
+          "--conditions=sharness-test",
+          "--import",
+          require.resolve("tsx"),
+          FIREWALL_DAEMON,
+        ],
+      ];
 
 /** Starts one sharnessd and returns only after its guarded loopback port listens. */
 export const acquireDaemonProcess = (
@@ -787,18 +876,10 @@ export const awaitDaemonStartupFailure = (
     return { exitCode: running.child.exitCode, logs: running.logs() };
   }).pipe(Effect.withSpan("awaitDaemonStartupFailure"));
 
-const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
-  `${prefix}${randomBytes(16).toString("base64url")}`;
-
 /** Creates exact one-shot bootstrap fields for a fixture's configured identity. */
 export const makeRegistrationRequest = (
   fixture: DaemonProcessFixture,
-): ManagementRegisterRequest =>
-  Schema.decodeUnknownSync(toolDefinitions.register.input)({
-    operationId: makeIdentifier("opn_"),
-    principalId: makeIdentifier("prn_"),
-    agentName: fixture.agentName,
-  });
+): ManagementRegisterRequest => fixture.registration;
 
 const callAndDecode = <A, I>(input: {
   readonly client: Client;
@@ -1034,7 +1115,7 @@ function launchCommand(
 /** Daemon compositions select their test wire policy before process startup. */
 function serviceScript(versions: ProcessWireVersions): string {
   return `import { NodeRuntime } from "@effect/platform-node";
-import { WireVersions } from "@moltzap/social-harness/test";
+import { configureDaemon as configure, WireVersions } from "@moltzap/social-harness/test";
 import { daemonLayer } from "@moltzap/social-harness/service";
 import { ConfigProvider, Effect, Layer } from "effect";
 Layer.launch(daemonLayer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
