@@ -35,20 +35,11 @@ import {
   transaction,
   withAgentTransaction,
 } from "@moltzap/social-harness/test";
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import {
-  Config,
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-} from "effect";
+import { Duration, Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { expect } from "vitest";
+
+import { acquirePostgres } from "./postgres-fixture.js";
 
 const testAgentCard = (name: string) =>
   Schema.decodeUnknownSync(AgentCard)({
@@ -57,36 +48,7 @@ const testAgentCard = (name: string) =>
     agentName: name,
   });
 
-const databaseLocator = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
-  Config.option,
-  Effect.flatMap(
-    Option.match({
-      onSome: Effect.succeed,
-      onNone: () =>
-        Effect.acquireRelease(
-          Effect.tryPromise(() =>
-            new PostgreSqlContainer("postgres:17-alpine")
-              .withDatabase("qualification")
-              .withUsername("qualification")
-              .withPassword(randomBytes(24).toString("hex"))
-              .start(),
-          ),
-          (container) =>
-            Effect.tryPromise(() => container.stop()).pipe(
-              Effect.asVoid,
-              Effect.orDie,
-            ),
-        ).pipe(
-          Effect.map((container) =>
-            Redacted.make(container.getConnectionUri()),
-          ),
-        ),
-    }),
-  ),
-);
-
 const unlockKey = Redacted.make(new Uint8Array(32).fill(3));
-const runtimePassword = randomBytes(24).toString("hex");
 
 const qualifyTenants = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -378,42 +340,16 @@ it(
   "isolates concurrent owners and clears transaction context on a pooled non-owner login",
   () =>
     Effect.gen(function* () {
-      const locator = yield* databaseLocator;
-      const adminLayer = databaseConnection(locator);
-      const admin = Context.get(
-        yield* Layer.build(adminLayer),
-        SqlClient.SqlClient,
-      );
-      const suffix = randomBytes(8).toString("hex");
-      const schema = `qualification_${suffix}`;
-      const role = `runtime_${suffix}`;
-      yield* admin`CREATE SCHEMA ${admin(schema)}`;
-      yield* admin`CREATE ROLE ${admin(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD ${admin.literal("'" + runtimePassword + "'")}`;
-      yield* Effect.addFinalizer(() =>
-        admin`DROP SCHEMA ${admin(schema)} CASCADE`.pipe(
-          Effect.zipRight(admin`DROP ROLE ${admin(role)}`),
-          Effect.orDie,
-        ),
-      );
-      const schemaUrl = new URL(Redacted.value(locator));
-      schemaUrl.searchParams.set("options", `-c search_path=${schema}`);
-      yield* migrateDaemon.pipe(
-        Effect.provide(databaseConnection(Redacted.make(schemaUrl.href))),
-      );
-      yield* admin`GRANT USAGE ON SCHEMA ${admin(schema)} TO ${admin(role)}`;
-      yield* admin`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${admin(schema)} TO ${admin(role)}`;
-      yield* admin`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${admin(schema)} TO ${admin(role)}`;
-      schemaUrl.username = role;
-      schemaUrl.password = runtimePassword;
+      const database = yield* acquirePostgres;
       const keys = yield* qualifyTenants.pipe(
         Effect.flatMap(qualifyInbox),
         Effect.flatMap(qualifyProtocol),
         Effect.flatMap(qualifyFirewall),
-        Effect.provide(databaseConnection(Redacted.make(schemaUrl.href))),
+        Effect.provide(databaseConnection(database.runtimeLocator)),
       );
-      const retained = yield* admin<
+      const retained = yield* database.admin<
         Record<"agent_key", string>
-      >`SELECT agent_key FROM ${admin(schema)}.agent_profiles`;
+      >`SELECT agent_key FROM agent_profiles`;
       expect(new Set(retained.map((row) => row.agent_key))).toEqual(
         new Set(keys),
       );

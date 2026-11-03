@@ -105,6 +105,7 @@ export interface DaemonProcessFixture {
   readonly registration: ManagementRegisterRequest;
   readonly endpoint: URL;
   readonly environment: Readonly<Record<string, string>>;
+  readonly configureLocator?: Redacted.Redacted;
   readonly stateDirectory: string;
   readonly agentPrivateKeyFile: string;
   readonly admissionCredentialFile: string;
@@ -651,9 +652,16 @@ export const makeDaemonProcessFixture = (
   infrastructure: ProcessInfrastructure,
   name: string,
   firewall?: FirewallMode,
-  setupChanges: Readonly<Record<string, unknown>> = {},
+  options: {
+    readonly settings?: Readonly<Record<string, unknown>>;
+    readonly database?: {
+      readonly configureLocator: Redacted.Redacted;
+      readonly runtimeLocator: Redacted.Redacted;
+    };
+  } = {},
 ): Effect.Effect<DaemonProcessFixture, ProcessTestError> =>
   Effect.gen(function* () {
+    const setupChanges = options.settings ?? {};
     const agentName = yield* Schema.decodeUnknown(AgentName)(name).pipe(
       Effect.mapError((cause) =>
         processTestError("invalid test agent name", cause),
@@ -678,9 +686,12 @@ export const makeDaemonProcessFixture = (
       agentName,
     });
     const environment = {
-      SHARNESS_DATABASE_URL: pathToFileURL(
-        join(stateDirectory, "sharnessd.sqlite3"),
-      ).href.replace(/^file:/u, "sqlite:"),
+      SHARNESS_DATABASE_URL:
+        options.database === undefined
+          ? pathToFileURL(
+              join(stateDirectory, "sharnessd.sqlite3"),
+            ).href.replace(/^file:/u, "sqlite:")
+          : Redacted.value(options.database.runtimeLocator),
       SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
       ...(firewall === undefined
         ? {}
@@ -709,7 +720,20 @@ export const makeDaemonProcessFixture = (
     yield* configure(setupFile).pipe(
       Effect.provide(NodeFileSystem.layer),
       Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(environment))),
+        ConfigProvider.fromMap(
+          new Map(
+            Object.entries({
+              ...environment,
+              ...(options.database === undefined
+                ? {}
+                : {
+                    SHARNESS_DATABASE_URL: Redacted.value(
+                      options.database.configureLocator,
+                    ),
+                  }),
+            }),
+          ),
+        ),
       ),
       Effect.mapError((cause) =>
         processTestError("daemon configuration failed", cause),
@@ -725,6 +749,9 @@ export const makeDaemonProcessFixture = (
     return {
       agentName,
       registration,
+      ...(options.database === undefined
+        ? {}
+        : { configureLocator: options.database.configureLocator }),
       endpoint: new URL(`http://${LOOPBACK_HOST}:${port}/mcp`),
       stateDirectory,
       agentPrivateKeyFile: keyPath,
@@ -760,7 +787,20 @@ export function configureDaemonFixture(
     );
     yield* configure(filename).pipe(
       Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
+        ConfigProvider.fromMap(
+          new Map(
+            Object.entries({
+              ...fixture.environment,
+              ...(fixture.configureLocator === undefined
+                ? {}
+                : {
+                    SHARNESS_DATABASE_URL: Redacted.value(
+                      fixture.configureLocator,
+                    ),
+                  }),
+            }),
+          ),
+        ),
       ),
     );
     return fixture;

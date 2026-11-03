@@ -38,6 +38,7 @@ import {
   type RunningProcess,
   stopProcess,
 } from "./daemon-fixture.js";
+import { acquirePostgres } from "./postgres-fixture.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and closed tool outcomes are external conformance contracts. */
 const requiredScope = "use:mcp";
@@ -180,125 +181,138 @@ function expectAcknowledgedEvent(client: Client, entry: InboxEntry) {
   });
 }
 
-const scenario = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const issuer = yield* issuerFixture;
-  const port = yield* reservePort;
-  const resource = new URL(`https://127.0.0.1:${port}/mcp`);
-  const fixture = yield* makeDaemonProcessFixture(
-    infrastructure,
-    "shared-runtime",
-    undefined,
-    {
-      port,
-      authentication: {
-        kind: "oauth",
-        resource: resource.href,
-        issuer: issuer.issuer,
-        scope: requiredScope,
+/** The observation bound allows a remote PostgreSQL tunnel's round trips; it is not a delivery latency assertion. */
+const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
+  Effect.gen(function* () {
+    const infrastructure = yield* acquireProcessInfrastructure;
+    const issuer = yield* issuerFixture;
+    const port = yield* reservePort;
+    const resource = new URL(`https://127.0.0.1:${port}/mcp`);
+    const fixture = yield* makeDaemonProcessFixture(
+      infrastructure,
+      "shared-runtime",
+      undefined,
+      {
+        database,
+        settings: {
+          port,
+          authentication: {
+            kind: "oauth",
+            resource: resource.href,
+            issuer: issuer.issuer,
+            scope: requiredScope,
+          },
+          agent: undefined,
+        },
       },
-      agent: undefined,
-    },
-  );
-  const access = yield* databaseAccess.pipe(
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
-    ),
-  );
-  const sql = Context.get(
-    yield* Layer.build(databaseConnection(access.locator)),
-    SqlClient.SqlClient,
-  );
-  expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-  yield* removeSetupFiles(fixture);
-  const daemon = yield* acquireDaemonProcess(fixture);
-  yield* expectUnauthenticated(fixture.endpoint, sql);
-  const aliceToken = yield* issuer.token("alice", resource.href);
-  const bobToken = yield* issuer.token("bob", resource.href);
-  const alice = yield* connect(fixture.endpoint, aliceToken);
-  const bob = yield* connect(fixture.endpoint, bobToken);
-  const a = yield* call(alice, { name: "status", arguments: {} });
-  const b = yield* call(bob, { name: "status", arguments: {} });
-  if (a.kind !== "registered" || b.kind !== "registered") {
-    return yield* Effect.dieMessage(
-      "OAuth accounts must register automatically",
     );
-  }
-  const aliceCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-    a.identityCard,
-  );
-  const bobCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-    b.identityCard,
-  );
-  expect(aliceCard.agentId).not.toBe(bobCard.agentId);
-  const again = yield* connect(fixture.endpoint, aliceToken);
-  expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
-  yield* call(alice, {
-    name: "send_message",
-    arguments: {
-      input: {
-        to: Schema.decodeUnknownSync(MessageAddressInput)(
-          `agent:${bobCard.agentName}`,
-        ),
-        text: "shared runtime delivery",
+    const access = yield* databaseAccess.pipe(
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
+      ),
+    );
+    const sql = Context.get(
+      yield* Layer.build(databaseConnection(access.locator)),
+      SqlClient.SqlClient,
+    );
+    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    yield* removeSetupFiles(fixture);
+    const daemon = yield* acquireDaemonProcess(fixture);
+    yield* expectUnauthenticated(fixture.endpoint, sql);
+    const aliceToken = yield* issuer.token("alice", resource.href);
+    const bobToken = yield* issuer.token("bob", resource.href);
+    const alice = yield* connect(fixture.endpoint, aliceToken);
+    const bob = yield* connect(fixture.endpoint, bobToken);
+    const a = yield* call(alice, { name: "status", arguments: {} });
+    const b = yield* call(bob, { name: "status", arguments: {} });
+    if (a.kind !== "registered" || b.kind !== "registered") {
+      return yield* Effect.dieMessage(
+        "OAuth accounts must register automatically",
+      );
+    }
+    const aliceCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+      a.identityCard,
+    );
+    const bobCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+      b.identityCard,
+    );
+    expect(aliceCard.agentId).not.toBe(bobCard.agentId);
+    const again = yield* connect(fixture.endpoint, aliceToken);
+    expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
+    yield* call(alice, {
+      name: "send_message",
+      arguments: {
+        input: {
+          to: Schema.decodeUnknownSync(MessageAddressInput)(
+            `agent:${bobCard.agentName}`,
+          ),
+          text: "shared runtime delivery",
+        },
       },
-    },
+    });
+    const pending = yield* Effect.iterate(
+      yield* call(bob, { name: "read_inbox", arguments: {} }),
+      {
+        while: (page) => page.items.length === 0,
+        body: () =>
+          Effect.sleep("50 millis").pipe(
+            Effect.andThen(call(bob, { name: "read_inbox", arguments: {} })),
+          ),
+      },
+    ).pipe(Effect.timeout("120 seconds"));
+    const entry = pending.items[0];
+    if (entry === undefined) {
+      return yield* Effect.dieMessage("Expected Bob's delivery");
+    }
+    expect(
+      (yield* call(alice, { name: "read_inbox", arguments: {} })).items,
+    ).toHaveLength(0);
+    expect(
+      yield* call(alice, {
+        name: "read_event",
+        arguments: { eventId: entry.deliveryToken },
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      yield* call(alice, {
+        name: "acknowledge_delivery",
+        arguments: { deliveryToken: entry.deliveryToken },
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(
+      (yield* call(bob, { name: "read_inbox", arguments: {} })).items,
+    ).toHaveLength(1);
+    yield* stopProcess(daemon);
+    const restoredDaemon = yield* acquireDaemonProcess(fixture);
+    const recovered = yield* connect(fixture.endpoint, bobToken);
+    expect(yield* call(recovered, { name: "status", arguments: {} })).toEqual(
+      b,
+    );
+    expect(
+      (yield* call(recovered, { name: "read_inbox", arguments: {} })).items,
+    ).toEqual(pending.items);
+    yield* expectAcknowledgedEvent(recovered, entry);
+    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(2);
+    yield* expectFailedAgentIsolation({
+      sql,
+      fixture,
+      running: restoredDaemon,
+      aliceToken,
+      bobToken,
+      expectedStatus: b,
+    });
   });
-  const pending = yield* Effect.iterate(
-    yield* call(bob, { name: "read_inbox", arguments: {} }),
-    {
-      while: (page) => page.items.length === 0,
-      body: () =>
-        Effect.sleep("50 millis").pipe(
-          Effect.andThen(call(bob, { name: "read_inbox", arguments: {} })),
-        ),
-    },
-  ).pipe(Effect.timeout("20 seconds"));
-  const entry = pending.items[0];
-  if (entry === undefined) {
-    return yield* Effect.dieMessage("Expected Bob's delivery");
-  }
-  expect(
-    (yield* call(alice, { name: "read_inbox", arguments: {} })).items,
-  ).toHaveLength(0);
-  expect(
-    yield* call(alice, {
-      name: "read_event",
-      arguments: { eventId: entry.deliveryToken },
-    }).pipe(Effect.isFailure),
-  ).toBe(true);
-  expect(
-    yield* call(alice, {
-      name: "acknowledge_delivery",
-      arguments: { deliveryToken: entry.deliveryToken },
-    }).pipe(Effect.isFailure),
-  ).toBe(true);
-  expect(
-    (yield* call(bob, { name: "read_inbox", arguments: {} })).items,
-  ).toHaveLength(1);
-  yield* stopProcess(daemon);
-  const restoredDaemon = yield* acquireDaemonProcess(fixture);
-  const recovered = yield* connect(fixture.endpoint, bobToken);
-  expect(yield* call(recovered, { name: "status", arguments: {} })).toEqual(b);
-  expect(
-    (yield* call(recovered, { name: "read_inbox", arguments: {} })).items,
-  ).toEqual(pending.items);
-  yield* expectAcknowledgedEvent(recovered, entry);
-  expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(2);
-  yield* expectFailedAgentIsolation({
-    sql,
-    fixture,
-    running: restoredDaemon,
-    aliceToken,
-    bobToken,
-    expectedStatus: b,
-  });
-});
 
 it(
   "authenticates before provisioning and recovers two isolated agents through one endpoint",
-  processTrace(Effect.scoped(scenario)),
+  processTrace(Effect.scoped(scenario())),
   180_000,
+);
+
+it(
+  "recovers signed peer delivery through one PostgreSQL-backed MCP daemon with a restricted login",
+  processTrace(Effect.scoped(acquirePostgres.pipe(Effect.flatMap(scenario)))),
+  240_000,
 );
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary assertion rules after the conformance trace. */
