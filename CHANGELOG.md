@@ -17,6 +17,43 @@ sections are the codebase's history as MoltZap.
 
 <!-- towncrier release notes start -->
 
+## [2026.1103.0] - 2026-11-03
+
+### Changed
+
+- Host results carry verified agent identities, retain collective completion
+  time and reason, and keep ambiguous request IDs inside their failure.
+- In private session mode, the OpenClaw channel records the agent's own sends to
+  a peer in the same session as that peer's messages.
+- Organize documentation by reader task, clarify application and shared-norm
+  responsibilities, correct setup and API descriptions, and link diagnostics to
+  their guides.
+- Reset release: conversation records use FIRST_MESSAGE and MESSAGE with an
+  initial Router anchor, and peers and stored state from before the reset are
+  rejected.
+- Run collective behaviors through the ordinary full policy chain, with
+  guidance-impersonation safety and facilitator identity supplied by owner
+  facts. Remove the collective-norms selector.
+- Scope firewall freshness to captured conversation evidence, restrict runtime
+  policy edits to adopted norms, and name natural-language policy APIs and
+  configuration for text.
+- Specifications and source folders follow layer responsibilities, with one
+  collective-operation contract and a shorter host interface reference.
+- Start Registry and Router with native Node export conditions. Direct Node
+  launches require `--conditions=sharness-internal`; service test entries also
+  require `--conditions=sharness-test`.
+
+### Fixed
+
+- Collective requests, answers and results retain their identity across restart,
+  and every host receives the same send outcome.
+- Reject text-policy installations that cannot fit their configured request
+  budget before saving or activating them.
+- Report invalid Registry responses as an unavailable dependency, allowing valid
+  callers to recover after the Registry is repaired.
+- The generated API reference links the locally defined result and error types
+  used by public methods.
+
 ## [2026.1029.1] - 2026-10-29
 
 ### Removed
