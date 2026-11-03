@@ -4,6 +4,7 @@ import openClawPlugin from "@moltzap/openclaw-channel";
 import {
   AgentAddress,
   type AgentCard,
+  AgentIdentityCard,
   type Content,
   GroupAddress,
   type InboxEntry,
@@ -29,6 +30,7 @@ import {
   makeRegistrationRequest,
   ProcessTestError,
 } from "../daemon/daemon-fixture.js";
+import { registeredDaemonStatus } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 
 interface RegisteredFixture extends DaemonProcessFixture {
@@ -744,14 +746,28 @@ function isStableOpenClawEntry(value: unknown): value is StableOpenClawEntry {
   );
 }
 
+/** Replaying the configured registration preserves the identity already selected at startup. */
 function registerFixture(fixture: DaemonProcessFixture) {
   return Effect.scoped(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.status()).toEqual({ kind: "unregistered" });
+      const initial = yield* management.status();
       const registered = yield* management.register(
         makeRegistrationRequest(fixture),
       );
+      expect(initial).toEqual({
+        kind: registeredDaemonStatus,
+        identityCard: yield* Schema.encode(AgentIdentityCard)(registered).pipe(
+          Effect.catchTag("ParseError", (cause) =>
+            Effect.fail(
+              new ProcessTestError({
+                message: "could not encode registered fixture identity",
+                cause,
+              }),
+            ),
+          ),
+        ),
+      });
       return {
         ...fixture,
         agent: {

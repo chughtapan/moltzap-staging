@@ -20,6 +20,7 @@ import {
   makeMcpHttpApp,
   Router,
   serveMcp,
+  spanExport,
 } from "@moltzap/social-harness/test";
 import { Context, Duration, Effect, FiberSet, Layer } from "effect";
 
@@ -110,7 +111,7 @@ export function runPolicyRuntime(policy: FirewallOptions) {
       return yield* FiberSet.join(workers);
     }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
   }).pipe(
-    Effect.provide(NodeFileSystem.layer),
     Effect.withSpan("runPolicyRuntime"),
+    Effect.provide(Layer.merge(NodeFileSystem.layer, spanExport)),
   );
 }

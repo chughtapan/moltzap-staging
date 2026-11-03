@@ -47,6 +47,7 @@ export {
   configureDaemon,
   databaseAccess,
   loadDaemonSettings,
+  spanExport,
 } from "./harness/config.js";
 /** Retained registration inputs are shared with process fixtures. */
 export { loadAgentRegistration, localOwner } from "./harness/ownership.js";

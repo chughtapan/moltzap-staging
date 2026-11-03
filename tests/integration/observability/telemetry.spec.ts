@@ -92,9 +92,11 @@ const acquireMarkerParticipants = Effect.gen(function* () {
       },
     ),
     yield* makeDaemonProcessFixture(infrastructure, "otel-member-a"),
-    withEnvironment(
-      yield* makeDaemonProcessFixture(infrastructure, "otel-member-b"),
-      { SHARNESS_ROUTER_ORIGIN: proxy.origin.origin },
+    yield* makeDaemonProcessFixture(
+      infrastructure,
+      "otel-member-b",
+      undefined,
+      { settings: { routerOrigin: proxy.origin.origin } },
     ),
   ];
   const [requester, member, held] = yield* startParticipants(fixtures);
