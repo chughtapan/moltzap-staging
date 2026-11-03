@@ -18,7 +18,6 @@ import {
   acquireProcessInfrastructure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   processTestError,
   type ProcessTestError,
 } from "./daemon/daemon-fixture.ts";
@@ -54,7 +53,7 @@ export interface Network {
   readonly close: () => Promise<undefined>;
 }
 
-/** Starts one fixture's daemon, which a consumer may run in its own container; the fixture's environment carries its startup registration. */
+/** Starts one fixture's daemon, which a consumer may run in its own container; the configured SQL database carries its registration seed. */
 type StartDaemon = (
   fixture: DaemonProcessFixture,
 ) => Effect.Effect<unknown, ProcessTestError, Scope.Scope>;
@@ -73,7 +72,6 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
       runInScope(
         scope,
         makeDaemonProcessFixture(infrastructure, name).pipe(
-          Effect.map(withStartupRegistration),
           Effect.tap(startDaemon),
         ),
       );
@@ -95,25 +93,6 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
     await close();
     throw cause;
   }
-}
-
-/**
- * Hosting starts a daemon with its registration in the environment, and the
- * daemon registers before it listens, so a started fixture is registered.
- */
-function withStartupRegistration(
-  fixture: DaemonProcessFixture,
-): DaemonProcessFixture {
-  const registration = makeRegistrationRequest(fixture);
-  return {
-    ...fixture,
-    environment: {
-      ...fixture.environment,
-      SHARNESS_REGISTRATION_AGENT_NAME: registration.agentName,
-      SHARNESS_REGISTRATION_OPERATION_ID: registration.operationId,
-      SHARNESS_REGISTRATION_PRINCIPAL_ID: registration.principalId,
-    },
-  };
 }
 
 async function networkEndpoint(
