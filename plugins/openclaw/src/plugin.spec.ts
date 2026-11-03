@@ -2,6 +2,7 @@
 
 import { live as it } from "@effect/vitest";
 import { Effect } from "effect";
+import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { afterEach, expect, it as unit, vi } from "vitest";
 import { openClawTestMcpCredentialFile } from "../vitest.setup.js";
 import { createChannelPlugin } from "./plugin.js";
@@ -29,6 +30,44 @@ unit(
       }),
     ).toEqual({ actions: ["send", "reply"] });
   },
+);
+
+unit.each(["shared", "private"] as const)(
+  "records a send in the session its recipient's turns use in %s mode",
+  (mode) =>
+    Effect.gen(function* () {
+      const cfg = {
+        channels: { sharness: { accounts: [{ id: "primary", mode }] } },
+        agents: { entries: { primary: {} } },
+        ...(mode === "private"
+          ? { session: { dmScope: "per-account-channel-peer" as const } }
+          : {}),
+      };
+      const turn = resolveAgentRoute({
+        cfg,
+        channel: "sharness",
+        accountId: "primary",
+        peer: { kind: "direct", id: "bob" },
+      });
+      const resolve = yield* Effect.fromNullable(
+        createChannelPlugin().messaging?.resolveOutboundSessionRoute,
+      );
+      const send = yield* Effect.tryPromise({
+        try: () =>
+          Promise.resolve(
+            resolve({
+              cfg,
+              agentId: turn.agentId,
+              accountId: "primary",
+              target: "agent:bob",
+            }),
+          ),
+        catch: (cause) => String(cause),
+      });
+      expect(send?.sessionKey).toBe(
+        mode === "shared" ? turn.mainSessionKey : turn.sessionKey,
+      );
+    }).pipe(Effect.runPromise),
 );
 
 unit.each([
