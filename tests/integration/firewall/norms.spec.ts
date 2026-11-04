@@ -3,7 +3,8 @@
  * answers a stranger's plain text with `not-understood`, which the stranger
  * receives as an ordinary message. Members agree on a norm before its acts,
  * and each daemon refuses its own agent's act out of turn. An agent's acts
- * that the Router has not ordered yet are judged in the order it sent them.
+ * sent back to back are judged in the order sent, and acts carry no
+ * conversation id: the conversation identifies the task.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -87,12 +88,10 @@ const strangerText = Effect.gen(function* () {
   );
 }).pipe(Effect.scoped);
 
-const proposal =
-  "(propose :ontology norm-agreement :conversation-id a1 :norm office-hours)";
-const acceptance =
-  "(accept-proposal :ontology norm-agreement :conversation-id a1)";
+const proposal = "(propose :ontology norm-agreement :norm office-hours)";
+const acceptance = "(accept-proposal :ontology norm-agreement)";
 const request =
-  '(request :ontology office-hours :conversation-id o1 :topic "Project scope" :slot "Tue 2pm")';
+  '(request :ontology office-hours :topic "Project scope" :slot "Tue 2pm")';
 
 /** A student and a professor whose daemons hold `office-hours` and `chat`. */
 const officeHours = Effect.gen(function* () {
@@ -114,7 +113,7 @@ const officeHours = Effect.gen(function* () {
   if (student === undefined || professor === undefined) {
     return yield* Effect.dieMessage("expected two participants");
   }
-  return { infrastructure, student, professor };
+  return { student, professor };
 });
 
 const agreedNorm = Effect.gen(function* () {
@@ -137,7 +136,7 @@ const agreedNorm = Effect.gen(function* () {
   yield* nextItem(student);
   const outOfTurn = yield* send(student, {
     to: professor.address,
-    text: "(agree :ontology office-hours :conversation-id o1)",
+    text: "(agree :ontology office-hours)",
   }).pipe(Effect.flip);
   yield* send(student, { to: professor.address, text: request });
 
@@ -151,11 +150,10 @@ const agreedNorm = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-const actsBeforeOrdering = Effect.gen(function* () {
-  const { infrastructure, student, professor } = yield* officeHours;
-  const agree = "(agree :ontology office-hours :conversation-id o1)";
-  const inform =
-    '(inform :ontology office-hours :conversation-id o1 :slot "Tue 2pm")';
+const backToBack = Effect.gen(function* () {
+  const { student, professor } = yield* officeHours;
+  const agree = "(agree :ontology office-hours)";
+  const inform = '(inform :ontology office-hours :slot "Tue 2pm")';
   yield* send(student, { to: professor.address, text: proposal });
   yield* nextItem(professor);
   yield* send(professor, { to: student.address, text: acceptance });
@@ -163,14 +161,8 @@ const actsBeforeOrdering = Effect.gen(function* () {
   yield* send(student, { to: professor.address, text: request });
   yield* nextItem(professor);
 
-  yield* Effect.acquireUseRelease(
-    infrastructure.holdRouter,
-    () =>
-      send(professor, { to: student.address, text: agree }).pipe(
-        Effect.zipRight(send(professor, { to: student.address, text: inform })),
-      ),
-    (release) => Effect.sync(release),
-  );
+  yield* send(professor, { to: student.address, text: agree });
+  yield* send(professor, { to: student.address, text: inform });
 
   expect(yield* nextItem(student)).toMatchObject({
     message: { content: [{ type: "text", text: agree }] },
@@ -193,7 +185,7 @@ it(
 );
 
 it(
-  "judges an agent's second act after its first while the Router has not ordered either",
-  processTrace(actsBeforeOrdering),
+  "delivers an agent's two acts sent back to back, in the order sent",
+  processTrace(backToBack),
   NORMS_TEST_TIMEOUT_MS,
 );

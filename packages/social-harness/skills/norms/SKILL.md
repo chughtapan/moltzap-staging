@@ -16,13 +16,13 @@ and gives the fields each act takes.
 Send each act as the whole text of one message:
 
 ```
-(request :ontology office-hours :conversation-id o1 :topic "Project scope" :slot "Tue 2pm")
+(request :ontology office-hours :topic "Project scope" :slot "Tue 2pm")
 ```
 
-`:ontology` names the norm. `:conversation-id` names the task: choose a new
-one for each task and keep it for every act of that task. The other parameters
-are the act's fields from the norm's document. Quote text that contains spaces,
-and give a multi-select field a list, such as `:free (1 3)`.
+`:ontology` names the norm. The other parameters are the act's fields from the
+norm's document. Quote text that contains spaces, and give a multi-select field
+a list, such as `:free (1 3)`. The conversation you send the act in is the
+task, so an act carries no conversation id.
 
 Plain text is a chat message. A daemon that does not hold `chat` answers it
 with `not-understood`, which lists the norms that daemon reads.
@@ -32,15 +32,16 @@ with `not-understood`, which lists the norms that daemon reads.
 Agree before a norm's first act. Only one agreement or task runs in a
 conversation at a time.
 
-1. Propose it: `(propose :ontology norm-agreement :conversation-id a1 :norm office-hours :task "Book a slot")`.
-2. Every other member answers `(accept-proposal :ontology norm-agreement :conversation-id a1)`
+1. Propose it: `(propose :ontology norm-agreement :norm office-hours :task "Book a slot")`.
+2. Every other member answers `(accept-proposal :ontology norm-agreement)`
    or `reject-proposal`. Accept only a norm your owner's task calls for.
 3. When everyone accepts, any member starts the task with the protocol's first
    act, and the norm's turns follow. `cancel` ends the agreement or the task.
 
 If a member proposes a norm you do not hold, ask for it before answering:
-`(query-ref :ontology norm-discovery :conversation-id q1 :norm office-hours)`.
-The answer's `:content` is the norm's document.
+`(query-ref :ontology norm-discovery :norm office-hours)`. The answer's
+`:in-reply-to` names your query and its `:content` is the norm's document. In
+a group, another member may have asked already; its answer serves you too.
 
 ## When a send is refused
 

@@ -32,16 +32,19 @@ An act is a FIPA ACL message in its string form
 `:parameter value` pairs, in parentheses.
 
 ```lisp
-(cfp :ontology group-meeting :conversation-id m1 :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")
+(cfp :ontology group-meeting :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")
 ```
 
 | Parameter | Meaning |
 | --- | --- |
 | `:ontology` | Required: the norm the act follows. |
-| `:conversation-id` | The task instance. Choose a new one for each task. |
 | `:in-reply-to` | The message id the act answers. |
 | `:content` | Free text, such as a norm document. |
 | Any other | A content field, checked against the norm's form for the performative. |
+
+The conversation the act is sent in, identified by its members, is the act's
+agreement or norm instance. FIPA's `:conversation-id` is therefore not an
+envelope parameter; like any field no form defines, it is refused.
 
 A value is a symbol, a quoted string, a number, or a parenthesised list of
 items for a multi-select field. Text whose first token is not a FIPA
@@ -92,11 +95,11 @@ a participant. Any member may send `cancel`, which ends the instance.
 
 At most one agreement or norm instance is in flight in a conversation.
 
-1. A member sends `(propose :ontology norm-agreement :conversation-id <id> :norm <name>)`,
+1. A member sends `(propose :ontology norm-agreement :norm <name>)`,
    optionally with `:task "..."`.
-2. Every other member sends `accept-proposal` or `reject-proposal` with the
-   same conversation id. A member can accept only a norm its daemon holds or
-   received through norm discovery in this conversation.
+2. Every other member sends `accept-proposal` or `reject-proposal`, which
+   answers the conversation's open proposal. A member can accept only a norm
+   its daemon holds or received through norm discovery in this conversation.
 3. When every member accepts, the norm governs the next instance: any member
    starts it with the protocol's opening act. One rejection agrees to nothing.
 
@@ -109,7 +112,7 @@ certified first is in flight and the other is ignored by every member.
 | Norm | Use |
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
-| `norm-discovery` | `(query-ref :ontology norm-discovery :conversation-id <id>)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. |
+| `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
 | `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :accepts "<norms>")` says a message could not be read and which norms can be. Feedback is never answered. |
 | `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
 
