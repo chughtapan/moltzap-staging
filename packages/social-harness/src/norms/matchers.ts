@@ -3,9 +3,10 @@
  * an act of a norm this agent holds, and the conversation's norm state from
  * the permitted history, and reports one fact:
  *
- * - `norms.unparsed`: the message is not an act of a norm held here;
- * - `norms.nonconforming`: the act breaks its norm, or the history it needs is
- *   missing;
+ * - `norms.unparsed`: the message cannot be read as an act of a norm held
+ *   here, including an act whose fields its norm's form refuses;
+ * - `norms.nonconforming`: a readable act breaks its norm's turns, or the
+ *   history it needs is missing;
  * - `norms.query`: a peer's norm-discovery query this agent answers;
  * - `norms.consent`: the agent proposes or accepts a norm, which its owner
  *   approves.
@@ -16,6 +17,10 @@
 import { Effect, Option } from "effect";
 import type { Matcher, MatchInput, MatchResult } from "../firewall/chain.js";
 import type { Norm } from "./documents.js";
+import {
+  type AnswerFieldFailures,
+  answerFieldsText,
+} from "../communication/messages.js";
 import {
   type Act,
   formatAct,
@@ -43,6 +48,9 @@ interface Analysis {
 }
 
 const unmatched = { matched: false } as const;
+
+/** The `error` field of `feedback`'s `not-understood` holds at most this many characters. */
+const maximumErrorLength = 1000;
 
 /** The stateless norms, which judge an act without the acts before it. */
 const standalone: ReadonlySet<string> = new Set([
@@ -152,42 +160,38 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
   });
 }
 
-/** Text that is not an act of a held norm; a peer hears `not-understood`, unless it sent one. */
+/**
+ * Text that cannot be read as an act of a norm held here, including an act
+ * whose fields its form refuses. A peer hears `not-understood` with what failed,
+ * unless it sent one.
+ */
 function unparsed(input: MatchInput, analysis: Analysis): Matched {
-  const { reading, setting, state } = analysis;
-  const accepts = [...setting.held.keys()].join(" ");
-  let reason: string;
-  if (reading.kind === "invalid") {
-    reason = "unparsed";
-  } else if (reading.kind === "text") {
-    if (setting.held.has(builtIns.chat)) {
-      return unmatched;
-    }
-    reason = "plain-text";
-  } else if (normOf(setting, state, reading.act.ontology) === undefined) {
-    reason = "unknown-norm";
-  } else {
+  const failure = unreadable(analysis);
+  if (failure === undefined) {
     return unmatched;
   }
-  const detail = {
-    reason,
-    accepts,
-    ...(reading.kind === "invalid" ? { error: reading.error } : {}),
-  };
+  const { reading, setting } = analysis;
+  const accepts = [...setting.held.keys()].join(" ");
   const answerable =
     input.direction === "incoming" &&
     setting.held.has(builtIns.feedback) &&
     !(reading.kind === "act" && reading.act.performative === "not-understood");
   return {
     matched: true,
-    detail,
+    detail: { ...failure, accepts },
     ...(answerable
       ? {
           reply: formatAct({
             performative: "not-understood",
             ontology: builtIns.feedback,
             inReplyTo: msgIdOf(input),
-            fields: { reason, accepts },
+            fields: {
+              reason: failure.reason,
+              ...(failure.error === undefined
+                ? {}
+                : { error: failure.error.slice(0, maximumErrorLength) }),
+              accepts,
+            },
           }),
         }
       : {}),
@@ -195,12 +199,17 @@ function unparsed(input: MatchInput, analysis: Analysis): Matched {
 }
 
 /**
- * An act that breaks its norm. Without the full history before it, an act that
- * depends on that history cannot be judged and is held for missing evidence.
+ * A readable act that breaks its norm's turns or agreement. Without the full
+ * history before it, an act that depends on that history cannot be judged and
+ * is held for missing evidence.
  */
 function nonconforming(input: MatchInput, analysis: Analysis): Matched {
   const { reading, verdict, state, setting } = analysis;
-  if (reading.kind !== "act" || verdict === undefined) {
+  if (
+    reading.kind !== "act" ||
+    verdict === undefined ||
+    unreadable(analysis) !== undefined
+  ) {
     return unmatched;
   }
   const { act } = reading;
@@ -230,6 +239,39 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
     };
   }
   return unmatched;
+}
+
+/** Why a message cannot be read as an act of a norm held here, if it cannot. */
+function unreadable({ reading, setting, state, verdict }: Analysis):
+  | {
+      readonly reason: string;
+      readonly norm?: string;
+      readonly error?: string;
+      readonly fields?: AnswerFieldFailures;
+    }
+  | undefined {
+  if (reading.kind === "invalid") {
+    return { reason: "unparsed", error: reading.error };
+  }
+  if (reading.kind === "text") {
+    return setting.held.has(builtIns.chat)
+      ? undefined
+      : { reason: "plain-text" };
+  }
+  if (normOf(setting, state, reading.act.ontology) === undefined) {
+    return { reason: "unknown-norm" };
+  }
+  const breach = verdict?.kind === "breaks" ? verdict.breach : undefined;
+  if (breach?.reason !== "invalid-content") {
+    return undefined;
+  }
+  return {
+    reason: "invalid-content",
+    norm: breach.norm,
+    ...(breach.fields === undefined
+      ? {}
+      : { error: answerFieldsText(breach.fields), fields: breach.fields }),
+  };
 }
 
 /**

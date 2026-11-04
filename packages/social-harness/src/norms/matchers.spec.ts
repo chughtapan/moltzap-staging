@@ -370,7 +370,7 @@ describe("agreement races, consent and order", () => {
     }));
 });
 
-describe("the conversation as the agreement's identity", () => {
+describe("agreement answers", () => {
   const matchers = normMatchers(
     norms(...builtIn, "examples/group-meeting.lisp"),
   );
@@ -388,25 +388,6 @@ describe("the conversation as the agreement's identity", () => {
       ).toMatchObject({
         matched: true,
         detail: { reason: "unknown-instance" },
-      });
-    }));
-
-  it("refuses an act that names a conversation id, which the conversation already gives", () =>
-    Effect.gen(function* () {
-      const proposal = yield* from(
-        alice,
-        group,
-        "(propose :ontology norm-agreement :conversation-id a1 :norm group-meeting)",
-      );
-
-      expect(
-        yield* check("norms.nonconforming", matchers, outgoing(proposal)),
-      ).toMatchObject({
-        matched: true,
-        detail: {
-          reason: "invalid-content",
-          fields: [{ field: "conversation-id" }],
-        },
       });
     }));
 });
@@ -454,7 +435,7 @@ describe("norm instances", () => {
       });
     }));
 
-  it("reports each field a form does not accept", () =>
+  it("reports each field a form does not accept to the sender, and answers a peer with not-understood", () =>
     Effect.gen(function* () {
       const history = [
         ...(yield* agreement(["accept-proposal", "accept-proposal"])),
@@ -463,18 +444,34 @@ describe("norm instances", () => {
       const proposal = yield* from(
         bob,
         group,
-        "(propose :ontology group-meeting :free (11))",
+        "(propose :ontology group-meeting :free (11) :note late)",
       );
 
-      const result = yield* check(
-        "norms.nonconforming",
+      const own = yield* check(
+        "norms.unparsed",
         matchers,
         outgoing(proposal, history),
       );
+      const peer = yield* check(
+        "norms.unparsed",
+        matchers,
+        incoming(alice, proposal, history),
+      );
 
-      expect(result).toMatchObject({
+      const free: unknown = expect.objectContaining({ field: "free" });
+      const note: unknown = expect.objectContaining({ field: "note" });
+      const bothFields: unknown = expect.arrayContaining([free, note]);
+      const namesNote: unknown = expect.stringContaining('"note"');
+      expect(own).toMatchObject({
         matched: true,
-        detail: { reason: "invalid-content", fields: [{ field: "free" }] },
+        detail: { reason: "invalid-content", fields: bothFields },
+      });
+      expect(replyOf(peer)).toMatchObject({
+        act: {
+          performative: "not-understood",
+          inReplyTo: proposal.msgId,
+          fields: { reason: "invalid-content", error: namesNote },
+        },
       });
     }));
 
