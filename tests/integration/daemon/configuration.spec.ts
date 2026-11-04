@@ -1,10 +1,11 @@
-/** @file Setup stores encrypted SQL configuration independently of its source document. */
+/** @file Runtime files and deployment-prepared SQL preserve configuration and key ownership. */
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
+import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
+import { prepareDatabase } from "@moltzap/social-harness/service";
 import {
-  configureDaemon,
+  checkDatabase,
   databaseAccess,
   databaseConnection,
   getOrCreateOwnedAgent,
@@ -12,15 +13,14 @@ import {
   localOwner,
   migrateDaemon,
 } from "@moltzap/social-harness/test";
-import { ConfigProvider, Context, Effect, Exit, Layer, Redacted } from "effect";
+import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Node supplies POSIX permission constants; filesystem operations use FileSystem.
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Filesystem effects use FileSystem; Node supplies the POSIX permission constants.
 import { constants } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
-
-import { runProcess } from "../../../scripts/test/packed-workspace.js";
+import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 
 const signer = {
   crv: "Ed25519",
@@ -28,6 +28,7 @@ const signer = {
   x: "y1j1FUgbqjCPeQVEnllv-2euwn_s9DeDkfEh3gk_OJ0",
 };
 const secret = "configuration-only-test-bearer-0000000001";
+const settingsVariable = "SHARNESS_CONFIG_FILE";
 const settings = {
   port: 4319,
   host: "127.0.0.1",
@@ -43,139 +44,396 @@ const fixture = Effect.gen(function* () {
   const directory = yield* filesystem.makeTempDirectoryScoped({
     prefix: "sharness-settings-",
   });
-  const filename = join(directory, "setup.json");
+  const filename = join(directory, "settings.json");
   const locator = pathToFileURL(join(directory, "daemon.sqlite3")).href.replace(
     /^file:/u,
     "sqlite:",
   );
   const key = randomBytes(32).toString("base64url");
-  const providerFor = (database: string) =>
+  const providerFor = (database: string, unlockKey = key) =>
     ConfigProvider.fromMap(
       new Map([
+        [settingsVariable, filename],
         ["SHARNESS_DATABASE_URL", database],
-        ["SHARNESS_DATABASE_KEY", key],
+        ["SHARNESS_DATABASE_KEY", unlockKey],
       ]),
     );
   const provider = providerFor(locator);
   const write = (value: unknown) =>
     filesystem.writeFileString(filename, JSON.stringify(value));
   yield* write(settings);
-  const configure = configureDaemon(filename).pipe(
-    Effect.withConfigProvider(provider),
-  );
   const access = yield* databaseAccess.pipe(
     Effect.withConfigProvider(provider),
   );
+  const prepare = prepareDatabase.pipe(Effect.withConfigProvider(provider));
+  const sql = Context.get(
+    yield* Layer.build(databaseConnection(access.locator)),
+    SqlClient.SqlClient,
+  );
   return {
     filesystem,
+    directory,
     filename,
     write,
-    configure,
     access,
+    prepare,
     provider,
     providerFor,
+    sql,
   };
 });
 
-it("recovers encrypted settings after the setup document is removed", () =>
+const postgresFixture = Effect.gen(function* () {
+  const database = yield* acquireUnpreparedPostgres;
+  const key = randomBytes(32);
+  const provider = ConfigProvider.fromMap(
+    new Map([
+      ["SHARNESS_DATABASE_URL", Redacted.value(database.configureLocator)],
+      ["SHARNESS_DATABASE_KEY", key.toString("base64url")],
+    ]),
+  );
+  return {
+    sql: database.admin,
+    prepare: prepareDatabase.pipe(Effect.withConfigProvider(provider)),
+    check: checkDatabase(Redacted.make(key)).pipe(
+      Effect.provideService(SqlClient.SqlClient, database.admin),
+    ),
+    locator: database.configureLocator,
+  };
+});
+
+// @agent-code-guard/regression-only: These finite file, schema and key custody boundaries use real SQL and filesystem operations.
+it("names the missing settings-file variable without opening storage", () =>
+  loadDaemonSettings().pipe(
+    Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),
+    Effect.flip,
+    Effect.tap((failure) => {
+      expect(failure).toMatchObject({ reason: "environment" });
+      expect(failure.message).toContain(settingsVariable);
+    }),
+    Effect.provide(NodeContext.layer),
+  ));
+
+it("loads changed process settings from their file on every startup", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const configured = yield* runProcess(
-      process.execPath,
-      [
-        fileURLToPath(
-          new URL(
-            "../../../packages/social-harness/bin/sharnessd",
-            import.meta.url,
-          ),
-        ),
-        "configure",
-        test.filename,
-      ],
-      {
-        env: {
-          SHARNESS_DATABASE_URL: Redacted.value(test.access.locator),
-          SHARNESS_DATABASE_KEY: Buffer.from(
-            Redacted.value(test.access.unlockKey),
-          ).toString("base64url"),
-        },
-      },
+    const first = yield* loadDaemonSettings().pipe(
+      Effect.withConfigProvider(test.provider),
     );
-    expect(configured.exitCode, configured.stderr).toBe(0);
-    yield* test.filesystem.remove(test.filename);
-    const sql = Context.get(
-      yield* Layer.build(databaseConnection(test.access.locator)),
-      SqlClient.SqlClient,
+    expect(first.settings.port).toBe(settings.port);
+    expect(first.settings.authentication.kind).toBe(
+      settings.authentication.kind,
     );
-    const loaded = yield* loadDaemonSettings(test.access.unlockKey).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
+    yield* test.write({ ...settings, port: settings.port + 1 });
+    expect((yield* loadDaemonSettings(test.filename)).settings.port).toBe(
+      settings.port + 1,
     );
-    expect(loaded.registryOrigin.href).toBe(
-      new URL(settings.registryOrigin).href,
-    );
-    expect(loaded.authentication.kind).toBe(settings.authentication.kind);
-    if (loaded.authentication.kind !== "local") {
-      return yield* Effect.dieMessage("Expected the saved local credential");
-    }
-    expect(Redacted.value(loaded.authentication.credential)).toBe(secret);
-    const records = yield* sql<{
-      readonly settings: string;
-    }>`SELECT settings FROM daemon_settings`;
-    expect(JSON.stringify(records)).not.toContain(secret);
-    expect(JSON.stringify(records)).not.toContain(settings.admissionCredential);
+    expect(
+      yield* test.sql`SELECT name FROM sqlite_schema WHERE type='table'`,
+    ).toEqual([]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-// @agent-code-guard/regression-only: Real encoded paths and Unix modes cover setup without truncating an existing database.
-it("creates private encoded paths and preserves identity on reconfiguration", () =>
+it("requires the current settings file instead of retaining a stale SQL copy", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    yield* test.filesystem.remove(test.filename);
+    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+    expect(failure).toMatchObject({ reason: "document" });
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    expect(JSON.stringify(failure)).not.toContain(secret);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("resolves policy references relative to the settings file", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const policy = {
+      format: "org.social-harness/message-policy/v2",
+      mode: "enforcement",
+    };
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "policy.json"),
+      JSON.stringify(policy),
+    );
+    yield* test.write({ ...settings, messagePolicyFile: "policy.json" });
+    expect(
+      (yield* loadDaemonSettings(test.filename)).settings.messagePolicy,
+    ).toBeDefined();
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("resolves provider credential references relative to the settings file", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const providerKey = "private-decision-provider-key";
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "policy.json"),
+      JSON.stringify({
+        format: "org.social-harness/message-policy/v2",
+        mode: "enforcement",
+        text: {},
+        decisionProvider: { kind: "jev", model: "configured-model" },
+      }),
+    );
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "provider.key"),
+      providerKey,
+    );
+    yield* test.write({
+      ...settings,
+      messagePolicyFile: "policy.json",
+      decisionProviderKeyFile: "provider.key",
+    });
+    const provider = (yield* loadDaemonSettings(test.filename)).settings
+      .messagePolicy?.provider;
+    expect(provider?.kind).toBe("jev");
+    if (provider?.kind === "jev") {
+      expect(Redacted.value(provider.apiKey)).toBe(providerKey);
+    }
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("accepts public OAuth settings without allocating an owner", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const authentication = {
+      kind: "oauth",
+      resource: "https://mcp.example/mcp",
+      issuer: "https://issuer.example/",
+      scope: "use:mcp",
+      allowedOrigins: ["https://owner.example"],
+    };
+    yield* test.write({ ...settings, host: "0.0.0.0", authentication });
+    yield* test.prepare;
+    const loaded = yield* loadDaemonSettings(test.filename);
+    expect(loaded.settings.authentication).toEqual({
+      ...authentication,
+      resource: new URL(authentication.resource),
+    });
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it.each([
+  { ...settings, host: "0.0.0.0" },
+  { ...settings, porrt: settings.port },
+  { ...settings, port: 0 },
+  { ...settings, registryOrigin: "https://registry.example/path" },
+])(
+  "rejects invalid settings without disclosing their credentials: %j",
+  (document) =>
+    Effect.gen(function* () {
+      const test = yield* fixture;
+      yield* test.write(document);
+      const failure = yield* loadDaemonSettings(test.filename).pipe(
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({ reason: "document" });
+      expect(JSON.stringify(failure)).not.toContain(secret);
+      expect(JSON.stringify(failure)).not.toContain(
+        settings.admissionCredential,
+      );
+    }).pipe(Effect.provide(NodeContext.layer)),
+);
+
+it("checks an unprepared database without creating schema or key metadata", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const check = checkDatabase(test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    expect(yield* check.pipe(Effect.flip)).toMatchObject({ reason: "schema" });
+    expect(
+      yield* test.sql`SELECT name FROM sqlite_schema WHERE type='table'`,
+    ).toEqual([]);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("deployment initializes a schema-only database while runtime refuses its missing verifier", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* migrateDaemon.pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    const check = checkDatabase(test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    expect(yield* check.pipe(Effect.flip)).toMatchObject({ reason: "key" });
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
+    yield* test.prepare;
+    yield* check;
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("prepares a fresh database whose migration ledger already exists but is empty", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* Migrator.make({})({ loader: Effect.succeed([]) }).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    yield* test.prepare;
+    yield* checkDatabase(test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(1);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("never overwrites an existing verifier under another key even with zero owners", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    const before = yield* test.sql`SELECT * FROM database_encryption`;
+    const failure = yield* prepareDatabase.pipe(
+      Effect.withConfigProvider(
+        test.providerFor(
+          Redacted.value(test.access.locator),
+          randomBytes(32).toString("base64url"),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure).toMatchObject({ reason: "key" });
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(before);
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("runtime refuses the wrong key before changing retained owner state", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    const agent = yield* getOrCreateOwnedAgent(
+      localOwner,
+      test.access.unlockKey,
+    ).pipe(Effect.provideService(SqlClient.SqlClient, test.sql));
+    const before = yield* test.sql`SELECT * FROM database_encryption`;
+    expect(
+      yield* checkDatabase(Redacted.make(randomBytes(32))).pipe(
+        Effect.provideService(SqlClient.SqlClient, test.sql),
+        Effect.flip,
+      ),
+    ).toMatchObject({ reason: "key" });
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(before);
+    expect(
+      (yield* test.sql<{
+        readonly agentKey: string;
+      }>`SELECT agent_key AS "agentKey" FROM owner_bindings`).map(
+        (row) => row.agentKey,
+      ),
+    ).toEqual([agent]);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("rolls back additive schema changes and migration rows when the retained key fails", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
+    yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+    yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
+    const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+    const migrations = yield* test.sql`SELECT * FROM effect_sql_migrations`;
+    const failure = yield* prepareDatabase.pipe(
+      Effect.withConfigProvider(
+        test.providerFor(
+          Redacted.value(test.access.locator),
+          randomBytes(32).toString("base64url"),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure).toMatchObject({ reason: "key" });
+    expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+    expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual(
+      migrations,
+    );
+    yield* test.prepare;
+    yield* checkDatabase(test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("deployment refuses missing verifier metadata when an orphaned profile remains", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    yield* getOrCreateOwnedAgent(localOwner, test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    yield* test.sql.unsafe("PRAGMA foreign_keys = OFF");
+    yield* test.sql`DELETE FROM owner_bindings`;
+    yield* test.sql`DELETE FROM database_encryption`;
+    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
+      reason: "key",
+    });
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
+    expect(yield* test.sql`SELECT * FROM agent_profiles`).toHaveLength(1);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("deployment refuses to adopt missing verifier metadata for existing owners", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.prepare;
+    yield* getOrCreateOwnedAgent(localOwner, test.access.unlockKey).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
+    yield* test.sql`DELETE FROM database_encryption`;
+    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
+      reason: "key",
+    });
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(1);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("rejects older SQLite state without changing its retained records", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.sql`CREATE TABLE retained (value TEXT NOT NULL)`;
+    yield* test.sql`INSERT INTO retained VALUES ('prior installation')`;
+    yield* test.sql.unsafe("PRAGMA user_version = 1");
+    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
+      reason: "schema",
+    });
+    expect(yield* test.sql`SELECT * FROM retained`).toEqual([
+      { value: "prior installation" },
+    ]);
+    expect(
+      yield* test.sql`SELECT name FROM sqlite_schema WHERE type='table'`,
+    ).toEqual([{ name: "retained" }]);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("rolls back domain schema and migration rows when schema preparation fails", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.sql`CREATE TABLE firewall_checks (value TEXT NOT NULL)`;
+    yield* test.sql`INSERT INTO firewall_checks VALUES ('retained obstruction')`;
+    yield* test.sql.unsafe("PRAGMA user_version = 3");
+    expect(yield* test.prepare.pipe(Effect.flip)).toBeDefined();
+    expect(yield* test.sql`SELECT * FROM firewall_checks`).toEqual([
+      { value: "retained obstruction" },
+    ]);
+    expect(
+      yield* test.sql`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+    ).toEqual([{ name: "firewall_checks" }]);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("creates private encoded database paths only during deployment preparation", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     const directory = join(dirname(test.filename), "private café # space");
     const filename = join(directory, "daemon.sqlite3");
     const locator = pathToFileURL(filename).href.replace(/^file:/u, "sqlite:");
-    const configured = configureDaemon(test.filename).pipe(
+    yield* prepareDatabase.pipe(
       Effect.withConfigProvider(test.providerFor(locator)),
     );
-    yield* configured;
     expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
       constants.S_IRWXU,
     );
     expect((yield* test.filesystem.stat(filename)).mode & 0o777).toBe(
       constants.S_IRUSR | constants.S_IWUSR,
     );
-    const ownedAgent = getOrCreateOwnedAgent(
-      localOwner,
-      test.access.unlockKey,
-    ).pipe(Effect.provide(databaseConnection(Redacted.make(locator))));
-    const agentKey = yield* ownedAgent;
-    yield* test.filesystem.chmod(
-      filename,
-      constants.S_IRUSR |
-        constants.S_IWUSR |
-        constants.S_IRGRP |
-        constants.S_IROTH,
-    );
-    yield* test.filesystem.chmod(
-      directory,
-      constants.S_IRWXU | constants.S_IRGRP | constants.S_IXGRP,
-    );
-    yield* configured;
-    expect(yield* ownedAgent).toBe(agentKey);
-    expect((yield* test.filesystem.stat(filename)).mode & 0o777).toBe(
-      constants.S_IRUSR | constants.S_IWUSR,
-    );
-    expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
-      constants.S_IRWXU | constants.S_IRGRP | constants.S_IXGRP,
-    );
   }).pipe(Effect.provide(NodeContext.layer)));
 
-// @agent-code-guard/regression-only: Invalid locators must fail before file creation and omit private URL components.
 it.each(["?credential=", "#"])(
-  "rejects invalid SQLite components before touching the filesystem: %s",
+  "rejects invalid SQLite locators without creating their directories: %s",
   (suffix) =>
     Effect.gen(function* () {
       const test = yield* fixture;
       const marker = randomBytes(16).toString("hex");
-      const directory = join(dirname(test.filename), "uncreated");
+      const directory = join(test.directory, "uncreated");
       const locator =
         pathToFileURL(join(directory, "daemon.sqlite3")).href.replace(
           /^file:/u,
@@ -183,146 +441,107 @@ it.each(["?credential=", "#"])(
         ) +
         suffix +
         marker;
-      const error = yield* configureDaemon(test.filename).pipe(
+      const failure = yield* prepareDatabase.pipe(
         Effect.withConfigProvider(test.providerFor(locator)),
         Effect.flip,
       );
-      expect(error).toMatchObject({
-        _tag: "DaemonConfigurationError",
-        reason: "environment",
-      });
-      expect(JSON.stringify(error)).not.toContain(marker);
+      expect(JSON.stringify(failure)).not.toContain(marker);
       expect(yield* test.filesystem.exists(directory)).toBe(false);
     }).pipe(Effect.provide(NodeContext.layer)),
 );
 
-it("accepts public OAuth setup without creating an agent before authentication", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const document = {
-      ...settings,
-      host: "0.0.0.0",
-      authentication: {
-        kind: "oauth",
-        resource: "https://mcp.example/mcp",
-        issuer: "https://issuer.example/",
-        scope: "use:mcp",
-        allowedOrigins: ["https://owner.example"],
-      },
-    };
-    yield* test.write(document);
-    yield* test.configure;
-    const sql = Context.get(
-      yield* Layer.build(databaseConnection(test.access.locator)),
-      SqlClient.SqlClient,
-    );
-    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    const loaded = yield* loadDaemonSettings(test.access.unlockKey).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-    );
-    expect(loaded.authentication).toEqual({
-      ...document.authentication,
-      resource: new URL(document.authentication.resource),
-    });
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it.each([
-  { ...settings, host: "0.0.0.0" },
-  { ...settings, porrt: 4319 },
-  { ...settings, port: 0 },
-  { ...settings, registryOrigin: "https://registry.example/path" },
-])("rejects invalid setup without replacing saved settings", (document) =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.configure;
-    yield* test.write(document);
-    const error = yield* test.configure.pipe(Effect.flip);
-    expect(error).toBeDefined();
-    expect(JSON.stringify(error)).not.toContain(secret);
-    const sql = Context.get(
-      yield* Layer.build(databaseConnection(test.access.locator)),
-      SqlClient.SqlClient,
-    );
-    const loaded = yield* loadDaemonSettings(test.access.unlockKey).pipe(
-      Effect.provideService(SqlClient.SqlClient, sql),
-    );
-    expect(loaded.port).toBe(settings.port);
-  }).pipe(Effect.provide(NodeContext.layer)),
+it(
+  "prepares fresh PostgreSQL storage independently of runtime settings",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* postgresFixture;
+      expect(yield* test.check.pipe(Effect.flip)).toMatchObject({
+        reason: "schema",
+      });
+      expect(
+        yield* test.sql`SELECT tablename FROM pg_tables WHERE schemaname=current_schema()`,
+      ).toEqual([]);
+      yield* test.prepare;
+      yield* test.check;
+      expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(
+        1,
+      );
+      expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
 );
 
-it("rejects a different unlock key without disclosing stored plaintext", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.configure;
-    const error = yield* loadDaemonSettings(
-      Redacted.make(randomBytes(32)),
-    ).pipe(
-      Effect.provide(databaseConnection(test.access.locator)),
-      Effect.flip,
-    );
-    expect(error).toBeDefined();
-    expect(JSON.stringify(error)).not.toContain(secret);
-  }).pipe(Effect.provide(NodeContext.layer)));
+it(
+  "prepares PostgreSQL storage when its framework migration ledger is already empty",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* postgresFixture;
+      yield* Migrator.make({})({ loader: Effect.succeed([]) }).pipe(
+        Effect.provideService(SqlClient.SqlClient, test.sql),
+      );
+      yield* test.prepare;
+      yield* test.check;
+      expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(
+        1,
+      );
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
+);
 
-it("does not replace a configured database under a different unlock key", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.configure;
-    const wrong = ConfigProvider.fromMap(
-      new Map([
-        ["SHARNESS_DATABASE_URL", Redacted.value(test.access.locator)],
-        ["SHARNESS_DATABASE_KEY", randomBytes(32).toString("base64url")],
-      ]),
-    );
-    const error = yield* configureDaemon(test.filename).pipe(
-      Effect.withConfigProvider(wrong),
-      Effect.flip,
-    );
-    expect(error).toBeDefined();
-    const saved = yield* loadDaemonSettings(test.access.unlockKey).pipe(
-      Effect.provide(databaseConnection(test.access.locator)),
-    );
-    expect(saved.port).toBe(settings.port);
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it("rejects an older SQLite file without migrating or replacing its contents", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TABLE retained (value TEXT NOT NULL)`;
-      yield* sql`INSERT INTO retained VALUES ('prior installation')`;
-      yield* sql.unsafe("PRAGMA user_version = 1");
-    }).pipe(Effect.provide(databaseConnection(test.access.locator)));
-    const failure = yield* test.configure.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "stored" });
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      expect(yield* sql`SELECT * FROM retained`).toEqual([
-        { value: "prior installation" },
-      ]);
-      expect(
-        yield* sql`SELECT name FROM sqlite_schema WHERE type = 'table'`,
-      ).toEqual([{ name: "retained" }]);
-    }).pipe(Effect.provide(databaseConnection(test.access.locator)));
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it("retries first configuration after a rolled-back SQLite migration", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TABLE firewall_checks (value TEXT NOT NULL)`;
-      yield* sql`INSERT INTO firewall_checks VALUES ('retained obstruction')`;
-      expect(Exit.isFailure(yield* Effect.exit(migrateDaemon))).toBe(true);
-      expect(yield* sql`SELECT * FROM firewall_checks`).toEqual([
+it(
+  "rolls back failed PostgreSQL domain migrations while leaving only an empty bookkeeping ledger",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* postgresFixture;
+      yield* test.sql`CREATE TABLE firewall_checks (value TEXT NOT NULL)`;
+      yield* test.sql`INSERT INTO firewall_checks VALUES ('retained obstruction')`;
+      expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
+        reason: "schema",
+      });
+      expect(yield* test.sql`SELECT * FROM firewall_checks`).toEqual([
         { value: "retained obstruction" },
       ]);
-      yield* sql`DROP TABLE firewall_checks`;
-    }).pipe(Effect.provide(databaseConnection(test.access.locator)));
-    yield* test.configure;
-    const saved = yield* loadDaemonSettings(test.access.unlockKey).pipe(
-      Effect.provide(databaseConnection(test.access.locator)),
-    );
-    expect(saved.port).toBe(settings.port);
-  }).pipe(Effect.provide(NodeContext.layer)));
+      expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual([]);
+      expect(
+        yield* test.sql`SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename`,
+      ).toEqual([
+        { tablename: "effect_sql_migrations" },
+        { tablename: "firewall_checks" },
+      ]);
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
+);
+
+it(
+  "rolls back pending PostgreSQL schema and ledger changes when the retained key fails",
+  () =>
+    Effect.gen(function* () {
+      const test = yield* postgresFixture;
+      yield* test.prepare;
+      yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
+      yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+      yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
+      const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+      const migrations =
+        yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      const provider = ConfigProvider.fromMap(
+        new Map([
+          ["SHARNESS_DATABASE_URL", Redacted.value(test.locator)],
+          ["SHARNESS_DATABASE_KEY", randomBytes(32).toString("base64url")],
+        ]),
+      );
+      expect(
+        yield* prepareDatabase.pipe(
+          Effect.withConfigProvider(provider),
+          Effect.flip,
+        ),
+      ).toMatchObject({ reason: "key" });
+      expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+      expect(
+        yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+      ).toEqual(migrations);
+      yield* test.prepare;
+      yield* test.check;
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
+);

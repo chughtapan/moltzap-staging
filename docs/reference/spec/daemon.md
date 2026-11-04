@@ -13,26 +13,26 @@ multiple authenticated owners through the same endpoint.
 
 ## Process and configuration
 
-Run `sharnessd configure <settings.json>` once to validate and save configuration.
-The command creates the database schema and encrypts the saved settings and
-agent signing keys. It exits successfully only after the configuration commits.
-Invalid input does not replace a prior configuration. Keep setup documents
-private because they may contain credentials; normal startup does not read them.
+Installation prepares the database schema and encryption metadata before the
+daemon starts. `sharnessd` validates the existing schema and key, reads its
+runtime settings file, then serves MCP. It does not install releases or migrate
+the database. Deployment owns database preparation and manual upgrades.
 
-Both configuration and normal startup require:
+Startup requires:
 
 | Environment setting | Accepted value |
 | --- | --- |
 | `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
 | `SHARNESS_DATABASE_KEY` | Base64url encoding of the 32-byte encryption key; retain it with the database backup |
+| `SHARNESS_CONFIG_FILE` | Path to the private runtime settings JSON document |
 
 Start the configured service with `sharnessd`. Standard `OTEL_*` environment
-settings configure tracing. Ordinary daemon configuration is read from SQL.
-A missing configuration, incompatible SQLite file or incorrect encryption key
-refuses startup. PostgreSQL runtime credentials need data access, but schema
-changes run only through the configure command.
+settings configure tracing. A missing or invalid settings file, incompatible
+database or incorrect encryption key refuses startup. PostgreSQL runtime
+credentials need data access; schema changes require separate deployment
+credentials. Runtime startup does not modify schema or encryption metadata.
 
-The setup JSON document takes these properties. Unknown properties are refused.
+The runtime JSON document takes these properties. Unknown properties are refused.
 
 | Property | Requirement/default |
 | --- | --- |
@@ -43,15 +43,16 @@ The setup JSON document takes these properties. Unknown properties are refused.
 | `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
 | `admissionCredential` | Network admission credential used when registering an agent |
 | `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
-| `messagePolicyFile` | Optional policy file, resolved relative to the setup document |
+| `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
-| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the setup document |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document |
 | `historyExport` | Optional path for traffic export |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
-are resolved during configuration and saved in SQL. Restart to activate a new configuration.
-Each agent retains its own editable rules. Repeating a seed is allowed;
+are read at startup. Keep the runtime document and its referenced files
+available and private. Restart to activate changes. Each agent retains its own
+editable rules in SQL. Repeating a seed is allowed;
 replacing an existing identity with a different seed is refused.
 
 ### MCP authentication

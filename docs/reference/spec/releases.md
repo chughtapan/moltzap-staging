@@ -35,7 +35,7 @@ merge-triggered or manual release.
 | --- | --- |
 | `sharnessContentHash` | Packed files, executable bits and packed manifest excluding version and recorded hashes. Equality means equal code; missing or changed hashes select publication. |
 | `sharnessHostCodeHash` | Packed OpenClaw code and sibling modules reachable through exports, excluding manifest versions, recorded hashes and `@moltzap/*` pins. Determines host restart; daemon-only changes leave it unchanged. |
-| `sharnessWireVersion` | Artifact's emitted wire version, used for publication, resume and launcher compatibility. |
+| `sharnessWireVersion` | Artifact's emitted wire version, used for publication and resume compatibility. |
 
 ## Wire compatibility window
 

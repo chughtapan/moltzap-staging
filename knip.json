@@ -27,7 +27,6 @@
       "entry": [
         "src/**/*.spec.ts",
         "src/**/*.types-check.ts",
-        "src/launcher/index.ts",
         "vitest*.config.ts"
       ],
       "project": [
@@ -88,7 +87,6 @@
       "entry": [
         "**/*.spec.ts",
         "firewall/firewall-daemon.ts",
-        "daemon/launcher-provenance.ts",
         "**/*vitest*.config.ts",
         "images/nanoclaw-probe.ts"
       ],
@@ -109,6 +107,7 @@
         "*.ts"
       ],
       "ignoreDependencies": [
+        "@moltzap/openclaw-channel",
         "openclaw"
       ]
     },
@@ -127,7 +126,8 @@
     "images/daemon": {
       "ignoreDependencies": [
         "@moltzap/social-harness",
-        "@moltzap/openclaw-channel"
+        "@effect/platform-node",
+        "effect"
       ]
     },
     "plugins/shared": {

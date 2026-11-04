@@ -72,14 +72,6 @@ interface HostOptions {
 /** The image user copies fixture state so OpenClaw owns the directories it secures. */
 async function startHost(options: HostOptions): Promise<undefined> {
   const { container, daemon, directory, mcp, mcpCredentialFile } = options;
-  const inspected = await docker("docker", [
-    "inspect",
-    "--format",
-    '{{range .Mounts}}{{if eq .Destination "/opt/social-harness/launcher"}}{{.Name}}{{end}}{{end}}',
-    daemon,
-  ]);
-  const volume = inspected.stdout.trim();
-  assert.ok(volume.length > 0);
   await docker("docker", [
     "run",
     "--detach",
@@ -87,8 +79,6 @@ async function startHost(options: HostOptions): Promise<undefined> {
     container,
     "--network",
     `container:${daemon}`,
-    "--mount",
-    `type=volume,src=${volume},dst=/opt/social-harness/launcher,readonly`,
     "--mount",
     `type=bind,src=${directory},dst=/probe`,
     "--mount",

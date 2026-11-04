@@ -1,5 +1,27 @@
-# OpenClaw host loads the matched channel from the daemon launcher volume.
+# OpenClaw host and this commit's installed channel ship together.
 ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw@sha256:70b8dbd23f8d27a206f43f9828fdebc87289e50d56dc55177354c9270d764026
+FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS build
+WORKDIR /build
+ENV HUSKY=0 NX_DAEMON=false NX_NO_CLOUD=true
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .node-version nx.json tsconfig.base.json ./
+COPY scripts/build/clean-dist.ts scripts/build/clean-dist.ts
+COPY scripts/build/copy-social-harness-skills.ts scripts/build/copy-social-harness-skills.ts
+COPY scripts/build/copy-plugin-mcp.ts scripts/build/copy-plugin-mcp.ts
+COPY packages/social-harness/ packages/social-harness/
+COPY plugins/openclaw/ plugins/openclaw/
+COPY plugins/shared/ plugins/shared/
+COPY images/openclaw-agent/package.json images/openclaw-agent/package.json
+COPY images/openclaw-agent/patch-openclaw.ts images/openclaw-agent/patch-openclaw.ts
+COPY images/openclaw-agent/entrypoint.sh images/openclaw-agent/entrypoint.sh
+COPY images/openclaw-agent/configure-channel.ts images/openclaw-agent/configure-channel.ts
+RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
+RUN pnpm install --frozen-lockfile --filter @social-harness/openclaw-agent...
+RUN pnpm nx run @social-harness/openclaw-agent:build
+# The base image supplies OpenClaw's SDK; deploy only the channel's other dependencies.
+RUN npm pkg delete --prefix images/openclaw-agent devDependencies \
+  && npm pkg delete --prefix plugins/openclaw peerDependencies.openclaw peerDependenciesMeta.openclaw
+RUN pnpm deploy --filter @social-harness/openclaw-agent --prod --legacy /deploy
+
 FROM ${OPENCLAW_BASE_IMAGE} AS agent
 
 USER root
@@ -42,13 +64,14 @@ RUN case "${TARGETARCH}" in \
 USER root
 
 
-COPY patch-openclaw.ts /opt/social-harness/agent/
+COPY --from=build --chown=node:node /deploy/ /opt/social-harness/
+COPY --from=build /build/images/openclaw-agent/ /opt/social-harness/agent/
+RUN ln -s /app /opt/social-harness/node_modules/openclaw
 RUN node /opt/social-harness/agent/patch-openclaw.ts /app/dist \
     --base-image "${OPENCLAW_BASE_IMAGE}" \
     --marker /opt/social-harness/agent/openclaw-patch.json
 RUN mkdir -p /app/node_modules/@openai \
   && ln -s /app/dist/extensions/codex/node_modules/@openai/codex /app/node_modules/@openai/codex
-COPY entrypoint.sh configure-channel.ts /opt/social-harness/agent/
 ENV NODE_ENV=production
 WORKDIR /app
 USER node

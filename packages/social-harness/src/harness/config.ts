@@ -1,7 +1,6 @@
-/** @file Persists validated daemon settings and leaves only SQL access and unlocking authority outside SQL. */
+/** @file Loads runtime daemon settings and resolves their policy and norms references from one file. */
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { FileSystem } from "@effect/platform";
-import { SqlClient } from "@effect/sql";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
@@ -17,14 +16,6 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { daemonDatabaseFormat, migrateDaemon } from "../database/migrations.js";
-import { openCredential, sealCredential } from "../database/secrets.js";
-import {
-  databaseConnection,
-  executeQuery,
-  makeQueries,
-  prepareDatabaseDirectory,
-} from "../database/sql.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import {
   installedMessagePolicy,
@@ -39,7 +30,6 @@ import {
 import { RegistrationId } from "../identity/registry.js";
 import { installedNorms, loadNorms } from "../norms/configuration.js";
 import { packageVersion } from "../version.js";
-import { getOrCreateOwnedAgent, localOwner } from "./ownership.js";
 
 const configurationDocs =
   "https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration";
@@ -48,13 +38,7 @@ const configurationDocs =
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
-  readonly reason:
-    | "environment"
-    | "document"
-    | "missing"
-    | "stored"
-    | "policy"
-    | "norms";
+  readonly reason: "environment" | "document" | "policy" | "norms";
   readonly message: string;
 }> {}
 
@@ -176,7 +160,7 @@ const settings = exactStruct({
   ),
 );
 
-/** The saved model contains resolved policy and credential values, never setup-file references. */
+/** Process settings contain resolved policy and credential values for this startup. */
 export type DaemonSettings = typeof settings.Type;
 
 const seed = exactStruct({
@@ -198,235 +182,98 @@ const setup = exactStruct({
   ),
 );
 
-/** The process needs only the database locator and one canonical 32-byte unlock key. */
-export const databaseAccess = Config.all({
-  locator: Config.redacted("SHARNESS_DATABASE_URL"),
-  encodedKey: Config.redacted("SHARNESS_DATABASE_KEY"),
-}).pipe(
-  Effect.flatMap(({ locator, encodedKey }) =>
-    Schema.decodeUnknown(
-      Schema.Uint8ArrayFromBase64Url.pipe(
-        Schema.filter((bytes) => bytes.byteLength === 32),
-      ),
-    )(Redacted.value(encodedKey)).pipe(
-      Effect.map((bytes) => ({ locator, unlockKey: Redacted.make(bytes) })),
-    ),
-  ),
-  Effect.mapError(() =>
-    refused(
-      "environment",
-      "Set SHARNESS_DATABASE_URL and a base64url-encoded 32-byte SHARNESS_DATABASE_KEY",
-    ),
-  ),
-  Effect.withSpan("databaseAccess"),
-);
-
-/** Setup reads a JSON document once; ordinary startup reads the encrypted SQL record. */
+/** The document and its referenced files are read on every daemon start. */
 export const processHelp = [
-  "Usage: sharnessd configure <settings.json> | sharnessd [--help]",
+  "Usage: sharnessd [--help]",
   "",
+  "SHARNESS_CONFIG_FILE: JSON daemon settings file",
   "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
   "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key",
+  "Deployment prepares the database schema and encryption verifier before startup.",
   "Standard OTEL_* variables configure telemetry.",
   "",
   `Docs: ${configurationDocs}`,
 ].join("\n");
 
-interface SettingsTable {
-  // eslint-disable-next-line @typescript-eslint/naming-convention -- SQL owns the physical table name.
-  readonly daemon_settings: {
-    readonly singleton: number;
-    readonly settings: string;
-  };
-}
-const settingsRecord = "daemon/settings";
-
-/** Incompatible SQLite files are rejected before migration can alter their contents. */
-export const prepareDatabase = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql.onDialectOrElse({
-    sqlite: () =>
-      Effect.gen(function* () {
-        // eslint-disable-next-line @typescript-eslint/naming-convention -- SQLite owns the PRAGMA result name.
-        const [version] = yield* sql.unsafe<{ readonly user_version: number }>(
-          "PRAGMA user_version",
-        );
-        const [tables] = yield* sql<{
-          readonly count: number;
-        }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`;
-        if (
-          !(version?.user_version === 0 && tables?.count === 0) &&
-          version?.user_version !== daemonDatabaseFormat
-        ) {
-          return yield* refused(
-            "stored",
-            "Use a fresh database for this reset release",
-          );
-        }
-        yield* sql.unsafe("PRAGMA foreign_keys = ON");
-        yield* sql.unsafe("PRAGMA journal_mode = WAL");
-        yield* sql.unsafe("PRAGMA synchronous = FULL");
-      }),
-    orElse: () => Effect.void,
-  });
-}).pipe(Effect.withSpan("prepareDatabase"));
-
-/** Configuration and the optional self-hosted identity seed commit together. */
-export const configureDaemon = Effect.fn("configureDaemon")(
-  function* (filename: string) {
-    const filesystem = yield* FileSystem.FileSystem;
-    const access = yield* databaseAccess;
-    const document = yield* filesystem.readFileString(filename).pipe(
-      Effect.flatMap(
-        Schema.decodeUnknown(Schema.parseJson(setup), {
-          onExcessProperty: "error",
-        }),
-      ),
-      Effect.mapError(() =>
-        refused(
-          "document",
-          "The daemon setup document is unreadable or invalid",
-        ),
-      ),
-    );
-    const root = dirname(resolve(filename));
-    const messagePolicy = yield* loadMessagePolicy(
-      {
-        messagePolicyFile:
-          document.messagePolicyFile === undefined
-            ? undefined
-            : resolve(root, document.messagePolicyFile),
-        decisionProviderKeyFile:
-          document.decisionProviderKeyFile === undefined
-            ? undefined
-            : Redacted.make(resolve(root, document.decisionProviderKeyFile)),
-      },
-      readPolicyCredential,
-    ).pipe(
-      Effect.mapError(() =>
-        refused(
-          "policy",
-          "The configured message policy or provider credential is invalid",
-        ),
-      ),
-    );
-    const norms =
-      document.normsDirectory === undefined
-        ? undefined
-        : yield* configuredNorms(resolve(root, document.normsDirectory));
-    const values = Struct.omit(
-      document,
-      "agent",
-      "messagePolicyFile",
-      "decisionProviderKeyFile",
-      "normsDirectory",
-    );
-    const captured = yield* Schema.validate(settings)({
-      ...values,
-      messagePolicy: Option.getOrUndefined(messagePolicy),
-      ...(norms === undefined ? {} : { norms }),
-    }).pipe(
-      Effect.mapError(() =>
-        refused(
-          "document",
-          "Local bearer access requires the 127.0.0.1 listener",
-        ),
-      ),
-    );
-    yield* prepareDatabaseDirectory(access.locator).pipe(
-      Effect.catchTag("DatabaseLocatorError", () =>
-        Effect.fail(refused("environment", "The database locator is invalid")),
-      ),
-    );
-    return yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* prepareDatabase;
-      yield* migrateDaemon;
-      const queries = yield* makeQueries<SettingsTable>();
-      const prior = (yield* executeQuery(
-        queries
-          .selectFrom("daemon_settings")
-          .select("settings")
-          .where("singleton", "=", 1),
-      ))[0];
-      if (prior !== undefined) {
-        yield* openCredential(
-          prior.settings,
-          settingsRecord,
-          access.unlockKey,
-        ).pipe(
-          Effect.mapError(() =>
-            refused("stored", "Stored daemon configuration cannot be unlocked"),
-          ),
-        );
-      }
-      const encoded = yield* Schema.encode(Schema.parseJson(settings))(
-        captured,
-      );
-      const sealed = yield* sealCredential(
-        Redacted.make(encoded),
-        settingsRecord,
-        access.unlockKey,
-      );
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          if (captured.authentication.kind === "local") {
-            yield* getOrCreateOwnedAgent(
-              localOwner,
-              access.unlockKey,
-              document.agent,
-            );
-          }
-          yield* executeQuery(
-            queries
-              .insertInto("daemon_settings")
-              .values({ singleton: 1, settings: sealed })
-              .onConflict((conflict) =>
-                conflict.column("singleton").doUpdateSet({ settings: sealed }),
-              ),
-          );
-        }),
-      );
-    }).pipe(Effect.provide(databaseConnection(access.locator)));
-  },
-  Effect.scoped,
-  Effect.withSpan("configureDaemon"),
-);
-
-/** Stored settings are decoded after authenticated decryption, with safe failures at the process boundary. */
+/** Policy and norms references resolve against the runtime document, independent of the process directory. */
 export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
-  unlockKey: Redacted.Redacted<Uint8Array>,
+  filename?: string,
 ) {
-  const queries = yield* makeQueries<SettingsTable>();
-  const rows = yield* executeQuery(
-    queries
-      .selectFrom("daemon_settings")
-      .select("settings")
-      .where("singleton", "=", 1),
-  );
-  const row = rows[0];
-  if (row === undefined) {
-    return yield* refused(
-      "missing",
-      "Run sharnessd configure with the daemon setup document first",
-    );
-  }
-  return yield* openCredential(row.settings, settingsRecord, unlockKey).pipe(
-    Effect.flatMap((value) =>
-      Schema.decodeUnknown(Schema.parseJson(settings), {
+  const selected =
+    filename ??
+    (yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
+      Effect.mapError(() =>
+        refused(
+          "environment",
+          "Set SHARNESS_CONFIG_FILE to the daemon settings document",
+        ),
+      ),
+    ));
+  const filesystem = yield* FileSystem.FileSystem;
+  const document = yield* filesystem.readFileString(selected).pipe(
+    Effect.flatMap(
+      Schema.decodeUnknown(Schema.parseJson(setup), {
         onExcessProperty: "error",
-      })(Redacted.value(value)),
+      }),
     ),
     Effect.mapError(() =>
       refused(
-        "stored",
-        "Stored daemon configuration cannot be unlocked or decoded",
+        "document",
+        "The daemon settings document is unreadable or invalid",
       ),
     ),
   );
-});
+  const root = dirname(resolve(selected));
+  const messagePolicy = yield* loadMessagePolicy(
+    {
+      messagePolicyFile:
+        document.messagePolicyFile === undefined
+          ? undefined
+          : resolve(root, document.messagePolicyFile),
+      decisionProviderKeyFile:
+        document.decisionProviderKeyFile === undefined
+          ? undefined
+          : Redacted.make(resolve(root, document.decisionProviderKeyFile)),
+    },
+    readPolicyCredential,
+  ).pipe(
+    Effect.mapError(() =>
+      refused(
+        "policy",
+        "The configured message policy or provider credential is invalid",
+      ),
+    ),
+  );
+  const norms =
+    document.normsDirectory === undefined
+      ? undefined
+      : yield* configuredNorms(resolve(root, document.normsDirectory));
+  const values = Struct.omit(
+    document,
+    "agent",
+    "messagePolicyFile",
+    "decisionProviderKeyFile",
+    "normsDirectory",
+  );
+  const captured = yield* Schema.validate(settings)({
+    ...values,
+    messagePolicy: Option.getOrUndefined(messagePolicy),
+    ...(norms === undefined ? {} : { norms }),
+  }).pipe(
+    Effect.mapError(() =>
+      refused(
+        "document",
+        "Local bearer access requires the 127.0.0.1 listener",
+      ),
+    ),
+  );
+  return {
+    settings: captured,
+    ...(document.agent === undefined ? {} : { agent: document.agent }),
+  };
+}, Effect.withSpan("loadDaemonSettings"));
 
-/** The setup document's norms directory, read and checked. */
+/** The settings document's norms directory, read and checked. */
 function configuredNorms(directory: string) {
   return loadNorms(directory).pipe(
     Effect.mapError((error) =>

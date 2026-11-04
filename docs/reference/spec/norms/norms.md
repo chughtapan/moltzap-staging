@@ -122,12 +122,12 @@ The norms module supplies four matchers:
 
 ## Norms directory
 
-The setup document's `normsDirectory` names a directory holding the norm
+The runtime document's `normsDirectory` names a directory holding the norm
 documents the daemon holds, as `.lisp` files, and `rules.json`, the rule chain
-that applies the matchers. Configuration reads and checks them and saves them
-in SQL; a document that does not parse, two documents for one norm, or a rule
-naming another matcher fails configuration. Without `normsDirectory`, the
-daemon reads no norms.
+that applies the matchers. The daemon reads and checks them each time it
+starts, and every agent it serves applies them. A document that does not
+parse, two documents for one norm, or a rule naming another matcher refuses
+startup. Without `normsDirectory`, the daemon reads no norms.
 
 The package ships `config/norms/`: the built-in norms, a `rules.json` that
 answers queries and unread messages, drops nonconforming incoming acts,

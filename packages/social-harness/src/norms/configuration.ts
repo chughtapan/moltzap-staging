@@ -1,8 +1,8 @@
 /**
  * @file A daemon's norms: the documents in its norms directory and the rule
- * chain that directory's `rules.json` applies. Configuration reads and checks
- * them once and keeps them in the daemon's settings; startup builds the chain
- * from those settings.
+ * chain that directory's `rules.json` applies. The daemon reads and checks
+ * them each time it starts, and every agent it serves builds its own chain
+ * from them.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -34,7 +34,7 @@ export class NormsConfigurationError extends Data.TaggedError(
   "NormsConfigurationError",
 )<{ readonly reason: string }> {
   override get message(): string {
-    return `The norms directory is invalid: ${this.reason}. Docs: https://docs.moltzap.xyz/reference/spec/norms#norms-directory`;
+    return `The norms directory is invalid: ${this.reason}. Docs: https://docs.moltzap.xyz/reference/spec/norms/norms#norms-directory`;
   }
 }
 

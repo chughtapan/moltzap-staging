@@ -21,7 +21,8 @@ import {
   type ToolResult,
 } from "@moltzap/social-harness";
 import {
-  configureDaemon as configure,
+  loadDaemonSettings,
+  prepareDatabase,
   WireVersions,
 } from "@moltzap/social-harness/test";
 import {
@@ -88,6 +89,8 @@ export interface ProcessInfrastructure {
   readonly restartRouter: Effect.Effect<void, ProcessTestError>;
   /** Pauses the current Router until the returned release function is called. */
   readonly holdRouter: Effect.Effect<() => void>;
+  /** Pauses registration while a first authenticated connection acquires its agent. */
+  readonly holdRegistry: Effect.Effect<() => void>;
   /** Recreates the empty in-memory Registry database and restarts both network services. */
   readonly resetNetwork: Effect.Effect<void, ProcessTestError>;
 }
@@ -619,7 +622,7 @@ export const acquireProcessInfrastructureFrom = (
 
     const resetNetwork = Effect.gen(function* () {
       yield* stopProcess(yield* Ref.get(router));
-      yield* Scope.close(yield* Ref.get(registry), Exit.void);
+      yield* Scope.close((yield* Ref.get(registry)).scope, Exit.void);
       yield* Ref.set(registry, yield* startRegistry);
       yield* Ref.set(router, yield* startRouter);
     });
@@ -630,7 +633,10 @@ export const acquireProcessInfrastructureFrom = (
       registrySignerPublicKeyJson,
       temporaryDirectory,
       restartRouter,
-      holdRouter: pauseRouter(router),
+      holdRouter: Ref.get(router).pipe(Effect.flatMap(pauseProcess)),
+      holdRegistry: Ref.get(registry).pipe(
+        Effect.flatMap((entry) => pauseProcess(entry.process)),
+      ),
       resetNetwork,
     };
   }).pipe(Effect.withSpan("acquireProcessInfrastructureFrom"));
@@ -682,7 +688,9 @@ export const makeDaemonProcessFixture = (
       principalId: makeIdentifier("prn_"),
       agentName,
     });
+    const setupFile = join(directory, "setup.json");
     const environment = {
+      SHARNESS_CONFIG_FILE: setupFile,
       SHARNESS_DATABASE_URL:
         options.database === undefined
           ? pathToFileURL(
@@ -691,7 +699,6 @@ export const makeDaemonProcessFixture = (
           : Redacted.value(options.database.runtimeLocator),
       SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
     };
-    const setupFile = join(directory, "setup.json");
     yield* writePrivateFile(
       setupFile,
       JSON.stringify({
@@ -711,7 +718,13 @@ export const makeDaemonProcessFixture = (
         ...setupChanges,
       }),
     );
-    yield* configure(setupFile).pipe(
+    yield* loadDaemonSettings(setupFile).pipe(
+      Effect.provide(NodeFileSystem.layer),
+      Effect.mapError((cause) =>
+        processTestError("daemon settings are invalid", cause),
+      ),
+    );
+    yield* prepareDatabase.pipe(
       Effect.provide(NodeFileSystem.layer),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(
@@ -756,7 +769,7 @@ export const makeDaemonProcessFixture = (
     };
   }).pipe(Effect.withSpan("makeDaemonProcessFixture"));
 
-/** Re-runs the real setup operation with explicit document changes before starting a process. */
+/** Validates explicit file changes for the next process startup without changing SQL configuration. */
 export function configureDaemonFixture(
   fixture: DaemonProcessFixture,
   changes: Readonly<Record<string, unknown>>,
@@ -779,24 +792,7 @@ export function configureDaemonFixture(
       filename,
       JSON.stringify({ ...current, ...changes }),
     );
-    yield* configure(filename).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries({
-              ...fixture.environment,
-              ...(fixture.configureLocator === undefined
-                ? {}
-                : {
-                    SHARNESS_DATABASE_URL: Redacted.value(
-                      fixture.configureLocator,
-                    ),
-                  }),
-            }),
-          ),
-        ),
-      ),
-    );
+    yield* loadDaemonSettings(filename);
     return fixture;
   }).pipe(
     Effect.provide(NodeFileSystem.layer),
@@ -1021,14 +1017,14 @@ function startNetworkRegistry(
       Scope.make(),
       (acquired) => Scope.close(acquired, Exit.void),
     );
-    yield* startPgliteRegistry({
+    const process = yield* startPgliteRegistry({
       postgresqlPort,
       registryPort,
       registryKeyPath,
       admissionCredential: ADMISSION_CREDENTIAL,
       command,
     }).pipe(Scope.extend(registryScope));
-    return registryScope;
+    return { scope: registryScope, process };
   });
 }
 
@@ -1149,7 +1145,7 @@ function launchCommand(
 /** Daemon compositions select their test wire policy before process startup. */
 function serviceScript(versions: ProcessWireVersions): string {
   return `import { NodeRuntime } from "@effect/platform-node";
-import { configureDaemon as configure, WireVersions } from "@moltzap/social-harness/test";
+import { WireVersions } from "@moltzap/social-harness/test";
 import { daemonLayer } from "@moltzap/social-harness/service";
 import { ConfigProvider, Effect, Layer } from "effect";
 Layer.launch(daemonLayer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
@@ -1168,13 +1164,11 @@ function startPglite(port: number) {
   );
 }
 
-function pauseRouter(router: Ref.Ref<RunningProcess>) {
-  return Ref.get(router).pipe(
-    Effect.map((running) => {
-      running.child.kill("SIGSTOP");
-      return () => {
-        running.child.kill("SIGCONT");
-      };
-    }),
-  );
+function pauseProcess(running: RunningProcess) {
+  return Effect.sync(() => {
+    running.child.kill("SIGSTOP");
+    return () => {
+      running.child.kill("SIGCONT");
+    };
+  });
 }

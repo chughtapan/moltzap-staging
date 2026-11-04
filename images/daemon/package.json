@@ -1,10 +1,11 @@
 {
   "name": "@social-harness/daemon",
   "private": true,
-  "description": "The daemon image's seed: the Client and OpenClaw channel the launcher falls back to",
+  "description": "The installed Social Harness daemon and its production dependencies",
   "dependencies": {
     "@moltzap/social-harness": "workspace:*",
-    "@moltzap/openclaw-channel": "workspace:*"
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:"
   },
   "nx": {
     "targets": {
