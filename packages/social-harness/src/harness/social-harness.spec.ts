@@ -1,13 +1,21 @@
 /** @file Main-service behavior across registration, policy assessment, delivery and history recovery. */
 
 import { scopedLive as it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Schedule, Schema, Scope } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Logger,
+  Schedule,
+  Schema,
+  Scope,
+} from "effect";
 import { expect } from "vitest";
 import type { DecisionRequest } from "../firewall/check.js";
 import type { AgentCard } from "../identity/agent-cards.js";
 import type { InboxEntry } from "../index.js";
 import type { ReadHistoryResult, SendRequest } from "./social-harness.js";
-import type { HistoryExportRecord } from "./traffic-export.js";
 import {
   encodeCollectiveContent,
   MessageAddressInput,
@@ -821,12 +829,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
-    const exported: HistoryExportRecord[] = [];
     const runtime = yield* subject.open({
-      historyExport: (record) =>
-        Effect.sync(() => {
-          exported.push(record);
-        }),
       policy: firewallOptions({
         decide: (request) =>
           Deferred.succeed(entered, undefined).pipe(
@@ -843,9 +846,6 @@ it("retains a draft's input while its caller changes the original object", () =>
     yield* Fiber.join(sending);
     expect(subject.submitted).toMatchObject([
       { content: [{ text: "Captured draft" }] },
-    ]);
-    expect(exported).toMatchObject([
-      { kind: "outbound", input: { text: "Captured draft" } },
     ]);
   }));
 
@@ -869,22 +869,28 @@ it.each(hiddenSends)(
   (request) =>
     Effect.gen(function* () {
       const subject = yield* makeHarnessFixture;
-      const exported: HistoryExportRecord[] = [];
+      const logs: Array<{
+        message: unknown;
+        annotations: Record<string, unknown>;
+      }> = [];
+      const logger = Logger.make(({ message, annotations }) => {
+        logs.push({ message, annotations: Object.fromEntries(annotations) });
+      });
       const runtime = yield* subject.open({
         hideGroups: true,
         hideCollectives: true,
-        historyExport: (record) =>
-          Effect.sync(() => {
-            exported.push(record);
-          }),
       });
       expect(
-        yield* runtime.harness.send(request).pipe(Effect.flip),
+        yield* runtime.harness
+          .send(request)
+          .pipe(Effect.flip, Effect.provide(Logger.add(logger))),
       ).toMatchObject({ reason: "content-invalid" });
       expect(subject.submitted).toEqual([]);
-      expect(exported).toMatchObject([
-        { kind: "outbound", input: request, outcome: { kind: "failed" } },
-      ]);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]?.message).toEqual(["Send failed"]);
+      expect(typeof logs[0]?.annotations.agentKey).toBe("string");
+      expect(logs[0]?.annotations.error).toBe("SendError");
+      expect(logs[0]?.annotations.reason).toContain("content is invalid");
     }),
 );
 
