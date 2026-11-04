@@ -54,6 +54,7 @@ const privacy = {
 const evidence: FirewallEvidence = {
   history: [],
   earlierHistoryOmitted: false,
+  pendingOutgoing: [],
   gaps: [],
 };
 const privateProviderResponse = "private provider explanation";

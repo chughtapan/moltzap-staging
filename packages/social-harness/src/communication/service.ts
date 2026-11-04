@@ -92,11 +92,11 @@ import {
 import {
   type EndpointStoreError,
   failMessage,
-  hasPendingMessages,
   initializeCommunication,
   readAcceptedMessage,
   readStoredConversation as readConversation,
   readMemberships,
+  readPendingMessages,
   readRecentConversation,
   readUnpreparedMessages,
   acceptMessage as storedAcceptMessage,
@@ -134,7 +134,11 @@ export interface HistoryPage extends PaginatedResult {
     readonly messageBytes: number;
   }>;
   readonly earlierMessagesOmitted: boolean;
-  readonly pendingOutgoing: boolean;
+  /**
+   * This agent's accepted messages that the Router has not ordered yet, in the
+   * order they were accepted. They are not in `entries`.
+   */
+  readonly pendingOutgoing: readonly Message[];
 }
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Named Effect schemas and their decoded values share one public contract. */
 /** Encodes the fixed semantic work that Communication accepts. */
@@ -420,7 +424,7 @@ const readHistory = Effect.fn("Communication.readHistory")(function* (
       return {
         entries: [],
         earlierMessagesOmitted: false,
-        pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
+        pendingOutgoing: yield* readPendingMessages(agentKey, conversationId),
       };
     }
     return yield* historyGap();
@@ -447,7 +451,7 @@ const readHistory = Effect.fn("Communication.readHistory")(function* (
         });
   return {
     ...page,
-    pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
+    pendingOutgoing: yield* readPendingMessages(agentKey, conversationId),
   } satisfies HistoryPage;
 }, mapHistoryErrors);
 

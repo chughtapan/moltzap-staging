@@ -96,10 +96,17 @@ function check(
     : found.match(input);
 }
 
+/** What the evidence lacks or holds beyond its ordered history. */
+interface EvidenceOptions {
+  readonly earlierHistoryOmitted?: boolean;
+  readonly pendingOutgoing?: readonly Message[];
+}
+
 function incoming(
   self: AgentCard,
   message: Message,
   history: readonly Message[] = [],
+  { pendingOutgoing = [] }: EvidenceOptions = {},
 ): MatchInput {
   return {
     direction: "incoming",
@@ -108,6 +115,7 @@ function incoming(
     evidence: {
       history: history.map((sent) => ({ message: sent, visibleToAgent: true })),
       earlierHistoryOmitted: false,
+      pendingOutgoing,
       gaps: [],
     },
   };
@@ -116,7 +124,7 @@ function incoming(
 function outgoing(
   message: Message,
   history: readonly Message[] = [],
-  earlierHistoryOmitted = false,
+  { earlierHistoryOmitted = false, pendingOutgoing = [] }: EvidenceOptions = {},
 ): MatchInput {
   return {
     direction: "outgoing",
@@ -125,6 +133,7 @@ function outgoing(
     evidence: {
       history: history.map((sent) => ({ message: sent, visibleToAgent: true })),
       earlierHistoryOmitted,
+      pendingOutgoing,
       gaps: [],
     },
   };
@@ -450,7 +459,7 @@ describe("norm instances", () => {
         yield* check(
           "norms.nonconforming",
           matchers,
-          outgoing(accept, [], true),
+          outgoing(accept, [], { earlierHistoryOmitted: true }),
         ),
       ).toMatchObject({
         matched: true,
@@ -458,8 +467,107 @@ describe("norm instances", () => {
         detail: { reason: "history-unavailable" },
       });
       expect(
-        yield* check("norms.nonconforming", matchers, outgoing(chat, [], true)),
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(chat, [], { earlierHistoryOmitted: true }),
+        ),
       ).toEqual({ matched: false });
+    }));
+});
+
+describe("acts the Router has not ordered yet", () => {
+  const matchers = normMatchers(
+    norms(...builtIn, "examples/office-hours.lisp"),
+  );
+  const pair = [alice, bob];
+
+  /** Bob proposes office-hours, Alice accepts, and Bob requests a slot. */
+  const requested = Effect.all([
+    from(
+      bob,
+      pair,
+      '(propose :ontology norm-agreement :conversation-id a1 :norm office-hours :task "Book a slot")',
+    ),
+    from(
+      alice,
+      pair,
+      "(accept-proposal :ontology norm-agreement :conversation-id a1)",
+    ),
+    from(
+      bob,
+      pair,
+      '(request :ontology office-hours :conversation-id o1 :topic "Scope" :slot "Tue 2pm")',
+    ),
+  ]);
+
+  it("judges an outgoing act while the agent's own acts wait to be ordered", () =>
+    Effect.gen(function* () {
+      const history = yield* requested;
+      const agree = yield* from(
+        alice,
+        pair,
+        "(agree :ontology office-hours :conversation-id o1)",
+      );
+      const inform = yield* from(
+        alice,
+        pair,
+        '(inform :ontology office-hours :conversation-id o1 :slot "Tue 2pm")',
+      );
+
+      const result = yield* check(
+        "norms.nonconforming",
+        matchers,
+        outgoing(inform, history, { pendingOutgoing: [agree] }),
+      );
+
+      expect(result).toEqual({ matched: false });
+    }));
+
+  it("refuses an outgoing act out of turn after the agent's own act still waiting to be ordered", () =>
+    Effect.gen(function* () {
+      const history = yield* requested;
+      const agree = yield* from(
+        alice,
+        pair,
+        "(agree :ontology office-hours :conversation-id o1)",
+      );
+      const again = yield* from(
+        alice,
+        pair,
+        "(agree :ontology office-hours :conversation-id o1)",
+      );
+
+      const result = yield* check(
+        "norms.nonconforming",
+        matchers,
+        outgoing(again, history, { pendingOutgoing: [agree] }),
+      );
+
+      expect(result).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn" },
+      });
+    }));
+
+  it("judges an incoming act on the ordered history alone", () =>
+    Effect.gen(function* () {
+      const [proposal, acceptance, request] = yield* requested;
+      const note = yield* from(
+        alice,
+        pair,
+        "One moment, checking the calendar.",
+      );
+
+      const result = yield* check(
+        "norms.nonconforming",
+        matchers,
+        incoming(alice, request, [proposal, acceptance], {
+          pendingOutgoing: [note],
+        }),
+      );
+
+      expect(result).toEqual({ matched: false });
     }));
 });
 

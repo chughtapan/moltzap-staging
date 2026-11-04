@@ -793,6 +793,11 @@ function saveDecision(store: FirewallStore, ...decisions: readonly Decision[]) {
     : store.saveDecisions(completions);
 }
 
+/**
+ * Checks candidates against the text rules. The classifier sees only ordered
+ * history, so this agent's messages the Router has not ordered yet count as a
+ * gap in it.
+ */
 function assess(
   policy: Policy,
   self: AgentCard,
@@ -835,7 +840,12 @@ function assess(
         earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
         now,
         facts: policy?.options.configuration.facts ?? [],
-        gaps: candidate.evidence.gaps,
+        gaps: [
+          ...(candidate.evidence.pendingOutgoing.length === 0
+            ? []
+            : ["An earlier outgoing message is not yet complete."]),
+          ...candidate.evidence.gaps,
+        ],
       };
       inputs.push({
         direction,

@@ -320,7 +320,7 @@ it("retains offline messages across cancelled waits and rolls acceptance back wi
     ).toEqual({
       entries: [],
       earlierMessagesOmitted: false,
-      pendingOutgoing: false,
+      pendingOutgoing: [],
     });
     yield* communication.send(message).pipe(Effect.timeout("1 second"));
     yield* communication.send(message);
@@ -329,7 +329,7 @@ it("retains offline messages across cancelled waits and rolls acceptance back wi
     ).toEqual({
       entries: [],
       earlierMessagesOmitted: false,
-      pendingOutgoing: true,
+      pendingOutgoing: [message],
     });
     expect(
       yield* communication
