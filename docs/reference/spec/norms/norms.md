@@ -54,31 +54,44 @@ parameters.
 
 ## Norm documents
 
-A document describes one norm in the same syntax, with `;` comments:
+A document describes one norm in the same syntax, with `;` comments. This
+excerpt of the shipped `office-hours` norm gives two of its acts:
 
 ```lisp
-(norm office-hours :protocol fipa-request :initiator Student :participant Professor
-      :description "A student requests an office-hours slot; the professor confirms it or refuses.")
-(content request
-  (field topic :type string :max-length 300 :description "What the student wants to discuss.")
-  (field slot :type string :max-length 80 :description "The slot the student asks for."))
-(content agree)
-(rule "The student asks only for a slot during the professor's posted office hours.")
+(norm office-hours :initiator Student :participant Professor
+      :description "A student asks to meet about a topic; the professor offers slots, the student picks one or none, and the professor confirms, holds or escalates.")
+(content request :by Student :unless open :initiates (open offer-due)
+  (field topic :type string :max-length 300 :description "What the student wants to discuss."))
+(content propose :by Professor :when offer-due :max 2
+         :initiates offered :terminates (offer-due decision-due checked-back)
+  (field option1 :type string :max-length 80 :description "A slot the professor offers.")
+  (field option2 :type string :max-length 80 :description "A second slot."))
+(rule "The professor offers only free slots within the posted office hours.")
 ```
 
-- `(norm ...)` names the norm, one of the protocols below with role names for
-  its initiator and participants, and a description. A norm without a protocol,
-  such as `chat`, has acts that stand alone.
-- `(content <performative> ...)` lists the performative's fields. A field has a
-  `:type` of `string`, `number`, `integer`, `boolean`, `select` or
-  `multi-select`, and takes `:description`, `:optional true`, `:min-length` and
-  `:max-length` for text, `:minimum` and `:maximum` for numbers, and
-  `:choices (...)` for selections. Fields map to the MCP form-mode grammar that
+- `(norm ...)` names the norm, the roles of its initiator and participants, and
+  a description. Its acts take turns by a [FIPA protocol](#protocols) that
+  `:protocol` names, or by [their own turns](#a-norms-own-turns). A norm with
+  neither, such as `chat`, has no roles and acts that stand alone.
+- `(content <performative> ...)` gives the act's own turn, in a norm without a
+  protocol, then lists its fields. A field has a `:type` of `string`,
+  `number`, `integer`, `boolean`, `select` or `multi-select`, and takes
+  `:description`, `:optional true`, `:min-length` and `:max-length` for text,
+  `:minimum` and `:maximum` for numbers, and `:choices (...)` for selections.
+  Fields map to the MCP form-mode grammar that
   [collective requests](../communication/collectives.md) use. A performative
   without a form takes no fields.
 - `(rule "...")` states a rule in English. Rules are not yet checked.
 
-## Protocols
+## Turns
+
+An agreed norm's acts take turns within one instance. The member that sends
+the instance's opening act is the initiator; every other member is a
+participant. Any member may send `cancel`, which ends the instance.
+
+### Protocols
+
+A norm that names a protocol follows its FIPA interaction protocol:
 
 | Protocol | Opening act | Then |
 | --- | --- | --- |
@@ -87,8 +100,33 @@ A document describes one norm in the same syntax, with `;` comments:
 | `fipa-request` | `request` | A participant may `agree`, then one final `inform`, `refuse` or `failure` ends it. |
 | `fipa-contract-net` | `cfp` | Each participant sends `propose` or `refuse` once; then the initiator sends `accept-proposal` or `reject-proposal`, which ends it. |
 
-The member that sends the opening act is the initiator; every other member is
-a participant. Any member may send `cancel`, which ends the instance.
+### A norm's own turns
+
+A norm without a protocol decides its turns through facts: names the norm
+chooses, such as `offer-due`, that hold while an instance is in flight. Each
+act needs some facts to hold and others not to, and each act starts and ends
+facts, so the facts that hold decide which acts may follow. The facts are
+derived from the conversation's history, so every member reaches the same
+facts.
+
+| Keyword | Meaning |
+| --- | --- |
+| `:by <role>` | The role that sends the act. Every act but `cancel` names one. |
+| `:when (<fact> ...)` | Facts that must hold for the act. |
+| `:unless (<fact> ...)` | Facts that must not hold for the act. |
+| `:initiates (<fact> ...)` | Facts that hold after the act. |
+| `:terminates (<fact> ...)` | Facts that stop holding after the act, unless it also initiates them. Ending a fact that does not hold does nothing. |
+| `:max <n>` | The most times the act may occur in one instance. |
+
+An act `:by` the norm's `:initiator` role with no `:when` facts starts an
+instance, and the instance ends when no fact holds. A document is invalid when
+an act names a fact that no act initiates, or when no act can start an
+instance.
+
+In `office-hours`, the student's `request` starts `open` and `offer-due`.
+Only the professor's `propose` and `failure` need `offer-due`, so the professor
+answers next. Once the student has declined two offers, `propose` has reached
+its `:max`, and the professor can only escalate with `failure`.
 
 ## Agreement
 
@@ -100,9 +138,9 @@ At most one agreement or norm instance is in flight in a conversation.
    answers the conversation's open proposal. A member can accept only a norm
    its daemon holds or received through norm discovery in this conversation.
 3. When every member accepts, the norm governs the next instance: any member
-   starts it with the protocol's opening act. One rejection agrees to nothing.
+   starts it with an opening act. One rejection agrees to nothing.
 
-The instance ends when its protocol completes or a member cancels it; the next
+The instance ends when its turns complete or a member cancels it; the next
 instance needs a new agreement. When two members propose at once, the proposal
 certified first is in flight and the other is ignored by every member.
 
@@ -148,4 +186,4 @@ text with `not-understood`.
 ## Reading norms
 
 With norms, the MCP tool `read_norms` lists each held norm's name,
-description, protocol and document.
+description, protocol if it names one, and document.

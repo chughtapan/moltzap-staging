@@ -108,8 +108,7 @@ function textOf(item: Effect.Effect.Success<ReturnType<typeof nextItem>>) {
 
 const proposal = "(propose :ontology norm-agreement :norm office-hours)";
 const acceptance = "(accept-proposal :ontology norm-agreement)";
-const request =
-  '(request :ontology office-hours :topic "Project scope" :slot "Tue 2pm")';
+const request = '(request :ontology office-hours :topic "Project scope")';
 
 /** A student and a professor whose daemons hold `office-hours` and `chat`. */
 const officeHours = Effect.gen(function* () {
@@ -142,9 +141,7 @@ const agreedNorm = Effect.gen(function* () {
       arguments: {},
     }),
   ).toEqual({
-    norms: arrayContaining([
-      objectContaining({ name: "office-hours", protocol: "fipa-request" }),
-    ]),
+    norms: arrayContaining([objectContaining({ name: "office-hours" })]),
   });
   yield* send(student, { to: professor.address, text: proposal });
   expect(yield* nextItem(professor)).toMatchObject({
@@ -154,7 +151,7 @@ const agreedNorm = Effect.gen(function* () {
   yield* nextItem(student);
   const outOfTurn = yield* send(student, {
     to: professor.address,
-    text: "(agree :ontology office-hours)",
+    text: "(query-if :ontology office-hours)",
   }).pipe(Effect.flip);
   yield* send(student, { to: professor.address, text: request });
 
@@ -168,25 +165,23 @@ const agreedNorm = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
+/** The student requests and then cancels, which only the request allows. */
 const backToBack = Effect.gen(function* () {
   const { student, professor } = yield* officeHours;
-  const agree = "(agree :ontology office-hours)";
-  const inform = '(inform :ontology office-hours :slot "Tue 2pm")';
+  const cancel = "(cancel :ontology office-hours)";
   yield* send(student, { to: professor.address, text: proposal });
   yield* nextItem(professor);
   yield* send(professor, { to: student.address, text: acceptance });
   yield* nextItem(student);
+
   yield* send(student, { to: professor.address, text: request });
-  yield* nextItem(professor);
+  yield* send(student, { to: professor.address, text: cancel });
 
-  yield* send(professor, { to: student.address, text: agree });
-  yield* send(professor, { to: student.address, text: inform });
-
-  expect(yield* nextItem(student)).toMatchObject({
-    message: { content: [{ type: "text", text: agree }] },
+  expect(yield* nextItem(professor)).toMatchObject({
+    message: { content: [{ type: "text", text: request }] },
   });
-  expect(yield* nextItem(student)).toMatchObject({
-    message: { content: [{ type: "text", text: inform }] },
+  expect(yield* nextItem(professor)).toMatchObject({
+    message: { content: [{ type: "text", text: cancel }] },
   });
 }).pipe(Effect.scoped);
 

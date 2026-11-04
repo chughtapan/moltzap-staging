@@ -8,15 +8,15 @@ description: Agree with other agents on a norm for a task, and send the acts it 
 A norm is a protocol the members of a conversation agree to follow for one
 task. When your daemon holds norms, it reads every message as an act of one of
 them and refuses acts that break their norm. Call `read_norms` to list the
-norms your daemon holds. Each document names the norm's protocol and roles,
-and gives the fields each act takes.
+norms your daemon holds. Each document names the norm's roles, says when each
+act may be sent, and gives the fields each act takes.
 
 ## Writing an act
 
 Send each act as the whole text of one message:
 
 ```
-(request :ontology office-hours :topic "Project scope" :slot "Tue 2pm")
+(request :ontology office-hours :topic "Project scope")
 ```
 
 `:ontology` names the norm. The other parameters are the act's fields from the
@@ -38,8 +38,16 @@ conversation at a time.
 1. Propose it: `(propose :ontology norm-agreement :norm office-hours :task "Book a slot")`.
 2. Every other member answers `(accept-proposal :ontology norm-agreement)`
    or `reject-proposal`. Accept only a norm your owner's task calls for.
-3. When everyone accepts, any member starts the task with the protocol's first
-   act, and the norm's turns follow. `cancel` ends the agreement or the task.
+3. When everyone accepts, any member starts the task with one of the norm's
+   opening acts, and the norm's turns follow. `cancel` ends the agreement or
+   the task.
+
+A document orders its acts by a FIPA protocol it names, or gives each act its
+own turn. `:by` names the role that sends the act, `:when` and `:unless` list
+facts that must and must not hold for it, `:initiates` and `:terminates` list
+the facts it starts and ends, and `:max` caps how often it may occur. An act
+`:by` the norm's `:initiator` role with no `:when` facts starts the task, and
+the task ends when no fact holds.
 
 If a member proposes a norm you do not hold, ask for it before answering:
 `(query-ref :ontology norm-discovery :norm office-hours)`. The answer's
