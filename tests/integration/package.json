@@ -10,7 +10,6 @@
         "inputs": [
           "sources",
           "!{projectRoot}/communication/published-peers.spec.ts",
-          "!{projectRoot}/daemon/launcher-upgrades.spec.ts",
           "!{projectRoot}/vitest.published.config.ts",
           "!{projectRoot}/images/**",
           "!{projectRoot}/README.md",

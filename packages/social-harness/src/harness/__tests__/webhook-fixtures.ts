@@ -6,7 +6,16 @@ import {
   HttpClientResponse,
 } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
-import { Effect, Match, Redacted, Schema, Stream } from "effect";
+import {
+  Effect,
+  Exit,
+  Match,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
@@ -138,10 +147,12 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   unlockKey?: Redacted.Redacted<Uint8Array>,
 ) {
   const key = unlockKey ?? Redacted.make(new Uint8Array(32).fill(7));
-  const gate = yield* Effect.makeSemaphore(1);
   let status = 200;
   let challengeValid = true;
   let onEvent = Effect.void;
+  const currentScope = yield* Ref.make<Scope.CloseableScope | undefined>(
+    undefined,
+  );
   const posts: Array<{
     readonly body: string;
     readonly headers: Readonly<Record<string, string>>;
@@ -158,7 +169,6 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     }).pipe(Effect.withSpan("webhookCallback")),
   );
   return {
-    gate,
     posts,
     status: (value: number) => {
       status = value;
@@ -169,11 +179,20 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     onEvent: (effect: Effect.Effect<void>) => {
       onEvent = effect;
     },
-    acquire: makeWebhookEvents(agentKey ?? store.directory, gate, key).pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
-      Effect.provideService(SocialHarness, store.harness),
-      Effect.provideService(SqlClient.SqlClient, store.sql),
-    ),
+    acquire: Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const previous = yield* Ref.getAndSet(currentScope, scope);
+      if (previous !== undefined) {
+        yield* Scope.close(previous, Exit.void);
+      }
+      yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
+      return yield* makeWebhookEvents(agentKey ?? store.directory, key).pipe(
+        Scope.extend(scope),
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(SocialHarness, store.harness),
+        Effect.provideService(SqlClient.SqlClient, store.sql),
+      );
+    }),
   };
 });
 

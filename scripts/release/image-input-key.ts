@@ -11,7 +11,6 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { parse } from "yaml";
 import {
-  admittedContext,
   dockerContextInputs,
   type DockerRuntime,
 } from "./dockerfile-inputs.ts";
@@ -56,7 +55,7 @@ const IMAGE_UNHASHED_FIELDS: ReadonlySet<string> = new Set([
   "sharnessWireVersion",
 ]);
 
-/** The daemon's launcher reads the release-written fields of the manifests its seed ships, so its key hashes them whole. */
+/** Installed packages report release-written versions, so their image keys retain whole manifests. */
 const WHOLE_MANIFESTS: ReadonlySet<string> = new Set();
 
 /** Image names are the only package layout choices the command fixes. */
@@ -188,20 +187,19 @@ function serviceInputs(
         unhashed: IMAGE_UNHASHED_FIELDS,
       });
     }
-    case "daemon": {
-      const root = "images/daemon";
+    case "daemon":
+    case "openclaw-agent": {
+      const root = `images/${service}`;
       return builtInputs(tree, roots, {
         name: packageName(roots, root),
         root,
         own: [`${root}/package.json`],
-        ...seedInputs(tree, root, roots),
+        ...installedInputs(tree, root, roots),
         directory: root,
-        stage: "launcher",
+        stage: service === "daemon" ? "daemon" : "host",
         unhashed: WHOLE_MANIFESTS,
       });
     }
-    case "openclaw-agent":
-      return hostInputs(tree, "images/openclaw-agent");
     default:
       return absurd(service);
   }
@@ -293,34 +291,12 @@ function packageName(roots: ReadonlyMap<string, string>, root: string): string {
   return name;
 }
 
-/** A host recipe builds from its own directory, so its key covers the Dockerfile, `.dockerignore` and the files that file admits. */
-function hostInputs(tree: Tree, directory: string): ImageInputs {
-  const image = [
-    ...new Set([
-      `${directory}/Dockerfile`,
-      ...[`${directory}/.dockerignore`].filter((file) => tree.files.has(file)),
-      ...admittedContext(tree, directory),
-    ]),
-  ];
-  return {
-    own: [],
-    modules: [],
-    tooling: [],
-    locked: [],
-    runtime: [],
-    image,
-    key: digestOf(
-      image.map((file) => committedEntry(tree, file, WHOLE_MANIFESTS)),
-    ),
-  };
-}
-
 /**
- * The seed ships each runtime workspace dependency whole: what it packs from
+ * Deployment ships each runtime workspace dependency whole: what it packs from
  * source, including bins and assets nothing imports, and what its compiler
  * emits. Tests its compiler excludes stay out.
  */
-function seedInputs(
+function installedInputs(
   tree: Tree,
   root: string,
   roots: ReadonlyMap<string, string>,

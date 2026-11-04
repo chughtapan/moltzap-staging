@@ -75,11 +75,11 @@ to a shared norm.
 Choose additional rules from the
 [message-policy reference](/reference/spec/firewall/message-policy#message-policy-file).
 
-### 2. Save the policy in SQL
+### 2. Configure the policy file
 
-Add these properties to the private daemon setup document, run
-`sharnessd configure <settings.json>` with the database URL and encryption key,
-then restart the daemon. Relative paths resolve beside the setup document.
+Add these properties to the private runtime document named by
+`SHARNESS_CONFIG_FILE`, then restart the daemon. Relative paths resolve beside
+that document. The daemon reads the policy and provider credential at startup.
 
 | Property | Value |
 | --- | --- |

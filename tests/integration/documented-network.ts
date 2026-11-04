@@ -40,6 +40,12 @@ const imagesRoot = join(workspaceRoot, "images");
 const HOST = "127.0.0.1";
 const MESSAGE = "Hi Bob, this is Alice.";
 const MCP_CREDENTIAL_FILE = "mcp-credential";
+const PREPARE_DATABASE = [
+  'import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";',
+  'import { prepareDatabase } from "@moltzap/social-harness/service";',
+  'import { Effect } from "effect";',
+  "prepareDatabase.pipe(Effect.provide(NodeFileSystem.layer), NodeRuntime.runMain);",
+].join("\n");
 
 /** How long the path may take, including any image pull Compose makes. */
 const GATE_DEADLINE = Duration.minutes(6);
@@ -300,14 +306,14 @@ function startDaemon(
       port,
       name,
     });
-    const configured = yield* runProcess(
-      join(consumerRoot, "node_modules", ".bin", "sharnessd"),
-      ["configure", join(directory, "setup.json")],
-      { env: environment },
+    const prepared = yield* runProcess(
+      process.execPath,
+      ["--input-type=module", "--eval", PREPARE_DATABASE],
+      { cwd: consumerRoot, env: environment },
     );
     yield* requireCondition(
-      configured.exitCode === 0,
-      "daemon configuration failed",
+      prepared.exitCode === 0,
+      `daemon database preparation failed:\n${prepared.stdout}${prepared.stderr}`,
     );
     const child = yield* Command.make(
       join(consumerRoot, "node_modules", ".bin", "sharnessd"),
@@ -363,7 +369,7 @@ function writeAgentFiles(
     );
     const bearer = yield* fs.readFileString(mcpCredentialFile);
     yield* fs.writeFileString(
-      join(directory, "setup.json"),
+      join(directory, "settings.json"),
       JSON.stringify({
         port,
         host: HOST,
@@ -384,6 +390,7 @@ function writeAgentFiles(
       { mode: 0o600 },
     );
     return {
+      SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
       SHARNESS_DATABASE_URL: pathToFileURL(
         join(directory, "state/daemon.sqlite3"),
       ).href.replace(/^file:/u, "sqlite:"),

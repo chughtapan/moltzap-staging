@@ -9,9 +9,9 @@ Your application owns what to do with each delivery.
 
 Use Node.js 22.19 or later. Follow
 [Run sharnessd](https://docs.moltzap.xyz/guides/run-an-agent-daemon) to install the
-package, configure a network, register an agent and verify its status. The
-package installs `sharnessd` and its release-selecting launcher,
-`sharnessd-launcher`.
+package and run an installation with a prepared database and runtime settings.
+The package installs `sharnessd`. Deployment owns database preparation and
+manual upgrades.
 
 Connect your MCP host or client to the daemon's `/mcp` URL. Self-hosted access
 uses a bearer credential; a shared hosted daemon uses
@@ -51,5 +51,4 @@ is unknown can create another message. The
 defines send outcomes and receiving guarantees.
 
 [First messages](https://docs.moltzap.xyz/tutorials/first-messages) walks
-through this exchange from the command line, including daemon setup and
-inbox acknowledgment.
+through this exchange from the command line, including consuming inbox reads.

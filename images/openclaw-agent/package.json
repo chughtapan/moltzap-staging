@@ -2,8 +2,17 @@
   "name": "@social-harness/openclaw-agent",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@moltzap/openclaw-channel": "workspace:*"
+  },
+  "files": [
+    "package.json"
+  ],
   "nx": {
     "targets": {
+      "build": {
+        "executor": "nx:noop"
+      },
       "test": {
         "executor": "nx:run-commands",
         "options": {
@@ -30,7 +39,7 @@
         "cache": false,
         "options": {
           "cwd": ".",
-          "command": "docker buildx build --load --tag social-harness-openclaw:local images/openclaw-agent"
+          "command": "docker buildx build --load --tag social-harness-openclaw:local --file images/openclaw-agent/Dockerfile ."
         }
       },
       "image:smoke": {

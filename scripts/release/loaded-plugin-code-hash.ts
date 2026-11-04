@@ -4,8 +4,8 @@
  * Usage: `node scripts/release/loaded-plugin-code-hash.ts DIR` with a repository-relative
  * package directory. Prints `sha256:` and a hex digest.
  *
- * The launcher compares `sharnessHostCodeHash` to decide whether to restart
- * OpenClaw. The hash covers every plugin file and sibling modules reachable
+ * Release metadata records this as `sharnessHostCodeHash`. The hash covers
+ * every plugin file and sibling modules reachable
  * through static or dynamic imports and package exports. Manifests omit version,
  * recorded hashes and workspace dependency pins, so a sibling version bump
  * without reachable code changes leaves the hash unchanged.
