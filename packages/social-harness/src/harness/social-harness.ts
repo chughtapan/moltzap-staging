@@ -5,7 +5,6 @@ import {
   absurd,
   Clock,
   Context,
-  DateTime,
   Deferred,
   type Duration,
   Effect,
@@ -21,7 +20,6 @@ import {
 } from "effect";
 import { createHash } from "node:crypto";
 import type { FirewallEvidence } from "../firewall/chain.js";
-import type { HistoryExport } from "./traffic-export.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
@@ -207,7 +205,6 @@ export interface HarnessSettings<R> {
     identityCard: VerifiedAgentIdentityCard,
   ) => Layer.Layer<Communication, CommunicationError, R>;
   readonly maximumHistoryRecords?: number;
-  readonly historyExport?: HistoryExport;
   readonly maximumConcurrentChecks?: number;
   readonly hideGroups?: boolean;
   readonly hideCollectives?: boolean;
@@ -232,7 +229,6 @@ function makeHarness<R>(
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity = settings.maximumConcurrentChecks ?? 4;
     const historyLimit = settings.maximumHistoryRecords ?? 256;
-    const historyExport = settings.historyExport ?? (() => Effect.void);
     let activated = false;
     const activate = Effect.fn(function* (card: VerifiedAgentIdentityCard) {
       if (activated) {
@@ -306,7 +302,6 @@ function makeHarness<R>(
             entry,
             card,
             historyLimit,
-            historyExport,
           ).pipe(
             Effect.zipRight(PubSub.publish(changes, undefined)),
             Effect.ensuring(
@@ -479,20 +474,6 @@ function makeHarness<R>(
                   Effect.fail(sendFailure(error)),
                 ),
               );
-            const operationId =
-              "kind" in value
-                ? value.operationId
-                : value.operation?.operationId;
-            yield* historyExport({
-              kind: "outbound",
-              input: request,
-              outcome: {
-                kind: "sent",
-                msgIds: "kind" in value ? [] : [value.msgId],
-                ...(operationId === undefined ? {} : { operationId }),
-              },
-              at: yield* DateTime.now,
-            });
             return {
               id: "kind" in value ? value.operationId : value.msgId,
               address: destination.address,
@@ -505,15 +486,12 @@ function makeHarness<R>(
               Effect.fail(new SendError({ reason: "persistence-failed" })),
             ),
             Effect.tapError((error) =>
-              DateTime.now.pipe(
-                Effect.flatMap((at) =>
-                  historyExport({
-                    kind: "outbound",
-                    input: request,
-                    outcome: { kind: "failed", error: error.message },
-                    at,
-                  }),
-                ),
+              Effect.logWarning("Send failed").pipe(
+                Effect.annotateLogs({
+                  agentKey: settings.agentKey,
+                  error: error._tag,
+                  reason: error.message,
+                }),
               ),
             ),
           );
@@ -725,7 +703,6 @@ function checkIncoming(
   entry: PendingItem,
   card: VerifiedAgentIdentityCard,
   limit: number,
-  historyExport: HistoryExport,
 ) {
   return Effect.gen(function* () {
     const value = entry.incoming;
@@ -792,7 +769,7 @@ function checkIncoming(
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
     const sql = yield* SqlClient.SqlClient;
-    const saved = yield* sql.withTransaction(
+    yield* sql.withTransaction(
       decision.save.pipe(
         Effect.zipRight(inbox.publish(entry, decision, expired)),
         Effect.tap(() =>
@@ -809,13 +786,6 @@ function checkIncoming(
         ),
       ),
     );
-    if (saved !== undefined) {
-      yield* historyExport({
-        kind: "inbound",
-        item: saved.item,
-        at: yield* DateTime.now,
-      });
-    }
   });
 }
 

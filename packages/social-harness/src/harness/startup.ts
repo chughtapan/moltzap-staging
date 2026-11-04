@@ -42,7 +42,6 @@ import {
   type OwnerAccount,
 } from "./ownership.js";
 import { SocialHarness } from "./social-harness.js";
-import { type HistoryExport, makeHistoryExport } from "./traffic-export.js";
 
 /** Usage names the runtime inputs without opening storage or allocating an owner. */
 export const daemonHelp = processHelp;
@@ -84,14 +83,9 @@ function makeAgentSelector(
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
-    const historyExport =
-      settings.historyExport === undefined
-        ? undefined
-        : yield* makeHistoryExport(settings.historyExport);
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
-      lookup: (agentKey: string) =>
-        makeAgentApp(settings, agentKey, unlockKey, historyExport),
+      lookup: (agentKey: string) => makeAgentApp(settings, agentKey, unlockKey),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -126,7 +120,6 @@ function makeAgentApp(
   settings: DaemonSettings,
   agentKey: string,
   unlockKey: Redacted.Redacted<Uint8Array>,
-  historyExport?: HistoryExport,
 ) {
   return Effect.gen(function* () {
     const registration = yield* loadAgentRegistration(agentKey, unlockKey);
@@ -150,7 +143,6 @@ function makeAgentApp(
       SocialHarness.layer(
         {
           agentKey,
-          historyExport,
           communication: (identityCard) =>
             Communication.layer({
               agentKey,

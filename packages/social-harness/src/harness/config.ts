@@ -142,7 +142,6 @@ const commonFields = {
   registrySignerPublicKey: AgentPublicKey,
   routerOrigin: origin,
   admissionCredential: Schema.optional(credential),
-  historyExport: Schema.optional(Schema.NonEmptyString),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   hideCollectives: Schema.optionalWith(Schema.Boolean, {
     default: () => false,

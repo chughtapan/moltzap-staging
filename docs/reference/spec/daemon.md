@@ -46,7 +46,6 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document |
-| `historyExport` | Optional path for traffic export |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
@@ -136,10 +135,11 @@ Rule edits use an approval step that initially approves every edit
 automatically. Host elicitation can later replace that placeholder. This step
 does not establish human confirmation.
 
-### Local policy and diagnostics
+### History and diagnostics
 
-The configured `historyExport` path appends JSON lines for published incoming items and
-completed send invocations. Incoming items are logged when their permitted content is saved. Sends record
-the captured input and result or refusal.
-Export adds no delivery or management authority. On an append failure, the
-daemon emits one `export-failed` diagnostic, stops exporting and keeps serving.
+Use `search_conversations` and `read_conversation` to retrieve the authenticated
+agent's retained messages, permitted incoming views and local collective
+results. History remains available after inbox delivery and daemon restart.
+Failed send invocations return their existing tool errors and emit structured
+daemon logs with agent attribution. They do not add messages to conversation
+history.
