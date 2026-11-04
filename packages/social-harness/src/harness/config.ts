@@ -37,6 +37,7 @@ import {
   PrincipalId,
 } from "../identity/agent-cards.js";
 import { RegistrationId } from "../identity/registry.js";
+import { installedNorms, loadNorms } from "../norms/configuration.js";
 import { packageVersion } from "../version.js";
 import { getOrCreateOwnedAgent, localOwner } from "./ownership.js";
 
@@ -47,7 +48,13 @@ const configurationDocs =
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
-  readonly reason: "environment" | "document" | "missing" | "stored" | "policy";
+  readonly reason:
+    | "environment"
+    | "document"
+    | "missing"
+    | "stored"
+    | "policy"
+    | "norms";
   readonly message: string;
 }> {}
 
@@ -161,6 +168,7 @@ const commonFields = {
 const settings = exactStruct({
   ...commonFields,
   messagePolicy: Schema.optional(installedMessagePolicy),
+  norms: Schema.optional(installedNorms),
 }).pipe(
   Schema.filter(
     (value) =>
@@ -182,6 +190,7 @@ const setup = exactStruct({
   agent: Schema.optional(seed),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
+  normsDirectory: Schema.optional(Schema.NonEmptyString),
 }).pipe(
   Schema.filter(
     (value) =>
@@ -301,15 +310,21 @@ export const configureDaemon = Effect.fn("configureDaemon")(
         ),
       ),
     );
+    const norms =
+      document.normsDirectory === undefined
+        ? undefined
+        : yield* configuredNorms(resolve(root, document.normsDirectory));
     const values = Struct.omit(
       document,
       "agent",
       "messagePolicyFile",
       "decisionProviderKeyFile",
+      "normsDirectory",
     );
     const captured = yield* Schema.validate(settings)({
       ...values,
       messagePolicy: Option.getOrUndefined(messagePolicy),
+      ...(norms === undefined ? {} : { norms }),
     }).pipe(
       Effect.mapError(() =>
         refused(
@@ -410,6 +425,18 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
     ),
   );
 });
+
+/** The setup document's norms directory, read and checked. */
+function configuredNorms(directory: string) {
+  return loadNorms(directory).pipe(
+    Effect.mapError((error) =>
+      refused(
+        "norms",
+        `The configured norms directory is invalid: ${error.reason}`,
+      ),
+    ),
+  );
+}
 
 const otelVariable = (name: string) =>
   Config.option(Config.string(name)).pipe(

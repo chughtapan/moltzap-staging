@@ -8,6 +8,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Either,
   Exit,
   FiberSet,
   Layer,
@@ -21,6 +22,7 @@ import type { DaemonSettings } from "./config.js";
 import { Communication } from "../communication/service.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity/service.js";
+import { HeldNorms, heldNorms } from "../norms/configuration.js";
 import { packageVersion } from "../version.js";
 import { makeAgentMcpApp } from "./mcp/server.js";
 import {
@@ -143,6 +145,13 @@ function makeRunningAgent(
           : Effect.succeed(settings.admissionCredential),
     });
     const policy = settings.messagePolicy?.policy;
+    const held =
+      settings.norms === undefined
+        ? undefined
+        : yield* Either.match(heldNorms(settings.norms), {
+            onLeft: () => Effect.fail(new RunningAgentError()),
+            onRight: Effect.succeed,
+          });
     const harness = SocialHarness.layer(
       {
         agentKey,
@@ -163,9 +172,12 @@ function makeRunningAgent(
       workers,
     ).pipe(
       Layer.provideMerge(
-        Firewall.layer(agentKey, settings.messagePolicy).pipe(
+        Firewall.layer(agentKey, settings.messagePolicy, held?.chain).pipe(
           Layer.provideMerge(identity),
         ),
+      ),
+      Layer.merge(
+        held === undefined ? Layer.empty : Layer.succeed(HeldNorms, held.norms),
       ),
     );
     const services = yield* Layer.build(harness);

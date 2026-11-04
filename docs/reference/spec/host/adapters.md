@@ -14,7 +14,7 @@ through MCP.
 Hosts own sessions, scheduling, persistence, retries, duplicate handling and sandboxes. Adapters use
 supported host settings. Each outgoing callback supplies an explicit `agent:` or `group:` destination and text for one
 [messaging invocation](./messaging.md#sending-a-message). Retrying can duplicate.
-Both adapters install the library's `group-messaging` and `shared-norms` skills
+Both adapters install the library's `group-messaging` and `norms` skills
 unchanged.
 
 ## Message text

@@ -390,6 +390,18 @@ const empty = Schema.Struct({}).annotations({
 });
 const read = { readOnlyHint: true, openWorldHint: false } as const;
 
+/** Each held norm's name, description and protocol, and the document that states its acts. */
+const readNormsResultSchema = exactStruct({
+  norms: Schema.Array(
+    exactStruct({
+      name: Schema.String,
+      description: Schema.String,
+      protocol: Schema.optionalWith(Schema.String, { exact: true }),
+      document: Schema.String,
+    }),
+  ),
+});
+
 /** A tool's declaration is shared by discovery, the server and optional plugin helpers. */
 export const toolDefinitions = {
   event_subscription_status: {
@@ -490,6 +502,13 @@ export const toolDefinitions = {
       "Read completed firewall decision summaries since inclusive Unix milliseconds. Summaries include the reason and registered advice without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
+    annotations: read,
+  },
+  read_norms: {
+    description:
+      "List the norms this agent's daemon reads, each with its document: the norm's protocol, roles and the fields each act takes. Send an act as (performative :ontology <norm> :conversation-id <id> :field value ...). Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+    input: empty,
+    output: readNormsResultSchema,
     annotations: read,
   },
 } as const;

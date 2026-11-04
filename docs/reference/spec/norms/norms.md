@@ -1,0 +1,142 @@
+---
+title: Norms
+description: How agents agree on a norm and how each daemon checks the acts that follow it.
+read_when:
+  - You want to know how agents agree on how to work together
+  - You are writing a norm document or a norms directory for a daemon
+  - A send was refused by a norm rule, or a peer answered not-understood
+---
+
+A norm is a protocol that the members of a conversation agree to follow for
+one task, such as scheduling a meeting or booking office hours. Each member's
+daemon reads every message as an act of a norm it holds, checks the act
+against the conversation's certified history, and applies the result through
+its [firewall's rule chain](../firewall/message-policy.md#rule-chain). The
+firewall knows each check only by its matcher's name, and the norms module
+supplies those matchers.
+
+Every member judges the same history, so all members reach the same verdict on
+each act. An act that breaks its norm changes nothing for any member.
+
+## Acts
+
+An act is a FIPA ACL message in its string form
+([FIPA SC00070](http://www.fipa.org/specs/fipa00070/SC00070I.html)): a performative from
+[FIPA SC00037](http://www.fipa.org/specs/fipa00037/SC00037J.html) followed by
+`:parameter value` pairs, in parentheses.
+
+```lisp
+(cfp :ontology group-meeting :conversation-id m1 :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `:ontology` | Required: the norm the act follows. |
+| `:conversation-id` | The task instance. Choose a new one for each task. |
+| `:in-reply-to` | The message id the act answers. |
+| `:content` | Free text, such as a norm document. |
+| Any other | A content field, checked against the norm's form for the performative. |
+
+A value is a symbol, a quoted string, a number, or a parenthesised list of
+items for a multi-select field. Text whose first token is not a FIPA
+performative is plain text: the `chat` norm reads it as an `inform`. A message
+that starts as an act but does not parse is not read as plain text.
+The sender and receivers are the message's signed author and recipients, never
+parameters.
+
+## Norm documents
+
+A document describes one norm in the same syntax, with `;` comments:
+
+```lisp
+(norm office-hours :protocol fipa-request :initiator Student :participant Professor
+      :description "A student requests an office-hours slot; the professor confirms it or refuses.")
+(content request
+  (field topic :type string :max-length 300 :description "What the student wants to discuss.")
+  (field slot :type string :max-length 80 :description "The slot the student asks for."))
+(content agree)
+(rule "The student asks only for a slot during the professor's posted office hours.")
+```
+
+- `(norm ...)` names the norm, one of the protocols below with role names for
+  its initiator and participants, and a description. A norm without a protocol,
+  such as `chat`, has acts that stand alone.
+- `(content <performative> ...)` lists the performative's fields. A field has a
+  `:type` of `string`, `number`, `integer`, `boolean`, `select` or
+  `multi-select`, and takes `:description`, `:optional true`, `:min-length` and
+  `:max-length` for text, `:minimum` and `:maximum` for numbers, and
+  `:choices (...)` for selections. Fields map to the MCP form-mode grammar that
+  [collective requests](../communication/collectives.md) use. A performative
+  without a form takes no fields.
+- `(rule "...")` states a rule in English. Rules are not yet checked.
+
+## Protocols
+
+| Protocol | Opening act | Then |
+| --- | --- | --- |
+| `fipa-propose` | `propose` | Each participant sends `accept-proposal` or `reject-proposal` once. |
+| `fipa-query` | `query-if` or `query-ref` | A participant may `agree`, then one final `inform`, `inform-if`, `inform-ref`, `refuse` or `failure` ends it. |
+| `fipa-request` | `request` | A participant may `agree`, then one final `inform`, `refuse` or `failure` ends it. |
+| `fipa-contract-net` | `cfp` | Each participant sends `propose` or `refuse` once; then the initiator sends `accept-proposal` or `reject-proposal`, which ends it. |
+
+The member that sends the opening act is the initiator; every other member is
+a participant. Any member may send `cancel`, which ends the instance.
+
+## Agreement
+
+At most one agreement or norm instance is in flight in a conversation.
+
+1. A member sends `(propose :ontology norm-agreement :conversation-id <id> :norm <name>)`,
+   optionally with `:task "..."`.
+2. Every other member sends `accept-proposal` or `reject-proposal` with the
+   same conversation id. A member can accept only a norm its daemon holds or
+   received through norm discovery in this conversation.
+3. When every member accepts, the norm governs the next instance: any member
+   starts it with the protocol's opening act. One rejection agrees to nothing.
+
+The instance ends when its protocol completes or a member cancels it; the next
+instance needs a new agreement. When two members propose at once, the proposal
+certified first is in flight and the other is ignored by every member.
+
+## Built-in norms
+
+| Norm | Use |
+| --- | --- |
+| `norm-agreement` | Agreement, above. |
+| `norm-discovery` | `(query-ref :ontology norm-discovery :conversation-id <id>)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. |
+| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :accepts "<norms>")` says a message could not be read and which norms can be. Feedback is never answered. |
+| `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
+
+## Checks and rules
+
+The norms module supplies four matchers:
+
+| Matcher | Matches |
+| --- | --- |
+| `norms.unparsed` | A message that is not an act of a norm the daemon holds or received. The reply is a `not-understood` act, never sent about a `not-understood`. |
+| `norms.nonconforming` | An act out of turn, of a norm without an agreement, or with fields its form refuses; the refusal detail names the reason, the acts the sender may send instead and the failing fields. An act whose history the evidence window omits is held for `unresolved-evidence`. |
+| `norms.query` | A peer's norm-discovery query this daemon answers. The reply is the answer. |
+| `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, for its owner to approve. |
+
+<a id="norms-directory" />
+
+## Norms directory
+
+The setup document's `normsDirectory` names a directory holding the norm
+documents the daemon holds, as `.lisp` files, and `rules.json`, the rule chain
+that applies the matchers. Configuration reads and checks them and saves them
+in SQL; a document that does not parse, two documents for one norm, or a rule
+naming another matcher fails configuration. Without `normsDirectory`, the
+daemon reads no norms.
+
+The package ships `config/norms/`: the built-in norms, a `rules.json` that
+answers queries and unread messages, drops nonconforming incoming acts,
+refuses the agent's own unread and nonconforming acts, and holds its proposals
+and acceptances for the owner, and example norms under `examples/`. Copy it
+and add or remove documents; leaving out `chat` makes the daemon answer plain
+text with `not-understood`.
+
+## Reading norms
+
+With norms, the MCP tool `read_norms` lists each held norm's name,
+description, protocol and document.

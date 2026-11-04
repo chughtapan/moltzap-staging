@@ -26,6 +26,7 @@ import type { OwnerAccount } from "../ownership.js";
 import { Firewall } from "../../firewall/service.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
+import { HeldNorms } from "../../norms/configuration.js";
 import {
   CallToolResult,
   ProtocolError,
@@ -88,10 +89,14 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const policyConfigured = firewall
     .readPolicy()
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+  const norms = yield* Effect.serviceOption(HeldNorms);
 
   yield* installMessageTools(server, harness, registered);
   yield* installIdentityTools(server, harness, identity);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
+  if (Option.isSome(norms)) {
+    yield* installNormTools(server, norms.value, registered);
+  }
   yield* installWebhookTools(server, callback, registered);
 
   const app = yield* makeHttpApp(settings.implementation).pipe(
@@ -223,6 +228,29 @@ function installIdentityTools(
     });
   });
 }
+/** `read_norms` lists the norms the daemon was configured with. */
+function installNormTools(
+  server: Context.Tag.Service<typeof McpServer>,
+  norms: Context.Tag.Service<typeof HeldNorms>,
+  registered: Effect.Effect<boolean>,
+) {
+  return bind(server, {
+    name: "read_norms",
+    definition: toolDefinitions.read_norms,
+    execute: () =>
+      Effect.succeed({
+        norms: norms.map((norm) => ({
+          name: norm.name,
+          description: norm.description,
+          ...(norm.protocol === undefined ? {} : { protocol: norm.protocol }),
+          document: norm.source,
+        })),
+      }),
+    failure: () => new ProtocolError(-32603, "read_norms failed"),
+    visible: registered,
+  });
+}
+
 function installPolicyTools(
   server: Context.Tag.Service<typeof McpServer>,
   firewall: Context.Tag.Service<typeof Firewall>,

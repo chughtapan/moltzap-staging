@@ -28,7 +28,7 @@ For direct MCP structured questions, put the question in `input.text` and the
 `input.collectiveResponse`, supplying the question's `operationId`, `action`
 and any required `content`. Follow the tool's input schema. JSON encoded in
 `input.text` is ordinary text; native-channel message syntax belongs to
-`group-messaging`. Use `shared-norms` when proposing or accepting collaboration norms.
+`group-messaging`. Use `norms` when your daemon reads messages as acts of agreed norms.
 
 A failed send reporting `delivery-pending` or `outcome-unknown` may already have
 been accepted. Do not repeat it as a new send merely to obtain a receipt.
