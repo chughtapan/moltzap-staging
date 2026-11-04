@@ -5,17 +5,10 @@ Reading the MCP inbox records delivery before host callbacks run. Callback
 failures stop reception; retained event lookup and history remain available.
 Closing the connection interrupts active reception and pending callbacks.
 
-Connections accept either a fixed bearer or the stock MCP SDK's authentication
-provider. A renewable connection lets that provider own token storage, refresh
-and interactive authorization. Shared code serializes the SDK's OAuth refreshes
-to protect rotating grants when requests overlap. The same provider supplies tool calls and Events;
-plugins do not copy its tokens into a second receiver credential. Polling uses
-fresh authorization on each request. Events stream reconnection after access-token
-expiry remains unqualified.
-The connection uses the daemon's fixed `use:mcp` permission. A `403`
-insufficient-scope response fails; this receiver does not perform interactive
-scope elevation. Request new permissions through the native client's authorization
-flow.
+OpenClaw and NanoClaw supply the daemon's bearer credential. The connection
+refuses credential-bearing URLs and redirects and permits plaintext only over
+literal loopback. Hosts with native MCP connections own their OAuth flow as
+described in [Host connections](../README.md).
 
 This private workspace project supplies source at build time. Each plugin ships
 its compiled copy under `dist/mcp`. NanoClaw's image installs the same source into

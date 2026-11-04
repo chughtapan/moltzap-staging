@@ -1,18 +1,13 @@
 /** @file Scoped MCP connections and tool calls shared by native host plugins. */
 import {
-  auth,
-  type AuthProvider,
   Client,
-  extractWWWAuthenticateParams,
   type Implementation,
-  type OAuthClientProvider,
   ProtocolError,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
   StreamableHTTPClientTransport,
   type StreamableHTTPClientTransportOptions,
-  UnauthorizedError,
 } from "@modelcontextprotocol/client";
 import {
   decodeHarnessSendErrorData,
@@ -79,14 +74,11 @@ type DomainFailure =
   | RegistrationError
   | FirewallPolicyError;
 
-/** One connection uses either a fixed bearer or the SDK's renewable authorization. */
-export type McpConnectionSettings = { readonly endpoint: URL } & (
-  | { readonly credential: Redacted.Redacted; readonly authProvider?: never }
-  | {
-      readonly credential?: never;
-      readonly authProvider: AuthProvider | OAuthClientProvider;
-    }
-);
+/** Native channels connect with the daemon credential supplied by their host. */
+export interface McpConnectionSettings {
+  readonly endpoint: URL;
+  readonly credential: Redacted.Redacted;
+}
 
 /**
  * Polling is the default. The `onReady` callback runs before the first poll or
@@ -176,24 +168,14 @@ function acquireConnection(
 ): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
   return Effect.gen(function* () {
     const endpoint = settings.endpoint;
-    let authProvider = settings.authProvider;
-    if (authProvider !== undefined && "tokens" in authProvider) {
-      authProvider = yield* renewableAuthorization(authProvider);
-    }
-    const transportOptions: StreamableHTTPClientTransportOptions =
-      settings.authProvider === undefined
-        ? {
-            requestInit: {
-              headers: {
-                Authorization: `Bearer ${Redacted.value(settings.credential)}`,
-              },
-              redirect: "error",
-            },
-          }
-        : {
-            authProvider,
-            requestInit: { redirect: "error" },
-          };
+    const transportOptions: StreamableHTTPClientTransportOptions = {
+      requestInit: {
+        headers: {
+          Authorization: `Bearer ${Redacted.value(settings.credential)}`,
+        },
+        redirect: "error",
+      },
+    };
     if (!safeCredentialEndpoint(endpoint)) {
       return yield* new McpConnectError({ reason: "transport-failed" });
     }
@@ -242,41 +224,6 @@ function acquireConnection(
       },
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
-}
-
-/** Both transports serialize SDK refreshes so rotating tokens are never reused concurrently. */
-function renewableAuthorization(provider: OAuthClientProvider) {
-  return Effect.gen(function* () {
-    const refresh = yield* Effect.makeSemaphore(1);
-    return {
-      token: () =>
-        Effect.runPromise(
-          Effect.tryPromise(() => Promise.resolve(provider.tokens())).pipe(
-            Effect.map((tokens) => tokens?.access_token),
-          ),
-        ),
-      onUnauthorized: (context) =>
-        Effect.runPromise(
-          refresh.withPermits(1)(
-            Effect.tryPromise({
-              try: () =>
-                auth(provider, {
-                  serverUrl: context.serverUrl,
-                  fetchFn: context.fetchFn,
-                  ...extractWWWAuthenticateParams(context.response),
-                }),
-              catch: () => new UnauthorizedError(),
-            }).pipe(
-              Effect.filterOrFail(
-                (result) => result === "AUTHORIZED",
-                () => new UnauthorizedError(),
-              ),
-              Effect.asVoid,
-            ),
-          ),
-        ),
-    } satisfies AuthProvider;
-  });
 }
 
 function decodeToolResult(
