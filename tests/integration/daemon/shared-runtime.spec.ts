@@ -13,9 +13,9 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
+  AgentAddress,
   AgentIdentityCard,
   type InboxEntry,
-  MessageAddressInput,
 } from "@moltzap/social-harness";
 import {
   databaseAccess,
@@ -112,6 +112,37 @@ function connect(endpoint: URL, token: string) {
     }),
     (client) => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
   );
+}
+
+/** The existing tools return each caller's retained view without consuming delivery. */
+function expectConversation(
+  client: Client,
+  address: AgentAddress,
+  kind: "sent" | "received",
+  messageIds: readonly string[],
+) {
+  return Effect.gen(function* () {
+    const catalog = yield* call(client, {
+      name: "search_conversations",
+      arguments: {},
+    });
+    expect(catalog.addresses).toContain(address);
+    const page = yield* call(client, {
+      name: "read_conversation",
+      arguments: { address },
+    });
+    expect(page.records.map((record) => record.kind)).toEqual(
+      messageIds.map(() => kind),
+    );
+    expect(
+      page.records.flatMap((record) =>
+        record.kind !== "result" && record.kind === kind
+          ? [record.message.msgId]
+          : [],
+      ),
+    ).toEqual(messageIds);
+    expect(page.nextCursor).toBeUndefined();
+  });
 }
 
 /** The public challenge must not allocate durable owner state. */
@@ -379,23 +410,18 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
       bobStatus: b,
     });
     if (a.kind !== "registered" || b.kind !== "registered") {
-      return yield* Effect.dieMessage(
-        "OAuth accounts must register automatically",
-      );
+      return yield* Effect.dieMessage("Expected registered OAuth agents");
     }
-    const aliceCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-      a.identityCard,
-    );
-    const bobCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
-      b.identityCard,
-    );
-    const bobAddress = Schema.decodeUnknownSync(MessageAddressInput)(
-      `agent:${bobCard.agentName}`,
-    );
+    const [aliceCard, bobCard] = yield* Effect.all([
+      Schema.decodeUnknown(AgentIdentityCard)(a.identityCard),
+      Schema.decodeUnknown(AgentIdentityCard)(b.identityCard),
+    ]);
+    const bobAddress = AgentAddress.make(`agent:${bobCard.agentName}`);
+    const aliceAddress = AgentAddress.make(`agent:${aliceCard.agentName}`);
     expect(aliceCard.agentId).not.toBe(bobCard.agentId);
     const again = yield* connect(fixture.endpoint, aliceToken);
     expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
-    yield* call(alice, {
+    const sent = yield* call(alice, {
       name: "send_message",
       arguments: {
         input: {
@@ -419,6 +445,8 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
       }).pipe(Effect.isFailure),
     ).toBe(true);
     yield* expectDeliveredEvent(bob, entry);
+    yield* expectConversation(alice, bobAddress, "sent", [sent.id]);
+    yield* expectConversation(bob, aliceAddress, "received", [sent.id]);
     const restartMessage = yield* call(alice, {
       name: "send_message",
       arguments: {
@@ -440,6 +468,10 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     expect(yield* call(recovered, { name: "status", arguments: {} })).toEqual(
       b,
     );
+    yield* expectConversation(recovered, aliceAddress, "received", [
+      sent.id,
+      restartMessage.id,
+    ]);
     const restored = yield* awaitInbox(recovered);
     expect(restored.items).toEqual([unread]);
     yield* expectDeliveredEvent(recovered, unread);
