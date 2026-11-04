@@ -245,9 +245,9 @@ function endpointInbound(input: ProjectedItem): InboundMessage {
 }
 
 /**
- * One endpoint scope lives from setup until the receive stream ends or
- * teardown completes. Successful host callbacks permit acknowledgment of
- * handoff. NanoClaw owns subsequent processing and retry policy.
+ * One MCP connection lives from setup until reception ends or teardown completes.
+ * Inbox reads record delivery before native callbacks. NanoClaw owns subsequent
+ * processing and retry policy.
  */
 class HarnessChannelAdapter {
   readonly name = CHANNEL_ID;

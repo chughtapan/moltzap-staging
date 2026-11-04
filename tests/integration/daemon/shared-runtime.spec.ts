@@ -19,6 +19,7 @@ import {
 import {
   databaseAccess,
   databaseConnection,
+  makeInbox,
   withAgentTransaction,
 } from "@moltzap/social-harness/test";
 import { ConfigProvider, Context, Effect, Layer, Schema } from "effect";
@@ -161,13 +162,9 @@ function removeSetupFiles(fixture: DaemonProcessFixture) {
   });
 }
 
-/** Acknowledgment clears pending work while preserving the saved event for its owner. */
-function expectAcknowledgedEvent(client: Client, entry: InboxEntry) {
+/** Consuming the inbox preserves its saved event for the authenticated owner. */
+function expectDeliveredEvent(client: Client, entry: InboxEntry) {
   return Effect.gen(function* () {
-    yield* call(client, {
-      name: "acknowledge_delivery",
-      arguments: { deliveryToken: entry.deliveryToken },
-    });
     expect(
       (yield* call(client, { name: "read_inbox", arguments: {} })).items,
     ).toHaveLength(0);
@@ -179,6 +176,56 @@ function expectAcknowledgedEvent(client: Client, entry: InboxEntry) {
       }),
     ).toEqual(event);
   });
+}
+
+function awaitInbox(client: Client) {
+  return Effect.gen(function* () {
+    return yield* Effect.iterate(
+      yield* call(client, { name: "read_inbox", arguments: {} }),
+      {
+        while: (page) => page.items.length === 0,
+        body: () =>
+          Effect.sleep("50 millis").pipe(
+            Effect.andThen(call(client, { name: "read_inbox", arguments: {} })),
+          ),
+      },
+    );
+  }).pipe(Effect.timeout("120 seconds"));
+}
+
+/** The production inbox store observes unread work without consuming it through MCP. */
+function awaitUnreadDelivery(
+  sql: SqlClient.SqlClient,
+  issuer: string,
+  subject: string,
+  messageId: string,
+) {
+  return Effect.gen(function* () {
+    const [owner] = yield* sql<{
+      // eslint-disable-next-line @typescript-eslint/naming-convention -- SQL owns the stored column name.
+      readonly agent_key: string;
+    }>`SELECT agent_key FROM owner_bindings WHERE issuer=${issuer} AND subject=${subject}`;
+    if (owner === undefined) {
+      return yield* Effect.dieMessage("Expected the delivery owner's binding");
+    }
+    const inbox = yield* makeInbox(owner.agent_key).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
+    const page = yield* Effect.iterate(yield* inbox.listInbox(), {
+      while: (result) => result.items.length === 0,
+      body: () =>
+        Effect.sleep("50 millis").pipe(Effect.andThen(inbox.listInbox())),
+    });
+    expect(page.items).toHaveLength(1);
+    const entry = page.items[0];
+    if (entry === undefined) {
+      return yield* Effect.dieMessage(
+        "Expected unread delivery before restart",
+      );
+    }
+    expect(entry.item).toMatchObject({ message: { msgId: messageId } });
+    return entry;
+  }).pipe(Effect.timeout("120 seconds"));
 }
 
 /** The observation bound allows a remote PostgreSQL tunnel's round trips; it is not a delivery latency assertion. */
@@ -236,6 +283,9 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     const bobCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
       b.identityCard,
     );
+    const bobAddress = Schema.decodeUnknownSync(MessageAddressInput)(
+      `agent:${bobCard.agentName}`,
+    );
     expect(aliceCard.agentId).not.toBe(bobCard.agentId);
     const again = yield* connect(fixture.endpoint, aliceToken);
     expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
@@ -243,23 +293,12 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
       name: "send_message",
       arguments: {
         input: {
-          to: Schema.decodeUnknownSync(MessageAddressInput)(
-            `agent:${bobCard.agentName}`,
-          ),
+          to: bobAddress,
           text: "shared runtime delivery",
         },
       },
     });
-    const pending = yield* Effect.iterate(
-      yield* call(bob, { name: "read_inbox", arguments: {} }),
-      {
-        while: (page) => page.items.length === 0,
-        body: () =>
-          Effect.sleep("50 millis").pipe(
-            Effect.andThen(call(bob, { name: "read_inbox", arguments: {} })),
-          ),
-      },
-    ).pipe(Effect.timeout("120 seconds"));
+    const pending = yield* awaitInbox(bob);
     const entry = pending.items[0];
     if (entry === undefined) {
       return yield* Effect.dieMessage("Expected Bob's delivery");
@@ -273,25 +312,32 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
         arguments: { eventId: entry.deliveryToken },
       }).pipe(Effect.isFailure),
     ).toBe(true);
-    expect(
-      yield* call(alice, {
-        name: "acknowledge_delivery",
-        arguments: { deliveryToken: entry.deliveryToken },
-      }).pipe(Effect.isFailure),
-    ).toBe(true);
-    expect(
-      (yield* call(bob, { name: "read_inbox", arguments: {} })).items,
-    ).toHaveLength(1);
+    yield* expectDeliveredEvent(bob, entry);
+    const restartMessage = yield* call(alice, {
+      name: "send_message",
+      arguments: {
+        input: {
+          to: bobAddress,
+          text: "unread delivery across restart",
+        },
+      },
+    });
+    const unread = yield* awaitUnreadDelivery(
+      sql,
+      issuer.issuer,
+      "bob",
+      restartMessage.id,
+    );
     yield* stopProcess(daemon);
     const restoredDaemon = yield* acquireDaemonProcess(fixture);
     const recovered = yield* connect(fixture.endpoint, bobToken);
     expect(yield* call(recovered, { name: "status", arguments: {} })).toEqual(
       b,
     );
-    expect(
-      (yield* call(recovered, { name: "read_inbox", arguments: {} })).items,
-    ).toEqual(pending.items);
-    yield* expectAcknowledgedEvent(recovered, entry);
+    const restored = yield* awaitInbox(recovered);
+    expect(restored.items).toEqual([unread]);
+    yield* expectDeliveredEvent(recovered, unread);
+    yield* expectDeliveredEvent(recovered, entry);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(2);
     yield* expectFailedAgentIsolation({
       sql,

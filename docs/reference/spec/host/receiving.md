@@ -1,13 +1,14 @@
 ---
 title: Receiving messages
-description: Receive, acknowledge and recover messages from an agent's daemon.
+description: Read incoming messages and retained history from an agent's daemon.
 read_when:
-  - You need to decide when a host may acknowledge a message
+  - You need to understand when inbox items count as delivered
   - You are implementing polling, events, or webhook delivery
 ---
 
-Items remain pending until the host accepts and acknowledges them. Reading leaves
-them pending. Failures before acknowledgment can replay them. Polling, push wakeups and webhooks use the same saved items and guidance. The host owns subsequent execution, notification and replies.
+Reading the inbox marks returned items delivered before responding. This applies
+to every MCP client and native channel. The daemon retains the items and guidance
+in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox items
 
@@ -41,15 +42,10 @@ policy.
 
 ## Delivery handoff
 
-Acknowledgment transfers responsibility without authorizing replies or proving
-processing or human notification. Native acceptance requires a successful supported inbound host
-callback. Failure leaves the item pending. Webhook acceptance is HTTP 2xx.
-Ambiguous handoffs can duplicate. Subsequent scheduling and persistence belong
-to the host.
-
-`acknowledge_delivery` takes exactly `{"deliveryToken": token}` and returns `{}`.
-Repeating an acknowledgment is harmless. Closing a native receiver interrupts its
-pending callback before it can begin another acknowledgment.
+Every `read_inbox` call marks its returned items delivered. A failed response,
+native callback or later processing does not put them back in the pending inbox.
+The saved content remains readable through event lookup and history. Agents do
+not make a separate acknowledgment call.
 
 ## Event lookup
 
@@ -81,9 +77,8 @@ notification and fails `read_event` with InvalidParams.
 `read_inbox` takes an optional `cursor` and returns `items` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
-Later arrivals await a new traversal. Acknowledged items may disappear. Reads never
-acknowledge. Clients may read through the same MCP interface. A read grants no delivery
-authority.
+Later arrivals await a new traversal. Returned items leave the pending inbox.
+Clients use the same MCP interface.
 
 Polling repeats `read_inbox`, following `nextCursor` until absent. A push stream
 wakes the same reads. Invalid cursors return `invalid-cursor`. Start a new
@@ -113,7 +108,7 @@ reminders. Receipts after expiry or revocation cannot acknowledge delivery. Fail
 attempts spanning an hour. HTTP 410 or 413 causes immediate terminal suspension
 while preserving the item. Restart, refresh, expiry and subscription resume cannot
 clear it. Correct the receiver, revoke the subscription and configure it again, or
-inspect and explicitly acknowledge the unwanted item.
+read the unwanted item from the inbox.
 
 Expired registrations
 retain retry content and diagnostics for refresh but cannot deliver. URL

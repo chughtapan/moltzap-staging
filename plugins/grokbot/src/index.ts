@@ -41,8 +41,8 @@ export const validateGrokRoutine = Effect.fn("Grok.validateRoutine")(function* (
 
 /**
  * Returns after HTTP acceptance and request cleanup, without reading the body.
- * The inbox consumer then acknowledges handoff, before model processing.
- * This call never retries. Uncertain acceptance can produce another wake on redelivery.
+ * Inbox delivery is recorded before this callback; routine failure does not undo it.
+ * This call never retries, and HTTP acceptance does not establish model processing.
  */
 export const deliverToGrokBot = Effect.fn("Grok.deliver")(function* (
   routine: GrokRoutine,

@@ -1,13 +1,13 @@
 # Muse native receiver
 
 This development candidate queues event references on Muse's remote host. The
-shared MCP receiver acknowledges delivery after the plugin publishes a complete pending file. The
-native hook wakes the worker, which reads the retained event through its approved
+MCP inbox read records delivery before the plugin publishes a complete pending
+file. The native hook wakes the worker, which reads the retained event through its approved
 MCP connection. Pending files survive receiver restart and failed hook calls.
 
 The hook needs no MCP credential. Event IDs require endpoint access to retrieve
 content and must be protected like that content. The daemon retains content and
-local guidance after acknowledgment under its
+local guidance after delivery under its
 [event lookup contract](../../docs/reference/spec/host/receiving.md#event-lookup).
 
 Distribution, one-prompt onboarding, renewable receiver authentication and real
@@ -90,10 +90,11 @@ references can still name the same event; this is not exactly-once processing.
 | `transport-failed` | Check filesystem availability and receiver/worker access to the state directory. |
 | `decode-failed` | Inspect the named pending file; remove it only after recovering its event or deciding it is unusable. |
 
-A failed publication leaves delivery pending in the MCP inbox. An acknowledgment failure
-leaves the published file available. The supervisor restarts a failed receiver;
-The shared receiver owns connection recovery. Redelivery can create another reference for the
-same event. Native scheduling and duplicate processing belong to the host.
+A failed publication stops the receiver after the inbox read has recorded
+delivery. Recover unpublished work through retained event lookup or history.
+Published files remain available across receiver restart and failed hook calls.
+The shared receiver owns connection recovery; native scheduling and duplicate
+processing belong to the host.
 
 Pending files have no expiry. An unclaimed file can wake several workers;
 only the worker that moves it may process it. Recover its event and remove the
@@ -120,7 +121,7 @@ the built detector and shell hook with test `wake`/`silent` helpers, including a
 failed wake followed by retry. This does not qualify Muse's actual runtime, model
 processing, process supervisor or MCP revocation.
 
-Shared MCP acceptance and acknowledgment ordering are checked separately with
+Shared MCP delivery-on-read behavior is checked separately with
 `pnpm nx run @moltzap/plugin-mcp:test`.
 
 For contributor artifact assembly, use the shared

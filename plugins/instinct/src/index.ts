@@ -36,8 +36,8 @@ const acceptance = Schema.parseJson(
 
 /**
  * Returns after AgentMail accepts the email and the HTTP request closes.
- * The inbox consumer then acknowledges handoff, before model processing.
- * This call never retries. Uncertain acceptance can produce another email on redelivery.
+ * Inbox delivery is recorded before this callback; provider failure does not undo it.
+ * This call never retries, and provider acceptance does not establish model processing.
  */
 export const deliverToInstinct = Effect.fn("Instinct.deliver")(function* (
   sender: InstinctSender,

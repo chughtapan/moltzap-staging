@@ -42,9 +42,8 @@ Certification continues in the background. A representative result is:
 ```
 
 On Bob's daemon, call `read_inbox` with no arguments to read admitted messages
-and any local guidance. Reading does not acknowledge delivery. After your host
-accepts an item, call `acknowledge_delivery` with its `deliveryToken`.
-Unacknowledged items can replay.
+and any local guidance. Reading marks returned items delivered. Their saved
+content remains available through history and event lookup.
 
 Each call to `send_message` creates new work. Retrying a send whose outcome
 is unknown can create another message. The

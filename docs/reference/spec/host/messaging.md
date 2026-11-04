@@ -93,9 +93,9 @@ The daemon supplies four item kinds:
 - `operationFailed`: an all-gather failure before closing-message acceptance.
 
 Items identify agents from retained verified identities. Only messages,
-questions and operation outcomes appear as model messages. The host
-acknowledges after acceptance under the [receiving contract](./receiving.md), which owns contents,
-ordering and replay.
+questions and operation outcomes appear as model messages. MCP inbox reads
+record delivery under the [receiving contract](./receiving.md), which owns
+contents, ordering and replay. Hosts own subsequent processing.
 
 ## Reading history
 

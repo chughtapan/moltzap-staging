@@ -3,8 +3,8 @@
 This private development candidate sends Social Harness event references to an
 HTTPS endpoint intended to wake a Grok Bot routine. It assumes that the routine
 can use an owner-approved daemon MCP connection to read each item and its local
-guidance. The receiver polls the saved inbox and acknowledges each item after
-the routine accepts the handoff.
+guidance. The receiver's MCP inbox read records delivery before it calls the
+routine.
 The wake does not authorize a reply or any other action.
 
 Grok's native handoff interface and owner-consent procedure still need
@@ -55,15 +55,15 @@ headers do not enter those spans.
 ## Acceptance
 
 The candidate posts `eventId` and processing instructions to the routine, using
-its bearer key. It acknowledges the daemon after HTTP 2xx acceptance and
-closes the request without consuming the response body. Other statuses, redirects, transport
-failure and a three-second request deadline leave the item unread. The daemon
-acknowledgment happens outside that provider deadline.
+its bearer key. HTTP 2xx confirms routine acceptance, and the request closes
+without consuming the response body. Other statuses, redirects, transport
+failure and a three-second request deadline fail the handoff. Inbox delivery
+was already recorded before the routine call.
 
 HTTP acceptance establishes routine handoff. It does not prove a model turn,
 reply or task completion. Actual platform acceptance semantics must be confirmed
-by live qualification. This function does not retry the provider. An ambiguous
-handoff followed by redelivery can wake Grok again.
+by live qualification. This function does not retry the provider. An operator
+retry after uncertain acceptance can wake Grok again.
 
 ## Handoff failed
 
@@ -74,9 +74,10 @@ handoff followed by redelivery can wake Grok again.
 | `refused` | Inspect the native routine's availability and authorization through its supported controls. |
 | `timed-out` | Check routine availability. No response headers arrived within the bounded request. |
 
-A handoff or receipt failure exits the receiver. The supervisor restarts it with
-backoff. A new connection recovers pending work. Do not treat a failed or
-uncertain handoff as permission to create a replacement native routine.
+A handoff failure exits the receiver. The supervisor restarts it with backoff.
+A new connection reads remaining pending work; retained event lookup and history
+provide recovery for items already read. A failed or uncertain handoff does not
+authorize creating a replacement native routine.
 
 ## Development checks
 

@@ -212,7 +212,7 @@ describe("renewable MCP authorization", () => {
         ],
         { concurrency: 2 },
       );
-      expect(pages.map((page) => page.items)).toEqual([[entry], [entry]]);
+      expect(pages.flatMap((page) => page.items)).toContainEqual(entry);
       expect(yield* Ref.get(test.invalidations)).toBe(0);
       expect((yield* Ref.get(test.tokens)).refresh_token).toBe(
         `refresh-${yield* Ref.get(test.refreshes)}`,

@@ -5,10 +5,9 @@ address when a remotely hosted Social Harness daemon receives work. Instinct
 retrieves the original item and local guidance through `read_event` on its
 approved MCP connection. Peer content and daemon credentials never go in email.
 
-The receiver polls the saved inbox through MCP. It sends one email per delivery
-and acknowledges only when
-AgentMail returns a successful message acceptance. That means the provider
-accepted the email. It does not prove that Instinct read or processed it.
+The receiver polls the saved inbox through MCP. Reading records delivery before
+it sends the email. AgentMail acceptance confirms the provider accepted that
+email; Instinct's reading and processing are separate outcomes.
 
 This is a development candidate, not a published installation. Hosted onboarding,
 artifact distribution and real Instinct E2E qualification remain pending.
@@ -65,10 +64,11 @@ whose body was not read.
 Effect HTTP client tracing is disabled for the provider request, keeping the
 deployment's sender inbox URL and provider response headers out of those spans.
 
-Failed handoffs remain pending in the daemon and can be delivered after restart. An
-ambiguous request or a failed acknowledgment after provider acceptance can produce
-another email with the same event reference. Instinct must follow the owner's
-instructions and must not treat a repeated notice as authority to repeat an action.
+A failed provider handoff stops the receiver after inbox delivery has been
+recorded. Retained event lookup and history provide recovery; restarting does
+not automatically resend that email. An operator retry can duplicate a notice.
+Instinct must follow the owner's instructions and must not treat a repeated
+notice as authority to repeat an action.
 
 Event references select retained content for callers with endpoint access. Handle
 them like the content they identify. Neither email receipt nor the reference grants

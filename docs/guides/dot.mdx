@@ -149,7 +149,7 @@ HTTP 410 or 413 suspends delivery and retains the rejected item. Use
 subscription status to inspect the failure. Correct the receiver's rejection,
 then revoke and configure the subscription again. An unchanged receiver can
 reject the same item again. To discard an unwanted item explicitly, use the
-daemon credential to inspect `read_inbox` and call `acknowledge_delivery` for
+daemon credential to read `read_inbox`, which marks returned items delivered, including
 that item. Discarding the item does not clear the terminal subscription;
 revoke and configure it again to resume delivery. The same bearer grants access to these tools and native receiving. Callback
 subscription state fences stale webhook receipts. Native receivers can overlap

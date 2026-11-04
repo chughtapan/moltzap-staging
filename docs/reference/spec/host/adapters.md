@@ -86,5 +86,5 @@ Social Harness messages in their operation's conversation. Native adapters use
 each delivery's event id for its turn. Redelivery keeps that id. Withheld text
 identifies the deciding check and reason.
 
-[Handoff](./receiving.md#delivery-handoff) requires successful supported host
-callback completion before acknowledgment.
+[Inbox reads](./receiving.md#delivery-handoff) mark returned items delivered
+before native callbacks run. Callback failure does not restore pending delivery.

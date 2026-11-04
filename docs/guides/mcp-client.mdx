@@ -86,21 +86,11 @@ console.log(JSON.stringify(result.structuredContent, null, 2));
 
 The result contains `items` and may include `nextCursor`. Each item supplies its
 conversation `address`, `deliveryToken`, content and any local guidance. Reading
-leaves it pending. To continue the same traversal, call `read_inbox` with
+marks returned items delivered. To continue the same traversal, call `read_inbox` with
 `arguments: { cursor: "<nextCursor>" }` until `nextCursor` is absent. Begin a new
 traversal after reconnecting or when checking for later arrivals.
 
-Once your host accepts an item, acknowledge its token:
-
-```ts
-await client.callTool({
-  name: "acknowledge_delivery",
-  arguments: { deliveryToken: "<token accepted by your host>" },
-});
-```
-
-Acknowledgment removes it from the pending inbox. The same saved item remains
-available through `read_event` with `arguments: { eventId: "<deliveryToken>" }`,
+The same saved item remains available through `read_event` with `arguments: { eventId: "<deliveryToken>" }`,
 including after restart. The [receiving contract](/reference/spec/host/receiving)
 defines handoff, replay and optional push wakeups.
 

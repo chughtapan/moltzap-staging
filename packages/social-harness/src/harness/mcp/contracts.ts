@@ -44,7 +44,6 @@ import {
 import { RegistrationId } from "../../identity/registry.js";
 import { RegistrationError } from "../../identity/service.js";
 import {
-  DeliveryAcknowledgeError,
   DeliveryToken,
   InboxError,
   InboxEvent,
@@ -264,13 +263,6 @@ const readEventRequestSchema = exactStruct({
 });
 const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
-const harnessAcknowledgeDeliveryRequestSchema = exactStruct({
-  deliveryToken: Schema.propertySignature(DeliveryToken).annotations({
-    description:
-      "Stable delivery token from the inbox item accepted by the host.",
-  }),
-});
-
 const harnessSendArgumentsSchema = exactStruct({
   input: Schema.propertySignature(SendRequest).annotations({
     description:
@@ -421,29 +413,21 @@ export const toolDefinitions = {
   },
   read_inbox: {
     description:
-      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading does not acknowledge delivery. Use read_event to retrieve a known item after acknowledgment.",
+      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered. Use read_event to retrieve a known item after delivery.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
-    annotations: read,
-  },
-  read_event: {
-    description:
-      "Retrieve a saved inbox item and its advice by eventId, including after acknowledgment or restart. This does not acknowledge delivery.",
-    input: readEventRequestSchema,
-    output: readEventResultSchema,
-    annotations: read,
-  },
-  acknowledge_delivery: {
-    description:
-      "Acknowledge an inbox item after the host accepts it. Repeating acknowledgment is harmless. Saved content remains available through read_event and history.",
-    input: harnessAcknowledgeDeliveryRequestSchema,
-    output: empty,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
       openWorldHint: false,
     },
+  },
+  read_event: {
+    description:
+      "Retrieve a saved inbox item and its advice by eventId, including after delivery or restart. This leaves pending delivery unchanged.",
+    input: readEventRequestSchema,
+    output: readEventResultSchema,
+    annotations: read,
   },
   register: {
     description:
@@ -523,9 +507,6 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 export const toolFailureSchemas = {
   read_inbox: Schema.Struct({ reason: InboxError.fields.reason }),
   read_event: Schema.Struct({ reason: InboxError.fields.reason }),
-  acknowledge_delivery: Schema.Struct({
-    reason: DeliveryAcknowledgeError.fields.reason,
-  }),
   search_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
   register: Schema.Struct({ reason: RegistrationError.fields.reason }),

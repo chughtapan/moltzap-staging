@@ -1,6 +1,6 @@
 ---
 title: Send your first message
-description: Send a message from Alice to Bob and inspect Bob's retained inbox.
+description: Send a message from Alice to Bob and read Bob's inbox.
 read_when:
   - You want to try messaging between two local agents
   - You want to see how sending and reading an inbox differ
@@ -60,21 +60,22 @@ You should see an entry in `items` with `item.kind` equal to `multicast`,
 one-to-one and group messages. If `items` is empty, read it again after a few
 seconds.
 
-Run the same inbox command again. The item remains because reading the inbox
-does not acknowledge or remove it.
+The inbox read marks the returned item delivered. Run the same command again;
+the item has left the pending inbox. Its content remains available through
+`read_event`, using the first result's `deliveryToken` as `eventId`, and through
+conversation history.
 
 ## Verify
 
-Bob's inbox holding Alice's message is the success condition. Both agents
+Bob's first inbox read returning Alice's message is the success condition. Both agents
 registered with your Registry, and the message went from Alice's daemon
-through your Router to Bob's. The successful send and the retained inbox
+through your Router to Bob's. The successful send and Bob's returned inbox
 item are separate observations of that path.
 
 ## Continue or stop
 
 Connect a host with [OpenClaw](/guides/openclaw), or use the
-[TypeScript MCP client](/guides/mcp-client) to receive and acknowledge
-deliveries in code.
+[TypeScript MCP client](/guides/mcp-client) to receive deliveries in code.
 
 To pause, [stop each agent's service](/guides/run-an-agent-daemon#stop-or-remove-the-agent),
 choosing `alice` and then `bob`, and leave the network running. You can then

@@ -54,9 +54,6 @@ catalogs:
     '@noble/curves':
       specifier: 2.4.0
       version: 2.4.0
-    '@opencode-ai/plugin':
-      specifier: 1.19.5
-      version: 1.19.5
     '@opentelemetry/api':
       specifier: ^1.9.0
       version: 1.9.1
@@ -456,28 +453,6 @@ importers:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1)
 
-  plugins/codex:
-    dependencies:
-      '@effect/platform':
-        specifier: 'catalog:'
-        version: 0.97.0(effect@3.22.1)
-      '@effect/platform-node':
-        specifier: 'catalog:'
-        version: 0.108.0(@effect/cluster@0.60.0(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.19.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@modelcontextprotocol/client':
-        specifier: 'catalog:'
-        version: 2.0.0-beta.5
-      '@moltzap/social-harness':
-        specifier: workspace:*
-        version: link:../../packages/social-harness
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@moltzap/plugin-mcp':
-        specifier: workspace:*
-        version: link:../shared
-
   plugins/grokbot:
     dependencies:
       '@effect/platform':
@@ -630,31 +605,6 @@ importers:
         specifier: 'catalog:'
         version: 3.2.4(@types/debug@4.1.13)(@types/node@25.5.0)(jiti@2.7.0)(terser@5.49.0)(tsx@4.21.0)(yaml@2.9.1)
 
-  plugins/opencode:
-    dependencies:
-      '@effect/platform':
-        specifier: 'catalog:'
-        version: 0.97.0(effect@3.22.1)
-      '@effect/platform-node':
-        specifier: 'catalog:'
-        version: 0.108.0(@effect/cluster@0.60.0(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.19.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(@effect/rpc@0.76.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.0(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@modelcontextprotocol/client':
-        specifier: 'catalog:'
-        version: 2.0.0-beta.5
-      '@moltzap/social-harness':
-        specifier: workspace:*
-        version: link:../../packages/social-harness
-      '@opencode-ai/plugin':
-        specifier: 'catalog:'
-        version: 1.19.5
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@moltzap/plugin-mcp':
-        specifier: workspace:*
-        version: link:../shared
-
   plugins/shared:
     dependencies:
       '@modelcontextprotocol/client':
@@ -755,10 +705,6 @@ packages:
     resolution: {integrity: sha512-524jwbB2iYWA+kWWyv9fhKbhU89dH/lu9u5EXwVNmfYzopV8BujCDxByBDZhxRUkB7RWIJzISCnwivdDk+bdVg==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
-
-  '@ai-sdk/provider@3.0.8':
-    resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
-    engines: {node: '>=18'}
 
   '@alcalzone/ansi-tokenize@0.2.5':
     resolution: {integrity: sha512-3NX/MpTdroi0aKz134A6RC2Gb2iXVECN4QaAXnvCIxxIm3C3AVB1mkUe8NaaiyvOpDfsrqWhYtj+Q6a62RrTsw==}
@@ -2539,23 +2485,6 @@ packages:
   '@openclaw/fs-safe@0.24.2':
     resolution: {integrity: sha512-MEq9TssvajMJTZxXlURwrOP7Or8CSS6c9F02rdG04BEe0LLRmfQqzTtRyrDi3uaj+yxr9tw2Tpy5yrLPuO+oZg==}
     engines: {node: '>=22'}
-
-  '@opencode-ai/plugin@1.19.5':
-    resolution: {integrity: sha512-79PY+pxcJajHReWv2OP2SYTdlx1f7zOmq2hIaReOJnovsxNaSvxVyQHx+6Yq22T5UcS4z3Qgws4KB4lQOaIbdQ==}
-    peerDependencies:
-      '@opentui/core': '>=0.4.5'
-      '@opentui/keymap': '>=0.4.5'
-      '@opentui/solid': '>=0.4.5'
-    peerDependenciesMeta:
-      '@opentui/core':
-        optional: true
-      '@opentui/keymap':
-        optional: true
-      '@opentui/solid':
-        optional: true
-
-  '@opencode-ai/sdk@1.19.5':
-    resolution: {integrity: sha512-+bqu8gHiwmq96T9q5G34uLNHWCInIMsrE3hytCNHj1cVaxjY0AGJyNCT1rkeeZwgPU7A5TMTNwN+0XxCO2vqDg==}
 
   '@opentelemetry/api-logs@0.223.0':
     resolution: {integrity: sha512-Oepm6etVPFCn0VWB1t833iOTgz1eYBDUPxcrOR/XvwzD1+Ag9VzSPSrrKAFNJ/haatj+8CXbG47pZXvdNQKDJw==}
@@ -6857,9 +6786,6 @@ packages:
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
 
-  json-schema@0.4.0:
-    resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
-
   json-stable-stringify-without-jsonify@1.0.1:
     resolution: {integrity: sha512-Bdboy+l7tA3OGW6FjyFHWkP5LuByj1Tk33Ljyq0axyzdk9//JSi2u3fP1QSmd1KNwq6VOKYGlAu87CisVir6Pw==}
 
@@ -9691,9 +9617,6 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.1.8:
-    resolution: {integrity: sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==}
-
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
@@ -9708,10 +9631,6 @@ snapshots:
   '@agentclientprotocol/sdk@1.5.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
-
-  '@ai-sdk/provider@3.0.8':
-    dependencies:
-      json-schema: 0.4.0
 
   '@alcalzone/ansi-tokenize@0.2.5':
     dependencies:
@@ -11768,17 +11687,6 @@ snapshots:
       '@openclaw/fs-safe-linux-x64-musl': 0.24.2
       '@openclaw/fs-safe-win32-x64-msvc': 0.24.2
       jszip: 3.10.2
-
-  '@opencode-ai/plugin@1.19.5':
-    dependencies:
-      '@ai-sdk/provider': 3.0.8
-      '@opencode-ai/sdk': 1.19.5
-      effect: 3.22.1
-      zod: 4.1.8
-
-  '@opencode-ai/sdk@1.19.5':
-    dependencies:
-      cross-spawn: 7.0.6
 
   '@opentelemetry/api-logs@0.223.0':
     dependencies:
@@ -16450,8 +16358,6 @@ snapshots:
 
   json-schema-typed@8.0.2: {}
 
-  json-schema@0.4.0: {}
-
   json-stable-stringify-without-jsonify@1.0.1: {}
 
   json5@2.2.3: {}
@@ -20396,8 +20302,6 @@ snapshots:
   zod@3.24.0: {}
 
   zod@3.25.76: {}
-
-  zod@4.1.8: {}
 
   zod@4.3.6: {}
 

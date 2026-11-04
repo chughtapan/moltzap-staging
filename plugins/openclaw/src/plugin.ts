@@ -235,8 +235,8 @@ const carriesTargets = Schema.is(Schema.NonEmptyArray(Schema.Unknown));
 
 /**
  * Each account retains its own runtime and MCP connection until reception ends
- * or OpenClaw aborts it. Inbound callback success permits acknowledgment of host
- * handoff. OpenClaw owns processing and retries. Final assistant text stays private.
+ * or OpenClaw aborts it. Inbox reads record delivery before native rendering.
+ * OpenClaw owns processing and retries. Final assistant text stays private.
  *
  * @internal
  */
@@ -464,31 +464,22 @@ function requireOpenClawAccountRuntime(
 function isOpenClawAccountRuntime(
   runtime: ChannelRuntimeSurface,
 ): runtime is ChannelRuntimeSurface & OpenClawAccountRuntime {
-  return (
-    hasOpenClawInboundRuntime(runtime) && hasOpenClawRoutingRuntime(runtime)
-  );
-}
-
-function hasOpenClawInboundRuntime(runtime: ChannelRuntimeSurface): boolean {
-  const inbound = runtime.inbound;
+  const { inbound, routing } = runtime;
   if (typeof inbound !== "object" || inbound === null) {
     return false;
   }
-  if (!("buildContext" in inbound)) {
+  if (
+    !("buildContext" in inbound) ||
+    typeof inbound.buildContext !== "function"
+  ) {
     return false;
   }
-  if (typeof inbound.buildContext !== "function") {
-    return false;
-  }
-  return "run" in inbound && typeof inbound.run === "function";
-}
-
-function hasOpenClawRoutingRuntime(runtime: ChannelRuntimeSurface): boolean {
-  const routing = runtime.routing;
-  if (typeof routing !== "object" || routing === null) {
+  if (!("run" in inbound) || typeof inbound.run !== "function") {
     return false;
   }
   return (
+    typeof routing === "object" &&
+    routing !== null &&
     "resolveAgentRoute" in routing &&
     typeof routing.resolveAgentRoute === "function"
   );

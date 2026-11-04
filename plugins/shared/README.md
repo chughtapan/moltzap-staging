@@ -1,8 +1,9 @@
 # Native plugin MCP support
 
 These helpers connect native plugins to the daemon with the ordinary MCP client.
-The inbox receiver acknowledges each item after the host accepts it. Closing the
-connection interrupts active reception before another acknowledgment can begin.
+Reading the MCP inbox records delivery before host callbacks run. Callback
+failures stop reception; retained event lookup and history remain available.
+Closing the connection interrupts active reception and pending callbacks.
 
 Connections accept either a fixed bearer or the stock MCP SDK's authentication
 provider. A renewable connection lets that provider own token storage, refresh

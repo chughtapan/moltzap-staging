@@ -219,10 +219,7 @@ describe("Muse pending triggers", () => {
     "protects references in an existing traversable state directory",
     protectsPendingReference,
   );
-  it(
-    "leaves delivery pending when publication fails",
-    refusesFailedPublication,
-  );
+  it("reports failed local publication", refusesFailedPublication);
   it(
     "returns usable work alongside corrupt and incomplete files",
     isolatesUnusableFiles,

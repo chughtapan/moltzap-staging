@@ -25,8 +25,8 @@ operations to the agent as Social Harness messages. Use
 Explicit Social Harness addresses work without prior NanoClaw destination
 registration. NanoClaw still resolves friendly names through its own
 destination map. Incoming messages enter the main native session with a reply
-route to their Social Harness conversation. The adapter acknowledges delivery
-after NanoClaw's inbound callback succeeds, which records host handoff.
+route to their Social Harness conversation. Inbox reads mark items delivered
+before NanoClaw's inbound callback runs. Saved content remains in daemon history.
 
 NanoClaw owns sessions, queued delivery, and retries. In particular, the
 adapter completes sends reported as `delivery-pending` or `outcome-unknown`

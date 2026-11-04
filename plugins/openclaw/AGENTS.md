@@ -47,10 +47,9 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   exhaustively.
 - Leave outbound queue and retry policy to OpenClaw. Every plugin callback is
   one Client operation; do not pass queue identity or add provider-owned retries.
-- Acknowledge Client delivery after the supported inbound callback returns
-  successfully; propagate callback failures. This establishes handoff only.
-  Processing and notification belong to the host. Its restricted durable
-  ingress queue is not a prerequisite. Ambiguous handoff replay is deferred.
+- Inbox reads record delivery before the native inbound callback. Propagate
+  callback failures; they do not restore pending daemon delivery. OpenClaw owns
+  processing, notification and task recovery.
 - Discovery, search, history, status, registration, and proof inspection use
   the MCP catalog.
 - Keep host failures and Client failures typed at the boundary. A delivery
@@ -65,7 +64,7 @@ adapter contract.
 ## Tests
 
 - Unit tests may fake the public Client capability to verify canonical
-  projection, stock routing, outbound callbacks, and acknowledgment ordering.
+  projection, stock routing and outbound callbacks.
 - Real-host qualification covers shared main-session context, private final
   text, explicit-target sends, successful callback handoff, and propagated
   callback failures. It does not require processing confirmation.

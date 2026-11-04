@@ -810,27 +810,34 @@ function runOpenClawFailedHandoffScenario() {
       const plugin = yield* registerOpenClawChannel();
       const failedTurns = yield* Queue.unbounded<OpenClawInboundContext>();
       const runtime = makeTurnQueueRuntime(failedTurns);
-      const failed = yield* startOpenClawGateway(scenario.target, plugin, {
-        channel: {
-          ...runtime.channel,
-          inbound: {
-            ...runtime.channel.inbound,
-            run: (input) =>
-              Effect.runPromise(
-                Queue.offer(
-                  failedTurns,
-                  input.adapter.resolveTurn().ctxPayload,
-                ).pipe(
-                  Effect.zipRight(
-                    Effect.fail(
-                      new ProcessTestError({ message: "host handoff failed" }),
+      const failed = yield* startOpenClawGateway(
+        scenario.target,
+        plugin,
+        {
+          channel: {
+            ...runtime.channel,
+            inbound: {
+              ...runtime.channel.inbound,
+              run: (input) =>
+                Effect.runPromise(
+                  Queue.offer(
+                    failedTurns,
+                    input.adapter.resolveTurn().ctxPayload,
+                  ).pipe(
+                    Effect.zipRight(
+                      Effect.fail(
+                        new ProcessTestError({
+                          message: "host handoff failed",
+                        }),
+                      ),
                     ),
                   ),
                 ),
-              ),
+            },
           },
         },
-      });
+        { mode: "private" },
+      );
       const text = "Please retain this failed handoff";
       yield* callTool(caller.client, {
         name: "send_message",
@@ -846,29 +853,29 @@ function runOpenClawFailedHandoffScenario() {
         true,
       );
 
-      const turns = yield* Queue.unbounded<OpenClawInboundContext>();
-      const restartedPlugin = yield* registerOpenClawChannel();
-      const restarted = yield* startOpenClawGateway(
-        scenario.target,
-        restartedPlugin,
-        makeTurnQueueRuntime(turns),
-        { mode: "private" },
-      );
-      const replay = yield* nextTurn(turns);
-      expect(replay.MessageSid).toBe(original.MessageSid);
-      expect(replay.Body).toBe(text);
-      expect(replay.SessionKey).toBe(
+      expect(original.Body).toBe(text);
+      expect(original.SessionKey).toBe(
         `agent:primary:sharness:direct:${scenario.caller.agentName}`,
       );
+      const target = yield* acquireMcpConnection(
+        {
+          endpoint: scenario.target.endpoint,
+          credential: scenario.target.mcpCredential,
+        },
+        { name: "process-test", version: "test" },
+      );
+      expect(
+        (yield* callTool(target.client, { name: "read_inbox", arguments: {} }))
+          .items,
+      ).toHaveLength(0);
       const management = yield* acquireDaemonManagementClient(scenario.target);
-      expect(yield* management.readEvent(replay.MessageSid)).toMatchObject({
+      expect(yield* management.readEvent(original.MessageSid)).toMatchObject({
         kind: "multicast",
         message: {
           author: scenario.caller.agent,
           content: multicastContent(text),
         },
       });
-      yield* stopGateway(restarted.abortController, restarted.runningGateway);
     }),
   );
 }
@@ -879,7 +886,7 @@ it(
   300_000,
 );
 it(
-  "redelivers a failed OpenClaw handoff under the same event id and host-selected private route",
+  "retains a failed OpenClaw handoff without replaying it and preserves the host-selected private route",
   processTrace(runOpenClawFailedHandoffScenario()),
   300_000,
 );

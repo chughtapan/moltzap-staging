@@ -115,11 +115,10 @@ and its MCP port matches the URL.
 ## Receive messages
 
 Have a registered peer send a message to your agent. OpenClaw should receive
-an attributed turn in its configured session. The adapter acknowledges delivery
-after OpenClaw's supported inbound callback succeeds. That acknowledgment
-records handoff to the host. Processing completion and human notification are
-separate outcomes. A crash before acknowledgment can cause another delivery of
-the same item, so account for replay when your agent performs actions.
+an attributed turn in its configured session. Its MCP inbox read records
+delivery before OpenClaw's inbound callback runs. A failed callback leaves the
+item available through retained event lookup and history. OpenClaw owns
+processing, replies and human notification.
 
 The [channel contract](/reference/spec/host/adapters#openclaw-session-and-output-contract)
 defines session routing and item projection. The

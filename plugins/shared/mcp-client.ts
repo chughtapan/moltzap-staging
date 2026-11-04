@@ -16,7 +16,6 @@ import {
 } from "@modelcontextprotocol/client";
 import {
   decodeHarnessSendErrorData,
-  DeliveryAcknowledgeError,
   FirewallPolicyError,
   FirewallRefusal,
   HistoryError,
@@ -63,22 +62,19 @@ export type ToolFailure<Name extends ToolName> = Name extends "send_message"
       | McpToolError
       | (Name extends "read_inbox" | "read_event"
           ? InboxError
-          : Name extends "acknowledge_delivery"
-            ? DeliveryAcknowledgeError
-            : Name extends "search_conversations" | "read_conversation"
-              ? HistoryError
-              : Name extends "register"
-                ? RegistrationError
-                : Name extends
-                      | "policy_read"
-                      | "policy_update"
-                      | "firewall_decisions"
-                  ? FirewallPolicyError
-                  : never);
+          : Name extends "search_conversations" | "read_conversation"
+            ? HistoryError
+            : Name extends "register"
+              ? RegistrationError
+              : Name extends
+                    | "policy_read"
+                    | "policy_update"
+                    | "firewall_decisions"
+                ? FirewallPolicyError
+                : never);
 
 type DomainFailure =
   | InboxError
-  | DeliveryAcknowledgeError
   | HistoryError
   | RegistrationError
   | FirewallPolicyError;
@@ -105,9 +101,8 @@ export interface InboxOptions {
 export type InboxEntry = ToolResult<"read_inbox">["items"][number];
 
 /**
- * Allows one inbox consumer at a time. A failed callback stops reception before
- * acknowledgment. Successful callbacks are acknowledged, and an uncertain
- * acknowledgment can cause redelivery.
+ * Allows one inbox consumer at a time. Reading marks items delivered before the
+ * callback runs. Callback failure stops reception; saved history retains the item.
  */
 export interface McpConnection {
   readonly client: Client;
@@ -115,32 +110,6 @@ export interface McpConnection {
     options: InboxOptions,
     accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | McpReceiveError, R>;
-}
-
-/** A native host may own the authorized MCP client; the receiver borrows only its standard tool call. */
-export function acquirePollingReceiver(
-  client: Pick<Client, "callTool">,
-): Effect.Effect<
-  <E, R>(
-    options: Pick<InboxOptions, "onReady">,
-    accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-  ) => Effect.Effect<void, E | McpReceiveError, R>,
-  never,
-  Scope.Scope
-> {
-  return Effect.gen(function* () {
-    const receiving = yield* Ref.make(false);
-    const scope = yield* Scope.Scope;
-    return <E, R>(
-      options: Pick<InboxOptions, "onReady">,
-      accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-    ) =>
-      runReception(
-        { client, receiving, scope },
-        pollingWakeups(options),
-        accept,
-      );
-  }).pipe(Effect.withSpan("Mcp.acquirePollingReceiver"));
 }
 
 /** TLS and literal loopback can carry the private bearer without redirects. */
@@ -333,10 +302,6 @@ function decodeToolResult(
       return Schema.decodeUnknown(toolDefinitions.read_inbox.output)(value);
     case "read_event":
       return Schema.decodeUnknown(toolDefinitions.read_event.output)(value);
-    case "acknowledge_delivery":
-      return Schema.decodeUnknown(toolDefinitions.acknowledge_delivery.output)(
-        value,
-      );
     case "register":
       return Schema.decodeUnknown(toolDefinitions.register.output)(value);
     case "status":
@@ -424,11 +389,6 @@ function managementFailure(
         toolFailureSchemas.read_event,
         (data) => new InboxError(data),
       );
-    case "acknowledge_delivery":
-      return decode(
-        toolFailureSchemas.acknowledge_delivery,
-        (data) => new DeliveryAcknowledgeError(data),
-      );
     case "search_conversations":
       return decode(
         toolFailureSchemas.search_conversations,
@@ -490,17 +450,6 @@ function consumePending<E, R>(
       );
       for (const entry of page.items) {
         yield* accept(entry);
-        yield* callTool(client, {
-          name: "acknowledge_delivery",
-          arguments: { deliveryToken: entry.deliveryToken },
-        }).pipe(
-          Effect.catchTags({
-            DeliveryAcknowledgeError: () =>
-              Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
-            McpToolError: () =>
-              Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
-          }),
-        );
       }
       cursor = page.nextCursor;
     } while (cursor !== undefined);
