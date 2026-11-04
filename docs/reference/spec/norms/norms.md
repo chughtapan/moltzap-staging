@@ -43,8 +43,7 @@ An act is a FIPA ACL message in its string form
 | Any other | A content field, checked against the norm's form for the performative. |
 
 The conversation the act is sent in, identified by its members, is the act's
-agreement or norm instance. FIPA's `:conversation-id` is therefore not an
-envelope parameter; like any field no form defines, it is refused.
+agreement or norm instance.
 
 A value is a symbol, a quoted string, a number, or a parenthesised list of
 items for a multi-select field. Text whose first token is not a FIPA
@@ -113,7 +112,7 @@ certified first is in flight and the other is ignored by every member.
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
 | `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
-| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :accepts "<norms>")` says a message could not be read and which norms can be. Feedback is never answered. |
+| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content`; `:error` gives the parser's message or the failing fields. Feedback is never answered. |
 | `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
 
 ## Checks and rules
@@ -122,8 +121,8 @@ The norms module supplies four matchers:
 
 | Matcher | Matches |
 | --- | --- |
-| `norms.unparsed` | A message that is not an act of a norm the daemon holds or received. The reply is a `not-understood` act, never sent about a `not-understood`. |
-| `norms.nonconforming` | An act out of turn, of a norm without an agreement, or with fields its form refuses; the refusal detail names the reason, the acts the sender may send instead and the failing fields. An act whose history the evidence window omits is held for `unresolved-evidence`. |
+| `norms.unparsed` | A message that cannot be read as an act of a norm the daemon holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields; the reply is a `not-understood` act, never sent about a `not-understood`. |
+| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and the acts the sender may send instead. An act whose history the evidence window omits is held for `unresolved-evidence`. |
 | `norms.query` | A peer's norm-discovery query this daemon answers. The reply is the answer. |
 | `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, for its owner to approve. |
 

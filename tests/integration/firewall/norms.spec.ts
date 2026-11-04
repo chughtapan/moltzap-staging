@@ -1,10 +1,10 @@
 /**
- * @file Norms through real daemons. A daemon that holds no `chat` norm
- * answers a stranger's plain text with `not-understood`, which the stranger
- * receives as an ordinary message. Members agree on a norm before its acts,
- * and each daemon refuses its own agent's act out of turn. An agent's acts
- * sent back to back are judged in the order sent, and acts carry no
- * conversation id: the conversation identifies the task.
+ * @file Norms through real daemons. A daemon answers a stranger's message it
+ * cannot read, plain text where it holds no `chat` norm or an act with a field
+ * its form lacks, with `not-understood`, which the stranger receives as an
+ * ordinary message. Members agree on a norm before its acts, and each daemon
+ * refuses its own agent's act out of turn. An agent's acts sent back to back
+ * are judged in the order sent.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -72,21 +72,32 @@ const strangerText = Effect.gen(function* () {
 
   yield* send(alice, { to: bob.address, text: "Can we meet today?" });
   const reply = yield* nextItem(alice);
-  const text =
-    reply.kind === "multicast"
-      ? reply.message.content.map((part) =>
-          part.type === "text" ? part.text : "",
-        )
-      : [];
+  yield* send(alice, {
+    to: bob.address,
+    text: "(propose :ontology norm-agreement :norm office-hours :when today)",
+  });
+  const fieldReply = yield* nextItem(alice);
 
   expect(reply).toMatchObject({
     kind: "multicast",
     message: { author: { agentName: bob.agent.agentName } },
   });
-  expect(text.join("")).toMatch(
+  expect(textOf(reply)).toMatch(
     /^\(not-understood :ontology feedback .*:reason "plain-text"/u,
   );
+  expect(textOf(fieldReply)).toMatch(
+    /:reason "invalid-content" :error "field \\"when\\"/u,
+  );
 }).pipe(Effect.scoped);
+
+/** The text of a delivered message, or nothing for any other item. */
+function textOf(item: Effect.Effect.Success<ReturnType<typeof nextItem>>) {
+  return item.kind === "multicast"
+    ? item.message.content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("")
+    : "";
+}
 
 const proposal = "(propose :ontology norm-agreement :norm office-hours)";
 const acceptance = "(accept-proposal :ontology norm-agreement)";
@@ -173,7 +184,7 @@ const backToBack = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 it(
-  "answers a stranger's plain text with not-understood where chat is not held",
+  "answers a stranger's plain text and an act with a field its form lacks with not-understood",
   processTrace(strangerText),
   NORMS_TEST_TIMEOUT_MS,
 );
