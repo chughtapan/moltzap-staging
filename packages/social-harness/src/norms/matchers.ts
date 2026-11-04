@@ -120,7 +120,13 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
       const body = messageText(message);
       const reading = body === undefined ? undefined : readText(body);
       return reading?.kind === "act"
-        ? [{ act: reading.act, sender: message.author.agentId }]
+        ? [
+            {
+              act: reading.act,
+              sender: message.author.agentId,
+              msgId: message.msgId,
+            },
+          ]
         : [];
     });
     const state = yield* foldActs(setting, acts);
@@ -128,7 +134,11 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
     const verdict =
       reading.kind === "act" &&
       normOf(setting, state, reading.act.ontology) !== undefined
-        ? yield* judge(setting, state, reading.act, author.agentId)
+        ? yield* judge(setting, state, {
+            act: reading.act,
+            sender: author.agentId,
+            msgId: msgIdOf(input),
+          })
         : undefined;
     return Option.some<Analysis>({
       reading,
@@ -246,17 +256,18 @@ function answerQuery(input: MatchInput, analysis: Analysis): Matched {
   }
   if (typeof requested !== "string") {
     return direct
-      ? answer(act, { norms: [...setting.held.keys()].join(" ") })
+      ? answer(msgIdOf(input), { norms: [...setting.held.keys()].join(" ") })
       : unmatched;
   }
   const norm = setting.held.get(requested);
   return norm === undefined
     ? unmatched
-    : answer(act, { norm: requested }, norm.source);
+    : answer(msgIdOf(input), { norm: requested }, norm.source);
 }
 
+/** An `inform` that answers the query message `query`. */
 function answer(
-  query: Act,
+  query: string,
   fields: Readonly<Record<string, string>>,
   content?: string,
 ): Matched {
@@ -265,9 +276,7 @@ function answer(
     reply: formatAct({
       performative: "inform",
       ontology: builtIns.discovery,
-      ...(query.conversationId === undefined
-        ? {}
-        : { conversationId: query.conversationId }),
+      inReplyTo: query,
       ...(content === undefined ? {} : { content }),
       fields,
     }),

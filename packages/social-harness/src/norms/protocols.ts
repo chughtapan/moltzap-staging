@@ -9,7 +9,6 @@ import type { ProtocolName } from "./documents.js";
 /** One protocol instance: who started it, who takes part, and the acts each has sent. */
 export interface Instance {
   readonly norm: string;
-  readonly conversationId: string;
   readonly protocol: ProtocolName;
   readonly initiator: string;
   readonly participants: readonly string[];
