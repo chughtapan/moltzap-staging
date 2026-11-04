@@ -97,14 +97,10 @@ jobs:
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker buildx create --use \
             --driver-opt image=moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
-          context=.
-          if [[ "$SERVICE" == openclaw-agent ]]; then
-            context=images/openclaw-agent
-          fi
           docker buildx build --platform "linux/$PLATFORM" \
             --file "images/$SERVICE/Dockerfile" \
             --output "type=image,name=ghcr.io/social-harness/$SERVICE,push-by-digest=true,name-canonical=true,push=true" \
-            --metadata-file "$RUNNER_TEMP/metadata.json" "$context"
+            --metadata-file "$RUNNER_TEMP/metadata.json" .
           jq -r '."containerimage.digest"' "$RUNNER_TEMP/metadata.json" > "$RUNNER_TEMP/$PLATFORM"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

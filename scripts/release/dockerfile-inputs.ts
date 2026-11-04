@@ -1,39 +1,25 @@
-/** @file Lists Docker build inputs and rejects unsupported Dockerfile and .dockerignore syntax. */
+/** @file Inventories the named context inputs of root-context image recipes. */
 import { absurd } from "effect";
 import path from "node:path";
-import {
-  ImageInputError,
-  readJson,
-  type Tree,
-  under,
-} from "./image-input-tree.ts";
+import { ImageInputError, readJson, type Tree } from "./image-input-tree.ts";
 
-/** What a runtime stage starts: a network service from `/app`, or the daemon launcher over its seed. */
-export type DockerRuntime = "service" | "launcher";
+/** The installed runtime shipped by a root-context image recipe. */
+export type DockerRuntime = "service" | "daemon" | "host";
 
-/**
- * The launcher stage seeds the volume both containers mount, which the launcher
- * directory must own and every user must read.
- */
-const LAUNCHER_STAGE: ReadonlySet<string> = new Set([
-  "COPY --from=build --chown=node:node /deploy/ /opt/social-harness/launcher/seed/",
-  'ENV PATH="/opt/social-harness/launcher/seed/node_modules/.bin:${PATH}"',
-  "ENV SHARNESS_LAUNCHER_DIRECTORY=/opt/social-harness/launcher",
-  "ENV SHARNESS_LAUNCHER_SEED=/opt/social-harness/launcher/seed",
-  "ENV SHARNESS_LAUNCHER_PACKAGE=@moltzap/openclaw-channel",
-  "RUN chown node:node /opt/social-harness/launcher && chmod -R a+rX /opt/social-harness/launcher/seed",
-  'VOLUME ["/opt/social-harness/launcher"]',
+const DAEMON_STAGE: ReadonlySet<string> = new Set([
+  "COPY --from=build --chown=node:node /deploy/ /opt/social-harness/",
+  'ENV PATH="/opt/social-harness/node_modules/.bin:${PATH}"',
   "USER node",
-  'ENTRYPOINT ["sharnessd-launcher"]',
+  'ENTRYPOINT ["sharnessd"]',
 ]);
 
-/** Docker's ignore wildcards: `**` crosses directories, `*` and `?` stay within one. */
-const IGNORE_WILDCARDS: ReadonlyMap<string, string> = new Map([
-  ["**/", "(?:.*/)?"],
-  ["**", ".*"],
-  ["*", "[^/]*"],
-  ["?", "[^/]"],
+const HOST_COPIES: ReadonlySet<string> = new Set([
+  "COPY --from=build --chown=node:node /deploy/ /opt/social-harness/",
+  "COPY --from=build /build/images/openclaw-agent/ /opt/social-harness/agent/",
 ]);
+
+const HOST_PRODUCTION_PACKAGES =
+  "npm pkg delete --prefix images/openclaw-agent devDependencies && npm pkg delete --prefix plugins/openclaw peerDependencies.openclaw peerDependenciesMeta.openclaw";
 
 /**
  * Inventories named context sources after validating every instruction.
@@ -48,15 +34,8 @@ export function dockerContextInputs(
 ): string[] {
   const inputs: string[] = [];
   let stage = 0;
-  const commands = buildCommands(tree, service);
-  const lines = tree
-    .read(file)
-    .split(/\r?\n/u)
-    .map((raw, index) => ({
-      file,
-      number: index + 1,
-      text: raw.trim(),
-    }));
+  const commands = buildCommands(tree, service, runtime);
+  const lines = dockerLines(tree.read(file), file);
   for (const line of lines.filter((line) => !ignored(line.text))) {
     stage = instructionInputs(
       tree,
@@ -69,34 +48,6 @@ export function dockerContextInputs(
     refuse({ file, number: lines.length, text: "expected two FROM stages" });
   }
   return inputs;
-}
-
-/**
- * Lists the files of a build context that its `.dockerignore` admits.
- * Docker's rules apply: the last matching pattern decides, `!` admits again,
- * a pattern that matches a directory covers its contents, and `*` matches
- * dotfiles. Character classes and escapes are refused rather than guessed.
- */
-export function admittedContext(tree: Tree, directory: string): string[] {
-  const file = `${directory}/.dockerignore`;
-  const patterns = tree.files.has(file)
-    ? tree
-        .read(file)
-        .split(/\r?\n/u)
-        .map((line) => line.trim())
-        .filter((line) => line !== "" && !line.startsWith("#"))
-        .map((line) => ignorePattern(file, line))
-    : [];
-  return under(tree, directory).filter((candidate) => {
-    const relative = path.posix.relative(directory, candidate);
-    return patterns.reduce(
-      (admitted, { admits, matches }) =>
-        ancestry(relative).some((entry) => matches.test(entry))
-          ? admits
-          : admitted,
-      true,
-    );
-  });
 }
 
 interface DockerLine {
@@ -112,6 +63,32 @@ interface DockerStage {
   readonly commands: ReadonlySet<string>;
 }
 
+/** Joins Docker continuations before validating instructions, retaining their first line number. */
+function dockerLines(source: string, file: string): DockerLine[] {
+  const lines: DockerLine[] = [];
+  let pending = "";
+  let number = 1;
+  for (const [index, raw] of source.split(/\r?\n/u).entries()) {
+    if (ignored(raw.trim())) {
+      continue;
+    }
+    if (pending === "") {
+      number = index + 1;
+    }
+    pending += raw.trim();
+    if (pending.endsWith("\\")) {
+      pending = pending.slice(0, -1).trimEnd() + " ";
+    } else {
+      lines.push({ file, number, text: pending });
+      pending = "";
+    }
+  }
+  if (pending !== "") {
+    refuse({ file, number, text: pending });
+  }
+  return lines;
+}
+
 function ignored(line: string): boolean {
   return (
     line === "" ||
@@ -119,12 +96,17 @@ function ignored(line: string): boolean {
   );
 }
 
-function buildCommands(tree: Tree, service: string): ReadonlySet<string> {
+function buildCommands(
+  tree: Tree,
+  service: string,
+  runtime: DockerRuntime,
+): ReadonlySet<string> {
   const manager = readJson(tree, "package.json").packageManager;
   return new Set([
     `corepack enable && corepack prepare ${String(manager)} --activate`,
     `pnpm install --frozen-lockfile --filter ${service}...`,
     `pnpm nx run ${service}:build`,
+    ...(runtime === "host" ? [HOST_PRODUCTION_PACKAGES] : []),
     `pnpm deploy --filter ${service} --prod --legacy /deploy`,
   ]);
 }
@@ -136,7 +118,7 @@ function instructionInputs(
   inputs: string[],
 ): number {
   if (line.text.startsWith("FROM ")) {
-    return nextStage(line, state.stage);
+    return nextStage(line, state);
   }
   if (line.text.startsWith("COPY ") && state.stage === 1) {
     inputs.push(...contextCopy(tree, line));
@@ -146,7 +128,14 @@ function instructionInputs(
   return state.stage;
 }
 
-function nextStage(line: DockerLine, stage: number): number {
+function nextStage(line: DockerLine, state: DockerStage): number {
+  const { stage, runtime } = state;
+  if (runtime === "host" && stage === 1) {
+    if (line.text !== "FROM ${OPENCLAW_BASE_IMAGE} AS agent") {
+      refuse(line);
+    }
+    return 2;
+  }
   const pinned = /^FROM node:[\w.-]+@sha256:[a-f\d]{64}(?: AS build)?$/u.test(
     line.text,
   );
@@ -161,6 +150,9 @@ function nextStage(line: DockerLine, stage: number): number {
 }
 
 function allowedInstruction(line: string, state: DockerStage): boolean {
+  if (state.stage === 0 && state.runtime === "host") {
+    return /^ARG OPENCLAW_BASE_IMAGE=[\w./-]+@sha256:[a-f\d]{64}$/u.test(line);
+  }
   if (state.stage === 1) {
     return state.commands.has(line.slice(4))
       ? line.startsWith("RUN ")
@@ -182,8 +174,14 @@ function allowedInstruction(line: string, state: DockerStage): boolean {
   switch (state.runtime) {
     case "service":
       return serviceStage(line, state.service);
-    case "launcher":
-      return LAUNCHER_STAGE.has(line);
+    case "daemon":
+      return DAEMON_STAGE.has(line);
+    case "host":
+      return (
+        HOST_COPIES.has(line) ||
+        /^(?:USER|ARG|LABEL|ENV|WORKDIR|ENTRYPOINT) /u.test(line) ||
+        (line.startsWith("RUN ") && !/^RUN\s+--/u.test(line))
+      );
     default:
       return absurd(state.runtime);
   }
@@ -262,35 +260,4 @@ function refuse(line: DockerLine): never {
   throw new ImageInputError({
     message: `Unsupported Dockerfile form in ${line.file} line ${line.number}: ${line.text}. Docs: https://docs.moltzap.xyz/guides/contributing#unsupported-dockerfile-form`,
   });
-}
-
-function ignorePattern(
-  file: string,
-  line: string,
-): { readonly admits: boolean; readonly matches: RegExp } {
-  const admits = line.startsWith("!");
-  const pattern = path.posix
-    .normalize((admits ? line.slice(1) : line).trim().replace(/^\/+/u, ""))
-    .replace(/\/$/u, "");
-  if (/[[\]\\]/u.test(pattern)) {
-    throw new ImageInputError({
-      message: `Unsupported .dockerignore pattern in ${file}: ${line}. Docs: https://docs.moltzap.xyz/guides/contributing#unsupported-dockerfile-form`,
-    });
-  }
-  const source = pattern
-    .split(/(\*\*\/|\*\*|\*|\?)/u)
-    .map(
-      (part) =>
-        IGNORE_WILDCARDS.get(part) ?? part.replace(/[.+^${}()|]/gu, "\\$&"),
-    )
-    .join("");
-  return { admits, matches: new RegExp(`^${source}$`, "u") };
-}
-
-/** A path and each directory above it, since a pattern that matches a directory covers its contents. */
-function ancestry(relative: string): string[] {
-  const segments = relative.split("/");
-  return segments.map((segment, index) =>
-    [...segments.slice(0, index), segment].join("/"),
-  );
 }

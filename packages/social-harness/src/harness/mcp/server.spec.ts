@@ -20,7 +20,7 @@ import {
 } from "../__tests__/mcp-fixtures.js";
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
-import { toolDefinitions } from "./contracts.js";
+import { INBOX_PENDING_EVENT, toolDefinitions } from "./contracts.js";
 import { serveMcp } from "./server.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
@@ -316,6 +316,55 @@ describe("MCP tool contracts", () => {
       expect((yield* json(reply)).error).toBeUndefined();
     }));
 });
+
+it("ends an in-flight request and refuses later calls when its agent stops", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<undefined>();
+    const fixture = yield* mcpFixture({
+      harness: {
+        send: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.zipRight(Effect.never),
+          ),
+      },
+    });
+    const waiting = yield* Effect.tryPromise(() =>
+      fixture.fetch(mcpRequest("tools/call", send)),
+    ).pipe(Effect.forkScoped);
+    yield* Deferred.await(entered);
+    yield* Deferred.succeed(fixture.stopped, undefined);
+    expect((yield* Fiber.join(waiting)).status).toBe(503);
+    const later = yield* Effect.tryPromise(() =>
+      fixture.fetch(mcpRequest("tools/list")),
+    );
+    expect(later.status).toBe(503);
+  }));
+
+it("closes a retained Events response body when its agent stops", () =>
+  Effect.gen(function* () {
+    const fixture = yield* mcpFixture();
+    const reply = yield* Effect.tryPromise(() =>
+      fixture.fetch(
+        mcpRequest("events/stream", {
+          name: INBOX_PENDING_EVENT,
+          arguments: {},
+        }),
+      ),
+    );
+    expect(reply.status).toBe(200);
+    if (reply.body === null) {
+      return yield* Effect.dieMessage("Expected an Events response body");
+    }
+    const reader = reply.body.getReader();
+    const next = Effect.tryPromise(() => reader.read());
+    expect((yield* next).done).toBe(false);
+    yield* Deferred.succeed(fixture.stopped, undefined);
+    const ended = yield* Effect.iterate(yield* next, {
+      while: (chunk) => !chunk.done,
+      body: () => next,
+    });
+    expect(ended.done).toBe(true);
+  }));
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the default assertion policy. */
 

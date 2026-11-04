@@ -425,10 +425,10 @@ const decisionProviderKey = Schema.Trim.pipe(
 );
 
 /**
- * SQL configuration retains resolved rules and redacts the provider credential.
- * A policy without natural-language rules has no provider.
+ * Runtime configuration retains resolved rules and redacts the provider
+ * credential. A policy without natural-language rules has no provider.
  */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with persisted daemon configuration.
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with resolved daemon configuration.
 export const installedMessagePolicy = Schema.Struct({
   policy: MessagePolicy,
   provider: Schema.optional(

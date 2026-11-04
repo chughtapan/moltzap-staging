@@ -1,6 +1,7 @@
 /** @file Real OAuth accounts share one daemon while identity, inbox and recovery remain isolated. */
 import {
   FileSystem,
+  HttpBody,
   HttpClient,
   HttpServerRequest,
   HttpServerResponse,
@@ -22,11 +23,18 @@ import {
   makeInbox,
   withAgentTransaction,
 } from "@moltzap/social-harness/test";
-import { ConfigProvider, Context, Effect, Layer, Schema } from "effect";
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Schema,
+} from "effect";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer owns the issuer listener's lifetime.
 import { createServer } from "node:http";
-import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import { callTool as call } from "../../../plugins/shared/mcp-client.js";
 import { processTrace } from "../scenario-fixture.js";
@@ -35,6 +43,7 @@ import {
   acquireProcessInfrastructure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
+  type ProcessInfrastructure,
   reservePort,
   type RunningProcess,
   stopProcess,
@@ -151,15 +160,98 @@ function expectFailedAgentIsolation(input: {
   }).pipe(Effect.provide(NodeHttpClient.layer));
 }
 
-function removeSetupFiles(fixture: DaemonProcessFixture) {
+function removeInitialCopies(fixture: DaemonProcessFixture) {
   return Effect.gen(function* () {
     const filesystem = yield* FileSystem.FileSystem;
-    yield* filesystem.remove(
-      join(dirname(fixture.agentPrivateKeyFile), "setup.json"),
-    );
     yield* filesystem.remove(fixture.agentPrivateKeyFile);
     yield* filesystem.remove(fixture.admissionCredentialFile);
   });
+}
+
+/** Reads retained registration inputs through the same tenant transaction as the daemon. */
+function ownerProfile(
+  sql: SqlClient.SqlClient,
+  issuer: string,
+  subject: string,
+) {
+  return Effect.gen(function* () {
+    const [binding] = yield* sql<{
+      readonly agentKey: string;
+    }>`SELECT agent_key AS "agentKey" FROM owner_bindings WHERE issuer=${issuer} AND subject=${subject}`;
+    if (binding === undefined) {
+      return undefined;
+    }
+    const [profile] = yield* withAgentTransaction(
+      binding.agentKey,
+      sql<{
+        readonly operation: string;
+        readonly privateKey: string;
+      }>`SELECT registration_operation_id AS operation,private_key AS "privateKey" FROM agent_profiles WHERE agent_key=${binding.agentKey}`,
+    );
+    return profile === undefined
+      ? undefined
+      : { agentKey: binding.agentKey, ...profile };
+  }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+}
+
+/** A disconnected first caller leaves one durable identity and does not stall another owner. */
+function cancelFirstAcquisition(input: {
+  readonly infrastructure: ProcessInfrastructure;
+  readonly endpoint: URL;
+  readonly sql: SqlClient.SqlClient;
+  readonly issuer: string;
+  readonly aliceToken: string;
+  readonly bob: Client;
+  readonly bobStatus: unknown;
+}) {
+  return Effect.gen(function* () {
+    const resume = yield* Effect.acquireRelease(
+      input.infrastructure.holdRegistry,
+      (release) => Effect.sync(release),
+    );
+    const body = yield* HttpBody.json({
+      jsonrpc: "2.0",
+      id: "first-connection",
+      method: "tools/list",
+      params: {},
+    });
+    const client = yield* HttpClient.HttpClient;
+    const first = yield* client
+      .post(input.endpoint.href, {
+        headers: {
+          authorization: `Bearer ${input.aliceToken}`,
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2025-11-25",
+        },
+        body,
+      })
+      .pipe(Effect.either, Effect.forkScoped);
+    const before = yield* Effect.iterate(
+      yield* ownerProfile(input.sql, input.issuer, "alice"),
+      {
+        while: (profile) => profile === undefined,
+        body: () =>
+          Effect.sleep("10 millis").pipe(
+            Effect.andThen(ownerProfile(input.sql, input.issuer, "alice")),
+          ),
+      },
+    ).pipe(Effect.timeout("10 seconds"));
+    expect(
+      Exit.isInterrupted(
+        yield* Fiber.interrupt(first).pipe(Effect.timeout("2 seconds")),
+      ),
+    ).toBe(true);
+    expect(yield* call(input.bob, { name: "status", arguments: {} })).toEqual(
+      input.bobStatus,
+    );
+    yield* Effect.sync(resume);
+    const alice = yield* connect(input.endpoint, input.aliceToken);
+    const status = yield* call(alice, { name: "status", arguments: {} });
+    expect(yield* ownerProfile(input.sql, input.issuer, "alice")).toEqual(
+      before,
+    );
+    return { alice, status };
+  }).pipe(Effect.provide(NodeHttpClient.layer));
 }
 
 /** Consuming the inbox preserves its saved event for the authenticated owner. */
@@ -228,6 +320,21 @@ function awaitUnreadDelivery(
   }).pipe(Effect.timeout("120 seconds"));
 }
 
+/** Opens the same configured database as the separate serving process. */
+function openRuntimeDatabase(fixture: DaemonProcessFixture) {
+  return Effect.gen(function* () {
+    const access = yield* databaseAccess.pipe(
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
+      ),
+    );
+    return Context.get(
+      yield* Layer.build(databaseConnection(access.locator)),
+      SqlClient.SqlClient,
+    );
+  });
+}
+
 /** The observation bound allows a remote PostgreSQL tunnel's round trips; it is not a delivery latency assertion. */
 const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
   Effect.gen(function* () {
@@ -253,25 +360,24 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
         },
       },
     );
-    const access = yield* databaseAccess.pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
-      ),
-    );
-    const sql = Context.get(
-      yield* Layer.build(databaseConnection(access.locator)),
-      SqlClient.SqlClient,
-    );
+    const sql = yield* openRuntimeDatabase(fixture);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    yield* removeSetupFiles(fixture);
+    yield* removeInitialCopies(fixture);
     const daemon = yield* acquireDaemonProcess(fixture);
     yield* expectUnauthenticated(fixture.endpoint, sql);
     const aliceToken = yield* issuer.token("alice", resource.href);
     const bobToken = yield* issuer.token("bob", resource.href);
-    const alice = yield* connect(fixture.endpoint, aliceToken);
     const bob = yield* connect(fixture.endpoint, bobToken);
-    const a = yield* call(alice, { name: "status", arguments: {} });
     const b = yield* call(bob, { name: "status", arguments: {} });
+    const { alice, status: a } = yield* cancelFirstAcquisition({
+      infrastructure,
+      endpoint: fixture.endpoint,
+      sql,
+      issuer: issuer.issuer,
+      aliceToken,
+      bob,
+      bobStatus: b,
+    });
     if (a.kind !== "registered" || b.kind !== "registered") {
       return yield* Effect.dieMessage(
         "OAuth accounts must register automatically",

@@ -10,15 +10,16 @@ import { NodeHttpServer } from "@effect/platform-node";
 import {
   Cause,
   type Context,
+  Deferred,
   Effect,
   JSONSchema,
   Match,
   Option,
-  type Redacted,
   Schema,
   type Scope,
   Stream,
 } from "effect";
+import { randomUUID } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { OwnerAccount } from "../ownership.js";
@@ -27,6 +28,7 @@ import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
 import {
   CallToolResult,
+  McpServerClient,
   ProtocolError,
   Tool,
   ToolAnnotations,
@@ -43,15 +45,21 @@ import {
   protectedResourceResponse,
 } from "./authentication.js";
 import {
+  eventListInput,
+  eventStreamInput,
+  eventSubscribeInput,
+  eventUnsubscribeInput,
   type HarnessWebhookEvents,
+  INBOX_ITEM_EVENT,
+  INBOX_PENDING_EVENT,
+  itemEventDataJsonSchema,
   sendErrorData,
   toolDefinitions,
 } from "./contracts.js";
-import { installEvents, webhookHttpClientLayer } from "./events.js";
 
 interface AgentServerSettings {
-  readonly agentKey: string;
-  readonly unlockKey: Redacted.Redacted<Uint8Array>;
+  readonly webhook: HarnessWebhookEvents;
+  readonly stopped: Deferred.Deferred<undefined>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
 
@@ -66,6 +74,187 @@ const reasonError = (error: { readonly reason: string }) =>
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
+const decodeEventArguments = <A, I>(
+  schema: Schema.Schema<A, I>,
+  input: unknown,
+) =>
+  Schema.decodeUnknown(schema)(input).pipe(
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
+    ),
+  );
+const requireEvent = (
+  name: string,
+  expected: string,
+  cursor?: string | null,
+) => {
+  if (name !== expected) {
+    return Effect.fail(
+      new ProtocolError(-32011, "Event not found", { kind: "event" }),
+    );
+  }
+  return cursor == null
+    ? Effect.void
+    : Effect.fail(
+        new ProtocolError(
+          -32014,
+          "Event replay is unavailable; read the inbox",
+          { feature: "cursor" },
+        ),
+      );
+};
+
+/** Registers the retained agent's Events handlers without acquiring delivery workers. */
+const installEvents = Effect.fn("installEvents")(function* (
+  webhook: HarnessWebhookEvents,
+) {
+  const harness = yield* SocialHarness;
+  const identity = yield* Identity;
+  const server = yield* McpServer;
+  const registered = identity
+    .me()
+    .pipe(
+      Effect.flatMap((status) =>
+        status.kind === "registered"
+          ? Effect.void
+          : Effect.fail(
+              new ProtocolError(-32012, "Endpoint is not registered"),
+            ),
+      ),
+    );
+  server.events.current = {
+    list: (raw) =>
+      decodeEventArguments(eventListInput, raw).pipe(
+        Effect.flatMap((input) =>
+          input.cursor === undefined
+            ? Effect.succeed({
+                events: [
+                  {
+                    name: INBOX_PENDING_EVENT,
+                    description: "A wakeup to read the pending inbox.",
+                    delivery: ["push"],
+                    inputSchema: {
+                      type: "object",
+                      properties: {},
+                      additionalProperties: false,
+                    },
+                    payloadSchema: {
+                      type: "object",
+                      properties: {
+                        pendingCount: { type: "integer", minimum: 0 },
+                      },
+                      required: ["pendingCount"],
+                    },
+                  },
+                  {
+                    name: INBOX_ITEM_EVENT,
+                    description:
+                      "A saved inbox item or a reference retrieved through read_event.",
+                    delivery: ["webhook"],
+                    inputSchema: {
+                      type: "object",
+                      properties: {},
+                      additionalProperties: false,
+                    },
+                    payloadSchema: itemEventDataJsonSchema,
+                  },
+                ],
+              })
+            : Effect.fail(
+                new ProtocolError(-32602, "Invalid event catalog cursor"),
+              ),
+        ),
+      ),
+    stream: (raw) => streamPending(harness, registered, raw),
+    subscribe: (raw) =>
+      Effect.gen(function* () {
+        const input = yield* decodeEventArguments(eventSubscribeInput, raw);
+        yield* registered;
+        yield* requireEvent(input.name, INBOX_ITEM_EVENT, input.cursor);
+        if (input.delivery.mode !== "webhook") {
+          return yield* Effect.fail(
+            new ProtocolError(-32602, "Unsupported delivery mode"),
+          );
+        }
+        return yield* webhook.subscribe(input, registered);
+      }),
+    unsubscribe: (raw) =>
+      Effect.gen(function* () {
+        const input = yield* decodeEventArguments(eventUnsubscribeInput, raw);
+        yield* requireEvent(input.name, INBOX_ITEM_EVENT);
+        yield* webhook.unsubscribe(input);
+        return {};
+      }),
+  };
+}, Effect.withSpan("installEvents"));
+
+function pendingInbox(harness: Context.Tag.Service<typeof SocialHarness>) {
+  return Effect.gen(function* () {
+    let total = 0;
+    let cursor: string | undefined;
+    do {
+      const page = yield* harness.listInbox(
+        cursor === undefined ? {} : { cursor },
+      );
+      total += page.items.length;
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+    return total;
+  }).pipe(
+    Effect.catchTag("InboxError", () =>
+      Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
+    ),
+  );
+}
+
+function streamPending(
+  harness: Context.Tag.Service<typeof SocialHarness>,
+  registered: Effect.Effect<void, ProtocolError>,
+  raw: unknown,
+) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const input = yield* decodeEventArguments(eventStreamInput, raw);
+      yield* registered;
+      yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
+      const context = yield* McpServerClient;
+      const notify = context.notify;
+      if (notify === undefined) {
+        return yield* Effect.fail(
+          new ProtocolError(-32603, "Event stream unavailable"),
+        );
+      }
+      yield* notify("notifications/events/active", {
+        cursor: null,
+        truncated: false,
+      });
+      yield* Effect.sleep("20 seconds").pipe(
+        Effect.zipRight(
+          notify("notifications/events/heartbeat", { cursor: null }),
+        ),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+      yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
+        Stream.runForEach(() =>
+          pendingInbox(harness).pipe(
+            Effect.flatMap((count) =>
+              notify("notifications/events/event", {
+                eventId: `wake_${randomUUID()}`,
+                name: INBOX_PENDING_EVENT,
+                timestamp: new Date().toISOString(),
+                data: { pendingCount: count },
+                cursor: null,
+              }),
+            ),
+          ),
+        ),
+      );
+      return {};
+    }),
+  );
+}
+
 /** One retained agent context owns its tools, inbox and notification subscribers. */
 export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   settings: AgentServerSettings,
@@ -77,12 +266,8 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const registered = identity
     .me()
     .pipe(Effect.map((state) => state.kind === "registered"));
-  const callback = yield* installEvents(
-    settings.agentKey,
-    settings.unlockKey,
-  ).pipe(
+  yield* installEvents(settings.webhook).pipe(
     Effect.provideService(McpServer, server),
-    Effect.provide(webhookHttpClientLayer),
   );
   const policyConfigured = firewall
     .readPolicy()
@@ -91,13 +276,43 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   yield* installMessageTools(server, harness, registered);
   yield* installIdentityTools(server, harness, identity);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
-  yield* installWebhookTools(server, callback, registered);
+  yield* installWebhookTools(server, settings.webhook, registered);
 
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
   );
-  return app;
+  const unavailable = Deferred.await(settings.stopped).pipe(
+    Effect.interruptible,
+    Effect.as(HttpServerResponse.text("Agent unavailable", { status: 503 })),
+  );
+  return Deferred.isDone(settings.stopped).pipe(
+    Effect.flatMap((stopped) =>
+      stopped ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
+    ),
+    Effect.flatMap((response) =>
+      responseWhileRunning(response, settings.stopped),
+    ),
+  );
 });
+
+/** Streams retain the agent-stop signal after their HTTP response is created. */
+function responseWhileRunning(
+  response: HttpServerResponse.HttpServerResponse,
+  stopped: Deferred.Deferred<undefined>,
+) {
+  return Match.value(response.body).pipe(
+    Match.tag("Stream", (body) =>
+      HttpServerResponse.setBody(
+        response,
+        HttpBody.stream(
+          body.stream.pipe(Stream.interruptWhen(Deferred.await(stopped))),
+          body.contentType,
+        ),
+      ),
+    ),
+    Match.orElse(() => response),
+  );
+}
 
 /** Authentication selects the account before any agent context or tool is acquired. */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (

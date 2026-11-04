@@ -1,5 +1,5 @@
 /** @file MCP tests substitute service behavior while exercising the real protocol and HTTP boundary. */
-import { HttpApp } from "@effect/platform";
+import { HttpApp, HttpClient } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
@@ -8,8 +8,10 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
-  type Context,
+  Context,
+  Deferred,
   Effect,
+  Layer,
   Redacted,
   Ref,
   type Scope,
@@ -26,6 +28,8 @@ import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity/service.js";
 import { InboxError } from "../inbox.js";
 import { makeAgentMcpApp, makeMcpHttpApp } from "../mcp/server.js";
+import { webhookHttpClientLayer } from "../mcp/webhook-client.js";
+import { makeWebhookEvents } from "../mcp/webhook.js";
 import { SocialHarness } from "../social-harness.js";
 
 /** The credential has no authority beyond this process. */
@@ -89,15 +93,27 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     updatePolicy: unused,
     readDecisions: unused,
   });
+  const callbackClient = yield* Layer.build(webhookHttpClientLayer);
+  const webhook = yield* makeWebhookEvents(
+    database.directory,
+    Redacted.make(randomBytes(32)),
+  ).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      Context.get(callbackClient, HttpClient.HttpClient),
+    ),
+    Effect.provideService(SocialHarness, harness),
+    Effect.provideService(SqlClient.SqlClient, database.sql),
+  );
+  const stopped = yield* Deferred.make<undefined>();
   const agentApp = yield* makeAgentMcpApp({
-    agentKey: database.directory,
-    unlockKey: Redacted.make(randomBytes(32)),
+    webhook,
+    stopped,
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),
     Effect.provideService(Identity, identity),
     Effect.provideService(Firewall, firewall),
-    Effect.provideService(SqlClient.SqlClient, database.sql),
   );
   const owners = yield* Ref.make<
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
@@ -111,6 +127,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   return {
     app,
+    stopped,
     owners,
     fetch: HttpApp.toWebHandler(app),
     harness,

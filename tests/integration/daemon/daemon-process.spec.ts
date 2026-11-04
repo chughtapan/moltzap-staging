@@ -42,6 +42,7 @@ import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
   awaitDaemonStartupFailure,
+  configureDaemonFixture,
   daemonListening,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
@@ -381,7 +382,7 @@ const processBehavior = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-/** Self-hosted recovery reads only SQL state and the retained unlock key. */
+/** Self-hosted recovery retains runtime settings while SQL owns the saved registration. */
 const admissionLifetimeBehavior = Effect.scoped(
   Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
@@ -396,9 +397,10 @@ const admissionLifetimeBehavior = Effect.scoped(
     yield* filesystem.remove(fixture.agentPrivateKeyFile);
     yield* filesystem.remove(fixture.admissionCredentialFile);
     yield* filesystem.remove(fixture.mcpCredentialFile);
-    yield* filesystem.remove(
-      join(dirname(fixture.agentPrivateKeyFile), "setup.json"),
-    );
+    yield* configureDaemonFixture(fixture, {
+      agent: undefined,
+      admissionCredential: undefined,
+    });
     const recovered = yield* acquireDaemonProcess(fixture);
     expect(yield* readActiveStatus(fixture)).toEqual(before);
     yield* stopProcess(recovered);
@@ -511,7 +513,7 @@ it(
 );
 
 it(
-  "recovers a self-hosted agent without setup files and refuses a different unlock key",
+  "recovers a self-hosted agent without registration seed and refuses a different unlock key",
   processTrace(admissionLifetimeBehavior),
   PROCESS_TEST_TIMEOUT_MS,
 );

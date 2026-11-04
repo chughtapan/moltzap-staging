@@ -1,12 +1,18 @@
-/** @file Creates daemon configuration and ownership records before agent services start. */
+/** @file Prepares versioned daemon storage for deployment and checks its runtime compatibility. */
 
 import { Migrator, SqlClient } from "@effect/sql";
-import { Effect } from "effect";
+import { Data, Effect, type Redacted } from "effect";
+import { initializeDatabaseKey, verifyDatabaseKey } from "./secrets.js";
+import {
+  databaseAccess,
+  databaseConnection,
+  prepareDatabaseDirectory,
+} from "./sql.js";
 
-// safer-arch-ignore no-trivial-sink-file: Versioned schema definitions remain separate from their process initialization caller.
+// safer-arch-ignore no-trivial-sink-file: Versioned schema definitions remain separate from their deployment caller.
 
 /** A reset format distinguishes incompatible layouts independently of additive migration numbers. */
-export const daemonDatabaseFormat = 3;
+const daemonDatabaseFormat = 3;
 
 const ownershipSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -405,14 +411,44 @@ const communicationSchema = Effect.gen(function* () {
   });
 });
 
-const runMigrations = Migrator.make({})({
-  loader: Migrator.fromRecord({
-    "0001_ownership": ownershipSchema,
-    "0002_agent_state": agentStateSchema,
-    "0003_firewall": firewallSchema,
-    "0004_communication": communicationSchema,
-  }),
+const encryptionSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`ALTER TABLE daemon_settings RENAME TO database_encryption`;
+  yield* sql`ALTER TABLE database_encryption RENAME COLUMN settings TO verifier`;
 });
+
+const migrationsTable = "effect_sql_migrations";
+const migrationLoader = Migrator.fromRecord({
+  "0001_ownership": ownershipSchema,
+  "0002_agent_state": agentStateSchema,
+  "0003_firewall": firewallSchema,
+  "0004_communication": communicationSchema,
+  "0005_database_encryption": encryptionSchema,
+});
+const runMigrations = Migrator.make({})({
+  loader: migrationLoader,
+  table: migrationsTable,
+});
+/** PostgreSQL's missing-relation probe must finish before the atomic domain transaction begins. */
+const initializeMigrationLedger = Migrator.make({})({
+  loader: Effect.succeed([]),
+  table: migrationsTable,
+});
+
+/**
+ * Schema failures identify the operator action without disclosing SQL or unlock material.
+ * Exported so the public preparation operation's inferred failure can be named.
+ * @public
+ */
+export class DatabasePreparationError extends Data.TaggedError(
+  "DatabasePreparationError",
+)<{
+  readonly reason: "schema" | "key" | "preparation";
+}> {
+  override get message(): string {
+    return `Database ${this.reason} check failed; prepare a compatible database with its existing unlock key before starting the daemon. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration`;
+  }
+}
 
 /** SQLite's reset guard requires ledger creation to roll back with a failed first migration. */
 export const migrateDaemon = Effect.gen(function* () {
@@ -422,3 +458,128 @@ export const migrateDaemon = Effect.gen(function* () {
     orElse: () => runMigrations,
   });
 }).pipe(Effect.withSpan("migrateDaemon"));
+
+/** Runtime only reads schema compatibility and the retained encryption verifier. */
+export const checkDatabase = Effect.fn("checkDatabase")(
+  function* (unlockKey: Redacted.Redacted<Uint8Array>) {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.onDialectOrElse({
+      sqlite: () =>
+        Effect.gen(function* () {
+          const [version] = yield* sql.unsafe<
+            Readonly<Record<"user_version", number>>
+          >("PRAGMA user_version");
+          if (version?.user_version !== daemonDatabaseFormat) {
+            return yield* new DatabasePreparationError({ reason: "schema" });
+          }
+        }),
+      orElse: () => Effect.void,
+    });
+    const expected = yield* migrationLoader;
+    const rows = yield* sql<{
+      readonly migrationId: number;
+      readonly name: string;
+    }>`SELECT migration_id AS "migrationId",name FROM ${sql(migrationsTable)} ORDER BY migration_id`;
+    if (
+      rows.length !== expected.length ||
+      rows.some(
+        (row, index) =>
+          row.migrationId !== expected[index]?.[0] ||
+          row.name !== expected[index]?.[1],
+      )
+    ) {
+      return yield* new DatabasePreparationError({ reason: "schema" });
+    }
+    yield* verifyDatabaseKey(unlockKey);
+  },
+  Effect.catchTags({
+    DatabaseKeyError: () => new DatabasePreparationError({ reason: "key" }),
+    SqlError: () => new DatabasePreparationError({ reason: "schema" }),
+  }),
+  Effect.withSpan("checkDatabase"),
+);
+
+/**
+ * Deployment commits domain migrations and encryption metadata atomically.
+ * Failed first PostgreSQL preparation can retain an empty Migrator bookkeeping table.
+ */
+export const prepareDatabase = Effect.gen(function* () {
+  const access = yield* databaseAccess;
+  yield* prepareDatabaseDirectory(access.locator);
+  yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* compatibleDatabase();
+    yield* sql.onDialectOrElse({
+      pg: () => initializeMigrationLedger,
+      orElse: () => Effect.void,
+    });
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* migrateDaemon;
+        yield* initializeDatabaseKey(access.unlockKey).pipe(
+          Effect.catchTags({
+            DatabaseKeyError: () =>
+              new DatabasePreparationError({ reason: "key" }),
+            StoredCredentialError: () =>
+              new DatabasePreparationError({ reason: "key" }),
+          }),
+        );
+        yield* checkDatabase(access.unlockKey);
+      }),
+    );
+  }).pipe(Effect.provide(databaseConnection(access.locator)));
+}).pipe(
+  Effect.scoped,
+  Effect.catchTags({
+    DatabaseAccessError: () =>
+      new DatabasePreparationError({ reason: "preparation" }),
+    DatabaseLocatorError: () =>
+      new DatabasePreparationError({ reason: "preparation" }),
+    ConfigError: () => new DatabasePreparationError({ reason: "preparation" }),
+    BadArgument: () => new DatabasePreparationError({ reason: "preparation" }),
+    SystemError: () => new DatabasePreparationError({ reason: "preparation" }),
+    MigrationError: () => new DatabasePreparationError({ reason: "schema" }),
+    SqlError: () => new DatabasePreparationError({ reason: "preparation" }),
+  }),
+  Effect.catchAllDefect(
+    (defect) =>
+      new DatabasePreparationError({
+        reason:
+          defect instanceof Migrator.MigrationError ? "schema" : "preparation",
+      }),
+  ),
+  Effect.withSpan("prepareDatabase"),
+);
+
+/** Only an empty SQLite database or the supported reset format can receive migrations. */
+function compatibleDatabase() {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    if (sql.onDialectOrElse({ sqlite: () => false, orElse: () => true })) {
+      return;
+    }
+    const [version] = yield* sql.unsafe<
+      Readonly<Record<"user_version", number>>
+    >("PRAGMA user_version");
+    if (version?.user_version === daemonDatabaseFormat) {
+      return;
+    }
+    const tables = yield* sql<{
+      readonly name: string;
+    }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`;
+    if (
+      version?.user_version !== 0 ||
+      tables.some((table) => table.name !== migrationsTable)
+    ) {
+      return yield* new DatabasePreparationError({ reason: "schema" });
+    }
+    if (tables.length !== 0) {
+      const [ledger] = yield* sql<{
+        readonly count: number;
+      }>`SELECT COUNT(*) AS count FROM ${sql(migrationsTable)}`;
+      if (Number(ledger?.count) !== 0) {
+        return yield* new DatabasePreparationError({ reason: "schema" });
+      }
+    }
+  });
+}

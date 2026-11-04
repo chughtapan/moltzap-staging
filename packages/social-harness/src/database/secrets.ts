@@ -1,4 +1,5 @@
 /** @file Seals persisted credentials to their owning record using authenticated encryption. */
+import { SqlClient } from "@effect/sql";
 import { Data, Effect, Redacted, Schema } from "effect";
 import { flattenedDecrypt, FlattenedEncrypt } from "jose";
 
@@ -71,3 +72,67 @@ export const openCredential = Effect.fn("openCredential")(function* (
     catch: () => new StoredCredentialError(),
   });
 }, Effect.withSpan("openCredential"));
+
+const verifierRecord = "database/encryption";
+const verifierPlaintext = "org.social-harness/database-key/v1";
+
+/** Database verification failures carry no ciphertext, plaintext or SQL details. */
+class DatabaseKeyError extends Data.TaggedError("DatabaseKeyError")<{
+  readonly reason: "missing" | "key" | "populated";
+}> {}
+
+const readVerifier = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{
+    readonly verifier: string;
+  }>`SELECT verifier FROM database_encryption WHERE singleton=1`;
+  return rows[0];
+});
+
+/** The verifier proves the supplied key belongs to this database without changing any record. */
+export const verifyDatabaseKey = Effect.fn("verifyDatabaseKey")(function* (
+  unlockKey: Redacted.Redacted<Uint8Array>,
+) {
+  const row = yield* readVerifier;
+  if (row === undefined) {
+    return yield* new DatabaseKeyError({ reason: "missing" });
+  }
+  const plaintext = yield* openCredential(
+    row.verifier,
+    verifierRecord,
+    unlockKey,
+  ).pipe(
+    Effect.catchTag(
+      "StoredCredentialError",
+      () => new DatabaseKeyError({ reason: "key" }),
+    ),
+  );
+  if (Redacted.value(plaintext) !== verifierPlaintext) {
+    return yield* new DatabaseKeyError({ reason: "key" });
+  }
+});
+
+/** Deployment initializes only empty databases; an existing verifier is always checked unchanged. */
+export const initializeDatabaseKey = Effect.fn("initializeDatabaseKey")(
+  function* (unlockKey: Redacted.Redacted<Uint8Array>) {
+    if ((yield* readVerifier) !== undefined) {
+      return yield* verifyDatabaseKey(unlockKey);
+    }
+    const sql = yield* SqlClient.SqlClient;
+    const [owners] = yield* sql<{
+      readonly count: number;
+    }>`SELECT COUNT(*) AS count FROM owner_bindings`;
+    const [profiles] = yield* sql<{
+      readonly count: number;
+    }>`SELECT COUNT(*) AS count FROM agent_profiles`;
+    if (Number(owners?.count) !== 0 || Number(profiles?.count) !== 0) {
+      return yield* new DatabaseKeyError({ reason: "populated" });
+    }
+    const sealed = yield* sealCredential(
+      Redacted.make(verifierPlaintext),
+      verifierRecord,
+      unlockKey,
+    );
+    yield* sql`INSERT INTO database_encryption (singleton,verifier) VALUES (1,${sealed})`;
+  },
+);

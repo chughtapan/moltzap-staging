@@ -2,7 +2,7 @@
 
 import { HttpClient } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
-import { type Clock, Effect, Redacted, Schema } from "effect";
+import { type Clock, Effect, Redacted, Schema, Stream } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { openCredential, sealCredential } from "../../database/secrets.js";
 import { executeQuery, makeQueries } from "../../database/sql.js";
@@ -583,7 +583,6 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
     subscribe(runtime, input, authorize ?? Effect.void),
   unsubscribe: (input) =>
     runtime.gate.withPermits(1)(unsubscribe(runtime, input.delivery.url)),
-  observe: () => observe(runtime),
   status: runtime.gate.withPermits(1)(Effect.sync(() => status(runtime))),
   revoke: runtime.gate.withPermits(1)(retire(runtime)),
   resume: runtime.gate.withPermits(1)(resume(runtime)),
@@ -618,7 +617,6 @@ function writeState(
 /** Preserves exact callback bytes and joins successful receipts to the inbox acknowledgment. */
 export const makeWebhookEvents = (
   agentKey: string,
-  gate: Effect.Semaphore,
   unlockKey: Redacted.Redacted<Uint8Array>,
 ) =>
   Effect.gen(function* () {
@@ -660,12 +658,23 @@ export const makeWebhookEvents = (
       client,
       clock: yield* Effect.clock,
       state,
-      gate,
+      gate: yield* Effect.makeSemaphore(1),
       deliveryGate: yield* Effect.makeSemaphore(1),
       generation: 0,
     };
     yield* Effect.addFinalizer(() => settleOnClose(runtime));
     yield* adopt(runtime, state);
+    yield* Stream.merge(
+      Stream.make(undefined).pipe(Stream.concat(harness.inboxChanged)),
+      Stream.tick("1 second"),
+    ).pipe(
+      Stream.runForEach(() =>
+        observe(runtime).pipe(
+          Effect.catchAll(() => Effect.logWarning("Webhook delivery deferred")),
+        ),
+      ),
+      Effect.forkScoped,
+    );
     return webhookOperations(runtime);
   }).pipe(
     Effect.mapError(persistenceFailure),
