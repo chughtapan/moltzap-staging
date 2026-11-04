@@ -147,10 +147,7 @@ it("requires the current settings file instead of retaining a stale SQL copy", (
 it("resolves policy references relative to the settings file", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const policy = {
-      format: "org.social-harness/message-policy/v2",
-      mode: "enforcement",
-    };
+    const policy = { format: "org.social-harness/message-policy/v2" };
     yield* test.filesystem.writeFileString(
       join(test.directory, "policy.json"),
       JSON.stringify(policy),
@@ -169,7 +166,6 @@ it("resolves provider credential references relative to the settings file", () =
       join(test.directory, "policy.json"),
       JSON.stringify({
         format: "org.social-harness/message-policy/v2",
-        mode: "enforcement",
         text: {},
         decisionProvider: { kind: "jev", model: "configured-model" },
       }),
