@@ -170,38 +170,21 @@ function unparsed(input: MatchInput, analysis: Analysis): Matched {
   if (failure === undefined) {
     return unmatched;
   }
-  const { reading, setting } = analysis;
-  const accepts = [...setting.held.keys()].join(" ");
-  const answerable =
-    input.direction === "incoming" &&
-    setting.held.has(builtIns.feedback) &&
-    !(reading.kind === "act" && reading.act.performative === "not-understood");
+  const accepts = [...analysis.setting.held.keys()].join(" ");
+  const reply = notUnderstood(input, analysis, failure.reason, failure.error);
   return {
     matched: true,
     detail: { ...failure, accepts },
-    ...(answerable
-      ? {
-          reply: formatAct({
-            performative: "not-understood",
-            ontology: builtIns.feedback,
-            inReplyTo: msgIdOf(input),
-            fields: {
-              reason: failure.reason,
-              ...(failure.error === undefined
-                ? {}
-                : { error: failure.error.slice(0, maximumErrorLength) }),
-              accepts,
-            },
-          }),
-        }
-      : {}),
+    ...(reply === undefined ? {} : { reply }),
   };
 }
 
 /**
- * A readable act that breaks its norm's turns or agreement. Without the full
- * history before it, an act that depends on that history cannot be judged and
- * is held for missing evidence.
+ * A readable act that breaks its norm's turns or agreement. In a direct
+ * conversation the peer hears `not-understood` with the reason and the acts it
+ * may send now; in a group every other member's daemon would send the same
+ * answer, so none does. Without the full history before it, an act that
+ * depends on that history cannot be judged and is held for missing evidence.
  */
 function nonconforming(input: MatchInput, analysis: Analysis): Matched {
   const { reading, verdict, state, setting } = analysis;
@@ -221,7 +204,20 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
     };
   }
   if (verdict.kind === "breaks") {
-    return { matched: true, detail: verdict.breach };
+    const { breach } = verdict;
+    const allowed =
+      breach.allowed === undefined
+        ? undefined
+        : `acts you may send now: ${breach.allowed.join(", ")}`;
+    const reply =
+      setting.members.length === 2
+        ? notUnderstood(input, analysis, breach.reason, allowed)
+        : undefined;
+    return {
+      matched: true,
+      detail: breach,
+      ...(reply === undefined ? {} : { reply }),
+    };
   }
   const accepting =
     input.direction === "outgoing"
@@ -272,6 +268,36 @@ function unreadable({ reading, setting, state, verdict }: Analysis):
       ? {}
       : { error: answerFieldsText(breach.fields), fields: breach.fields }),
   };
+}
+
+/**
+ * The `not-understood` this agent's daemon sends back for a peer's message,
+ * or nothing for its own send, without `feedback`, or about feedback.
+ */
+function notUnderstood(
+  input: MatchInput,
+  { reading, setting }: Analysis,
+  reason: string,
+  error?: string,
+): string | undefined {
+  const answerable =
+    input.direction === "incoming" &&
+    setting.held.has(builtIns.feedback) &&
+    !(reading.kind === "act" && reading.act.performative === "not-understood");
+  return answerable
+    ? formatAct({
+        performative: "not-understood",
+        ontology: builtIns.feedback,
+        inReplyTo: msgIdOf(input),
+        fields: {
+          reason,
+          ...(error === undefined
+            ? {}
+            : { error: error.slice(0, maximumErrorLength) }),
+          accepts: [...setting.held.keys()].join(" "),
+        },
+      })
+    : undefined;
 }
 
 /**
