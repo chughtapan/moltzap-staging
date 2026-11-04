@@ -13,15 +13,14 @@ import {
   acquireDaemonManagementClient,
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  awaitDaemonStartupFailure,
   configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   makeRegistrationRequest,
+  stopProcess,
 } from "../daemon/daemon-fixture.js";
-import {
-  registeredDaemonStatus,
-  unavailablePolicyRemedy,
-} from "../expected-contracts.js";
+import { unavailablePolicyRemedy } from "../expected-contracts.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
 
@@ -71,7 +70,6 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
   const alice = yield* configureDaemonFixture(stock, {
     messagePolicyFile: policyFile,
   });
-  yield* fs.remove(policyFile);
   yield* acquireDaemonProcess(alice);
   const management = yield* acquireDaemonManagementClient(alice);
   yield* management.register(makeRegistrationRequest(alice));
@@ -120,6 +118,10 @@ const olderMcpClient = Effect.gen(function* () {
 const invalidDocument = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
   const stock = yield* makeDaemonProcessFixture(infrastructure, "carol");
+  const original = yield* acquireDaemonProcess(stock);
+  const before = yield* acquireDaemonManagementClient(stock);
+  const status = yield* before.status();
+  yield* stopProcess(original);
   const fs = yield* FileSystem.FileSystem;
   const policyFile = join(infrastructure.temporaryDirectory, "carol.json");
   yield* fs.writeFileString(
@@ -133,9 +135,11 @@ const invalidDocument = Effect.gen(function* () {
     messagePolicyFile: policyFile,
   }).pipe(Effect.flip);
   expect(failure).toMatchObject({ reason: "policy" });
+  expect((yield* awaitDaemonStartupFailure(stock)).exitCode).not.toBe(0);
+  yield* configureDaemonFixture(stock, { messagePolicyFile: undefined });
   yield* acquireDaemonProcess(stock);
   const management = yield* acquireDaemonManagementClient(stock);
-  expect((yield* management.status()).kind).toBe(registeredDaemonStatus);
+  expect(yield* management.status()).toEqual(status);
 });
 
 describe("stock sharnessd with a message-policy file", () => {
@@ -152,7 +156,7 @@ describe("stock sharnessd with a message-policy file", () => {
   );
 
   it(
-    "rejects an invalid setup document and retains the prior configuration",
+    "rejects an invalid runtime policy file and recovers after its reference is removed",
     processTrace(invalidDocument.pipe(Effect.scoped)),
     60_000,
   );
