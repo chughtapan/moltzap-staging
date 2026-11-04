@@ -521,7 +521,7 @@ describe("a peer's act out of turn", () => {
         ),
         yield* from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
       ];
-      const early = yield* from(bob, pair, "(agree :ontology office-hours)");
+      const early = yield* from(bob, pair, "(query-if :ontology office-hours)");
 
       const result = yield* check(
         "norms.nonconforming",
@@ -570,41 +570,203 @@ describe("a peer's act out of turn", () => {
     }));
 });
 
+describe("office hours: a norm's own turns", () => {
+  const matchers = normMatchers(
+    norms(...builtIn, "examples/office-hours.lisp"),
+  );
+  const pair = [alice, bob];
+  const student = (text: string) => from(bob, pair, text);
+  const professor = (text: string) => from(alice, pair, text);
+  const offer =
+    '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
+  const none = "(reject-proposal :ontology office-hours)";
+
+  /** The student proposes office-hours, the professor accepts, and the student asks to meet. */
+  const asked = Effect.all([
+    student(
+      '(propose :ontology norm-agreement :norm office-hours :task "Meet")',
+    ),
+    professor("(accept-proposal :ontology norm-agreement)"),
+    student('(request :ontology office-hours :topic "Project scope")'),
+  ]);
+
+  it("books a held slot once the student checks back", () =>
+    Effect.gen(function* () {
+      const history = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student("(accept-proposal :ontology office-hours :option 1)"),
+        yield* professor(
+          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
+        ),
+        yield* student("(query-if :ontology office-hours)"),
+      ];
+      const confirm = yield* professor(
+        '(confirm :ontology office-hours :slot "Tue 14:00")',
+      );
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(confirm, history),
+        ),
+      ).toEqual({ matched: false });
+    }));
+
+  it("lets the professor offer again at the check-back while a round is left", () =>
+    Effect.gen(function* () {
+      const history = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student("(accept-proposal :ontology office-hours :option 1)"),
+        yield* professor(
+          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
+        ),
+        yield* student("(query-if :ontology office-hours)"),
+      ];
+      const again = yield* professor(offer);
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(again, history)),
+      ).toEqual({ matched: false });
+    }));
+
+  it("allows an offer only while fewer than two rounds were declined", () =>
+    Effect.gen(function* () {
+      const opening = yield* asked;
+      const rounds = yield* Effect.all(
+        Array.from({ length: 3 }, () =>
+          Effect.all([professor(offer), student(none)]),
+        ),
+      );
+      const next = yield* professor(offer);
+
+      fc.assert(
+        fc.property(fc.nat({ max: rounds.length }), (declined) => {
+          const history = [...opening, ...rounds.slice(0, declined).flat()];
+          const result = Effect.runSync(
+            check("norms.nonconforming", matchers, outgoing(next, history)),
+          );
+          expect(result.matched).toBe(declined >= 2);
+        }),
+      );
+    }));
+
+  it("allows two rounds of offers, then only escalation", () =>
+    Effect.gen(function* () {
+      const history = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student(none),
+        yield* professor(offer),
+        yield* student(none),
+      ];
+      const third = yield* professor(offer);
+      const escalate = yield* professor(
+        '(failure :ontology office-hours :reason "No offered slot works.")',
+      );
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(third, history)),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn", allowed: ["failure", "cancel"] },
+      });
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(escalate, history),
+        ),
+      ).toEqual({ matched: false });
+    }));
+
+  it("lets each side send only its own acts", () =>
+    Effect.gen(function* () {
+      const history = yield* asked;
+      const studentOffer = yield* student(offer);
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(studentOffer, history),
+        ),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn", allowed: ["cancel"] },
+      });
+    }));
+});
+
+describe("a norm's own turns", () => {
+  it("ends an instance at once when its opening act starts no fact", () =>
+    Effect.gen(function* () {
+      const notice = Either.getOrThrow(
+        readNorm(`
+          (norm notice :initiator Sender :participant Reader :description "Send one notice.")
+          (content inform :by Sender (field text :type string))
+        `),
+      );
+      const matchers = normMatchers([...norms(...builtIn), notice]);
+      const pair = [alice, bob];
+      const history = [
+        yield* from(
+          alice,
+          pair,
+          '(propose :ontology norm-agreement :norm notice :task "Closing")',
+        ),
+        yield* from(bob, pair, "(accept-proposal :ontology norm-agreement)"),
+        yield* from(
+          alice,
+          pair,
+          '(inform :ontology notice :text "Closed Fri")',
+        ),
+      ];
+      const second = yield* from(
+        alice,
+        pair,
+        '(inform :ontology notice :text "Open Mon")',
+      );
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(second, history),
+        ),
+      ).toMatchObject({ matched: true, detail: { reason: "no-agreement" } });
+    }));
+});
+
 describe("acts the Router has not ordered yet", () => {
   const matchers = normMatchers(
     norms(...builtIn, "examples/office-hours.lisp"),
   );
   const pair = [alice, bob];
 
-  /** Bob proposes office-hours, Alice accepts, and Bob requests a slot. */
-  const requested = Effect.all([
+  /** Bob proposes office-hours and Alice accepts. */
+  const agreed = Effect.all([
     from(
       bob,
       pair,
       '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")',
     ),
     from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
-    from(
-      bob,
-      pair,
-      '(request :ontology office-hours :topic "Scope" :slot "Tue 2pm")',
-    ),
   ]);
+  const request = '(request :ontology office-hours :topic "Scope")';
 
   it("judges an outgoing act while the agent's own acts wait to be ordered", () =>
     Effect.gen(function* () {
-      const history = yield* requested;
-      const agree = yield* from(alice, pair, "(agree :ontology office-hours)");
-      const inform = yield* from(
-        alice,
-        pair,
-        '(inform :ontology office-hours :slot "Tue 2pm")',
-      );
+      const history = yield* agreed;
+      const asked = yield* from(bob, pair, request);
+      const cancel = yield* from(bob, pair, "(cancel :ontology office-hours)");
 
       const result = yield* check(
         "norms.nonconforming",
         matchers,
-        outgoing(inform, history, { pendingOutgoing: [agree] }),
+        outgoing(cancel, history, { pendingOutgoing: [asked] }),
       );
 
       expect(result).toEqual({ matched: false });
@@ -612,14 +774,14 @@ describe("acts the Router has not ordered yet", () => {
 
   it("refuses an outgoing act out of turn after the agent's own act still waiting to be ordered", () =>
     Effect.gen(function* () {
-      const history = yield* requested;
-      const agree = yield* from(alice, pair, "(agree :ontology office-hours)");
-      const again = yield* from(alice, pair, "(agree :ontology office-hours)");
+      const history = yield* agreed;
+      const asked = yield* from(bob, pair, request);
+      const again = yield* from(bob, pair, request);
 
       const result = yield* check(
         "norms.nonconforming",
         matchers,
-        outgoing(again, history, { pendingOutgoing: [agree] }),
+        outgoing(again, history, { pendingOutgoing: [asked] }),
       );
 
       expect(result).toMatchObject({
@@ -630,7 +792,8 @@ describe("acts the Router has not ordered yet", () => {
 
   it("judges an incoming act on the ordered history alone", () =>
     Effect.gen(function* () {
-      const [proposal, acceptance, request] = yield* requested;
+      const history = yield* agreed;
+      const asked = yield* from(bob, pair, request);
       const note = yield* from(
         alice,
         pair,
@@ -640,9 +803,7 @@ describe("acts the Router has not ordered yet", () => {
       const result = yield* check(
         "norms.nonconforming",
         matchers,
-        incoming(alice, request, [proposal, acceptance], {
-          pendingOutgoing: [note],
-        }),
+        incoming(alice, asked, history, { pendingOutgoing: [note] }),
       );
 
       expect(result).toEqual({ matched: false });
