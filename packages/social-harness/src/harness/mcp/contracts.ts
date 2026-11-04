@@ -269,7 +269,15 @@ const harnessSendArgumentsSchema = exactStruct({
   }),
 });
 
-const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
+const inboxRequestSchema = exactStruct({
+  ...PaginatedRequest.fields,
+  wait: Schema.optional(
+    Schema.Positive.annotations({
+      description:
+        "Seconds to wait for an item when none is pending. Without it the read returns at once.",
+    }),
+  ),
+});
 const inboxResultSchema = Schema.typeSchema(InboxPage);
 const invocationValidationErrorSchema = Schema.Struct({
   reason: Schema.Literal("content-invalid"),
@@ -414,7 +422,7 @@ export const toolDefinitions = {
   },
   read_inbox: {
     description:
-      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered. Use read_event to retrieve a known item after delivery.",
+      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered. Pass wait to wait that many seconds for an item when none is pending; the read returns as soon as one arrives, or empty when the wait ends. Use read_event to retrieve a known item after delivery.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {

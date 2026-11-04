@@ -1,7 +1,16 @@
 /** @file Main-service behavior across registration, policy assessment, delivery and history recovery. */
 
 import { scopedLive as it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Schedule, Schema, Scope } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Schedule,
+  Schema,
+  Scope,
+} from "effect";
 import { expect } from "vitest";
 import type { DecisionRequest } from "../firewall/check.js";
 import type { AgentCard } from "../identity/agent-cards.js";
@@ -479,6 +488,60 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
       },
     ]);
     expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+  }));
+
+it("returns a waiting read at once when an item is already pending", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Already here"),
+    });
+    yield* waitForInbox(runtime);
+
+    const page = yield* runtime.harness
+      .listInbox({ wait: Duration.minutes(5) })
+      .pipe(Effect.timeout("2 seconds"));
+
+    expect(page.items).toHaveLength(1);
+  }));
+
+it("ends a waiting read as soon as an item arrives", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+    const reading = yield* runtime.harness
+      .listInbox({ wait: Duration.minutes(5) })
+      .pipe(Effect.fork);
+
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Arrived while waiting"),
+    });
+    const page = yield* Fiber.join(reading).pipe(Effect.timeout("10 seconds"));
+
+    expect(page.items).toMatchObject([
+      {
+        item: {
+          message: {
+            content: [{ type: "text", text: "Arrived while waiting" }],
+          },
+        },
+      },
+    ]);
+  }));
+
+it("returns an empty page when the wait ends with nothing pending", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+
+    const page = yield* runtime.harness.listInbox({
+      wait: Duration.millis(50),
+    });
+
+    expect(page.items).toEqual([]);
   }));
 
 it("rolls back policy decisions when publication fails and recovers both on restart", () =>

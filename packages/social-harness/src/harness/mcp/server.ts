@@ -10,6 +10,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import {
   Cause,
   type Context,
+  Duration,
   Effect,
   JSONSchema,
   Match,
@@ -142,8 +143,11 @@ function installMessageTools(
     yield* bind(server, {
       name: "read_inbox",
       definition: toolDefinitions.read_inbox,
-      execute: Effect.fn(function* (request) {
-        const page = yield* harness.listInbox(request);
+      execute: Effect.fn(function* ({ wait, ...request }) {
+        const page = yield* harness.listInbox({
+          ...request,
+          ...(wait === undefined ? {} : { wait: Duration.seconds(wait) }),
+        });
         for (const item of page.items) {
           yield* harness
             .acknowledgeDelivery(item.deliveryToken)

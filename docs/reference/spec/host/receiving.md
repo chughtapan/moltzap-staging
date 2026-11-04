@@ -80,9 +80,15 @@ of stored content. Cursors stop at the first page's insertion boundary.
 Later arrivals await a new traversal. Returned items leave the pending inbox.
 Clients use the same MCP interface.
 
+An optional `wait`, in seconds, lets a read that finds no item wait for one: it
+returns as soon as an item is pending, or an empty page when the wait ends.
+The caller chooses the wait; the daemon sets no default and no limit. Without
+`wait`, a read returns at once.
+
 Polling repeats `read_inbox`, following `nextCursor` until absent. A push stream
-wakes the same reads. Invalid cursors return `invalid-cursor`. Start a new
-traversal after reconnecting.
+wakes the same reads, and a host without one can wait in the read instead.
+Invalid cursors return `invalid-cursor`. Start a new traversal after
+reconnecting.
 
 ## Webhook consumer
 
