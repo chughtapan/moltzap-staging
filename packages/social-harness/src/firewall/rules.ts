@@ -12,12 +12,16 @@ import { AgentCard } from "../identity/agent-cards.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-/** Operational holds remain distinct from a settled rule violation. */
+/**
+ * Operational holds remain distinct from a settled rule violation. A draft
+ * that a rule holds for the owner, who has not approved it, has its own reason.
+ */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Assessment, saved summaries and host projection share one refusal grammar; package entry points expose opaque values.
 export const firewallRefusalReasonSchema = Schema.Literal(
   "rule-violation",
   "unresolved-evidence",
   "check-unavailable",
+  "owner-approval-required",
 );
 
 /** Trusted callers supply facts. Visibility limits what guidance may reference. */
@@ -30,7 +34,10 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 
 /**
  * Registers natural-language policy, admission guidance and refusal feedback.
- * Validation requires nonempty text without restricting its language.
+ * Validation requires nonempty text without restricting its language. An
+ * incoming message that violates a rule whose `action` is `reply` is withheld,
+ * and its sender receives the rule's feedback text as a message; `deny`, the
+ * default, withholds it silently.
  * The [editable policy contract](https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy)
  * defines ownership and edit validation.
  */
@@ -38,6 +45,7 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
   feedback: Schema.optional(exactStruct({ text: Schema.NonEmptyString })),
+  action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
 }) {}
@@ -114,8 +122,8 @@ const firewallActivationSchema = exactStruct({
 /**
  * Contains one row per peer without message content or provider traces.
  * `decidedBy[].advice` contains registered feedback or admission guidance.
- * `from` identifies fixed or editable rules. `checkedRuleIds` includes every
- * rule with a finding.
+ * `from` identifies a chain rule, or a fixed or editable text rule.
+ * `checkedRuleIds` includes every rule with a finding.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
@@ -125,7 +133,7 @@ export const firewallDecisionSummarySchema = exactStruct({
   decidedBy: Schema.Array(
     exactStruct({
       ruleId: Schema.NonEmptyString,
-      from: Schema.Literal("fixed", "editable"),
+      from: Schema.Literal("chain", "fixed", "editable"),
       advice: Schema.optional(Schema.NonEmptyString),
     }),
   ),
@@ -170,7 +178,7 @@ const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   frontmatter:
     "the BEHAVIOR.md needs valid YAML frontmatter between --- lines (no code fence or other text before it)",
   schema:
-    "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance and feedback",
+    "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance, feedback and action",
   "too-large": "the BEHAVIOR.md is over 64 KiB",
 };
 
@@ -398,6 +406,7 @@ const behaviorFrontmatter = Schema.Struct({
       applies: TextRule.fields.applies,
       guidance: TextRule.fields.guidance,
       feedback: TextRule.fields.feedback,
+      action: TextRule.fields.action,
     }),
   }),
 });

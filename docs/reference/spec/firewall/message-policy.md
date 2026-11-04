@@ -20,10 +20,38 @@ The firewall is optional and experimental. Without a message-policy file,
 `sharnessd` installs none. It checks messages between agents. The host owns
 models, tools and the agent's private context.
 
+## Rule chain
+
+The rule chain applies before the text rules. Like a Google Cloud firewall
+policy, it is an ordered list of rules. Each rule has an `id`, the direction it
+`applies` to, the name of a matcher and an action. The first rule whose matcher
+matches a message decides it, and a message no rule matches goes on to the
+text rules. Trusted process composition supplies the rules and registers their
+matchers by name; a rule naming an unregistered matcher prevents startup.
+
+| Action | Outgoing draft | Incoming message |
+| --- | --- | --- |
+| `allow` | Sent without the text rules. | Delivered without the text rules. |
+| `deny` | Refused. | Withheld. |
+| `reply` | Refused. | Withheld, and the matcher's reply goes to the sender. |
+| `hold` | Goes on to the next rule once the owner approves it; otherwise refused with `owner-approval-required`. | Not allowed. |
+
+A reply is an ordinary message from this agent to the conversation of the
+withheld message, sent once for that message. A collective result's withheld
+parts get no reply. The daemon does not yet ask the owner about a held draft,
+so every held draft is approved.
+
+A match refuses for a rule violation unless the matcher reports missing
+history (`unresolved-evidence`) or cannot decide (`check-unavailable`). A
+matcher that fails counts as `check-unavailable`. The refusal names the
+deciding rule and carries the matcher's detail. A chain decision is retained
+like a text check, and its `decidedBy` names the rule with `from: "chain"`.
+
 ## Decisions
 
-Checks capture the active rules. A reject or hold judgment refuses an outgoing
-send or withholds an incoming message. Findings combine in priority order:
+Text rules decide a message no chain rule matched. Checks capture the active
+rules. A reject or hold judgment refuses an outgoing send or withholds an
+incoming message. Findings combine in priority order:
 
 1. A settled rule violation rejects.
 2. Required missing evidence, unavailable checks or conflicting expectations hold.
@@ -71,12 +99,18 @@ recipients and answer members use `AgentCard`.
 Guidance neither forces replies nor establishes speaking turns. Rule findings
 on withheld items create no obligation for the agent.
 
+A text rule whose `action` is `reply` answers each message it withholds for a
+rule violation: the sender receives the rule's registered feedback text the way
+a chain rule's reply arrives. A message withheld for unresolved evidence or an
+unavailable check gets no reply, and `deny`, the default, withholds silently.
+
 ## Outgoing messages
 
-Refusal returns a rule-violation, unresolved-evidence or check-unavailable
-reason, the check reference and the registered feedback of the deciding rules.
-Its error message carries the same reason, reference and feedback, without
-private evidence, credentials or raw provider output.
+Refusal returns a rule-violation, unresolved-evidence, check-unavailable or
+owner-approval-required reason, the check reference, the deciding chain rule,
+the registered feedback of the deciding text rules and the chain matcher's
+detail. Its error message carries the same fields, without private evidence,
+credentials or raw provider output.
 
 Refusal before admission creates no send intent. A revised invocation gets a new
 assessment. The daemon neither changes the draft nor sends substitutes or
@@ -245,6 +279,7 @@ then fixed and initial behaviors.
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
 | `guidance` | Optional `metadata.social-harness.guidance`. |
 | `feedback` | Optional `metadata.social-harness.feedback`: `text`. |
+| `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
 
 Other metadata, description/license and neighboring files supply no policy.
 The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior,
@@ -283,7 +318,7 @@ decisions apply.
 ## Editing rules
 
 At most 256 editable rules have unique ids, text, an explicit `applies` direction,
-and optional guidance and feedback. Editable ids
+and optional guidance, feedback and action. Editable ids
 cannot reuse fixed rule ids. Initial rules seed a missing saved policy.
 Every edit passes the configured approval step before changing rules.
 The default approves automatically. A host can replace it with a confirmation
@@ -342,8 +377,9 @@ rows identify authors. Daemon-generated failures have no assessment row. Retaine
 | Unavailable | Rules in checks that could not run, plus unavailable judgments. |
 | Unresolved evidence | Rules reporting unresolved evidence or conflicting response expectations. |
 | Admission | Uncertain rules, otherwise none. |
+| Chain decision | The chain rule that decided, including a held draft the owner has not approved. |
 
 Advice comes from registered guidance or feedback.
-Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
+Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
 active only through an authorized policy change.
 

@@ -17,12 +17,16 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { createHash } from "node:crypto";
+import type { FirewallEvidence } from "../firewall/chain.js";
 import type { HistoryExport } from "./traffic-export.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
   GroupAddress,
   type MessageAddressInput,
+  messageFromParticipants,
+  MsgId,
 } from "../communication/messages.js";
 import {
   Answer,
@@ -41,8 +45,8 @@ import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import {
   Firewall,
-  type FirewallEvidence,
   type FirewallRefusal,
+  type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/service.js";
 import {
@@ -773,6 +777,7 @@ function checkIncoming(
       };
     }
     const decision = yield* firewall.checkIncoming(value, evidence);
+    const reply = yield* replyTo(value, decision, agentCardOf(card));
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
@@ -780,6 +785,18 @@ function checkIncoming(
     const saved = yield* sql.withTransaction(
       decision.save.pipe(
         Effect.zipRight(inbox.publish(entry, decision, expired)),
+        Effect.tap(() =>
+          reply === undefined
+            ? Effect.void
+            : communication.send(reply).pipe(
+                Effect.catchIf(
+                  (error) =>
+                    error._tag === "CommunicationError" &&
+                    error.reason === "message-conflict",
+                  () => Effect.void,
+                ),
+              ),
+        ),
       ),
     );
     if (saved !== undefined) {
@@ -790,6 +807,41 @@ function checkIncoming(
       });
     }
   });
+}
+
+/**
+ * The firewall's reply to a message it withheld, when a rule asked for one: an
+ * ordinary message from this agent to the same conversation. Its id derives
+ * from the withheld message, so checking that message again sends at most one
+ * reply. A reply that is not a valid message is not sent, and the message
+ * stays withheld.
+ */
+function replyTo(value: Incoming, decision: IncomingDecision, self: AgentCard) {
+  if (
+    decision.kind !== "withheld" ||
+    decision.reply === undefined ||
+    !("message" in value)
+  ) {
+    return Effect.succeed(undefined);
+  }
+  const withheld = value.message;
+  const text = decision.reply;
+  return Schema.decodeUnknown(MsgId)(
+    `msg_${createHash("sha256")
+      .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)
+      .digest("base64url")}`,
+  ).pipe(
+    Effect.flatMap((msgId) =>
+      messageFromParticipants(
+        self,
+        [withheld.author, ...withheld.recipients].filter(
+          (member) => member.agentId !== self.agentId,
+        ),
+        { msgId, content: [{ type: "text", text }] },
+      ),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
 }
 
 function evidenceFor(

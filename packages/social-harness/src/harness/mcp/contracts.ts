@@ -147,11 +147,16 @@ export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 /** Signed callbacks carry saved content or its lookup reference. */
 export const INBOX_ITEM_EVENT = "org.social-harness/inbox.item";
 
-/** Refusals disclose the check and registered feedback without assessment evidence. */
+/**
+ * Refusals disclose the check, the deciding chain rule, registered feedback and
+ * the rule's matcher detail, without assessment evidence.
+ */
 const firewallRefusalSchema = exactStruct({
   checkId: checkedGuidanceSchema.fields.checkId,
   refusal: firewallRefusalReasonSchema,
+  rule: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
   feedback: Schema.Array(exactStruct({ text: Schema.NonEmptyString })),
+  detail: Schema.optionalWith(Schema.Unknown, { exact: true }),
 });
 
 const savedItemSchema = Schema.typeSchema(PermittedItem);
@@ -329,7 +334,9 @@ export function sendErrorData(
       reason: "firewall-refused",
       checkId: error.checkId,
       refusal: error.refusal,
+      ...(error.rule === undefined ? {} : { rule: error.rule }),
       feedback: error.feedback,
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
     };
   }
   if (error._tag === "RequestError") {

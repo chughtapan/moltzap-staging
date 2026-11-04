@@ -452,6 +452,35 @@ it("withholds peer content from both the inbox and history", () =>
     ).toEqual([]);
   }));
 
+it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({
+      policy: firewallOptions(
+        {
+          decide: (request) =>
+            Effect.succeed(decisionResponse(request, "violation")),
+        },
+        "reply",
+      ),
+    });
+
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Private peer content"),
+    });
+    yield* waitForDecisions(runtime);
+
+    expect(subject.submitted).toMatchObject([
+      {
+        author: subject.self,
+        recipients: [subject.bob],
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+  }));
+
 it("rolls back policy decisions when publication fails and recovers both on restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;

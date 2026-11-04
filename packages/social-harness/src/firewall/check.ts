@@ -34,7 +34,10 @@ export interface CheckMessageInput extends CheckConfiguration {
   readonly provider?: DecisionProvider;
 }
 
-type Reason = "eligible" | typeof firewallRefusalReasonSchema.Type;
+/** Only a chain rule holds a draft for its owner, so a text check never gives that reason. */
+type Reason =
+  | "eligible"
+  | Exclude<typeof firewallRefusalReasonSchema.Type, "owner-approval-required">;
 
 const instruction = {
   ruleId: Schema.NonEmptyTrimmedString,

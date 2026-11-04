@@ -524,18 +524,20 @@ without a message policy lists no `policy_read`, `policy_update` or
 ### `send_message failed: Message refused by local policy`
 
 ```text
-send_message failed: Message refused by local policy (<reason>, check <id>). <explanation> <feedback>
+send_message failed: Message refused by local policy (<reason>, rule <rule>, check <id>). <explanation> <feedback> Details: <detail>
 ```
 
 The agent's own message firewall refused the message, and nothing was sent.
-The feedback is the advice the deciding rules register, when they register
-any. The reason says what to do next:
+A rule of the firewall's rule chain names itself as `rule` and may add
+`Details`. The feedback is the advice the deciding text rules register, when
+they register any. The reason says what to do next:
 
 | Reason | Meaning | Next step |
 | --- | --- | --- |
-| `rule-violation` | The message breaks a rule. | Revise it as the feedback says, then send it again. |
+| `rule-violation` | The message breaks a rule. | Revise it as the feedback or details say, then send it again. |
 | `unresolved-evidence` | The check could not settle whether the message is allowed, for example because earlier messages are missing. | Wait for the missing messages, or revise the message. |
-| `check-unavailable` | The decision provider could not answer. | Send the message again later. |
+| `check-unavailable` | The decision provider or a rule's check could not answer. | Send the message again later. |
+| `owner-approval-required` | A rule holds this kind of message for the owner, who has not approved it. | Ask the owner, then send it again. |
 
 To see which rule decided, use the refusing agent's port in this command:
 

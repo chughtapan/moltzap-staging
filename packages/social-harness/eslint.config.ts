@@ -128,6 +128,7 @@ export default [
       "src/harness/social-harness.ts",
       "src/harness/inbox.ts",
       "src/firewall/service.ts",
+      "src/firewall/store.ts",
     ],
     rules: {
       "max-lines-per-function": [

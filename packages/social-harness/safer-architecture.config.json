@@ -67,6 +67,10 @@
       "reason": "Policy configuration and failures"
     },
     {
+      "file": "firewall/chain.ts",
+      "reason": "Rule chain: rules, matchers and their evaluation"
+    },
+    {
       "file": "harness/startup.ts",
       "reason": "Process construction and trusted embedding services"
     },
@@ -173,7 +177,8 @@
       "entrypoints": [
         "src/firewall/service.ts",
         "src/firewall/check.ts",
-        "src/firewall/rules.ts"
+        "src/firewall/rules.ts",
+        "src/firewall/chain.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },

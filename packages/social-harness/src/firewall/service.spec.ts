@@ -16,6 +16,7 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
+import type { Chain, FirewallEvidence, Matcher } from "./chain.js";
 import type { DecisionProvider } from "./check.js";
 import { Message } from "../communication/messages.js";
 import { migrateDaemon } from "../database/migrations.js";
@@ -40,11 +41,7 @@ import {
   type policyUpdateSchema,
   type TextRule,
 } from "./rules.js";
-import {
-  Firewall,
-  type FirewallEvidence,
-  type FirewallOptions,
-} from "./service.js";
+import { Firewall, type FirewallOptions } from "./service.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed policy failures and dispositions are the public contract under test. */
 
@@ -155,6 +152,14 @@ function outgoing(self: AgentCard) {
       { type: "text", text: "The private record says the owner is away." },
     ],
   });
+}
+
+function incoming(self: AgentCard) {
+  return Message.create({
+    author: peer("bob", 2),
+    recipients: [self],
+    content: [{ type: "text", text: "Hello" }],
+  }).pipe(Effect.map((message) => ({ kind: "message" as const, message })));
 }
 
 function peer(name: string, byte: number): AgentCard {
@@ -669,5 +674,304 @@ describe("Firewall.layer", () => {
         (agentKey) => Firewall.layer(agentKey, policy([initial])),
       );
     }).pipe(Effect.provide(NodeContext.layer)));
+});
+
+const always: Matcher = { match: () => Effect.succeed({ matched: true }) };
+const never: Matcher = { match: () => Effect.succeed({ matched: false }) };
+
+describe("Firewall rule chain actions", () => {
+  it("lets the first rule for the message's direction decide before the text rules", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          {
+            id: "drop-incoming",
+            applies: "incoming",
+            match: "always",
+            action: "deny",
+          },
+          {
+            id: "allow-drafts",
+            applies: "outgoing",
+            match: "always",
+            action: "allow",
+          },
+          {
+            id: "refuse-drafts",
+            applies: "outgoing",
+            match: "always",
+            action: "deny",
+          },
+        ],
+        matchers: { always },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+            yield* decision.save;
+
+            expect(decision.kind).toBe("allowed");
+            expect((yield* firewall.readDecisions({})).decisions).toMatchObject(
+              [
+                {
+                  outcome: "allow",
+                  disposition: "admitted",
+                  decidedBy: [{ ruleId: "allow-drafts", from: "chain" }],
+                },
+                { outcome: "allow", disposition: "admitted" },
+              ],
+            );
+          }),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy]), chain),
+      );
+    }));
+
+  it("refuses a draft with the deciding rule and its matcher's detail", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          {
+            id: "refuse-unparsed",
+            applies: "outgoing",
+            match: "unparsed",
+            action: "deny",
+          },
+        ],
+        matchers: {
+          unparsed: {
+            match: () =>
+              Effect.succeed({
+                matched: true,
+                detail: { accepts: ["inform"] },
+              }),
+          },
+        },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+            const refusal =
+              decision.kind === "refused" ? decision.refusal : undefined;
+
+            expect(refusal).toMatchObject({
+              refusal: "rule-violation",
+              rule: "refuse-unparsed",
+              feedback: [],
+              detail: { accepts: ["inform"] },
+            });
+            expect(refusal?.message).toContain(
+              'Details: {"accepts":["inform"]}',
+            );
+          }),
+        (agentKey) => Firewall.layer(agentKey, undefined, chain),
+      );
+    }));
+});
+
+describe("Firewall rule chain replies and holds", () => {
+  it("withholds an incoming message with the reply of a reply rule", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          {
+            id: "not-understood",
+            applies: "incoming",
+            match: "unparsed",
+            action: "reply",
+          },
+        ],
+        matchers: {
+          unparsed: {
+            match: () =>
+              Effect.succeed({ matched: true, reply: "(not-understood)" }),
+          },
+        },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkIncoming(
+              yield* incoming(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "withheld",
+              reply: "(not-understood)",
+              visibility: [{ visibleToAgent: false }],
+            });
+          }),
+        (agentKey) => Firewall.layer(agentKey, undefined, chain),
+      );
+    }));
+
+  it.each([
+    { approved: false, refusal: "owner-approval-required", rule: "consent" },
+    { approved: true, refusal: "rule-violation", rule: "refuse-drafts" },
+  ] as const)(
+    "holds a draft for its owner, who approves it: $approved",
+    ({ approved, refusal, rule }) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeIdentityFixture;
+        const chain: Chain = {
+          rules: [
+            {
+              id: "consent",
+              applies: "outgoing",
+              match: "always",
+              action: "hold",
+            },
+            {
+              id: "refuse-drafts",
+              applies: "outgoing",
+              match: "always",
+              action: "deny",
+            },
+          ],
+          matchers: { always },
+          approveHeld: () => Effect.succeed(approved),
+        };
+        yield* withFirewall(
+          ":memory:",
+          fixture,
+          (firewall, self) =>
+            Effect.gen(function* () {
+              const decision = yield* firewall.checkOutgoing(
+                yield* outgoing(self),
+                evidence,
+              );
+
+              expect(decision).toMatchObject({
+                kind: "refused",
+                refusal: { refusal, rule },
+              });
+            }),
+          (agentKey) => Firewall.layer(agentKey, undefined, chain),
+        );
+      }),
+  );
+});
+
+describe("Firewall rule chain beside text rules", () => {
+  it("leaves a message no chain rule matches to the text rules", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          { id: "unused", applies: "both", match: "never", action: "deny" },
+        ],
+        matchers: { never },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "refused",
+              refusal: {
+                refusal: "rule-violation",
+                feedback: [privacy.feedback],
+              },
+            });
+          }),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy]), chain),
+      );
+    }));
+
+  it("refuses for an unavailable check when a matcher fails", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          { id: "broken", applies: "both", match: "broken", action: "deny" },
+        ],
+        matchers: { broken: { match: () => Effect.die("matcher failed") } },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "refused",
+              refusal: { refusal: "check-unavailable", rule: "broken" },
+            });
+          }),
+        (agentKey) => Firewall.layer(agentKey, undefined, chain),
+      );
+    }));
+
+  it("refuses to install a rule whose matcher is not registered", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = {
+        rules: [
+          { id: "unknown", applies: "both", match: "missing", action: "deny" },
+        ],
+        matchers: {},
+      };
+      const failure = yield* withFirewall(
+        ":memory:",
+        fixture,
+        () => Effect.void,
+        (agentKey) => Firewall.layer(agentKey, undefined, chain),
+      ).pipe(Effect.flip);
+
+      expect(failure).toMatchObject({
+        reason: "build-failed",
+        ruleId: "unknown",
+      });
+    }));
+
+  it("replies with the feedback of a violated text rule whose action is reply", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkIncoming(
+              yield* incoming(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "withheld",
+              reply: privacy.feedback.text,
+            });
+          }),
+        (agentKey) =>
+          Firewall.layer(agentKey, policy([{ ...privacy, action: "reply" }])),
+      );
+    }));
 });
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after policy contract assertions. */

@@ -109,8 +109,15 @@ export const decisionState = Schema.decodeUnknownSync(
   ),
 );
 
-/** One natural-language rule makes assessment order and retained advice observable. */
-export function firewallOptions(provider: DecisionProvider): FirewallOptions {
+/**
+ * One natural-language rule makes assessment order and retained advice
+ * observable. With `action`, the rule replies to or silently withholds the
+ * incoming messages it rejects.
+ */
+export function firewallOptions(
+  provider: DecisionProvider,
+  action?: "deny" | "reply",
+): FirewallOptions {
   return {
     facts: [],
     settings: {
@@ -126,6 +133,7 @@ export function firewallOptions(provider: DecisionProvider): FirewallOptions {
           text: "Protect the owner's private information.",
           guidance: "Check before sharing private information.",
           feedback: { text: "Keep private information private." },
+          ...(action === undefined ? {} : { action }),
         },
       ],
       provider,

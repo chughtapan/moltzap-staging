@@ -1,6 +1,5 @@
 /** @file Owns local message policy, assessments, permitted content and retained decisions. */
 
-import { SqlClient } from "@effect/sql";
 import {
   Clock,
   Context,
@@ -24,19 +23,24 @@ import {
   RequestOperation,
   type ResultSources,
 } from "../communication/service.js";
-import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
-import { withAgentTransaction } from "../database/transactions.js";
 import {
   canonicalBytes,
   decodeCanonical,
   encodeCanonicalJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-  sameBytes,
 } from "../encoding/canonical-json.js";
 import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
 import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";
+import {
+  type Chain,
+  type ChainOutcome,
+  chainRuleFileSchema,
+  evaluateChain,
+  type FirewallEvidence,
+  validateChain,
+} from "./chain.js";
 import {
   type Message as AssessmentText,
   checkCapturedMessage,
@@ -61,7 +65,7 @@ import {
   type FirewallConfiguration,
   firewallConfigurationSchema,
   type firewallDecisionsSchema,
-  firewallDecisionSummarySchema,
+  type firewallDecisionSummarySchema,
   FirewallPolicyError,
   firewallRefusalReasonSchema,
   FirewallSettings,
@@ -75,6 +79,13 @@ import {
   TextPolicySettings,
   TextRule,
 } from "./rules.js";
+import {
+  type FirewallActivation,
+  type FirewallCompletion,
+  type FirewallStore,
+  makeFirewallStore,
+  persistenceFailure,
+} from "./store.js";
 
 /**
  * Provider resources remain fixed while authorized edits change text rules.
@@ -102,16 +113,7 @@ type Policy = Effect.Effect.Success<ReturnType<typeof initialPolicy>>;
 
 type ReplyResult = Extract<Incoming, { readonly kind: "result" }>;
 type Direction = "incoming" | "outgoing";
-
-/** Carries bounded preceding history and each message's visibility to the agent. */
-export interface FirewallEvidence {
-  readonly history: ReadonlyArray<{
-    readonly message: Message;
-    readonly visibleToAgent: boolean;
-  }>;
-  readonly earlierHistoryOmitted: boolean;
-  readonly gaps: readonly string[];
-}
+type RefusalReason = typeof firewallRefusalReasonSchema.Type;
 
 /** Peer questions and selected peer answers retain their own preceding history. */
 export interface ResultEvidence {
@@ -187,30 +189,37 @@ export type PermittedItem = typeof PermittedItem.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema declarations. */
 
-const refusalText: Readonly<
-  Record<typeof firewallRefusalReasonSchema.Type, string>
-> = {
+const refusalText: Readonly<Record<RefusalReason, string>> = {
   "rule-violation": "It breaks a rule of the agent's message policy.",
   "unresolved-evidence":
     "The policy check could not settle whether the message is allowed.",
   "check-unavailable": "The policy check could not complete.",
+  "owner-approval-required": "The agent's owner has not approved it.",
 };
 
 /**
  * The sender can act on registered feedback without seeing assessment evidence.
- * The message states the reason and each deciding rule's registered feedback.
+ * `rule` names the chain rule that refused, and `detail` is that rule's matcher
+ * report. The message states the reason, each deciding rule's registered
+ * feedback and the detail.
  */
 export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
   readonly checkId: string;
-  readonly refusal: typeof firewallRefusalReasonSchema.Type;
+  readonly refusal: RefusalReason;
+  readonly rule?: string;
   readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly detail?: unknown;
 }> {
   override get message(): string {
+    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
     return [
-      `Message refused by local policy (${this.refusal}, check ${this.checkId}).`,
+      `Message refused by local policy (${this.refusal}${rule}, check ${this.checkId}).`,
       refusalText[this.refusal],
       ...this.feedback.map((entry) => entry.text),
+      ...(this.detail === undefined
+        ? []
+        : [`Details: ${JSON.stringify(this.detail)}`]),
       "Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#firewall-refused",
     ].join(" ");
   }
@@ -229,7 +238,8 @@ type OutgoingDecision = {
 
 /**
  * Run `save` in the same SQL transaction as the inbox write and visibility update.
- * Saving is repeatable.
+ * Saving is repeatable. A withheld message with `reply` gets that text back, as
+ * an ordinary message from this agent in the same conversation.
  */
 export type IncomingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
@@ -243,7 +253,7 @@ export type IncomingDecision = {
       readonly item: PermittedItem;
       readonly guidance?: LocalGuidance;
     }
-  | { readonly kind: "withheld" }
+  | { readonly kind: "withheld"; readonly reply?: string }
 );
 /** Message assessment, policy edits and saved decision summaries. */
 interface FirewallService {
@@ -281,20 +291,29 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   Firewall,
   FirewallService
 >() {
-  /** Policy resources are fixed for this scope. Registration supplies immutable local attribution. */
+  /**
+   * Policy resources are fixed for this scope. Registration supplies immutable
+   * local attribution. `chain` rules apply before the text rules of `source`;
+   * a rule naming an unregistered matcher fails with `build-failed`.
+   */
   static readonly layer = (
     agentKey: string,
     source?: FirewallOptions | LoadedMessagePolicy,
+    chain?: Chain,
   ) =>
     Layer.effect(
       Firewall,
       Effect.gen(function* () {
         const identity = yield* Identity;
         const store = yield* makeFirewallStore(agentKey);
+        const rules =
+          chain === undefined ? undefined : yield* captureChain(chain);
         const policy =
           source === undefined
             ? undefined
-            : yield* initialPolicy(store, source);
+            : yield* initialPolicy(store, source, rules?.rules ?? []);
+        const chainRevision =
+          rules === undefined ? "" : yield* chainDigest(rules);
         const localAgent = Effect.gen(function* () {
           const state = yield* identity.me();
           if (state.kind !== "registered") {
@@ -302,6 +321,16 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           }
           return agentCardOf(state.identityCard);
         });
+        const installed: Installation = {
+          store,
+          ...(policy === undefined ? {} : { policy }),
+          ...(rules === undefined ? {} : { chain: rules }),
+          localAgent,
+          revision: () =>
+            policy === undefined
+              ? chainRevision
+              : policy.active.configurationDigest,
+        };
         return Firewall.of({
           readPolicy: () =>
             policy === undefined
@@ -322,41 +351,39 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (value, evidence) =>
             Effect.gen(function* () {
-              if (policy === undefined) {
-                return {
-                  kind: "allowed",
-                  save: Effect.void,
-                } satisfies OutgoingDecision;
-              }
-              const agent = yield* localAgent;
-              const [checked] = yield* assess(
-                policy,
-                agent,
+              const [decision] = yield* decide(
+                installed,
                 [{ value, evidence }],
                 "outgoing",
               );
-              if (checked === undefined) {
+              if (decision === undefined) {
                 return yield* new CheckInputError({ reason: "message" });
               }
-              const save = store.saveDecisions([checked.completion]);
-              return checked.completion.admit
-                ? ({
-                    kind: "allowed",
-                    save,
-                    ...(checked.guidance === undefined
-                      ? {}
-                      : { guidance: checked.guidance }),
-                  } satisfies OutgoingDecision)
-                : ({
-                    kind: "refused",
-                    save,
-                    refusal: new FirewallRefusal({
-                      reason: "firewall-refused",
-                      checkId: checked.completion.checkId,
-                      refusal: refusalReason(checked.result.reason),
-                      feedback: checked.result.feedback,
-                    }),
-                  } satisfies OutgoingDecision);
+              const save = saveDecision(store, decision);
+              if (decision.kind === "admitted") {
+                return {
+                  kind: "allowed",
+                  save,
+                  ...(decision.guidance === undefined
+                    ? {}
+                    : { guidance: decision.guidance }),
+                } satisfies OutgoingDecision;
+              }
+              const { refusal } = decision;
+              return {
+                kind: "refused",
+                save,
+                refusal: new FirewallRefusal({
+                  reason: "firewall-refused",
+                  checkId: decision.completion.checkId,
+                  refusal: refusal.reason,
+                  ...(refusal.rule === undefined ? {} : { rule: refusal.rule }),
+                  feedback: refusal.feedback,
+                  ...(refusal.detail === undefined
+                    ? {}
+                    : { detail: refusal.detail }),
+                }),
+              } satisfies OutgoingDecision;
             }),
           checkIncoming: (value, evidence) =>
             Effect.gen(function* () {
@@ -374,13 +401,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               }
               const agent = yield* localAgent;
               if (value.kind === "result") {
-                return yield* checkResult(
-                  store,
-                  agent,
-                  value,
-                  evidence,
-                  policy,
-                );
+                return yield* checkResult(installed, agent, value, evidence);
               }
               if (evidence === undefined || "answers" in evidence) {
                 return yield* new CheckInputError({ reason: "context" });
@@ -389,46 +410,39 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 value.kind === "request"
                   ? { kind: "collectiveRequest", message: value.message }
                   : { kind: "multicast", message: value.message };
-              const reference = messageReference(value.message);
-              if (policy === undefined) {
-                return {
-                  kind: "allowed",
-                  item,
-                  save: Effect.void,
-                  visibility: [{ message: reference, visibleToAgent: true }],
-                } satisfies IncomingDecision;
-              }
-              const [checked] = yield* assess(
-                policy,
-                agent,
+              const [decision] = yield* decide(
+                installed,
                 [{ value: value.message, evidence }],
                 "incoming",
               );
-              if (checked === undefined) {
+              if (decision === undefined) {
                 return yield* new CheckInputError({ reason: "message" });
               }
-              const save = store.saveDecisions([checked.completion]);
+              const save = saveDecision(store, decision);
               const visibility = [
                 {
-                  message: reference,
-                  visibleToAgent: checked.completion.admit,
+                  message: messageReference(value.message),
+                  visibleToAgent: decision.kind === "admitted",
                 },
               ];
-              return checked.completion.admit
-                ? ({
-                    kind: "allowed",
-                    item,
-                    save,
-                    visibility,
-                    ...(checked.guidance === undefined
-                      ? {}
-                      : { guidance: checked.guidance }),
-                  } satisfies IncomingDecision)
-                : ({
-                    kind: "withheld",
-                    save,
-                    visibility,
-                  } satisfies IncomingDecision);
+              if (decision.kind === "admitted") {
+                return {
+                  kind: "allowed",
+                  item,
+                  save,
+                  visibility,
+                  ...(decision.guidance === undefined
+                    ? {}
+                    : { guidance: decision.guidance }),
+                } satisfies IncomingDecision;
+              }
+              const { reply } = decision.refusal;
+              return {
+                kind: "withheld",
+                save,
+                visibility,
+                ...(reply === undefined ? {} : { reply }),
+              } satisfies IncomingDecision;
             }),
         });
       }),
@@ -449,10 +463,39 @@ interface RuleCheckInput {
   readonly agents: readonly AgentCard[];
 }
 
-interface RuleDecision {
-  readonly completion: FirewallCompletion;
-  readonly result: FirewallCheck;
-  readonly guidance?: CheckedGuidance;
+/** A refused message's reason, the chain rule that decided, and what its sender is told. */
+interface Refusal {
+  readonly reason: RefusalReason;
+  readonly rule?: string;
+  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly detail?: unknown;
+  readonly reply?: string;
+}
+
+/**
+ * One candidate's decision and the record that saves it. A message nothing
+ * checked, because no chain rule matched and no text policy is installed, has
+ * no record.
+ */
+type Decision =
+  | {
+      readonly kind: "admitted";
+      readonly completion?: FirewallCompletion;
+      readonly guidance?: CheckedGuidance;
+    }
+  | {
+      readonly kind: "refused";
+      readonly completion: FirewallCompletion;
+      readonly refusal: Refusal;
+    };
+
+/** The chain and text policy one firewall applies, and the revision its records name. */
+interface Installation {
+  readonly store: FirewallStore;
+  readonly policy?: Policy;
+  readonly chain?: Chain;
+  readonly localAgent: Effect.Effect<AgentCard, CheckInputError>;
+  readonly revision: () => string;
 }
 
 const storedPolicyFormat = "org.social-harness/text-rules/v1";
@@ -461,9 +504,6 @@ const storedPolicySchema = exactStruct({
   format: Schema.Literal(storedPolicyFormat),
   rules: editableDocumentSchema,
 });
-
-const persistenceFailure = () =>
-  new FirewallPolicyError({ reason: "persistence-failed" });
 
 type PolicyEditPath = NonNullable<FirewallPolicyError["path"]>;
 
@@ -480,12 +520,12 @@ type CapturedCheck = Effect.Effect.Success<ReturnType<typeof capturePrepared>>;
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
+/** Each peer part of a result is checked as an incoming message; a `reply` rule withholds it without replying. */
 function checkResult(
-  store: FirewallStore,
+  installed: Installation,
   self: AgentCard,
   incoming: ReplyResult,
   evidence?: FirewallEvidence | ResultEvidence,
-  policy?: Policy,
 ) {
   return Effect.gen(function* () {
     const { result, sources } = incoming;
@@ -502,7 +542,7 @@ function checkResult(
         readonly part: "question" | "answer";
       }
     > = [];
-    if (policy !== undefined) {
+    if (installed.policy !== undefined || installed.chain !== undefined) {
       if (
         evidence === undefined ||
         !("answers" in evidence) ||
@@ -547,13 +587,13 @@ function checkResult(
         });
       }
     }
-    const checks =
-      selected.length === 0 || policy === undefined
+    const decisions =
+      selected.length === 0
         ? []
-        : yield* assess(policy, self, selected, "incoming");
+        : yield* decide(installed, selected, "incoming");
     const checked = selected.map((source, index) => ({
       source,
-      check: checks[index],
+      check: decisions[index],
     }));
     if (checked.some((entry) => entry.check === undefined)) {
       return yield* new CheckInputError({ reason: "context" });
@@ -569,7 +609,7 @@ function checkResult(
           entry.source.part === "answer" &&
           entry.source.message.author.agentId === outcome.member.agentId,
       )?.check;
-      return check !== undefined && !check.completion.admit
+      return check?.kind === "refused"
         ? { member: outcome.member, outcome: withheld(check) }
         : outcome;
     };
@@ -581,33 +621,175 @@ function checkResult(
       closedAt: result.closedAt,
       closedBy: result.closedBy,
       question:
-        questionCheck !== undefined && !questionCheck.completion.admit
+        questionCheck?.kind === "refused"
           ? withheld(questionCheck)
           : result.request.question,
       outcomes: [permittedOutcome(first), ...rest.map(permittedOutcome)],
     };
     const answers = checked.flatMap(({ source, check }) =>
-      source.part === "answer" && check?.guidance !== undefined
+      source.part === "answer" &&
+      check?.kind === "admitted" &&
+      check.guidance !== undefined
         ? [{ member: source.message.author, ...check.guidance }]
         : [],
     );
+    const questionGuidance =
+      questionCheck?.kind === "admitted" ? questionCheck.guidance : undefined;
     const guidance: LocalGuidance | undefined =
-      answers.length === 0 && questionCheck?.guidance === undefined
+      answers.length === 0 && questionGuidance === undefined
         ? undefined
         : {
             answers,
-            ...(questionCheck?.guidance === undefined
+            ...(questionGuidance === undefined
               ? {}
-              : { question: questionCheck.guidance }),
+              : { question: questionGuidance }),
           };
     return {
       kind: "allowed",
       item,
       visibility: resultVisibility(item, sources),
-      save: store.saveDecisions(checks.map((check) => check.completion)),
+      save: saveDecision(installed.store, ...decisions),
       ...(guidance === undefined ? {} : { guidance }),
     } satisfies IncomingDecision;
   });
+}
+
+/**
+ * Applies the chain to each candidate, then the text policy to every candidate
+ * no chain rule matched, in one assessment that shares its clock and permits.
+ */
+function decide(
+  installed: Installation,
+  candidates: readonly Candidate[],
+  direction: Direction,
+) {
+  return Effect.gen(function* () {
+    const chained = yield* Effect.forEach(
+      candidates,
+      (candidate) =>
+        chainDecision(installed, candidate, direction).pipe(
+          Effect.map((decision) => ({ candidate, decision })),
+        ),
+      { concurrency: 1 },
+    );
+    const unmatched = chained.flatMap(({ candidate, decision }) =>
+      decision === undefined ? [candidate] : [],
+    );
+    const assessed =
+      installed.policy === undefined || unmatched.length === 0
+        ? []
+        : yield* assess(
+            installed.policy,
+            yield* installed.localAgent,
+            unmatched,
+            direction,
+          );
+    const text = assessed.values();
+    return chained.map(
+      ({ decision }): Decision =>
+        decision ?? text.next().value ?? { kind: "admitted" },
+    );
+  });
+}
+
+/** Records the chain rule that decided a candidate, or returns nothing when none matched. */
+function chainDecision(
+  installed: Installation,
+  candidate: Candidate,
+  direction: Direction,
+) {
+  return Effect.gen(function* () {
+    if (installed.chain === undefined) {
+      return undefined;
+    }
+    const outcome = yield* evaluateChain(installed.chain, {
+      direction,
+      message: candidate.value,
+      evidence: candidate.evidence,
+    });
+    if (outcome.kind === "unmatched") {
+      return undefined;
+    }
+    const activeRevision = installed.revision();
+    const completion: FirewallCompletion = {
+      checkId: mintCheckId(),
+      direction,
+      canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
+      canonicalInput: yield* canonicalBytes({
+        activeRevision,
+        rule: outcome.rule,
+      }),
+      canonicalResult: yield* canonicalBytes({
+        result: {
+          rule: outcome.rule,
+          ...(outcome.kind === "refused" ? { refusal: outcome.refusal } : {}),
+        },
+        summaries: chainSummaries(
+          candidate,
+          direction,
+          outcome,
+          activeRevision,
+        ),
+      }),
+      admit: outcome.kind === "allowed",
+    };
+    if (outcome.kind === "allowed") {
+      return { kind: "admitted", completion } satisfies Decision;
+    }
+    return {
+      kind: "refused",
+      completion,
+      refusal: {
+        reason: outcome.refusal,
+        rule: outcome.rule,
+        feedback: [],
+        ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
+        ...(outcome.reply === undefined ? {} : { reply: outcome.reply }),
+      },
+    } satisfies Decision;
+  }).pipe(
+    Effect.catchTags({
+      CanonicalJsonError: () =>
+        Effect.fail(new CheckInputError({ reason: "message" })),
+      ClientRepresentationError: () =>
+        Effect.fail(new CheckInputError({ reason: "message" })),
+    }),
+  );
+}
+
+/** One summary row per peer, as for text checks, naming the deciding chain rule. */
+function chainSummaries(
+  candidate: Candidate,
+  direction: Direction,
+  outcome: Exclude<ChainOutcome, { readonly kind: "unmatched" }>,
+  activeRevision: string,
+): readonly DecisionSummary[] {
+  const peers =
+    direction === "outgoing"
+      ? candidate.value.recipients
+      : [candidate.value.author];
+  const held =
+    outcome.kind === "refused" && outcome.refusal === "owner-approval-required";
+  const judged = outcome.kind === "refused" ? "reject" : "allow";
+  return peers.map((peer) => ({
+    direction,
+    peer,
+    outcome: held ? "hold" : judged,
+    reason: outcome.kind === "allowed" ? "eligible" : outcome.refusal,
+    decidedBy: [{ ruleId: outcome.rule, from: "chain" }],
+    checkedRuleIds: [outcome.rule],
+    activeRevision,
+  }));
+}
+
+/** Saves the records of decisions that have one; saving none does no work. */
+function saveDecision(store: FirewallStore, ...decisions: readonly Decision[]) {
+  const completions = decisions.flatMap((decision) =>
+    decision.completion === undefined ? [] : [decision.completion],
+  );
+  return completions.length === 0
+    ? Effect.void
+    : store.saveDecisions(completions);
 }
 
 function assess(
@@ -802,17 +984,17 @@ function outcomeText(outcome: typeof AnswerOutcome.Type): string {
   }
 }
 
-function withheld(check: RuleDecision): Withheld {
+function withheld(
+  check: Extract<Decision, { readonly kind: "refused" }>,
+): Withheld {
   return {
     kind: "withheld",
     checkId: check.completion.checkId,
-    reason: refusalReason(check.result.reason),
+    reason: check.refusal.reason,
   };
 }
 
-function refusalReason(
-  reason: RuleDecision["result"]["reason"],
-): typeof firewallRefusalReasonSchema.Type {
+function refusalReason(reason: FirewallCheck["reason"]): RefusalReason {
   return reason === "eligible" ? "unresolved-evidence" : reason;
 }
 
@@ -833,14 +1015,16 @@ function referenceId(value: string): string {
   return `msg_${createHash("sha256").update(value).digest("hex")}`;
 }
 
+/** The installation's revision covers `chain`, so a decision names the rules that applied. */
 function initialPolicy(
   store: FirewallStore,
   source: FirewallOptions | LoadedMessagePolicy,
+  chain: Chain["rules"],
 ) {
   return Effect.gen(function* () {
     const options =
       "policy" in source ? yield* configuredOptions(source) : source;
-    const captured = yield* captureOptions(options).pipe(
+    const captured = yield* captureOptions(options, chain).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
       ),
@@ -909,7 +1093,7 @@ function configuredOptions(loaded: LoadedMessagePolicy) {
   } satisfies FirewallOptions);
 }
 
-function captureOptions(options: FirewallOptions) {
+function captureOptions(options: FirewallOptions, chain: Chain["rules"]) {
   return Effect.gen(function* () {
     const configuration = yield* decodeFrozen(firewallConfigurationSchema, {
       facts: options.facts,
@@ -921,8 +1105,36 @@ function captureOptions(options: FirewallOptions) {
       options.text === undefined ? undefined : yield* captureText(options.text);
     const approvePolicyUpdate =
       options.approvePolicyUpdate?.bind(options) ?? (() => Effect.void);
-    return { configuration, settings, text, approvePolicyUpdate };
+    return { configuration, settings, text, approvePolicyUpdate, chain };
   });
+}
+
+/**
+ * Validates and freezes the rules, and checks that every rule's matcher is
+ * registered. A rule file that breaks the file contract fails `build-failed`.
+ */
+function captureChain(chain: Chain) {
+  return Effect.gen(function* () {
+    const { rules } = yield* decodeFrozen(chainRuleFileSchema, {
+      rules: chain.rules,
+    }).pipe(
+      Effect.catchTag("ParseError", () =>
+        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+      ),
+    );
+    const captured: Chain = { ...chain, rules };
+    yield* validateChain(captured);
+    return captured;
+  });
+}
+
+/** Names a chain-only installation, which has no text policy revision. */
+function chainDigest(chain: Chain) {
+  return digest({ chain: chain.rules }).pipe(
+    Effect.catchTag("ClientRepresentationError", () =>
+      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+    ),
+  );
 }
 
 function captureText(selected: NonNullable<FirewallOptions["text"]>) {
@@ -1013,30 +1225,69 @@ function assessRule(
       ),
     );
     const projection = yield* guidanceProjection(assessed, input, checkId);
-    const admit = projection.result.judgment === "allow";
+    const { result } = projection;
+    const admit = result.judgment === "allow";
+    const completion: FirewallCompletion = {
+      checkId,
+      direction: input.direction,
+      canonicalCandidate: input.canonicalCandidate,
+      canonicalInput: yield* retainedInput(active, input),
+      admit,
+      canonicalResult: yield* canonicalBytes({
+        result: Struct.omit(result, "trace"),
+        summaries: yield* decisionSummaries(active, input, result),
+      }),
+    };
+    if (admit) {
+      return {
+        kind: "admitted",
+        completion,
+        ...(projection.guidance === undefined
+          ? {}
+          : { guidance: projection.guidance }),
+      } satisfies Decision;
+    }
+    const reply =
+      input.direction === "incoming" ? textReply(active, result) : "";
     return {
-      result: projection.result,
-      completion: {
-        checkId,
-        direction: input.direction,
-        canonicalCandidate: input.canonicalCandidate,
-        canonicalInput: yield* retainedInput(active, input),
-        admit,
-        canonicalResult: yield* canonicalBytes({
-          result: Struct.omit(projection.result, "trace"),
-          summaries: yield* decisionSummaries(active, input, projection.result),
-        }),
+      kind: "refused",
+      completion,
+      refusal: {
+        reason: refusalReason(result.reason),
+        feedback: result.feedback,
+        ...(reply === "" ? {} : { reply }),
       },
-      ...(admit && projection.guidance !== undefined
-        ? { guidance: projection.guidance }
-        : {}),
-    } satisfies RuleDecision;
+    } satisfies Decision;
   }).pipe(
     Effect.catchTag("ClientRepresentationError", () =>
       Effect.fail(new CheckInputError({ reason: "context" })),
     ),
     Effect.withSpan("assessMessage"),
   );
+}
+
+/**
+ * The registered feedback of each violated rule whose action is `reply`, one
+ * per line. Holds reply nothing: the sender broke no settled rule.
+ */
+function textReply(active: ActiveRules, result: FirewallCheck): string {
+  if (result.reason !== "rule-violation") {
+    return "";
+  }
+  const violated = new Set(
+    decidingRules(result.reason, active.rules, result).map(
+      (rule) => rule.ruleId,
+    ),
+  );
+  return active.rules
+    .flatMap((rule) =>
+      violated.has(rule.id) &&
+      rule.action === "reply" &&
+      rule.feedback !== undefined
+        ? [rule.feedback.text]
+        : [],
+    )
+    .join("\n");
 }
 
 /** The evaluator and retained decision receive the same detached message and context. */
@@ -1272,6 +1523,7 @@ function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
       configuration: options.configuration,
       settings: options.settings,
       questionEdition: textQuestionEdition,
+      chain: options.chain,
       rules: documents,
       fixedRuleIds: fixed.map((rule) => rule.id),
       ...(options.text === undefined
@@ -1420,271 +1672,4 @@ function invalidRule(
   at: { readonly path?: PolicyEditPath; readonly ruleId?: string } = {},
 ) {
   return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
-}
-
-const bytes = Schema.Uint8ArrayFromSelf.pipe(
-  Schema.filter((value) => value.byteLength > 0),
-);
-const time = Schema.Int.pipe(
-  Schema.nonNegative(),
-  Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
-);
-const ruleIds = Schema.parseJson(Schema.Array(Schema.NonEmptyString));
-const storedTime = Schema.Union(
-  time,
-  Schema.NumberFromString.pipe(
-    Schema.int(),
-    Schema.nonNegative(),
-    Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
-  ),
-);
-const activationRow = Schema.Struct({
-  time: storedTime,
-  activeRevision: Schema.NonEmptyString,
-  addedRuleIds: ruleIds,
-  removedRuleIds: ruleIds,
-});
-const disposition = Schema.Literal("admitted", "withheld");
-const completedCheck = Schema.Struct({
-  checkId: Schema.NonEmptyString,
-  direction: Schema.Literal("incoming", "outgoing"),
-  canonicalCandidate: bytes,
-  canonicalInput: bytes,
-  canonicalResult: bytes,
-  admit: Schema.Boolean,
-});
-const storedCheck = Schema.Struct({
-  direction: completedCheck.fields.direction,
-  canonicalCandidate: bytes,
-  canonicalInput: bytes,
-  canonicalResult: bytes,
-  disposition,
-});
-const decisionRow = Schema.Struct({
-  checkId: Schema.NonEmptyString,
-  canonicalResult: bytes,
-  disposition,
-  time: storedTime,
-});
-const savedSummary = Schema.parseJson(
-  Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
-);
-const decoder = new TextDecoder("utf-8", { fatal: true });
-
-type FirewallActivation = typeof activationRow.Type;
-type FirewallCompletion = typeof completedCheck.Type;
-
-type FirewallStore = Effect.Effect.Success<
-  ReturnType<typeof makeFirewallStore>
->;
-
-/* eslint-disable @typescript-eslint/naming-convention -- These properties name physical SQL tables and columns. */
-interface FirewallTables {
-  readonly firewall_policy: {
-    readonly agent_key: string;
-    readonly canonical_rules: Uint8Array;
-  };
-  readonly firewall_checks: {
-    readonly agent_key: string;
-    readonly sequence: Generated<number>;
-    readonly check_id: string;
-    readonly direction: typeof completedCheck.Type.direction;
-    readonly canonical_candidate: Uint8Array;
-    readonly canonical_input: Uint8Array;
-    readonly canonical_result: Uint8Array;
-    readonly decided_at: number;
-    readonly disposition: typeof disposition.Type;
-  };
-  readonly firewall_activations: {
-    readonly agent_key: string;
-    readonly sequence: Generated<number>;
-    readonly activated_at: number;
-    readonly active_revision: string;
-    readonly added_rule_ids: string;
-    readonly removed_rule_ids: string;
-  };
-}
-
-/* eslint-enable @typescript-eslint/naming-convention -- Restore naming outside physical SQL types. */
-
-/** Captured ownership scopes policy, evidence and activations on every database operation. */
-function makeFirewallStore(agentKey: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const queries = yield* makeQueries<FirewallTables>();
-    const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-      withAgentTransaction(agentKey, work).pipe(
-        Effect.provideService(SqlClient.SqlClient, sql),
-        Effect.mapError(persistenceFailure),
-      );
-    const policy = queries
-      .selectFrom("firewall_policy")
-      .select("canonical_rules as rules")
-      .where("agent_key", "=", agentKey);
-    const checks = queries
-      .selectFrom("firewall_checks")
-      .where("agent_key", "=", agentKey);
-    const activations = queries
-      .selectFrom("firewall_activations")
-      .where("agent_key", "=", agentKey);
-    const saveDecision = (value: FirewallCompletion) =>
-      Effect.gen(function* () {
-        const applied = value.admit ? "admitted" : "withheld";
-        yield* executeQuery(
-          queries
-            .insertInto("firewall_checks")
-            .values({
-              agent_key: agentKey,
-              check_id: value.checkId,
-              direction: value.direction,
-              canonical_candidate: value.canonicalCandidate,
-              canonical_input: value.canonicalInput,
-              canonical_result: value.canonicalResult,
-              disposition: applied,
-              decided_at: yield* Clock.currentTimeMillis,
-            })
-            .onConflict((conflict) =>
-              conflict.columns(["agent_key", "check_id"]).doNothing(),
-            ),
-        );
-        const prior = yield* executeQuery(
-          checks
-            .select([
-              "direction",
-              "canonical_candidate as canonicalCandidate",
-              "canonical_input as canonicalInput",
-              "canonical_result as canonicalResult",
-              "disposition",
-            ])
-            .where("check_id", "=", value.checkId),
-        ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
-        const saved = prior[0];
-        if (saved === undefined) {
-          return yield* persistenceFailure();
-        }
-        const sameEvidence =
-          sameBytes(saved.canonicalCandidate, value.canonicalCandidate) &&
-          sameBytes(saved.canonicalInput, value.canonicalInput) &&
-          sameBytes(saved.canonicalResult, value.canonicalResult);
-        if (
-          saved.direction !== value.direction ||
-          saved.disposition !== applied ||
-          !sameEvidence
-        ) {
-          return yield* persistenceFailure();
-        }
-      });
-    return {
-      readPolicy: () =>
-        run(
-          executeQuery(policy).pipe(
-            Effect.flatMap(
-              Schema.decodeUnknown(
-                Schema.Array(Schema.Struct({ rules: bytes })),
-              ),
-            ),
-            Effect.map((rows) => rows[0]?.rules),
-          ),
-        ),
-      writePolicy: (rules: Uint8Array, activation?: FirewallActivation) =>
-        run(
-          Effect.gen(function* () {
-            yield* executeQuery(
-              queries
-                .insertInto("firewall_policy")
-                .values({
-                  agent_key: agentKey,
-                  canonical_rules: rules,
-                })
-                .onConflict((conflict) =>
-                  conflict
-                    .column("agent_key")
-                    .doUpdateSet({ canonical_rules: rules }),
-                ),
-            );
-            if (activation !== undefined) {
-              yield* executeQuery(
-                queries.insertInto("firewall_activations").values({
-                  agent_key: agentKey,
-                  activated_at: activation.time,
-                  active_revision: activation.activeRevision,
-                  added_rule_ids: yield* Schema.encode(ruleIds)(
-                    activation.addedRuleIds,
-                  ),
-                  removed_rule_ids: yield* Schema.encode(ruleIds)(
-                    activation.removedRuleIds,
-                  ),
-                }),
-              );
-            }
-          }),
-        ),
-      saveDecisions: (decisions: readonly FirewallCompletion[]) =>
-        run(
-          Effect.forEach(decisions, saveDecision, {
-            discard: true,
-            concurrency: 1,
-          }),
-        ),
-      readDecisions: (request: { readonly since?: number }) =>
-        run(
-          Effect.gen(function* () {
-            const since = request.since ?? 0;
-            const rows = yield* executeQuery(
-              checks
-                .select([
-                  "check_id as checkId",
-                  "canonical_result as canonicalResult",
-                  "disposition",
-                  "decided_at as time",
-                ])
-                .where("decided_at", ">=", since)
-                .orderBy("decided_at", "desc")
-                .orderBy("sequence", "desc")
-                .limit(100),
-            ).pipe(
-              Effect.flatMap(Schema.decodeUnknown(Schema.Array(decisionRow))),
-            );
-            const summaries = yield* Effect.forEach(
-              rows,
-              decodeDecisionSummaries,
-              { concurrency: 1 },
-            );
-            const edits = yield* executeQuery(
-              activations
-                .select([
-                  "activated_at as time",
-                  "active_revision as activeRevision",
-                  "added_rule_ids as addedRuleIds",
-                  "removed_rule_ids as removedRuleIds",
-                ])
-                .where("activated_at", ">=", since)
-                .orderBy("activated_at", "desc")
-                .orderBy("sequence", "desc")
-                .limit(100),
-            ).pipe(
-              Effect.flatMap(Schema.decodeUnknown(Schema.Array(activationRow))),
-            );
-            return { decisions: summaries.flat(), activations: edits };
-          }),
-        ),
-    };
-  });
-}
-
-function decodeDecisionSummaries(row: typeof decisionRow.Type) {
-  return Effect.try({
-    try: () => decoder.decode(row.canonicalResult),
-    catch: persistenceFailure,
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(savedSummary)),
-    Effect.map(({ summaries }) =>
-      summaries.map((summary) => ({
-        ...summary,
-        checkId: row.checkId,
-        disposition: row.disposition,
-        time: row.time,
-      })),
-    ),
-  );
 }
