@@ -706,6 +706,7 @@ function chainDecision(
       direction,
       message: candidate.value,
       evidence: candidate.evidence,
+      self: yield* installed.localAgent,
     });
     if (outcome.kind === "unmatched") {
       return undefined;

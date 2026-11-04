@@ -38,6 +38,7 @@ catalog:
   "@opentelemetry/semantic-conventions": ^1.33.0
   "@sigstore/bundle": 4.0.0
   "@testcontainers/postgresql": 10.28.0
+  "@thi.ng/sexpr": 1.1.39
   "@types/estree": ^1.0.8
   "@types/node": ^25.5.0
   "@typescript/native": npm:typescript@7.0.2

@@ -112,6 +112,7 @@
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@sigstore/bundle": "catalog:",
+    "@thi.ng/sexpr": "catalog:",
     "canonicalize": "catalog:",
     "effect": "catalog:",
     "sigstore": "catalog:",

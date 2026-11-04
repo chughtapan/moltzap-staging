@@ -8,6 +8,7 @@
 
 import { Effect, Schema } from "effect";
 import type { Message, Outgoing } from "../communication/service.js";
+import type { AgentCard } from "../identity/agent-cards.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import {
   FirewallPolicyError,
@@ -63,11 +64,12 @@ export const chainRuleFileSchema = exactStruct({
   ),
 );
 
-/** What a matcher sees: the message, its direction and the permitted history. */
+/** What a matcher sees: the message, its direction, the permitted history and this agent. */
 export interface MatchInput {
   readonly direction: "incoming" | "outgoing";
   readonly message: Outgoing;
   readonly evidence: FirewallEvidence;
+  readonly self: AgentCard;
 }
 
 /**
@@ -76,7 +78,7 @@ export interface MatchInput {
  * JSON value the refused agent reads, and `reply` is the text a `reply` rule
  * sends to the sender of the message it withholds.
  */
-type MatchResult =
+export type MatchResult =
   | { readonly matched: false }
   | {
       readonly matched: true;
