@@ -5,15 +5,6 @@
       "path": "plugins/shared"
     },
     {
-      "path": "plugins/grokbot"
-    },
-    {
-      "path": "plugins/muse"
-    },
-    {
-      "path": "plugins/instinct"
-    },
-    {
       "path": "packages/social-harness"
     },
     {

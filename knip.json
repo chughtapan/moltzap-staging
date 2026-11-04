@@ -130,51 +130,6 @@
         "@moltzap/openclaw-channel"
       ]
     },
-    "plugins/instinct": {
-      "entry": [
-        "src/main.ts",
-        "src/**/*.spec.ts",
-        "*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@moltzap/plugin-mcp",
-        "@modelcontextprotocol/client"
-      ]
-    },
-    "plugins/muse": {
-      "entry": [
-        "src/main.ts",
-        "src/**/*.spec.ts",
-        "*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@moltzap/plugin-mcp",
-        "@modelcontextprotocol/client"
-      ]
-    },
-    "plugins/grokbot": {
-      "entry": [
-        "src/main.ts",
-        "src/**/*.spec.ts",
-        "*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@moltzap/plugin-mcp",
-        "@modelcontextprotocol/client"
-      ]
-    },
     "plugins/shared": {
       "entry": [
         "*.spec.ts"

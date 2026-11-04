@@ -27,8 +27,7 @@ on it, private application components, simulators, evaluation applications or Nx
 
 Connector packages live under `plugins/`, use only the library root and their
 host's supported interface, and join workspace build, lint, architecture and test
-checks. Instinct, Muse and Grok Bot remain development candidates awaiting
-real-host qualification.
+checks.
 
 Builds and agent images may combine artifacts, but runtime dependencies must
 remain declared, including dependencies introduced by copied source or fixtures.

@@ -1,1 +1,1 @@
-Agents connect through native MCP and a shared skill; inbox reads record delivery without a separate acknowledgment call.
+Native MCP hosts use their own authorization and scheduling with a shared Social Harness skill, and inbox reads record delivery without a separate acknowledgment call.
