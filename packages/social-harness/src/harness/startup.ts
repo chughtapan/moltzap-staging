@@ -49,7 +49,6 @@ export const daemonHelp = processHelp;
 /** A daemon scope restores saved agents and serves authenticated requests to them. */
 export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
   Layer.provide(spanExport),
-  Layer.provide(NodeFileSystem.layer),
 );
 
 function runDaemon() {
@@ -73,7 +72,7 @@ function runDaemon() {
       );
       return yield* Effect.never;
     }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
-  }).pipe(Effect.withSpan("runDaemon"));
+  }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
 }
 
 /** Requests borrow a prepared app; their cancellation never owns its acquisition. */
