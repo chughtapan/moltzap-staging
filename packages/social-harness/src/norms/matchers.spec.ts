@@ -505,6 +505,71 @@ describe("norm instances", () => {
     }));
 });
 
+describe("a peer's act out of turn", () => {
+  const pair = [alice, bob];
+
+  it("is answered with not-understood naming the acts the peer may send, in a direct conversation", () =>
+    Effect.gen(function* () {
+      const matchers = normMatchers(
+        norms(...builtIn, "examples/office-hours.lisp"),
+      );
+      const agreed = [
+        yield* from(
+          bob,
+          pair,
+          '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")',
+        ),
+        yield* from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
+      ];
+      const early = yield* from(bob, pair, "(agree :ontology office-hours)");
+
+      const result = yield* check(
+        "norms.nonconforming",
+        matchers,
+        incoming(alice, early, agreed),
+      );
+
+      expect(replyOf(result)).toMatchObject({
+        act: {
+          performative: "not-understood",
+          inReplyTo: early.msgId,
+          fields: {
+            reason: "out-of-turn",
+            error: "acts you may send now: request",
+          },
+        },
+      });
+    }));
+
+  it("is withheld without an answer in a group, where every member would answer", () =>
+    Effect.gen(function* () {
+      const matchers = normMatchers(
+        norms(...builtIn, "examples/group-meeting.lisp"),
+      );
+      const history = yield* agreement(["accept-proposal", "accept-proposal"]);
+      const early = yield* from(
+        bob,
+        group,
+        "(propose :ontology group-meeting :free (1))",
+      );
+
+      const result = yield* check(
+        "norms.nonconforming",
+        matchers,
+        incoming(carol, early, history),
+      );
+
+      expect(result).toEqual({
+        matched: true,
+        detail: {
+          reason: "out-of-turn",
+          norm: "group-meeting",
+          allowed: ["cfp"],
+        },
+      });
+    }));
+});
+
 describe("acts the Router has not ordered yet", () => {
   const matchers = normMatchers(
     norms(...builtIn, "examples/office-hours.lisp"),
