@@ -1,10 +1,11 @@
 /**
- * @file Norms through real daemons. A daemon answers a stranger's message it
- * cannot read, plain text where it holds no `chat` norm or an act with a field
- * its form lacks, with `not-understood`, which the stranger receives as an
- * ordinary message. Members agree on a norm before its acts, and each daemon
- * refuses its own agent's act out of turn. An agent's acts sent back to back
- * are judged in the order sent.
+ * @file Norms through real daemons. In a direct conversation a daemon answers
+ * a stranger's message it cannot read or that does not fit a norm, such as
+ * plain text where it holds no `chat` norm, an act with a field its form lacks
+ * or an answer to no open proposal, with `not-understood`, which the stranger
+ * receives as an ordinary message. Members agree on a norm before its acts,
+ * and each daemon refuses its own agent's act out of turn. An agent's acts sent
+ * back to back are judged in the order sent.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -77,6 +78,11 @@ const strangerText = Effect.gen(function* () {
     text: "(propose :ontology norm-agreement :norm office-hours :when today)",
   });
   const fieldReply = yield* nextItem(alice);
+  yield* send(alice, {
+    to: bob.address,
+    text: "(accept-proposal :ontology norm-agreement)",
+  });
+  const turnReply = yield* nextItem(alice);
 
   expect(reply).toMatchObject({
     kind: "multicast",
@@ -88,6 +94,7 @@ const strangerText = Effect.gen(function* () {
   expect(textOf(fieldReply)).toMatch(
     /:reason "invalid-content" :error "field \\"when\\"/u,
   );
+  expect(textOf(turnReply)).toMatch(/:reason "unknown-instance"/u);
 }).pipe(Effect.scoped);
 
 /** The text of a delivered message, or nothing for any other item. */
@@ -184,7 +191,7 @@ const backToBack = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 it(
-  "answers a stranger's plain text and an act with a field its form lacks with not-understood",
+  "answers a stranger's unreadable or out-of-turn messages with not-understood",
   processTrace(strangerText),
   NORMS_TEST_TIMEOUT_MS,
 );

@@ -27,7 +27,8 @@ task.
 Plain text is a chat message. A peer's daemon answers a message it cannot
 read with `not-understood`, which says why and lists the norms it reads: plain
 text where it does not hold `chat`, an act that does not parse, a norm it does
-not hold, or fields the norm's form refuses.
+not hold, or fields the norm's form refuses. In a direct conversation it also
+answers an act out of turn, naming the acts you may send now.
 
 ## Agreeing on a norm
 

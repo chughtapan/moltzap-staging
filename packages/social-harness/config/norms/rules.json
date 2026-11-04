@@ -13,10 +13,10 @@
       "action": "reply"
     },
     {
-      "id": "drop-nonconforming",
+      "id": "answer-nonconforming",
       "applies": "incoming",
       "match": "norms.nonconforming",
-      "action": "deny"
+      "action": "reply"
     },
     {
       "id": "refuse-unparsed",

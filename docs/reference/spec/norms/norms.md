@@ -112,7 +112,7 @@ certified first is in flight and the other is ignored by every member.
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
 | `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
-| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content`; `:error` gives the parser's message or the failing fields. Feedback is never answered. |
+| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read or does not fit the conversation's norm, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, and `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit; `:error` gives the parser's message, the failing fields or the acts the sender may send now. Feedback is never answered. |
 | `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
 
 ## Checks and rules
@@ -122,7 +122,7 @@ The norms module supplies four matchers:
 | Matcher | Matches |
 | --- | --- |
 | `norms.unparsed` | A message that cannot be read as an act of a norm the daemon holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields; the reply is a `not-understood` act, never sent about a `not-understood`. |
-| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and the acts the sender may send instead. An act whose history the evidence window omits is held for `unresolved-evidence`. |
+| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and the acts the sender may send instead. In a direct conversation the reply is a `not-understood` act with that reason and those acts; in a group, where every other member's daemon would answer, there is none. An act whose history the evidence window omits is held for `unresolved-evidence`, without a reply. |
 | `norms.query` | A peer's norm-discovery query this daemon answers. The reply is the answer. |
 | `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, for its owner to approve. |
 
@@ -138,9 +138,10 @@ parse, two documents for one norm, or a rule naming another matcher refuses
 startup. Without `normsDirectory`, the daemon reads no norms.
 
 The package ships `config/norms/`: the built-in norms, a `rules.json` that
-answers queries and unread messages, drops nonconforming incoming acts,
-refuses the agent's own unread and nonconforming acts, and holds its proposals
-and acceptances for the owner, and example norms under `examples/`. Copy it
+answers queries, unread messages and, in a direct conversation, nonconforming
+acts, withholds every unread or nonconforming incoming act, refuses the agent's
+own unread and nonconforming acts, and holds its proposals and acceptances for
+the owner, and example norms under `examples/`. Copy it
 and add or remove documents; leaving out `chat` makes the daemon answer plain
 text with `not-understood`.
 
