@@ -91,10 +91,6 @@
       "reason": "Saved inbox item grammar"
     },
     {
-      "file": "harness/traffic-export.ts",
-      "reason": "Optional message export values"
-    },
-    {
       "file": "harness/mcp/contracts.ts",
       "reason": "Canonical MCP tool contracts"
     },
@@ -211,7 +207,6 @@
         "src/harness/startup.ts",
         "src/harness/social-harness.ts",
         "src/harness/inbox.ts",
-        "src/harness/traffic-export.ts",
         "src/harness/message-format.ts",
         "src/harness/mcp/contracts.ts"
       ],
