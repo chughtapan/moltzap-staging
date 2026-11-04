@@ -2,7 +2,8 @@
  * @file Norms through real daemons. A daemon that holds no `chat` norm
  * answers a stranger's plain text with `not-understood`, which the stranger
  * receives as an ordinary message. Members agree on a norm before its acts,
- * and each daemon refuses its own agent's act out of turn.
+ * and each daemon refuses its own agent's act out of turn. An agent's acts
+ * that the Router has not ordered yet are judged in the order it sent them.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -86,7 +87,15 @@ const strangerText = Effect.gen(function* () {
   );
 }).pipe(Effect.scoped);
 
-const agreedNorm = Effect.gen(function* () {
+const proposal =
+  "(propose :ontology norm-agreement :conversation-id a1 :norm office-hours)";
+const acceptance =
+  "(accept-proposal :ontology norm-agreement :conversation-id a1)";
+const request =
+  '(request :ontology office-hours :conversation-id o1 :topic "Project scope" :slot "Tue 2pm")';
+
+/** A student and a professor whose daemons hold `office-hours` and `chat`. */
+const officeHours = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
   const documents = [...builtIn, "chat.lisp", "examples/office-hours.lisp"];
   const fixtures = yield* Effect.forEach(
@@ -105,6 +114,11 @@ const agreedNorm = Effect.gen(function* () {
   if (student === undefined || professor === undefined) {
     return yield* Effect.dieMessage("expected two participants");
   }
+  return { infrastructure, student, professor };
+});
+
+const agreedNorm = Effect.gen(function* () {
+  const { student, professor } = yield* officeHours;
   expect(
     yield* callTool(professor.endpoint.client, {
       name: "read_norms",
@@ -115,19 +129,11 @@ const agreedNorm = Effect.gen(function* () {
       objectContaining({ name: "office-hours", protocol: "fipa-request" }),
     ]),
   });
-  const proposal =
-    "(propose :ontology norm-agreement :conversation-id a1 :norm office-hours)";
-  const request =
-    '(request :ontology office-hours :conversation-id o1 :topic "Project scope" :slot "Tue 2pm")';
-
   yield* send(student, { to: professor.address, text: proposal });
   expect(yield* nextItem(professor)).toMatchObject({
     message: { content: [{ type: "text", text: proposal }] },
   });
-  yield* send(professor, {
-    to: student.address,
-    text: "(accept-proposal :ontology norm-agreement :conversation-id a1)",
-  });
+  yield* send(professor, { to: student.address, text: acceptance });
   yield* nextItem(student);
   const outOfTurn = yield* send(student, {
     to: professor.address,
@@ -145,6 +151,35 @@ const agreedNorm = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
+const actsBeforeOrdering = Effect.gen(function* () {
+  const { infrastructure, student, professor } = yield* officeHours;
+  const agree = "(agree :ontology office-hours :conversation-id o1)";
+  const inform =
+    '(inform :ontology office-hours :conversation-id o1 :slot "Tue 2pm")';
+  yield* send(student, { to: professor.address, text: proposal });
+  yield* nextItem(professor);
+  yield* send(professor, { to: student.address, text: acceptance });
+  yield* nextItem(student);
+  yield* send(student, { to: professor.address, text: request });
+  yield* nextItem(professor);
+
+  yield* Effect.acquireUseRelease(
+    infrastructure.holdRouter,
+    () =>
+      send(professor, { to: student.address, text: agree }).pipe(
+        Effect.zipRight(send(professor, { to: student.address, text: inform })),
+      ),
+    (release) => Effect.sync(release),
+  );
+
+  expect(yield* nextItem(student)).toMatchObject({
+    message: { content: [{ type: "text", text: agree }] },
+  });
+  expect(yield* nextItem(student)).toMatchObject({
+    message: { content: [{ type: "text", text: inform }] },
+  });
+}).pipe(Effect.scoped);
+
 it(
   "answers a stranger's plain text with not-understood where chat is not held",
   processTrace(strangerText),
@@ -154,5 +189,11 @@ it(
 it(
   "lets members follow a norm they agreed to and refuses an act out of turn",
   processTrace(agreedNorm),
+  NORMS_TEST_TIMEOUT_MS,
+);
+
+it(
+  "judges an agent's second act after its first while the Router has not ordered either",
+  processTrace(actsBeforeOrdering),
   NORMS_TEST_TIMEOUT_MS,
 );

@@ -18,6 +18,12 @@ supplies those matchers.
 Every member judges the same history, so all members reach the same verdict on
 each act. An act that breaks its norm changes nothing for any member.
 
+An agent may send several acts before the Router orders them. Its daemon
+checks each one after the agent's earlier acts in the order it sent them. If a
+peer's act is ordered between them, each member's daemon judges the acts it
+receives in their final order and withholds any act that order makes
+nonconforming.
+
 ## Acts
 
 An act is a FIPA ACL message in its string form
