@@ -62,9 +62,7 @@ it(
         [invalidVariable]: secret,
       });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(
-        `Usage: ${processName} configure <settings.json>`,
-      );
+      expect(result.stdout).toContain(`Usage: ${processName} [--help]`);
       expect(result.stdout).toContain(
         `${requiredVariable}: sqlite file URL or PostgreSQL connection URL`,
       );

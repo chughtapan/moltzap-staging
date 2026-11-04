@@ -21,6 +21,7 @@ import {
   dockerfile,
   fixture,
   git,
+  hostDockerfile,
   key,
   lock,
   write,
@@ -2050,11 +2051,49 @@ await test("host hash returns malformed tracked manifest failures", (t) => {
 
 // @agent-code-guard/regression-only: Git fixtures pin rebuild behavior through the exported release API.
 
+for (const instruction of [
+  "COPY images/openclaw-agent/entrypoint.sh /opt/social-harness/agent/",
+  "RUN --mount=type=bind,source=assets,target=/probe cat /probe/config",
+  "RUN --network=none --mount=type=bind,source=assets,target=/probe cat /probe/config",
+]) {
+  await test(`host recipe refuses unaccounted runtime context input: ${instruction}`, (t) => {
+    const repo = fixture();
+    t.after(() => {
+      rmSync(repo, { recursive: true, force: true });
+    });
+    write(
+      repo,
+      "images/openclaw-agent/Dockerfile",
+      `${hostDockerfile}\n${instruction}\n`,
+    );
+    commit(repo);
+    const result = Effect.runSync(
+      Effect.either(imageInputs(repo, ["openclaw-agent"])),
+    );
+    Either.match(result, {
+      onLeft: (error) => {
+        assert.match(
+          error.message,
+          /Unsupported Dockerfile form in images\/openclaw-agent\/Dockerfile/u,
+        );
+      },
+      onRight: () => {
+        assert.fail("Expected refusal");
+      },
+    });
+  });
+}
+
 for (const [file, content, image] of [
   [
     "packages/social-harness/src/harness/run.ts",
     "export const daemon = 42;",
     "daemon",
+  ],
+  [
+    "packages/social-harness/src/harness/run.ts",
+    "export const daemon = 42;",
+    "openclaw-agent",
   ],
   ["packages/social-harness/assets/policy.txt", "runtime policy", "daemon"],
   [
@@ -2065,16 +2104,20 @@ for (const [file, content, image] of [
     ),
     "daemon",
   ],
-  ["plugins/openclaw/src/index.ts", "export const channel = 42;", "daemon"],
+  [
+    "plugins/openclaw/src/index.ts",
+    "export const channel = 42;",
+    "openclaw-agent",
+  ],
   [
     "plugins/openclaw/bin/loader",
     "#!/usr/bin/env node\nconsole.log('updated');",
-    "daemon",
+    "openclaw-agent",
   ],
   [
     "plugins/openclaw/skills/connect/SKILL.md",
     "Updated skill instructions.",
-    "daemon",
+    "openclaw-agent",
   ],
   [
     "images/daemon/Dockerfile",
@@ -2088,11 +2131,10 @@ for (const [file, content, image] of [
       private: true,
       dependencies: {
         "@fixture/core": "workspace:*",
-        "@fixture/channel": "workspace:*",
       },
       files: ["package.json"],
       nx: { targets: { build: { executor: "nx:noop" } } },
-      description: "seed",
+      description: "installed daemon",
     }),
     "daemon",
   ],
@@ -2103,12 +2145,7 @@ for (const [file, content, image] of [
   ],
   [
     "images/openclaw-agent/Dockerfile",
-    "FROM upstream@sha256:changed",
-    "openclaw-agent",
-  ],
-  [
-    "images/openclaw-agent/.dockerignore",
-    "*\n!entrypoint.sh\n!patch-openclaw.ts\n",
+    `${hostDockerfile}\n# updated host recipe\n`,
     "openclaw-agent",
   ],
   [
@@ -2134,6 +2171,9 @@ for (const [file, content, image] of [
     assert.notEqual(after[image]?.key, before[image]?.key);
     assert.equal(after.router?.key, before.router?.key);
     assert.equal(after.registry?.key, before.registry?.key);
+    if (file.startsWith("plugins/openclaw/")) {
+      assert.equal(after.daemon?.key, before.daemon?.key);
+    }
   });
 }
 
@@ -2165,7 +2205,7 @@ for (const [file, content, image] of [
   });
 }
 
-await test("daemon key binds transitive runtime integrity while the standalone host keeps its key", (t) => {
+await test("installed daemon and host keys bind transitive runtime integrity", (t) => {
   const repo = fixture();
   t.after(() => {
     rmSync(repo, { recursive: true, force: true });
@@ -2175,7 +2215,7 @@ await test("daemon key binds transitive runtime integrity while the standalone h
   commit(repo);
   const after = Effect.runSync(imageInputs(repo));
   assert.notEqual(after.daemon?.key, before.daemon?.key);
-  assert.equal(after["openclaw-agent"]?.key, before["openclaw-agent"]?.key);
+  assert.notEqual(after["openclaw-agent"]?.key, before["openclaw-agent"]?.key);
 });
 
 for (const { file, content, changesKey } of [
@@ -2200,7 +2240,7 @@ for (const { file, content, changesKey } of [
     changesKey: false,
   },
 ]) {
-  await test(`daemon key ${changesKey ? "binds" : "excludes"} build-only workspace ${file} without publishing it`, (t) => {
+  await test(`host key ${changesKey ? "binds" : "excludes"} build-only workspace ${file} without publishing it`, (t) => {
     const repo = buildOnlyWorkspace();
     t.after(() => {
       rmSync(repo, { recursive: true, force: true });
@@ -2209,12 +2249,15 @@ for (const { file, content, changesKey } of [
     write(repo, `plugins/build-support/${file}`, content);
     commit(repo);
     const after = Effect.runSync(imageInputs(repo));
-    assert.equal(after.daemon?.key !== before.daemon?.key, changesKey);
+    assert.equal(
+      after["openclaw-agent"]?.key !== before["openclaw-agent"]?.key,
+      changesKey,
+    );
     assert.equal(after.router?.key, before.router?.key);
     assert.equal(after.registry?.key, before.registry?.key);
-    assert.ok(after.daemon);
+    assert.ok(after["openclaw-agent"]);
     assert.ok(
-      after.daemon.modules.every(
+      after["openclaw-agent"].modules.every(
         (input) => !input.startsWith("plugins/build-support/"),
       ),
     );
@@ -2264,8 +2307,8 @@ function buildOnlyWorkspace(): string {
   write(repo, "plugins/build-support/README.md", "Build support.");
   write(
     repo,
-    "images/daemon/Dockerfile",
-    daemonDockerfile.replace(
+    "images/openclaw-agent/Dockerfile",
+    hostDockerfile.replace(
       "COPY plugins/openclaw/ plugins/openclaw/",
       "COPY plugins/openclaw/ plugins/openclaw/\nCOPY plugins/build-support/ plugins/build-support/",
     ),

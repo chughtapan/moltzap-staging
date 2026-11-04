@@ -128,13 +128,9 @@ jobs:
       - name: Build release images for amd64
         run: |
           for service in registry router daemon openclaw-agent; do
-            context=.
-            if [[ "$service" == openclaw-agent ]]; then
-              context=images/openclaw-agent
-            fi
             docker buildx build --platform linux/amd64 --load \
               --file "images/${service}/Dockerfile" \
-              --tag "ghcr.io/social-harness/${service}:ci" "$context"
+              --tag "ghcr.io/social-harness/${service}:ci" .
           done
       - name: Smoke-test deployed executables
         run: |

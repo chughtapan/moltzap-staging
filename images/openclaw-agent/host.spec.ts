@@ -4,14 +4,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, mkdtempSync, openSync, readFileSync } from "node:fs";
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -93,14 +86,6 @@ test("a missing configuration path ends the host with a clear error", async () =
   assert.match(stderr, /OPENCLAW_CONFIG_PATH is required/u);
 });
 
-test("a missing launcher release ends the host with a clear error", async () => {
-  const { code, stderr } = await runHost({
-    SHARNESS_LAUNCHER_DIRECTORY: temporaryDirectory("missing-release-"),
-  });
-  assert.equal(code, 1);
-  assert.match(stderr, /launcher current release is missing/u);
-});
-
 test("a start selects the image channel configuration", async () => {
   const fake = await fakeOpenClaw();
   const root = temporaryDirectory("social-harness-channel-config-");
@@ -108,9 +93,7 @@ test("a start selects the image channel configuration", async () => {
   const config = JSON.stringify({
     plugins: {
       load: {
-        paths: [
-          "/opt/social-harness/launcher/current/node_modules/@moltzap/openclaw-channel",
-        ],
+        paths: ["/custom/channel"],
       },
     },
   });
@@ -122,10 +105,16 @@ test("a start selects the image channel configuration", async () => {
   });
 
   assert.equal(code, 0);
-  assert.match(
-    await readFile(configPath, "utf8"),
-    /social-harness-launcher-.+current/u,
-  );
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+    plugins: {
+      load: {
+        paths: [
+          "/custom/channel",
+          "/opt/social-harness/node_modules/@moltzap/openclaw-channel",
+        ],
+      },
+    },
+  });
 });
 
 test("a failed apply ends the host with its code and never starts the gateway", async () => {
@@ -370,12 +359,10 @@ async function runHost(
   environment: Record<string, string>,
   onStart?: (child: ChildProcess) => void,
 ): Promise<HostExit> {
-  const launcher = temporaryDirectory("social-harness-launcher-");
-  await mkdir(join(launcher, "seed"));
-  await symlink(join(launcher, "seed"), join(launcher, "current"));
-  const configPath = join(launcher, "openclaw.json");
+  const configuration = temporaryDirectory("social-harness-openclaw-config-");
+  const configPath = join(configuration, "openclaw.json");
   await writeFile(configPath, "{}");
-  const diagnosticPath = join(launcher, "host.stderr");
+  const diagnosticPath = join(configuration, "host.stderr");
   const diagnosticFile = openSync(diagnosticPath, "w");
   return await new Promise((resolve, reject) => {
     refuseAfterEnd();
@@ -383,7 +370,6 @@ async function runHost(
       detached: true,
       env: {
         ...hostEnvironment,
-        SHARNESS_LAUNCHER_DIRECTORY: launcher,
         OPENCLAW_CONFIG_PATH: configPath,
         HOME: temporaryDirectory("social-harness-openclaw-home-"),
         ...environment,

@@ -29,6 +29,8 @@ importers:
     dependencies:
       '@fixture/core':
         version: link:../../packages/social-harness
+  images/openclaw-agent:
+    dependencies:
       '@fixture/channel':
         version: link:../../plugins/openclaw
   plugins/openclaw:
@@ -81,15 +83,33 @@ FROM node:24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 COPY --from=build /deploy/ /app/
 `;
 
-/** The daemon recipe deploys its seed package from the repository root. */
+/** The daemon recipe deploys its installed package from the repository root. */
 export const daemonDockerfile = `FROM node:24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/social-harness/ packages/social-harness/
-COPY plugins/openclaw/ plugins/openclaw/
 COPY images/daemon/package.json images/daemon/package.json
 FROM node:24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-COPY --from=build --chown=node:node /deploy/ /opt/social-harness/launcher/seed/
-ENTRYPOINT ["sharnessd-launcher"]
+COPY --from=build --chown=node:node /deploy/ /opt/social-harness/
+ENTRYPOINT ["sharnessd"]
+`;
+
+/** The host deploys the channel and its runtime closure into its own image. */
+export const hostDockerfile = `ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+FROM node:24@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/social-harness/ packages/social-harness/
+COPY plugins/openclaw/ plugins/openclaw/
+COPY images/openclaw-agent/package.json images/openclaw-agent/package.json
+COPY images/openclaw-agent/entrypoint.sh images/openclaw-agent/entrypoint.sh
+COPY images/openclaw-agent/patch-openclaw.ts images/openclaw-agent/patch-openclaw.ts
+COPY images/openclaw-agent/configure-channel.ts images/openclaw-agent/configure-channel.ts
+RUN npm pkg delete --prefix images/openclaw-agent devDependencies \\
+  && npm pkg delete --prefix plugins/openclaw peerDependencies.openclaw peerDependenciesMeta.openclaw
+FROM \${OPENCLAW_BASE_IMAGE} AS agent
+COPY --from=build --chown=node:node /deploy/ /opt/social-harness/
+COPY --from=build /build/images/openclaw-agent/ /opt/social-harness/agent/
+USER node
+ENTRYPOINT ["bash", "/opt/social-harness/agent/entrypoint.sh"]
 `;
 
 /** Every fixture has both service names and a differently named library with condition-only exports. */
@@ -214,7 +234,7 @@ function fixtureFiles(
     "tools/heredoc-task.ts": "export {};",
     "assets/config": "initial",
     "pnpm-workspace.yaml":
-      "packages:\n  - packages/*\n  - images/daemon\n  - plugins/*\n",
+      "packages:\n  - packages/*\n  - images/daemon\n  - images/openclaw-agent\n  - plugins/*\n",
     "pnpm-lock.yaml": lock,
     "scripts/build/image.ts": "export {};\n",
     ...agentFiles(),
@@ -240,7 +260,7 @@ function fixtureFiles(
   };
 }
 
-/** The daemon seeds both runtime dependencies; the host builds from its own context. */
+/** Each image ships its own production closure from the root context. */
 function agentFiles(): Record<string, string> {
   return {
     "images/daemon/package.json": JSON.stringify({
@@ -248,7 +268,6 @@ function agentFiles(): Record<string, string> {
       private: true,
       dependencies: {
         "@fixture/core": "workspace:*",
-        "@fixture/channel": "workspace:*",
       },
       files: ["package.json"],
       nx: { targets: { build: { executor: "nx:noop" } } },
@@ -270,10 +289,17 @@ function agentFiles(): Record<string, string> {
     "plugins/openclaw/src/index.ts": 'import "@fixture/core";',
     "plugins/openclaw/bin/loader": "#!/usr/bin/env node\nconsole.log('load');",
     "plugins/openclaw/skills/connect/SKILL.md": "Connect to the daemon.",
-    "images/openclaw-agent/Dockerfile":
-      "FROM upstream@sha256:host\nCOPY entrypoint.sh /entrypoint.sh\n",
-    "images/openclaw-agent/.dockerignore":
-      "*\n!entrypoint.sh\n!patch-openclaw.ts\n!configure-channel.ts\n",
+    "images/openclaw-agent/package.json": JSON.stringify({
+      name: "@social-harness/openclaw-agent",
+      private: true,
+      dependencies: { "@fixture/channel": "workspace:*" },
+      files: ["package.json"],
+      nx: { targets: { build: { executor: "nx:noop" } } },
+    }),
+    "images/openclaw-agent/Dockerfile": hostDockerfile,
+    "images/openclaw-agent/patch-openclaw.ts": "export const patch = false;",
+    "images/openclaw-agent/configure-channel.ts":
+      "export const channel = false;",
     "images/openclaw-agent/entrypoint.sh": "exec openclaw gateway\n",
     "images/openclaw-agent/README.md": "Run the host.\n",
   };

@@ -12,8 +12,6 @@ and the contract for the area you change:
 Keep public type canaries on the supported package surface. A private
 implementation type must not become a compatibility facade.
 
-Keep `src/launcher` independent of the agent services.
-
 `skills/` contains instructions that every channel installs unchanged.
 `group-messaging` teaches operation mechanics and `shared-norms` teaches
 agreement. Keep their shared instructions independent of a host, with host

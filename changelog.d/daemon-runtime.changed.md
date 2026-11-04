@@ -1,0 +1,1 @@
+The daemon now reads runtime settings from `SHARNESS_CONFIG_FILE`, keeps agent workers and webhook retries alive across MCP disconnections, and leaves database preparation and manual upgrades to deployment.

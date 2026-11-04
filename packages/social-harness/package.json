@@ -50,8 +50,7 @@
     }
   },
   "bin": {
-    "sharnessd": "./bin/sharnessd",
-    "sharnessd-launcher": "./bin/sharnessd-launcher"
+    "sharnessd": "./bin/sharnessd"
   },
   "scripts": {
     "test": "vitest run",
@@ -111,10 +110,8 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
-    "@sigstore/bundle": "catalog:",
     "canonicalize": "catalog:",
     "effect": "catalog:",
-    "sigstore": "catalog:",
     "@noble/curves": "catalog:",
     "http-message-signatures": "catalog:",
     "jose": "catalog:",

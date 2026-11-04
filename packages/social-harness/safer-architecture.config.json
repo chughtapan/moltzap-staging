@@ -219,16 +219,6 @@
       "reason": "Package identity and shared protocol compatibility"
     },
     {
-      "name": "launcher",
-      "roots": [
-        "src/launcher"
-      ],
-      "entrypoints": [
-        "src/launcher/index.ts"
-      ],
-      "reason": "Release installation and daemon startup"
-    },
-    {
       "name": "database",
       "roots": [
         "src/database"
