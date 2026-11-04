@@ -1,16 +1,10 @@
-/** @file Loads the launcher-selected channel in the host's configuration before OpenClaw reads it. */
+/** @file Loads the image's installed channel before OpenClaw reads its configuration. */
 
-import {
-  access,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-const IMAGE_CHANNEL = `${process.env.SHARNESS_LAUNCHER_DIRECTORY ?? "/opt/social-harness/launcher"}/current/node_modules/@moltzap/openclaw-channel`;
+const IMAGE_CHANNEL =
+  "/opt/social-harness/node_modules/@moltzap/openclaw-channel";
 
 async function configureChannel(): Promise<undefined> {
   const path = process.env.OPENCLAW_CONFIG_PATH;
@@ -19,13 +13,6 @@ async function configureChannel(): Promise<undefined> {
       "OPENCLAW_CONFIG_PATH is required. Docs: https://github.com/social-harness/moltzap/tree/main/images/openclaw-agent#openclaw-host-image",
     );
   }
-  await access(
-    `${process.env.SHARNESS_LAUNCHER_DIRECTORY ?? "/opt/social-harness/launcher"}/current`,
-  ).catch(() => {
-    throw new Error(
-      "launcher current release is missing; start the daemon before the host. Docs: https://github.com/social-harness/moltzap/tree/main/images/openclaw-agent#openclaw-host-image",
-    );
-  });
   const config: unknown = JSON.parse(await readFile(path, "utf8"));
   if (!selectChannel(config)) {
     return;

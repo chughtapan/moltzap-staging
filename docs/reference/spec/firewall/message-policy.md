@@ -189,9 +189,9 @@ surrounding messages.
 
 ## Message-policy file
 
-The daemon setup document's `messagePolicyFile` names a readable regular JSON
-file, at most 1 MiB. `sharnessd configure` resolves fixed rules, owner facts,
-settings and provider credentials into SQL; startup restores them before serving.
+The daemon runtime document's `messagePolicyFile` names a readable regular JSON
+file, at most 1 MiB. Startup reads fixed rules, owner facts, settings and provider
+credentials before serving.
 Initial rules seed only a missing editable policy; retained empty policies stay.
 
 | Property | Requirement/default |

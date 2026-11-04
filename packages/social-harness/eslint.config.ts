@@ -149,7 +149,6 @@ export default [
       "src/communication/router/connection.ts",
       "src/communication/collectives.ts",
       "src/communication/records.spec.ts",
-      "src/launcher/installation.ts",
       "src/communication/conversations/history.ts",
     ],
     rules: {

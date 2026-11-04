@@ -447,8 +447,8 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
-/** SQL configuration retains resolved rules and redacts the provider credential. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with persisted daemon configuration.
+/** Runtime configuration retains resolved rules and redacts the provider credential. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with resolved daemon configuration.
 export const installedMessagePolicy = Schema.Struct({
   policy: MessagePolicy,
   provider: Schema.Union(

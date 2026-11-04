@@ -260,26 +260,6 @@ export function readConsumerPins(workspaceRoot: string) {
 }
 
 /**
- * Extract one tarball under `temporaryRoot/extracted` and return the package
- * directory inside it.
- * @param archive Tarball path.
- * @param temporaryRoot Scratch directory owned by the caller.
- * @returns The extracted `package/` directory.
- */
-export function extractPackedArchive(
-  archive: string,
-  temporaryRoot: string,
-): Effect.Effect<string, GateError, GateServices> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const extractedRoot = join(temporaryRoot, "extracted");
-    yield* fs.makeDirectory(extractedRoot);
-    yield* runCommand("tar", ["-xzf", archive, "-C", extractedRoot]);
-    return join(extractedRoot, "package");
-  }).pipe(Effect.withSpan("packedWorkspace.extractPackedArchive"));
-}
-
-/**
  * Read one text file, failing with `missing` when the file system refuses.
  * @param path File to read.
  * @param missing Failure message when the file is absent or unreadable.

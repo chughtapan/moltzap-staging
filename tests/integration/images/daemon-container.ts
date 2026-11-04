@@ -113,8 +113,6 @@ function containerArguments(
     `${directory}:${directory}:ro`,
     "--mount",
     `type=volume,src=${volume},dst=/home/node`,
-    "--env",
-    "SHARNESS_LAUNCHER_UPGRADE=off",
     ...Object.entries(fixture.environment).flatMap(([name, value]) => [
       "--env",
       `${name}=${value}`,

@@ -4,7 +4,15 @@ import { FileSystem } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { type ConfigError, Data, Effect, Layer, Redacted } from "effect";
+import {
+  Config,
+  type ConfigError,
+  Data,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Kysely only compiles SQL; Effect SqlClient owns every connection and execution.
 import {
   type Compilable,
@@ -61,6 +69,45 @@ export class DatabaseLocatorError extends Data.TaggedError(
   "DatabaseLocatorError",
 ) {}
 
+/**
+ * Database environment failures never include the supplied locator or unlock material.
+ * Exported so the daemon layer's inferred failure can be named.
+ * @public
+ */
+export class DatabaseAccessError extends Data.TaggedError(
+  "DatabaseAccessError",
+) {
+  override get message(): string {
+    return "Set SHARNESS_DATABASE_URL and a canonical base64url-encoded 32-byte SHARNESS_DATABASE_KEY. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration";
+  }
+}
+
+/** One database locator and canonical unlock key are shared by preparation and runtime. */
+export const databaseAccess = Config.all({
+  locator: Config.redacted("SHARNESS_DATABASE_URL"),
+  encodedKey: Config.redacted("SHARNESS_DATABASE_KEY"),
+}).pipe(
+  Effect.flatMap(({ locator, encodedKey }) =>
+    Schema.decodeUnknown(Schema.Uint8ArrayFromBase64Url)(
+      Redacted.value(encodedKey),
+    ).pipe(
+      Effect.filterOrFail(
+        (bytes) =>
+          bytes.byteLength === 32 &&
+          Buffer.from(bytes).toString("base64url") ===
+            Redacted.value(encodedKey),
+        () => new DatabaseAccessError(),
+      ),
+      Effect.map((bytes) => ({ locator, unlockKey: Redacted.make(bytes) })),
+    ),
+  ),
+  Effect.catchTags({
+    ConfigError: () => new DatabaseAccessError(),
+    ParseError: () => new DatabaseAccessError(),
+  }),
+  Effect.withSpan("databaseAccess"),
+);
+
 const databaseLocation = Effect.fn("databaseLocation")(function* (
   locator: Redacted.Redacted,
 ) {
@@ -104,11 +151,29 @@ export const databaseConnection = (locator: Redacted.Redacted) =>
                 filename: location.filename,
                 disableWAL: true,
               });
-        return layer;
+        return Layer.effectDiscard(connectionSettings()).pipe(
+          Layer.provideMerge(layer),
+        );
       }),
       Effect.withSpan("databaseConnection"),
     ),
   );
+
+/** Connection pragmas precede transactions so preparation and runtime share SQLite durability. */
+function connectionSettings() {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.onDialectOrElse({
+      sqlite: () =>
+        Effect.gen(function* () {
+          yield* sql.unsafe("PRAGMA foreign_keys = ON");
+          yield* sql.unsafe("PRAGMA journal_mode = WAL");
+          yield* sql.unsafe("PRAGMA synchronous = FULL");
+        }),
+      orElse: () => Effect.void,
+    });
+  });
+}
 
 /** Setup creates private SQLite paths without truncating existing data; PostgreSQL and memory need no filesystem. */
 export const prepareDatabaseDirectory = Effect.fn("prepareDatabaseDirectory")(

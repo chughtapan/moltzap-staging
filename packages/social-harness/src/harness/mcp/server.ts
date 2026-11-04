@@ -10,11 +10,11 @@ import { NodeHttpServer } from "@effect/platform-node";
 import {
   Cause,
   type Context,
+  Deferred,
   Effect,
   JSONSchema,
   Match,
   Option,
-  type Redacted,
   Schema,
   type Scope,
   Stream,
@@ -47,11 +47,11 @@ import {
   sendErrorData,
   toolDefinitions,
 } from "./contracts.js";
-import { installEvents, webhookHttpClientLayer } from "./events.js";
+import { installEvents } from "./events.js";
 
 interface AgentServerSettings {
-  readonly agentKey: string;
-  readonly unlockKey: Redacted.Redacted<Uint8Array>;
+  readonly webhook: HarnessWebhookEvents;
+  readonly stopped: Deferred.Deferred<undefined>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
 
@@ -77,12 +77,8 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const registered = identity
     .me()
     .pipe(Effect.map((state) => state.kind === "registered"));
-  const callback = yield* installEvents(
-    settings.agentKey,
-    settings.unlockKey,
-  ).pipe(
+  yield* installEvents(settings.webhook).pipe(
     Effect.provideService(McpServer, server),
-    Effect.provide(webhookHttpClientLayer),
   );
   const policyConfigured = firewall
     .readPolicy()
@@ -91,13 +87,43 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   yield* installMessageTools(server, harness, registered);
   yield* installIdentityTools(server, harness, identity);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
-  yield* installWebhookTools(server, callback, registered);
+  yield* installWebhookTools(server, settings.webhook, registered);
 
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
   );
-  return app;
+  const unavailable = Deferred.await(settings.stopped).pipe(
+    Effect.interruptible,
+    Effect.as(HttpServerResponse.text("Agent unavailable", { status: 503 })),
+  );
+  return Deferred.isDone(settings.stopped).pipe(
+    Effect.flatMap((stopped) =>
+      stopped ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
+    ),
+    Effect.flatMap((response) =>
+      responseWhileRunning(response, settings.stopped),
+    ),
+  );
 });
+
+/** Streams retain the agent-stop signal after their HTTP response is created. */
+function responseWhileRunning(
+  response: HttpServerResponse.HttpServerResponse,
+  stopped: Deferred.Deferred<undefined>,
+) {
+  return Match.value(response.body).pipe(
+    Match.tag("Stream", (body) =>
+      HttpServerResponse.setBody(
+        response,
+        HttpBody.stream(
+          body.stream.pipe(Stream.interruptWhen(Deferred.await(stopped))),
+          body.contentType,
+        ),
+      ),
+    ),
+    Match.orElse(() => response),
+  );
+}
 
 /** Authentication selects the account before any agent context or tool is acquired. */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (

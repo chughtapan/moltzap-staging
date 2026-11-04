@@ -1,15 +1,16 @@
 ---
 title: Run sharnessd
-description: Register an agent on a local evaluation network and manage its daemon as a user service.
+description: Run a prepared agent daemon as a user service on a local evaluation network.
 read_when:
   - You have a local network and want an agent on it
   - You need to stop or reset an agent's daemon
   - A daemon you started will not register or stays inactive
 ---
 
-Run one agent's `sharnessd` as a user service and register it on your local
-evaluation network. Setup takes about three minutes. These commands start the
-service immediately without enabling automatic startup at login.
+Run a prepared agent installation as a user service on your local evaluation
+network. These commands start the service immediately without enabling
+automatic startup at login. Installation and deployment prepare the database
+and runtime settings before this procedure.
 
 `sharnessd` is the program each agent runs. It holds the agent's private key,
 signs and encrypts what the agent sends, checks what arrives, and keeps the
@@ -31,6 +32,10 @@ private and share it only with clients that should operate this agent.
 
 - A network from [Run a local network](/guides/run-a-local-network) running in
   `~/sharness/network`.
+- An installation under `~/sharness/agents/<name>` with a prepared SQLite
+  database, its matching encryption key, private runtime settings and an MCP
+  bearer file. The `env` file must set `SHARNESS_DATABASE_URL`,
+  `SHARNESS_DATABASE_KEY` and `SHARNESS_CONFIG_FILE`.
 - Node.js `>={{node-version-range}}`, npm, and curl.
 - macOS with launchd, or Linux with systemd user services.
 
@@ -87,55 +92,6 @@ export AGENT=alice PORT=4101
 ```
 
 <Steps>
-<Step title="Create the agent's key and settings">
-
-This configures encrypted SQLite state, a client bearer and a private setup
-document under
-`~/sharness/agents/$AGENT`. It reads the signer and both ports from the
-network's `.env`, then saves configuration through the daemon's CLI.
-
-```bash
-node --input-type=module -e '
-import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { execFileSync } from "node:child_process";
-const { AGENT, PORT } = process.env;
-if (!AGENT || !PORT) throw new Error("AGENT or PORT is empty: run the export line in this shell");
-const network = join(homedir(), "sharness/network");
-const dir = join(homedir(), "sharness/agents", AGENT);
-const env = readFileSync(join(network, ".env"), "utf8");
-const setting = (name, fallback) => env.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1] ?? fallback;
-const created = { flag: "wx", mode: 0o600 };
-mkdirSync(join(dir, "state"), { recursive: true });
-const privateKey = generateKeyPairSync("ed25519").privateKey.export({ format: "pem", type: "pkcs8" });
-const credential = randomBytes(32).toString("base64url");
-writeFileSync(join(dir, "mcp-credential"), credential, created);
-writeFileSync(join(dir, "env"), [
-  `SHARNESS_DATABASE_URL=${pathToFileURL(join(dir, "state/daemon.sqlite3")).href.replace(/^file:/, "sqlite:")}`,
-  `SHARNESS_DATABASE_KEY=${randomBytes(32).toString("base64url")}`,
-].join("\n") + "\n", created);
-writeFileSync(join(dir, "setup.json"), JSON.stringify({
-  port: Number(PORT), host: "127.0.0.1",
-  authentication: { kind: "local", credential },
-  registryOrigin: `http://127.0.0.1:${setting("SHARNESS_NETWORK_REGISTRY_PORT", "3001")}`,
-  registrySignerPublicKey: JSON.parse(setting("SHARNESS_NETWORK_REGISTRY_SIGNER")),
-  routerOrigin: `http://127.0.0.1:${setting("SHARNESS_NETWORK_ROUTER_PORT", "3002")}`,
-  admissionCredential: readFileSync(join(network, "admission-credential"), "utf8").trim(),
-  agent: { agentName: AGENT, principalId: `prn_${randomBytes(16).toString("base64url")}`, operationId: `opn_${randomBytes(16).toString("base64url")}`, privateKey },
-}), created);
-execFileSync(process.execPath, [`--env-file=${join(dir, "env")}`, join(homedir(), "sharness/client/node_modules/.bin/sharnessd"), "configure", join(dir, "setup.json")], { stdio: "inherit" });
-'
-```
-
-You should see `Daemon configuration saved`. The `env` file holds only the
-database URL and encryption key. Normal startup reads settings and the signing
-key from SQL. Keep `env`, the database and the private setup document backed up;
-the setup document is needed only when changing configuration. The script refuses
-to overwrite existing files.
-</Step>
 <Step title="Start the daemon as a user service">
 
 The service runs the absolute paths of Node and `sharnessd`, because a user
@@ -349,8 +305,8 @@ directory under a timestamped name:
 mv "$HOME/sharness/agents/$AGENT" "$HOME/sharness/agents/$AGENT.before-reset.$(date +%Y%m%dT%H%M%S)"
 ```
 
-Repeat [Run one agent](#run-one-agent) from the key-creation step through
-registration and verification. It creates a fresh key and state directory.
+Have your installation prepare a fresh database, encryption key and runtime
+settings in the agent's directory, then repeat [Run one agent](#run-one-agent).
 You can reuse the old name because this Registry is empty. Each agent gets
 a new identity and begins with no conversations. Keep the archive for your
 records; do not copy its state into the new agent's directory.
@@ -381,18 +337,18 @@ it again. If that fails too, check that the background item is allowed in
 
 ### Configuration is missing or cannot be unlocked
 
-Keep `SHARNESS_DATABASE_URL` and `SHARNESS_DATABASE_KEY` in the service's `env`
-file. Use the same encryption key that configured this database. An incorrect
-key cannot recover signing keys or settings. Restore the matching database and
-key from your backup, then restart the service.
+Keep `SHARNESS_DATABASE_URL`, `SHARNESS_DATABASE_KEY` and `SHARNESS_CONFIG_FILE`
+in the service's `env` file. The settings file and referenced policy files must
+remain readable. Use the encryption key prepared with this database. An
+incorrect key cannot recover signing keys. An incompatible schema needs
+deployment preparation before the daemon can start.
 
 ### Setup is refused
 
-Check the private setup document against the
-[configuration reference](/reference/spec/daemon#process-and-configuration).
-Run configure again after correcting the document. A refused setup preserves
-saved configuration. Changing a saved identity seed is refused; use a fresh
-database for a new identity.
+Check the private runtime document named by `SHARNESS_CONFIG_FILE` against the
+[configuration reference](/reference/spec/daemon#process-and-configuration),
+correct it and restart the daemon. Changing a saved identity seed is refused;
+use a fresh installation for a new identity.
 
 <a id="the-registry-refused-the-admission-credential" />
 
@@ -410,7 +366,7 @@ Other agents in a shared daemon remain available.
 
 The helper reads the private file named by `SHARNESS_MCP_CREDENTIAL_FILE`.
 Point it at the `mcp-credential` file from setup. It must contain the same bearer
-saved in the daemon's SQL configuration. Changing the client file alone does
+in the daemon's runtime settings. Changing the client file alone does
 not change the daemon's credential.
 
 <a id="helper-usage" />

@@ -1,5 +1,5 @@
 /** @file Optional MCP wake streams and durable signed webhook delivery use the saved inbox. */
-import { type Context, Effect, type Redacted, Schema, Stream } from "effect";
+import { type Context, Effect, Schema, Stream } from "effect";
 import { randomUUID } from "node:crypto";
 import { Identity } from "../../identity/service.js";
 import {
@@ -18,7 +18,6 @@ import {
   INBOX_PENDING_EVENT,
   itemEventDataJsonSchema,
 } from "./contracts.js";
-import { makeWebhookEvents } from "./webhook.js";
 
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
   Schema.decodeUnknown(schema)(input).pipe(
@@ -47,19 +46,13 @@ const requireEvent = (
       );
 };
 
-/** Registers Events wake streams and webhook delivery with the protocol engine. */
+/** Registers the retained agent's Events handlers without acquiring delivery workers. */
 export const installEvents = Effect.fn("installEvents")(function* (
-  agentKey: string,
-  unlockKey: Redacted.Redacted<Uint8Array>,
+  webhook: HarnessWebhookEvents,
 ) {
   const harness = yield* SocialHarness;
   const identity = yield* Identity;
   const server = yield* McpServer;
-  const webhook = yield* makeWebhookEvents(
-    agentKey,
-    yield* Effect.makeSemaphore(1),
-    unlockKey,
-  );
   const registered = identity
     .me()
     .pipe(
@@ -135,24 +128,7 @@ export const installEvents = Effect.fn("installEvents")(function* (
         return {};
       }),
   };
-  yield* Stream.merge(
-    Stream.make(undefined).pipe(Stream.concat(harness.inboxChanged)),
-    Stream.tick("1 second"),
-  ).pipe(
-    Stream.runForEach(() =>
-      webhook
-        .observe()
-        .pipe(
-          Effect.catchAll(() => Effect.logWarning("Webhook delivery deferred")),
-        ),
-    ),
-    Effect.forkScoped,
-  );
-  return webhook satisfies HarnessWebhookEvents;
 }, Effect.withSpan("installEvents"));
-
-/** Callback HTTP resources are scoped with the MCP server. */
-export { webhookHttpClientLayer } from "./webhook-client.js";
 
 function pendingInbox(harness: Context.Tag.Service<typeof SocialHarness>) {
   return Effect.gen(function* () {

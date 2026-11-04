@@ -49,19 +49,25 @@ const scenario = Effect.gen(function* () {
     undefined,
     { database, settings: { messagePolicyFile: policyFile } },
   );
-  yield* filesystem.remove(policyFile);
+  const configuration = ConfigProvider.fromMap(
+    new Map(Object.entries(fixture.environment)),
+  );
   const access = yield* databaseAccess.pipe(
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
-    ),
+    Effect.withConfigProvider(configuration),
   );
   const saved = yield* Effect.gen(function* () {
-    const agentKey = yield* getOrCreateOwnedAgent(localOwner, access.unlockKey);
+    const { settings, agent } = yield* loadDaemonSettings().pipe(
+      Effect.withConfigProvider(configuration),
+    );
+    const agentKey = yield* getOrCreateOwnedAgent(
+      localOwner,
+      access.unlockKey,
+      agent,
+    );
     const registration = yield* loadAgentRegistration(
       agentKey,
       access.unlockKey,
     );
-    const settings = yield* loadDaemonSettings(access.unlockKey);
     if (settings.admissionCredential === undefined) {
       return yield* Effect.dieMessage(
         "Expected network admission in qualification settings",

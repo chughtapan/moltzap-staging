@@ -136,7 +136,6 @@ export interface HarnessWebhookEvents {
   readonly unsubscribe: (
     input: EventUnsubscribeInput,
   ) => Effect.Effect<void, ProtocolError>;
-  readonly observe: () => Effect.Effect<void, ProtocolError>;
   readonly status: Effect.Effect<WebhookStatus, ProtocolError>;
   readonly revoke: Effect.Effect<void, ProtocolError>;
   readonly resume: Effect.Effect<void, ProtocolError>;
