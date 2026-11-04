@@ -4,11 +4,13 @@
  * breaks its norm changes nothing, so every member reading the same history
  * reaches the same state and the same verdicts.
  *
- * At most one agreement or norm instance is in flight. A unanimous
- * `norm-agreement` registers its norm for the next instance, which any member
- * starts with the protocol's opening act and which ends when the protocol
- * completes or a member cancels it. Norm discovery and feedback run beside
- * that instance, and chat needs no state.
+ * The conversation, its set of members, identifies the agreement and the norm
+ * instance, so acts carry no conversation id. At most one agreement or norm
+ * instance is in flight. A unanimous `norm-agreement` registers its norm for
+ * the next instance, which any member starts with the protocol's opening act
+ * and which ends when the protocol completes or a member cancels it. Norm
+ * discovery and feedback run beside that instance; a discovery answer names
+ * its query with `:in-reply-to`. Chat needs no state.
  */
 
 import { Effect, Either, Option, Struct } from "effect";
@@ -40,7 +42,7 @@ export interface State {
   readonly agreed?: string;
   /** The norm instance in flight. */
   readonly instance?: Instance;
-  /** Open norm-discovery queries, by conversation id. */
+  /** Open norm-discovery queries, by the id of the message that asked. */
   readonly queries: ReadonlyMap<string, Instance>;
   /** Norms a member sent through norm discovery, which all members can read. */
   readonly fetched: ReadonlyMap<string, Norm>;
@@ -70,6 +72,13 @@ export interface Setting {
   readonly members: readonly string[];
 }
 
+/** An act, the member that sent it, and the id of the message that carried it. */
+export interface SentAct {
+  readonly act: Act;
+  readonly sender: string;
+  readonly msgId: string;
+}
+
 /** A conversation with no acts. */
 const emptyState: State = { queries: new Map(), fetched: new Map() };
 
@@ -85,12 +94,12 @@ export function normOf(
 /** Folds acts in history order, skipping acts of unknown norms and acts that break theirs. */
 export function foldActs(
   setting: Setting,
-  acts: ReadonlyArray<{ readonly act: Act; readonly sender: string }>,
+  acts: readonly SentAct[],
 ): Effect.Effect<State> {
-  return Effect.reduce(acts, emptyState, (state, { act, sender }) =>
-    normOf(setting, state, act.ontology) === undefined
+  return Effect.reduce(acts, emptyState, (state, sent) =>
+    normOf(setting, state, sent.act.ontology) === undefined
       ? Effect.succeed(state)
-      : judge(setting, state, act, sender).pipe(
+      : judge(setting, state, sent).pipe(
           Effect.map((verdict) =>
             verdict.kind === "conforms" ? verdict.state : state,
           ),
@@ -102,14 +111,14 @@ export function foldActs(
 export function judge(
   setting: Setting,
   state: State,
-  act: Act,
-  sender: string,
+  sent: SentAct,
 ): Effect.Effect<Verdict> {
+  const { act, sender } = sent;
   switch (act.ontology) {
     case builtIns.agreement:
       return agreementAct(setting, state, act, sender);
     case builtIns.discovery:
-      return discoveryAct(setting, state, act, sender);
+      return discoveryAct(setting, state, sent);
     case builtIns.feedback:
       return standalone(setting, state, act, ["not-understood"]);
     case builtIns.chat:
@@ -150,11 +159,7 @@ function agreementAct(
       if (state.agreement !== undefined || state.instance !== undefined) {
         return breaks("in-flight", act, []);
       }
-      if (
-        typeof proposed !== "string" ||
-        builtInNames.has(proposed) ||
-        act.conversationId === undefined
-      ) {
+      if (typeof proposed !== "string" || builtInNames.has(proposed)) {
         return breaks("invalid-content", act, ["propose"]);
       }
       const rest = Struct.omit(state, "agreed");
@@ -167,10 +172,7 @@ function agreementAct(
       });
     }
     const agreement = state.agreement;
-    if (
-      agreement === undefined ||
-      agreement.instance.conversationId !== act.conversationId
-    ) {
+    if (agreement === undefined) {
       return breaks("unknown-instance", act, []);
     }
     const advanced = advance(agreement.instance, act, sender);
@@ -201,50 +203,43 @@ function agreementAct(
 
 /**
  * `query-ref` asks for the names of the norms a member holds, or with `:norm`
- * for one norm's document; another member answers with `inform`, whose
- * `:content` carries the document.
+ * for one norm's document. Any member may ask at any time. Another member
+ * answers with `inform`, whose `:in-reply-to` names the query's message and
+ * whose `:content` carries the document.
  */
 function discoveryAct(
   setting: Setting,
   state: State,
-  act: Act,
-  sender: string,
+  { act, sender, msgId }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
     const failure = yield* checkContent(setting, state, act);
     if (failure !== undefined) {
       return failure;
     }
-    const id = act.conversationId;
-    if (id === undefined) {
+    if (act.performative === "query-ref") {
+      return conforms({
+        ...state,
+        queries: new Map([
+          ...state.queries,
+          [msgId, open(setting, act, sender, "fipa-query")],
+        ]),
+      });
+    }
+    const asked = act.inReplyTo;
+    const query = asked === undefined ? undefined : state.queries.get(asked);
+    if (asked === undefined || query === undefined) {
       return breaks("unknown-instance", act, []);
     }
-    const query = state.queries.get(id);
-    if (act.performative === "query-ref") {
-      return query === undefined
-        ? conforms({
-            ...state,
-            queries: new Map([
-              ...state.queries,
-              [id, open(setting, act, sender, "fipa-query")],
-            ]),
-          })
-        : breaks("in-flight", act, []);
-    }
-    const advanced =
-      query === undefined ? undefined : advance(query, act, sender);
-    if (query === undefined || advanced === undefined) {
-      return breaks(
-        "out-of-turn",
-        act,
-        query === undefined ? ["query-ref"] : allowedActs(query, sender),
-      );
+    const advanced = advance(query, act, sender);
+    if (advanced === undefined) {
+      return breaks("out-of-turn", act, allowedActs(query, sender));
     }
     const queries = new Map(state.queries);
     if (ended(advanced) || act.performative === "cancel") {
-      queries.delete(id);
+      queries.delete(asked);
     } else {
-      queries.set(id, advanced);
+      queries.set(asked, advanced);
     }
     return conforms({
       ...state,
@@ -275,7 +270,7 @@ function normAct(
       if (!openingActs[norm.protocol].includes(act.performative)) {
         return breaks("out-of-turn", act, openingActs[norm.protocol]);
       }
-      if (state.agreed !== norm.name || act.conversationId === undefined) {
+      if (state.agreed !== norm.name) {
         return breaks("no-agreement", act, []);
       }
       const rest = Struct.omit(state, "agreed");
@@ -284,10 +279,7 @@ function normAct(
         instance: open(setting, act, sender, norm.protocol),
       });
     }
-    if (
-      current.norm !== norm.name ||
-      current.conversationId !== act.conversationId
-    ) {
+    if (current.norm !== norm.name) {
       return breaks("in-flight", act, []);
     }
     const advanced = advance(current, act, sender);
@@ -331,7 +323,6 @@ function open(
 ): Instance {
   return {
     norm: act.ontology,
-    conversationId: act.conversationId ?? "",
     protocol,
     initiator: sender,
     participants: setting.members.filter((member) => member !== sender),

@@ -10,14 +10,14 @@ describe("readText", () => {
   it("reads the envelope parameters and every other parameter as a field", () => {
     expect(
       readText(
-        '(cfp :ontology group-meeting :conversation-id m1 :length "30 minutes" :free (1 3) :option 2)',
+        '(propose :ontology group-meeting :in-reply-to msg_1 :length "30 minutes" :free (1 3) :option 2)',
       ),
     ).toEqual({
       kind: "act",
       act: {
-        performative: "cfp",
+        performative: "propose",
         ontology: "group-meeting",
-        conversationId: "m1",
+        inReplyTo: "msg_1",
         fields: { length: "30 minutes", free: ["1", "3"], option: 2 },
       },
     });
@@ -62,7 +62,7 @@ describe("formatAct", () => {
           const act = {
             performative: "inform",
             ontology: "norm-discovery",
-            conversationId: "q1",
+            inReplyTo: "msg_1",
             content: text,
             fields: { norms: text, items, count: number },
           };

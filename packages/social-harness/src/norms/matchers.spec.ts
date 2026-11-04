@@ -53,7 +53,7 @@ const carol = card("carol", 3);
 const group = [alice, bob, carol];
 
 const cfp =
-  '(cfp :ontology group-meeting :conversation-id m1 :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")';
+  '(cfp :ontology group-meeting :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")';
 
 /** Alice proposes group-meeting, and Bob and Carol give `answers` in order. */
 function agreement(answers: readonly string[]) {
@@ -61,13 +61,13 @@ function agreement(answers: readonly string[]) {
     from(
       alice,
       group,
-      '(propose :ontology norm-agreement :conversation-id a1 :norm group-meeting :task "Plan the review")',
+      '(propose :ontology norm-agreement :norm group-meeting :task "Plan the review")',
     ),
     ...answers.map((answer, index) =>
       from(
         index === 0 ? bob : carol,
         group,
-        `(${answer} :ontology norm-agreement :conversation-id a1)`,
+        `(${answer} :ontology norm-agreement)`,
       ),
     ),
   ]);
@@ -275,48 +275,41 @@ describe("agreement races, consent and order", () => {
     norms(...builtIn, "examples/group-meeting.lisp"),
   );
 
-  it("judges the first of two concurrent proposals and ignores the second", () =>
+  it("keeps the first of two concurrent proposals and refuses the second", () =>
     Effect.gen(function* () {
-      const history = [
-        yield* from(
-          alice,
-          group,
-          "(propose :ontology norm-agreement :conversation-id a1 :norm group-meeting)",
-        ),
-        yield* from(
-          bob,
-          group,
-          "(propose :ontology norm-agreement :conversation-id b1 :norm group-meeting)",
-        ),
-      ];
-      const acceptFirst = yield* from(
-        carol,
+      const first = yield* from(
+        alice,
         group,
-        "(accept-proposal :ontology norm-agreement :conversation-id a1)",
+        "(propose :ontology norm-agreement :norm group-meeting)",
       );
-      const acceptSecond = yield* from(
+      const second = yield* from(
+        bob,
+        group,
+        "(propose :ontology norm-agreement :norm group-meeting)",
+      );
+      const accept = yield* from(
         carol,
         group,
-        "(accept-proposal :ontology norm-agreement :conversation-id b1)",
+        "(accept-proposal :ontology norm-agreement)",
       );
 
       expect(
         yield* check(
           "norms.nonconforming",
           matchers,
-          outgoing(acceptFirst, history),
+          incoming(carol, second, [first]),
         ),
-      ).toEqual({ matched: false });
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "in-flight" },
+      });
       expect(
         yield* check(
           "norms.nonconforming",
           matchers,
-          outgoing(acceptSecond, history),
+          outgoing(accept, [first, second]),
         ),
-      ).toMatchObject({
-        matched: true,
-        detail: { reason: "unknown-instance" },
-      });
+      ).toEqual({ matched: false });
     }));
 
   it("asks the owner to approve a proposal this agent sends, not one it receives", () =>
@@ -334,10 +327,8 @@ describe("agreement races, consent and order", () => {
   it("starts a norm only once every member accepts it, in any order", () =>
     Effect.gen(function* () {
       const [proposal] = yield* agreement([]);
-      const accept =
-        "(accept-proposal :ontology norm-agreement :conversation-id a1)";
-      const reject =
-        "(reject-proposal :ontology norm-agreement :conversation-id a1)";
+      const accept = "(accept-proposal :ontology norm-agreement)";
+      const reject = "(reject-proposal :ontology norm-agreement)";
       const answers = {
         bob: {
           accept: yield* from(bob, group, accept),
@@ -379,6 +370,47 @@ describe("agreement races, consent and order", () => {
     }));
 });
 
+describe("the conversation as the agreement's identity", () => {
+  const matchers = normMatchers(
+    norms(...builtIn, "examples/group-meeting.lisp"),
+  );
+
+  it("refuses an answer to an agreement when none is open", () =>
+    Effect.gen(function* () {
+      const accept = yield* from(
+        carol,
+        group,
+        "(accept-proposal :ontology norm-agreement)",
+      );
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(accept)),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "unknown-instance" },
+      });
+    }));
+
+  it("refuses an act that names a conversation id, which the conversation already gives", () =>
+    Effect.gen(function* () {
+      const proposal = yield* from(
+        alice,
+        group,
+        "(propose :ontology norm-agreement :conversation-id a1 :norm group-meeting)",
+      );
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(proposal)),
+      ).toMatchObject({
+        matched: true,
+        detail: {
+          reason: "invalid-content",
+          fields: [{ field: "conversation-id" }],
+        },
+      });
+    }));
+});
+
 describe("norm instances", () => {
   const matchers = normMatchers(
     norms(...builtIn, "examples/group-meeting.lisp"),
@@ -393,12 +425,12 @@ describe("norm instances", () => {
       const early = yield* from(
         alice,
         group,
-        "(accept-proposal :ontology group-meeting :conversation-id m1 :option 1)",
+        "(accept-proposal :ontology group-meeting :option 1)",
       );
       const wrongRole = yield* from(
         bob,
         group,
-        '(cfp :ontology group-meeting :conversation-id m1 :length "1 hour" :candidates "1 Fri")',
+        '(cfp :ontology group-meeting :length "1 hour" :candidates "1 Fri")',
       );
 
       expect(
@@ -431,7 +463,7 @@ describe("norm instances", () => {
       const proposal = yield* from(
         bob,
         group,
-        "(propose :ontology group-meeting :conversation-id m1 :free (11))",
+        "(propose :ontology group-meeting :free (11))",
       );
 
       const result = yield* check(
@@ -451,7 +483,7 @@ describe("norm instances", () => {
       const accept = yield* from(
         bob,
         group,
-        "(accept-proposal :ontology norm-agreement :conversation-id a1)",
+        "(accept-proposal :ontology norm-agreement)",
       );
       const chat = yield* from(bob, group, "Sounds good.");
 
@@ -487,32 +519,24 @@ describe("acts the Router has not ordered yet", () => {
     from(
       bob,
       pair,
-      '(propose :ontology norm-agreement :conversation-id a1 :norm office-hours :task "Book a slot")',
+      '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")',
     ),
-    from(
-      alice,
-      pair,
-      "(accept-proposal :ontology norm-agreement :conversation-id a1)",
-    ),
+    from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
     from(
       bob,
       pair,
-      '(request :ontology office-hours :conversation-id o1 :topic "Scope" :slot "Tue 2pm")',
+      '(request :ontology office-hours :topic "Scope" :slot "Tue 2pm")',
     ),
   ]);
 
   it("judges an outgoing act while the agent's own acts wait to be ordered", () =>
     Effect.gen(function* () {
       const history = yield* requested;
-      const agree = yield* from(
-        alice,
-        pair,
-        "(agree :ontology office-hours :conversation-id o1)",
-      );
+      const agree = yield* from(alice, pair, "(agree :ontology office-hours)");
       const inform = yield* from(
         alice,
         pair,
-        '(inform :ontology office-hours :conversation-id o1 :slot "Tue 2pm")',
+        '(inform :ontology office-hours :slot "Tue 2pm")',
       );
 
       const result = yield* check(
@@ -527,16 +551,8 @@ describe("acts the Router has not ordered yet", () => {
   it("refuses an outgoing act out of turn after the agent's own act still waiting to be ordered", () =>
     Effect.gen(function* () {
       const history = yield* requested;
-      const agree = yield* from(
-        alice,
-        pair,
-        "(agree :ontology office-hours :conversation-id o1)",
-      );
-      const again = yield* from(
-        alice,
-        pair,
-        "(agree :ontology office-hours :conversation-id o1)",
-      );
+      const agree = yield* from(alice, pair, "(agree :ontology office-hours)");
+      const again = yield* from(alice, pair, "(agree :ontology office-hours)");
 
       const result = yield* check(
         "norms.nonconforming",
@@ -584,22 +600,14 @@ describe("norm state", () => {
       ];
       const noise = yield* Effect.all([
         from(bob, group, "(cfp :ontology"),
-        from(
-          carol,
-          group,
-          "(propose :ontology group-meeting :conversation-id m1 :free (12))",
-        ),
-        from(
-          carol,
-          group,
-          "(accept-proposal :ontology norm-agreement :conversation-id zz)",
-        ),
+        from(carol, group, "(propose :ontology group-meeting :free (12))"),
+        from(alice, group, "(accept-proposal :ontology norm-agreement)"),
         from(alice, group, "Running five minutes late."),
       ]);
       const proposal = yield* from(
         bob,
         group,
-        "(propose :ontology group-meeting :conversation-id m1 :free (1 2))",
+        "(propose :ontology group-meeting :free (1 2))",
       );
       const judge = (history: readonly Message[]) =>
         Effect.runSync(
@@ -633,12 +641,12 @@ describe("norm discovery", () => {
       const list = yield* from(
         bob,
         [alice, bob],
-        "(query-ref :ontology norm-discovery :conversation-id q1)",
+        "(query-ref :ontology norm-discovery)",
       );
       const one = yield* from(
         bob,
         [alice, bob],
-        "(query-ref :ontology norm-discovery :conversation-id q2 :norm office-hours)",
+        "(query-ref :ontology norm-discovery :norm office-hours)",
       );
 
       const listed = yield* check(
@@ -651,7 +659,7 @@ describe("norm discovery", () => {
       expect(replyOf(listed)).toMatchObject({
         act: {
           performative: "inform",
-          conversationId: "q1",
+          inReplyTo: list.msgId,
           fields: {
             norms: "norm-agreement norm-discovery feedback chat office-hours",
           },
@@ -675,7 +683,7 @@ describe("norm discovery", () => {
       const query = yield* from(
         bob,
         pair,
-        "(query-ref :ontology norm-discovery :conversation-id q1 :norm office-hours)",
+        "(query-ref :ontology norm-discovery :norm office-hours)",
       );
       const answered = yield* check(
         "norms.query",
@@ -690,12 +698,12 @@ describe("norm discovery", () => {
       const proposal = yield* from(
         alice,
         pair,
-        "(propose :ontology norm-agreement :conversation-id a1 :norm office-hours)",
+        "(propose :ontology norm-agreement :norm office-hours)",
       );
       const accept = yield* from(
         bob,
         pair,
-        "(accept-proposal :ontology norm-agreement :conversation-id a1)",
+        "(accept-proposal :ontology norm-agreement)",
       );
 
       expect(
@@ -715,6 +723,56 @@ describe("norm discovery", () => {
           outgoing(accept, [query, reply, proposal]),
         ),
       ).toEqual({ matched: false });
+    }));
+});
+
+describe("discovery among several members", () => {
+  it("answers each member's query by its message, however many others asked first", () =>
+    Effect.gen(function* () {
+      const matchers = normMatchers(
+        norms(...builtIn, "examples/group-meeting.lisp"),
+      );
+      const [proposal] = yield* agreement([]);
+      const ask = (member: AgentCard) =>
+        from(
+          member,
+          group,
+          "(query-ref :ontology norm-discovery :norm group-meeting)",
+        );
+      const others = yield* Effect.all([ask(bob), ask(carol), ask(bob)]);
+      const query = yield* ask(carol);
+
+      fc.assert(
+        fc.property(fc.shuffledSubarray(others), (earlier) => {
+          const answered = Effect.runSync(
+            check(
+              "norms.query",
+              matchers,
+              incoming(alice, query, [proposal, ...earlier]),
+            ),
+          );
+          expect(replyOf(answered)).toMatchObject({
+            act: { inReplyTo: query.msgId },
+          });
+        }),
+      );
+    }));
+
+  it("refuses a discovery answer that names no open query", () =>
+    Effect.gen(function* () {
+      const matchers = normMatchers(norms(...builtIn));
+      const stray = yield* from(
+        alice,
+        [alice, bob],
+        "(inform :ontology norm-discovery :in-reply-to msg_unasked :norms chat)",
+      );
+
+      expect(
+        yield* check("norms.nonconforming", matchers, incoming(bob, stray)),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "unknown-instance" },
+      });
     }));
 });
 

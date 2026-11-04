@@ -40,14 +40,14 @@ const performatives = new Set([
 export type ActValue = string | number | readonly string[];
 
 /**
- * One act. `ontology` names the norm it follows, `conversationId` its protocol
- * instance, and `inReplyTo` the message it answers. Every other parameter is a
- * content field, which the norm's form for this performative checks.
+ * One act. `ontology` names the norm it follows and `inReplyTo` the message it
+ * answers. The conversation the act is sent in identifies its agreement or
+ * norm instance, so an act carries no conversation id. Every other parameter
+ * is a content field, which the norm's form for this performative checks.
  */
 export interface Act {
   readonly performative: string;
   readonly ontology: string;
-  readonly conversationId?: string;
   readonly inReplyTo?: string;
   readonly content?: string;
   readonly fields: Readonly<Record<string, ActValue>>;
@@ -97,9 +97,6 @@ export function formatAct(act: Act): string {
     ? act.ontology
     : formatValue(act.ontology);
   const parameters: Array<readonly [string, ActValue]> = [
-    ...(act.conversationId === undefined
-      ? []
-      : [["conversation-id", act.conversationId] as const]),
     ...(act.inReplyTo === undefined
       ? []
       : [["in-reply-to", act.inReplyTo] as const]),
@@ -141,7 +138,7 @@ function actOf(form: Expression): Either.Either<Act, string> {
     const value = valueOf(pairs[index + 1]);
     if (name === undefined || parameters.has(name)) {
       return Either.left(
-        "parameters are distinct :names such as :ontology or :conversation-id",
+        "parameters are distinct :names such as :ontology or :in-reply-to",
       );
     }
     if (value === undefined) {
@@ -162,33 +159,26 @@ function envelope(
     return typeof value === "number" ? String(value) : value;
   };
   const ontology = text("ontology");
-  const conversationId = text("conversation-id");
   const inReplyTo = text("in-reply-to");
   const content = text("content");
   if (typeof ontology !== "string" || !parameterName.test(ontology)) {
     return Either.left(":ontology names the norm the act follows");
   }
   if (
-    [conversationId, inReplyTo, content].some(
+    [inReplyTo, content].some(
       (value) => value !== undefined && typeof value !== "string",
     )
   ) {
-    return Either.left(
-      ":conversation-id, :in-reply-to and :content each take one value",
-    );
+    return Either.left(":in-reply-to and :content each take one value");
   }
   const fields = Object.fromEntries(
     [...parameters].filter(
-      ([name]) =>
-        !["ontology", "conversation-id", "in-reply-to", "content"].includes(
-          name,
-        ),
+      ([name]) => !["ontology", "in-reply-to", "content"].includes(name),
     ),
   );
   return Either.right({
     performative,
     ontology,
-    ...(typeof conversationId === "string" ? { conversationId } : {}),
     ...(typeof inReplyTo === "string" ? { inReplyTo } : {}),
     ...(typeof content === "string" ? { content } : {}),
     fields,
