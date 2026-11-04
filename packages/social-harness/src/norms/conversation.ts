@@ -7,8 +7,9 @@
  * The conversation, its set of members, identifies the agreement and the norm
  * instance, so acts carry no conversation id. At most one agreement or norm
  * instance is in flight. A unanimous `norm-agreement` registers its norm for
- * the next instance, which any member starts with the protocol's opening act
- * and which ends when the protocol completes or a member cancels it. Norm
+ * the next instance, which any member starts with one of its opening acts and
+ * which ends when its protocol or its own turns complete, or a member cancels
+ * it. Norm
  * discovery and feedback run beside that instance; a discovery answer names
  * its query with `:in-reply-to`. Chat needs no state.
  */
@@ -249,7 +250,10 @@ function discoveryAct(
   });
 }
 
-/** Acts of an agreed norm: the opening act starts its instance, and the protocol orders the rest. */
+/**
+ * Acts of an agreed norm: the opening act starts its instance, and the norm's
+ * protocol or its own turns order the rest.
+ */
 function normAct(
   setting: Setting,
   state: State,
@@ -262,22 +266,21 @@ function normAct(
     if (norm === undefined || failure !== undefined) {
       return failure ?? breaks("no-agreement", act, []);
     }
-    if (norm.protocol === undefined) {
+    const protocol = norm.protocol ?? norm.turns;
+    if (protocol === undefined) {
       return conforms(state);
     }
     const current = state.instance;
     if (current === undefined) {
-      if (!openingActs[norm.protocol].includes(act.performative)) {
-        return breaks("out-of-turn", act, openingActs[norm.protocol]);
+      if (!openingActs(protocol).includes(act.performative)) {
+        return breaks("out-of-turn", act, openingActs(protocol));
       }
       if (state.agreed !== norm.name) {
         return breaks("no-agreement", act, []);
       }
       const rest = Struct.omit(state, "agreed");
-      return conforms({
-        ...rest,
-        instance: open(setting, act, sender, norm.protocol),
-      });
+      const opened = open(setting, act, sender, protocol);
+      return conforms(ended(opened) ? rest : { ...rest, instance: opened });
     }
     if (current.norm !== norm.name) {
       return breaks("in-flight", act, []);

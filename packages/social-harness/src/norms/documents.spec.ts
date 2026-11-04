@@ -99,3 +99,99 @@ describe("readNorm", () => {
     );
   });
 });
+
+describe("readNorm with a norm's own turns", () => {
+  it("reads who sends each act, the facts it needs and the facts it changes", () => {
+    const norm = Either.getOrThrow(
+      readNorm(`
+        (norm swap :initiator Asker :participant Owner :description "Swap a shift.")
+        (content request :by Asker :unless open :initiates (open asked))
+        (content propose :by Owner :when asked :max 2
+                 :initiates offered :terminates asked
+          (field shift :type string))
+        (content accept-proposal :by Asker :when offered :terminates (open offered))
+        (content cancel)
+      `),
+    );
+    expect(norm).toMatchObject({
+      roles: { initiator: "Asker", participant: "Owner" },
+      turns: {
+        request: {
+          by: "initiator",
+          when: [],
+          unless: ["open"],
+          initiates: ["open", "asked"],
+          terminates: [],
+        },
+        propose: {
+          by: "participant",
+          when: ["asked"],
+          unless: [],
+          initiates: ["offered"],
+          terminates: ["asked"],
+          max: 2,
+        },
+        "accept-proposal": {
+          by: "initiator",
+          when: ["offered"],
+          unless: [],
+          initiates: [],
+          terminates: ["open", "offered"],
+        },
+      },
+      contents: { propose: { properties: { shift: { type: "string" } } } },
+    });
+  });
+
+  it.each([
+    {
+      what: "turns and a protocol",
+      source:
+        '(norm a :protocol fipa-request :initiator A :participant B :description "A.") (content request :by A :initiates x)',
+    },
+    {
+      what: "roles but neither a protocol nor turns",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request)',
+    },
+    {
+      what: "a turn by an unknown role",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by C :initiates x)',
+    },
+    {
+      what: "an unknown turn keyword",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by A :after agree :initiates x)',
+    },
+    {
+      what: "a fact that is not a name",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates ("Open"))',
+    },
+    {
+      what: "a fact no act initiates",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content agree :by B :when opened :terminates open)',
+    },
+    {
+      what: "no act the initiator can open an instance with",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by B :initiates open) (content agree :by A :when open :terminates open)',
+    },
+    {
+      what: "an act without a turn among turns",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content agree)',
+    },
+    {
+      what: "turn keywords on cancel",
+      source:
+        '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content cancel :by A)',
+    },
+  ])("refuses a document with $what", ({ source }) => {
+    expect(Either.getOrThrow(Either.flip(readNorm(source)))).toBeInstanceOf(
+      NormDocumentError,
+    );
+  });
+});
