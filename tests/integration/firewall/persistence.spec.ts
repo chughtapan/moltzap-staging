@@ -30,6 +30,14 @@ import {
 import { acquirePostgres } from "../daemon/postgres-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 
+/** A send with no conversation history before it. */
+const evidence = {
+  history: [],
+  earlierHistoryOmitted: false,
+  pendingOutgoing: [],
+  gaps: [],
+};
+
 /** Scoped resources reopen with the same fixed policy and saved signing identity. */
 const scenario = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
@@ -102,7 +110,6 @@ const scenario = Effect.gen(function* () {
         ],
         content: [{ type: "text", text: "Store one completed decision." }],
       });
-      const evidence = { history: [], earlierHistoryOmitted: false, gaps: [] };
       const decision = yield* firewall.checkOutgoing(message, evidence);
       yield* Effect.forEach(Array.from({ length: 8 }), () => decision.save, {
         concurrency: 8,

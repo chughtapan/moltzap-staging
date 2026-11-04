@@ -889,6 +889,7 @@ function evidenceFor(
       return {
         history: [],
         earlierHistoryOmitted: false,
+        pendingOutgoing: [],
         gaps: ["The preceding conversation history is unavailable."],
       };
     }
@@ -909,14 +910,11 @@ function evidenceFor(
       history,
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
-      gaps: [
-        ...(page.pendingOutgoing
-          ? ["An earlier outgoing message is not yet complete."]
-          : []),
-        ...(recent.length < page.entries.length
+      pendingOutgoing: page.pendingOutgoing,
+      gaps:
+        recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
-          : []),
-      ],
+          : [],
     };
   });
 }

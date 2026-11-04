@@ -25,6 +25,13 @@ export interface FirewallEvidence {
     readonly visibleToAgent: boolean;
   }>;
   readonly earlierHistoryOmitted: boolean;
+  /**
+   * This agent's sent messages that the Router has not ordered yet, oldest
+   * first. They are not in `history`; the Router orders them before any later
+   * message of this agent, and a peer's message may be ordered between them.
+   */
+  readonly pendingOutgoing: readonly Message[];
+  /** What else the history lacks, such as messages beyond the evidence byte limit. */
   readonly gaps: readonly string[];
 }
 

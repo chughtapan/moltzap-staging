@@ -92,6 +92,13 @@ export function normMatchers(
 
 type Matched = MatchResult;
 
+/**
+ * Reads the message and folds the acts before it. An outgoing act follows
+ * this agent's acts that the Router has not ordered yet, in the order the
+ * Router will give them. If a peer's act is ordered between them, every
+ * member's firewall judges the acts in their final order. An incoming act is
+ * judged on the ordered history before it alone.
+ */
 function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
   return Effect.gen(function* () {
     const text = messageText(input.message);
@@ -105,7 +112,11 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
         ...new Set([author, ...recipients].map((card) => card.agentId)),
       ],
     };
-    const acts = input.evidence.history.flatMap(({ message }) => {
+    const before = [
+      ...input.evidence.history.map(({ message }) => message),
+      ...(input.direction === "outgoing" ? input.evidence.pendingOutgoing : []),
+    ];
+    const acts = before.flatMap((message) => {
       const body = messageText(message);
       const reading = body === undefined ? undefined : readText(body);
       return reading?.kind === "act"

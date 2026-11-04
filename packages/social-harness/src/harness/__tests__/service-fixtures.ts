@@ -524,7 +524,7 @@ function historyPage(
         .byteLength,
     })),
     earlierMessagesOmitted,
-    pendingOutgoing: false,
+    pendingOutgoing: [],
     ...(nextCursor === undefined ? {} : { nextCursor }),
   };
 }

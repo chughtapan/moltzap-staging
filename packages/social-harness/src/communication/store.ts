@@ -858,14 +858,23 @@ export function failMessage(
   }).pipe(agentOperation(agentKey), Effect.withSpan("failMessage"));
 }
 
-/** Pending status includes accepted messages whose membership is not prepared yet. */
-export function hasPendingMessages(agentKey: string, conversationId: string) {
+/**
+ * Accepted messages of this conversation that have neither completed nor
+ * failed, in the order they were accepted, including those whose membership is
+ * not prepared yet.
+ */
+export function readPendingMessages(agentKey: string, conversationId: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const rows =
-      yield* sql`SELECT 1 FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND completed_record_hash IS NULL AND failure_reason IS NULL LIMIT 1`;
-    return rows.length > 0;
-  }).pipe(agentOperation(agentKey), Effect.withSpan("hasPendingMessages"));
+    const rows = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT author_agent_id,msg_id,canonical_message,completed_record_hash,failure_reason FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND completed_record_hash IS NULL AND failure_reason IS NULL ORDER BY sequence`;
+    return yield* Effect.forEach(
+      rows,
+      (row) => readAcceptedRow(row).pipe(Effect.map(({ message }) => message)),
+      { concurrency: 1 },
+    );
+  }).pipe(agentOperation(agentKey), Effect.withSpan("readPendingMessages"));
 }
 
 /** A record and its exact signed dissemination envelope commit before a durability vote. */
