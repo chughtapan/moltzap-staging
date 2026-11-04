@@ -123,6 +123,7 @@ it("accepts public OAuth setup without creating an agent before authentication",
         resource: "https://mcp.example/mcp",
         issuer: "https://issuer.example/",
         scope: "use:mcp",
+        allowedOrigins: ["https://owner.example"],
       },
     };
     yield* test.write(document);
@@ -135,7 +136,10 @@ it("accepts public OAuth setup without creating an agent before authentication",
     const loaded = yield* loadDaemonSettings(test.access.unlockKey).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
-    expect(loaded.authentication.kind).toBe(document.authentication.kind);
+    expect(loaded.authentication).toEqual({
+      ...document.authentication,
+      resource: new URL(document.authentication.resource),
+    });
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.each([

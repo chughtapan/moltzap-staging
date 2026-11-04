@@ -7,7 +7,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import type { DaemonOAuth } from "./authentication.js";
+import type { McpAuthentication } from "./authentication.js";
 import { mcpFixture, mcpRequest } from "../__tests__/mcp-fixtures.js";
 import { INBOX_PENDING_EVENT } from "./contracts.js";
 
@@ -36,13 +36,14 @@ const fixture = Effect.gen(function* () {
       return yield* HttpServerResponse.json(data).pipe(Effect.orDie);
     }),
   );
-  const oauth: DaemonOAuth = {
+  const oauth: McpAuthentication = {
+    kind: "oauth",
     resource,
     issuer,
     scope,
-    allowedOrigins: [],
+    allowedOrigins: ["https://owner.example.test"],
   };
-  const test = yield* mcpFixture({ authentication: { oauth } });
+  const test = yield* mcpFixture({ authentication: oauth });
   const token = (
     changes: {
       readonly audience?: string;
@@ -62,7 +63,7 @@ const fixture = Effect.gen(function* () {
         )
         .sign(keys.privateKey),
     );
-  const call = (bearer?: string, host?: string) =>
+  const call = (bearer?: string, host?: string, origin?: string) =>
     Effect.tryPromise(() =>
       test.fetch(
         mcpRequest(
@@ -76,6 +77,7 @@ const fixture = Effect.gen(function* () {
             headers: {
               host: host ?? resource.host,
               authorization: bearer === undefined ? "" : `Bearer ${bearer}`,
+              ...(origin === undefined ? {} : { origin }),
             },
           },
         ),
@@ -190,26 +192,15 @@ it(
   15000,
 );
 
-it("refuses an unlisted browser Origin before granting owner access", () =>
+it.each([
+  { origin: "https://owner.example.test", status: 200 },
+  { origin: "https://another-host.example", status: 403 },
+])("admits only configured browser origins: %j", ({ origin, status }) =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const token = yield* test.token();
-    const response = yield* Effect.tryPromise(() =>
-      test.fetch(
-        mcpRequest(
-          "initialize",
-          {},
-          {
-            headers: {
-              host: resource.host,
-              origin: "https://another-host.example",
-              authorization: `Bearer ${token}`,
-            },
-          },
-        ),
-      ),
-    );
-    expect(response.status).toBe(403);
-  }));
+    const response = yield* test.call(yield* test.token(), undefined, origin);
+    expect(response.status).toBe(status);
+  }),
+);
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the assertion policy. */

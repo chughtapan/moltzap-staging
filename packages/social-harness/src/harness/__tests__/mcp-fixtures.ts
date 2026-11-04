@@ -103,7 +103,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
   >([]);
   const app = yield* makeMcpHttpApp(
-    options.authentication ?? { credential: mcpTestCredential },
+    options.authentication ?? { kind: "local", credential: mcpTestCredential },
     (owner) =>
       Ref.update(owners, (values) => [...values, owner]).pipe(
         Effect.as(agentApp),

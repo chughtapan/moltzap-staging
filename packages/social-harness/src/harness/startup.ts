@@ -1,8 +1,6 @@
 /** @file Opens configured SQL storage and composes the shared daemon listener. */
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
 import { Console, Context, Duration, Effect, Layer } from "effect";
-import type { McpAuthentication } from "./mcp/authentication.js";
 import { Router } from "../communication/router/client.js";
 import { databaseConnection } from "../database/sql.js";
 import { Registry } from "../identity/registry.js";
@@ -29,8 +27,6 @@ export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
 function runDaemon() {
   return Effect.gen(function* () {
     const access = yield* databaseAccess;
-    const context = yield* Layer.build(databaseConnection(access.locator));
-    const sql = Context.get(context, SqlClient.SqlClient);
     return yield* Effect.gen(function* () {
       yield* prepareDatabase;
       const settings = yield* loadDaemonSettings(access.unlockKey);
@@ -41,31 +37,14 @@ function runDaemon() {
         ),
       );
       const agents = Context.get(running, RunningHarnesses);
-      const authentication = authenticationOf(settings);
-      const app = yield* makeMcpHttpApp(authentication, agents.get);
+      const app = yield* makeMcpHttpApp(settings.authentication, agents.get);
       yield* serveMcp(settings.port, app, settings.host);
       yield* Console.log(
         `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
       );
       return yield* Effect.never;
-    }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
   }).pipe(Effect.withSpan("runDaemon"));
-}
-
-function authenticationOf(settings: DaemonSettings): McpAuthentication {
-  const authentication = settings.authentication;
-  return authentication.kind === "local"
-    ? { credential: authentication.credential }
-    : {
-        oauth: {
-          resource: authentication.resource,
-          issuer: authentication.issuer,
-          scope: authentication.scope,
-          allowedOrigins: authentication.allowedOrigins.map(
-            (value) => value.origin,
-          ),
-        },
-      };
 }
 
 function networkLayer(settings: DaemonSettings) {

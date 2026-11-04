@@ -127,7 +127,7 @@ const publicOAuth = exactStruct({
   scope: Schema.String.pipe(Schema.pattern(/^[\x21\x23-\x5B\x5D-\x7E]+$/u)),
   allowedOrigins: Schema.optionalWith(
     Schema.Array(
-      origin.pipe(Schema.filter((value) => value.protocol === "https:")),
+      httpsUrl.pipe(Schema.filter((value) => new URL(value).origin === value)),
     ),
     { default: () => [] },
   ),

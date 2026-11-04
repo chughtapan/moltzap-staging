@@ -100,9 +100,8 @@ export function runPolicyRuntime(policy: FirewallOptions) {
         unlockKey: access.unlockKey,
         implementation: { name: "policy-integration", version: "1" },
       }).pipe(Effect.provide(services));
-      const app = yield* makeMcpHttpApp(
-        { credential: settings.authentication.credential },
-        () => Effect.succeed(agent),
+      const app = yield* makeMcpHttpApp(settings.authentication, () =>
+        Effect.succeed(agent),
       );
       yield* serveMcp(settings.port, app, settings.host);
       yield* Effect.log(

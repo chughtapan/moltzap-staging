@@ -390,7 +390,7 @@ function guardMcp(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const host = request.headers.host;
     const origin = request.headers.origin;
-    const oauth = authentication.oauth;
+    const oauth = authentication.kind === "oauth" ? authentication : undefined;
     const allowedHost =
       host !== undefined &&
       (oauth === undefined

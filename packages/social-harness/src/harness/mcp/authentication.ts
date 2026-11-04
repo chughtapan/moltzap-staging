@@ -4,6 +4,7 @@ import { FetchHttpClient, HttpClient } from "@effect/platform";
 import { Data, Effect, Redacted, Schema } from "effect";
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { DaemonSettings } from "../config.js";
 import { localOwner, type OwnerAccount } from "../ownership.js";
 
 const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
@@ -12,18 +13,10 @@ const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
     resource.origin,
   ).href;
 
-/** Fixed provider metadata for the daemon's OAuth resource. */
-export interface DaemonOAuth {
-  readonly resource: URL;
-  readonly issuer: string;
-  readonly scope: string;
-  readonly allowedOrigins: readonly string[];
-}
+/** Request admission uses the validated authentication settings without translating them. */
+export type McpAuthentication = DaemonSettings["authentication"];
 
-/** Exactly one admission mechanism is installed for an endpoint. */
-export type McpAuthentication =
-  | { readonly credential: Redacted.Redacted; readonly oauth?: never }
-  | { readonly credential?: never; readonly oauth: DaemonOAuth };
+type OAuthResource = Extract<McpAuthentication, { readonly kind: "oauth" }>;
 
 /** The verified account selects an agent; expiry bounds the admitted response stream. */
 export interface McpAdmission {
@@ -37,11 +30,11 @@ export class AuthenticationRefused extends Data.TaggedError(
 ) {}
 
 /** Metadata and bearer challenges derive from the same fixed resource. */
-export const protectedResourcePath = (oauth: DaemonOAuth): string =>
+export const protectedResourcePath = (oauth: OAuthResource): string =>
   new URL(getOAuthProtectedResourceMetadataUrl(oauth.resource)).pathname;
 
 /** Native discovery does not grant access to any daemon operation. */
-export const protectedResourceResponse = (oauth: DaemonOAuth): Response =>
+export const protectedResourceResponse = (oauth: OAuthResource): Response =>
   Response.json(
     {
       resource: oauth.resource.href,
@@ -59,10 +52,10 @@ export function makeRequestAdmission(
   (request: Request) => Effect.Effect<McpAdmission, AuthenticationRefused>,
   AuthenticationRefused
 > {
-  if (authentication.oauth === undefined) {
+  if (authentication.kind === "local") {
     return Effect.succeed(bearerAdmission(authentication.credential));
   }
-  const oauth = authentication.oauth;
+  const oauth = authentication;
   return discoverKeys(oauth).pipe(
     Effect.map(
       (keys) => (request: Request) =>
@@ -96,9 +89,9 @@ export function authenticationChallenge(
   authentication: McpAuthentication,
 ): Response {
   const challenge =
-    authentication.oauth === undefined
+    authentication.kind === "local"
       ? "Bearer"
-      : `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.oauth.resource)}"`;
+      : `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.resource)}"`;
   return new Response("Unauthorized", {
     status: 401,
     headers: { "www-authenticate": challenge, "cache-control": "no-store" },
@@ -122,7 +115,7 @@ function bearerAdmission(credential: Redacted.Redacted) {
       : Effect.fail(new AuthenticationRefused());
 }
 
-function ownsPayload(payload: JWTPayload, oauth: DaemonOAuth): boolean {
+function ownsPayload(payload: JWTPayload, oauth: OAuthResource): boolean {
   return (
     typeof payload.sub === "string" &&
     payload.sub.length > 0 &&
@@ -140,7 +133,7 @@ const issuerKeys = Schema.Struct({
 });
 
 /** Discover the key-set location from the configured issuer before opening the listener. */
-function discoverKeys(oauth: DaemonOAuth) {
+function discoverKeys(oauth: OAuthResource) {
   return HttpClient.get(
     new URL(
       `${oauth.issuer.replace(/\/$/u, "")}/.well-known/openid-configuration`,
