@@ -9,7 +9,6 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "communication/published-peers.spec.ts",
-      "daemon/launcher-upgrades.spec.ts",
       "images/**",
     ],
     maxWorkers: 2,

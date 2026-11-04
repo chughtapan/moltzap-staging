@@ -1,81 +1,42 @@
 ---
 title: Daemon service
-description: Settings, release selection and container setup for the agent daemon.
+description: Runtime settings, process ownership and container setup for the agent daemon.
 read_when:
   - You are configuring or starting an agent daemon
-  - You are selecting a daemon release or setting up its container
+  - You are setting up its container
 ---
 
-## Launcher
+`sharnessd` runs the installed daemon release. It reads the private settings
+file named by `SHARNESS_CONFIG_FILE` and checks the database schema and encryption
+key before serving MCP. Installation prepares the database; deployment owns
+schema changes and manual release upgrades. See the
+[configuration contract](/reference/spec/daemon#process-and-configuration).
 
-`sharnessd-launcher` selects a release, starts its daemon with the supplied
-environment and exits with the daemon's status. `prepare` selects and installs
-a release without starting it and prints the choice as one JSON line.
+## Agent resources
 
-| Setting | Meaning and default |
-| --- | --- |
-| `SHARNESS_LAUNCHER_DIRECTORY` | Required directory owned by the launcher |
-| `SHARNESS_LAUNCHER_PACKAGE` | `@moltzap/social-harness` by default, or `@moltzap/openclaw-channel`, whose exact library dependency supplies the daemon |
-| `SHARNESS_LAUNCHER_DIST_TAG` | Follow `latest` by default |
-| `SHARNESS_LAUNCHER_VERSION` | Pin an exact release instead of following a tag |
-| `SHARNESS_LAUNCHER_UPGRADE` | `on` by default. `off` keeps the recorded release. |
-| `SHARNESS_LAUNCHER_REGISTRY` | `https://registry.npmjs.org` by default |
-| `SHARNESS_LAUNCHER_SEED` | Installed image release. Defaults to the prefix containing the launcher's package. |
+One daemon process retains each active agent's identity, firewall and
+communication resources. Authenticated requests borrow that agent's MCP app.
+Disconnecting a client does not stop registration, incoming checks, collective
+work or webhook retries. A process restart restores agents from SQL.
 
-On its first start, the launcher records the image's installed release without
-network access. If that record still follows the image, replacing the image
-updates the recorded release from its seed. Only one start at a time may own
-the launcher directory. A dead process's claim can be reclaimed.
-
-Every start verifies the recorded installation and cached package integrity
-offline. Failure stops startup. It then considers a candidate release:
-
-- A dist-tag upgrade must be newer and inside the recorded daemon's live wire
-  window. Any newer release in that window is eligible. Resets require an
-  explicit choice.
-- An exact pin may move backward or cross a wire change. Storage compatibility
-  still requires the current format.
-
-Every selection must include `@moltzap/social-harness`. Release tags and sibling
-pins must be calendar versions of `@moltzap/*` packages before download.
-Failure to read compatibility metadata keeps the recorded release. Exact pins
-bypass those automatic compatibility checks.
-
-The launcher verifies every selected `@moltzap/*` package against npm integrity
-and its SLSA provenance through Sigstore. Verification requires the package's
-name and bytes, issuer `https://token.actions.githubusercontent.com`, and
-certificate identity
-`https://github.com/social-harness/moltzap/.github/workflows/publish.yml@refs/heads/main`.
-Installation disables lifecycle scripts and installs the verified packages,
-fetching their other dependencies from the registry. Later starts verify the
-cached bytes offline. After recording a release, the launcher removes older
-installations and cached tarballs.
-
-A candidate failure keeps the recorded release. The printed reason is
-`current`, `older`, `outside-wire-window`, `upgrade-off`, `unresolved`,
-`unverified` or `uninstalled`. The choice also reports `restartHost` when the
-selected channel's `sharnessHostCodeHash` changes. An interrupted selection
-must preserve that restart requirement. OpenClaw restarts its gateway only
-when that flag requires reloading channel code.
+Run one replica. Durable SQL state preserves recovery across restarts; it does
+not coordinate multiple daemon replicas.
 
 ## Agent images
 
-Generic OpenClaw and NanoClaw images install the library and channels from the
-same workspace commit. The daemon runs in its own container and mounts its secrets and persistent state locally.
+Generic OpenClaw and NanoClaw images install their channels from the same
+workspace commit as the daemon image. Each image runs its installed code.
+The daemon runs in its own container and mounts its private runtime settings,
+database access and persistent state. OpenClaw loads its bundled channel from
+`/opt/social-harness/node_modules/@moltzap/openclaw-channel`.
 
-The launcher publishes its selection through `current` on a separate volume.
-The daemon writes that volume. OpenClaw mounts it read-only at the same absolute
-path to load its channel. The volume contains no secrets and remains readable
-by the host user.
+The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`.
+For a local sidecar, both containers share a network namespace and use loopback.
+The host reads its private bearer file through `SHARNESS_MCP_CREDENTIAL_FILE`;
+the daemon's runtime settings supply the matching bearer. The host needs no
+signing key, database key or network admission credential.
 
-Kubernetes selects a release with `prepare` before starting the host and keeps
-that selection through daemon sidecar restarts. Its fresh launcher volume is
-separate from persistent daemon state. Docker also gives each daemon container
-a fresh launcher volume and never reuses one across image versions.
-
-The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`
-over shared loopback. The host reads its private bearer file through
-`SHARNESS_MCP_CREDENTIAL_FILE`; the daemon reads the same bearer from its saved
-SQL configuration. Listening establishes endpoint availability. The selected
-agent may still be registering, or return HTTP 503 if its context cannot start.
-Container runtimes own startup order, lifecycle and signals.
+Listening establishes endpoint availability. Agent registration and restoration
+continue asynchronously; an unavailable agent returns HTTP 503. Container
+runtimes own startup order, lifecycle and signals. Hosted OAuth deployments can
+serve the same MCP interface through HTTPS ingress.

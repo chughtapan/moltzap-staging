@@ -8,7 +8,6 @@ import {
   readdir,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,13 +40,11 @@ test("abandoned channel writes do not block installing the image channel", async
       },
     }),
   );
-  await symlink(root, join(root, "current"));
 
   await assert.doesNotReject(
     run(process.execPath, [script], {
       env: {
         ...process.env,
-        SHARNESS_LAUNCHER_DIRECTORY: root,
         OPENCLAW_CONFIG_PATH: path,
       },
     }),
@@ -56,7 +53,7 @@ test("abandoned channel writes do not block installing the image channel", async
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
     plugins: {
       load: {
-        paths: [`${root}/current/node_modules/@moltzap/openclaw-channel`],
+        paths: ["/opt/social-harness/node_modules/@moltzap/openclaw-channel"],
       },
     },
   });
@@ -64,7 +61,6 @@ test("abandoned channel writes do not block installing the image channel", async
     (await readdir(root)).sort((left, right) => left.localeCompare(right)),
     [
       ".social-harness-channel-abandoned",
-      "current",
       "openclaw.json",
       `openclaw.json.channel-${String(process.pid)}`,
     ],
@@ -82,7 +78,6 @@ test("a failed configuration rename keeps the old configuration and removes temp
     },
   });
   await writeFile(path, original);
-  await symlink(root, join(root, "current"));
   const preload = `
     import filesystem from "node:fs/promises";
     import { syncBuiltinESMExports } from "node:module";
@@ -101,7 +96,6 @@ test("a failed configuration rename keeps the old configuration and removes temp
       {
         env: {
           ...process.env,
-          SHARNESS_LAUNCHER_DIRECTORY: root,
           OPENCLAW_CONFIG_PATH: path,
         },
       },
@@ -110,7 +104,7 @@ test("a failed configuration rename keeps the old configuration and removes temp
   );
 
   assert.equal(await readFile(path, "utf8"), original);
-  assert.deepEqual(await readdir(root), ["current", "openclaw.json"]);
+  assert.deepEqual(await readdir(root), ["openclaw.json"]);
 });
 
 test("initializes channel loading in a stock host configuration", async (context) => {
@@ -121,12 +115,10 @@ test("initializes channel loading in a stock host configuration", async (context
     path,
     JSON.stringify({ channels: { sharness: { enabled: true } } }),
   );
-  await symlink(root, join(root, "current"));
   await assert.doesNotReject(
     run(process.execPath, [script], {
       env: {
         ...process.env,
-        SHARNESS_LAUNCHER_DIRECTORY: root,
         OPENCLAW_CONFIG_PATH: path,
       },
     }),
@@ -134,7 +126,7 @@ test("initializes channel loading in a stock host configuration", async (context
   assert.partialDeepStrictEqual(JSON.parse(await readFile(path, "utf8")), {
     plugins: {
       load: {
-        paths: [`${root}/current/node_modules/@moltzap/openclaw-channel`],
+        paths: ["/opt/social-harness/node_modules/@moltzap/openclaw-channel"],
       },
     },
   });

@@ -1,19 +1,12 @@
 #!/usr/bin/env node
-import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
+import { NodeRuntime } from "@effect/platform-node";
 import { ConfigProvider, Console, Effect, Layer } from "effect";
-import { configureDaemon } from "../dist/harness/config.js";
 import { daemonHelp, daemonLayer } from "../dist/harness/startup.js";
 
 const args = process.argv.slice(2);
 const program = Effect.suspend(() => {
   if (args.length === 1 && args[0] === "--help") {
     return Console.log(daemonHelp);
-  }
-  if (args.length === 2 && args[0] === "configure") {
-    return configureDaemon(args[1]).pipe(
-      Effect.provide(NodeFileSystem.layer),
-      Effect.andThen(Console.log("Daemon configuration saved")),
-    );
   }
   if (args.length === 0) {
     return Layer.launch(daemonLayer);
@@ -25,7 +18,9 @@ const program = Effect.suspend(() => {
 
 program.pipe(
   Effect.catchAll((error) => Console.error(
-    error._tag === "DaemonConfigurationError"
+    error._tag === "DaemonConfigurationError" ||
+    error._tag === "DatabaseAccessError" ||
+    error._tag === "DatabasePreparationError"
       ? error.message
       : "Daemon configuration or startup failed. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration",
   ).pipe(

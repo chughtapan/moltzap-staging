@@ -1,4 +1,5 @@
 /** @file Owner bindings preserve registration identity across reconnects and interrupted setup. */
+import { NodeContext } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { AgentSigningAuthority } from "@moltzap/social-harness";
@@ -8,14 +9,15 @@ import {
   loadAgentRegistration,
   migrateDaemon,
 } from "@moltzap/social-harness/test";
-import { Effect, Exit, Redacted } from "effect";
+import { Context, Effect, Exit, Layer, Redacted } from "effect";
 import { expect } from "vitest";
+import { acquirePostgres } from "./postgres-fixture.js";
 
 const unlockKey = Redacted.make(new Uint8Array(32).fill(7));
 const owner = { issuer: "https://issuer.example", subject: "owner" };
 const database = databaseConnection(Redacted.make("sqlite::memory:"));
 
-// @agent-code-guard/regression-only: Real SQLite covers racing setup, rollback and encrypted identity recovery.
+// @agent-code-guard/regression-only: Real SQL covers racing setup, rollback and encrypted identity recovery.
 it("reuses identity material for concurrent and repeated connections", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
@@ -123,3 +125,65 @@ it("rejects attempts to replace the saved identity", () =>
     expect(Exit.isFailure(changed)).toBe(true);
     expect(yield* sql`SELECT * FROM agent_profiles`).toEqual(before);
   }).pipe(Effect.provide(database)));
+
+it(
+  "reuses owner identity across concurrent PostgreSQL connections with a restricted login",
+  () =>
+    Effect.gen(function* () {
+      const postgres = yield* acquirePostgres;
+      const runtime = Context.get(
+        yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
+        SqlClient.SqlClient,
+      );
+      const provision = getOrCreateOwnedAgent(owner, unlockKey).pipe(
+        Effect.provideService(SqlClient.SqlClient, runtime),
+      );
+      const agentKeys = yield* Effect.all(
+        Array.from({ length: 8 }, () => provision),
+        { concurrency: 8 },
+      );
+      const reopened = yield* provision;
+      expect(new Set(agentKeys)).toEqual(new Set([reopened]));
+      const load = loadAgentRegistration(reopened, unlockKey).pipe(
+        Effect.provideService(SqlClient.SqlClient, runtime),
+      );
+      const hydrated = yield* load;
+      const repeated = yield* load;
+      expect(repeated.registration).toEqual(hydrated.registration);
+      expect(
+        AgentSigningAuthority.publicKey(repeated.signingAuthority),
+      ).toEqual(AgentSigningAuthority.publicKey(hydrated.signingAuthority));
+      expect(yield* postgres.admin`SELECT * FROM owner_bindings`).toHaveLength(
+        1,
+      );
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
+);
+
+it(
+  "rolls back a PostgreSQL owner binding when its profile cannot be stored",
+  () =>
+    Effect.gen(function* () {
+      const postgres = yield* acquirePostgres;
+      const sql = postgres.admin;
+      yield* sql`CREATE FUNCTION reject_profile() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'profile unavailable'; END $$`;
+      yield* sql`CREATE TRIGGER reject_profile BEFORE INSERT ON agent_profiles FOR EACH ROW EXECUTE FUNCTION reject_profile()`;
+      const runtime = Context.get(
+        yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
+        SqlClient.SqlClient,
+      );
+      const provision = getOrCreateOwnedAgent(owner, unlockKey).pipe(
+        Effect.provideService(SqlClient.SqlClient, runtime),
+      );
+      expect(Exit.isFailure(yield* provision.pipe(Effect.exit))).toBeTruthy();
+      expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+      yield* sql`DROP TRIGGER reject_profile ON agent_profiles`;
+      const recovered = yield* provision;
+      expect(
+        (yield* loadAgentRegistration(recovered, unlockKey).pipe(
+          Effect.provideService(SqlClient.SqlClient, runtime),
+        )).registration.agentName,
+      ).toMatch(/^agent-/u);
+    }).pipe(Effect.provide(NodeContext.layer)),
+  60_000,
+);
