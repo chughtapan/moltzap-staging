@@ -373,7 +373,16 @@ const refreshPreservesTerminalReceipt = () =>
       yield* events.resume;
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(delivery);
-      expect((yield* events.status).stalled).toBe("terminal");
+      const settled = yield* events.status.pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("1 millis"),
+          until: (status) => status.stalled !== null,
+        }),
+        Effect.zipRight(events.status),
+        Effect.timeout("3 seconds"),
+        TestServices.provideLive,
+      );
+      expect(settled.stalled).toBe("terminal");
       expect((yield* store.pending).pendingCount).toBe(1);
     }),
   ).pipe(onSteppedClock);

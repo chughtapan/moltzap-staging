@@ -317,7 +317,6 @@ function openHarness(
           agentKey: environment.filename,
           maximumHistoryRecords: options.maximumHistoryRecords,
           maximumConcurrentChecks: options.maximumConcurrentChecks,
-          historyExport: options.historyExport,
           hideGroups: options.hideGroups,
           hideCollectives: options.hideCollectives,
           communication: () =>

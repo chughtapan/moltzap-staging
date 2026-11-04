@@ -59,8 +59,6 @@ export {
 } from "./harness/social-harness.js";
 /** Registration failures are distinct from communication startup. */
 export { RegistrationError } from "./identity/service.js";
-/** Optional traffic export records admitted incoming content and completed sends. */
-export { HistoryExportRecord } from "./harness/traffic-export.js";
 /** Message, question, answer and collective result values. */
 export {
   Answer,
