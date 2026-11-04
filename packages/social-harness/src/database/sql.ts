@@ -1,5 +1,6 @@
 /** @file Selects SQL drivers and compiles typed queries for Effect-owned execution. */
 import type { SqlError } from "@effect/sql/SqlError";
+import { FileSystem } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
 import * as PgClient from "@effect/sql-pg/PgClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
@@ -16,6 +17,7 @@ import {
   SqliteIntrospector,
   SqliteQueryCompiler,
 } from "kysely";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Builders have no driver resources; compiled queries run through the current SqlClient. */
@@ -59,43 +61,71 @@ export class DatabaseLocatorError extends Data.TaggedError(
   "DatabaseLocatorError",
 ) {}
 
+const databaseLocation = Effect.fn("databaseLocation")(function* (
+  locator: Redacted.Redacted,
+) {
+  const url = yield* Effect.try({
+    try: () => new URL(Redacted.value(locator)),
+    catch: () => new DatabaseLocatorError(),
+  });
+  if (url.protocol === "postgres:" || url.protocol === "postgresql:") {
+    return { kind: "postgres" as const, locator };
+  }
+  if (
+    url.protocol !== "sqlite:" ||
+    url.host !== "" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
+    return yield* new DatabaseLocatorError();
+  }
+  const filename = yield* Effect.try({
+    try: () =>
+      url.pathname === ":memory:"
+        ? ":memory:"
+        : fileURLToPath(new URL(url.href.replace(/^sqlite:/u, "file:"))),
+    catch: () => new DatabaseLocatorError(),
+  });
+  return { kind: "sqlite" as const, filename };
+});
+
 /** SQLite and PostgreSQL expose the same SqlClient to all domain stores. */
 export const databaseConnection = (locator: Redacted.Redacted) =>
   Layer.unwrapEffect(
-    Effect.gen(function* () {
-      const url = yield* Effect.try({
-        try: () => new URL(Redacted.value(locator)),
-        catch: () => new DatabaseLocatorError(),
-      });
-      if (url.protocol === "postgres:" || url.protocol === "postgresql:") {
+    databaseLocation(locator).pipe(
+      Effect.map((location) => {
         const layer: Layer.Layer<
           SqlClient.SqlClient,
           SqlError | ConfigError.ConfigError
-        > = PgClient.layer({ url: locator });
+        > =
+          location.kind === "postgres"
+            ? PgClient.layer({ url: location.locator })
+            : SqliteClient.layer({
+                filename: location.filename,
+                disableWAL: true,
+              });
         return layer;
-      }
-      if (
-        url.protocol !== "sqlite:" ||
-        url.host !== "" ||
-        url.search !== "" ||
-        url.hash !== ""
-      ) {
-        return yield* new DatabaseLocatorError();
-      }
-      const filename = yield* Effect.try({
-        try: () =>
-          url.pathname === ":memory:"
-            ? ":memory:"
-            : fileURLToPath(new URL(url.href.replace(/^sqlite:/u, "file:"))),
-        catch: () => new DatabaseLocatorError(),
-      });
-      const layer: Layer.Layer<
-        SqlClient.SqlClient,
-        SqlError | ConfigError.ConfigError
-      > = SqliteClient.layer({ filename, disableWAL: true });
-      return layer;
-    }).pipe(Effect.withSpan("databaseConnection")),
+      }),
+      Effect.withSpan("databaseConnection"),
+    ),
   );
+
+/** Setup creates private SQLite paths without truncating existing data; PostgreSQL and memory need no filesystem. */
+export const prepareDatabaseDirectory = Effect.fn("prepareDatabaseDirectory")(
+  function* (locator: Redacted.Redacted) {
+    const location = yield* databaseLocation(locator);
+    if (location.kind === "postgres" || location.filename === ":memory:") {
+      return;
+    }
+    const filesystem = yield* FileSystem.FileSystem;
+    yield* filesystem.makeDirectory(dirname(location.filename), {
+      recursive: true,
+      mode: 0o700,
+    });
+    yield* filesystem.open(location.filename, { flag: "a", mode: 0o600 });
+    yield* filesystem.chmod(location.filename, 0o600);
+  },
+);
 
 /** Stores use Kysely column and query types without introducing another executor. */
 export type { Compilable, Generated } from "kysely";

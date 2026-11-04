@@ -17,13 +17,13 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { daemonDatabaseFormat, migrateDaemon } from "../database/migrations.js";
 import { openCredential, sealCredential } from "../database/secrets.js";
 import {
   databaseConnection,
   executeQuery,
   makeQueries,
+  prepareDatabaseDirectory,
 } from "../database/sql.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import {
@@ -318,7 +318,11 @@ export const configureDaemon = Effect.fn("configureDaemon")(
         ),
       ),
     );
-    yield* prepareDirectory(access.locator);
+    yield* prepareDatabaseDirectory(access.locator).pipe(
+      Effect.catchTag("DatabaseLocatorError", () =>
+        Effect.fail(refused("environment", "The database locator is invalid")),
+      ),
+    );
     return yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* prepareDatabase;
@@ -406,30 +410,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
     ),
   );
 });
-
-function prepareDirectory(locator: Redacted.Redacted) {
-  return Effect.gen(function* () {
-    const url = yield* Effect.try({
-      try: () => new URL(Redacted.value(locator)),
-      catch: () => refused("environment", "The database locator is invalid"),
-    });
-    if (url.protocol !== "sqlite:" || url.pathname === ":memory:") {
-      return;
-    }
-    const filesystem = yield* FileSystem.FileSystem;
-    const filename = yield* Effect.try({
-      try: () => fileURLToPath(new URL(url.href.replace(/^sqlite:/u, "file:"))),
-      catch: () =>
-        refused("environment", "The SQLite database locator is invalid"),
-    });
-    yield* filesystem.makeDirectory(dirname(filename), {
-      recursive: true,
-      mode: 0o700,
-    });
-    yield* filesystem.open(filename, { flag: "a", mode: 0o600 });
-    yield* filesystem.chmod(filename, 0o600);
-  });
-}
 
 const otelVariable = (name: string) =>
   Config.option(Config.string(name)).pipe(

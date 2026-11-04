@@ -7,12 +7,16 @@ import {
   configureDaemon,
   databaseAccess,
   databaseConnection,
+  getOrCreateOwnedAgent,
   loadDaemonSettings,
+  localOwner,
   migrateDaemon,
 } from "@moltzap/social-harness/test";
 import { ConfigProvider, Context, Effect, Exit, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Node supplies POSIX permission constants; filesystem operations use FileSystem.
+import { constants } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
 
@@ -45,12 +49,14 @@ const fixture = Effect.gen(function* () {
     "sqlite:",
   );
   const key = randomBytes(32).toString("base64url");
-  const provider = ConfigProvider.fromMap(
-    new Map([
-      ["SHARNESS_DATABASE_URL", locator],
-      ["SHARNESS_DATABASE_KEY", key],
-    ]),
-  );
+  const providerFor = (database: string) =>
+    ConfigProvider.fromMap(
+      new Map([
+        ["SHARNESS_DATABASE_URL", database],
+        ["SHARNESS_DATABASE_KEY", key],
+      ]),
+    );
+  const provider = providerFor(locator);
   const write = (value: unknown) =>
     filesystem.writeFileString(filename, JSON.stringify(value));
   yield* write(settings);
@@ -60,10 +66,17 @@ const fixture = Effect.gen(function* () {
   const access = yield* databaseAccess.pipe(
     Effect.withConfigProvider(provider),
   );
-  return { filesystem, filename, write, configure, access, provider };
+  return {
+    filesystem,
+    filename,
+    write,
+    configure,
+    access,
+    provider,
+    providerFor,
+  };
 });
 
-// eslint-disable-next-line agent-code-guard/no-example-only-tests -- These regressions cover persistence and configuration rejection boundaries.
 it("recovers encrypted settings after the setup document is removed", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
@@ -111,6 +124,77 @@ it("recovers encrypted settings after the setup document is removed", () =>
     expect(JSON.stringify(records)).not.toContain(secret);
     expect(JSON.stringify(records)).not.toContain(settings.admissionCredential);
   }).pipe(Effect.provide(NodeContext.layer)));
+
+// @agent-code-guard/regression-only: Real encoded paths and Unix modes cover setup without truncating an existing database.
+it("creates private encoded paths and preserves identity on reconfiguration", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const directory = join(dirname(test.filename), "private café # space");
+    const filename = join(directory, "daemon.sqlite3");
+    const locator = pathToFileURL(filename).href.replace(/^file:/u, "sqlite:");
+    const configured = configureDaemon(test.filename).pipe(
+      Effect.withConfigProvider(test.providerFor(locator)),
+    );
+    yield* configured;
+    expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
+      constants.S_IRWXU,
+    );
+    expect((yield* test.filesystem.stat(filename)).mode & 0o777).toBe(
+      constants.S_IRUSR | constants.S_IWUSR,
+    );
+    const ownedAgent = getOrCreateOwnedAgent(
+      localOwner,
+      test.access.unlockKey,
+    ).pipe(Effect.provide(databaseConnection(Redacted.make(locator))));
+    const agentKey = yield* ownedAgent;
+    yield* test.filesystem.chmod(
+      filename,
+      constants.S_IRUSR |
+        constants.S_IWUSR |
+        constants.S_IRGRP |
+        constants.S_IROTH,
+    );
+    yield* test.filesystem.chmod(
+      directory,
+      constants.S_IRWXU | constants.S_IRGRP | constants.S_IXGRP,
+    );
+    yield* configured;
+    expect(yield* ownedAgent).toBe(agentKey);
+    expect((yield* test.filesystem.stat(filename)).mode & 0o777).toBe(
+      constants.S_IRUSR | constants.S_IWUSR,
+    );
+    expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
+      constants.S_IRWXU | constants.S_IRGRP | constants.S_IXGRP,
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+// @agent-code-guard/regression-only: Invalid locators must fail before file creation and omit private URL components.
+it.each(["?credential=", "#"])(
+  "rejects invalid SQLite components before touching the filesystem: %s",
+  (suffix) =>
+    Effect.gen(function* () {
+      const test = yield* fixture;
+      const marker = randomBytes(16).toString("hex");
+      const directory = join(dirname(test.filename), "uncreated");
+      const locator =
+        pathToFileURL(join(directory, "daemon.sqlite3")).href.replace(
+          /^file:/u,
+          "sqlite:",
+        ) +
+        suffix +
+        marker;
+      const error = yield* configureDaemon(test.filename).pipe(
+        Effect.withConfigProvider(test.providerFor(locator)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "DaemonConfigurationError",
+        reason: "environment",
+      });
+      expect(JSON.stringify(error)).not.toContain(marker);
+      expect(yield* test.filesystem.exists(directory)).toBe(false);
+    }).pipe(Effect.provide(NodeContext.layer)),
+);
 
 it("accepts public OAuth setup without creating an agent before authentication", () =>
   Effect.gen(function* () {
