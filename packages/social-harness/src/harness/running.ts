@@ -114,7 +114,7 @@ export class RunningHarnesses extends Context.Tag(
         return RunningHarnesses.of({
           get: (owner) =>
             getOrCreateOwnedAgent(owner, unlockKey).pipe(
-              Effect.flatMap((profile) => cache.get(profile.agent_key)),
+              Effect.flatMap((agentKey) => cache.get(agentKey)),
               Effect.flatMap(liveApp),
               Effect.provideService(SqlClient.SqlClient, sql),
             ),

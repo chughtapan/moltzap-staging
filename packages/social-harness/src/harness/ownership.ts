@@ -65,6 +65,19 @@ const freshKey = Effect.gen(function* () {
   );
 });
 
+function readProfile(agentKey: string) {
+  return Effect.gen(function* () {
+    const queries = yield* makeQueries<OwnershipTables>();
+    const rows = yield* executeQuery(
+      queries
+        .selectFrom("agent_profiles")
+        .selectAll()
+        .where("agent_key", "=", agentKey),
+    );
+    return yield* Schema.decodeUnknown(profileRow)(rows[0]);
+  });
+}
+
 /** Reconfiguration may repeat the original seed, but cannot silently replace a saved identity. */
 function verifySeed(
   profile: typeof profileRow.Type,
@@ -88,7 +101,7 @@ function verifySeed(
   );
 }
 
-/** Concurrent first connections converge on one profile with one durable registration identity. */
+/** Concurrent first connections return one agent key with durable registration inputs. */
 export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
   function* (
     owner: OwnerAccount,
@@ -105,22 +118,17 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
           .where("issuer", "=", owner.issuer)
           .where("subject", "=", owner.subject),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(bindingRow))));
-    const readProfile = (agentKey: string) =>
+    const ownedKey = (agentKey: string) =>
       withAgentTransaction(
         agentKey,
-        executeQuery(
-          queries
-            .selectFrom("agent_profiles")
-            .selectAll()
-            .where("agent_key", "=", agentKey),
-        ).pipe(
-          Effect.flatMap((rows) => Schema.decodeUnknown(profileRow)(rows[0])),
+        readProfile(agentKey).pipe(
           Effect.tap((profile) => verifySeed(profile, unlockKey, seed)),
+          Effect.as(agentKey),
         ),
       );
     const existing = (yield* lookup())[0];
     if (existing !== undefined) {
-      return yield* readProfile(existing.agent_key);
+      return yield* ownedKey(existing.agent_key);
     }
     const candidateKey = randomUUID();
     const name = seed?.agentName ?? `agent-${randomBytes(12).toString("hex")}`;
@@ -165,7 +173,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
             ),
           );
         }
-        return yield* readProfile(binding.agent_key);
+        return yield* ownedKey(binding.agent_key);
       }),
     );
   },
@@ -188,21 +196,12 @@ export const listOwnedAgentKeys = Effect.gen(function* () {
 /** Hydration uses the saved registration operation and signing key on every restart. */
 export const loadAgentRegistration = Effect.fn("loadAgentRegistration")(
   function* (agentKey: string, unlockKey: Redacted.Redacted<Uint8Array>) {
-    const queries = yield* makeQueries<OwnershipTables>();
     const profile = yield* withAgentTransaction(
       agentKey,
-      executeQuery(
-        queries
-          .selectFrom("agent_profiles")
-          .selectAll()
-          .where("agent_key", "=", agentKey),
-      ).pipe(
-        Effect.flatMap((rows) => Schema.decodeUnknown(profileRow)(rows[0])),
-      ),
+      readProfile(agentKey),
     );
     const key = yield* openCredential(profile.private_key, agentKey, unlockKey);
     return {
-      agentKey,
       signingAuthority: yield* AgentSigningAuthority.fromPkcs8(key),
       registration: {
         agentName: profile.agent_name,

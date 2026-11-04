@@ -24,6 +24,7 @@ import {
   failMessage,
   getOrCreateOwnedAgent,
   initializeCommunication,
+  loadAgentRegistration,
   makeInbox,
   migrateDaemon,
   putCollectiveOperation,
@@ -53,13 +54,13 @@ const unlockKey = Redacted.make(new Uint8Array(32).fill(3));
 const qualifyTenants = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const owner = { issuer: "https://issuer.example", subject: "first" };
-  const profiles = yield* Effect.all(
+  const agentKeys = yield* Effect.all(
     Array.from({ length: 8 }, () => getOrCreateOwnedAgent(owner, unlockKey)),
     { concurrency: 8 },
   );
   const first = yield* getOrCreateOwnedAgent(owner, unlockKey);
-  for (const profile of profiles) {
-    expect(profile).toEqual(first);
+  for (const agentKey of agentKeys) {
+    expect(agentKey).toBe(first);
   }
   const second = yield* getOrCreateOwnedAgent(
     { ...owner, subject: "second" },
@@ -72,7 +73,7 @@ const qualifyTenants = Effect.gen(function* () {
     SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user`;
   expect(role[0]?.rolsuper).toBeFalsy();
   expect(role[0]?.rolbypassrls).toBeFalsy();
-  const keys = [first.agent_key, second.agent_key];
+  const keys = [first, second];
   yield* Effect.all(
     Array.from({ length: 12 })
       .flatMap(() => keys)
@@ -95,15 +96,19 @@ const qualifyTenants = Effect.gen(function* () {
     { concurrency: 8 },
   );
   expect(yield* sql`SELECT * FROM agent_profiles`).toHaveLength(0);
+  const before = yield* loadAgentRegistration(first, unlockKey);
   const interrupted = yield* withAgentTransaction(
-    first.agent_key,
-    sql`UPDATE agent_profiles SET agent_name='rolled-back' WHERE agent_key=${first.agent_key}`.pipe(
+    first,
+    sql`UPDATE agent_profiles SET agent_name='rolled-back' WHERE agent_key=${first}`.pipe(
       Effect.zipRight(Effect.fail("rollback")),
     ),
   ).pipe(Effect.exit);
   expect(Exit.isFailure(interrupted)).toBeTruthy();
   expect(yield* sql`SELECT * FROM agent_profiles`).toHaveLength(0);
   expect(yield* getOrCreateOwnedAgent(owner, unlockKey)).toEqual(first);
+  expect((yield* loadAgentRegistration(first, unlockKey)).registration).toEqual(
+    before.registration,
+  );
   return keys;
 });
 

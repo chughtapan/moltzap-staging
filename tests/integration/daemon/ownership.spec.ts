@@ -1,6 +1,7 @@
 /** @file Owner bindings preserve registration identity across reconnects and interrupted setup. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
+import { AgentSigningAuthority } from "@moltzap/social-harness";
 import {
   databaseConnection,
   getOrCreateOwnedAgent,
@@ -18,21 +19,24 @@ const database = databaseConnection(Redacted.make("sqlite::memory:"));
 it("reuses identity material for concurrent and repeated connections", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
-    const profiles = yield* Effect.all(
+    const agentKeys = yield* Effect.all(
       Array.from({ length: 8 }, () => getOrCreateOwnedAgent(owner, unlockKey)),
       { concurrency: 8 },
     );
-    expect(profiles).toHaveLength(8);
-    for (const profile of profiles) {
-      expect(profile).toEqual(profiles[0]);
-    }
     const reopened = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    expect(reopened).toEqual(profiles[0]);
-    const hydrated = yield* loadAgentRegistration(
-      reopened.agent_key,
+    expect(agentKeys).toHaveLength(8);
+    for (const agentKey of agentKeys) {
+      expect(agentKey).toBe(reopened);
+    }
+    const hydrated = yield* loadAgentRegistration(reopened, unlockKey);
+    const repeated = yield* loadAgentRegistration(
+      yield* getOrCreateOwnedAgent(owner, unlockKey),
       unlockKey,
     );
-    expect(hydrated.registration.agentName).toBe(reopened.agent_name);
+    expect(repeated.registration).toEqual(hydrated.registration);
+    expect(AgentSigningAuthority.publicKey(repeated.signingAuthority)).toEqual(
+      AgentSigningAuthority.publicKey(hydrated.signingAuthority),
+    );
     const sql = yield* SqlClient.SqlClient;
     const bindings = yield* sql`SELECT * FROM owner_bindings`;
     expect(bindings).toHaveLength(1);
@@ -50,17 +54,18 @@ it("distinguishes both issuer and subject without merging accounts", () =>
       { ...owner, subject: "another" },
       unlockKey,
     );
+    expect(new Set([first, otherIssuer, otherSubject]).size).toBe(
+      [first, otherIssuer, otherSubject].length,
+    );
+    const registrations = yield* Effect.forEach(
+      [first, otherIssuer, otherSubject],
+      (agentKey) => loadAgentRegistration(agentKey, unlockKey),
+      { concurrency: 1 },
+    );
     expect(
-      new Set([first.agent_key, otherIssuer.agent_key, otherSubject.agent_key])
+      new Set(registrations.map((value) => value.registration.principalId))
         .size,
-    ).toBe([first, otherIssuer, otherSubject].length);
-    expect(
-      new Set([
-        first.principal_id,
-        otherIssuer.principal_id,
-        otherSubject.principal_id,
-      ]).size,
-    ).toBe([first, otherIssuer, otherSubject].length);
+    ).toBe(registrations.length);
   }).pipe(Effect.provide(database)));
 
 it("rolls back the owner binding when saving its profile fails", () =>
@@ -77,7 +82,10 @@ it("rolls back the owner binding when saving its profile fails", () =>
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     yield* sql`DROP TRIGGER reject_profile`;
     const recovered = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    expect(recovered.agent_name).toMatch(/^agent-/u);
+    expect(
+      (yield* loadAgentRegistration(recovered, unlockKey)).registration
+        .agentName,
+    ).toMatch(/^agent-/u);
   }).pipe(Effect.provide(database)));
 
 it("rejects a credential substituted from another agent or unlocked with another key", () =>
@@ -89,13 +97,12 @@ it("rejects a credential substituted from another agent or unlocked with another
       unlockKey,
     );
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE agent_profiles SET private_key = ${first.private_key} WHERE agent_key = ${second.agent_key}`;
-    const substituted = yield* loadAgentRegistration(
-      second.agent_key,
-      unlockKey,
-    ).pipe(Effect.exit);
+    yield* sql`UPDATE agent_profiles SET private_key = (SELECT private_key FROM agent_profiles WHERE agent_key = ${first}) WHERE agent_key = ${second}`;
+    const substituted = yield* loadAgentRegistration(second, unlockKey).pipe(
+      Effect.exit,
+    );
     const wrongKey = yield* loadAgentRegistration(
-      first.agent_key,
+      first,
       Redacted.make(new Uint8Array(32).fill(9)),
     ).pipe(Effect.exit);
     expect(Exit.isFailure(substituted)).toBeTruthy();
@@ -105,8 +112,8 @@ it("rejects a credential substituted from another agent or unlocked with another
 it("rejects attempts to replace the saved identity", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
-    const profile = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    const hydrated = yield* loadAgentRegistration(profile.agent_key, unlockKey);
+    const agentKey = yield* getOrCreateOwnedAgent(owner, unlockKey);
+    const hydrated = yield* loadAgentRegistration(agentKey, unlockKey);
     const sql = yield* SqlClient.SqlClient;
     const before = yield* sql`SELECT * FROM agent_profiles`;
     const changed = yield* getOrCreateOwnedAgent(owner, unlockKey, {

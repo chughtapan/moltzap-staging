@@ -40,17 +40,17 @@ export function runPolicyRuntime(policy: FirewallOptions) {
           "Policy fixtures require local authenticated configuration",
         );
       }
-      const profile = yield* getOrCreateOwnedAgent(
+      const agentKey = yield* getOrCreateOwnedAgent(
         localOwner,
         access.unlockKey,
       );
       const registration = yield* loadAgentRegistration(
-        profile.agent_key,
+        agentKey,
         access.unlockKey,
       );
       const workers = yield* FiberSet.make();
       const identity = Identity.layer({
-        agentKey: profile.agent_key,
+        agentKey,
         signingAuthority: registration.signingAuthority,
         registrySignerPublicKey: settings.registrySignerPublicKey,
         admissionCredential: Effect.succeed(settings.admissionCredential),
@@ -70,10 +70,10 @@ export function runPolicyRuntime(policy: FirewallOptions) {
       const services = yield* Layer.build(
         SocialHarness.layer(
           {
-            agentKey: profile.agent_key,
+            agentKey,
             communication: (identityCard) =>
               Communication.layer({
-                agentKey: profile.agent_key,
+                agentKey,
                 identityCard,
                 signingAuthority: registration.signingAuthority,
                 registrySignerPublicKey: settings.registrySignerPublicKey,
@@ -82,9 +82,7 @@ export function runPolicyRuntime(policy: FirewallOptions) {
           workers,
         ).pipe(
           Layer.provideMerge(
-            Firewall.layer(profile.agent_key, policy).pipe(
-              Layer.provideMerge(identity),
-            ),
+            Firewall.layer(agentKey, policy).pipe(Layer.provideMerge(identity)),
           ),
           Layer.provide(network),
         ),
@@ -96,7 +94,7 @@ export function runPolicyRuntime(policy: FirewallOptions) {
         );
       }
       const agent = yield* makeAgentMcpApp({
-        agentKey: profile.agent_key,
+        agentKey,
         unlockKey: access.unlockKey,
         implementation: { name: "policy-integration", version: "1" },
       }).pipe(Effect.provide(services));

@@ -56,9 +56,9 @@ const scenario = Effect.gen(function* () {
     ),
   );
   const saved = yield* Effect.gen(function* () {
-    const profile = yield* getOrCreateOwnedAgent(localOwner, access.unlockKey);
+    const agentKey = yield* getOrCreateOwnedAgent(localOwner, access.unlockKey);
     const registration = yield* loadAgentRegistration(
-      profile.agent_key,
+      agentKey,
       access.unlockKey,
     );
     const settings = yield* loadDaemonSettings(access.unlockKey);
@@ -68,7 +68,7 @@ const scenario = Effect.gen(function* () {
       );
     }
     const identity = Identity.layer({
-      agentKey: profile.agent_key,
+      agentKey,
       signingAuthority: registration.signingAuthority,
       registrySignerPublicKey: settings.registrySignerPublicKey,
       admissionCredential: Effect.succeed(settings.admissionCredential),
@@ -81,10 +81,9 @@ const scenario = Effect.gen(function* () {
         }).pipe(Layer.provide(NodeHttpClient.layer)),
       ),
     );
-    const configured = Firewall.layer(
-      profile.agent_key,
-      settings.messagePolicy,
-    ).pipe(Layer.provideMerge(identity));
+    const configured = Firewall.layer(agentKey, settings.messagePolicy).pipe(
+      Layer.provideMerge(identity),
+    );
     const result = yield* Effect.gen(function* () {
       const identityService = yield* Identity;
       const card = yield* identityService.register(registration.registration);
@@ -118,7 +117,7 @@ const scenario = Effect.gen(function* () {
       expect(yield* firewall.readDecisions({})).toEqual(retained);
       return retained;
     }).pipe(Effect.provide(configured));
-    return { agentKey: profile.agent_key, registration, settings, result };
+    return { agentKey, registration, settings, result };
   }).pipe(Effect.provide(databaseConnection(database.runtimeLocator)));
   yield* Effect.gen(function* () {
     const identity = Identity.layer({
