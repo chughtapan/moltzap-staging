@@ -56,7 +56,6 @@ const provider: DecisionProvider = {
 };
 
 const options: FirewallOptions = {
-  mode: "enforcement",
   settings,
   facts: [],
   text: {
@@ -252,7 +251,7 @@ const authenticatedPolicyEdits = Effect.gen(function* () {
     id: "shared-review",
     applies: "incoming",
     text: "Reject peer scheduling requests without prior confirmation.",
-    feedback: { text: "Confirm first.", nextAction: "wait" },
+    feedback: { text: "Confirm first." },
   };
   yield* update(client, { add: [adopted] });
   expect((yield* read(client)).rules).toEqual([

@@ -475,16 +475,9 @@ function renderInstructions(guidance: CheckedGuidance) {
 function instructionDetails(
   instruction: CheckedGuidance["instructions"][number],
 ) {
-  if ("uncertain" in instruction) {
-    return { uncertain: instruction.uncertain };
-  }
-  if ("expectation" in instruction) {
-    return {
-      expectation: instruction.expectation,
-      subjects: instruction.subjects,
-    };
-  }
-  return {};
+  return "uncertain" in instruction
+    ? { uncertain: instruction.uncertain }
+    : { expectation: instruction.expectation, subjects: instruction.subjects };
 }
 
 /** Escapes JSON and host prompt delimiters to keep peer text inside quoted values. */

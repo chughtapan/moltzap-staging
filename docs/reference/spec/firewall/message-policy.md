@@ -22,10 +22,8 @@ models, tools and the agent's private context.
 
 ## Decisions
 
-Checks capture the active rules and mode. Enforcement refuses outgoing sends
-or withholds incoming messages for reject or hold judgments. Guidance
-mode records judgments and admits with permitted advice. Findings combine in
-priority order:
+Checks capture the active rules. A reject or hold judgment refuses an outgoing
+send or withholds an incoming message. Findings combine in priority order:
 
 1. A settled rule violation rejects.
 2. Required missing evidence, unavailable checks or conflicting expectations hold.
@@ -54,7 +52,7 @@ probable than another option. Probability sums and the selected option's
 distance from the maximum tolerate 0.02; this does not settle a less probable
 choice.
 
-Valid judgment uncertainty admits with registered advice, including in enforcement.
+Valid judgment uncertainty admits with registered advice.
 Uncertain expectations or subjects create no obligation or reference. Findings retain
 the provider's choice and probability, with registered guidance when present.
 Settled violations retain their effect. Invalid output or
@@ -75,9 +73,10 @@ on withheld items create no obligation for the agent.
 
 ## Outgoing messages
 
-Refusal returns a rule-violation, unresolved-evidence or check-unavailable reason, check reference and permitted feedback. Its next action
-is revise, wait, stop or seek approval; text errors also carry that action and
-reference, without private evidence, credentials or raw provider output.
+Refusal returns a rule-violation, unresolved-evidence or check-unavailable
+reason, the check reference and the registered feedback of the deciding rules.
+Its error message carries the same reason, reference and feedback, without
+private evidence, credentials or raw provider output.
 
 Refusal before admission creates no send intent. A revised invocation gets a new
 assessment. The daemon neither changes the draft nor sends substitutes or
@@ -85,7 +84,7 @@ later approval. Accepted sends follow the
 [send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
 
 An admitted uncertain judgment carries registered guidance without
-subjects. Guidance mode also retains registered advice for settled violations. MCP results preserve that guidance.
+subjects. MCP results preserve that guidance.
 
 ## Evidence
 
@@ -115,9 +114,8 @@ content shown to the agent, including answers and local results. Authored
 content without proof that it came from an agent caller remains private evidence.
 
 A missing subject or guidance exceeding the 2 MiB inbox-item budget makes
-projection unavailable; guidance mode admits without advice. Oversized combined
-collective advice is omitted in either mode because answers were individually
-assessed. Rules needing other conversations, older messages or owner instructions
+the check unavailable, which holds the message. Oversized combined collective
+advice is omitted because answers were individually assessed. Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence. Messages alone cannot establish
 calendar changes, retract tool actions or reveal undisclosed collusion.
 
@@ -177,8 +175,7 @@ those expiring during assessment are withheld. Neither reaches the host.
 Membership and outcomes are admitted; local policy selects visible text without
 changing the operation's result. Withheld
 question/answer text becomes `{kind: "withheld", checkId, reason}`. Advice names
-each affected member/check and any question checked with the result. Guidance
-mode withholds no text.
+each affected member/check and any question checked with the result.
 
 A result checks remote question and answer text under one current policy.
 Earlier inbox and history items keep their saved content and advice. Every
@@ -197,9 +194,8 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | Property | Requirement/default |
 | --- | --- |
 | `format` | Required: `org.social-harness/message-policy/v2`. |
-| `mode` | Required: `guidance` or `enforcement`. |
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
-| `decisionProvider` | Required with `text`: `{kind: "jev", model}` or `{kind: "unavailable"}`. |
+| `decisionProvider` | Required with `text`: `{kind: "jev", model}`. |
 | `textSettings` | Defaults: probability 0.5; 384,000 request bytes; 15 s per stage. |
 | `settings` | Defaults: 150 s per assessment; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
@@ -212,9 +208,8 @@ those callable types.
 
 Jev is an optional TypeSafe service. It trims the key from
 the setup document's `decisionProviderKeyFile` and retries connectivity, rate-limit and
-server errors twice within each stage timeout. `unavailable` makes text checks
-unavailable: enforcement holds, guidance admits. Without `text`, no provider/key
-is used. Oversized catalog/history requests hold without dropping required
+server errors twice within each stage timeout. Without `text`, no provider or
+key is used. Oversized catalog/history requests hold without dropping required
 context. Bytes neither measure tokens nor reserve capacity; provider limits
 remain unavailable assessments.
 
@@ -232,8 +227,8 @@ exact credential-pattern detection or complete acknowledgement vocabulary.
 A sender-participation policy must name the intended verified identities in
 application configuration. Identity verification itself belongs to the protocol.
 
-The example uses guidance mode and an unavailable provider. Select a provider
-and model to obtain assessments. Rule content, including the impersonation
+The example selects Jev's `jev-1.13.0` model, so it needs
+`decisionProviderKeyFile`. Rule content, including the impersonation
 policy, is active only when explicitly configured. Fixed rules remain protected
 by edit authorization regardless of their content.
 
@@ -249,7 +244,7 @@ then fixed and initial behaviors.
 | `text` | Trimmed body. |
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
 | `guidance` | Optional `metadata.social-harness.guidance`. |
-| `feedback` | Optional `metadata.social-harness.feedback`: `text`, `nextAction`. |
+| `feedback` | Optional `metadata.social-harness.feedback`: `text`. |
 
 Other metadata, description/license and neighboring files supply no policy.
 The limit is 64 KiB. Unknown Social Harness metadata, invalid/oversized behavior,
@@ -321,7 +316,7 @@ Minimum rules, instructions, mandatory questions and structure must fit the
 request budget. Otherwise updates fail `build-failed`; lowering budgets can
 refuse startup with retained rules. Longer messages/evidence can still overflow.
 
-`activeRevision` hashes the complete installation with SHA-256, including mode,
+`activeRevision` hashes the complete installation with SHA-256, including
 rules, settings and provider configuration, and is stable across identical restarts. Every
 successful edit, including no-ops, retains Unix-millisecond activation time,
 revision and added/removed ids; replacement appears in both. These records
@@ -348,7 +343,7 @@ rows identify authors. Daemon-generated failures have no assessment row. Retaine
 | Unresolved evidence | Rules reporting unresolved evidence or conflicting response expectations. |
 | Admission | Uncertain rules, otherwise none. |
 
-Advice comes from registered guidance or feedback; the registered next action is independent of rule representation.
+Advice comes from registered guidance or feedback.
 Sources are `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
 active only through an authorized policy change.
 

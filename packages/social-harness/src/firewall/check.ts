@@ -14,7 +14,6 @@ import { AgentCard } from "../identity/agent-cards.js";
 import {
   type firewallRefusalReasonSchema,
   type FirewallSettings,
-  type nextActionSchema,
   OwnerFact,
   type TextPolicySettings,
   type TextRule,
@@ -56,7 +55,6 @@ const registeredGuidanceSchema = Schema.Union(
       probability: Schema.Number.pipe(Schema.between(0, 1)),
     }),
   }),
-  exactStruct(instruction),
 );
 
 const identifier = Schema.NonEmptyTrimmedString;
@@ -144,7 +142,7 @@ const messageEvent = Schema.Union(
 export type MessageEvent = typeof messageEvent.Type;
 
 /** An unsettled valid judgment admits with registered advice. */
-export type PolicyFinding =
+type PolicyFinding =
   | {
       readonly ruleId: string;
       readonly outcome: "pass";
@@ -209,10 +207,7 @@ export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
 export interface FirewallCheck extends TextAssessment {
   readonly judgment: "allow" | "reject" | "hold";
   readonly reason: Reason;
-  readonly feedback: ReadonlyArray<{
-    readonly nextAction: typeof nextActionSchema.Type;
-    readonly text: string;
-  }>;
+  readonly feedback: ReadonlyArray<{ readonly text: string }>;
   readonly guidance: ReadonlyArray<typeof registeredGuidanceSchema.Type>;
 }
 
@@ -322,8 +317,8 @@ const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
 /**
  * Only registered instructions and visible message subjects reach the host.
- * Instructions carry settled expectations, uncertain choices and probabilities,
- * or advice for violations admitted in guidance mode.
+ * Instructions carry settled expectations, or uncertain choices and their
+ * probabilities.
  */
 const checkedGuidance = {
   checkId: checkIdSchema,
@@ -353,32 +348,10 @@ const judgments: Readonly<Record<Reason, FirewallCheck["judgment"]>> = {
   "check-unavailable": "hold",
 };
 
-const defaultFeedback: Readonly<Record<Reason, FirewallCheck["feedback"]>> = {
-  eligible: [],
-  "rule-violation": [
-    {
-      nextAction: "revise",
-      text: "Revise the message to satisfy the local message policy before making a new send attempt.",
-    },
-  ],
-  "unresolved-evidence": [
-    {
-      nextAction: "wait",
-      text: "Required policy evidence is missing or uncertain. The message was not admitted. Wait for the evidence and resend, or revise the message.",
-    },
-  ],
-  "check-unavailable": [
-    {
-      nextAction: "wait",
-      text: "A required policy check is unavailable. The message was not admitted. Wait for the check to become available and resend, or revise the message.",
-    },
-  ],
-};
-
 /**
  * Identifies a rule that determined the decision's reason. `finding` records
  * whether its judgment was settled, uncertain or unavailable. `advice` contains
- * registered guidance for admission, or feedback whose next action fits the reason.
+ * registered guidance for admission, or registered feedback for a refusal.
  */
 export interface DecidingRule {
   readonly ruleId: string;
@@ -547,27 +520,6 @@ export function decodeFrozen<A, I>(
   );
 }
 
-/** Missing registered feedback receives the safe default for the final reason. */
-export function projectFeedback(
-  rules: readonly TextRule[],
-  findings: readonly PolicyFinding[],
-  reason: Reason,
-): FirewallCheck["feedback"] {
-  const selected = new Set(
-    findings
-      .filter((finding) => matchesReason(finding, reason))
-      .map((finding) => finding.ruleId),
-  );
-  const feedback = rules.flatMap((rule) =>
-    selected.has(rule.id) && rule.feedback !== undefined
-      ? [{ ...rule.feedback }]
-      : [],
-  );
-  return feedback.length === 0
-    ? defaultFeedback[reason].map((entry) => ({ ...entry }))
-    : feedback;
-}
-
 /** One rule contributes one attribution entry even when several judgments select it. */
 export function decidingRules(
   reason: Reason,
@@ -695,11 +647,26 @@ function composeDecision(
     judgment: judgments[reason],
     reason,
     feedback: projectFeedback(rules, assessment.findings, reason),
-    guidance:
-      reason === "eligible" || reason === "rule-violation"
-        ? projectGuidance(rules, assessment)
-        : [],
+    guidance: reason === "eligible" ? projectGuidance(rules, assessment) : [],
   };
+}
+
+/** The registered feedback of each rule whose finding gives the final reason. */
+function projectFeedback(
+  rules: readonly TextRule[],
+  findings: readonly PolicyFinding[],
+  reason: Reason,
+): FirewallCheck["feedback"] {
+  const selected = new Set(
+    findings
+      .filter((finding) => matchesReason(finding, reason))
+      .map((finding) => finding.ruleId),
+  );
+  return rules.flatMap((rule) =>
+    selected.has(rule.id) && rule.feedback !== undefined
+      ? [{ ...rule.feedback }]
+      : [],
+  );
 }
 
 function selectReason(
@@ -843,13 +810,7 @@ function projectGuidance(
           ];
     },
   );
-  const violations = assessment.findings.flatMap((finding) => {
-    const instruction = instructionFor(finding.ruleId);
-    return finding.outcome !== "violation" || instruction === undefined
-      ? []
-      : [{ ruleId: finding.ruleId, instruction }];
-  });
-  return [...expected, ...uncertain, ...violations];
+  return [...expected, ...uncertain];
 }
 
 function decideWithinBudget(

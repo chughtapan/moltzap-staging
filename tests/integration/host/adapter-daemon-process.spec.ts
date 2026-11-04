@@ -631,10 +631,7 @@ it(
 function runOpenClawBoundaryScenario() {
   return Effect.scoped(
     Effect.gen(function* () {
-      const scenario = yield* acquireGroupScenario(
-        "openclaw-boundary",
-        "enforcement",
-      );
+      const scenario = yield* acquireGroupScenario("openclaw-boundary", true);
       const caller = yield* acquireMcpConnection(
         {
           endpoint: scenario.caller.endpoint,

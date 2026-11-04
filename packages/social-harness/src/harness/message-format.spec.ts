@@ -392,23 +392,22 @@ it("retains the check reference when no advice is supplied", () => {
 });
 
 it.each([
-  { nextAction: "revise", refusal: "rule-violation" },
-  { nextAction: "wait", refusal: "rule-violation" },
-  { nextAction: "stop", refusal: "rule-violation" },
-  { nextAction: "seek-approval", refusal: "rule-violation" },
+  "rule-violation",
+  "unresolved-evidence",
+  "check-unavailable",
 ] as const)(
-  "prints the check, advice and $nextAction next action",
-  ({ nextAction, refusal }) => {
+  "prints the check, the %s reason and registered feedback",
+  (refusal) => {
     const rendered = String(
       new FirewallRefusal({
         reason: "firewall-refused",
         checkId: guidanceCheckId,
         refusal,
-        feedback: [{ nextAction, text: advice }],
+        feedback: [{ text: advice }],
       }),
     );
     expect(rendered).toContain(guidanceCheckId);
-    expect(rendered).toContain(nextAction);
+    expect(rendered).toContain(refusal);
     expect(rendered).toContain(advice);
   },
 );
@@ -570,20 +569,6 @@ it("keeps withheld result entries local while grouping answer and question advic
   expect(rendered).toContain(
     `(withheld: local policy held it (rule-violation, check ${guidanceCheckId}))`,
   );
-});
-
-it("renders settled registered advice without inventing an expectation", () => {
-  const rendered = renderLocalGuidance({
-    checkId: guidanceCheckId,
-    subjects: [],
-    instructions: [{ ruleId: "reply", instruction: advice }],
-  });
-  expect(JSON.parse(rendered.split("\n")[1] ?? "[]")).toEqual([
-    {
-      checkId: guidanceCheckId,
-      instructions: [{ ruleId: "reply", instruction: advice }],
-    },
-  ]);
 });
 
 const group = Schema.decodeUnknownSync(MessageAddressInput)(

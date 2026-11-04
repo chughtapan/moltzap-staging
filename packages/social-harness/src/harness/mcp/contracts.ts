@@ -26,7 +26,6 @@ import {
   firewallDecisionsSchema,
   FirewallPolicyError,
   firewallRefusalReasonSchema,
-  nextActionSchema,
   policyReadSchema,
   policyUpdateResultSchema,
   policyUpdateSchema,
@@ -152,12 +151,7 @@ export const INBOX_ITEM_EVENT = "org.social-harness/inbox.item";
 const firewallRefusalSchema = exactStruct({
   checkId: checkedGuidanceSchema.fields.checkId,
   refusal: firewallRefusalReasonSchema,
-  feedback: Schema.Array(
-    exactStruct({
-      nextAction: nextActionSchema,
-      text: Schema.NonEmptyString,
-    }),
-  ),
+  feedback: Schema.Array(exactStruct({ text: Schema.NonEmptyString })),
 });
 
 const savedItemSchema = Schema.typeSchema(PermittedItem);

@@ -45,13 +45,12 @@ import {
   CheckInputError,
   decidingRules,
   type DecisionProvider,
-  DecisionProviderError,
+  type DecisionProviderError,
   decodeFrozen,
   type FirewallCheck,
   freezeData,
   type HistoryEntry,
   type MessageContext,
-  projectFeedback,
   textQuestionEdition,
   validateChecks,
 } from "./check.js";
@@ -69,7 +68,6 @@ import {
   type LoadedMessagePolicy,
   MAXIMUM_BEHAVIOR_BYTES,
   MAXIMUM_EDITABLE_RULES,
-  type nextActionSchema,
   type PolicyProblem,
   type policyReadSchema,
   type policyUpdateResultSchema,
@@ -78,13 +76,12 @@ import {
   TextRule,
 } from "./rules.js";
 
-/** Provider resources remain fixed while authorized edits change text rules. */
+/**
+ * Provider resources remain fixed while authorized edits change text rules.
+ * Reject and hold judgments, including provider failures, refuse sends and
+ * withhold incoming messages.
+ */
 export interface FirewallOptions {
-  /**
-   * Guidance admits messages despite reject or hold judgments, including provider
-   * failures. Enforcement refuses sends or withholds incoming text for those judgments.
-   */
-  readonly mode: "guidance" | "enforcement";
   readonly settings: FirewallSettings;
   readonly facts: MessageContext["facts"];
   readonly maximumHistoryRecords?: number;
@@ -190,21 +187,32 @@ export type PermittedItem = typeof PermittedItem.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema declarations. */
 
-/** The sender can act on registered feedback without seeing assessment evidence. */
+const refusalText: Readonly<
+  Record<typeof firewallRefusalReasonSchema.Type, string>
+> = {
+  "rule-violation": "It breaks a rule of the agent's message policy.",
+  "unresolved-evidence":
+    "The policy check could not settle whether the message is allowed.",
+  "check-unavailable": "The policy check could not complete.",
+};
+
+/**
+ * The sender can act on registered feedback without seeing assessment evidence.
+ * The message states the reason and each deciding rule's registered feedback.
+ */
 export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
   readonly checkId: string;
   readonly refusal: typeof firewallRefusalReasonSchema.Type;
-  readonly feedback: ReadonlyArray<{
-    readonly nextAction: typeof nextActionSchema.Type;
-    readonly text: string;
-  }>;
+  readonly feedback: ReadonlyArray<{ readonly text: string }>;
 }> {
   override get message(): string {
-    const feedback = this.feedback
-      .map((entry) => `${entry.nextAction}: ${entry.text}`)
-      .join(" ");
-    return `Message refused by local policy (${this.refusal}, check ${this.checkId}). ${feedback}`;
+    return [
+      `Message refused by local policy (${this.refusal}, check ${this.checkId}).`,
+      refusalText[this.refusal],
+      ...this.feedback.map((entry) => entry.text),
+      "Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#firewall-refused",
+    ].join(" ");
   }
 }
 
@@ -830,7 +838,8 @@ function initialPolicy(
   source: FirewallOptions | LoadedMessagePolicy,
 ) {
   return Effect.gen(function* () {
-    const options = "policy" in source ? configuredOptions(source) : source;
+    const options =
+      "policy" in source ? yield* configuredOptions(source) : source;
     const captured = yield* captureOptions(options).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
@@ -875,37 +884,34 @@ function loadRules(store: FirewallStore, options: CapturedOptions) {
   });
 }
 
+/** Natural-language rules without a provider fail installation instead of passing unchecked. */
 function configuredOptions(loaded: LoadedMessagePolicy) {
-  const policy = loaded.policy;
-  const provider: DecisionProvider =
-    loaded.provider.kind === "jev"
-      ? retryingTransientFailures(makeJevDecisionProvider(loaded.provider))
-      : {
-          decide: () =>
-            Effect.fail(new DecisionProviderError({ reason: "transport" })),
-        };
-  return {
-    mode: policy.mode,
+  const { policy, provider } = loaded;
+  if (policy.text !== undefined && provider === undefined) {
+    return Effect.fail(new FirewallPolicyError({ reason: "build-failed" }));
+  }
+  return Effect.succeed({
     settings: policy.settings,
     facts: policy.facts,
     maximumHistoryRecords: policy.maximumHistoryRecords,
     maximumConcurrentChecks: policy.maximumConcurrentChecks,
     text:
-      policy.text === undefined
+      policy.text === undefined || provider === undefined
         ? undefined
         : {
             fixedRules: policy.text.fixedRules,
             initialRules: policy.text.initialRules,
             settings: policy.textSettings,
-            provider,
+            provider: retryingTransientFailures(
+              makeJevDecisionProvider(provider),
+            ),
           },
-  } satisfies FirewallOptions;
+  } satisfies FirewallOptions);
 }
 
 function captureOptions(options: FirewallOptions) {
   return Effect.gen(function* () {
     const configuration = yield* decodeFrozen(firewallConfigurationSchema, {
-      mode: options.mode,
       facts: options.facts,
       maximumHistoryRecords: options.maximumHistoryRecords ?? 256,
       maximumConcurrentChecks: options.maximumConcurrentChecks ?? 4,
@@ -1006,13 +1012,8 @@ function assessRule(
         exitOutcome(exit, "checked"),
       ),
     );
-    const projection = yield* guidanceProjection(assessed, input, {
-      mode: options.configuration.mode,
-      checkId,
-    });
-    const admit =
-      options.configuration.mode === "guidance" ||
-      projection.result.judgment === "allow";
+    const projection = yield* guidanceProjection(assessed, input, checkId);
+    const admit = projection.result.judgment === "allow";
     return {
       result: projection.result,
       completion: {
@@ -1145,18 +1146,18 @@ function mintCheckId() {
   return `chk_${randomBytes(32).toString("hex")}`;
 }
 
-/** Registered advice includes only the message references already visible to this agent. */
+/**
+ * Registered advice includes only the message references already visible to
+ * this agent. An allowed draft carries only its uncertain findings.
+ */
 function guidanceProjection(
   result: FirewallCheck,
   input: CapturedCheck,
-  capture: {
-    readonly mode: "guidance" | "enforcement";
-    readonly checkId: string;
-  },
+  checkId: string,
 ) {
   return Effect.gen(function* () {
     const instructions =
-      input.direction === "incoming" || capture.mode === "guidance"
+      input.direction === "incoming"
         ? result.guidance
         : result.guidance.filter((entry) => "uncertain" in entry);
     if (instructions.length === 0) {
@@ -1169,7 +1170,7 @@ function guidanceProjection(
     );
     const subjects = guidanceSubjects(selected, input);
     const guidance: CheckedGuidance = {
-      checkId: capture.checkId,
+      checkId,
       instructions,
       subjects,
     };
@@ -1192,7 +1193,7 @@ function unavailable(): FirewallCheck {
   return {
     judgment: "hold",
     reason: "check-unavailable",
-    feedback: projectFeedback([], [], "check-unavailable"),
+    feedback: [],
     guidance: [],
     findings: [],
     expectations: [],

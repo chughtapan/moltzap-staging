@@ -112,7 +112,6 @@ export const decisionState = Schema.decodeUnknownSync(
 /** One natural-language rule makes assessment order and retained advice observable. */
 export function firewallOptions(provider: DecisionProvider): FirewallOptions {
   return {
-    mode: "enforcement",
     facts: [],
     settings: {
       timeoutMilliseconds: 10_000,
@@ -126,10 +125,7 @@ export function firewallOptions(provider: DecisionProvider): FirewallOptions {
           applies: "both",
           text: "Protect the owner's private information.",
           guidance: "Check before sharing private information.",
-          feedback: {
-            text: "Keep private information private.",
-            nextAction: "stop",
-          },
+          feedback: { text: "Keep private information private." },
         },
       ],
       provider,

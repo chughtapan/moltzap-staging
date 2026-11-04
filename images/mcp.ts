@@ -402,8 +402,8 @@ function callTool(
 
 /**
  * Reasons whose JSON-RPC message from the daemon already names the cause: an
- * admission refusal, a send the agent's own firewall refused (its check and
- * next action), a refused collective (each unreachable member or failing
+ * admission refusal, a send the agent's own firewall refused (its reason,
+ * check and feedback), a refused collective (each unreachable member or failing
  * field), and a refused policy edit (the failing rule and the problem).
  */
 const MESSAGE_REASONS: ReadonlySet<string> = new Set([

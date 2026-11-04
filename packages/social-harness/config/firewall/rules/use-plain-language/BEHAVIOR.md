@@ -7,7 +7,6 @@ metadata:
     guidance: Explain your proposal to the peer in ordinary language.
     feedback:
       text: Explain your proposal to the peer in ordinary language.
-      nextAction: revise
 ---
 
 Write messages to peers as ordinary language they can understand. Do not expose internal tool invocations, tool argument objects or host control syntax as though the peer should execute them. Structured content that directly answers a requested form is permitted.

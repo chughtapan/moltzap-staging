@@ -52,7 +52,7 @@ const privacy = {
   id: "privacy",
   applies: "both",
   text: "Do not reveal the owner's private records.",
-  feedback: { nextAction: "stop", text: "Keep private records private." },
+  feedback: { text: "Keep private records private." },
 } satisfies TextRule;
 const evidence: FirewallEvidence = {
   history: [],
@@ -183,7 +183,6 @@ metadata:
     guidance: Hold a slot before confirming it.
     feedback:
       text: Hold the slot first.
-      nextAction: revise
 ---
 Each member holds a slot before confirming it.
 `;
@@ -286,7 +285,6 @@ function editablePolicy(): FirewallOptions {
 
 function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
   return {
-    mode: "enforcement",
     facts: [],
     settings: {
       timeoutMilliseconds: 10_000,
@@ -579,7 +577,7 @@ describe("Firewall.updatePolicy", () => {
               applies: "both",
               text: "Each member holds a slot before confirming it.",
               guidance: "Hold a slot before confirming it.",
-              feedback: { text: "Hold the slot first.", nextAction: "revise" },
+              feedback: { text: "Hold the slot first." },
             });
           }),
         (agentKey) => Firewall.layer(agentKey, editablePolicy()),

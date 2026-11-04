@@ -12,15 +12,6 @@ import { AgentCard } from "../identity/agent-cards.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-/** Registered feedback names one repair action independently of a judgment. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Checking and host projection share this configuration-owned action grammar; public entries do not expose its constructor.
-export const nextActionSchema = Schema.Literal(
-  "revise",
-  "wait",
-  "stop",
-  "seek-approval",
-);
-
 /** Operational holds remain distinct from a settled rule violation. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Assessment, saved summaries and host projection share one refusal grammar; package entry points expose opaque values.
 export const firewallRefusalReasonSchema = Schema.Literal(
@@ -46,12 +37,7 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
-  feedback: Schema.optional(
-    Schema.Struct({
-      text: Schema.NonEmptyString,
-      nextAction: nextActionSchema,
-    }),
-  ),
+  feedback: Schema.optional(exactStruct({ text: Schema.NonEmptyString })),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
 }) {}
@@ -321,17 +307,11 @@ const failureMessages: Readonly<
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
-/**
- * An unavailable provider holds messages in enforcement mode and admits them in
- * guidance mode. Only Jev requires a provider key.
- */
-const decisionProvider = Schema.Union(
-  Schema.Struct({
-    kind: Schema.Literal("jev"),
-    model: Schema.NonEmptyTrimmedString,
-  }),
-  Schema.Struct({ kind: Schema.Literal("unavailable") }),
-);
+/** Jev decides natural-language rules with the key `decisionProviderKeyFile` holds. */
+const decisionProvider = Schema.Struct({
+  kind: Schema.Literal("jev"),
+  model: Schema.NonEmptyTrimmedString,
+});
 
 const textRules = Schema.optionalWith(Schema.Array(TextRule), {
   default: () => [],
@@ -357,7 +337,6 @@ const textDocument = Schema.Struct({
 
 const document = Schema.Struct({
   format: Schema.Literal(messagePolicyFormat),
-  mode: Schema.Literal("guidance", "enforcement"),
   text: Schema.optional(textDocument),
   decisionProvider: Schema.optional(decisionProvider),
   textSettings: Schema.optionalWith(Schema.Struct(TextPolicySettings.fields), {
@@ -426,13 +405,11 @@ const behaviorFrontmatter = Schema.Struct({
 type BehaviorRefusal = "frontmatter" | "schema";
 
 /** Loading validates provider parameters. Construction binds execution. */
-type LoadedDecisionProvider =
-  | { readonly kind: "unavailable" }
-  | {
-      readonly kind: "jev";
-      readonly model: string;
-      readonly apiKey: Redacted.Redacted;
-    };
+interface LoadedDecisionProvider {
+  readonly kind: "jev";
+  readonly model: string;
+  readonly apiKey: Redacted.Redacted;
+}
 
 const MAXIMUM_POLICY_BYTES = 1_048_576;
 
@@ -447,12 +424,14 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
-/** SQL configuration retains resolved rules and redacts the provider credential. */
+/**
+ * SQL configuration retains resolved rules and redacts the provider credential.
+ * A policy without natural-language rules has no provider.
+ */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with persisted daemon configuration.
 export const installedMessagePolicy = Schema.Struct({
   policy: MessagePolicy,
-  provider: Schema.Union(
-    Schema.Struct({ kind: Schema.Literal("unavailable") }),
+  provider: Schema.optional(
     Schema.Struct({
       kind: Schema.Literal("jev"),
       model: Schema.String,
@@ -511,13 +490,14 @@ export const loadMessagePolicy = (
       ),
     );
     const resolved = yield* resolveBehaviors(policy, dirname(path));
+    const provider = yield* loadDecisionProvider(
+      policy,
+      configuration,
+      readCredential,
+    );
     return Option.some({
       policy: resolved,
-      provider: yield* loadDecisionProvider(
-        policy,
-        configuration,
-        readCredential,
-      ),
+      ...(provider === undefined ? {} : { provider }),
     });
   }).pipe(Effect.withSpan("loadMessagePolicy"));
 
@@ -530,7 +510,6 @@ interface BehaviorState {
 /** Operational evidence limits are part of the installed policy identity. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installation validates fixed settings with the same grammar retained audits decode.
 export const firewallConfigurationSchema = Schema.Struct({
-  mode: Schema.Literal("guidance", "enforcement"),
   facts: Schema.Array(OwnerFact),
   maximumHistoryRecords: Schema.Int.pipe(Schema.between(1, 1024)),
   maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
@@ -833,14 +812,18 @@ function editSubject(
     : (place ?? rule);
 }
 
+/** Only a policy with natural-language rules reads the provider key. */
 function loadDecisionProvider(
   policy: MessagePolicy,
   configuration: PolicyConfiguration,
   readCredential: CredentialReader,
-): Effect.Effect<LoadedDecisionProvider, MessagePolicyConfigurationError> {
+): Effect.Effect<
+  LoadedDecisionProvider | undefined,
+  MessagePolicyConfigurationError
+> {
   const setting = policy.decisionProvider;
-  if (policy.text === undefined || setting?.kind !== "jev") {
-    return Effect.succeed({ kind: "unavailable" });
+  if (policy.text === undefined || setting === undefined) {
+    return Effect.succeed(undefined);
   }
   return jevKey(configuration, readCredential).pipe(
     Effect.map((apiKey) => ({

@@ -38,10 +38,7 @@ const scenario = Effect.gen(function* () {
   const policyFile = join(infrastructure.temporaryDirectory, "policy.json");
   yield* filesystem.writeFileString(
     policyFile,
-    JSON.stringify({
-      format: "org.social-harness/message-policy/v2",
-      mode: "enforcement",
-    }),
+    JSON.stringify({ format: "org.social-harness/message-policy/v2" }),
   );
   const fixture = yield* makeDaemonProcessFixture(
     infrastructure,

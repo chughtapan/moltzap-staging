@@ -70,7 +70,7 @@ const proposalAcceptance: TextRule = {
   applies: "both",
   text: "Availability is not acceptance. Everyone must accept the same concrete proposal before it is finalized.",
   guidance: reminder,
-  feedback: { text: repair, nextAction: "revise" },
+  feedback: { text: repair },
 };
 const rules: readonly TextRule[] = [
   {
@@ -493,11 +493,7 @@ it("returns rule repair with only registered feedback", () =>
       }),
     );
     expect(result.judgment).toBe("reject");
-    expect(result.feedback).toEqual([{ nextAction: "revise", text: repair }]);
-    expect(result.guidance).toContainEqual({
-      ruleId: proposalAcceptance.id,
-      instruction: reminder,
-    });
+    expect(result.feedback).toEqual([{ text: repair }]);
   }));
 it("retains a settled violation beside another rule's valid uncertainty", () =>
   Effect.gen(function* () {
@@ -774,10 +770,7 @@ it.each([false, true])(
     Effect.gen(function* () {
       const requests: DecisionRequest[] = [];
       const { textSettings } = yield* decodeMessagePolicy(
-        JSON.stringify({
-          format: "org.social-harness/message-policy/v2",
-          mode: "enforcement",
-        }),
+        JSON.stringify({ format: "org.social-harness/message-policy/v2" }),
       );
       const { maximumRequestBytes } = textSettings;
       const result = yield* check(provider({}, requests), {

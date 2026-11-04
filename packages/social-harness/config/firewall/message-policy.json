@@ -1,6 +1,5 @@
 {
   "format": "org.social-harness/message-policy/v2",
-  "mode": "guidance",
   "text": {
     "fixedBehaviors": [
       "rules/protect-credentials",
@@ -11,6 +10,7 @@
     ]
   },
   "decisionProvider": {
-    "kind": "unavailable"
+    "kind": "jev",
+    "model": "jev-1.13.0"
   }
 }

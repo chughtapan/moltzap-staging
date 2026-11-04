@@ -79,11 +79,7 @@ const acquireMarkerParticipants = Effect.gen(function* () {
   const fixtures = [
     withEnvironment(
       exportingTo(
-        yield* makeDaemonProcessFixture(
-          infrastructure,
-          "otel-requester",
-          "guidance",
-        ),
+        yield* makeDaemonProcessFixture(infrastructure, "otel-requester", true),
         receiver,
       ),
       {
@@ -92,12 +88,9 @@ const acquireMarkerParticipants = Effect.gen(function* () {
       },
     ),
     yield* makeDaemonProcessFixture(infrastructure, "otel-member-a"),
-    yield* makeDaemonProcessFixture(
-      infrastructure,
-      "otel-member-b",
-      undefined,
-      { settings: { routerOrigin: proxy.origin.origin } },
-    ),
+    yield* makeDaemonProcessFixture(infrastructure, "otel-member-b", false, {
+      settings: { routerOrigin: proxy.origin.origin },
+    }),
   ];
   const [requester, member, held] = yield* startParticipants(fixtures);
   if (requester === undefined || member === undefined || held === undefined) {

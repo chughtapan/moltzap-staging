@@ -34,7 +34,6 @@ import {
   acquireProcessInfrastructure,
   configureDaemonFixture,
   type DaemonProcessFixture,
-  type FirewallMode,
   makeDaemonProcessFixture,
 } from "../daemon/daemon-fixture.js";
 import { inboxStream } from "../mcp-inbox.js";
@@ -124,8 +123,8 @@ interface HeldDelivery {
 }
 
 const acquireHeldPair = (firewalls: {
-  readonly sender?: FirewallMode;
-  readonly target?: FirewallMode;
+  readonly sender?: boolean;
+  readonly target?: boolean;
 }) =>
   Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
@@ -162,10 +161,7 @@ const acquireHeldPair = (firewalls: {
  * that passes every message changes nothing a peer or host sees.
  */
 const heldDeliveryBehavior = (
-  firewalls: {
-    readonly sender?: FirewallMode;
-    readonly target?: FirewallMode;
-  } = {},
+  firewalls: { readonly sender?: boolean; readonly target?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const started = yield* acquireHeldPair(firewalls);
@@ -201,10 +197,8 @@ it(
 );
 
 it(
-  "recovers a held delivery the same way between daemons with firewalls in both modes",
-  processTrace(
-    heldDeliveryBehavior({ sender: "guidance", target: "enforcement" }),
-  ),
+  "recovers a held delivery the same way between daemons with firewalls",
+  processTrace(heldDeliveryBehavior({ sender: true, target: true })),
   HELD_DELIVERY_TEST_TIMEOUT_MS,
 );
 

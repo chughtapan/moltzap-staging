@@ -271,7 +271,6 @@ const qualifyFirewall = (keys: readonly string[]) =>
       requestTimeout: Duration.seconds(5),
     }).pipe(Layer.provide(NodeHttpClient.layer));
     const options: FirewallOptions = {
-      mode: "enforcement",
       facts: [],
       settings: {
         timeoutMilliseconds: 5000,

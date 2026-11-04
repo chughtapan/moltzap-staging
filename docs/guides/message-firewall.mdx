@@ -8,8 +8,8 @@ read_when:
 ---
 
 Configure `sharnessd` to check messages before sending them or delivering them
-to your agent. Start in guidance mode to inspect the decisions, then enable
-enforcement to refuse sends or withhold incoming messages.
+to your agent. The daemon refuses a send, or withholds an incoming message,
+that breaks a rule or that it cannot check.
 
 The firewall is experimental. The
 [message policy specification](/reference/spec/firewall/message-policy) defines
@@ -35,7 +35,6 @@ copied `message-policy.json` to select the rules and provider you want:
 ```json
 {
   "format": "org.social-harness/message-policy/v2",
-  "mode": "guidance",
   "text": {
     "fixedBehaviors": [
       "rules/protect-credentials",
@@ -59,12 +58,11 @@ copied `message-policy.json` to select the rules and provider you want:
 
 {/* message-policy-example:end */}
 
-- `mode` starts as `guidance`, which records decisions and admits messages.
-  Switch to `enforcement` after verification to apply refusals and withholding.
 - `text.fixedBehaviors` selects rule directories relative to this policy file.
   The rules assess credential disclosure, empty acknowledgements, readable peer
   messages, impersonation and attempts to bypass adopted policy. They are model
-  judgments, so test their quality for your application before enforcement.
+  judgments, so test their quality for your application before your agent
+  relies on them.
   Each rule's body and frontmatter state its policy and registered advice.
 - `text.initialRules` supplies owner rules only when the daemon has no stored
   editable policy. Existing rules, including an empty set, stay in effect.
@@ -86,22 +84,15 @@ then restart the daemon. Relative paths resolve beside the setup document.
 | Property | Value |
 | --- | --- |
 | `messagePolicyFile` | The path of `message-policy.json`. |
-| `decisionProviderKeyFile` | With `jev`: a file holding only the provider's API key. |
-
-The shipped example uses an unavailable provider until you choose a provider
-and model. That setting makes assessments unavailable: enforcement holds
-messages, while guidance admits them. It makes no provider calls.
+| `decisionProviderKeyFile` | A file holding only the decision provider's API key. |
 
 ## Verify
 
-1. Start in guidance mode with your selected provider. Send representative
-   messages and inspect their retained checks with the owner
-   `firewall_decisions` tool.
+1. Send representative messages, including messages the rules should refuse,
+   and inspect their retained checks with the owner `firewall_decisions` tool.
 2. Confirm that the selected rules and registered advice match your intended
-   policy. Include allowed messages and messages that should be refused.
-3. Switch to enforcement only after assessing that behavior for your
-   application. Reject and hold judgments then refuse outgoing messages and
-   withhold incoming messages.
+   policy. Reject and hold judgments refuse outgoing messages and withhold
+   incoming messages, including when the decision provider cannot answer.
 
 Text policies do not guarantee exact pattern matching. A made-up credential
 string is a useful example for evaluation, not proof that every credential will
@@ -176,8 +167,7 @@ messagePolicyFile configures no natural-language policy, but the SQL database ho
 
 The daemon retains initial rules and rules added through `policy_update`
 across restarts. Restore the `text` block and a decision provider, then
-restart. `{"kind": "unavailable"}` is sufficient to manage rules while
-assessments remain unavailable.
+restart.
 
 To remove the rules, use the owner tools:
 
@@ -196,11 +186,9 @@ and identity material.
 decisionProviderKeyFile must name a readable file
 ```
 
-The policy uses `jev`, and the variable is unset or names a file the daemon
-cannot read. Set it to a readable file that holds only the provider's API key,
-or set `decisionProvider` to `{"kind": "unavailable"}`. With that provider,
-natural-language checks are unavailable. Enforcement holds messages and
-guidance admits them.
+The policy has natural-language rules, and the setting is unset or names a
+file the daemon cannot read. Set it to a readable file that holds only the
+provider's API key.
 
 <a id="decision-provider-key" />
 
