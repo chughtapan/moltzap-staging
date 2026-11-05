@@ -23,7 +23,7 @@ import {
   send,
 } from "../agent-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
-import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
+import { anyNumber, anyString } from "../test-matchers.js";
 
 const requireAll = (participants: readonly Participant[], count: 3 | 4) =>
   participants.length === count
