@@ -570,7 +570,7 @@ describe("a peer's act out of turn", () => {
     }));
 });
 
-describe("office hours: a norm's own turns", () => {
+describe("office hours: offers and escalation", () => {
   const matchers = normMatchers(
     norms(...builtIn, "examples/office-hours.lisp"),
   );
@@ -589,48 +589,6 @@ describe("office hours: a norm's own turns", () => {
     professor("(accept-proposal :ontology norm-agreement)"),
     student('(request :ontology office-hours :topic "Project scope")'),
   ]);
-
-  it("books a held slot once the student checks back", () =>
-    Effect.gen(function* () {
-      const history = [
-        ...(yield* asked),
-        yield* professor(offer),
-        yield* student("(accept-proposal :ontology office-hours :option 1)"),
-        yield* professor(
-          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
-        ),
-        yield* student("(query-if :ontology office-hours)"),
-      ];
-      const confirm = yield* professor(
-        '(confirm :ontology office-hours :slot "Tue 14:00")',
-      );
-
-      expect(
-        yield* check(
-          "norms.nonconforming",
-          matchers,
-          outgoing(confirm, history),
-        ),
-      ).toEqual({ matched: false });
-    }));
-
-  it("lets the professor offer again at the check-back while a round is left", () =>
-    Effect.gen(function* () {
-      const history = [
-        ...(yield* asked),
-        yield* professor(offer),
-        yield* student("(accept-proposal :ontology office-hours :option 1)"),
-        yield* professor(
-          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
-        ),
-        yield* student("(query-if :ontology office-hours)"),
-      ];
-      const again = yield* professor(offer);
-
-      expect(
-        yield* check("norms.nonconforming", matchers, outgoing(again, history)),
-      ).toEqual({ matched: false });
-    }));
 
   it("allows an offer only while fewer than two rounds were declined", () =>
     Effect.gen(function* () {
@@ -682,6 +640,37 @@ describe("office hours: a norm's own turns", () => {
       ).toEqual({ matched: false });
     }));
 
+  it("lets the professor escalate only once the student declines an offer", () =>
+    Effect.gen(function* () {
+      const requested = yield* asked;
+      const declined = [
+        ...requested,
+        yield* professor(offer),
+        yield* student(none),
+      ];
+      const escalate = yield* professor(
+        '(failure :ontology office-hours :reason "No offered slot works.")',
+      );
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(escalate, requested),
+        ),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn", allowed: ["propose", "cancel"] },
+      });
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(escalate, declined),
+        ),
+      ).toEqual({ matched: false });
+    }));
+
   it("lets each side send only its own acts", () =>
     Effect.gen(function* () {
       const history = yield* asked;
@@ -697,6 +686,68 @@ describe("office hours: a norm's own turns", () => {
         matched: true,
         detail: { reason: "out-of-turn", allowed: ["cancel"] },
       });
+    }));
+});
+
+describe("office hours: holds", () => {
+  const matchers = normMatchers(
+    norms(...builtIn, "examples/office-hours.lisp"),
+  );
+  const pair = [alice, bob];
+  const student = (text: string) => from(bob, pair, text);
+  const professor = (text: string) => from(alice, pair, text);
+  const offer =
+    '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
+
+  /** The student proposes office-hours, the professor accepts, and the student asks to meet. */
+  const asked = Effect.all([
+    student(
+      '(propose :ontology norm-agreement :norm office-hours :task "Meet")',
+    ),
+    professor("(accept-proposal :ontology norm-agreement)"),
+    student('(request :ontology office-hours :topic "Project scope")'),
+  ]);
+
+  it("books a held slot once the student checks back", () =>
+    Effect.gen(function* () {
+      const history = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student("(accept-proposal :ontology office-hours :option 1)"),
+        yield* professor(
+          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
+        ),
+        yield* student("(query-if :ontology office-hours)"),
+      ];
+      const confirm = yield* professor(
+        '(confirm :ontology office-hours :slot "Tue 14:00")',
+      );
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(confirm, history),
+        ),
+      ).toEqual({ matched: false });
+    }));
+
+  it("lets the professor offer again at the check-back while a round is left", () =>
+    Effect.gen(function* () {
+      const history = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student("(accept-proposal :ontology office-hours :option 1)"),
+        yield* professor(
+          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
+        ),
+        yield* student("(query-if :ontology office-hours)"),
+      ];
+      const again = yield* professor(offer);
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(again, history)),
+      ).toEqual({ matched: false });
     }));
 });
 
