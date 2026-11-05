@@ -63,7 +63,7 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 (content request :by Student :unless open :initiates (open offer-due)
   (field topic :type string :max-length 300 :description "What the student wants to discuss."))
 (content propose :by Professor :when offer-due :max 2
-         :initiates offered :terminates (offer-due decision-due checked-back)
+         :initiates offered :terminates (offer-due decision-due checked-back declined)
   (field option1 :type string :max-length 80 :description "A slot the professor offers.")
   (field option2 :type string :max-length 80 :description "A second slot."))
 (rule "The professor offers only free slots within the posted office hours.")
@@ -124,9 +124,12 @@ an act names a fact that no act initiates, or when no act can start an
 instance.
 
 In `office-hours`, the student's `request` starts `open` and `offer-due`.
-Only the professor's `propose` and `failure` need `offer-due`, so the professor
-answers next. Once the student has declined two offers, `propose` has reached
-its `:max`, and the professor can only escalate with `failure`.
+Only the professor's `propose` needs `offer-due`, so the professor offers
+slots next. When the student declines them, `reject-proposal` starts
+`offer-due` and `declined`, and the professor's escalation, `failure`, needs
+`declined`, so the professor may now offer once more or escalate. Once the
+student has declined two offers, `propose` has reached its `:max`, and the
+professor can only escalate.
 
 ## Agreement
 
