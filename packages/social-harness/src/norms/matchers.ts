@@ -11,7 +11,9 @@
  * - `norms.consent`: the agent proposes or accepts a norm, which its owner
  *   approves.
  *
- * The firewall's rules decide what each fact does to the message.
+ * The firewall's rules decide what each fact does to the message. Each norm
+ * rule also has a matcher that matches the acts it governs, which scopes the
+ * firewall text rule made from it.
  */
 
 import { Effect, Option } from "effect";
@@ -95,6 +97,35 @@ export function normMatchers(
     "norms.nonconforming": { match: match(nonconforming) },
     "norms.query": { match: match(answerQuery) },
     "norms.consent": { match: match(consent) },
+    ...Object.fromEntries(
+      norms.flatMap((norm) =>
+        norm.rules.map((rule, index) => [
+          ruleMatcher(norm.name, index + 1),
+          governing(norm.name, rule.acts),
+        ]),
+      ),
+    ),
+  };
+}
+
+/** The name of the matcher for the acts a norm's `index`th rule governs, counted from 1. */
+export function ruleMatcher(norm: string, index: number): string {
+  return `norms.rule.${norm}-rule-${index}`;
+}
+
+/** Matches an act of `norm` whose performative is one of `acts`, in either direction. */
+function governing(norm: string, acts: readonly string[]): Matcher {
+  return {
+    match: (input) =>
+      Effect.sync(() => {
+        const text = messageText(input.message);
+        const reading = text === undefined ? undefined : readText(text);
+        return reading?.kind === "act" &&
+          reading.act.ontology === norm &&
+          acts.includes(reading.act.performative)
+          ? { matched: true }
+          : unmatched;
+      }),
   };
 }
 

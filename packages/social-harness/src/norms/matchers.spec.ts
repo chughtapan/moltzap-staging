@@ -17,7 +17,7 @@ import {
 } from "../identity/agent-cards.js";
 import { readText } from "./acts.js";
 import { type Norm, readNorm } from "./documents.js";
-import { normMatchers } from "./matchers.js";
+import { normMatchers, ruleMatcher } from "./matchers.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Matcher names, breach reasons and acts are the norm contract under test. */
 
@@ -748,6 +748,37 @@ describe("office hours: holds", () => {
       expect(
         yield* check("norms.nonconforming", matchers, outgoing(again, history)),
       ).toEqual({ matched: false });
+    }));
+});
+
+describe("a norm rule's acts", () => {
+  it("matches only the acts its rule governs, in either direction", () =>
+    Effect.gen(function* () {
+      const matchers = normMatchers(
+        norms(...builtIn, "examples/office-hours.lisp"),
+      );
+      const pair = [alice, bob];
+      const request = yield* from(
+        bob,
+        pair,
+        '(request :ontology office-hours :topic "Project scope")',
+      );
+      const decline = yield* from(
+        bob,
+        pair,
+        '(reject-proposal :ontology office-hours :reason "Not Tuesday.")',
+      );
+      const topicRule = ruleMatcher("office-hours", 1);
+
+      expect(yield* check(topicRule, matchers, outgoing(request))).toEqual({
+        matched: true,
+      });
+      expect(
+        yield* check(topicRule, matchers, incoming(alice, request)),
+      ).toEqual({ matched: true });
+      expect(yield* check(topicRule, matchers, outgoing(decline))).toEqual({
+        matched: false,
+      });
     }));
 });
 

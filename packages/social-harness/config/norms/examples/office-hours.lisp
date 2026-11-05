@@ -70,5 +70,5 @@
 
 (content cancel)
 
-(rule "The student's request names only what the student wants to discuss; the professor proposes the times.")
-(rule "The professor offers only free slots within the posted office hours.")
+(rule :act request "The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.")
+(rule :act propose "Each offered option is a slot within the posted office hours that is not already booked.")

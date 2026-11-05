@@ -285,7 +285,10 @@ function editablePolicy(): FirewallOptions {
   };
 }
 
-function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
+function policy(
+  initialRules: readonly TextRule[] = [],
+  fixedRules: readonly TextRule[] = [],
+): FirewallOptions {
   return {
     facts: [],
     settings: {
@@ -294,7 +297,7 @@ function policy(initialRules: readonly TextRule[] = []): FirewallOptions {
       maximumResultBytes: 100_000,
     },
     text: {
-      fixedRules: [],
+      fixedRules,
       initialRules,
       provider: judgments,
       settings: {
@@ -776,6 +779,85 @@ describe("Firewall rule chain actions", () => {
           }),
         (agentKey) => Firewall.layer(agentKey, undefined, chain),
       );
+    }));
+});
+
+describe("Firewall text rules scoped by a matcher", () => {
+  it("asks about a scoped text rule only for messages its matcher matches", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = { rules: [], matchers: { never } };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+
+            expect(decision.kind).toBe("allowed");
+          }),
+        (agentKey) =>
+          Firewall.layer(
+            agentKey,
+            policy([], [{ ...privacy, match: "never" }]),
+            chain,
+          ),
+      );
+    }));
+
+  it("refuses a draft that breaks a scoped text rule its matcher matches", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const chain: Chain = { rules: [], matchers: { always } };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "refused",
+              refusal: {
+                refusal: "rule-violation",
+                feedback: [privacy.feedback],
+              },
+            });
+          }),
+        (agentKey) =>
+          Firewall.layer(
+            agentKey,
+            policy([], [{ ...privacy, match: "always" }]),
+            chain,
+          ),
+      );
+    }));
+
+  it("refuses to install a text rule whose matcher is not registered", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const failure = yield* withFirewall(
+        ":memory:",
+        fixture,
+        () => Effect.void,
+        (agentKey) =>
+          Firewall.layer(
+            agentKey,
+            policy([], [{ ...privacy, match: "missing" }]),
+            { rules: [], matchers: {} },
+          ),
+      ).pipe(Effect.flip);
+
+      expect(failure).toMatchObject({
+        reason: "build-failed",
+        ruleId: privacy.id,
+      });
     }));
 });
 

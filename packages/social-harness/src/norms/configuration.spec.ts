@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
 import { heldNorms, loadNorms, normTextRules } from "./configuration.js";
 import { readNorm } from "./documents.js";
+import { ruleMatcher } from "./matchers.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and failure text are the configuration contract under test. */
 
@@ -110,15 +111,15 @@ describe("loadNorms", () => {
 });
 
 describe("normTextRules", () => {
-  it("turns each English rule into a fixed rule over every act of its norm, which replies to a peer's breach", () =>
+  it("turns each English rule into a fixed rule scoped to the acts it governs, which replies to a peer's breach", () =>
     Effect.sync(() => {
       const norm = Either.getOrThrow(
         readNorm(`
         (norm swap :initiator Asker :participant Owner :description "Swap a shift.")
         (content request :by Asker :initiates asked)
         (content agree :by Owner :when asked :terminates asked)
-        (rule "Ask for a swap a day ahead.")
-        (rule "Swap only with a trained colleague.")
+        (rule :act request "Ask for a swap a day ahead.")
+        (rule :act (agree request) "Swap only with a trained colleague.")
       `),
       );
 
@@ -128,9 +129,14 @@ describe("normTextRules", () => {
         "swap-rule-1",
         "swap-rule-2",
       ]);
-      expect(first).toMatchObject({ applies: "both", action: "reply" });
+      expect(first).toMatchObject({
+        applies: "both",
+        action: "reply",
+        match: ruleMatcher("swap", 1),
+      });
+      expect(second?.match).toBe(ruleMatcher("swap", 2));
       expect(first?.text).toContain("Ask for a swap a day ahead.");
-      expect(first?.text).toContain(":ontology swap");
+      expect(second?.text).toContain("agree or request act of the swap norm");
       expect(second?.feedback?.text).toContain(
         "Swap only with a trained colleague.",
       );

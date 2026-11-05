@@ -5,7 +5,8 @@
  * act: who sends it, the facts that must and must not hold for it, the facts
  * it starts and ends, and how often it may occur. It gives each performative
  * a form, in the MCP form-mode grammar the collective layer uses, and states
- * English rules. Documents use the act syntax and parser, with `;` comments.
+ * English rules, each tied to the acts it governs. Documents use the act
+ * syntax and parser, with `;` comments.
  */
 
 import type { ASTNode, Expression } from "@thi.ng/sexpr/api";
@@ -64,8 +65,14 @@ export interface Norm {
   readonly roles?: { readonly initiator: string; readonly participant: string };
   readonly description: string;
   readonly contents: Readonly<Record<string, RequestedSchema>>;
-  readonly rules: readonly string[];
+  readonly rules: readonly NormRule[];
   readonly source: string;
+}
+
+/** One English rule and the performatives of the acts it governs. */
+interface NormRule {
+  readonly acts: readonly string[];
+  readonly text: string;
 }
 
 /** A document that does not describe a norm, and where. */
@@ -136,6 +143,14 @@ function normOf(
       if (new Set(performatives).size !== performatives.length) {
         return Either.left(
           "each performative has at most one (content ...) form",
+        );
+      }
+      const ungoverned = rules
+        .flatMap(({ acts }) => acts)
+        .find((act) => !performatives.includes(act));
+      if (ungoverned !== undefined) {
+        return Either.left(
+          `a rule governs ${ungoverned}, which has no (content ...) form`,
         );
       }
       return turnsOf(header, contents).pipe(
@@ -357,6 +372,33 @@ function contentOf(form: Expression): Either.Either<Content, string> {
   );
 }
 
+/**
+ * Reads a `(rule ...)` form: `:act` and the performative, or list of
+ * performatives, of the acts it governs, then one English rule in quotes.
+ */
+function ruleOf(form: Expression): Either.Either<NormRule, string> {
+  const [, ...parts] = form.children;
+  const usage =
+    '(rule :act <performative> "...") ties one English rule in quotes to the acts it governs';
+  const split = keywordCount(parts);
+  const [text, ...rest] = parts.slice(split);
+  if (text?.type !== "str" || text.value.trim() === "" || rest.length !== 0) {
+    return Either.left(usage);
+  }
+  return options(parts.slice(0, split), "rule").pipe(
+    Either.flatMap((given) =>
+      given.size === 1
+        ? Either.fromOption(namesOf(given.get("act")), () => usage)
+        : Either.left(usage),
+    ),
+    Either.filterOrLeft(
+      (acts) => acts.length !== 0,
+      () => usage,
+    ),
+    Either.map((acts) => ({ acts, text: text.value })),
+  );
+}
+
 /** How many of `nodes`, from the start, are `:keyword value` pairs. */
 function keywordCount(nodes: readonly ASTNode[]): number {
   const firstField = nodes.findIndex(
@@ -389,10 +431,10 @@ function contentTurn(
     return Either.right(undefined);
   }
   return Option.all({
-    when: factsOf(given.get("when")),
-    unless: factsOf(given.get("unless")),
-    initiates: factsOf(given.get("initiates")),
-    terminates: factsOf(given.get("terminates")),
+    when: namesOf(given.get("when")),
+    unless: namesOf(given.get("unless")),
+    initiates: namesOf(given.get("initiates")),
+    terminates: namesOf(given.get("terminates")),
   }).pipe(
     Either.fromOption(() => usage),
     Either.map((facts) => ({
@@ -403,14 +445,17 @@ function contentTurn(
   );
 }
 
-/** A fact keyword's value, a list of fact names or one name, as a list. */
-function factsOf(value?: OptionValue): Option.Option<readonly string[]> {
+/**
+ * A keyword's value, one name or a list of names, as a list: the facts of a
+ * turn keyword or the performatives a rule governs.
+ */
+function namesOf(value?: OptionValue): Option.Option<readonly string[]> {
   if (typeof value === "number") {
     return Option.none();
   }
-  const facts = typeof value === "string" ? [value] : (value ?? []);
-  return facts.every((fact) => name.test(fact))
-    ? Option.some(facts)
+  const names = typeof value === "string" ? [value] : (value ?? []);
+  return names.every((each) => name.test(each))
+    ? Option.some(names)
     : Option.none();
 }
 
@@ -472,14 +517,6 @@ function selectProperty(
   return type === "select"
     ? { type: "string", enum: options, ...keywords }
     : { type: "array", items: { type: "string", enum: options }, ...keywords };
-}
-
-/** Reads a `(rule ...)` form, which quotes one English rule. */
-function ruleOf(form: Expression): Either.Either<string, string> {
-  const [, text, ...rest] = form.children;
-  return text?.type === "str" && text.value.trim() !== "" && rest.length === 0
-    ? Either.right(text.value)
-    : Either.left('(rule "...") holds one English rule in quotes');
 }
 
 /** The keyword arguments of one form, by name without its colon. */

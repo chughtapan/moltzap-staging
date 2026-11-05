@@ -39,6 +39,7 @@ import {
   chainRuleFileSchema,
   evaluateChain,
   type FirewallEvidence,
+  type MatchInput,
   validateChain,
 } from "./chain.js";
 import {
@@ -312,7 +313,12 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         const policy =
           source === undefined
             ? undefined
-            : yield* initialPolicy(store, source, rules?.rules ?? []);
+            : yield* initialPolicy(
+                store,
+                source,
+                rules?.rules ?? [],
+                Object.keys(rules?.matchers ?? {}),
+              );
         const chainRevision =
           rules === undefined ? "" : yield* chainDigest(rules);
         const localAgent = Effect.gen(function* () {
@@ -456,6 +462,8 @@ interface RuleCheckInput {
   readonly message: AssessmentText;
   readonly context: MessageContext;
   readonly agents: readonly AgentCard[];
+  /** Text rules whose matcher does not match this message, so the provider is not asked about them. */
+  readonly outOfScope: readonly string[];
 }
 
 /** A refused message's reason, the chain rule that decided, and what its sender is told. */
@@ -678,6 +686,7 @@ function decide(
             yield* installed.localAgent,
             unmatched,
             direction,
+            installed.chain?.matchers ?? {},
           );
     const text = assessed.values();
     return chained.map(
@@ -798,6 +807,7 @@ function assess(
   self: AgentCard,
   candidates: readonly Candidate[],
   direction: Direction,
+  matchers: Chain["matchers"],
 ) {
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -844,6 +854,12 @@ function assess(
       };
       inputs.push({
         direction,
+        outOfScope: yield* outOfScopeRules(policy.active.rules, matchers, {
+          direction,
+          message: candidate.value,
+          evidence: candidate.evidence,
+          self,
+        }),
         canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
         message: {
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
@@ -868,6 +884,34 @@ function assess(
       Effect.fail(new CheckInputError({ reason: "context" })),
     ),
   );
+}
+
+/**
+ * The text rules whose matcher does not match the message. A rule whose
+ * matcher is missing or fails stays in scope, so it is never skipped for want
+ * of its check.
+ */
+function outOfScopeRules(
+  rules: readonly TextRule[],
+  matchers: Chain["matchers"],
+  input: MatchInput,
+) {
+  return Effect.forEach(
+    rules,
+    (rule) => {
+      const matcher =
+        rule.match !== undefined && Object.hasOwn(matchers, rule.match)
+          ? matchers[rule.match]
+          : undefined;
+      return matcher === undefined
+        ? Effect.succeed([])
+        : matcher.match(input).pipe(
+            Effect.map((result) => (result.matched ? [] : [rule.id])),
+            Effect.catchAllDefect(() => Effect.succeed([])),
+          );
+    },
+    { concurrency: 1 },
+  ).pipe(Effect.map((ids) => ids.flat()));
 }
 
 function assessmentText(value: Outgoing): AssessmentText {
@@ -1026,11 +1070,12 @@ function initialPolicy(
   store: FirewallStore,
   source: FirewallOptions | LoadedMessagePolicy,
   chain: Chain["rules"],
+  matchers: readonly string[],
 ) {
   return Effect.gen(function* () {
     const options =
       "policy" in source ? yield* configuredOptions(source) : source;
-    const captured = yield* captureOptions(options, chain).pipe(
+    const captured = yield* captureOptions(options, chain, matchers).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
       ),
@@ -1099,7 +1144,11 @@ function configuredOptions(loaded: LoadedMessagePolicy) {
   } satisfies FirewallOptions);
 }
 
-function captureOptions(options: FirewallOptions, chain: Chain["rules"]) {
+function captureOptions(
+  options: FirewallOptions,
+  chain: Chain["rules"],
+  matchers: readonly string[],
+) {
   return Effect.gen(function* () {
     const configuration = yield* decodeFrozen(firewallConfigurationSchema, {
       facts: options.facts,
@@ -1111,7 +1160,14 @@ function captureOptions(options: FirewallOptions, chain: Chain["rules"]) {
       options.text === undefined ? undefined : yield* captureText(options.text);
     const approvePolicyUpdate =
       options.approvePolicyUpdate?.bind(options) ?? (() => Effect.void);
-    return { configuration, settings, text, approvePolicyUpdate, chain };
+    return {
+      configuration,
+      settings,
+      text,
+      approvePolicyUpdate,
+      chain,
+      matchers,
+    };
   });
 }
 
@@ -1314,6 +1370,7 @@ function capturePrepared(
             }),
           },
           agents: input.agents,
+          outOfScope: input.outOfScope,
         }),
       catch: () => new CheckInputError({ reason: "context" }),
     });
@@ -1332,6 +1389,7 @@ function evaluateMessage(
   return checkCapturedMessage(
     {
       rules: active.rules,
+      outOfScope: input.outOfScope,
       settings: options.settings,
       revision: active.configurationDigest,
       ...(options.text === undefined
@@ -1469,6 +1527,16 @@ function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
     const documents = [...fixed, ...rules];
     if (documents.length > 0 && options.text === undefined) {
       return yield* new FirewallPolicyError({ reason: "not-configured" });
+    }
+    const unmatched = documents.find(
+      (rule) =>
+        rule.match !== undefined && !options.matchers.includes(rule.match),
+    );
+    if (unmatched !== undefined) {
+      return yield* new FirewallPolicyError({
+        reason: "build-failed",
+        ruleId: unmatched.id,
+      });
     }
     const metadata = {
       configuration: options.configuration,

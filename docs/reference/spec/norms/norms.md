@@ -66,7 +66,7 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
          :initiates offered :terminates (offer-due decision-due checked-back declined)
   (field option1 :type string :max-length 80 :description "A slot the professor offers.")
   (field option2 :type string :max-length 80 :description "A second slot."))
-(rule "The professor offers only free slots within the posted office hours.")
+(rule :act propose "Each offered option is a slot within the posted office hours that is not already booked.")
 ```
 
 - `(norm ...)` names the norm, the roles of its initiator and participants, and
@@ -81,19 +81,22 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
   Fields map to the MCP form-mode grammar that
   [collective requests](../communication/collectives.md) use. A performative
   without a form takes no fields.
-- `(rule "...")` states a rule in English, which the firewall of each daemon
-  that holds the norm checks against its own agent's acts of the norm. See
+- `(rule :act <performative> "...")` states a rule in English for the acts
+  with that performative, or with any of a parenthesised list of
+  performatives. Each of them needs a `(content ...)` form, which may list no
+  fields. The firewall of each daemon that holds the norm checks those acts,
+  its own agent's and its peers', against the rule. See
   [English rules](#english-rules).
 
 ### English rules
 
 A daemon adds each `(rule ...)` of a norm it holds to its
 [message policy](../firewall/message-policy.md) as a fixed text rule, named
-for the norm and the rule's position, such as `office-hours-rule-1`. The
-policy's decision provider judges every message against it, the agent's own
-and its peers'; the rule text says it governs only acts of its norm, so other
-messages conform. Each party judges with its owner's facts, such as the
-professor's calendar.
+for the norm and the rule's position, such as `office-hours-rule-1`, and
+scoped to the acts the rule names. The policy's decision provider judges each
+of those acts against the rule, the agent's own and its peers', and is not
+asked about other messages. Each party judges with its owner's facts, such as
+the professor's calendar.
 
 | Judgment | The agent's own act | A peer's act |
 | --- | --- | --- |

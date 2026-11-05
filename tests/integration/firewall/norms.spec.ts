@@ -54,7 +54,7 @@ function normsDirectory(
             Effect.flatMap((text) =>
               fs.writeFileString(
                 join(directory, basename(document)),
-                text.replaceAll(/^\(rule ".*"\)$/gmu, ""),
+                text.replaceAll(/^\(rule .*\)$/gmu, ""),
               ),
             ),
           ),

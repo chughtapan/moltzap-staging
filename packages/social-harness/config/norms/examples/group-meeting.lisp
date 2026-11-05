@@ -26,4 +26,4 @@
 
 (content cancel)
 
-(rule "accept-proposal names a candidate that every Member who proposed listed as free.")
+(rule :act accept-proposal "The accepted option is a candidate that every Member who proposed listed as free.")

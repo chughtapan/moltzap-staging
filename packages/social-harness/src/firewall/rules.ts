@@ -1,6 +1,14 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
+import {
+  Data,
+  Effect,
+  Option,
+  ParseResult,
+  Redacted,
+  Schema,
+  Struct,
+} from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -48,6 +56,11 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
+  /**
+   * A matcher the daemon registers, such as the one for a norm rule's acts.
+   * The provider is asked about the rule only for messages it matches.
+   */
+  match: Schema.optional(Schema.NonEmptyTrimmedString),
 }) {}
 
 /** Bounds apply to one complete text assessment. */
@@ -68,7 +81,11 @@ export class TextPolicySettings extends Schema.Class<TextPolicySettings>(
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-const editableRuleSchema = exactStruct(TextRule.fields);
+/**
+ * An editable rule names no matcher: matchers come with the daemon's
+ * configuration, so only a fixed rule can be scoped to one.
+ */
+const editableRuleSchema = exactStruct(Struct.omit(TextRule.fields, "match"));
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
@@ -343,7 +360,9 @@ const defaultSettings = {
 
 const textDocument = Schema.Struct({
   fixedRules: textRules,
-  initialRules: textRules,
+  initialRules: Schema.optionalWith(Schema.Array(editableRuleSchema), {
+    default: () => [],
+  }),
   fixedBehaviors: Schema.optional(Schema.Array(Schema.String)),
   initialBehaviors: Schema.optional(Schema.Array(Schema.String)),
 });

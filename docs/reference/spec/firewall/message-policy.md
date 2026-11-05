@@ -67,9 +67,15 @@ Cancellation produces no decision.
 
 ### Natural-language judgments
 
-Text rules describe when they apply and the conduct they require. For each
-rule, the provider answers one question about the candidate: does it break the
-rule? The answer is `compliant` or `violation`, with a probability for each.
+Text rules describe when they apply and the conduct they require. A fixed
+rule may also name a registered matcher in `match`: the provider is asked
+about the rule only for messages that matcher matches, and the rule does not
+apply to the rest. A rule naming an unregistered matcher prevents startup,
+and editable rules name none. The daemon scopes each
+[norm rule](../norms/norms.md#english-rules) this way to the acts it governs.
+
+For each rule, the provider answers one question about the candidate: does it
+break the rule? The answer is `compliant` or `violation`, with a probability for each.
 An outgoing draft is judged as the local agent's; an incoming message is judged
 as its peer sender's.
 

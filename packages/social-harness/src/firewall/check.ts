@@ -26,11 +26,16 @@ export interface CheckConfiguration {
   readonly revision: string;
 }
 
-/** Requires verified attribution, prepared message bytes and a configured provider. */
+/**
+ * Requires verified attribution, prepared message bytes and a configured
+ * provider. `outOfScope` names rules whose matcher does not match this
+ * message: they are not applicable, and the provider is not asked about them.
+ */
 export interface CheckMessageInput extends CheckConfiguration {
   readonly event: MessageEvent;
   readonly context: MessageContext;
   readonly provider?: DecisionProvider;
+  readonly outOfScope?: readonly string[];
 }
 
 /** Only a chain rule holds a draft for its owner, so a text check never gives that reason. */
@@ -357,7 +362,11 @@ export function checkCapturedMessage(
 ): Effect.Effect<FirewallCheck, CheckInputError> {
   return Effect.gen(function* () {
     yield* validateEvidence(captured);
-    const selected = forDirection(input.rules, captured.event.direction);
+    const selected = forDirection(
+      input.rules,
+      captured.event.direction,
+      input.outOfScope ?? [],
+    );
     if (selected.rules.length === 0) {
       return composeDecision(captured.context, input.rules, {
         findings: selected.skipped,
@@ -860,19 +869,20 @@ function checkText(
   }).pipe(Effect.withSpan("TextPolicy.check"));
 }
 
+/** The rules asked about a message in `direction`, and those that do not apply to it. */
 function forDirection(
   rules: readonly TextRule[],
   direction: CapturedInput["event"]["direction"],
+  outOfScope: readonly string[] = [],
 ) {
+  const applies = (rule: TextRule) =>
+    (rule.applies === "both" || rule.applies === direction) &&
+    !outOfScope.includes(rule.id);
   return Object.freeze({
-    rules: Object.freeze(
-      rules.filter(
-        (rule) => rule.applies === "both" || rule.applies === direction,
-      ),
-    ),
+    rules: Object.freeze(rules.filter((rule) => applies(rule))),
     skipped: Object.freeze(
       rules
-        .filter((rule) => rule.applies !== "both" && rule.applies !== direction)
+        .filter((rule) => !applies(rule))
         .map(
           (rule): PolicyFinding => ({
             ruleId: rule.id,

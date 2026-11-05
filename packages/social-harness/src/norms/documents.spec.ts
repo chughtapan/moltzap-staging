@@ -34,7 +34,7 @@ describe("readNorm", () => {
         (content request
           (field shift :type select :choices (morning evening) :description "The shift.")
           (field note :type string :max-length 80 :optional true))
-        (rule "Ask a day ahead.")
+        (rule :act request "Ask a day ahead.")
       `),
     );
     expect(norm).toMatchObject({
@@ -56,7 +56,7 @@ describe("readNorm", () => {
           required: ["shift"],
         },
       },
-      rules: ["Ask a day ahead."],
+      rules: [{ acts: ["request"], text: "Ask a day ahead." }],
     });
   });
 
@@ -92,6 +92,15 @@ describe("readNorm", () => {
     {
       what: "an unknown form",
       source: '(norm a :description "A.") (permit inform)',
+    },
+    {
+      what: "a rule tied to no act",
+      source: '(norm a :description "A.") (content inform) (rule "Be brief.")',
+    },
+    {
+      what: "a rule governing an act without a form",
+      source:
+        '(norm a :description "A.") (content inform) (rule :act request "Be brief.")',
     },
   ])("refuses a document with $what", ({ source }) => {
     expect(Either.getOrThrow(Either.flip(readNorm(source)))).toBeInstanceOf(

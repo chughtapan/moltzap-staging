@@ -14,7 +14,7 @@ import { compareAscii } from "../encoding/identifier.js";
 import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
 import { TextRule } from "../firewall/rules.js";
 import { type Norm, readNorm } from "./documents.js";
-import { normMatchers } from "./matchers.js";
+import { normMatchers, ruleMatcher } from "./matchers.js";
 
 /** The settings' copy of a norms directory: each document's text and the rule file. */
 export const installedNorms = exactStruct({
@@ -115,12 +115,12 @@ export function heldNorms(
 /**
  * The English rules of the norms a daemon holds, as fixed firewall text rules.
  * The daemon adds them to its message policy, so its decision provider judges
- * every act of a norm, its agent's and its peers', against that norm's rules.
- * A rule's id is the norm's name, `-rule-` and its number, and its text names
- * the acts it governs, so other messages conform. A breach refuses the agent's
- * act, or withholds a peer's act and replies with the rule. When the provider
- * is unsure, the agent's act is refused so it can revise it, and a peer's act
- * is admitted with the rule as a reminder.
+ * each act a rule governs, its agent's and its peers', and is not asked about
+ * other messages: the rule's `match` names the norm matcher for its acts. A
+ * rule's id is the norm's name, `-rule-` and its number. A breach refuses the
+ * agent's act, or withholds a peer's act and replies with the rule. When the
+ * provider is unsure, the agent's act is refused so it can revise it, and a
+ * peer's act is admitted with the rule as a reminder.
  */
 export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
   return norms.flatMap((norm) =>
@@ -130,14 +130,15 @@ export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
           id: `${norm.name}-rule-${index + 1}`,
           applies: "both",
           action: "reply",
+          match: ruleMatcher(norm.name, index + 1),
           text: [
-            `This rule governs only acts of the ${norm.name} norm, written as (performative :ontology ${norm.name} ...); any other message conforms.`,
-            "Judge from this conversation and the owner's facts: without evidence that an act breaks the rule, it conforms.",
-            rule,
+            `For a ${rule.acts.join(" or ")} act of the ${norm.name} norm, written as (${rule.acts[0]} :ontology ${norm.name} ...):`,
+            rule.text,
+            "Judge from this conversation and the owner's facts: without evidence that the act breaks the rule, it conforms.",
           ].join(" "),
-          guidance: `This act may break the ${norm.name} norm's rule: ${rule}`,
+          guidance: `This act may break the ${norm.name} norm's rule: ${rule.text}`,
           feedback: {
-            text: `Check this act against the ${norm.name} norm's rule: ${rule}`,
+            text: `Check this act against the ${norm.name} norm's rule: ${rule.text}`,
           },
         }),
     ),
