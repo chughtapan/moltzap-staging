@@ -67,7 +67,7 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
          :initiates offered :terminates (offer-due decision-due checked-back declined)
   (field option1 :type string :max-length 80 :description "A slot the professor offers.")
   (field option2 :type string :max-length 80 :description "A second slot."))
-(rule :act propose "Each offered option is a slot within the posted office hours that is not already booked.")
+(rule :act request "The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.")
 ```
 
 - `(norm ...)` names the norm, the roles of its initiator and participants, and
@@ -96,8 +96,7 @@ A daemon adds each `(rule ...)` of a norm it holds to its
 for the norm and the rule's position, such as `office-hours-rule-1`, and
 scoped to the acts the rule names. The policy's decision provider judges each
 of those acts against the rule, the agent's own and its peers', and is not
-asked about other messages. Each party judges with its owner's facts, such as
-the professor's calendar.
+asked about other messages. Each party judges with its own owner's facts.
 
 | Judgment | The agent's own act | A peer's act |
 | --- | --- | --- |

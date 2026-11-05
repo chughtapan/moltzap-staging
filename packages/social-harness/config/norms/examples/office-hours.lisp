@@ -71,4 +71,3 @@
 (content cancel)
 
 (rule :act request "The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.")
-(rule :act propose "Each offered option is a slot within the posted office hours that is not already booked.")
