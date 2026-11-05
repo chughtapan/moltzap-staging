@@ -7,7 +7,7 @@ NanoClaw channel adapter and integration canary. Publication follows `docs/refer
 This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
 or another adapter. NanoClaw creates it through the native channel registry,
-and it connects the stock MCP client to the configured loopback MCP URL. It
+and it connects the stock MCP client to the configured MCP URL. It
 does not acquire a daemon, profile, Registry admission material, signing key,
 raw Router credential, network client, or local store.
 

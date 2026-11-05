@@ -111,6 +111,7 @@ beforeEach(async () => {
   boundary.acquire.mockReset();
   vi.stubEnv("SHARNESS_MCP_URL", "http://127.0.0.1:8321/mcp");
   vi.stubEnv("SHARNESS_MCP_CREDENTIAL_FILE", credentialFile);
+  vi.stubEnv("SHARNESS_MCP_ALLOW_HTTP", undefined);
   await import("./sharness.js");
   const entry = boundary.register.mock.calls[0];
   if (entry === undefined) {
@@ -126,6 +127,23 @@ afterEach(async () => {
 });
 
 describe("NanoClaw lifecycle", () => {
+  it.each([
+    { value: undefined, expected: false },
+    { value: "false", expected: false },
+    { value: "true", expected: true },
+  ])(
+    "passes the host HTTP permission $value to MCP",
+    async ({ value, expected }) => {
+      vi.stubEnv("SHARNESS_MCP_ALLOW_HTTP", value);
+      connection();
+      const current = await channel();
+      await current.setup(host());
+      expect(boundary.acquire).toHaveBeenCalledWith(
+        expect.objectContaining({ allowHttp: expected }),
+        expect.anything(),
+      );
+    },
+  );
   it("stays disabled without a configured daemon", async () => {
     vi.stubEnv("SHARNESS_MCP_URL", undefined);
     expect(await registration.factory()).toBeNull();

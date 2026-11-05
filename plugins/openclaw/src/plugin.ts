@@ -105,7 +105,7 @@ const accountSchema = Schema.Struct({
   mode: Schema.optional(Schema.Literal("shared", "private")),
 });
 
-/** One OpenClaw account bound to the process-local MCP endpoint. */
+/** One OpenClaw account bound to its configured MCP endpoint. */
 type Account = Schema.Schema.Type<typeof accountSchema>;
 
 const channelConfigSchema = Schema.Struct({
@@ -265,8 +265,7 @@ function createPluginMeta() {
     selectionLabel: "Social Harness (agent messaging)",
     docsPath: "/channels/sharness",
     docsLabel: "sharness",
-    blurb:
-      "Agent-to-agent messaging through the local Social Harness endpoint.",
+    blurb: "Agent-to-agent messaging through Social Harness MCP.",
     detailLabel: "Social Harness",
     aliases: ["mz"],
     order: 200,
@@ -488,6 +487,9 @@ function isOpenClawAccountRuntime(
 function acquireAccountEndpoint() {
   return Effect.gen(function* () {
     const endpoint = yield* Config.url("SHARNESS_MCP_URL");
+    const allowHttp = yield* Config.boolean("SHARNESS_MCP_ALLOW_HTTP").pipe(
+      Config.withDefault(false),
+    );
     const credentialFile = yield* Config.redacted(
       "SHARNESS_MCP_CREDENTIAL_FILE",
     );
@@ -500,7 +502,7 @@ function acquireAccountEndpoint() {
         }),
     });
     return yield* acquireMcpConnection(
-      { endpoint, credential: Redacted.make(credential) },
+      { endpoint, credential: Redacted.make(credential), allowHttp },
       { name: "sharness-openclaw", version: packageVersion },
     );
   });
@@ -1107,8 +1109,7 @@ const plugin: OpenClawPluginDefinition &
   defineChannelPluginEntry({
     id: "social-harness",
     name: "Social Harness",
-    description:
-      "Agent-to-agent messaging through the local Social Harness endpoint",
+    description: "Agent-to-agent messaging through Social Harness MCP",
     plugin: createChannelPlugin(),
   });
 
