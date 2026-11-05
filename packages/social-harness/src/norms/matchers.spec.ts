@@ -752,12 +752,16 @@ describe("office hours: holds", () => {
 });
 
 describe("a norm rule's acts", () => {
-  it("matches only the acts its rule governs, in either direction", () =>
+  const matchers = normMatchers(
+    norms(...builtIn, "examples/office-hours.lisp"),
+  );
+  const pair = [alice, bob];
+  const topicRule = ruleMatcher("office-hours", 1);
+  const officeHours =
+    '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")';
+
+  it("matches only the acts its rule governs", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms(...builtIn, "examples/office-hours.lisp"),
-      );
-      const pair = [alice, bob];
       const request = yield* from(
         bob,
         pair,
@@ -768,17 +772,73 @@ describe("a norm rule's acts", () => {
         pair,
         '(reject-proposal :ontology office-hours :reason "Not Tuesday.")',
       );
-      const topicRule = ruleMatcher("office-hours", 1);
 
       expect(yield* check(topicRule, matchers, outgoing(request))).toEqual({
         matched: true,
       });
-      expect(
-        yield* check(topicRule, matchers, incoming(alice, request)),
-      ).toEqual({ matched: true });
       expect(yield* check(topicRule, matchers, outgoing(decline))).toEqual({
         matched: false,
       });
+    }));
+
+  it("answers a peer's act it governs with not-understood naming the rule", () =>
+    Effect.gen(function* () {
+      const request = yield* from(
+        bob,
+        pair,
+        '(request :ontology office-hours :topic "Project scope. I am free on Monday.")',
+      );
+
+      const result = yield* check(
+        topicRule,
+        matchers,
+        incoming(alice, request),
+      );
+
+      expect(replyOf(result)).toMatchObject({
+        kind: "act",
+        act: {
+          performative: "not-understood",
+          ontology: "feedback",
+          inReplyTo: request.msgId,
+          fields: {
+            reason: "rule-violation",
+            error:
+              "office-hours-rule-1: The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.",
+          },
+        },
+      });
+    }));
+
+  it("lets a peer resend an act after answering it with not-understood", () =>
+    Effect.gen(function* () {
+      const agreed = [
+        yield* from(bob, pair, officeHours),
+        yield* from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
+      ];
+      const breach = yield* from(
+        bob,
+        pair,
+        '(request :ontology office-hours :topic "Project scope. I am free on Monday.")',
+      );
+      const answer = yield* check(topicRule, matchers, incoming(alice, breach));
+      const reply =
+        answer.matched && answer.reply !== undefined
+          ? yield* from(alice, pair, answer.reply)
+          : yield* Effect.dieMessage("the rule gave no reply");
+      const resent = yield* from(
+        bob,
+        pair,
+        '(request :ontology office-hours :topic "Project scope")',
+      );
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          incoming(alice, resent, [...agreed, breach, reply]),
+        ),
+      ).toEqual({ matched: false });
     }));
 });
 

@@ -783,31 +783,6 @@ describe("Firewall rule chain actions", () => {
 });
 
 describe("Firewall text rules scoped by a matcher", () => {
-  it("asks about a scoped text rule only for messages its matcher matches", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-      const chain: Chain = { rules: [], matchers: { never } };
-      yield* withFirewall(
-        ":memory:",
-        fixture,
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-
-            expect(decision.kind).toBe("allowed");
-          }),
-        (agentKey) =>
-          Firewall.layer(
-            agentKey,
-            policy([], [{ ...privacy, match: "never" }]),
-            chain,
-          ),
-      );
-    }));
-
   it("refuses a draft that breaks a scoped text rule its matcher matches", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
@@ -839,7 +814,7 @@ describe("Firewall text rules scoped by a matcher", () => {
       );
     }));
 
-  it("lists only the rules it asked about as a decision's checked rules", () =>
+  it("does not ask about a scoped rule for a message its matcher does not match", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
       const plain = {
@@ -858,6 +833,7 @@ describe("Firewall text rules scoped by a matcher", () => {
             );
             yield* decision.save;
 
+            expect(decision.kind).toBe("allowed");
             expect((yield* firewall.readDecisions({})).decisions).toMatchObject(
               [{ checkedRuleIds: [plain.id] }, { checkedRuleIds: [plain.id] }],
             );
@@ -867,6 +843,40 @@ describe("Firewall text rules scoped by a matcher", () => {
             agentKey,
             policy([], [{ ...privacy, match: "never" }, plain]),
             { rules: [], matchers: { never } },
+          ),
+      );
+    }));
+
+  it("replies with its matcher's reply when a scoped reply rule withholds a message", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const answer =
+        "(not-understood :ontology feedback :reason rule-violation)";
+      const chain: Chain = {
+        rules: [],
+        matchers: {
+          answering: {
+            match: () => Effect.succeed({ matched: true, reply: answer }),
+          },
+        },
+      };
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkIncoming(
+              yield* incoming(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({ kind: "withheld", reply: answer });
+          }),
+        (agentKey) =>
+          Firewall.layer(
+            agentKey,
+            policy([], [{ ...privacy, action: "reply", match: "answering" }]),
+            chain,
           ),
       );
     }));

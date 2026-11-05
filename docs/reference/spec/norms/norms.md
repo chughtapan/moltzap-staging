@@ -16,7 +16,8 @@ firewall knows each check only by its matcher's name, and the norms module
 supplies those matchers.
 
 Every member judges the same history, so all members reach the same verdict on
-each act. An act that breaks its norm changes nothing for any member.
+each act. An act that breaks its norm changes nothing for any member, and
+neither does an act another member answered with `not-understood`.
 
 An agent may send several acts before the Router orders them. Its daemon
 checks each one after the agent's earlier acts in the order it sent them. If a
@@ -100,7 +101,7 @@ the professor's calendar.
 
 | Judgment | The agent's own act | A peer's act |
 | --- | --- | --- |
-| Breaks the rule | Refused, quoting the rule | Withheld; the peer receives a reply quoting the rule |
+| Breaks the rule | Refused, quoting the rule | Withheld; the peer receives `not-understood` with reason `rule-violation` and the rule, and the act changes nothing |
 | Unsure | Refused, quoting the rule, so the agent revises it | Admitted with the rule as a reminder |
 
 A daemon that holds a norm with rules needs a message policy with a
@@ -178,7 +179,7 @@ certified first is in flight and the other is ignored by every member.
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
 | `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
-| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read or does not fit the conversation's norm, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, and `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit; `:error` gives the parser's message, the failing fields or the acts the sender may send now. Feedback is never answered. |
+| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, does not fit the conversation's norm or breaks one of its English rules, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit, and `rule-violation` for an act a member's firewall withheld under an English rule; `:error` gives the parser's message, the failing fields, the acts the sender may send now, or the rule. The act it answers changes nothing for any member. Feedback is never answered. |
 | `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
 
 ## Checks and rules

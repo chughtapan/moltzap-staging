@@ -13,12 +13,13 @@
  *
  * The firewall's rules decide what each fact does to the message. Each norm
  * rule also has a matcher that matches the acts it governs, which scopes the
- * firewall text rule made from it.
+ * firewall text rule made from it. For a peer's act its reply is the
+ * `not-understood` the daemon sends when that rule withholds the act.
  */
 
 import { Effect, Option } from "effect";
 import type { Matcher, MatchInput, MatchResult } from "../firewall/chain.js";
-import type { Norm } from "./documents.js";
+import type { Norm, NormRule } from "./documents.js";
 import {
   type AnswerFieldFailures,
   answerFieldsText,
@@ -101,7 +102,14 @@ export function normMatchers(
       norms.flatMap((norm) =>
         norm.rules.map((rule, index) => [
           ruleMatcher(norm.name, index + 1),
-          governing(norm.name, rule.acts),
+          {
+            match: match((input, found) =>
+              governed(normRuleId(norm.name, index + 1), norm.name, rule, {
+                input,
+                analysis: found,
+              }),
+            ),
+          },
         ]),
       ),
     ),
@@ -110,23 +118,40 @@ export function normMatchers(
 
 /** The name of the matcher for the acts a norm's `index`th rule governs, counted from 1. */
 export function ruleMatcher(norm: string, index: number): string {
-  return `norms.rule.${norm}-rule-${index}`;
+  return `norms.rule.${normRuleId(norm, index)}`;
 }
 
-/** Matches an act of `norm` whose performative is one of `acts`, in either direction. */
-function governing(norm: string, acts: readonly string[]): Matcher {
-  return {
-    match: (input) =>
-      Effect.sync(() => {
-        const text = messageText(input.message);
-        const reading = text === undefined ? undefined : readText(text);
-        return reading?.kind === "act" &&
-          reading.act.ontology === norm &&
-          acts.includes(reading.act.performative)
-          ? { matched: true }
-          : unmatched;
-      }),
-  };
+/** The id of a norm's `index`th English rule as a firewall text rule, counted from 1. */
+export function normRuleId(norm: string, index: number): string {
+  return `${norm}-rule-${index}`;
+}
+
+/**
+ * An act of `norm` whose performative the rule governs, in either direction.
+ * For a peer's act the reply is `not-understood` naming the rule, which
+ * voids the act for every member when the rule withholds it.
+ */
+function governed(
+  ruleId: string,
+  norm: string,
+  rule: NormRule,
+  { input, analysis }: { input: MatchInput; analysis: Analysis },
+): Matched {
+  const { reading } = analysis;
+  if (
+    reading.kind !== "act" ||
+    reading.act.ontology !== norm ||
+    !rule.acts.includes(reading.act.performative)
+  ) {
+    return unmatched;
+  }
+  const reply = notUnderstood(
+    input,
+    analysis,
+    "rule-violation",
+    `${ruleId}: ${rule.text}`,
+  );
+  return { matched: true, ...(reply === undefined ? {} : { reply }) };
 }
 
 type Matched = MatchResult;

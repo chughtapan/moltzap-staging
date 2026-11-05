@@ -70,7 +70,7 @@ export interface Norm {
 }
 
 /** One English rule and the performatives of the acts it governs. */
-interface NormRule {
+export interface NormRule {
   readonly acts: readonly string[];
   readonly text: string;
 }

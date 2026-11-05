@@ -40,6 +40,7 @@ import {
   evaluateChain,
   type FirewallEvidence,
   type MatchInput,
+  type MatchResult,
   validateChain,
 } from "./chain.js";
 import {
@@ -464,6 +465,8 @@ interface RuleCheckInput {
   readonly agents: readonly AgentCard[];
   /** Text rules whose matcher does not match this message, so the provider is not asked about them. */
   readonly outOfScope: readonly string[];
+  /** The reply each matching rule's matcher gives, which a `reply` rule sends in place of its feedback. */
+  readonly replies: Readonly<Record<string, string>>;
 }
 
 /** A refused message's reason, the chain rule that decided, and what its sender is told. */
@@ -852,14 +855,15 @@ function assess(
           ...candidate.evidence.gaps,
         ],
       };
+      const scope = yield* ruleScopes(policy.active.rules, matchers, {
+        direction,
+        message: candidate.value,
+        evidence: candidate.evidence,
+        self,
+      });
       inputs.push({
         direction,
-        outOfScope: yield* outOfScopeRules(policy.active.rules, matchers, {
-          direction,
-          message: candidate.value,
-          evidence: candidate.evidence,
-          self,
-        }),
+        ...scope,
         canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
         message: {
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
@@ -887,15 +891,17 @@ function assess(
 }
 
 /**
- * The text rules whose matcher does not match the message. A rule whose
- * matcher is missing or fails stays in scope, so it is never skipped for want
- * of its check.
+ * Each text rule's scope for the message: the rules whose matcher does not
+ * match it, and the reply each matching matcher gives. A rule whose matcher is
+ * missing or fails stays in scope, so it is never skipped for want of its
+ * check.
  */
-function outOfScopeRules(
+function ruleScopes(
   rules: readonly TextRule[],
   matchers: Chain["matchers"],
   input: MatchInput,
 ) {
+  const inScope: MatchResult = { matched: true };
   return Effect.forEach(
     rules,
     (rule) => {
@@ -903,15 +909,34 @@ function outOfScopeRules(
         rule.match !== undefined && Object.hasOwn(matchers, rule.match)
           ? matchers[rule.match]
           : undefined;
-      return matcher === undefined
-        ? Effect.succeed([])
-        : matcher.match(input).pipe(
-            Effect.map((result) => (result.matched ? [] : [rule.id])),
-            Effect.catchAllDefect(() => Effect.succeed([])),
-          );
+      return (
+        matcher === undefined
+          ? Effect.succeed(inScope)
+          : matcher
+              .match(input)
+              .pipe(Effect.catchAllDefect(() => Effect.succeed(inScope)))
+      ).pipe(
+        Effect.map((result): readonly [string, MatchResult] => [
+          rule.id,
+          result,
+        ]),
+      );
     },
     { concurrency: 1 },
-  ).pipe(Effect.map((ids) => ids.flat()));
+  ).pipe(
+    Effect.map((scoped) => ({
+      outOfScope: scoped.flatMap(([id, result]) =>
+        result.matched ? [] : [id],
+      ),
+      replies: Object.fromEntries(
+        scoped.flatMap(([id, result]) =>
+          result.matched && result.reply !== undefined
+            ? [[id, result.reply]]
+            : [],
+        ),
+      ),
+    })),
+  );
 }
 
 function assessmentText(value: Outgoing): AssessmentText {
@@ -1310,7 +1335,9 @@ function assessRule(
       } satisfies Decision;
     }
     const reply =
-      input.direction === "incoming" ? textReply(active, result) : "";
+      input.direction === "incoming"
+        ? textReply(active, result, requested.replies)
+        : "";
     return {
       kind: "refused",
       completion,
@@ -1329,10 +1356,17 @@ function assessRule(
 }
 
 /**
- * The registered feedback of each violated rule whose action is `reply`, one
- * per line. Holds reply nothing: the sender broke no settled rule.
+ * What the sender of a withheld message is told. The first violated `reply`
+ * rule whose matcher gave a reply sends that reply, such as a norm's
+ * `not-understood`; otherwise each violated `reply` rule's registered
+ * feedback, one per line. Holds reply nothing: the sender broke no settled
+ * rule.
  */
-function textReply(active: ActiveRules, result: FirewallCheck): string {
+function textReply(
+  active: ActiveRules,
+  result: FirewallCheck,
+  replies: Readonly<Record<string, string>>,
+): string {
   if (result.reason !== "rule-violation") {
     return "";
   }
@@ -1341,13 +1375,16 @@ function textReply(active: ActiveRules, result: FirewallCheck): string {
       (rule) => rule.ruleId,
     ),
   );
-  return active.rules
+  const replying = active.rules.filter(
+    (rule) => violated.has(rule.id) && rule.action === "reply",
+  );
+  const matched = replying.find((rule) => Object.hasOwn(replies, rule.id));
+  if (matched !== undefined) {
+    return replies[matched.id] ?? "";
+  }
+  return replying
     .flatMap((rule) =>
-      violated.has(rule.id) &&
-      rule.action === "reply" &&
-      rule.feedback !== undefined
-        ? [rule.feedback.text]
-        : [],
+      rule.feedback === undefined ? [] : [rule.feedback.text],
     )
     .join("\n");
 }

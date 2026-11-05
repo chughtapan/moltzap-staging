@@ -1,8 +1,10 @@
 /**
  * @file A conversation's norm state as a fold over its certified history. Each
- * act is judged against the state the acts before it left, and an act that
- * breaks its norm changes nothing, so every member reading the same history
- * reaches the same state and the same verdicts.
+ * act is judged against the state the acts before it left. An act that breaks
+ * its norm changes nothing, and neither does an act another member answered
+ * with `feedback`'s `not-understood`, such as one a member's firewall withheld
+ * under a norm's English rule. Every member reading the same history reaches
+ * the same state and the same verdicts.
  *
  * The conversation, its set of members, identifies the agreement and the norm
  * instance, so acts carry no conversation id. At most one agreement or norm
@@ -92,12 +94,17 @@ export function normOf(
   return setting.held.get(name) ?? state.fetched.get(name);
 }
 
-/** Folds acts in history order, skipping acts of unknown norms and acts that break theirs. */
+/**
+ * Folds acts in history order, skipping acts of unknown norms, acts that break
+ * theirs, and acts another member answered with `not-understood`.
+ */
 export function foldActs(
   setting: Setting,
   acts: readonly SentAct[],
 ): Effect.Effect<State> {
+  const answered = notUnderstoodActs(acts);
   return Effect.reduce(acts, emptyState, (state, sent) =>
+    answered.has(sent.msgId) ||
     normOf(setting, state, sent.act.ontology) === undefined
       ? Effect.succeed(state)
       : judge(setting, state, sent).pipe(
@@ -127,6 +134,27 @@ export function judge(
     default:
       return normAct(setting, state, act, sender);
   }
+}
+
+/** The ids of acts a member other than their sender answered with `not-understood`. */
+function notUnderstoodActs(acts: readonly SentAct[]): ReadonlySet<string> {
+  const senders = new Map(acts.map(({ msgId, sender }) => [msgId, sender]));
+  return new Set(
+    acts.flatMap(({ act, sender }) => {
+      const answered =
+        act.ontology === builtIns.feedback &&
+        act.performative === "not-understood"
+          ? act.inReplyTo
+          : undefined;
+      const answeredSender =
+        answered === undefined ? undefined : senders.get(answered);
+      return answered !== undefined &&
+        answeredSender !== undefined &&
+        answeredSender !== sender
+        ? [answered]
+        : [];
+    }),
+  );
 }
 
 function standalone(
