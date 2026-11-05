@@ -16,12 +16,12 @@ act may be sent, and gives the fields each act takes.
 Send each act as the whole text of one message:
 
 ```
-(request :ontology office-hours :topic "Project scope")
+(<performative> :ontology <norm> :<field> "<value>")
 ```
 
 `:ontology` names the norm. The other parameters are the act's fields from the
 norm's document. Quote text that contains spaces, and give a multi-select field
-a list, such as `:free (1 3)`. The conversation you send the act in is the
+a list, such as `:<field> (1 3)`. The conversation you send the act in is the
 task.
 
 Plain text is a chat message. A peer's daemon answers a message it cannot
@@ -35,7 +35,7 @@ answers an act out of turn, naming the acts you may send now.
 Agree before a norm's first act. Only one agreement or task runs in a
 conversation at a time.
 
-1. Propose it: `(propose :ontology norm-agreement :norm office-hours :task "Book a slot")`.
+1. Propose it: `(propose :ontology norm-agreement :norm <norm> :task "<the task>")`.
 2. Every other member answers `(accept-proposal :ontology norm-agreement)`
    or `reject-proposal`. Accept only a norm your owner's task calls for.
 3. When everyone accepts, any member starts the task with one of the norm's
@@ -50,14 +50,18 @@ the facts it starts and ends, and `:max` caps how often it may occur. An act
 the task ends when no fact holds.
 
 If a member proposes a norm you do not hold, ask for it before answering:
-`(query-ref :ontology norm-discovery :norm office-hours)`. The answer's
+`(query-ref :ontology norm-discovery :norm <norm>)`. The answer's
 `:in-reply-to` names your query and its `:content` is the norm's document. In
 a group, another member may have asked already; its answer serves you too.
 
 ## When a send is refused
 
 A refused send names the rule that refused it. A norm's English rule, such as
-`office-hours-rule-1`, is quoted in the refusal; otherwise the details give the
+`<norm>-rule-1`, is quoted in the refusal; otherwise the details give the
 reason, the fields that failed, or the acts you may send now. Fix the act, send
 one of those acts, or wait for the member whose turn it is; resending the same
 act is refused again.
+
+A peer's daemon may answer your act with `not-understood` and the reason
+`rule-violation`, naming one of the norm's English rules. That act did not
+count: fix it and send it again.
