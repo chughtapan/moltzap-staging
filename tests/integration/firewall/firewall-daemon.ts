@@ -4,12 +4,10 @@
  *
  * The fixture composes domain services with a text policy and deterministic
  * provider, so a trace decides each check by the text it sends: the policy
- * rejects an incoming text that carries
- * `[in]` and an outgoing text that carries `[out]`, asks the agent to
- * respond to an incoming text that carries `[guide]`, and leaves its
- * judgment of a text that carries `[unsure]` unsettled in either direction,
- * beside a settled `none` expectation for an outgoing one.
- * Every other `SHARNESS_*` setting is read as `sharnessd` reads it.
+ * rejects an incoming text that carries `[in]` and an outgoing text that
+ * carries `[out]`, and is unsure about a text that carries `[unsure]` in
+ * either direction, which refuses it outgoing and admits it incoming with a
+ * reminder. Every other `SHARNESS_*` setting is read as `sharnessd` reads it.
  */
 
 import type {
@@ -24,8 +22,6 @@ import { runPolicyRuntime } from "./policy-runtime.js";
 const INCOMING_HOLD = "[in]";
 /** The marker an outgoing text carries to be refused. */
 const OUTGOING_HOLD = "[out]";
-/** The marker an incoming text carries to draw guidance. */
-const GUIDE = "[guide]";
 /** The marker a text carries for its judgment to be left unsettled. */
 const UNSURE = "[unsure]";
 
@@ -43,7 +39,6 @@ const provider: DecisionProvider = {
 function markedResponse(request: DecisionRequest) {
   const state = Schema.decodeUnknownSync(stateSchema)(request.state);
   const text = state.candidate.text ?? "";
-  const guided = state.direction === "incoming" && text.includes(GUIDE);
   const held = text.includes(
     state.direction === "incoming" ? INCOMING_HOLD : OUTGOING_HOLD,
   );
@@ -55,29 +50,16 @@ function markedResponse(request: DecisionRequest) {
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => {
         const marked = question.ruleId === "marked";
-        let selected = "none";
-        if (question.purpose === "subject") {
-          selected = guided && marked ? "relevant" : "irrelevant";
-        } else if (request.stage === "compliance") {
-          selected = held && marked ? "violation" : "compliant";
-        } else if (guided && marked) {
-          selected = "required";
-        }
-        const uncertain =
-          marked && request.stage === "compliance" && text.includes(UNSURE);
-        const alternatives = Object.keys(question.criteria);
-        const selectedProbability = uncertain ? 0.4 : 1;
-        const otherProbability = uncertain
-          ? 0.6 / (alternatives.length - 1)
-          : 0;
+        const selected = held && marked ? "violation" : "compliant";
+        const probability = marked && text.includes(UNSURE) ? 0.6 : 1;
         return [
           id,
           {
             choice: selected,
             probabilities: Object.fromEntries(
-              alternatives.map((choice) => [
+              Object.keys(question.criteria).map((choice) => [
                 choice,
-                choice === selected ? selectedProbability : otherProbability,
+                choice === selected ? probability : 1 - probability,
               ]),
             ),
           },
@@ -100,13 +82,13 @@ runPolicyRuntime({
       {
         id: "marked",
         applies: "both",
-        text: "Reject incoming messages containing [in] and outgoing messages containing [out]. Respond to incoming messages containing [guide].",
-        guidance: "Respond to the marked message.",
+        text: "Reject incoming messages containing [in] and outgoing messages containing [out].",
+        guidance: "The marked message may break the rule.",
         feedback: { text: "Remove the marked text." },
       },
     ],
     settings: {
-      minimumProbability: 0.5,
+      minimumProbability: 0.8,
       maximumRequestBytes: 1_000_000,
       timeoutMilliseconds: 8_000,
     },

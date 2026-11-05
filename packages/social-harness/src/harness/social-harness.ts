@@ -477,9 +477,6 @@ function makeHarness<R>(
             return {
               id: "kind" in value ? value.operationId : value.msgId,
               address: destination.address,
-              ...(decision.guidance === undefined
-                ? {}
-                : { guidance: decision.guidance }),
             };
           }).pipe(
             Effect.catchTag("InboxError", () =>

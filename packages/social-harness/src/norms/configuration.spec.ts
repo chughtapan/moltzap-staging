@@ -110,7 +110,7 @@ describe("loadNorms", () => {
 });
 
 describe("normTextRules", () => {
-  it("turns each English rule into a fixed rule over the agent's own acts of its norm", () =>
+  it("turns each English rule into a fixed rule over every act of its norm, which replies to a peer's breach", () =>
     Effect.sync(() => {
       const norm = Either.getOrThrow(
         readNorm(`
@@ -128,7 +128,7 @@ describe("normTextRules", () => {
         "swap-rule-1",
         "swap-rule-2",
       ]);
-      expect(first?.applies).toBe("outgoing");
+      expect(first).toMatchObject({ applies: "both", action: "reply" });
       expect(first?.text).toContain("Ask for a swap a day ahead.");
       expect(first?.text).toContain(":ontology swap");
       expect(second?.feedback?.text).toContain(

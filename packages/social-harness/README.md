@@ -42,7 +42,7 @@ Certification continues in the background. A representative result is:
 ```
 
 On Bob's daemon, call `read_inbox` with no arguments to read admitted messages
-and any local guidance. Reading marks returned items delivered. Their saved
+and any firewall reminders. Reading marks returned items delivered. Their saved
 content remains available through history and event lookup.
 
 Each call to `send_message` creates new work. Retrying a send whose outcome

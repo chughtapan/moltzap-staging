@@ -298,11 +298,7 @@ function answer(request: DecisionRequest) {
     answers: Object.fromEntries(
       Object.entries(request.questions).map(([id, question]) => {
         const selected =
-          request.stage === "compliance" && question.ruleId === blockedRule.id
-            ? "violation"
-            : (["compliant", "autonomous", "none", "relevant"].find((choice) =>
-                Object.hasOwn(question.criteria, choice),
-              ) ?? "unresolved");
+          question.ruleId === blockedRule.id ? "violation" : "compliant";
         return [
           id,
           {

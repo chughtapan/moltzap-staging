@@ -183,8 +183,7 @@ For the `agent:bob` send, the expected tool result is:
 { "ok": true, "to": "agent:bob" }
 ```
 
-If the result includes firewall guidance, follow its instructions before
-continuing. If the tool refuses a send, use the reason it reports to correct
+If the tool refuses a send, use the reason and rule it reports to revise
 the request. The [message-text reference](/reference/spec/host/adapters#message-text)
 defines multicast, gather, all_gather, and answer formats and their limits.
 

@@ -433,7 +433,7 @@ export const toolDefinitions = {
   },
   read_inbox: {
     description:
-      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered. Pass wait to wait that many seconds for an item when none is pending; the read returns as soon as one arrives, or empty when the wait ends. Use read_event to retrieve a known item after delivery.",
+      "Read pending inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Reading marks returned items delivered. Pass wait to wait that many seconds for an item when none is pending; the read returns as soon as one arrives, or empty when the wait ends. Use read_event to retrieve a known item after delivery.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -444,7 +444,7 @@ export const toolDefinitions = {
   },
   read_event: {
     description:
-      "Retrieve a saved inbox item and its advice by eventId, including after delivery or restart. This leaves pending delivery unchanged.",
+      "Retrieve a saved inbox item and any firewall reminder by eventId, including after delivery or restart. This leaves pending delivery unchanged.",
     input: readEventRequestSchema,
     output: readEventResultSchema,
     annotations: read,

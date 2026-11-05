@@ -4,8 +4,8 @@
  *
  * Every other daemon runs `firewall-daemon.ts`, whose policy withholds an
  * incoming text carrying `[in]`, refuses an outgoing text carrying `[out]`,
- * asks for a response to an incoming text carrying `[guide]`, and leaves its
- * judgment of a text carrying `[unsure]` unsettled. Each endpoint
+ * and is unsure about a text carrying `[unsure]`: it refuses such a text
+ * outgoing and admits it incoming with a reminder. Each endpoint
  * checks with its own firewall: a requester checks the question it sends and
  * the answers it receives, a member checks the question it is asked.
  */
@@ -147,8 +147,8 @@ const gatherBehavior = Effect.gen(function* () {
   yield* expectOutgoingGatherRefused(scenario.requester, scenario.members);
   yield* expectIncomingGatherWithheld(scenario);
   yield* expectGatherAnswerWithheld(scenario);
-  yield* expectGuidedGatherAdvice(scenario);
-  yield* expectUnsettledGatherAdvice(scenario);
+  yield* expectUnsureAnswerReminder(scenario);
+  yield* expectUnsureQuestionRefused(scenario.requester, scenario.members);
 }).pipe(Effect.scoped);
 
 /**
@@ -274,114 +274,75 @@ function expectGatherAnswerWithheld({
   });
 }
 
-/** A strict requester admits an answer that asks for a reply, with the advice its check gave. */
-function expectGuidedGatherAdvice({ requester, open, strict }: GatherScenario) {
+const uncertainAdvice = {
+  ruleId: "marked",
+  uncertain: { choice: "compliant", probability: 0.6 },
+  instruction: "The marked message may break the rule.",
+};
+
+/** A strict requester admits an answer its firewall is unsure about, with a reminder naming the rule. */
+function expectUnsureAnswerReminder({
+  requester,
+  open,
+  strict,
+}: GatherScenario) {
   return Effect.gen(function* () {
-    const advised = yield* collecting(strict, "gather", [open, requester], {
+    const asked = yield* collecting(strict, "gather", [open, requester], {
       question: "Which day works for the retro?",
       deadline: ANSWERED_DEADLINE_SECONDS,
     });
     expect(yield* nextItem(open)).toMatchObject({
-      message: { operation: { operationId: advised.id } },
+      message: { operation: { operationId: asked.id } },
     });
     expect(yield* nextItem(requester)).toMatchObject({
-      message: { operation: { operationId: advised.id } },
+      message: { operation: { operationId: asked.id } },
     });
-    yield* accept(open, strict.address, advised.id, { slot: "tue" });
-    yield* accept(requester, strict.address, advised.id, {
-      slot: "mon",
-      note: "[guide] reply to me",
+    yield* accept(open, strict.address, asked.id, {
+      slot: "tue",
+      note: "[unsure] maybe",
     });
+    yield* accept(requester, strict.address, asked.id, { slot: "mon" });
     const result = yield* Queue.take(strict.inbox);
 
     expect(result.item).toMatchObject({
       kind: "collectiveResult",
-      operationId: advised.id,
+      operationId: asked.id,
       outcomes: [
-        { member: open.agent, outcome: { kind: "answered" } },
         {
-          member: requester.agent,
-          outcome: {
-            kind: "answered",
-            content: { note: "[guide] reply to me" },
-          },
+          member: open.agent,
+          outcome: { kind: "answered", content: { note: "[unsure] maybe" } },
         },
+        { member: requester.agent, outcome: { kind: "answered" } },
       ],
     });
     const guidance = result.guidance;
     if (guidance === undefined || !("answers" in guidance)) {
       return yield* Effect.dieMessage(
-        "expected guidance for collective answers",
+        "expected a reminder for collective answers",
       );
     }
-    const advice = guidance.answers.find(
-      ({ member }) => member.agentId === requester.agent.agentId,
-    );
-    expect(advice).toMatchObject({
-      member: requester.agent,
-      instructions: [{ instruction: "Respond to the marked message." }],
-    });
+    expect(
+      guidance.answers.find(
+        ({ member }) => member.agentId === open.agent.agentId,
+      ),
+    ).toMatchObject({ member: open.agent, instructions: [uncertainAdvice] });
   });
 }
 
-const uncertainAdvice = {
-  ruleId: "marked",
-  uncertain: { choice: "compliant", probability: 0.4 },
-  instruction: "Respond to the marked message.",
-};
-
-/** An unsettled judgment supplies advice without blocking the question or its answer. */
-function expectUnsettledGatherAdvice({
-  requester,
-  open,
-  strict,
-  members,
-}: GatherScenario) {
+/** A question the requester's firewall is unsure about is refused, so the agent can revise it. */
+function expectUnsureQuestionRefused(
+  requester: Participant,
+  members: readonly Participant[],
+) {
   return Effect.gen(function* () {
-    const unsettled = yield* collecting(requester, "gather", members, {
+    const refused = yield* collecting(requester, "gather", members, {
       question: "[unsure] Which day works for the demo?",
       deadline: ANSWERED_DEADLINE_SECONDS,
-    });
-    expect(unsettled.guidance?.instructions).toEqual([uncertainAdvice]);
-    expect(yield* nextItem(open)).toMatchObject({
-      message: { operation: { operationId: unsettled.id } },
-    });
-    expect(yield* nextItem(strict)).toMatchObject({
-      message: { operation: { operationId: unsettled.id } },
-    });
-    yield* accept(open, requester.address, unsettled.id, {
-      slot: "mon",
-    });
-    const unsure = yield* accept(strict, requester.address, unsettled.id, {
-      slot: "tue",
-      note: "[unsure] maybe",
-    });
-    expect(unsure.guidance?.instructions).toEqual([uncertainAdvice]);
-    const unsureResult = yield* Queue.take(requester.inbox);
-
-    expect(unsureResult.item).toMatchObject({
-      kind: "collectiveResult",
-      operationId: unsettled.id,
-      outcomes: [
-        { member: open.agent, outcome: { kind: "answered" } },
-        {
-          member: strict.agent,
-          outcome: { kind: "answered", content: { note: "[unsure] maybe" } },
-        },
-      ],
-    });
-    const guidance = unsureResult.guidance;
-    if (guidance === undefined || !("answers" in guidance)) {
-      return yield* Effect.dieMessage(
-        "expected guidance for collective answers",
-      );
-    }
-    const advice = guidance.answers.find(
-      ({ member }) => member.agentId === strict.agent.agentId,
-    );
-    expect(advice).toMatchObject({
-      member: strict.agent,
-      instructions: arrayContaining([uncertainAdvice]),
+    }).pipe(Effect.flip);
+    expect(refused).toBeInstanceOf(FirewallRefusal);
+    expect(refused).toMatchObject({
+      refusal: "unresolved-evidence",
+      feedback: [{ text: "Remove the marked text." }],
     });
   });
 }

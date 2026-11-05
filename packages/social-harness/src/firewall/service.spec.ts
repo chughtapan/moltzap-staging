@@ -69,11 +69,7 @@ const judgments: DecisionProvider = {
         Object.entries(request.questions).map(([id, question]) => {
           const choices = Object.keys(question.criteria);
           const selected =
-            request.stage === "compliance" && question.ruleId === privacy.id
-              ? "violation"
-              : (["compliant", "none", "relevant"].find((choice) =>
-                  choices.includes(choice),
-                ) ?? "unresolved");
+            question.ruleId === privacy.id ? "violation" : "compliant";
           return [
             id,
             {

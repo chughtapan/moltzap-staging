@@ -282,12 +282,10 @@ it("checks each conversation in order while another conversation progresses", ()
         decide: (request) =>
           Effect.gen(function* () {
             const text = decisionState(request.state).candidate.text;
-            if (request.stage === "compliance") {
-              assessed.push(text);
-              if (text === "First") {
-                yield* Deferred.succeed(entered, undefined);
-                yield* Deferred.await(release);
-              }
+            assessed.push(text);
+            if (text === "First") {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
             }
             return decisionResponse(request);
           }),
@@ -341,7 +339,7 @@ it("recovers an interrupted check and retains its published view after edits, ac
       .open({
         policy: firewallOptions({
           decide: (request) =>
-            Effect.succeed(decisionResponse(request, "compliant", "required")),
+            Effect.succeed(decisionResponse(request, "compliant", 0.6)),
         }),
       })
       .pipe(Scope.extend(resumedScope));
@@ -609,7 +607,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
       message: yield* subject.message("Candidate"),
     });
     yield* waitForInbox(runtime);
-    const assessment = seen.find((request) => request.stage === "compliance");
+    const [assessment] = seen;
     if (assessment === undefined) {
       return yield* Effect.dieMessage("Expected assessment");
     }
@@ -727,7 +725,7 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     const options = firewallOptions({
       decide: (request) =>
         Effect.gen(function* () {
-          if (completing && request.stage === "compliance") {
+          if (completing) {
             assessed.push(decisionState(request.state).candidate.sender);
             yield* Deferred.succeed(entered, undefined);
             yield* Deferred.await(release);
@@ -1005,7 +1003,7 @@ it("uses the public invalid-answer reason without exposing the original answer",
         decide: (request) =>
           Effect.sync(() => {
             seen.push(request);
-            return decisionResponse(request, "compliant", "required");
+            return decisionResponse(request, "compliant", 0.6);
           }),
       }),
     });

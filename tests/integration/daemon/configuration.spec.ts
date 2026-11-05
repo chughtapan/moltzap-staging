@@ -259,8 +259,8 @@ it("adds the norms' English rules to the message policy as fixed rules", () =>
         applies: rule.applies,
       })),
     ).toEqual([
-      { id: "office-hours-rule-1", applies: "outgoing" },
-      { id: "office-hours-rule-2", applies: "outgoing" },
+      { id: "office-hours-rule-1", applies: "both" },
+      { id: "office-hours-rule-2", applies: "both" },
     ]);
     expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
   }).pipe(Effect.provide(NodeContext.layer)));

@@ -330,7 +330,7 @@ const textRules = Schema.optionalWith(Schema.Array(TextRule), {
   default: () => [],
 });
 const defaultTextSettings = {
-  minimumProbability: 0.5,
+  minimumProbability: 0.8,
   maximumRequestBytes: 384_000,
   timeoutMilliseconds: 15_000,
 };

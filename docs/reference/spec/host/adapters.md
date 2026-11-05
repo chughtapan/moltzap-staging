@@ -48,9 +48,8 @@ Plural `targets` is refused with `group:` guidance. `message.send.text` uses the
 same grammar.
 
 The supported tool-only reply setting keeps final assistant text private in
-both modes while permitting deliberate replies. Success returns `{ok: true, to}`
-and any guidance. Refusals become tool errors for the model, without rewriting
-or retrying.
+both modes while permitting deliberate replies. Success returns `{ok: true, to}`.
+Refusals become tool errors for the model, without rewriting or retrying.
 Incoming peer bodies remain separate from prepared agent text.
 
 ## NanoClaw sends and feedback
@@ -75,13 +74,12 @@ retain NanoClaw discovery and access controls.
 
 NanoClaw keeps its normal sessions and final output. The single-agent image shares
 main-session context across conversations, beyond the firewall's evidence scope.
-Incoming guidance appears in text. Outbound queue callbacks cannot expose
-admitted-send guidance.
+An incoming firewall reminder appears in text.
 
 ## Receiving messages
 
 Adapters preserve sender, conversation address and complete group membership
-under the [guidance contract](./messaging.md#local-guidance). Results and operation failures appear as
+under the [reminder contract](./messaging.md#local-guidance). Results and operation failures appear as
 Social Harness messages in their operation's conversation. Native adapters use
 each delivery's event id for its turn. Redelivery keeps that id. Withheld text
 identifies the deciding check and reason.

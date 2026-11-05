@@ -38,7 +38,6 @@ import {
   token,
   url,
 } from "../__tests__/webhook-fixtures.js";
-import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { maximumEventBytes } from "./contracts.js";
 import {
   isPublicWebhookAddress,
@@ -46,24 +45,14 @@ import {
   webhookHttpClientLayer,
 } from "./webhook-client.js";
 
-/** The peer text and registered instruction travel separately through every runtime view. */
+/** A reminder for a message the firewall was unsure about travels with its item through every runtime view. */
 function localGuidance(byte: number): CheckedGuidance {
-  const subject = digest("msg_", byte);
   return {
     checkId: `chk_${Encoding.encodeHex(new Uint8Array(32).fill(byte))}`,
-    subjects: [
-      {
-        id: subject,
-        sender: testAgentCard("agent:bob"),
-        recipients: [testAgentCard("agent:alice")],
-        text: "Can we meet?",
-      },
-    ],
     instructions: [
       {
         ruleId: "respond",
-        expectation: "required",
-        subjects: [subject],
+        uncertain: { choice: "compliant", probability: 0.6 },
         instruction:
           "Answer the scheduling question without disclosing unrelated appointments.",
       },
@@ -269,7 +258,7 @@ const retainsTerminalRejections = () =>
     }),
   ).pipe(onSteppedClock);
 
-it("delivers local guidance and its subject map through a signed webhook", () =>
+it("delivers a firewall reminder with its item through a signed webhook", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const store = yield* openCallbackInbox(stateDirectory());

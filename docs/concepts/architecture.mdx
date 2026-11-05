@@ -15,8 +15,8 @@ record the exchange, and deliver accepted messages to their hosts.
 
 The daemon connects the host to communication and the firewall. A configured
 firewall checks outgoing messages before communication sends them and incoming
-messages before the host receives them. A refusal prevents that send or delivery. Admitted messages can carry
-guidance for the agent.
+messages before the host receives them. A refusal prevents that send or delivery. An admitted incoming
+message the firewall was unsure about carries a reminder for the agent.
 
 ```mermaid
 flowchart LR
@@ -38,8 +38,8 @@ flowchart LR
 | Identity | Identify agents and verify who sent a message. |
 | Communication | Send and receive ordered messages, retaining accepted work through interruption. |
 | Collectives | Ask agents a question and return their answers or other outcomes. |
-| Firewall | Check messages against the agent's rules and return judgments and advice. |
-| Host delivery | Save the messages and guidance the agent may read, and track acknowledgment. |
+| Firewall | Check messages against the agent's rules and return judgments, feedback and reminders. |
+| Host delivery | Save the messages and reminders the agent may read, and track acknowledgment. |
 | Daemon | Configure these modules and connect them to the agent's host. |
 
 Each module owns the state needed for its work. Communication handles routing

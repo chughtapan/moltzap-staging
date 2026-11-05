@@ -232,7 +232,7 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
 type OutgoingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
 } & (
-  | { readonly kind: "allowed"; readonly guidance?: CheckedGuidance }
+  | { readonly kind: "allowed" }
   | { readonly kind: "refused"; readonly refusal: FirewallRefusal }
 );
 
@@ -257,14 +257,15 @@ export type IncomingDecision = {
 );
 /** Message assessment, policy edits and saved decision summaries. */
 interface FirewallService {
-  /** Assesses without saving. Refusals expose feedback. Allowed work may carry guidance. */
+  /** Assesses without saving. Refusals expose feedback. */
   readonly checkOutgoing: (
     value: Outgoing,
     evidence: FirewallEvidence,
   ) => Effect.Effect<OutgoingDecision, CheckInputError>;
   /**
-   * Assesses each peer-controlled part under one policy with its preceding evidence.
-   * Withheld items expose no guidance.
+   * Assesses each peer-controlled part under one policy with its preceding
+   * evidence. An admitted part the provider was unsure about carries a
+   * reminder; withheld items expose none.
    */
   readonly checkIncoming: (
     value: Incoming,
@@ -361,13 +362,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               }
               const save = saveDecision(store, decision);
               if (decision.kind === "admitted") {
-                return {
-                  kind: "allowed",
-                  save,
-                  ...(decision.guidance === undefined
-                    ? {}
-                    : { guidance: decision.guidance }),
-                } satisfies OutgoingDecision;
+                return { kind: "allowed", save } satisfies OutgoingDecision;
               }
               const { refusal } = decision;
               return {
@@ -1235,7 +1230,7 @@ function assessRule(
         exitOutcome(exit, "checked"),
       ),
     );
-    const projection = yield* guidanceProjection(assessed, input, checkId);
+    const projection = yield* guidanceProjection(assessed, checkId);
     const { result } = projection;
     const admit = result.judgment === "allow";
     const completion: FirewallCompletion = {
@@ -1409,43 +1404,21 @@ function mintCheckId() {
 }
 
 /**
- * Registered advice includes only the message references already visible to
- * this agent. An allowed draft carries only its uncertain findings.
+ * The reminders of an admitted incoming message the provider was unsure about.
+ * Reminders over the runtime item bound make the check unavailable.
  */
-function guidanceProjection(
-  result: FirewallCheck,
-  input: CapturedCheck,
-  checkId: string,
-) {
+function guidanceProjection(result: FirewallCheck, checkId: string) {
   return Effect.gen(function* () {
-    const instructions =
-      input.direction === "incoming"
-        ? result.guidance
-        : result.guidance.filter((entry) => "uncertain" in entry);
-    if (instructions.length === 0) {
+    if (result.guidance.length === 0) {
       return { result };
     }
-    const selected = new Set(
-      instructions.flatMap((entry) =>
-        "subjects" in entry ? entry.subjects : [],
-      ),
-    );
-    const subjects = guidanceSubjects(selected, input);
     const guidance: CheckedGuidance = {
       checkId,
-      instructions,
-      subjects,
+      instructions: result.guidance,
     };
     const bytes = yield* canonicalBytes(guidance);
-    return subjects.length !== selected.size ||
-      bytes.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
-      ? {
-          result: {
-            ...unavailable(),
-            findings: result.findings,
-            expectations: result.expectations,
-          },
-        }
+    return bytes.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
+      ? { result: { ...unavailable(), findings: result.findings } }
       : { result, guidance };
   });
 }
@@ -1458,40 +1431,7 @@ function unavailable(): FirewallCheck {
     feedback: [],
     guidance: [],
     findings: [],
-    expectations: [],
   };
-}
-
-function guidanceSubjects(
-  selected: ReadonlySet<string>,
-  input: CapturedCheck,
-): CheckedGuidance["subjects"] {
-  const agents = new Map<string, AgentCard>(
-    input.agents.map((agent) => [agent.agentId, agent]),
-  );
-  const available = input.evidence.context.history.filter(
-    (entry) => entry.visibleToAgent,
-  );
-  const message = input.evidence.event.message;
-  const subjects = new Map(
-    [...available, ...(message === undefined ? [] : [message])].map((entry) => [
-      entry.id,
-      entry,
-    ]),
-  );
-  return [...subjects.values()]
-    .filter((entry) => selected.has(entry.id))
-    .flatMap((entry) => {
-      const sender = agents.get(entry.sender);
-      const recipients = entry.recipients.flatMap((identity) => {
-        const agent = agents.get(identity);
-        return agent === undefined ? [] : [agent];
-      });
-      return sender === undefined ||
-        recipients.length !== entry.recipients.length
-        ? []
-        : [{ id: entry.id, sender, recipients, text: entry.text }];
-    });
 }
 
 function updatePolicy(policy: Policy, request: typeof policyUpdateSchema.Type) {

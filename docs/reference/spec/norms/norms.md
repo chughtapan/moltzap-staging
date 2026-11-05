@@ -90,14 +90,20 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 A daemon adds each `(rule ...)` of a norm it holds to its
 [message policy](../firewall/message-policy.md) as a fixed text rule, named
 for the norm and the rule's position, such as `office-hours-rule-1`. The
-policy's decision provider judges each of the agent's own messages against
-it; the rule text says it governs only acts of its norm, so other messages
-conform. An act that breaks a rule is refused, and the refusal quotes the
-rule; an act the provider passes without certainty carries the rule as
-guidance. Each party to a norm keeps its own agent to the norm's rules, with its
-owner's facts, such as the professor's calendar. A daemon that holds a norm
-with rules needs a message policy with a `decisionProvider`. Rules of a norm
-a member received through norm discovery are not added.
+policy's decision provider judges every message against it, the agent's own
+and its peers'; the rule text says it governs only acts of its norm, so other
+messages conform. Each party judges with its owner's facts, such as the
+professor's calendar.
+
+| Judgment | The agent's own act | A peer's act |
+| --- | --- | --- |
+| Breaks the rule | Refused, quoting the rule | Withheld; the peer receives a reply quoting the rule |
+| Unsure | Refused, quoting the rule, so the agent revises it | Admitted with the rule as a reminder |
+
+A daemon that holds a norm with rules needs a message policy with a
+`decisionProvider`. Rules of a norm a member received through norm discovery
+are not added. In a group, every member that holds the norm replies to a
+breach.
 
 ## Turns
 

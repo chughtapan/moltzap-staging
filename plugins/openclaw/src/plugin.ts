@@ -312,7 +312,7 @@ function createConfigSection() {
 }
 
 /**
- * Returns firewall guidance with accepted tool sends. OpenClaw supplies the
+ * Sends the `message` tool's send and reply actions. OpenClaw supplies the
  * current conversation for reply. Core sends use message.send.text.
  */
 function createMessageActions(
@@ -344,17 +344,7 @@ function handleMessageAction(
         text: ctx.params.message,
       }),
     ),
-    Effect.map(({ input, result }) =>
-      jsonResult({
-        ok: true,
-        to: input.to,
-        ...(result.guidance === undefined
-          ? {}
-          : {
-              guidance: result.guidance,
-            }),
-      }),
-    ),
+    Effect.map(({ input }) => jsonResult({ ok: true, to: input.to })),
   );
 }
 
