@@ -1430,7 +1430,11 @@ function decisionSummaries(
     }),
   );
   const checkedRuleIds = [
-    ...new Set(result.findings.map((finding) => finding.ruleId)),
+    ...new Set(
+      result.findings.flatMap((finding) =>
+        finding.outcome === "not-applicable" ? [] : [finding.ruleId],
+      ),
+    ),
   ];
   const message = input.evidence.event.message;
   const peers =

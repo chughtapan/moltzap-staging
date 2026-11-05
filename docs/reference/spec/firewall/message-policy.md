@@ -369,8 +369,9 @@ provider, model and rule source after edits.
 ## Decision reasons
 
 The decision feed separates `outcome` (`allow`, `reject`, `hold`) from
-admitted/withheld `disposition`. `checkedRuleIds` lists every rule with a
-finding.
+admitted/withheld `disposition`. `checkedRuleIds` lists the rules the check
+judged; a rule that does not apply to the message, by its direction or its
+`match`, is not listed.
 Outgoing checks produce one row per verified recipient captured before
 assessment, including refused first messages without a conversation. Incoming
 rows identify authors. Daemon-generated failures have no assessment row. Retained identities survive restart without lookup.

@@ -140,7 +140,8 @@ const firewallActivationSchema = exactStruct({
  * Contains one row per peer without message content or provider traces.
  * `decidedBy[].advice` contains registered feedback or admission guidance.
  * `from` identifies a chain rule, or a fixed or editable text rule.
- * `checkedRuleIds` includes every rule with a finding.
+ * `checkedRuleIds` lists the rules the check judged: a rule that does not
+ * apply to the message, by its direction or its matcher, is not listed.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),

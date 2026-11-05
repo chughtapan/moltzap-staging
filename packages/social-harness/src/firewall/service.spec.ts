@@ -839,6 +839,38 @@ describe("Firewall text rules scoped by a matcher", () => {
       );
     }));
 
+  it("lists only the rules it asked about as a decision's checked rules", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeIdentityFixture;
+      const plain = {
+        ...privacy,
+        id: "plain-language",
+        text: "Write in plain language.",
+      } satisfies TextRule;
+      yield* withFirewall(
+        ":memory:",
+        fixture,
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+            yield* decision.save;
+
+            expect((yield* firewall.readDecisions({})).decisions).toMatchObject(
+              [{ checkedRuleIds: [plain.id] }, { checkedRuleIds: [plain.id] }],
+            );
+          }),
+        (agentKey) =>
+          Firewall.layer(
+            agentKey,
+            policy([], [{ ...privacy, match: "never" }, plain]),
+            { rules: [], matchers: { never } },
+          ),
+      );
+    }));
+
   it("refuses to install a text rule whose matcher is not registered", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
