@@ -93,7 +93,8 @@ for the norm and the rule's position, such as `office-hours-rule-1`. The
 policy's decision provider judges each of the agent's own messages against
 it; the rule text says it governs only acts of its norm, so other messages
 conform. An act that breaks a rule is refused, and the refusal quotes the
-rule. Each party to a norm keeps its own agent to the norm's rules, with its
+rule; an act the provider passes without certainty carries the rule as
+guidance. Each party to a norm keeps its own agent to the norm's rules, with its
 owner's facts, such as the professor's calendar. A daemon that holds a norm
 with rules needs a message policy with a `decisionProvider`. Rules of a norm
 a member received through norm discovery are not added.

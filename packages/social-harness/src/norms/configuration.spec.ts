@@ -134,6 +134,7 @@ describe("normTextRules", () => {
       expect(second?.feedback?.text).toContain(
         "Swap only with a trained colleague.",
       );
+      expect(second?.guidance).toContain("Swap only with a trained colleague.");
     }));
 });
 

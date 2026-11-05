@@ -118,7 +118,8 @@ export function heldNorms(
  * each of its agent's own acts of a norm against that norm's rules: each party
  * to a norm keeps its own agent to the norm. A rule's id is the norm's name,
  * `-rule-` and its number, and its text names the acts it governs, so other
- * messages conform.
+ * messages conform. A refusal quotes the rule as broken; an act the provider
+ * passes without certainty carries the rule as guidance instead.
  */
 export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
   return norms.flatMap((norm) =>
@@ -132,6 +133,7 @@ export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
             "Judge from this conversation and the owner's facts: without evidence that an act breaks the rule, it conforms.",
             rule,
           ].join(" "),
+          guidance: `Keep to this rule of the ${norm.name} norm: ${rule}`,
           feedback: {
             text: `This act breaks a rule of the ${norm.name} norm: ${rule}`,
           },
