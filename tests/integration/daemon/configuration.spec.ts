@@ -212,6 +212,70 @@ it("resolves the norms directory relative to the settings file", () =>
     ]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
+/** A norms directory holding the shipped `office-hours`, whose documents give English rules. */
+function normsWithRules(test: Effect.Effect.Success<typeof fixture>) {
+  return Effect.gen(function* () {
+    const norms = join(test.directory, "norms");
+    yield* test.filesystem.makeDirectory(norms);
+    yield* Effect.forEach(
+      ["examples/office-hours.lisp", "rules.json"],
+      (file) =>
+        test.filesystem.copyFile(
+          join(shippedNorms, file),
+          join(norms, file.replace("examples/", "")),
+        ),
+      { concurrency: 1 },
+    );
+  });
+}
+
+it("adds the norms' English rules to the message policy as fixed rules", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* normsWithRules(test);
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "policy.json"),
+      JSON.stringify({
+        format: "org.social-harness/message-policy/v2",
+        decisionProvider: { kind: "jev", model: "configured-model" },
+      }),
+    );
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "provider.key"),
+      "private-decision-provider-key",
+    );
+    yield* test.write({
+      ...settings,
+      normsDirectory: "norms",
+      messagePolicyFile: "policy.json",
+      decisionProviderKeyFile: "provider.key",
+    });
+
+    const loaded = yield* loadDaemonSettings(test.filename);
+
+    expect(
+      loaded.settings.messagePolicy?.policy.text?.fixedRules.map((rule) => ({
+        id: rule.id,
+        applies: rule.applies,
+      })),
+    ).toEqual([
+      { id: "office-hours-rule-1", applies: "outgoing" },
+      { id: "office-hours-rule-2", applies: "outgoing" },
+    ]);
+    expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("refuses norms with English rules when no message policy can check them", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* normsWithRules(test);
+    yield* test.write({ ...settings, normsDirectory: "norms" });
+
+    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+
+    expect(failure).toMatchObject({ reason: "norms" });
+  }).pipe(Effect.provide(NodeContext.layer)));
+
 it("refuses a norms directory without its rule file", () =>
   Effect.gen(function* () {
     const test = yield* fixture;

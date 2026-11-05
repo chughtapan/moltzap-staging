@@ -2,7 +2,8 @@
  * @file A daemon's norms: the documents in its norms directory and the rule
  * chain that directory's `rules.json` applies. The daemon reads and checks
  * them each time it starts, and every agent it serves builds its own chain
- * from them.
+ * from them. The documents' English rules become fixed rules of the daemon's
+ * message policy.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
+import { TextRule } from "../firewall/rules.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers } from "./matchers.js";
 
@@ -107,6 +109,34 @@ export function heldNorms(
       norms,
       chain: { rules: installed.chain.rules, matchers: normMatchers(norms) },
     })),
+  );
+}
+
+/**
+ * The English rules of the norms a daemon holds, as fixed firewall text rules.
+ * The daemon adds them to its message policy, so its decision provider judges
+ * each of its agent's own acts of a norm against that norm's rules: each party
+ * to a norm keeps its own agent to the norm. A rule's id is the norm's name,
+ * `-rule-` and its number, and its text names the acts it governs, so other
+ * messages conform.
+ */
+export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
+  return norms.flatMap((norm) =>
+    norm.rules.map(
+      (rule, index) =>
+        new TextRule({
+          id: `${norm.name}-rule-${index + 1}`,
+          applies: "outgoing",
+          text: [
+            `This rule governs only acts of the ${norm.name} norm, written as (performative :ontology ${norm.name} ...); any other message conforms.`,
+            "Judge from this conversation and the owner's facts: without evidence that an act breaks the rule, it conforms.",
+            rule,
+          ].join(" "),
+          feedback: {
+            text: `This act breaks a rule of the ${norm.name} norm: ${rule}`,
+          },
+        }),
+    ),
   );
 }
 

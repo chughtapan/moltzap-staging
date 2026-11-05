@@ -56,7 +56,8 @@ a group, another member may have asked already; its answer serves you too.
 
 ## When a send is refused
 
-A refused send names the rule that refused it. Its details give the reason,
-the fields that failed, or the acts you may send now. Fix the act, send one of
-those acts, or wait for the member whose turn it is; resending the same act is
-refused again.
+A refused send names the rule that refused it. A norm's English rule, such as
+`office-hours-rule-1`, is quoted in the refusal; otherwise the details give the
+reason, the fields that failed, or the acts you may send now. Fix the act, send
+one of those acts, or wait for the member whose turn it is; resending the same
+act is refused again.

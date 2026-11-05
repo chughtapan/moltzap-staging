@@ -70,4 +70,5 @@
 
 (content cancel)
 
+(rule "The student's request names only what the student wants to discuss; the professor proposes the times.")
 (rule "The professor offers only free slots within the posted office hours.")

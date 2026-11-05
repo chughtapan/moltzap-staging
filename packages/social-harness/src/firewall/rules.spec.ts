@@ -22,6 +22,7 @@ import {
   MAXIMUM_BEHAVIOR_BYTES,
   type PolicyConfiguration,
   readPolicyCredential as readCredential,
+  TextRule,
 } from "./rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Rule fields, settings and closed configuration failures are the owner policy contract. */
@@ -45,6 +46,12 @@ describe("policy documents", () => {
     ...baseDocument,
     decisionProvider: { kind: "jev", model: "jev-1.13.0" },
   };
+  /** A fixed rule the daemon adds to the policy file's own, such as a norm's. */
+  const addedRule = new TextRule({
+    id: "swap-rule-1",
+    applies: "outgoing",
+    text: "Ask for a swap a day ahead.",
+  });
 
   afterEach(() => {
     for (const directory of directories.splice(0)) {
@@ -107,6 +114,34 @@ describe("policy documents", () => {
         }),
       }),
       "message-policy-file",
+    ],
+    [
+      "added fixed rules without a policy file",
+      () => ({ fixedRules: [addedRule] }),
+      "message-policy-file",
+    ],
+    [
+      "added fixed rules without a decision provider",
+      () => ({
+        messagePolicyFile: file({ format: policyFormat }),
+        fixedRules: [addedRule],
+      }),
+      "message-policy",
+    ],
+    [
+      "an added fixed rule whose id the policy file uses",
+      () => ({
+        messagePolicyFile: file(jevDocument),
+        decisionProviderKeyFile: Redacted.make(file("key-value")),
+        fixedRules: [
+          new TextRule({
+            id: "builtin.policy-owner",
+            applies: "outgoing",
+            text: addedRule.text,
+          }),
+        ],
+      }),
+      "message-policy",
     ],
     [
       "a text rule id given as both fixed and initial",
@@ -184,6 +219,24 @@ describe("policy documents", () => {
           ? undefined
           : Redacted.value(installed.provider.apiKey),
       ).toBe("key-value");
+    }));
+
+  it("adds the daemon's fixed rules after the file's own and loads the provider that checks them", () =>
+    Effect.gen(function* () {
+      const installed = yield* loadConfigured(
+        {
+          messagePolicyFile: file({
+            format: policyFormat,
+            decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+          }),
+          decisionProviderKeyFile: Redacted.make(file("key-value")),
+          fixedRules: [addedRule],
+        },
+        readCredential,
+      );
+
+      expect(installed.policy.text?.fixedRules).toEqual([addedRule]);
+      expect(installed.provider).toMatchObject({ kind: "jev" });
     }));
 
   it("decodes the example policy the message firewall guide documents", () =>

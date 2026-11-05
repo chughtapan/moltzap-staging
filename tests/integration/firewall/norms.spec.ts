@@ -31,7 +31,11 @@ const builtIn = ["norm-agreement.lisp", "norm-discovery.lisp", "feedback.lisp"];
 /** Each test starts PGlite, the Registry, the Router and two daemons. */
 const NORMS_TEST_TIMEOUT_MS = 120_000;
 
-/** A norms directory holding the shipped `documents` and rule file. */
+/**
+ * A norms directory holding the shipped `documents` and rule file. The copies
+ * leave out the documents' English `(rule ...)` forms: only a decision
+ * provider can check those, and these daemons run without one.
+ */
 function normsDirectory(
   root: string,
   name: string,
@@ -44,10 +48,16 @@ function normsDirectory(
     yield* Effect.forEach(
       [...documents, "rules.json"],
       (document) =>
-        fs.copyFile(
-          join(shipped, document),
-          join(directory, basename(document)),
-        ),
+        fs
+          .readFileString(join(shipped, document))
+          .pipe(
+            Effect.flatMap((text) =>
+              fs.writeFileString(
+                join(directory, basename(document)),
+                text.replaceAll(/^\(rule ".*"\)$/gmu, ""),
+              ),
+            ),
+          ),
       { concurrency: 1 },
     );
     return directory;

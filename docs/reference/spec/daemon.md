@@ -45,7 +45,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
-| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Norms with English rules need `messagePolicyFile` with a `decisionProvider` |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials

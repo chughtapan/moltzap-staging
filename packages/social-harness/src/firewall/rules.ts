@@ -263,10 +263,15 @@ export type BehaviorFailure =
   | "duplicate-id"
   | "editable-limit";
 
-/** Only policy and provider file locations enter the loader. */
+/**
+ * Policy and provider file locations, and fixed rules the daemon adds after
+ * the policy file's own, such as the English rules of the norms it holds.
+ * Added rules need a policy file whose `decisionProvider` judges them.
+ */
 export interface PolicyConfiguration {
   readonly messagePolicyFile?: string;
   readonly decisionProviderKeyFile?: Redacted.Redacted;
+  readonly fixedRules?: readonly TextRule[];
 }
 
 /** Policy loading fails with a closed reason and a safe operator message. */
@@ -490,17 +495,22 @@ export const loadMessagePolicy = (
 > =>
   Effect.gen(function* () {
     const path = configuration.messagePolicyFile;
+    const added = configuration.fixedRules ?? [];
     if (path === undefined) {
-      return Option.none();
+      return added.length === 0
+        ? Option.none()
+        : yield* policyConfigurationError("message-policy-file");
     }
     const policy = yield* readPolicyText(path).pipe(
       Effect.flatMap((text) =>
         decodeMessagePolicy(text).pipe(Effect.mapError(invalidPolicy)),
       ),
     );
-    const resolved = yield* resolveBehaviors(policy, dirname(path));
+    const resolved = yield* resolveBehaviors(policy, dirname(path)).pipe(
+      Effect.flatMap((behaviors) => withAddedRules(behaviors, added)),
+    );
     const provider = yield* loadDecisionProvider(
-      policy,
+      resolved,
       configuration,
       readCredential,
     );
@@ -555,6 +565,35 @@ export function decodeBehavior<Failure>(
       ...metadata,
     }).pipe(Effect.mapError(() => refused("schema")));
   }).pipe(Effect.withSpan("decodeBehavior"));
+}
+
+/**
+ * The policy with the daemon's added fixed rules after its own. Rule ids stay
+ * unique, and added rules need the policy's `decisionProvider`, since a
+ * natural-language rule without one would pass unchecked.
+ */
+function withAddedRules(
+  policy: MessagePolicy,
+  added: readonly TextRule[],
+): Effect.Effect<MessagePolicy, MessagePolicyConfigurationError> {
+  if (added.length === 0) {
+    return Effect.succeed(policy);
+  }
+  if (policy.decisionProvider === undefined) {
+    return Effect.fail(
+      policyConfigurationError("message-policy", "decisionProvider"),
+    );
+  }
+  const text = policy.text ?? { fixedRules: [], initialRules: [] };
+  const merged: MessagePolicy = {
+    ...policy,
+    text: { ...text, fixedRules: [...text.fixedRules, ...added] },
+  };
+  return uniqueTextRuleIds(merged)
+    ? Effect.succeed(merged)
+    : Effect.fail(
+        policyConfigurationError("message-policy", "text.fixedRules"),
+      );
 }
 
 function uniqueTextRuleIds(policy: typeof document.Type): boolean {

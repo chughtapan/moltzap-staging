@@ -7,7 +7,8 @@ import { Effect, Either } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import { heldNorms, loadNorms } from "./configuration.js";
+import { heldNorms, loadNorms, normTextRules } from "./configuration.js";
+import { readNorm } from "./documents.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and failure text are the configuration contract under test. */
 
@@ -106,6 +107,34 @@ describe("loadNorms", () => {
       expect(failure.reason).toContain(reason);
     }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)),
   );
+});
+
+describe("normTextRules", () => {
+  it("turns each English rule into a fixed rule over the agent's own acts of its norm", () =>
+    Effect.sync(() => {
+      const norm = Either.getOrThrow(
+        readNorm(`
+        (norm swap :initiator Asker :participant Owner :description "Swap a shift.")
+        (content request :by Asker :initiates asked)
+        (content agree :by Owner :when asked :terminates asked)
+        (rule "Ask for a swap a day ahead.")
+        (rule "Swap only with a trained colleague.")
+      `),
+      );
+
+      const [first, second] = normTextRules([norm]);
+
+      expect([first, second].map((rule) => rule?.id)).toEqual([
+        "swap-rule-1",
+        "swap-rule-2",
+      ]);
+      expect(first?.applies).toBe("outgoing");
+      expect(first?.text).toContain("Ask for a swap a day ahead.");
+      expect(first?.text).toContain(":ontology swap");
+      expect(second?.feedback?.text).toContain(
+        "Swap only with a trained colleague.",
+      );
+    }));
 });
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

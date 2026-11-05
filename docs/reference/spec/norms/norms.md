@@ -81,7 +81,22 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
   Fields map to the MCP form-mode grammar that
   [collective requests](../communication/collectives.md) use. A performative
   without a form takes no fields.
-- `(rule "...")` states a rule in English. Rules are not yet checked.
+- `(rule "...")` states a rule in English, which the firewall of each daemon
+  that holds the norm checks against its own agent's acts of the norm. See
+  [English rules](#english-rules).
+
+### English rules
+
+A daemon adds each `(rule ...)` of a norm it holds to its
+[message policy](../firewall/message-policy.md) as a fixed text rule, named
+for the norm and the rule's position, such as `office-hours-rule-1`. The
+policy's decision provider judges each of the agent's own messages against
+it; the rule text says it governs only acts of its norm, so other messages
+conform. An act that breaks a rule is refused, and the refusal quotes the
+rule. Each party to a norm keeps its own agent to the norm's rules, with its
+owner's facts, such as the professor's calendar. A daemon that holds a norm
+with rules needs a message policy with a `decisionProvider`. Rules of a norm
+a member received through norm discovery are not added.
 
 ## Turns
 
@@ -176,7 +191,9 @@ documents the daemon holds, as `.lisp` files, and `rules.json`, the rule chain
 that applies the matchers. The daemon reads and checks them each time it
 starts, and every agent it serves applies them. A document that does not
 parse, two documents for one norm, or a rule naming another matcher refuses
-startup. Without `normsDirectory`, the daemon reads no norms.
+startup, and so do documents with [English rules](#english-rules) when the
+runtime document names no `messagePolicyFile` with a `decisionProvider`.
+Without `normsDirectory`, the daemon reads no norms.
 
 The package ships `config/norms/`: the built-in norms, a `rules.json` that
 answers queries, unread messages and, in a direct conversation, nonconforming

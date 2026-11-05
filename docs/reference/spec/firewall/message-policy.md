@@ -238,7 +238,9 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 
 Unknown properties and unsupported values fail. Trusted process composition may
 supply its own provider and fixed text rules. The generated API reference owns
-those callable types.
+those callable types. A daemon that holds norms adds their
+[English rules](../norms/norms.md#english-rules) after the file's fixed rules,
+so it needs `decisionProvider` even when the file has no `text`.
 
 Jev is an optional TypeSafe service. It trims the key from
 the setup document's `decisionProviderKeyFile` and retries connectivity, rate-limit and
