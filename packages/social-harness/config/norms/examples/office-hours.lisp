@@ -1,13 +1,15 @@
 ;; office-hours: a student asks a professor to meet about a topic. The
 ;; professor offers two or three slots; the student picks one or none. After
-;; two rounds of none, the request escalates to the professor in person. A
-;; picked slot is confirmed, or held tentatively until the student checks back.
+;; none, the professor offers once more or escalates to the professor in
+;; person. A picked slot is confirmed, or held tentatively until the student
+;; checks back.
 ;;
 ;; Each act starts and ends facts, and the facts that hold decide which acts
 ;; may follow:
 ;;   open          a request is in progress
-;;   offer-due     the professor offers slots or escalates
+;;   offer-due     the professor offers slots
 ;;   offered       slots are out; the student picks one or none
+;;   declined      the student declined the offered slots
 ;;   decision-due  the professor confirms the picked slot or holds it
 ;;   held          a slot is held; the student checks back
 ;;   checked-back  the student has checked back on a held slot
@@ -20,7 +22,7 @@
 
 ;; At most two rounds of offers in one request.
 (content propose :by Professor :when offer-due :max 2
-         :initiates offered :terminates (offer-due decision-due checked-back)
+         :initiates offered :terminates (offer-due decision-due checked-back declined)
   (field option1 :type string :max-length 80 :description "A slot the professor offers.")
   (field option2 :type string :max-length 80 :description "A second slot.")
   (field option3 :type string :max-length 80 :optional true
@@ -33,7 +35,7 @@
 
 ;; None of the above.
 (content reject-proposal :by Student :when offered
-         :initiates offer-due :terminates offered
+         :initiates (offer-due declined) :terminates offered
   (field reason :type string :max-length 300 :optional true
          :description "Why none of the slots works."))
 
@@ -59,9 +61,10 @@
   (field reason :type string :max-length 300 :optional true
          :description "Why the held slot cannot be booked."))
 
-;; Escalation to the professor in person, which ends the request.
-(content failure :by Professor :when offer-due :unless checked-back
-         :terminates (open offer-due)
+;; Escalation to the professor in person once the student has declined the
+;; offered slots, which ends the request.
+(content failure :by Professor :when declined
+         :terminates (open offer-due declined)
   (field reason :type string :max-length 300
          :description "Why the request goes to the professor, such as no offered slot working."))
 
