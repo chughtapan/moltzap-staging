@@ -801,9 +801,10 @@ function saveDecision(store: FirewallStore, ...decisions: readonly Decision[]) {
 }
 
 /**
- * Checks candidates against the text rules. The classifier sees only ordered
- * history, so this agent's messages the Router has not ordered yet count as a
- * gap in it.
+ * Checks candidates against the text rules. An outgoing check also sees this
+ * agent's sends the Router has not ordered yet, after the ordered history and
+ * in the order they were sent, because the Router orders them before this one.
+ * An incoming check sees only the ordered history before its message.
  */
 function assess(
   policy: Policy,
@@ -816,27 +817,34 @@ function assess(
     const now = yield* Clock.currentTimeMillis;
     const inputs: RuleCheckInput[] = [];
     for (const candidate of candidates) {
+      const pending =
+        direction === "outgoing" ? candidate.evidence.pendingOutgoing : [];
       const cards = new Map<string, AgentCard>();
       for (const card of [
         self,
         candidate.value.author,
         ...candidate.value.recipients,
-        ...candidate.evidence.history.flatMap((entry) => [
-          entry.message.author,
-          ...entry.message.recipients,
-        ]),
+        ...[
+          ...candidate.evidence.history.map(({ message }) => message),
+          ...pending,
+        ].flatMap((message) => [message.author, ...message.recipients]),
       ]) {
         cards.set(card.agentId, card);
       }
-      const history: HistoryEntry[] = candidate.evidence.history.map(
-        (entry) => ({
+      const history: HistoryEntry[] = [
+        ...candidate.evidence.history.map((entry) => ({
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
           ...assessmentText(entry.message),
           visibleToAgent:
             entry.visibleToAgent ||
             entry.message.author.agentId === self.agentId,
-        }),
-      );
+        })),
+        ...pending.map((message) => ({
+          // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
+          ...assessmentText(message),
+          visibleToAgent: true,
+        })),
+      ];
       const context: MessageContext = {
         agentId: self.agentId,
         principal: self.principalId,
@@ -848,12 +856,7 @@ function assess(
         earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
         now,
         facts: policy?.options.configuration.facts ?? [],
-        gaps: [
-          ...(candidate.evidence.pendingOutgoing.length === 0
-            ? []
-            : ["An earlier outgoing message is not yet complete."]),
-          ...candidate.evidence.gaps,
-        ],
+        gaps: candidate.evidence.gaps,
       };
       const scope = yield* ruleScopes(policy.active.rules, matchers, {
         direction,

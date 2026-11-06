@@ -146,8 +146,10 @@ Assessment captures preceding messages in conversation order, excluding the
 candidate. The limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
-Exceeding the history window's separate 2 MiB budget, or unresolved outgoing
-sends that may already have taken effect, creates an evidence gap. Required
+An outgoing check also sees this agent's earlier sends that the Router has not
+ordered yet, after the ordered history and in the order they were sent; an
+incoming check sees only the ordered history before its message. Exceeding the
+history window's separate 2 MiB budget creates an evidence gap. Required
 missing evidence holds.
 
 The firewall may use earlier messages it withheld or blocked when checking a
@@ -264,8 +266,8 @@ The npm package includes ordinary rule documents and an example policy under
 rule directories beside their own policy file. Every selected document uses the
 same loader. An empty configuration adds no rules.
 
-The example selects credential protection, useful acknowledgements, plain
-language, authority-impersonation protection and policy-change rules. These are
+The example selects credential protection, useful acknowledgements,
+authority-impersonation protection and policy-change rules. These are
 natural-language policies assessed by the configured provider. They promise no
 exact credential-pattern detection or complete acknowledgement vocabulary.
 A sender-participation policy must name the intended verified identities in
