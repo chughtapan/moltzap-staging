@@ -32,6 +32,7 @@ import {
   initialNormsHaveRules,
   installedNorms,
   loadNorms,
+  type NormsConfigurationError,
 } from "../norms/configuration.js";
 import { packageVersion } from "../version.js";
 
@@ -295,7 +296,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
 /** The settings document's norms directory, read and checked. */
 function configuredNorms(directory: string) {
   return loadNorms(directory).pipe(
-    Effect.mapError((error) =>
+    Effect.mapError((error: NormsConfigurationError) =>
       refused(
         "norms",
         `The configured norms directory is invalid: ${error.reason}`,
