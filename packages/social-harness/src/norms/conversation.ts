@@ -85,15 +85,6 @@ export interface SentAct {
 /** A conversation with no acts. */
 const emptyState: State = { queries: new Map(), fetched: new Map() };
 
-/** The norm an act names, if this member holds it or a member sent it. */
-export function normOf(
-  setting: Setting,
-  state: State,
-  name: string,
-): Norm | undefined {
-  return setting.held.get(name) ?? state.fetched.get(name);
-}
-
 /**
  * Folds acts in history order, skipping acts of unknown norms, acts that break
  * theirs, and acts another member answered with `not-understood`.
@@ -115,25 +106,37 @@ export function foldActs(
   );
 }
 
-/** Judges one act of a known norm against the state before it. */
+/**
+ * Judges one act of a known norm against the state before it. Agreement and
+ * discovery have effects the daemon implements; every other norm, built-in or
+ * not, is judged by its document alone.
+ */
 export function judge(
   setting: Setting,
   state: State,
   sent: SentAct,
 ): Effect.Effect<Verdict> {
-  const { act, sender } = sent;
-  switch (act.ontology) {
-    case builtIns.agreement:
-      return agreementAct(setting, state, act, sender);
-    case builtIns.discovery:
-      return discoveryAct(setting, state, sent);
-    case builtIns.feedback:
-      return standalone(setting, state, act, ["not-understood"]);
-    case builtIns.chat:
-      return standalone(setting, state, act, ["inform"]);
-    default:
-      return normAct(setting, state, act, sender);
+  const norm = normOf(setting, state, sent.act.ontology);
+  if (norm === undefined) {
+    return Effect.succeed(breaks("no-agreement", sent.act, []));
   }
+  switch (norm.name) {
+    case builtIns.agreement:
+      return agreementAct(setting, state, norm, sent);
+    case builtIns.discovery:
+      return discoveryAct(setting, state, norm, sent);
+    default:
+      return normAct(setting, state, norm, sent);
+  }
+}
+
+/** The norm an act names, if this member holds it or a member sent it. */
+export function normOf(
+  setting: Setting,
+  state: State,
+  name: string,
+): Norm | undefined {
+  return setting.held.get(name) ?? state.fetched.get(name);
 }
 
 /** The ids of acts a member other than their sender answered with `not-understood`. */
@@ -157,31 +160,25 @@ function notUnderstoodActs(acts: readonly SentAct[]): ReadonlySet<string> {
   );
 }
 
-function standalone(
-  setting: Setting,
-  state: State,
-  act: Act,
-  performatives: readonly string[],
-): Effect.Effect<Verdict> {
-  if (!performatives.includes(act.performative)) {
-    return Effect.succeed(breaks("out-of-turn", act, performatives));
-  }
-  return checkContent(setting, state, act).pipe(
-    Effect.map((failure) => failure ?? conforms(state)),
-  );
-}
-
-/** `propose` opens an agreement on `:norm`; every other member accepts or rejects it once. */
+/**
+ * `propose` opens an agreement on `:norm` under the protocol the
+ * norm-agreement document names; every other member accepts or rejects it
+ * once.
+ */
 function agreementAct(
   setting: Setting,
   state: State,
-  act: Act,
-  sender: string,
+  agreementNorm: Norm,
+  { act, sender }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
     const failure = yield* checkContent(setting, state, act);
     if (failure !== undefined) {
       return failure;
+    }
+    const protocol = agreementNorm.protocol;
+    if (protocol === undefined) {
+      return breaks("invalid-content", act, []);
     }
     const proposed = act.fields.norm;
     if (act.performative === "propose") {
@@ -196,7 +193,7 @@ function agreementAct(
         ...rest,
         agreement: {
           norm: proposed,
-          instance: open(setting, act, sender, "fipa-propose"),
+          instance: open(setting, act, sender, protocol),
         },
       });
     }
@@ -232,13 +229,15 @@ function agreementAct(
 
 /**
  * `query-ref` asks for the names of the norms a member holds, or with `:norm`
- * for one norm's document. Any member may ask at any time. Another member
- * answers with `inform`, whose `:in-reply-to` names the query's message and
- * whose `:content` carries the document.
+ * for one norm's document, under the protocol the norm-discovery document
+ * names. Any member may ask at any time. Another member answers with
+ * `inform`, whose `:in-reply-to` names the query's message and whose
+ * `:content` carries the document.
  */
 function discoveryAct(
   setting: Setting,
   state: State,
+  discoveryNorm: Norm,
   { act, sender, msgId }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
@@ -246,12 +245,16 @@ function discoveryAct(
     if (failure !== undefined) {
       return failure;
     }
+    const protocol = discoveryNorm.protocol;
+    if (protocol === undefined) {
+      return breaks("invalid-content", act, []);
+    }
     if (act.performative === "query-ref") {
       return conforms({
         ...state,
         queries: new Map([
           ...state.queries,
-          [msgId, open(setting, act, sender, "fipa-query")],
+          [msgId, open(setting, act, sender, protocol)],
         ]),
       });
     }
@@ -285,18 +288,20 @@ function discoveryAct(
 function normAct(
   setting: Setting,
   state: State,
-  act: Act,
-  sender: string,
+  norm: Norm,
+  { act, sender }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
-    const norm = normOf(setting, state, act.ontology);
     const failure = yield* checkContent(setting, state, act);
-    if (norm === undefined || failure !== undefined) {
-      return failure ?? breaks("no-agreement", act, []);
+    if (failure !== undefined) {
+      return failure;
     }
     const protocol = norm.protocol ?? norm.turns;
     if (protocol === undefined) {
-      return conforms(state);
+      const performatives = Object.keys(norm.contents);
+      return performatives.includes(act.performative)
+        ? conforms(state)
+        : breaks("out-of-turn", act, performatives);
     }
     const current = state.instance;
     if (current === undefined) {

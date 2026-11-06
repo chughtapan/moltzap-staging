@@ -29,8 +29,6 @@ const shipped = fileURLToPath(
   new URL("../../../packages/social-harness/config/norms/", import.meta.url),
 );
 
-const builtIn = ["norm-agreement.lisp", "norm-discovery.lisp", "feedback.lisp"];
-
 /** Each test starts PGlite, the Registry, the Router and two daemons. */
 const NORMS_TEST_TIMEOUT_MS = 120_000;
 
@@ -62,7 +60,7 @@ const strangerText = Effect.gen(function* () {
   const strict = yield* normsDirectory(
     infrastructure.temporaryDirectory,
     "norms-bob",
-    builtIn,
+    [],
   );
   const [alice, bob] = yield* startParticipants([
     yield* makeDaemonProcessFixture(infrastructure, "norms-alice"),
@@ -115,11 +113,7 @@ const request = '(request :ontology office-hours :topic "Project scope")';
 const offer =
   '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
 
-const officeHoursDocuments = [
-  ...builtIn,
-  "chat.lisp",
-  "examples/office-hours.lisp",
-];
+const officeHoursDocuments = ["chat.lisp", "examples/office-hours.lisp"];
 
 /**
  * A student and a professor whose firewall daemons hold `office-hours` and
@@ -310,7 +304,7 @@ const peerBreach = Effect.gen(function* () {
 
 /** A professor whose daemon lacks office-hours fetches it from the student, then the task starts. */
 const discovery = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours([...builtIn, "chat.lisp"]);
+  const { student, professor } = yield* officeHours(["chat.lisp"]);
   const query = "(query-ref :ontology norm-discovery :norm office-hours)";
   yield* send(student, { to: professor.address, text: proposal });
   yield* nextItem(professor);

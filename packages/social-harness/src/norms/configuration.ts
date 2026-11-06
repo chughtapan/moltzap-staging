@@ -1,20 +1,28 @@
 /**
- * @file A daemon's norms: the documents in its norms directory and the rule
- * chain that directory's `rules.json` applies. The daemon reads and checks
- * them each time it starts, and every agent it serves builds its own chain
- * from them. The documents' English rules become fixed rules of the daemon's
- * message policy.
+ * @file A daemon's norms: the built-in norms this package ships, plus the
+ * documents in its norms directory and the rule chain that directory's
+ * `rules.json` applies. The built-ins carry effects the daemon implements, so
+ * they ship with the code; the directory holds only policy. The daemon reads
+ * and checks them each time it starts, and every agent it serves builds its
+ * own chain from them. The documents' English rules become fixed rules of the
+ * daemon's message policy.
  */
 
 import { FileSystem } from "@effect/platform";
 import { Context, Data, Effect, Either, ParseResult, Schema } from "effect";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
 import { TextRule } from "../firewall/rules.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, normRuleId, ruleMatcher } from "./matchers.js";
+
+/** The package's built-in norm documents, beside the code that implements their effects. */
+const builtInDirectory = fileURLToPath(
+  new URL("../../config/norms/built-in/", import.meta.url),
+);
 
 /** The settings' copy of a norms directory: each document's text and the rule file. */
 export const installedNorms = exactStruct({
@@ -41,31 +49,30 @@ export class NormsConfigurationError extends Data.TaggedError(
 }
 
 /**
- * Reads every `.lisp` document directly in `directory` and its `rules.json`.
- * Norm names are unique, and every rule names a norm matcher.
+ * Reads the package's built-in norms, every `.lisp` document directly in
+ * `directory`, and the directory's `rules.json`. Norm names are unique, the
+ * directory names no built-in norm, and every rule names a norm matcher.
  */
 export function loadNorms(directory: string) {
   return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
     const failed = (reason: string) => new NormsConfigurationError({ reason });
-    const files = (yield* fs
-      .readDirectory(directory)
-      .pipe(Effect.mapError(() => failed("the directory cannot be read"))))
-      .filter((file) => file.endsWith(".lisp"))
-      .sort(compareAscii);
-    const documents = yield* Effect.forEach(
-      files,
-      (file) =>
-        fs.readFileString(join(directory, file)).pipe(
-          Effect.mapError(() => failed(`${file} cannot be read`)),
-          Effect.flatMap((source) => documentOf(file, source)),
-        ),
-      { concurrency: 1 },
+    const builtIn = yield* lispDocuments(builtInDirectory);
+    const configured = yield* lispDocuments(directory);
+    const builtInNames = new Set(builtIn.map(({ norm }) => norm.name));
+    const shadowing = configured.find(({ norm }) =>
+      builtInNames.has(norm.name),
     );
+    if (shadowing !== undefined) {
+      return yield* failed(
+        `${shadowing.file} names the built-in norm ${shadowing.norm.name}`,
+      );
+    }
+    const documents = [...builtIn, ...configured];
     const names = documents.map(({ norm }) => norm.name);
     if (new Set(names).size !== names.length) {
       return yield* failed("two documents name the same norm");
     }
+    const fs = yield* FileSystem.FileSystem;
     const text = yield* fs
       .readFileString(join(directory, "rules.json"))
       .pipe(Effect.mapError(() => failed("rules.json cannot be read")));
@@ -144,6 +151,29 @@ export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
         }),
     ),
   );
+}
+
+/** Every `.lisp` document directly in `directory`, read and parsed, in name order. */
+function lispDocuments(directory: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const failed = (reason: string) => new NormsConfigurationError({ reason });
+    const files = (yield* fs
+      .readDirectory(directory)
+      .pipe(Effect.mapError(() => failed("the directory cannot be read"))))
+      .filter((file) => file.endsWith(".lisp"))
+      .sort(compareAscii);
+    return yield* Effect.forEach(
+      files,
+      (file) =>
+        fs.readFileString(join(directory, file)).pipe(
+          Effect.mapError(() => failed(`${file} cannot be read`)),
+          Effect.flatMap((source) => documentOf(file, source)),
+          Effect.map((document) => ({ ...document, file })),
+        ),
+      { concurrency: 1 },
+    );
+  });
 }
 
 /** One document's text and the norm it describes, or why `file` holds none. */

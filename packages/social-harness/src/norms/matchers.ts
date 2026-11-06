@@ -19,7 +19,6 @@
 
 import { Effect, Option } from "effect";
 import type { Matcher, MatchInput, MatchResult } from "../firewall/chain.js";
-import type { Norm, NormRule } from "./documents.js";
 import {
   type AnswerFieldFailures,
   answerFieldsText,
@@ -40,6 +39,7 @@ import {
   type State,
   type Verdict,
 } from "./conversation.js";
+import { type Norm, type NormRule, standsAlone } from "./documents.js";
 
 /** What one matcher call reads, computed once for every matcher the chain asks. */
 interface Analysis {
@@ -51,15 +51,6 @@ interface Analysis {
 }
 
 const unmatched = { matched: false } as const;
-
-/** The `error` field of `feedback`'s `not-understood` holds at most this many characters. */
-const maximumErrorLength = 1000;
-
-/** The stateless norms, which judge an act without the acts before it. */
-const standalone: ReadonlySet<string> = new Set([
-  builtIns.chat,
-  builtIns.feedback,
-]);
 
 /**
  * The four norm matchers over the norms this agent holds, by the names rule
@@ -252,7 +243,8 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
     return unmatched;
   }
   const { act } = reading;
-  if (!analysis.complete && !standalone.has(act.ontology)) {
+  const actNorm = normOf(setting, state, act.ontology);
+  if (!analysis.complete && (actNorm === undefined || !standsAlone(actNorm))) {
     return {
       matched: true,
       refusal: "unresolved-evidence",
@@ -349,11 +341,22 @@ function notUnderstood(
           reason,
           ...(error === undefined
             ? {}
-            : { error: error.slice(0, maximumErrorLength) }),
+            : { error: error.slice(0, errorLimit(setting)) }),
           accepts: [...setting.held.keys()].join(" "),
         },
       })
     : undefined;
+}
+
+/** The longest `:error` the held feedback norm's `not-understood` form accepts. */
+function errorLimit(setting: Setting): number {
+  const field = setting.held.get(builtIns.feedback)?.contents["not-understood"]
+    ?.properties.error;
+  return field !== undefined &&
+    "maxLength" in field &&
+    field.maxLength !== undefined
+    ? field.maxLength
+    : Number.POSITIVE_INFINITY;
 }
 
 /**

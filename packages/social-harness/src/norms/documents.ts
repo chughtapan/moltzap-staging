@@ -75,6 +75,15 @@ export interface NormRule {
   readonly text: string;
 }
 
+/**
+ * Whether each act of `norm` stands alone: the norm names no protocol and
+ * gives its acts no turns, so an act needs no history, and only the
+ * performatives the document gives a form are its acts.
+ */
+export function standsAlone(norm: Norm): boolean {
+  return norm.protocol === undefined && norm.turns === undefined;
+}
+
 /** A document that does not describe a norm, and where. */
 export class NormDocumentError extends Data.TaggedError("NormDocumentError")<{
   readonly reason: string;

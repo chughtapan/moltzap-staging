@@ -196,8 +196,8 @@ it("resolves the norms directory relative to the settings file", () =>
     const norms = join(test.directory, "norms");
     yield* test.filesystem.makeDirectory(norms);
     yield* test.filesystem.copyFile(
-      join(shippedNorms, "norm-agreement.lisp"),
-      join(norms, "norm-agreement.lisp"),
+      join(shippedNorms, "chat.lisp"),
+      join(norms, "chat.lisp"),
     );
     yield* test.filesystem.copyFile(
       join(shippedNorms, "rules.json"),
@@ -205,11 +205,11 @@ it("resolves the norms directory relative to the settings file", () =>
     );
     yield* test.write({ ...settings, normsDirectory: "norms" });
     const loaded = yield* loadDaemonSettings(test.filename);
-    expect(loaded.settings.norms?.documents).toEqual([
-      yield* test.filesystem.readFileString(
-        join(shippedNorms, "norm-agreement.lisp"),
-      ),
-    ]);
+    expect(loaded.settings.norms?.documents).toEqual(
+      expect.arrayContaining([
+        yield* test.filesystem.readFileString(join(shippedNorms, "chat.lisp")),
+      ]),
+    );
   }).pipe(Effect.provide(NodeContext.layer)));
 
 /** A norms directory holding the shipped `office-hours`, whose documents give English rules. */

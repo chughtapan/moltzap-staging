@@ -12,8 +12,8 @@ const directory = fileURLToPath(
 );
 const shipped = [
   ...readdirSync(directory).filter((file) => file.endsWith(".lisp")),
-  ...readdirSync(join(directory, "examples")).map((file) =>
-    join("examples", file),
+  ...["built-in", "examples"].flatMap((folder) =>
+    readdirSync(join(directory, folder)).map((file) => join(folder, file)),
   ),
 ];
 

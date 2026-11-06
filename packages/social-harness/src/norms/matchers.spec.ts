@@ -25,18 +25,23 @@ const directory = fileURLToPath(
   new URL("../../config/norms/", import.meta.url),
 );
 
+const builtIn = [
+  "built-in/norm-agreement.lisp",
+  "built-in/norm-discovery.lisp",
+  "built-in/feedback.lisp",
+];
+const shipped = [...builtIn, "chat.lisp"];
+
+/** The matchers of a daemon holding the built-in norms, `chat` and the documents in `files`. */
+function holding(...files: readonly string[]) {
+  return normMatchers(norms(...shipped, ...files));
+}
+
 function norms(...files: readonly string[]): readonly Norm[] {
   return files.map((file) =>
     Either.getOrThrow(readNorm(readFileSync(join(directory, file), "utf8"))),
   );
 }
-
-const builtIn = [
-  "norm-agreement.lisp",
-  "norm-discovery.lisp",
-  "feedback.lisp",
-  "chat.lisp",
-];
 
 function card(name: string, byte: number): AgentCard {
   const id = Encoding.encodeBase64Url(new Uint8Array(16).fill(byte));
@@ -148,9 +153,7 @@ function replyOf(result: Effect.Effect.Success<ReturnType<typeof check>>) {
 describe("norms.unparsed", () => {
   it("answers plain text with not-understood where chat is not held", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms("norm-agreement.lisp", "norm-discovery.lisp", "feedback.lisp"),
-      );
+      const matchers = normMatchers(norms(...builtIn));
       const message = yield* from(bob, [alice, bob], "Can we meet today?");
 
       const result = yield* check(
@@ -183,7 +186,7 @@ describe("norms.unparsed", () => {
 
       const result = yield* check(
         "norms.unparsed",
-        normMatchers(norms(...builtIn)),
+        holding(),
         incoming(alice, message),
       );
 
@@ -192,7 +195,7 @@ describe("norms.unparsed", () => {
 
   it("reports an act that does not parse, and never answers a not-understood", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(norms(...builtIn));
+      const matchers = holding();
       const broken = yield* from(bob, [alice, bob], "(cfp :ontology");
       const feedback = yield* from(
         bob,
@@ -229,9 +232,7 @@ describe("norms.unparsed", () => {
 });
 
 describe("norm agreement", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/group-meeting.lisp"),
-  );
+  const matchers = holding("examples/group-meeting.lisp");
 
   it("lets a norm start once every member accepts it", () =>
     Effect.gen(function* () {
@@ -271,9 +272,7 @@ describe("norm agreement", () => {
 });
 
 describe("agreement races, consent and order", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/group-meeting.lisp"),
-  );
+  const matchers = holding("examples/group-meeting.lisp");
 
   it("keeps the first of two concurrent proposals and refuses the second", () =>
     Effect.gen(function* () {
@@ -371,9 +370,7 @@ describe("agreement races, consent and order", () => {
 });
 
 describe("agreement answers", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/group-meeting.lisp"),
-  );
+  const matchers = holding("examples/group-meeting.lisp");
 
   it("refuses an answer to an agreement when none is open", () =>
     Effect.gen(function* () {
@@ -393,9 +390,7 @@ describe("agreement answers", () => {
 });
 
 describe("norm instances", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/group-meeting.lisp"),
-  );
+  const matchers = holding("examples/group-meeting.lisp");
 
   it("names the acts a member may send instead of one out of turn", () =>
     Effect.gen(function* () {
@@ -475,14 +470,13 @@ describe("norm instances", () => {
       });
     }));
 
-  it("holds an act that depends on history the window omits, but not chat", () =>
+  it("holds an act that depends on history the window omits", () =>
     Effect.gen(function* () {
       const accept = yield* from(
         bob,
         group,
         "(accept-proposal :ontology norm-agreement)",
       );
-      const chat = yield* from(bob, group, "Sounds good.");
 
       expect(
         yield* check(
@@ -495,13 +489,6 @@ describe("norm instances", () => {
         refusal: "unresolved-evidence",
         detail: { reason: "history-unavailable" },
       });
-      expect(
-        yield* check(
-          "norms.nonconforming",
-          matchers,
-          outgoing(chat, [], { earlierHistoryOmitted: true }),
-        ),
-      ).toEqual({ matched: false });
     }));
 });
 
@@ -510,9 +497,7 @@ describe("a peer's act out of turn", () => {
 
   it("is answered with not-understood naming the acts the peer may send, in a direct conversation", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms(...builtIn, "examples/office-hours.lisp"),
-      );
+      const matchers = holding("examples/office-hours.lisp");
       const agreed = [
         yield* from(
           bob,
@@ -543,9 +528,7 @@ describe("a peer's act out of turn", () => {
 
   it("is withheld without an answer in a group, where every member would answer", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms(...builtIn, "examples/group-meeting.lisp"),
-      );
+      const matchers = holding("examples/group-meeting.lisp");
       const history = yield* agreement(["accept-proposal", "accept-proposal"]);
       const early = yield* from(
         bob,
@@ -571,9 +554,7 @@ describe("a peer's act out of turn", () => {
 });
 
 describe("office hours: offers and escalation", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/office-hours.lisp"),
-  );
+  const matchers = holding("examples/office-hours.lisp");
   const pair = [alice, bob];
   const student = (text: string) => from(bob, pair, text);
   const professor = (text: string) => from(alice, pair, text);
@@ -690,9 +671,7 @@ describe("office hours: offers and escalation", () => {
 });
 
 describe("office hours: holds", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/office-hours.lisp"),
-  );
+  const matchers = holding("examples/office-hours.lisp");
   const pair = [alice, bob];
   const student = (text: string) => from(bob, pair, text);
   const professor = (text: string) => from(alice, pair, text);
@@ -752,9 +731,7 @@ describe("office hours: holds", () => {
 });
 
 describe("a norm rule's acts", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/office-hours.lisp"),
-  );
+  const matchers = holding("examples/office-hours.lisp");
   const pair = [alice, bob];
   const topicRule = ruleMatcher("office-hours", 1);
   const officeHours =
@@ -851,7 +828,7 @@ describe("a norm's own turns", () => {
           (content inform :by Sender (field text :type string))
         `),
       );
-      const matchers = normMatchers([...norms(...builtIn), notice]);
+      const matchers = normMatchers([...norms(...shipped), notice]);
       const pair = [alice, bob];
       const history = [
         yield* from(
@@ -883,9 +860,7 @@ describe("a norm's own turns", () => {
 });
 
 describe("acts the Router has not ordered yet", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/office-hours.lisp"),
-  );
+  const matchers = holding("examples/office-hours.lisp");
   const pair = [alice, bob];
 
   /** Bob proposes office-hours and Alice accepts. */
@@ -953,9 +928,7 @@ describe("acts the Router has not ordered yet", () => {
 });
 
 describe("norm state", () => {
-  const matchers = normMatchers(
-    norms(...builtIn, "examples/group-meeting.lisp"),
-  );
+  const matchers = holding("examples/group-meeting.lisp");
 
   it("judges an act the same whatever broken acts and chat the history holds", () =>
     Effect.gen(function* () {
@@ -1000,9 +973,7 @@ describe("norm state", () => {
 describe("norm discovery", () => {
   it("answers a direct query with the norms held, or one norm's document", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms(...builtIn, "examples/office-hours.lisp"),
-      );
+      const matchers = holding("examples/office-hours.lisp");
       const list = yield* from(
         bob,
         [alice, bob],
@@ -1040,10 +1011,8 @@ describe("norm discovery", () => {
 
   it("lets a member accept a norm once it holds or received the document", () =>
     Effect.gen(function* () {
-      const proposer = normMatchers(
-        norms(...builtIn, "examples/office-hours.lisp"),
-      );
-      const member = normMatchers(norms(...builtIn));
+      const proposer = holding("examples/office-hours.lisp");
+      const member = holding();
       const pair = [alice, bob];
       const query = yield* from(
         bob,
@@ -1094,9 +1063,7 @@ describe("norm discovery", () => {
 describe("discovery among several members", () => {
   it("answers each member's query by its message, however many others asked first", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(
-        norms(...builtIn, "examples/group-meeting.lisp"),
-      );
+      const matchers = holding("examples/group-meeting.lisp");
       const [proposal] = yield* agreement([]);
       const ask = (member: AgentCard) =>
         from(
@@ -1125,7 +1092,7 @@ describe("discovery among several members", () => {
 
   it("refuses a discovery answer that names no open query", () =>
     Effect.gen(function* () {
-      const matchers = normMatchers(norms(...builtIn));
+      const matchers = holding();
       const stray = yield* from(
         alice,
         [alice, bob],
@@ -1139,6 +1106,46 @@ describe("discovery among several members", () => {
         detail: { reason: "unknown-instance" },
       });
     }));
+});
+
+describe("a standalone norm", () => {
+  const poll = Either.getOrThrow(
+    readNorm(
+      '(norm poll :description "Vote in a poll.") (content inform (field choice :type string))',
+    ),
+  );
+  const matchers = normMatchers([...norms(...shipped), poll]);
+  const pair = [alice, bob];
+  const vote = '(inform :ontology poll :choice "yes")';
+
+  it("accepts only the acts its document gives a form", () =>
+    Effect.gen(function* () {
+      const allowed = yield* from(bob, pair, vote);
+      const other = yield* from(bob, pair, "(request :ontology poll)");
+
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(allowed)),
+      ).toEqual({ matched: false });
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(other)),
+      ).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn", allowed: ["inform"] },
+      });
+    }));
+
+  it.each([vote, "Sounds good."])(
+    "judges %s without the history the window omits",
+    (text) =>
+      Effect.gen(function* () {
+        const act = yield* from(bob, pair, text);
+        const omitted = outgoing(act, [], { earlierHistoryOmitted: true });
+
+        expect(yield* check("norms.nonconforming", matchers, omitted)).toEqual({
+          matched: false,
+        });
+      }),
+  );
 });
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

@@ -73,7 +73,8 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 - `(norm ...)` names the norm, the roles of its initiator and participants, and
   a description. Its acts take turns by a [FIPA protocol](#protocols) that
   `:protocol` names, or by [their own turns](#a-norms-own-turns). A norm with
-  neither, such as `chat`, has no roles and acts that stand alone.
+  neither, such as `chat`, has no roles, and its acts are the performatives it
+  gives a form, each standing alone without the history before it.
 - `(content <performative> ...)` gives the act's own turn, in a norm without a
   protocol, then lists its fields. A field has a `:type` of `string`,
   `number`, `integer`, `boolean`, `select` or `multi-select`, and takes
@@ -174,12 +175,18 @@ certified first is in flight and the other is ignored by every member.
 
 ## Built-in norms
 
+Every daemon that holds norms holds the three built-in norms. Their documents
+ship in the package's `config/norms/built-in/`, beside the code that
+implements their effects, and a norms directory cannot name them.
+
 | Norm | Use |
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
 | `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
 | `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, does not fit the conversation's norm or breaks one of its English rules, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit, and `rule-violation` for an act a member's firewall withheld under an English rule; `:error` gives the parser's message, the failing fields, the acts the sender may send now, or the rule. The act it answers changes nothing for any member. Feedback is never answered. |
-| `chat` | Plain text. A daemon whose norms leave out `chat` answers plain text with `not-understood`. |
+
+`chat`, the norm that reads plain text, is not built in: a norms directory holds
+it like an application norm.
 
 ## Checks and rules
 
@@ -202,23 +209,25 @@ check matches it.
 
 ## Norms directory
 
-The runtime document's `normsDirectory` names a directory holding the norm
-documents the daemon holds, as `.lisp` files, and `rules.json`, the rule chain
-that applies the matchers. The daemon reads and checks them each time it
-starts, and every agent it serves applies them. A document that does not
-parse, two documents for one norm, or a rule naming another matcher refuses
-startup, and so do documents with [English rules](#english-rules) when the
-runtime document names no `messagePolicyFile` with a `decisionProvider`.
-Without `normsDirectory`, the daemon reads no norms.
+The runtime document's `normsDirectory` names a directory of policy:
+`rules.json`, the rule chain that applies the matchers, and the norm documents
+the daemon holds besides the [built-in norms](#built-in-norms), as `.lisp`
+files, such as `chat` and application norms. The daemon reads and checks them
+each time it starts, and every agent it serves applies them. A document that
+does not parse, two documents for one norm, a document naming a built-in norm,
+or a rule naming another matcher refuses startup, and so do documents with
+[English rules](#english-rules) when the runtime document names no
+`messagePolicyFile` with a `decisionProvider`. Without `normsDirectory`, the
+daemon holds no norms, built-in or not.
 
-The package ships `config/norms/`: the built-in norms, a `rules.json` that
+The package ships `config/norms/`: `chat.lisp`, a `rules.json` that
 answers queries, unread messages and, in a direct conversation, nonconforming
 acts, withholds every unread or nonconforming incoming act, refuses the agent's
 own unread and nonconforming acts, and holds its proposals and acceptances for
 the owner, which are approved at once until a host approval path exists, and
-example norms under `examples/`. Copy it
-and add or remove documents; leaving out `chat` makes the daemon answer plain
-text with `not-understood`.
+example norms under `examples/`. Copy `chat.lisp`, `rules.json` and the
+norms you want into the directory; leaving out `chat` makes the daemon answer
+plain text with `not-understood`.
 
 ## Reading norms
 

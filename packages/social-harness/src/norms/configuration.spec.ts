@@ -49,10 +49,10 @@ describe("loadNorms", () => {
       const held = Either.getOrThrow(heldNorms(installed));
 
       expect(held.norms.map((norm) => norm.name)).toEqual([
-        "chat",
         "feedback",
         "norm-agreement",
         "norm-discovery",
+        "chat",
       ]);
       expect(held.chain.rules.map((rule) => rule.id)).toContain(
         "not-understood",
@@ -80,6 +80,14 @@ describe("loadNorms", () => {
         "rules.json": rules,
       },
       reason: "two documents name the same norm",
+    },
+    {
+      what: "a document naming a built-in norm",
+      files: {
+        "mine.lisp": '(norm feedback :description "Mine.")',
+        "rules.json": rules,
+      },
+      reason: "mine.lisp names the built-in norm feedback",
     },
     {
       what: "no rule file",

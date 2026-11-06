@@ -196,8 +196,6 @@
         "src/norms"
       ],
       "entrypoints": [
-        "src/norms/matchers.ts",
-        "src/norms/documents.ts",
         "src/norms/configuration.ts"
       ],
       "reason": "Agreed norms: FIPA acts, protocols and the checks firewall rules name"

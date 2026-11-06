@@ -6,11 +6,8 @@
       :description "Tell a member that its message could not be read here, does not fit the norm or breaks one of its rules, and which norms can be.")
 
 (content not-understood
-  (field reason :type select
-         :choices (unparsed plain-text unknown-norm invalid-content
-                   out-of-turn no-agreement in-flight unknown-instance
-                   rule-violation)
-         :description "Why the message could not be read, does not fit the conversation's norm, or breaks one of its rules.")
+  (field reason :type string :max-length 40
+         :description "Why the message could not be read, does not fit the conversation's norm, or breaks one of its rules. The norms specification lists the reasons.")
   (field error :type string :max-length 1000 :optional true
          :description "What failed, such as a field the norm's form refuses, the acts the sender may send now, or the rule the act breaks.")
   (field accepts :type string :max-length 4000
