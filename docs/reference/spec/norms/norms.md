@@ -186,8 +186,9 @@ agent's edit can name them.
 | `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
 | `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, does not fit the conversation's norm or breaks one of its English rules, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit, and `rule-violation` for an act a member's firewall withheld under an English rule; `:error` gives the parser's message, the failing fields, the acts the sender may send now, or the rule. The act it answers changes nothing for any member. Feedback is never answered. |
 
-`chat`, the norm that reads plain text, is not built in: a norms directory holds
-it like an application norm.
+`chat`, the norm that reads plain text, is not built in and not held by
+default: an agent reads plain text only while it holds `chat`, like any
+application norm.
 
 ## Checks and rules
 
@@ -212,7 +213,7 @@ check matches it.
 
 The runtime document's `normsDirectory` names a directory of policy:
 `rules.json`, the rule chain every agent's firewall applies to the matchers,
-and the initial norms, as `.lisp` files, such as `chat` and application norms,
+and the initial norms, as `.lisp` files, such as application norms,
 which each new agent holds besides the [built-in norms](#built-in-norms). The
 daemon reads and checks them each time it starts. A document that does not
 parse, two documents for one norm, a document naming a built-in norm, a rule
@@ -222,13 +223,13 @@ refuses startup, and so do initial norms with
 `decisionProvider`. Without `normsDirectory`, the daemon's agents hold no
 norms, built-in or not.
 
-The package ships `config/norms/`: `chat.lisp`, a `rules.json` that
-answers queries, unread messages and, in a direct conversation, nonconforming
-acts, withholds every unread or nonconforming incoming act, refuses the agent's
-own unread and nonconforming acts, and holds its proposals and acceptances for
-the owner, which are approved at once until a host approval path exists, and
-example norms under `examples/`. Copy `chat.lisp`, `rules.json` and the
-norms you want into the directory; leaving out `chat` makes the daemon answer
+The package ships `config/norms/`: a `rules.json` that answers queries,
+unread messages and, in a direct conversation, nonconforming acts, withholds
+every unread or nonconforming incoming act, refuses the agent's own unread and
+nonconforming acts, and holds its proposals and acceptances for the owner,
+which are approved at once until a host approval path exists, and example
+norms under `examples/`, among them the optional `chat`. Copy `rules.json`
+and the norms you want into the directory. Without `chat`, the daemon answers
 plain text with `not-understood`.
 
 ## Holding norms

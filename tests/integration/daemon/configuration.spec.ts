@@ -229,7 +229,7 @@ it("resolves the norms directory relative to the settings file", () =>
     const norms = join(test.directory, "norms");
     yield* test.filesystem.makeDirectory(norms);
     yield* test.filesystem.copyFile(
-      join(shippedNorms, "chat.lisp"),
+      join(shippedNorms, "examples/chat.lisp"),
       join(norms, "chat.lisp"),
     );
     yield* test.filesystem.copyFile(
@@ -243,7 +243,9 @@ it("resolves the norms directory relative to the settings file", () =>
     });
     const loaded = yield* loadDaemonSettings(test.filename);
     expect(loaded.settings.norms?.initial).toEqual([
-      yield* test.filesystem.readFileString(join(shippedNorms, "chat.lisp")),
+      yield* test.filesystem.readFileString(
+        join(shippedNorms, "examples/chat.lisp"),
+      ),
     ]);
   }).pipe(Effect.provide(NodeContext.layer)));
 

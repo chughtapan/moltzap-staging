@@ -50,7 +50,7 @@ const rules = JSON.stringify({
 });
 
 describe("loadNorms", () => {
-  it("loads the shipped directory: a new agent holds chat over the built-ins, and its chain's matchers compile", () =>
+  it("loads the shipped directory: a new agent holds only the built-ins, and its chain's matchers compile", () =>
     Effect.gen(function* () {
       const service = yield* serviceNorms(yield* loadNorms(shipped));
       const { documents } = service;
@@ -60,9 +60,7 @@ describe("loadNorms", () => {
         "norm-agreement",
         "norm-discovery",
       ]);
-      expect(
-        documents.initial.map((document) => documents.name(document)),
-      ).toEqual([Option.some("chat")]);
+      expect(documents.initial).toEqual([]);
       expect(service.chain.rules.map((rule) => rule.id)).toContain(
         "not-understood",
       );

@@ -43,7 +43,7 @@ function normsDirectory(root: string) {
     const directory = join(root, "held-norms");
     yield* fs.makeDirectory(directory, { recursive: true });
     yield* Effect.forEach(
-      ["chat.lisp", "examples/office-hours.lisp", "rules.json"],
+      ["examples/chat.lisp", "examples/office-hours.lisp", "rules.json"],
       (file) =>
         fs.copyFile(join(shipped, file), join(directory, basename(file))),
       { concurrency: 1 },

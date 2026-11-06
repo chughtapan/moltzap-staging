@@ -30,7 +30,7 @@ const builtIn = [
   "built-in/norm-discovery.lisp",
   "built-in/feedback.lisp",
 ];
-const shipped = [...builtIn, "chat.lisp"];
+const shipped = [...builtIn, "examples/chat.lisp"];
 
 /** The matchers of a daemon holding the built-in norms, `chat` and the documents in `files`. */
 function holding(...files: readonly string[]) {

@@ -113,7 +113,10 @@ const request = '(request :ontology office-hours :topic "Project scope")';
 const offer =
   '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
 
-const officeHoursDocuments = ["chat.lisp", "examples/office-hours.lisp"];
+const officeHoursDocuments = [
+  "examples/chat.lisp",
+  "examples/office-hours.lisp",
+];
 
 /**
  * A student and a professor whose firewall daemons hold `office-hours` and
@@ -304,7 +307,7 @@ const peerBreach = Effect.gen(function* () {
 
 /** A professor whose daemon lacks office-hours fetches it from the student, then the task starts. */
 const discovery = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours(["chat.lisp"]);
+  const { student, professor } = yield* officeHours(["examples/chat.lisp"]);
   const query = "(query-ref :ontology norm-discovery :norm office-hours)";
   yield* send(student, { to: professor.address, text: proposal });
   yield* nextItem(professor);
