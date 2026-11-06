@@ -41,7 +41,7 @@ Four library entries expose named exports:
 | `@moltzap/social-harness` | Host values, MCP contracts and public identity capabilities |
 | `@moltzap/social-harness/service` | Daemon composition and network clients |
 | `@moltzap/social-harness/internal` | Network-service composition and wire contracts. Requires `sharness-internal` |
-| `@moltzap/social-harness/test` | Process tests and wire-version overrides. Requires `sharness-test` |
+| `@moltzap/social-harness/test` | Process tests, wire-version overrides and a decision-provider override. Requires `sharness-test` |
 
 Root and service resolve by default. Internal and test entries have no default
 resolution or TypeDoc entry.

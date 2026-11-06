@@ -3,7 +3,6 @@
 import type {
   DecisionProvider,
   DecisionRequest,
-  FirewallOptions,
 } from "@moltzap/social-harness/service";
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
@@ -11,15 +10,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  ConfigProvider,
-  Deferred,
-  Effect,
-  Fiber,
-  Redacted,
-  Schedule,
-  Schema,
-} from "effect";
+import { Deferred, Effect, Fiber, Redacted, Schedule, Schema } from "effect";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -33,7 +24,11 @@ import {
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
-import { runPolicyRuntime } from "./policy-runtime.js";
+import {
+  launchDaemon,
+  markedPolicy,
+  writeMessagePolicy,
+} from "./policy-fixture.js";
 
 const pair = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
@@ -45,27 +40,14 @@ const pair = Effect.gen(function* () {
   return { alice, bob };
 });
 
-const settings = {
-  timeoutMilliseconds: 10000,
-  maximumInputBytes: 1000000,
-  maximumResultBytes: 1000000,
-};
-
 const provider: DecisionProvider = {
   decide: (request) => Effect.succeed(answer(request)),
 };
 
-const options: FirewallOptions = {
-  settings,
-  facts: [],
-  text: {
-    provider,
-    settings: {
-      minimumProbability: 0.5,
-      maximumRequestBytes: 1000000,
-      timeoutMilliseconds: 5000,
-    },
-  },
+const textSettings = {
+  minimumProbability: 0.5,
+  maximumRequestBytes: 1000000,
+  timeoutMilliseconds: 5000,
 };
 
 const readSchema = Schema.Struct({
@@ -112,24 +94,12 @@ const acquirePolicyCheckScenario = Effect.gen(function* () {
   const { alice } = yield* pair;
   const entered = yield* Deferred.make<undefined>();
   const release = yield* Deferred.make<undefined>();
-  yield* start(alice, {
-    ...options,
-    text: {
-      ...options.text,
-      provider: {
-        decide: (request) =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Deferred.await(release)),
-            Effect.as(answer(request)),
-          ),
-      },
-      fixedRules: [fixedRule],
-      settings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 1000000,
-        timeoutMilliseconds: 5000,
-      },
-    },
+  yield* start(alice, markedPolicy(textSettings, [fixedRule]), {
+    decide: (request) =>
+      Deferred.succeed(entered, undefined).pipe(
+        Effect.zipRight(Deferred.await(release)),
+        Effect.as(answer(request)),
+      ),
   });
   const client = yield* connect(alice);
   yield* register(client, alice);
@@ -154,20 +124,8 @@ const swapDuringCheck = Effect.gen(function* () {
 
 const persistAndValidate = Effect.gen(function* () {
   const { alice } = yield* pair;
-  const fixedOptions = {
-    ...options,
-    text: {
-      ...options.text,
-      provider,
-      settings: {
-        minimumProbability: 0.5,
-        maximumRequestBytes: 1000000,
-        timeoutMilliseconds: 5000,
-      },
-      fixedRules: [fixedRule],
-    },
-  };
-  const runtime = yield* start(alice, fixedOptions);
+  const fixedPolicy = markedPolicy(textSettings, [fixedRule]);
+  const runtime = yield* start(alice, fixedPolicy);
   const client = yield* connect(alice);
   yield* register(client, alice);
   const changed = yield* update(client, { add: [blockedRule] });
@@ -191,7 +149,7 @@ const persistAndValidate = Effect.gen(function* () {
   });
   expect(yield* send(client).pipe(Effect.isFailure)).toBe(true);
   yield* Fiber.interrupt(runtime);
-  const restarted = yield* start(alice, fixedOptions);
+  const restarted = yield* start(alice, fixedPolicy);
   const fresh = yield* connect(alice);
   expect(yield* read(fresh)).toMatchObject({
     activeRevision: changed.activeRevision,
@@ -205,7 +163,7 @@ const persistAndValidate = Effect.gen(function* () {
 
 const concurrentEdits = Effect.gen(function* () {
   const { alice } = yield* pair;
-  const runtime = yield* start(alice, options);
+  const runtime = yield* start(alice, markedPolicy(textSettings, []));
   const client = yield* connect(alice);
   yield* register(client, alice);
   const additions = [
@@ -222,7 +180,7 @@ const concurrentEdits = Effect.gen(function* () {
   );
   yield* send(client);
   yield* Fiber.interrupt(runtime);
-  yield* start(alice, options);
+  yield* start(alice, markedPolicy(textSettings, []));
   const fresh = yield* connect(alice);
   expect(yield* read(fresh)).toEqual(before);
 });
@@ -236,7 +194,7 @@ const authenticatedPolicyEdits = Effect.gen(function* () {
   yield* configureDaemonFixture(alice, {
     authentication: { kind: "local", credential: token },
   });
-  yield* start(alice, options);
+  yield* start(alice, markedPolicy(textSettings, []));
   const client = yield* connect(alice, token);
   yield* register(client, alice);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
@@ -316,13 +274,17 @@ function answer(request: DecisionRequest) {
   };
 }
 
-function start(fixture: DaemonProcessFixture, policy: FirewallOptions) {
-  return runPolicyRuntime(policy).pipe(
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
-    ),
-    Effect.forkScoped,
-  );
+/** Writes `document` as the fixture's message policy and runs its daemon in this process, judged by `decisions`. */
+function start(
+  fixture: DaemonProcessFixture,
+  document: unknown,
+  decisions: DecisionProvider = provider,
+) {
+  return Effect.gen(function* () {
+    const files = yield* writeMessagePolicy(fixture.stateDirectory, document);
+    yield* configureDaemonFixture(fixture, files);
+    return yield* launchDaemon(fixture.environment, decisions);
+  });
 }
 
 function connect(fixture: DaemonProcessFixture, bearer?: string) {

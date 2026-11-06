@@ -44,6 +44,10 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  markedPolicy,
+  writeMessagePolicy,
+} from "../firewall/policy-fixture.js";
 
 type ManagementRegisterRequest = ToolRequest<"register">["arguments"];
 
@@ -97,8 +101,9 @@ export interface ProcessInfrastructure {
 
 /**
  * Exact reusable process inputs for one daemon identity and state directory.
- * A fixture with `firewall` runs `firewall-daemon.ts`, which installs a
- * firewall; one without runs `sharnessd`.
+ * A fixture with `firewall` runs `firewall-daemon.ts`: the daemon's own
+ * composition with the marked decision provider and, unless its settings name
+ * another, the marked message policy. One without runs `sharnessd`.
  */
 export interface DaemonProcessFixture {
   readonly agentName: AgentName;
@@ -715,6 +720,9 @@ export const makeDaemonProcessFixture = (
         routerOrigin: infrastructure.routerOrigin.origin,
         admissionCredential: ADMISSION_CREDENTIAL,
         agent: { ...registration, privateKey },
+        ...(firewall && setupChanges.messagePolicyFile === undefined
+          ? yield* markedPolicyFiles(directory)
+          : {}),
         ...setupChanges,
       }),
     );
@@ -797,6 +805,16 @@ export function configureDaemonFixture(
   }).pipe(
     Effect.provide(NodeFileSystem.layer),
     Effect.withSpan("configureDaemonFixture"),
+  );
+}
+
+/** Writes the marked message policy a firewall fixture's daemon reads, and the settings naming it. */
+function markedPolicyFiles(directory: string) {
+  return writeMessagePolicy(directory, markedPolicy()).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.mapError((cause) =>
+      processTestError("firewall policy could not be written", cause),
+    ),
   );
 }
 

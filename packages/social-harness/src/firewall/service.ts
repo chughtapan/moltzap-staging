@@ -6,6 +6,7 @@ import {
   Data,
   Effect,
   Layer,
+  Option,
   Schedule,
   Schema,
   Struct,
@@ -288,6 +289,15 @@ interface FirewallService {
     readonly since?: number;
   }) => Effect.Effect<typeof firewallDecisionsSchema.Type, FirewallPolicyError>;
 }
+
+/**
+ * A decision provider that replaces the one a message policy configures.
+ * Tests provide it around the daemon's own composition, so a process built
+ * exactly as `sharnessd` judges text rules without network credentials.
+ */
+export class DecisionProviderOverride extends Context.Tag(
+  "SocialHarness/DecisionProviderOverride",
+)<DecisionProviderOverride, DecisionProvider>() {}
 
 /** One local policy owns assessment, advice, disclosure and completed decisions. */
 export class Firewall extends Context.Tag("SocialHarness/Firewall")<
@@ -1149,27 +1159,30 @@ function loadRules(store: FirewallStore, options: CapturedOptions) {
 
 /** Natural-language rules without a provider fail installation instead of passing unchecked. */
 function configuredOptions(loaded: LoadedMessagePolicy) {
-  const { policy, provider } = loaded;
-  if (policy.text !== undefined && provider === undefined) {
-    return Effect.fail(new FirewallPolicyError({ reason: "build-failed" }));
-  }
-  return Effect.succeed({
-    settings: policy.settings,
-    facts: policy.facts,
-    maximumHistoryRecords: policy.maximumHistoryRecords,
-    maximumConcurrentChecks: policy.maximumConcurrentChecks,
-    text:
-      policy.text === undefined || provider === undefined
-        ? undefined
-        : {
-            fixedRules: policy.text.fixedRules,
-            initialRules: policy.text.initialRules,
-            settings: policy.textSettings,
-            provider: retryingTransientFailures(
-              makeJevDecisionProvider(provider),
-            ),
-          },
-  } satisfies FirewallOptions);
+  return Effect.gen(function* () {
+    const { policy, provider } = loaded;
+    if (policy.text !== undefined && provider === undefined) {
+      return yield* new FirewallPolicyError({ reason: "build-failed" });
+    }
+    const override = yield* Effect.serviceOption(DecisionProviderOverride);
+    return {
+      settings: policy.settings,
+      facts: policy.facts,
+      maximumHistoryRecords: policy.maximumHistoryRecords,
+      maximumConcurrentChecks: policy.maximumConcurrentChecks,
+      text:
+        policy.text === undefined || provider === undefined
+          ? undefined
+          : {
+              fixedRules: policy.text.fixedRules,
+              initialRules: policy.text.initialRules,
+              settings: policy.textSettings,
+              provider: Option.getOrElse(override, () =>
+                retryingTransientFailures(makeJevDecisionProvider(provider)),
+              ),
+            },
+    } satisfies FirewallOptions;
+  });
 }
 
 function captureOptions(

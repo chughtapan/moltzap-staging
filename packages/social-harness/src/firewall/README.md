@@ -51,3 +51,6 @@ through Effect.
 
 The test-only entry exports `checkMessage` for evaluating supplied rules and
 evidence with an injected provider. It performs no storage or configuration reads.
+It also exports `DecisionProviderOverride`, which replaces the provider a
+message policy configures, so tests run the daemon's own composition without
+provider credentials.

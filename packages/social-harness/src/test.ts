@@ -4,6 +4,8 @@
 export { HISTORY_WIRE_VERSIONS, WireVersions } from "./version.js";
 /** HTTP signing for process fixtures. */
 export { signAgentRequest } from "./identity/http-authentication.js";
+/** Replaces a configured decision provider around the daemon's own composition. */
+export { DecisionProviderOverride } from "./firewall/service.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
   CheckInputError,
