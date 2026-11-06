@@ -37,7 +37,8 @@ matchers by name; a rule naming an unregistered matcher prevents startup.
 | `hold` | Goes on to the next rule once the owner approves it; otherwise refused with `owner-approval-required`. | Not allowed. |
 
 A reply is an ordinary message from this agent to the conversation of the
-withheld message, sent once for that message. A collective result's withheld
+withheld message, sent once for that message: its message id is derived from
+the withheld message, so checking that message again sends no second reply. A collective result's withheld
 parts get no reply. The daemon does not yet ask the owner about a held draft,
 so every held draft is approved.
 
@@ -298,7 +299,7 @@ path and `missing`, `too-large`, `not-a-file`, `frontmatter`, `schema`,
 
 Fixed behaviors cannot be edited or collide with retained editable ids. Initial
 behaviors are validated every start but seed only missing policy.
-Shared-norm `{behavior: "<document>"}` additions use this mapping; malformed
+`policy_update`'s `{behavior: "<document>"}` additions use this mapping; malformed
 or oversized documents fail with `invalid-rule`.
 
 ### Policy-change rule asset
@@ -310,7 +311,7 @@ configuration.
 
 ### Shipped collective behaviors
 
-| Directory under `config/firewall/rules/collectives/` | Norm |
+| Directory under `config/firewall/rules/collectives/` | Rule |
 | --- | --- |
 | `one-gather` | Ask several members one question with gather/all-gather. |
 | `announce-once` | Announce the outcome once to the group. |
@@ -389,6 +390,6 @@ rows identify authors. Daemon-generated failures have no assessment row. Retaine
 | Chain decision | The chain rule that decided, including a held draft the owner has not approved. |
 
 Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an admission.
-Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller privileges. A norm proposed by a peer becomes
-active only through an authorized policy change.
+Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller privileges. Agents agree on a norm in the
+conversation itself; see [norms](../norms/norms.md#agreement).
 

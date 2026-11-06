@@ -183,14 +183,20 @@ certified first is in flight and the other is ignored by every member.
 
 ## Checks and rules
 
-The norms module supplies four matchers:
+The norms module supplies four matchers for the rule chain, and one matcher
+per English rule for the text rule made from it:
 
 | Matcher | Matches |
 | --- | --- |
 | `norms.unparsed` | A message that cannot be read as an act of a norm the daemon holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields; the reply is a `not-understood` act, never sent about a `not-understood`. |
 | `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and the acts the sender may send instead. In a direct conversation the reply is a `not-understood` act with that reason and those acts; in a group, where every other member's daemon would answer, there is none. An act whose history the evidence window omits is held for `unresolved-evidence`, without a reply. |
 | `norms.query` | A peer's norm-discovery query this daemon answers. The reply is the answer. |
-| `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, for its owner to approve. |
+| `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, held for its owner to approve. The daemon has no approval path yet, so it approves every held act at once. |
+| `norms.rule.<norm>-rule-<n>` | An act of `<norm>` whose performative the norm's `<n>`th English rule names, in either direction. The text rule made from that English rule names it in `match`, so the rule is judged only for those acts; for a peer's act its reply is `not-understood` with reason `rule-violation` and the rule. `rules.json` cannot name it. |
+
+The matchers read only messages whose whole content is text. A collective
+operation or a message with other parts is not read as an act, so no norm
+check matches it.
 
 <a id="norms-directory" />
 
@@ -209,7 +215,8 @@ The package ships `config/norms/`: the built-in norms, a `rules.json` that
 answers queries, unread messages and, in a direct conversation, nonconforming
 acts, withholds every unread or nonconforming incoming act, refuses the agent's
 own unread and nonconforming acts, and holds its proposals and acceptances for
-the owner, and example norms under `examples/`. Copy it
+the owner, which are approved at once until a host approval path exists, and
+example norms under `examples/`. Copy it
 and add or remove documents; leaving out `chat` makes the daemon answer plain
 text with `not-understood`.
 
@@ -217,3 +224,19 @@ text with `not-understood`.
 
 With norms, the MCP tool `read_norms` lists each held norm's name,
 description, protocol if it names one, and document.
+
+## Limitations
+
+- Members agree on a norm by name. Two members holding different documents
+  under one name can reach different verdicts.
+- A daemon reads at most its configured history window, 256 messages by
+  default. Once a conversation is longer, every act of a norm with turns is
+  refused, or withheld when incoming, for `unresolved-evidence`.
+- Any member can answer an earlier act of another member with
+  `not-understood`, which voids that act for every member.
+- A daemon answers a norm-discovery query only for norms it holds; a query
+  for another norm gets no answer. Each answered query appears in the decision
+  feed as a withheld message with reason `rule-violation`.
+- Behaviour is verified for direct, two-member conversations. In a group,
+  every member that holds a norm with English rules replies to the same
+  breach.

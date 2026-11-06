@@ -65,6 +65,7 @@ Each module owns its contract and the representations it exchanges:
 | [Communication](./communication/protocol.md) | Ordered messages, routing and recovery |
 | [Collectives](./communication/collectives.md) | Requests, answers and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
+| [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
 
 Each AgentId has one configured [daemon](./daemon.md) and loopback `/mcp`
 endpoint. Signing keys, admission credentials, network clients and stores remain

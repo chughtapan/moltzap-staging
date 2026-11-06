@@ -653,7 +653,10 @@ interface MembershipDescriptor {
 Both arrays contain 2–32 entries sorted by unsigned lexicographic decoded
 AgentId bytes. IDs and names are unique. Verify every card's Registry signature
 and rederive conversationId from the cards before preparing protocol work. The
-author creates MsgId from 32 cryptographically random bytes before acceptance.
+author creates MsgId from 32 cryptographically random bytes before acceptance,
+except that a daemon's reply to a message its firewall withheld derives its
+MsgId from that message, so the reply is sent once. A MsgId is unique per
+author.
 Peers check its canonical form and reject changed intent under
 `(authorAgentId, MsgId)`.
 

@@ -1,19 +1,24 @@
 # Message firewall
 
-The firewall checks incoming messages and outgoing drafts against configured
-rules. It returns a judgment and advice, and manages changes to editable rules.
+The firewall checks incoming messages and outgoing drafts against a rule chain
+and text rules. It returns a judgment and advice, and manages changes to
+editable rules.
 
 ## Checking messages
 
 ```mermaid
 flowchart LR
   A[Messages and permitted history] --> B[Capture input and active rules]
-  B --> C[Run code checks]
-  C --> D[Assess text rules]
+  B --> C[Apply the rule chain]
+  C -->|no rule matched| D[Assess text rules]
+  C -->|a rule decided| E
   D --> E[Combine findings and select advice]
   E --> F[Return judgments and completed checks]
 ```
 
+The rule chain runs first: each rule names a matcher that another module
+registers, such as the norms checks, and the first rule whose matcher matches
+decides the message. A message no chain rule decides goes on to the text rules.
 One call keeps the same policy for every message, including the question and
 answers in a collective result. Advice selects registered instructions and
 references the host may see.
