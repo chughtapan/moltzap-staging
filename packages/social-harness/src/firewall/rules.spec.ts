@@ -155,6 +155,33 @@ describe("policy documents", () => {
       expect(error.message).not.toContain("private-mode-value");
     }));
 
+  it("reads the provider key through symbolic links, as a Kubernetes Secret volume presents it", () =>
+    Effect.gen(function* () {
+      const mount = directory();
+      mkdirSync(join(mount, "..2026_11_06_00_00_00.000000000"));
+      writeFileSync(
+        join(mount, "..2026_11_06_00_00_00.000000000", "jev.key"),
+        "key-value",
+        { mode: 0o600 },
+      );
+      symlinkSync("..2026_11_06_00_00_00.000000000", join(mount, "..data"));
+      symlinkSync(join("..data", "jev.key"), join(mount, "jev.key"));
+
+      const installed = yield* loadConfigured(
+        {
+          messagePolicyFile: file(jevDocument),
+          decisionProviderKeyFile: Redacted.make(join(mount, "jev.key")),
+        },
+        readCredential,
+      );
+
+      expect(
+        installed.provider === undefined
+          ? undefined
+          : Redacted.value(installed.provider.apiKey),
+      ).toBe("key-value");
+    }));
+
   it("installs the document with its key and Client's default settings", () =>
     Effect.gen(function* () {
       const installed = yield* loadConfigured(

@@ -490,15 +490,25 @@ export const installedMessagePolicy = Schema.Struct({
 /** Contains validated policy and the provider parameters it selects. */
 export type LoadedMessagePolicy = typeof installedMessagePolicy.Type;
 
-/** Setup reads bounded UTF-8 credential files before validating the provider's token grammar. */
+/**
+ * Setup reads bounded UTF-8 credential files before validating the provider's
+ * token grammar. Like the policy file, the key file is read at its resolved
+ * path, so a symbolic link to it works, as a Kubernetes Secret volume
+ * presents every key.
+ */
 export function readPolicyCredential(
   path: Redacted.Redacted,
   grammar: Schema.Schema<string>,
 ) {
-  return readBoundedFile(Redacted.value(path), 16_384, () =>
-    policyConfigurationError("decision-provider-key-file"),
-  ).pipe(
-    Effect.mapError(() => ({ stage: "file" as const })),
+  return Effect.tryPromise({
+    try: () => realpath(Redacted.value(path)),
+    catch: () => ({ stage: "file" as const }),
+  }).pipe(
+    Effect.flatMap((canonical) =>
+      readBoundedFile(canonical, 16_384, () =>
+        policyConfigurationError("decision-provider-key-file"),
+      ).pipe(Effect.mapError(() => ({ stage: "file" as const }))),
+    ),
     Effect.flatMap((bytes) =>
       Effect.try({
         try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
