@@ -219,7 +219,7 @@ belong to [Package boundaries](./spec/package-boundaries.md).
 An implementation must not answer these choices accidentally:
 
 1. Dynamic membership, pruning and garbage collection, public observers,
-   malicious or replicated Registry/Router profiles, richer norm vocabularies,
-   dispute protocols, and cross-history audit conventions.
+   malicious or replicated Registry/Router profiles, dispute protocols, and
+   cross-history audit conventions.
 2. Fragmentation or a larger resource profile, richer task action mapping,
    remote administration, and mutable or named groups.
