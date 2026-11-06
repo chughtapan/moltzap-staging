@@ -23,7 +23,11 @@ import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall } from "../firewall/service.js";
 import { Registry } from "../identity/registry.js";
 import { Identity, IdentityError } from "../identity/service.js";
-import { HeldNorms, heldNorms } from "../norms/configuration.js";
+import {
+  HeldNorms,
+  type ServiceNorms,
+  serviceNorms,
+} from "../norms/configuration.js";
 import { packageVersion, WIRE_VERSION } from "../version.js";
 import {
   type DaemonSettings,
@@ -83,9 +87,14 @@ function makeAgentSelector(
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
+    const norms =
+      settings.norms === undefined
+        ? undefined
+        : yield* serviceNorms(settings.norms);
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
-      lookup: (agentKey: string) => makeAgentApp(settings, agentKey, unlockKey),
+      lookup: (agentKey: string) =>
+        makeAgentApp(settings, agentKey, unlockKey, norms),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -116,10 +125,15 @@ function makeAgentSelector(
   }).pipe(Effect.withSpan("makeAgentSelector"));
 }
 
+/**
+ * One agent's retained services and MCP app. Its firewall applies the
+ * service's policy and the norms the agent holds in its own editable policy.
+ */
 function makeAgentApp(
   settings: DaemonSettings,
   agentKey: string,
   unlockKey: Redacted.Redacted<Uint8Array>,
+  norms?: ServiceNorms,
 ) {
   return Effect.gen(function* () {
     const registration = yield* loadAgentRegistration(agentKey, unlockKey);
@@ -135,10 +149,12 @@ function makeAgentApp(
           : Effect.succeed(settings.admissionCredential),
     });
     const policy = settings.messagePolicy?.policy;
-    const held =
-      settings.norms === undefined
-        ? undefined
-        : yield* heldNorms(settings.norms);
+    const firewall = Firewall.layer(
+      agentKey,
+      settings.messagePolicy,
+      norms?.chain,
+      norms?.documents,
+    ).pipe(Layer.provideMerge(identity));
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
@@ -159,14 +175,9 @@ function makeAgentApp(
         workers,
       ).pipe(
         Layer.provideMerge(
-          Firewall.layer(agentKey, settings.messagePolicy, held?.chain).pipe(
-            Layer.provideMerge(identity),
-          ),
-        ),
-        Layer.merge(
-          held === undefined
-            ? Layer.empty
-            : Layer.succeed(HeldNorms, held.norms),
+          norms === undefined
+            ? firewall
+            : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall)),
         ),
       ),
     );

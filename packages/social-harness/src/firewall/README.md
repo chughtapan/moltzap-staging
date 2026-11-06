@@ -40,13 +40,18 @@ flowchart LR
 Approval currently always succeeds. The placeholder can later use host
 elicitation. Fixed rules come from configuration and cannot be edited.
 
+The editable policy also holds the agent's norm documents, which the firewall
+saves and versions without reading them. The norms layer names and compiles
+them through `NormDocuments` in `editable-policy.ts`, and each activation adds
+the matchers and fixed rules they compile to.
+
 A failed save leaves the active rules unchanged. In-flight checks keep the
 policy they captured.
 
 ## Using the firewall
 
-`Firewall.layer` loads saved editable rules, seeding them from configuration on
-the first startup. It obtains the daemon's shared `SqlClient` and identity
+`Firewall.layer` loads saved editable rules and norm documents, seeding them
+from configuration on the first startup. It obtains the daemon's shared `SqlClient` and identity
 through Effect.
 
 The test-only entry exports `checkMessage` for evaluating supplied rules and

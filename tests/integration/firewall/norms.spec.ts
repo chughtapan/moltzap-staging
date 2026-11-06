@@ -64,7 +64,7 @@ const strangerText = Effect.gen(function* () {
   );
   const [alice, bob] = yield* startParticipants([
     yield* makeDaemonProcessFixture(infrastructure, "norms-alice"),
-    yield* makeDaemonProcessFixture(infrastructure, "norms-bob", false, {
+    yield* makeDaemonProcessFixture(infrastructure, "norms-bob", true, {
       settings: { normsDirectory: strict },
     }),
   ]);

@@ -113,6 +113,10 @@
     {
       "file": "communication/store.ts",
       "reason": "One private communication store owns SQL operations and row types."
+    },
+    {
+      "file": "firewall/editable-policy.ts",
+      "reason": "Editable policy edits and the norm documents the norms layer compiles"
     }
   ],
   "compositionRoots": [
@@ -186,7 +190,8 @@
         "src/firewall/service.ts",
         "src/firewall/check.ts",
         "src/firewall/rules.ts",
-        "src/firewall/chain.ts"
+        "src/firewall/chain.ts",
+        "src/firewall/editable-policy.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },

@@ -54,6 +54,12 @@ If a member proposes a norm you do not hold, ask for it before answering:
 `:in-reply-to` names your query and its `:content` is the norm's document. In
 a group, another member may have asked already; its answer serves you too.
 
+A norm you receive this way applies only in that conversation. When your
+owner's task calls for holding it in every conversation, add its document
+with `policy_update`, `{"add": [{"norm": "<document>"}]}`; your owner
+approves the change. `{"remove": [{"norm": "<norm>"}]}` stops holding a
+norm.
+
 ## When a send is refused
 
 A refused send says why. A refusal under a norm's English rule quotes the

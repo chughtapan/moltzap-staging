@@ -45,7 +45,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
-| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Norms with English rules need `messagePolicyFile` with a `decisionProvider` |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
@@ -102,7 +102,9 @@ registration that succeeds.
 
 The configured message policy and norms apply before host calls are accepted.
 Agents use `policy_read`, `policy_update`, `firewall_decisions` and, with
-norms, `read_norms` through their own MCP context. Each conversation checks one incoming item at a time. A withheld
+norms, `read_norms` through their own MCP context. Each agent's editable
+policy holds its own [norms](./norms/norms.md#holding-norms), so agents of one
+service can hold different norms. Each conversation checks one incoming item at a time. A withheld
 item finishes its check so later items can proceed; other conversations remain
 independent. A request expiring before checking retires without a check. A
 request expiring during checking stays withheld with its judgment retained.

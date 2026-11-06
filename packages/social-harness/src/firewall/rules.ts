@@ -97,24 +97,38 @@ export const editableDocumentSchema = Schema.Array(editableRuleSchema).pipe(
 
 const behaviorAddition = exactStruct({ behavior: Schema.String });
 
-/** Removing and adding the same editable id replaces it in one activation. */
+/** A norm document for the agent to hold, which the daemon's norms read. */
+const normAddition = exactStruct({ norm: Schema.String });
+
+/** A norm the agent holds, by name, for it to stop holding. */
+const normRemoval = exactStruct({ norm: Schema.NonEmptyString });
+
+/**
+ * Removing and adding the same editable id, or a norm of the same name,
+ * replaces it in one activation.
+ */
 export const policyUpdateSchema = exactStruct({
   add: Schema.optional(
-    Schema.Array(Schema.Union(editableRuleSchema, behaviorAddition)).pipe(
-      Schema.maxItems(MAXIMUM_EDITABLE_RULES),
-    ),
+    Schema.Array(
+      Schema.Union(editableRuleSchema, behaviorAddition, normAddition),
+    ).pipe(Schema.maxItems(MAXIMUM_EDITABLE_RULES)),
   ),
   remove: Schema.optional(
-    Schema.Array(TextRule.fields.id).pipe(
+    Schema.Array(Schema.Union(TextRule.fields.id, normRemoval)).pipe(
       Schema.maxItems(MAXIMUM_EDITABLE_RULES),
     ),
   ),
 });
 
-/** The digest identifies the entire active installation, including fixed policy. */
+/**
+ * The digest identifies the entire active installation, including fixed
+ * policy and held norms. `fixedRules` include the English rules of the norms
+ * the agent holds, and `norms` names those norms.
+ */
 export const policyReadSchema = exactStruct({
   rules: editableDocumentSchema,
   fixedRules: Schema.Array(TextRule),
+  norms: Schema.Array(Schema.String),
   activeRevision: Schema.NonEmptyString,
 });
 
@@ -185,25 +199,29 @@ const policyProblemSchema = Schema.Literal(
   "frontmatter",
   "schema",
   "too-large",
+  "invalid-norm",
 );
 
 const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   "duplicate-id":
-    "its id is already in the policy; remove that rule in the same update to replace it, or use another id",
+    "the policy already has a rule with this id or a norm with this name; remove it in the same update to replace it",
   "unknown-id":
-    "no editable rule has this id; policy_read lists the editable rules",
-  "editable-limit": `the update would leave more than ${String(MAXIMUM_EDITABLE_RULES)} editable rules; remove some rules first`,
+    "no editable rule has this id and no held norm has this name; policy_read lists both",
+  "editable-limit": `the update would leave more than ${String(MAXIMUM_EDITABLE_RULES)} editable rules or held norms; remove some first`,
   frontmatter:
     "the BEHAVIOR.md needs valid YAML frontmatter between --- lines (no code fence or other text before it)",
   schema:
     "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance, feedback and action",
-  "too-large": "the BEHAVIOR.md is over 64 KiB",
+  "too-large": "the document is over 64 KiB",
+  "invalid-norm":
+    "it is not a norm document this daemon can hold: the daemon reads no norms, the document does not parse, or it names a built-in norm",
 };
 
 const policyReasonText: Readonly<
   Record<FirewallPolicyError["reason"], string>
 > = {
-  "not-configured": "the message policy has no text block",
+  "not-configured":
+    "the daemon has no message policy, or its policy has no decisionProvider to judge text rules",
   "invalid-rule": "the update is invalid",
   "fixed-rule":
     "it is a fixed rule of the owner's policy, which policy_update cannot add, remove or replace",
@@ -281,15 +299,10 @@ export type BehaviorFailure =
   | "duplicate-id"
   | "editable-limit";
 
-/**
- * Policy and provider file locations, and fixed rules the daemon adds after
- * the policy file's own, such as the English rules of the norms it holds.
- * Added rules need a policy file whose `decisionProvider` judges them.
- */
+/** Policy and provider file locations. */
 export interface PolicyConfiguration {
   readonly messagePolicyFile?: string;
   readonly decisionProviderKeyFile?: Redacted.Redacted;
-  readonly fixedRules?: readonly TextRule[];
 }
 
 /** Policy loading fails with a closed reason and a safe operator message. */
@@ -419,8 +432,8 @@ export const decodeMessagePolicy = Schema.decodeUnknown(
   { onExcessProperty: "error" },
 );
 
-/** Limits each `BEHAVIOR.md` to 64 KiB. */
-export const MAXIMUM_BEHAVIOR_BYTES = 65_536;
+/** Limits each `BEHAVIOR.md`, and each norm document an edit adds, to 64 KiB. */
+export const MAXIMUM_DOCUMENT_BYTES = 65_536;
 
 /** YAML defines frontmatter syntax. Only Social Harness metadata rejects unknown fields. */
 const behaviorFrontmatter = Schema.Struct({
@@ -460,7 +473,7 @@ const decisionProviderKey = Schema.Trim.pipe(
 
 /**
  * Runtime configuration retains resolved rules and redacts the provider
- * credential. A policy without natural-language rules has no provider.
+ * credential. A policy that names no `decisionProvider` has no provider.
  */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with resolved daemon configuration.
 export const installedMessagePolicy = Schema.Struct({
@@ -515,20 +528,15 @@ export const loadMessagePolicy = (
 > =>
   Effect.gen(function* () {
     const path = configuration.messagePolicyFile;
-    const added = configuration.fixedRules ?? [];
     if (path === undefined) {
-      return added.length === 0
-        ? Option.none()
-        : yield* policyConfigurationError("message-policy-file");
+      return Option.none();
     }
     const policy = yield* readPolicyText(path).pipe(
       Effect.flatMap((text) =>
         decodeMessagePolicy(text).pipe(Effect.mapError(invalidPolicy)),
       ),
     );
-    const resolved = yield* resolveBehaviors(policy, dirname(path)).pipe(
-      Effect.flatMap((behaviors) => withAddedRules(behaviors, added)),
-    );
+    const resolved = yield* resolveBehaviors(policy, dirname(path));
     const provider = yield* loadDecisionProvider(
       resolved,
       configuration,
@@ -559,7 +567,7 @@ export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
  * Maps a `BEHAVIOR.md` to an editable rule. Callers must bound `bytes` by
- * {@link MAXIMUM_BEHAVIOR_BYTES}. Only a closed failure category reaches
+ * {@link MAXIMUM_DOCUMENT_BYTES}. Only a closed failure category reaches
  * `refused`. YAML diagnostics stay private.
  */
 export function decodeBehavior<Failure>(
@@ -585,35 +593,6 @@ export function decodeBehavior<Failure>(
       ...metadata,
     }).pipe(Effect.mapError(() => refused("schema")));
   }).pipe(Effect.withSpan("decodeBehavior"));
-}
-
-/**
- * The policy with the daemon's added fixed rules after its own. Rule ids stay
- * unique, and added rules need the policy's `decisionProvider`, since a
- * natural-language rule without one would pass unchecked.
- */
-function withAddedRules(
-  policy: MessagePolicy,
-  added: readonly TextRule[],
-): Effect.Effect<MessagePolicy, MessagePolicyConfigurationError> {
-  if (added.length === 0) {
-    return Effect.succeed(policy);
-  }
-  if (policy.decisionProvider === undefined) {
-    return Effect.fail(
-      policyConfigurationError("message-policy", "decisionProvider"),
-    );
-  }
-  const text = policy.text ?? { fixedRules: [], initialRules: [] };
-  const merged: MessagePolicy = {
-    ...policy,
-    text: { ...text, fixedRules: [...text.fixedRules, ...added] },
-  };
-  return uniqueTextRuleIds(merged)
-    ? Effect.succeed(merged)
-    : Effect.fail(
-        policyConfigurationError("message-policy", "text.fixedRules"),
-      );
 }
 
 function uniqueTextRuleIds(policy: typeof document.Type): boolean {
@@ -688,7 +667,7 @@ function readBehavior(root: string, directory: string, path: string) {
     }
     const bytes = yield* readBoundedFile(
       locations.file,
-      MAXIMUM_BEHAVIOR_BYTES,
+      MAXIMUM_DOCUMENT_BYTES,
       refused,
     );
     return yield* decodeBehavior(bytes, refused);
@@ -880,7 +859,10 @@ function editSubject(
     : (place ?? rule);
 }
 
-/** Only a policy with natural-language rules reads the provider key. */
+/**
+ * A policy that names a `decisionProvider` reads its key, even without text
+ * rules of its own: the norms an agent holds can add rules for it to judge.
+ */
 function loadDecisionProvider(
   policy: MessagePolicy,
   configuration: PolicyConfiguration,
@@ -890,7 +872,7 @@ function loadDecisionProvider(
   MessagePolicyConfigurationError
 > {
   const setting = policy.decisionProvider;
-  if (policy.text === undefined || setting === undefined) {
+  if (setting === undefined) {
     return Effect.succeed(undefined);
   }
   return jevKey(configuration, readCredential).pipe(

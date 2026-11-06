@@ -1,21 +1,31 @@
 /**
- * @file A daemon's norms: the built-in norms this package ships, plus the
- * documents in its norms directory and the rule chain that directory's
- * `rules.json` applies. The built-ins carry effects the daemon implements, so
- * they ship with the code; the directory holds only policy. The daemon reads
- * and checks them each time it starts, and every agent it serves builds its
- * own chain from them. The documents' English rules become fixed rules of the
- * daemon's message policy.
+ * @file A daemon's norms. The package ships the built-in norms, whose effects
+ * the daemon implements. A deployment's norms directory holds policy: the
+ * `rules.json` chain every agent applies, and the norms each new agent holds.
+ * After that, each agent holds its own norms in its firewall's editable
+ * policy; this module names and compiles them for the firewall, and their
+ * English rules become fixed rules of that agent's message policy.
  */
 
 import { FileSystem } from "@effect/platform";
-import { Context, Data, Effect, Either, ParseResult, Schema } from "effect";
+import {
+  Context,
+  Data,
+  Effect,
+  Either,
+  Layer,
+  Option,
+  ParseResult,
+  Schema,
+} from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { NormDocuments } from "../firewall/editable-policy.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
-import { TextRule } from "../firewall/rules.js";
+import { type FirewallPolicyError, TextRule } from "../firewall/rules.js";
+import { Firewall } from "../firewall/service.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, normRuleId, ruleMatcher } from "./matchers.js";
 
@@ -24,20 +34,50 @@ const builtInDirectory = fileURLToPath(
   new URL("../../config/norms/built-in/", import.meta.url),
 );
 
-/** The settings' copy of a norms directory: each document's text and the rule file. */
+/** The settings' copy of a norms directory: the documents each new agent holds, and the rule file. */
 export const installedNorms = exactStruct({
-  documents: Schema.Array(Schema.String),
+  initial: Schema.Array(Schema.String),
   chain: chainRuleFileSchema,
 });
 
-/** The norms a daemon holds and the rule file it applies. */
+/** The norms a new agent holds and the rule file every agent applies. */
 export type InstalledNorms = typeof installedNorms.Type;
 
-/** The norms this daemon holds, which `read_norms` lists. */
+/**
+ * A daemon's norms once read: the rule chain every agent applies, how each
+ * agent's firewall names and compiles the norm documents it holds, and the
+ * built-in norms every agent holds besides them.
+ */
+export interface ServiceNorms {
+  readonly chain: Chain;
+  readonly documents: NormDocuments;
+  readonly builtIn: readonly Norm[];
+}
+
+/** The norms one agent holds, which `read_norms` lists: the built-ins, then the norms its active policy holds. */
 export class HeldNorms extends Context.Tag("SocialHarness/HeldNorms")<
   HeldNorms,
-  readonly Norm[]
->() {}
+  { readonly read: () => Effect.Effect<readonly Norm[], FirewallPolicyError> }
+>() {
+  /** Reads the agent's held norms from its firewall's active revision. */
+  static readonly layer = (service: ServiceNorms) =>
+    Layer.effect(
+      HeldNorms,
+      Effect.map(Firewall, (firewall) =>
+        HeldNorms.of({
+          read: () =>
+            firewall
+              .readNorms()
+              .pipe(
+                Effect.map((documents) => [
+                  ...service.builtIn,
+                  ...savedNorms(documents),
+                ]),
+              ),
+        }),
+      ),
+    );
+}
 
 /** A norms directory the daemon cannot use, and why. */
 export class NormsConfigurationError extends Data.TaggedError(
@@ -49,9 +89,9 @@ export class NormsConfigurationError extends Data.TaggedError(
 }
 
 /**
- * Reads the package's built-in norms, every `.lisp` document directly in
- * `directory`, and the directory's `rules.json`. Norm names are unique, the
- * directory names no built-in norm, and every rule names a norm matcher.
+ * Reads every `.lisp` document directly in `directory`, which each new agent
+ * holds, and the directory's `rules.json`. Norm names are unique, no document
+ * names a built-in norm, and every rule names a norm matcher.
  */
 export function loadNorms(directory: string) {
   return Effect.gen(function* () {
@@ -95,34 +135,90 @@ export function loadNorms(directory: string) {
       );
     }
     return {
-      documents: documents.map(({ source }) => source),
+      initial: configured.map(({ source }) => source),
       chain,
     } satisfies InstalledNorms;
   }).pipe(Effect.withSpan("loadNorms"));
 }
 
-/** The norms in installed settings, and the chain that checks acts of them. */
-export function heldNorms(
-  installed: InstalledNorms,
-): Either.Either<
-  { readonly norms: readonly Norm[]; readonly chain: Chain },
-  NormsConfigurationError
-> {
-  return Either.all(installed.documents.map((source) => readNorm(source))).pipe(
-    Either.mapLeft(
-      (error) => new NormsConfigurationError({ reason: error.reason }),
-    ),
-    Either.map((norms) => ({
-      norms,
-      chain: { rules: installed.chain.rules, matchers: normMatchers(norms) },
-    })),
+/**
+ * The daemon's norms from its settings, read once for every agent it serves:
+ * the package's built-in norms and the rule chain, whose matchers each agent's
+ * firewall compiles from the norms it holds.
+ */
+export function serviceNorms(installed: InstalledNorms) {
+  return lispDocuments(builtInDirectory).pipe(
+    Effect.map((documents) => {
+      const builtIn = documents.map(({ norm }) => norm);
+      return {
+        chain: { rules: installed.chain.rules, matchers: {} },
+        documents: normDocuments(builtIn, installed.initial),
+        builtIn,
+      } satisfies ServiceNorms;
+    }),
+    Effect.withSpan("serviceNorms"),
+  );
+}
+
+/** Whether the norms each new agent holds have English rules, which need a decision provider. */
+export function initialNormsHaveRules(installed: InstalledNorms): boolean {
+  return installed.initial.some((source) =>
+    Either.match(readNorm(source), {
+      onLeft: () => false,
+      onRight: (norm) => norm.rules.length > 0,
+    }),
   );
 }
 
 /**
- * The English rules of the norms a daemon holds, as fixed firewall text rules.
- * The daemon adds them to its message policy, so its decision provider judges
- * each act a rule governs, its agent's and its peers', and is not asked about
+ * The norms of the documents an agent's firewall saved. Each parses, since the
+ * firewall named it before saving it.
+ */
+function savedNorms(documents: readonly string[]): readonly Norm[] {
+  return documents.flatMap((document) =>
+    Option.toArray(Either.getRight(readNorm(document))),
+  );
+}
+
+/**
+ * How an agent's firewall names and compiles the norm documents it holds.
+ * An agent cannot hold a document that does not parse or names a built-in
+ * norm, nor two documents for one norm. The held norms compile with the
+ * built-ins into the norm matchers and their English rules.
+ */
+function normDocuments(
+  builtIn: readonly Norm[],
+  initial: readonly string[],
+): NormDocuments {
+  const builtInNames = new Set(builtIn.map((norm) => norm.name));
+  const holdable = (document: string) =>
+    Either.getRight(readNorm(document)).pipe(
+      Option.filter((norm) => !builtInNames.has(norm.name)),
+    );
+  return {
+    initial,
+    name: (document) =>
+      holdable(document).pipe(Option.map((norm) => norm.name)),
+    compile: (documents) =>
+      Option.all(documents.map((document) => holdable(document))).pipe(
+        Option.filter(
+          (held) => new Set(held.map((norm) => norm.name)).size === held.length,
+        ),
+        Option.map((held) => {
+          const norms = [...builtIn, ...held];
+          return {
+            matchers: normMatchers(norms),
+            fixedRules: normTextRules(norms),
+          };
+        }),
+      ),
+  };
+}
+
+/**
+ * The English rules of the norms an agent holds, as fixed firewall text rules.
+ * They join the agent's message policy, so its decision provider judges each
+ * act a rule governs, its agent's and its peers', and is not asked about
  * other messages: the rule's `match` names the norm matcher for its acts. A
  * rule's id is the norm's name, `-rule-` and its number. A breach refuses the
  * agent's act, or withholds a peer's act and answers it with `not-understood`
@@ -130,7 +226,7 @@ export function heldNorms(
  * provider is unsure, the agent's act is refused so it can revise it, and a
  * peer's act is admitted with the rule as a reminder.
  */
-export function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
+function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
   return norms.flatMap((norm) =>
     norm.rules.map(
       (rule, index) =>

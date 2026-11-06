@@ -1,14 +1,13 @@
-/** @file A norms directory loads into settings and back into the chain that checks acts. */
+/** @file A norms directory loads into settings, and an agent's firewall names and compiles the norms it holds. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { live as it } from "@effect/vitest";
-import { Effect, Either } from "effect";
+import { Effect, Option } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import { heldNorms, loadNorms, normTextRules } from "./configuration.js";
-import { readNorm } from "./documents.js";
+import { loadNorms, serviceNorms } from "./configuration.js";
 import { ruleMatcher } from "./matchers.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and failure text are the configuration contract under test. */
@@ -31,6 +30,14 @@ function directoryWith(files: Readonly<Record<string, string>>) {
   });
 }
 
+const swap = `
+  (norm swap :initiator Asker :participant Owner :description "Swap a shift.")
+  (content request :by Asker :initiates asked)
+  (content agree :by Owner :when asked :terminates asked)
+  (rule :act request "Ask for a swap a day ahead.")
+  (rule :act (agree request) "Swap only with a trained colleague.")
+`;
+
 const rules = JSON.stringify({
   rules: [
     {
@@ -43,22 +50,28 @@ const rules = JSON.stringify({
 });
 
 describe("loadNorms", () => {
-  it("loads the shipped directory into a chain over its norms", () =>
+  it("loads the shipped directory: a new agent holds chat over the built-ins, and its chain's matchers compile", () =>
     Effect.gen(function* () {
-      const installed = yield* loadNorms(shipped);
-      const held = Either.getOrThrow(heldNorms(installed));
+      const service = yield* serviceNorms(yield* loadNorms(shipped));
+      const { documents } = service;
 
-      expect(held.norms.map((norm) => norm.name)).toEqual([
+      expect(service.builtIn.map((norm) => norm.name)).toEqual([
         "feedback",
         "norm-agreement",
         "norm-discovery",
-        "chat",
       ]);
-      expect(held.chain.rules.map((rule) => rule.id)).toContain(
+      expect(
+        documents.initial.map((document) => documents.name(document)),
+      ).toEqual([Option.some("chat")]);
+      expect(service.chain.rules.map((rule) => rule.id)).toContain(
         "not-understood",
       );
-      expect(Object.keys(held.chain.matchers)).toEqual(
-        expect.arrayContaining(held.chain.rules.map((rule) => rule.match)),
+      expect(
+        Object.keys(
+          Option.getOrThrow(documents.compile(documents.initial)).matchers,
+        ),
+      ).toEqual(
+        expect.arrayContaining(service.chain.rules.map((rule) => rule.match)),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)));
 
@@ -118,20 +131,40 @@ describe("loadNorms", () => {
   );
 });
 
-describe("normTextRules", () => {
-  it("turns each English rule into a fixed rule scoped to the acts it governs, which replies to a peer's breach", () =>
-    Effect.sync(() => {
-      const norm = Either.getOrThrow(
-        readNorm(`
-        (norm swap :initiator Asker :participant Owner :description "Swap a shift.")
-        (content request :by Asker :initiates asked)
-        (content agree :by Owner :when asked :terminates asked)
-        (rule :act request "Ask for a swap a day ahead.")
-        (rule :act (agree request) "Swap only with a trained colleague.")
-      `),
-      );
+describe("the norm documents an agent holds", () => {
+  /** The shipped directory's norms, as an agent's firewall names and compiles them. */
+  const held = loadNorms(shipped).pipe(
+    Effect.flatMap(serviceNorms),
+    Effect.map((service) => service.documents),
+    Effect.provide(NodeContext.layer),
+  );
 
-      const [first, second] = normTextRules([norm]);
+  it("names a document an agent can hold, and none that does not parse or names a built-in norm", () =>
+    Effect.gen(function* () {
+      const documents = yield* held;
+
+      expect(documents.name(swap)).toEqual(Option.some("swap"));
+      expect(documents.name("(norm")).toEqual(Option.none());
+      expect(documents.name('(norm feedback :description "Mine.")')).toEqual(
+        Option.none(),
+      );
+    }));
+
+  it("compiles held norms with the built-ins, but not two documents for one norm", () =>
+    Effect.gen(function* () {
+      const documents = yield* held;
+
+      expect(Option.isSome(documents.compile([swap]))).toBe(true);
+      expect(documents.compile([swap, swap])).toEqual(Option.none());
+    }));
+
+  it("turns each English rule into a fixed rule scoped to the acts it governs, which replies to a peer's breach", () =>
+    Effect.gen(function* () {
+      const documents = yield* held;
+
+      const [first, second] = Option.getOrThrow(
+        documents.compile([swap]),
+      ).fixedRules;
 
       expect([first, second].map((rule) => rule?.id)).toEqual([
         "swap-rule-1",

@@ -1,17 +1,8 @@
 /** @file Real OAuth accounts share one daemon while identity, inbox and recovery remain isolated. */
-import {
-  FileSystem,
-  HttpBody,
-  HttpClient,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "@effect/platform";
-import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
+import type { Client } from "@modelcontextprotocol/client";
+import { FileSystem, HttpBody, HttpClient } from "@effect/platform";
+import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import {
-  Client,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
 import {
   AgentAddress,
   AgentIdentityCard,
@@ -32,9 +23,6 @@ import {
   Layer,
   Schema,
 } from "effect";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer owns the issuer listener's lifetime.
-import { createServer } from "node:http";
 import { expect, it } from "vitest";
 import { callTool as call } from "../../../plugins/shared/mcp-client.js";
 import { processTrace } from "../scenario-fixture.js";
@@ -48,72 +36,10 @@ import {
   type RunningProcess,
   stopProcess,
 } from "./daemon-fixture.js";
+import { connect, issuerFixture, requiredScope } from "./oauth-fixture.js";
 import { acquirePostgres } from "./postgres-fixture.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and closed tool outcomes are external conformance contracts. */
-const requiredScope = "use:mcp";
-
-const issuerFixture = Effect.gen(function* () {
-  const keys = yield* Effect.tryPromise(() => generateKeyPair("RS256"));
-  const publicKey = yield* Effect.tryPromise(() => exportJWK(keys.publicKey));
-  const server = yield* NodeHttpServer.make(createServer, {
-    host: "127.0.0.1",
-    port: 0,
-  });
-  if (server.address._tag !== "TcpAddress") {
-    return yield* Effect.dieMessage("Expected issuer TCP listener");
-  }
-  const issuer = `http://127.0.0.1:${server.address.port}/`;
-  yield* server.serve(
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      return yield* HttpServerResponse.json(
-        request.url === "/.well-known/openid-configuration"
-          ? { issuer, jwks_uri: `${issuer}jwks` }
-          : { keys: [{ ...publicKey, kid: "shared-test", alg: "RS256" }] },
-      ).pipe(Effect.orDie);
-    }),
-  );
-  const token = (subject: string, audience: string) =>
-    Effect.tryPromise(() =>
-      new SignJWT({ scope: requiredScope })
-        .setProtectedHeader({ alg: "RS256", kid: "shared-test" })
-        .setIssuer(issuer)
-        .setAudience(audience)
-        .setSubject(subject)
-        .setExpirationTime("5m")
-        .sign(keys.privateKey),
-    );
-  return { issuer, token };
-});
-
-function connect(endpoint: URL, token: string) {
-  return Effect.acquireRelease(
-    Effect.gen(function* () {
-      const client = new Client(
-        { name: "shared-daemon-evaluation", version: "1" },
-        {
-          capabilities: {},
-          versionNegotiation: { mode: { pin: "2026-07-28" } },
-        },
-      );
-      yield* Effect.tryPromise(() =>
-        client.connect(
-          new StreamableHTTPClientTransport(endpoint, {
-            requestInit: {
-              headers: {
-                authorization: `Bearer ${token}`,
-              },
-            },
-          }),
-        ),
-      );
-      return client;
-    }),
-    (client) => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-  );
-}
-
 /** The existing tools return each caller's retained view without consuming delivery. */
 function expectConversation(
   client: Client,

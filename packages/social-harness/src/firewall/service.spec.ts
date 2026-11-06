@@ -24,7 +24,7 @@ import {
 } from "./__tests__/firewall-fixtures.js";
 import {
   FirewallPolicyError,
-  MAXIMUM_BEHAVIOR_BYTES,
+  MAXIMUM_DOCUMENT_BYTES,
   MAXIMUM_EDITABLE_RULES,
   type policyUpdateSchema,
   type TextRule,
@@ -122,7 +122,7 @@ const refusedEdits: ReadonlyArray<{
   {
     edit: {
       add: [
-        { behavior: sharedBehavior.padEnd(MAXIMUM_BEHAVIOR_BYTES + 1, " ") },
+        { behavior: sharedBehavior.padEnd(MAXIMUM_DOCUMENT_BYTES + 1, " ") },
       ],
     },
     refusal: { reason: "invalid-rule", problem: "too-large", path: ["add", 0] },

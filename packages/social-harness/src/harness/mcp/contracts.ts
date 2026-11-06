@@ -484,14 +484,14 @@ export const toolDefinitions = {
   },
   policy_read: {
     description:
-      "Read active editable rules, fixed rules and the policy revision.",
+      "Read active editable rules, fixed rules, the names of the norms this agent holds, and the policy revision. Fixed rules include the English rules of held norms.",
     input: empty,
     output: policyReadSchema,
     annotations: read,
   },
   policy_update: {
     description:
-      "Add, remove or replace editable rules. A behavior is a complete BEHAVIOR.md document. Remove and add the same id to replace a rule. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
+      "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
     output: policyUpdateResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: false },
@@ -505,7 +505,7 @@ export const toolDefinitions = {
   },
   read_norms: {
     description:
-      "List the norms this agent's daemon reads, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+      "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
     input: empty,
     output: readNormsResultSchema,
     annotations: read,

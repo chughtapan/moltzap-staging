@@ -143,7 +143,7 @@ The file is valid, but the daemon could not install its rules beside the
 editable rules its SQL database holds. `invalid-rule` means an initial or
 stored rule is invalid, such as one id given twice. `fixed-rule` means an
 initial or stored rule reuses the id of a fixed rule. Rename the
-initial rule in the file. A stored rule, such as a norm the agent added with
+initial rule in the file. A stored rule, such as one the agent added with
 `policy_update`, keeps its id: take the colliding fixed rule out of the file,
 start the daemon, remove the stored rule with `policy_update`
 `{"remove": ["<id>"]}`, then put the fixed rule back and restart.

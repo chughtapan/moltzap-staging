@@ -444,7 +444,7 @@ function installIdentityTools(
   });
 }
 
-/** `read_norms` lists the norms the daemon was configured with. */
+/** `read_norms` lists the norms this agent holds in its active policy. */
 function installNormTools(
   server: Context.Tag.Service<typeof McpServer>,
   norms: Context.Tag.Service<typeof HeldNorms>,
@@ -454,14 +454,16 @@ function installNormTools(
     name: "read_norms",
     definition: toolDefinitions.read_norms,
     execute: () =>
-      Effect.succeed({
-        norms: norms.map((norm) => ({
-          name: norm.name,
-          description: norm.description,
-          ...(norm.protocol === undefined ? {} : { protocol: norm.protocol }),
-          document: norm.source,
+      norms.read().pipe(
+        Effect.map((held) => ({
+          norms: held.map((norm) => ({
+            name: norm.name,
+            description: norm.description,
+            ...(norm.protocol === undefined ? {} : { protocol: norm.protocol }),
+            document: norm.source,
+          })),
         })),
-      }),
+      ),
     failure: () => new ProtocolError(-32603, "read_norms failed"),
     visible: registered,
   });

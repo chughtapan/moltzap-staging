@@ -19,10 +19,9 @@ import { afterEach, describe, expect } from "vitest";
 import {
   decodeMessagePolicy,
   loadMessagePolicy,
-  MAXIMUM_BEHAVIOR_BYTES,
+  MAXIMUM_DOCUMENT_BYTES,
   type PolicyConfiguration,
   readPolicyCredential as readCredential,
-  TextRule,
 } from "./rules.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Rule fields, settings and closed configuration failures are the owner policy contract. */
@@ -46,13 +45,6 @@ describe("policy documents", () => {
     ...baseDocument,
     decisionProvider: { kind: "jev", model: "jev-1.13.0" },
   };
-  /** A fixed rule the daemon adds to the policy file's own, such as a norm's. */
-  const addedRule = new TextRule({
-    id: "swap-rule-1",
-    applies: "outgoing",
-    text: "Ask for a swap a day ahead.",
-  });
-
   afterEach(() => {
     for (const directory of directories.splice(0)) {
       rmSync(directory, { recursive: true, force: true });
@@ -114,34 +106,6 @@ describe("policy documents", () => {
         }),
       }),
       "message-policy-file",
-    ],
-    [
-      "added fixed rules without a policy file",
-      () => ({ fixedRules: [addedRule] }),
-      "message-policy-file",
-    ],
-    [
-      "added fixed rules without a decision provider",
-      () => ({
-        messagePolicyFile: file({ format: policyFormat }),
-        fixedRules: [addedRule],
-      }),
-      "message-policy",
-    ],
-    [
-      "an added fixed rule whose id the policy file uses",
-      () => ({
-        messagePolicyFile: file(jevDocument),
-        decisionProviderKeyFile: Redacted.make(file("key-value")),
-        fixedRules: [
-          new TextRule({
-            id: "builtin.policy-owner",
-            applies: "outgoing",
-            text: addedRule.text,
-          }),
-        ],
-      }),
-      "message-policy",
     ],
     [
       "a text rule id given as both fixed and initial",
@@ -221,7 +185,7 @@ describe("policy documents", () => {
       ).toBe("key-value");
     }));
 
-  it("adds the daemon's fixed rules after the file's own and loads the provider that checks them", () =>
+  it("loads the provider a policy names without text rules, for the rules of the norms agents hold", () =>
     Effect.gen(function* () {
       const installed = yield* loadConfigured(
         {
@@ -230,12 +194,11 @@ describe("policy documents", () => {
             decisionProvider: { kind: "jev", model: "jev-1.13.0" },
           }),
           decisionProviderKeyFile: Redacted.make(file("key-value")),
-          fixedRules: [addedRule],
         },
         readCredential,
       );
 
-      expect(installed.policy.text?.fixedRules).toEqual([addedRule]);
+      expect(installed.policy.text).toBeUndefined();
       expect(installed.provider).toMatchObject({ kind: "jev" });
     }));
 
@@ -434,7 +397,7 @@ Ask before starting a conversation.
     "accepts a behavior at the 64 KiB byte limit",
     Effect.fn(function* () {
       const { path } = fixture(
-        behaviorDocument.padEnd(MAXIMUM_BEHAVIOR_BYTES, " "),
+        behaviorDocument.padEnd(MAXIMUM_DOCUMENT_BYTES, " "),
       );
       const { policy } = yield* loaded(path);
       expect(policy.text?.fixedRules).toContainEqual(
@@ -579,7 +542,7 @@ Ask before starting a conversation.
       "oversized file",
       "too-large",
       "fixed",
-      behaviorDocument.padEnd(MAXIMUM_BEHAVIOR_BYTES + 1, " "),
+      behaviorDocument.padEnd(MAXIMUM_DOCUMENT_BYTES + 1, " "),
     ],
     [
       "duplicate fixed inline id",

@@ -92,22 +92,22 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 
 ### English rules
 
-A daemon adds each `(rule ...)` of a norm it holds to its
-[message policy](../firewall/message-policy.md) as a fixed text rule, named
-for the norm and the rule's position, such as `office-hours-rule-1`, and
-scoped to the acts the rule names. The policy's decision provider judges each
-of those acts against the rule, the agent's own and its peers', and is not
-asked about other messages. Each party judges with its own owner's facts.
+Each `(rule ...)` of a norm an agent [holds](#holding-norms) becomes a fixed
+text rule of that agent's [message policy](../firewall/message-policy.md),
+named for the norm and the rule's position, such as `office-hours-rule-1`,
+and scoped to the acts the rule names. The policy's decision provider judges
+each of those acts against the rule, the agent's own and its peers', and is
+not asked about other messages. Each party judges with its own owner's facts.
 
 | Judgment | The agent's own act | A peer's act |
 | --- | --- | --- |
 | Breaks the rule | Refused, quoting the rule | Withheld; the peer receives `not-understood` with reason `rule-violation` and the rule, and the act changes nothing |
 | Unsure | Refused, quoting the rule, so the agent revises it | Admitted with the rule as a reminder |
 
-A daemon that holds a norm with rules needs a message policy with a
+An agent can hold a norm with rules only under a message policy with a
 `decisionProvider`. Rules of a norm a member received through norm discovery
-are not added. In a group, every member that holds the norm replies to a
-breach.
+are not added until the agent holds the norm. In a group, every member that
+holds the norm replies to a breach.
 
 ## Turns
 
@@ -175,9 +175,10 @@ certified first is in flight and the other is ignored by every member.
 
 ## Built-in norms
 
-Every daemon that holds norms holds the three built-in norms. Their documents
-ship in the package's `config/norms/built-in/`, beside the code that
-implements their effects, and a norms directory cannot name them.
+Every agent of a daemon with a norms directory holds the three built-in
+norms. Their documents ship in the package's `config/norms/built-in/`, beside
+the code that implements their effects, and neither a norms directory nor an
+agent's edit can name them.
 
 | Norm | Use |
 | --- | --- |
@@ -210,15 +211,16 @@ check matches it.
 ## Norms directory
 
 The runtime document's `normsDirectory` names a directory of policy:
-`rules.json`, the rule chain that applies the matchers, and the norm documents
-the daemon holds besides the [built-in norms](#built-in-norms), as `.lisp`
-files, such as `chat` and application norms. The daemon reads and checks them
-each time it starts, and every agent it serves applies them. A document that
-does not parse, two documents for one norm, a document naming a built-in norm,
-or a rule naming another matcher refuses startup, and so do documents with
-[English rules](#english-rules) when the runtime document names no
-`messagePolicyFile` with a `decisionProvider`. Without `normsDirectory`, the
-daemon holds no norms, built-in or not.
+`rules.json`, the rule chain every agent's firewall applies to the matchers,
+and the initial norms, as `.lisp` files, such as `chat` and application norms,
+which each new agent holds besides the [built-in norms](#built-in-norms). The
+daemon reads and checks them each time it starts. A document that does not
+parse, two documents for one norm, a document naming a built-in norm, a rule
+naming another matcher, or a runtime document without a `messagePolicyFile`
+refuses startup, and so do initial norms with
+[English rules](#english-rules) when the message policy has no
+`decisionProvider`. Without `normsDirectory`, the daemon's agents hold no
+norms, built-in or not.
 
 The package ships `config/norms/`: `chat.lisp`, a `rules.json` that
 answers queries, unread messages and, in a direct conversation, nonconforming
@@ -229,10 +231,24 @@ example norms under `examples/`. Copy `chat.lisp`, `rules.json` and the
 norms you want into the directory; leaving out `chat` makes the daemon answer
 plain text with `not-understood`.
 
-## Reading norms
+## Holding norms
 
-With norms, the MCP tool `read_norms` lists each held norm's name,
-description, protocol if it names one, and document.
+Each agent holds its own norms, saved with its editable rules in its
+[message policy](../firewall/message-policy.md#editable-text-policy). A new
+agent holds the initial norms; after that the directory no longer changes
+them, as initial rules seed only a missing editable policy. The agent's owner,
+its host or an evaluation changes them through the agent's own MCP context
+with `policy_update`, under the same approval step as a rule edit:
+`{"add": [{"norm": "<document>"}]}` holds a document, and
+`{"remove": [{"norm": "<name>"}]}` stops holding a norm. Removing and adding
+a norm of one name replaces it. A document that does not parse or names a
+built-in norm is refused.
+
+Each edit activates the agent's matchers and English rules for the norms it
+now holds, so agents of one daemon judge acts by different norms. With norms,
+the MCP tool `read_norms` lists the built-in norms and the norms the agent
+holds, each with its name, description, protocol if it names one, and
+document; `policy_read` names the held norms.
 
 ## Limitations
 

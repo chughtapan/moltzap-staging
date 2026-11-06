@@ -61,9 +61,17 @@ import {
   textQuestionEdition,
   validateChecks,
 } from "./check.js";
+import {
+  type CompiledNorms,
+  editedNorms,
+  editedRules,
+  type HeldNorm,
+  invalidRule,
+  type NormDocuments,
+  resolvedChange,
+} from "./editable-policy.js";
 import { makeJevDecisionProvider } from "./jev.js";
 import {
-  decodeBehavior,
   editableDocumentSchema,
   type FirewallConfiguration,
   firewallConfigurationSchema,
@@ -73,9 +81,6 @@ import {
   firewallRefusalReasonSchema,
   FirewallSettings,
   type LoadedMessagePolicy,
-  MAXIMUM_BEHAVIOR_BYTES,
-  MAXIMUM_EDITABLE_RULES,
-  type PolicyProblem,
   type policyReadSchema,
   type policyUpdateResultSchema,
   type policyUpdateSchema,
@@ -278,6 +283,11 @@ interface FirewallService {
     typeof policyReadSchema.Type,
     FirewallPolicyError
   >;
+  /** The documents of the norms the agent holds in its active revision. */
+  readonly readNorms: () => Effect.Effect<
+    readonly string[],
+    FirewallPolicyError
+  >;
   /**
    * Validates and approves each edit before saving and activating it.
    * Retries validate again and may repeat approval.
@@ -307,12 +317,15 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   /**
    * Policy resources are fixed for this scope. Registration supplies immutable
    * local attribution. `chain` rules apply before the text rules of `source`;
-   * a rule naming an unregistered matcher fails with `build-failed`.
+   * a rule naming an unregistered matcher fails with `build-failed`. With
+   * `norms`, the agent holds norm documents in its editable policy, and each
+   * activation adds the matchers and fixed rules they compile to.
    */
   static readonly layer = (
     agentKey: string,
     source?: FirewallOptions | LoadedMessagePolicy,
     chain?: Chain,
+    norms?: NormDocuments,
   ) =>
     Layer.effect(
       Firewall,
@@ -324,12 +337,10 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         const policy =
           source === undefined
             ? undefined
-            : yield* initialPolicy(
-                store,
-                source,
-                rules?.rules ?? [],
-                Object.keys(rules?.matchers ?? {}),
-              );
+            : yield* initialPolicy(store, source, rules, norms);
+        if (policy === undefined && rules !== undefined) {
+          yield* validateChain(rules);
+        }
         const chainRevision =
           rules === undefined ? "" : yield* chainDigest(rules);
         const localAgent = Effect.gen(function* () {
@@ -357,9 +368,18 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 )
               : Effect.sync(() => ({
                   rules: policy.active.editableRules,
-                  fixedRules: policy.options.text?.fixedRules ?? [],
+                  fixedRules: policy.active.fixedRules,
+                  norms: policy.active.norms.map((norm) => norm.name),
                   activeRevision: policy.active.configurationDigest,
                 })),
+          readNorms: () =>
+            policy === undefined
+              ? Effect.fail(
+                  new FirewallPolicyError({ reason: "not-configured" }),
+                )
+              : Effect.sync(() =>
+                  policy.active.norms.map((norm) => norm.document),
+                ),
           updatePolicy: (request) =>
             policy === undefined
               ? Effect.fail(
@@ -514,23 +534,19 @@ interface Installation {
   readonly revision: () => string;
 }
 
-const storedPolicyFormat = "org.social-harness/text-rules/v1";
+const storedPolicyFormat = "org.social-harness/editable-policy/v1";
 
 const storedPolicySchema = exactStruct({
   format: Schema.Literal(storedPolicyFormat),
   rules: editableDocumentSchema,
+  norms: Schema.Array(Schema.String),
 });
-
-type PolicyEditPath = NonNullable<FirewallPolicyError["path"]>;
 
 type CapturedOptions = Effect.Effect.Success<ReturnType<typeof captureOptions>>;
 
 type ActiveRules = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 
-interface RuleChange {
-  readonly add: typeof editableDocumentSchema.Type;
-  readonly remove: readonly string[];
-}
+const noNorms: CompiledNorms = { matchers: {}, fixedRules: [] };
 
 type CapturedCheck = Effect.Effect.Success<ReturnType<typeof capturePrepared>>;
 
@@ -680,10 +696,11 @@ function decide(
   direction: Direction,
 ) {
   return Effect.gen(function* () {
+    const chain = installed.policy?.active.chain ?? installed.chain;
     const chained = yield* Effect.forEach(
       candidates,
       (candidate) =>
-        chainDecision(installed, candidate, direction).pipe(
+        chainDecision(installed, candidate, direction, chain).pipe(
           Effect.map((decision) => ({ candidate, decision })),
         ),
       { concurrency: 1 },
@@ -699,7 +716,6 @@ function decide(
             yield* installed.localAgent,
             unmatched,
             direction,
-            installed.chain?.matchers ?? {},
           );
     const text = assessed.values();
     return chained.map(
@@ -714,12 +730,13 @@ function chainDecision(
   installed: Installation,
   candidate: Candidate,
   direction: Direction,
+  chain?: Chain,
 ) {
   return Effect.gen(function* () {
-    if (installed.chain === undefined) {
+    if (chain === undefined) {
       return undefined;
     }
-    const outcome = yield* evaluateChain(installed.chain, {
+    const outcome = yield* evaluateChain(chain, {
       direction,
       message: candidate.value,
       evidence: candidate.evidence,
@@ -821,10 +838,10 @@ function assess(
   self: AgentCard,
   candidates: readonly Candidate[],
   direction: Direction,
-  matchers: Chain["matchers"],
 ) {
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
+    const active = policy.active;
     const inputs: RuleCheckInput[] = [];
     for (const candidate of candidates) {
       const pending =
@@ -868,7 +885,7 @@ function assess(
         facts: policy?.options.configuration.facts ?? [],
         gaps: candidate.evidence.gaps,
       };
-      const scope = yield* ruleScopes(policy.active.rules, matchers, {
+      const scope = yield* ruleScopes(active.rules, active.matchers, {
         direction,
         message: candidate.value,
         evidence: candidate.evidence,
@@ -887,7 +904,6 @@ function assess(
         agents: [...cards.values()],
       });
     }
-    const active = policy.active;
     return yield* Effect.forEach(
       inputs,
       (input) =>
@@ -1103,17 +1119,20 @@ function referenceId(value: string): string {
   return `msg_${createHash("sha256").update(value).digest("hex")}`;
 }
 
-/** The installation's revision covers `chain`, so a decision names the rules that applied. */
+/**
+ * The installation's revision covers `chain` and the held norms, so a
+ * decision names the rules that applied.
+ */
 function initialPolicy(
   store: FirewallStore,
   source: FirewallOptions | LoadedMessagePolicy,
-  chain: Chain["rules"],
-  matchers: readonly string[],
+  chain?: Chain,
+  norms?: NormDocuments,
 ) {
   return Effect.gen(function* () {
     const options =
       "policy" in source ? yield* configuredOptions(source) : source;
-    const captured = yield* captureOptions(options, chain, matchers).pipe(
+    const captured = yield* captureOptions(options, chain, norms).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
       ),
@@ -1121,15 +1140,11 @@ function initialPolicy(
         Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
       ),
     );
-    const fixed = captured.text?.fixedRules ?? [];
-    const { stored, rules } = yield* loadRules(store, captured);
-    yield* validateIds(
-      rules,
-      fixed.map((rule) => rule.id),
-    );
-    const active = yield* buildPolicy(captured, rules);
+    const { stored, rules, documents } = yield* loadRules(store, captured);
+    const held = yield* heldNorms(captured, documents);
+    const active = yield* buildPolicy(captured, rules, held);
     if (stored === undefined) {
-      yield* persistRules(store, rules);
+      yield* persistRules(store, rules, held);
     }
     return {
       store,
@@ -1143,18 +1158,40 @@ function initialPolicy(
   });
 }
 
+/** The saved rules and norm documents, or the initial ones for an agent with none saved. */
 function loadRules(store: FirewallStore, options: CapturedOptions) {
   return Effect.gen(function* () {
     const stored = yield* store.readPolicy();
-    const rules =
+    const saved =
       stored === undefined
-        ? (options.text?.initialRules ?? [])
-        : (yield* decodeCanonical(storedPolicySchema, stored).pipe(
+        ? undefined
+        : yield* decodeCanonical(storedPolicySchema, stored).pipe(
             Effect.mapError(persistenceFailure),
-          )).rules;
+          );
+    const rules = saved?.rules ?? options.text?.initialRules ?? [];
+    const documents = saved?.norms ?? options.norms?.initial ?? [];
     freezeData(rules);
-    return { stored, rules };
+    return { stored, rules, documents };
   });
+}
+
+/** Names each held document; one the daemon's norms cannot read fails `build-failed`. */
+function heldNorms(options: CapturedOptions, documents: readonly string[]) {
+  return Effect.forEach(
+    documents,
+    (document) =>
+      Option.match(
+        Option.flatMap(Option.fromNullable(options.norms), (norms) =>
+          norms.name(document),
+        ),
+        {
+          onNone: () =>
+            Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+          onSome: (name) => Effect.succeed({ name, document }),
+        },
+      ),
+    { concurrency: 1 },
+  );
 }
 
 /** Natural-language rules without a provider fail installation instead of passing unchecked. */
@@ -1171,11 +1208,11 @@ function configuredOptions(loaded: LoadedMessagePolicy) {
       maximumHistoryRecords: policy.maximumHistoryRecords,
       maximumConcurrentChecks: policy.maximumConcurrentChecks,
       text:
-        policy.text === undefined || provider === undefined
+        provider === undefined
           ? undefined
           : {
-              fixedRules: policy.text.fixedRules,
-              initialRules: policy.text.initialRules,
+              fixedRules: policy.text?.fixedRules ?? [],
+              initialRules: policy.text?.initialRules ?? [],
               settings: policy.textSettings,
               provider: Option.getOrElse(override, () =>
                 retryingTransientFailures(makeJevDecisionProvider(provider)),
@@ -1187,8 +1224,8 @@ function configuredOptions(loaded: LoadedMessagePolicy) {
 
 function captureOptions(
   options: FirewallOptions,
-  chain: Chain["rules"],
-  matchers: readonly string[],
+  chain?: Chain,
+  norms?: NormDocuments,
 ) {
   return Effect.gen(function* () {
     const configuration = yield* decodeFrozen(firewallConfigurationSchema, {
@@ -1207,28 +1244,23 @@ function captureOptions(
       text,
       approvePolicyUpdate,
       chain,
-      matchers,
+      norms,
     };
   });
 }
 
 /**
- * Validates and freezes the rules, and checks that every rule's matcher is
- * registered. A rule file that breaks the file contract fails `build-failed`.
+ * Validates and freezes the rules. A rule file that breaks the file contract
+ * fails `build-failed`. Each installation checks the rules' matchers, since
+ * held norms add matchers to a policy's chain.
  */
 function captureChain(chain: Chain) {
-  return Effect.gen(function* () {
-    const { rules } = yield* decodeFrozen(chainRuleFileSchema, {
-      rules: chain.rules,
-    }).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-      ),
-    );
-    const captured: Chain = { ...chain, rules };
-    yield* validateChain(captured);
-    return captured;
-  });
+  return decodeFrozen(chainRuleFileSchema, { rules: chain.rules }).pipe(
+    Effect.map(({ rules }): Chain => ({ ...chain, rules })),
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+    ),
+  );
 }
 
 /** Names a chain-only installation, which has no text policy revision. */
@@ -1552,21 +1584,25 @@ function unavailable(): FirewallCheck {
 function updatePolicy(policy: Policy, request: typeof policyUpdateSchema.Type) {
   return policy.edits.withPermits(1)(
     Effect.gen(function* () {
-      const { request: captured, change } = yield* resolvedChange(request);
+      const { request: captured, change } = yield* resolvedChange(
+        request,
+        policy.options.norms,
+      );
       const next = yield* editedRules(
         policy.active.editableRules,
         policy.active.fixedRuleIds,
         change,
       );
-      const replacement = yield* buildPolicy(policy.options, next);
+      const norms = yield* editedNorms(policy.active.norms, change);
+      const replacement = yield* buildPolicy(policy.options, next, norms);
       yield* policy.options.approvePolicyUpdate(captured);
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          yield* persistRules(policy.store, next, {
+          yield* persistRules(policy.store, next, norms, {
             time: yield* Clock.currentTimeMillis,
             activeRevision: replacement.configurationDigest,
-            addedRuleIds: change.add.map((rule) => rule.id),
-            removedRuleIds: change.remove,
+            addedRuleIds: change.add.map(({ rule }) => rule.id),
+            removedRuleIds: change.remove.map(({ ruleId }) => ruleId),
           });
           yield* Effect.sync(() => {
             policy.active = replacement;
@@ -1578,16 +1614,38 @@ function updatePolicy(policy: Policy, request: typeof policyUpdateSchema.Type) {
   );
 }
 
-function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
+/**
+ * One activation: the configured fixed rules, the held norms' rules and the
+ * editable rules, with the chain's matchers and the held norms' own.
+ */
+function buildPolicy(
+  options: CapturedOptions,
+  rules: readonly TextRule[],
+  norms: readonly HeldNorm[],
+) {
   return Effect.gen(function* () {
-    const fixed = options.text?.fixedRules ?? [];
+    const compiled = yield* compiledNorms(options, norms);
+    const fixed = [...(options.text?.fixedRules ?? []), ...compiled.fixedRules];
+    yield* validateIds(
+      rules,
+      fixed.map((rule) => rule.id),
+    );
     const documents = [...fixed, ...rules];
     if (documents.length > 0 && options.text === undefined) {
       return yield* new FirewallPolicyError({ reason: "not-configured" });
     }
+    const matchers = {
+      ...(options.chain?.matchers ?? {}),
+      ...compiled.matchers,
+    };
+    const chain =
+      options.chain === undefined ? undefined : { ...options.chain, matchers };
+    if (chain !== undefined) {
+      yield* validateChain(chain);
+    }
     const unmatched = documents.find(
       (rule) =>
-        rule.match !== undefined && !options.matchers.includes(rule.match),
+        rule.match !== undefined && !Object.hasOwn(matchers, rule.match),
     );
     if (unmatched !== undefined) {
       return yield* new FirewallPolicyError({
@@ -1599,9 +1657,12 @@ function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
       configuration: options.configuration,
       settings: options.settings,
       questionEdition: textQuestionEdition,
-      chain: options.chain,
+      chain: options.chain?.rules ?? [],
       rules: documents,
       fixedRuleIds: fixed.map((rule) => rule.id),
+      ...(options.norms === undefined
+        ? {}
+        : { norms: norms.map((norm) => norm.document) }),
       ...(options.text === undefined
         ? {}
         : {
@@ -1620,9 +1681,13 @@ function buildPolicy(options: CapturedOptions, rules: readonly TextRule[]) {
     return {
       metadata,
       editableRules: rules,
+      norms,
       configurationDigest,
       rules: documents,
+      fixedRules: fixed,
       fixedRuleIds: metadata.fixedRuleIds,
+      chain,
+      matchers,
     };
   }).pipe(
     Effect.catchTags({
@@ -1643,109 +1708,46 @@ function digest(value: unknown) {
   );
 }
 
+/**
+ * What the held norms add, frozen like configured rules. Norms the daemon's
+ * norms cannot compile together fail `build-failed`.
+ */
+function compiledNorms(options: CapturedOptions, norms: readonly HeldNorm[]) {
+  if (options.norms === undefined) {
+    return norms.length === 0
+      ? Effect.succeed(noNorms)
+      : Effect.fail(new FirewallPolicyError({ reason: "build-failed" }));
+  }
+  return Option.match(
+    options.norms.compile(norms.map((norm) => norm.document)),
+    {
+      onNone: () =>
+        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+      onSome: (compiled) =>
+        decodeFrozen(Schema.Array(TextRule), compiled.fixedRules).pipe(
+          Effect.map((fixedRules) => ({ ...compiled, fixedRules })),
+          Effect.catchTag("ParseError", () =>
+            Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+          ),
+        ),
+    },
+  );
+}
+
 function persistRules(
   store: FirewallStore,
   rules: readonly TextRule[],
+  norms: readonly HeldNorm[],
   activation?: FirewallActivation,
 ) {
-  return canonicalBytes({ format: storedPolicyFormat, rules }).pipe(
+  return canonicalBytes({
+    format: storedPolicyFormat,
+    rules,
+    norms: norms.map((norm) => norm.document),
+  }).pipe(
     Effect.flatMap((bytes) => store.writePolicy(bytes, activation)),
     Effect.catchTag("ClientRepresentationError", () =>
       Effect.fail(persistenceFailure()),
     ),
   );
-}
-
-/** Maps each `{behavior}` to a rule and reports invalid behavior at its index in `add`. */
-function resolvedChange(change: typeof policyUpdateSchema.Type) {
-  return Effect.gen(function* () {
-    const captured = yield* Effect.try({
-      try: () => structuredClone(change),
-      catch: () => invalidRule("schema"),
-    });
-    freezeData(captured);
-    const add = yield* Effect.forEach(
-      captured.add ?? [],
-      (item, index) =>
-        "behavior" in item
-          ? behaviorRule(item.behavior, ["add", index])
-          : Effect.succeed(item),
-      { concurrency: 1 },
-    );
-    return {
-      request: captured,
-      change: { add, remove: captured.remove ?? [] } satisfies RuleChange,
-    };
-  });
-}
-
-/** A behavior supplies the same direction and registered advice as an inline rule. */
-function behaviorRule(text: string, path: PolicyEditPath) {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length > MAXIMUM_BEHAVIOR_BYTES) {
-    return Effect.fail(invalidRule("too-large", { path }));
-  }
-  return decodeBehavior(bytes, (problem) =>
-    invalidRule(problem, { path }),
-  ).pipe(
-    Effect.tap((rule) =>
-      Effect.sync(() => {
-        freezeData(rule);
-      }),
-    ),
-  );
-}
-
-/**
- * The editable document an edit leaves, or the first item it cannot apply:
- * a fixed id, a removal of an id the document lacks, an addition whose id the
- * document keeps or the edit adds twice, or more rules than the limit.
- */
-function editedRules(
-  rules: readonly TextRule[],
-  fixedRuleIds: readonly string[],
-  { add, remove }: RuleChange,
-) {
-  return Effect.gen(function* () {
-    for (const [index, ruleId] of remove.entries()) {
-      const path: PolicyEditPath = ["remove", index];
-      if (fixedRuleIds.includes(ruleId)) {
-        return yield* new FirewallPolicyError({
-          reason: "fixed-rule",
-          ruleId,
-          path,
-        });
-      }
-      if (!rules.some((rule) => rule.id === ruleId)) {
-        return yield* invalidRule("unknown-id", { ruleId, path });
-      }
-    }
-    const kept = rules.filter((rule) => !remove.includes(rule.id));
-    const ids = new Set(kept.map((rule) => rule.id));
-    for (const [index, rule] of add.entries()) {
-      const path: PolicyEditPath = ["add", index];
-      if (fixedRuleIds.includes(rule.id)) {
-        return yield* new FirewallPolicyError({
-          reason: "fixed-rule",
-          ruleId: rule.id,
-          path,
-        });
-      }
-      if (ids.has(rule.id)) {
-        return yield* invalidRule("duplicate-id", { ruleId: rule.id, path });
-      }
-      ids.add(rule.id);
-    }
-    if (kept.length + add.length > MAXIMUM_EDITABLE_RULES) {
-      return yield* invalidRule("editable-limit");
-    }
-    return Object.freeze([...kept, ...add]);
-  });
-}
-
-function invalidRule(
-  problem: PolicyProblem,
-  at: { readonly path?: PolicyEditPath; readonly ruleId?: string } = {},
-) {
-  return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
 }

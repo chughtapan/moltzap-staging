@@ -239,7 +239,7 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | --- | --- |
 | `format` | Required: `org.social-harness/message-policy/v2`. |
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
-| `decisionProvider` | Required with `text`: `{kind: "jev", model}`. |
+| `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which a judgment is unsure; 384,000 request bytes; 15 s per request. |
 | `settings` | Defaults: 150 s per assessment; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
@@ -248,14 +248,15 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 
 Unknown properties and unsupported values fail. Trusted process composition may
 supply its own provider and fixed text rules. The generated API reference owns
-those callable types. A daemon that holds norms adds their
+those callable types. The norms an agent holds add their
 [English rules](../norms/norms.md#english-rules) after the file's fixed rules,
-so it needs `decisionProvider` even when the file has no `text`.
+so a daemon whose norms have rules needs `decisionProvider` even when the file
+has no `text`.
 
 Jev is an optional TypeSafe service. It trims the key from
 the setup document's `decisionProviderKeyFile` and retries connectivity, rate-limit and
-server errors twice within each request timeout. Without `text`, no provider or
-key is used. Oversized catalog/history requests hold without dropping required
+server errors twice within each request timeout. Without `decisionProvider`, no
+provider or key is used. Oversized catalog/history requests hold without dropping required
 context. Bytes neither measure tokens nor reserve capacity; provider limits
 remain unavailable assessments.
 
@@ -336,9 +337,17 @@ The default approves automatically. A host can replace it with a confirmation
 interaction. A proposed replacement cannot authorize itself. Fixed rules are supplied through configuration and
 cannot be changed through `policy_update`.
 
+An agent's editable policy also holds its
+[norms](../norms/norms.md#holding-norms). `policy_update` adds a norm with
+`{norm: "<document>"}` in `add` and stops holding one with `{norm: "<name>"}`
+in `remove`; removing and adding one name replaces it. Each activation adds
+the held norms' English rules to the fixed rules, so they refuse edits like
+other fixed rules.
+
 Rule replacement and its change record save together. An edit either applies
-in full or leaves the previous rules active.
-`policy_read` reports editable and fixed rules with their current revision.
+in full or leaves the previous rules and norms active.
+`policy_read` reports editable and fixed rules and the held norms' names with
+their current revision.
 
 The complete replacement activates before return. Remove/add of one id is
 atomic replacement; adding existing ids without removal, unknown removals or
@@ -351,12 +360,13 @@ path, without rejected text. Reasons: `invalid-rule`, `fixed-rule`,
 
 | Problem | Meaning |
 | --- | --- |
-| `duplicate-id` | Repeated or retained-and-added id. |
-| `unknown-id` | Removal names no rule. |
-| `editable-limit` | Result exceeds 256 rules. |
+| `duplicate-id` | Repeated or retained-and-added rule id or norm name. |
+| `unknown-id` | Removal names no editable rule or held norm. |
+| `editable-limit` | Result exceeds 256 rules or 256 norms. |
 | `frontmatter` | Missing/invalid opening YAML frontmatter. |
 | `schema` | Invalid rule/behavior format. |
-| `too-large` | Behavior exceeds 64 KiB. |
+| `too-large` | Behavior or norm document exceeds 64 KiB. |
+| `invalid-norm` | The daemon has no norms directory, or the document does not parse or names a built-in norm. |
 
 Minimum rules, instructions, mandatory questions and structure must fit the
 request budget. Otherwise updates fail `build-failed`; lowering budgets can
