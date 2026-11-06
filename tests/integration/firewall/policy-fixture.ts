@@ -25,7 +25,7 @@ const OUTGOING_BREACH = "[out]";
 const UNSURE = "[unsure]";
 
 /** The fixed text rule every firewall fixture holds. */
-export const markedRule = {
+const markedRule = {
   id: "marked",
   applies: "both",
   text: "Reject incoming messages containing [in] and outgoing messages containing [out].",
