@@ -707,7 +707,10 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     const resolved: MessagePolicy = {
       ...policy,
       text: {
-        fixedRules: [...text.fixedRules, ...fixed],
+        fixedRules: [
+          ...text.fixedRules,
+          ...fixed.map((rule) => new TextRule(rule)),
+        ],
         initialRules: [...text.initialRules, ...initial],
       },
     };
