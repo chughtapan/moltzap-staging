@@ -233,8 +233,11 @@ function agreementAct(
       if (state.agreement !== undefined || state.instance !== undefined) {
         return breaks("in-flight", act, []);
       }
-      if (typeof proposed !== "string" || builtInNames.has(proposed)) {
+      if (typeof proposed !== "string") {
         return breaks("invalid-content", act, ["propose"]);
+      }
+      if (builtInNames.has(proposed)) {
+        return proposedBuiltIn(act, proposed);
       }
       const rest = Struct.omit(state, "agreed");
       return conforms({
@@ -476,6 +479,26 @@ function answerOf(
       ];
     }),
   );
+}
+
+/**
+ * A proposal of a built-in norm, which every member already follows without
+ * agreeing to it. The refusal says so, and for `chat` names plain text, so
+ * the sender writes the message instead of proposing again.
+ */
+function proposedBuiltIn(act: Act, proposed: string): Verdict {
+  const detail =
+    proposed === builtIns.chat
+      ? "chat needs no agreement: write the message as plain text"
+      : `${proposed} is built in and needs no agreement`;
+  return {
+    kind: "breaks",
+    breach: {
+      reason: "invalid-content",
+      norm: act.ontology,
+      fields: [{ field: "norm", reason: "invalid", detail }],
+    },
+  };
 }
 
 function conforms(state: State): Verdict {

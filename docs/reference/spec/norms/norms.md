@@ -166,7 +166,10 @@ nothing before the student checks back.
 At most one agreement or norm instance is in flight in a conversation.
 
 1. A member sends `(propose :ontology norm-agreement :norm <name>)`,
-   optionally with `:task "..."`.
+   optionally with `:task "..."`. A proposal of `chat` or a built-in norm is
+   refused with reason `invalid-content`, since every member follows those
+   without agreeing to them. Its `:norm` field failure says so, and for `chat`
+   says to write plain text.
 2. Every other member sends `accept-proposal` or `reject-proposal`, which
    answers the conversation's open proposal. A member can accept only a norm
    its daemon holds or received through norm discovery in this conversation.

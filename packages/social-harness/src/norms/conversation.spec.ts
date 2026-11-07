@@ -203,3 +203,28 @@ describe("office-hours holds", () => {
       }),
   );
 });
+
+describe("a proposal of a built-in norm", () => {
+  it("is refused with the norm field's reason, and chat points to plain text", () =>
+    Effect.gen(function* () {
+      const state = yield* foldActs(setting, []);
+      const proposeChat = yield* professorAct(
+        '(propose :ontology norm-agreement :norm chat :task "Book a meeting")',
+      );
+
+      expect(yield* judge(setting, state, proposeChat)).toMatchObject({
+        kind: "breaks",
+        breach: {
+          reason: "invalid-content",
+          fields: [
+            {
+              field: "norm",
+              reason: "invalid",
+              detail:
+                "chat needs no agreement: write the message as plain text",
+            },
+          ],
+        },
+      });
+    }));
+});
