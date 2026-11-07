@@ -60,11 +60,11 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 
 ```lisp
 (norm office-hours :initiator Student :participant Professor
-      :description "A student asks to meet about a topic; the professor offers slots, the student picks one or none, and the professor confirms, holds or escalates.")
+      :description "A student asks to meet about a topic; the professor offers slots, the student names the ones it can make, and the professor holds the request until the student checks back, then confirms one, offers again or refuses.")
 (content request :by Student :unless open :initiates (open offer-due)
   (field topic :type string :max-length 300 :description "What the student wants to discuss."))
 (content propose :by Professor :when offer-due :max 2
-         :initiates offered :terminates (offer-due decision-due checked-back declined)
+         :initiates offered :terminates (offer-due decision-due declined)
   (field option1 :type string :max-length 80 :description "A slot the professor offers.")
   (field option2 :type string :max-length 80 :description "A second slot."))
 (rule :act request "The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.")
@@ -155,7 +155,11 @@ slots next. When the student declines them, `reject-proposal` starts
 `offer-due` and `declined`, and the professor's escalation, `failure`, needs
 `declined`, so the professor may now offer once more or escalate. Once the
 student has declined two offers, `propose` has reached its `:max`, and the
-professor can only escalate.
+professor can only escalate. When the student instead names the slots it can
+make, `accept-proposal` starts `hold-due`, which only the professor's `agree`
+needs, so the professor holds the request. `confirm` needs `decision-due`,
+which only the student's check-back, `query-if`, starts, so the professor books
+nothing before the student checks back.
 
 ## Agreement
 

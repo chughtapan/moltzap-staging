@@ -694,66 +694,6 @@ describe("office hours: offers and escalation", () => {
     }));
 });
 
-describe("office hours: holds", () => {
-  const matchers = holding("examples/office-hours.lisp");
-  const pair = [alice, bob];
-  const student = (text: string) => from(bob, pair, text);
-  const professor = (text: string) => from(alice, pair, text);
-  const offer =
-    '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
-
-  /** The student proposes office-hours, the professor accepts, and the student asks to meet. */
-  const asked = Effect.all([
-    student(
-      '(propose :ontology norm-agreement :norm office-hours :task "Meet")',
-    ),
-    professor("(accept-proposal :ontology norm-agreement)"),
-    student('(request :ontology office-hours :topic "Project scope")'),
-  ]);
-
-  it("books a held slot once the student checks back", () =>
-    Effect.gen(function* () {
-      const history = [
-        ...(yield* asked),
-        yield* professor(offer),
-        yield* student("(accept-proposal :ontology office-hours :option 1)"),
-        yield* professor(
-          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
-        ),
-        yield* student("(query-if :ontology office-hours)"),
-      ];
-      const confirm = yield* professor(
-        '(confirm :ontology office-hours :slot "Tue 14:00")',
-      );
-
-      expect(
-        yield* check(
-          "norms.nonconforming",
-          matchers,
-          outgoing(confirm, history),
-        ),
-      ).toEqual({ matched: false });
-    }));
-
-  it("lets the professor offer again at the check-back while a round is left", () =>
-    Effect.gen(function* () {
-      const history = [
-        ...(yield* asked),
-        yield* professor(offer),
-        yield* student("(accept-proposal :ontology office-hours :option 1)"),
-        yield* professor(
-          '(agree :ontology office-hours :slot "Tue 14:00" :recheck-after 5)',
-        ),
-        yield* student("(query-if :ontology office-hours)"),
-      ];
-      const again = yield* professor(offer);
-
-      expect(
-        yield* check("norms.nonconforming", matchers, outgoing(again, history)),
-      ).toEqual({ matched: false });
-    }));
-});
-
 describe("a norm rule's acts", () => {
   const matchers = holding("examples/office-hours.lisp");
   const pair = [alice, bob];

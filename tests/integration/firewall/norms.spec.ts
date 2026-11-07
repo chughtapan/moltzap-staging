@@ -210,10 +210,15 @@ const backToBack = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-/** A chat line and a request sent back to back, then the offer, the pick and the confirmation. */
+/**
+ * A chat line and a request sent back to back, then the offer, the slots the
+ * student can make, the hold, the check-back and the confirmation.
+ */
 const booking = Effect.gen(function* () {
   const { student, professor } = yield* officeHours();
-  const pick = "(accept-proposal :ontology office-hours :option 1)";
+  const slots = "(accept-proposal :ontology office-hours :available (1 2))";
+  const hold = "(agree :ontology office-hours :recheck-after 1)";
+  const checkBack = "(query-if :ontology office-hours)";
   const confirmation = '(confirm :ontology office-hours :slot "Tue 14:00")';
   yield* agree(student, professor);
 
@@ -223,16 +228,24 @@ const booking = Effect.gen(function* () {
   const received = yield* nextItem(professor);
   yield* send(professor, { to: student.address, text: offer });
   const offered = yield* nextItem(student);
-  yield* send(student, { to: professor.address, text: pick });
-  const picked = yield* nextItem(professor);
+  yield* send(student, { to: professor.address, text: slots });
+  const named = yield* nextItem(professor);
+  yield* send(professor, { to: student.address, text: hold });
+  const held = yield* nextItem(student);
+  yield* send(student, { to: professor.address, text: checkBack });
+  const checked = yield* nextItem(professor);
   yield* send(professor, { to: student.address, text: confirmation });
   const confirmed = yield* nextItem(student);
 
-  expect([chatLine, received, offered, picked, confirmed].map(textOf)).toEqual([
+  expect(
+    [chatLine, received, offered, named, held, checked, confirmed].map(textOf),
+  ).toEqual([
     "Hello again.",
     request,
     offer,
-    pick,
+    slots,
+    hold,
+    checkBack,
     confirmation,
   ]);
 }).pipe(Effect.scoped);

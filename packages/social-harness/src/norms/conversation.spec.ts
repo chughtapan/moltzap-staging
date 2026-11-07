@@ -1,4 +1,4 @@
-/** @file The acts a member may send now, read from a conversation's norm state. */
+/** @file What a conversation's norm state lets a member send next. */
 
 import { live as it } from "@effect/vitest";
 import { Effect, Either } from "effect";
@@ -10,6 +10,7 @@ import { describe, expect } from "vitest";
 import { readText } from "./acts.js";
 import {
   foldActs,
+  judge,
   type SendableAct,
   sendableActs,
   type SentAct,
@@ -126,5 +127,79 @@ describe("sendableActs", () => {
 
       expect(sendableActs(setting, state, sender)).toEqual(acts);
     }),
+  );
+});
+
+const named = [
+  ...agreed,
+  ["student", '(request :ontology office-hours :topic "Project scope")'],
+  [
+    "professor",
+    '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")',
+  ],
+  ["student", "(accept-proposal :ontology office-hours :available (1 2))"],
+] as const;
+const checkedBack = [
+  ...named,
+  ["professor", "(agree :ontology office-hours :recheck-after 5)"],
+  ["student", "(query-if :ontology office-hours)"],
+] as const;
+
+/** A history, the professor's next act, and the verdict that act gets. */
+interface HoldCase {
+  readonly state: string;
+  readonly history: ReadonlyArray<readonly [string, string]>;
+  readonly next: string;
+  readonly verdict: Readonly<Record<string, unknown>>;
+}
+
+/** The professor's act `text`, or a test failure when it is not an act. */
+function professorAct(text: string): Effect.Effect<SentAct> {
+  const reading = readText(text);
+  return reading.kind === "act"
+    ? Effect.succeed({ act: reading.act, sender: "professor", msgId: "next" })
+    : Effect.dieMessage(`not an act: ${text}`);
+}
+
+describe("office-hours holds", () => {
+  // @agent-code-guard/regression-only: each case pins one turn of the office-hours example norm around its hold.
+  it.each<HoldCase>([
+    {
+      state: "confirms as soon as the student names its slots",
+      history: named,
+      next: '(confirm :ontology office-hours :slot "Tue 14:00")',
+      verdict: {
+        kind: "breaks",
+        breach: { reason: "out-of-turn", allowed: ["agree", "cancel"] },
+      },
+    },
+    {
+      state: "confirms after the student checks back",
+      history: checkedBack,
+      next: '(confirm :ontology office-hours :slot "Tue 14:00")',
+      verdict: { kind: "conforms" },
+    },
+    {
+      state: "offers again at the check-back while a round is left",
+      history: checkedBack,
+      next: '(propose :ontology office-hours :option1 "Wed 09:00" :option2 "Fri 11:00")',
+      verdict: { kind: "conforms" },
+    },
+    {
+      state: "refuses at the check-back",
+      history: checkedBack,
+      next: "(refuse :ontology office-hours)",
+      verdict: { kind: "conforms" },
+    },
+  ])(
+    "judges the professor's act when it $state",
+    ({ history, next, verdict }) =>
+      Effect.gen(function* () {
+        const state = yield* foldActs(setting, sent(history));
+
+        expect(
+          yield* judge(setting, state, yield* professorAct(next)),
+        ).toMatchObject(verdict);
+      }),
   );
 });
