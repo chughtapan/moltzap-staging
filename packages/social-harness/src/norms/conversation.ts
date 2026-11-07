@@ -24,7 +24,7 @@ import {
   type RequestedSchema,
   validateAnswer,
 } from "../communication/messages.js";
-import { type Norm, readNorm } from "./documents.js";
+import { type Norm, readNorm, standsAlone } from "./documents.js";
 import { allowedActs, ended, type Instance, openingActs } from "./protocols.js";
 
 /** The norms built into every daemon's handling of acts. */
@@ -128,6 +128,54 @@ export function judge(
     default:
       return normAct(setting, state, norm, sent);
   }
+}
+
+/** An act a member may send: its performative, its norm and, for a proposal or a document query, the norm it names. */
+export interface SendableAct {
+  readonly performative: string;
+  readonly ontology: string;
+  readonly norm?: string;
+}
+
+/**
+ * The acts `sender` may send now: the next acts of the agreement or norm
+ * instance in flight, the agreed norm's opening acts or, with nothing in
+ * flight, a proposal of each norm held here that has turns and a query for
+ * that norm's document.
+ */
+export function sendableActs(
+  setting: Setting,
+  state: State,
+  sender: string,
+): readonly SendableAct[] {
+  const { agreement, instance, agreed } = state;
+  if (agreement !== undefined) {
+    return [...allowedActs(agreement.instance, sender), "cancel"].map(
+      (performative) => ({ performative, ontology: builtIns.agreement }),
+    );
+  }
+  if (instance !== undefined) {
+    return [...allowedActs(instance, sender), "cancel"].map((performative) => ({
+      performative,
+      ontology: instance.norm,
+    }));
+  }
+  if (agreed !== undefined) {
+    const norm = normOf(setting, state, agreed);
+    const protocol = norm?.protocol ?? norm?.turns;
+    return protocol === undefined
+      ? []
+      : openingActs(protocol).map((performative) => ({
+          performative,
+          ontology: agreed,
+        }));
+  }
+  return [...setting.held.values()]
+    .filter((norm) => !builtInNames.has(norm.name) && !standsAlone(norm))
+    .flatMap(({ name }) => [
+      { performative: "propose", ontology: builtIns.agreement, norm: name },
+      { performative: "query-ref", ontology: builtIns.discovery, norm: name },
+    ]);
 }
 
 /** The norm an act names, if this member holds it or a member sent it. */

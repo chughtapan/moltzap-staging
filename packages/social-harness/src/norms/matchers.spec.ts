@@ -180,6 +180,30 @@ describe("norms.unparsed", () => {
       });
     }));
 
+  it("names a proposal and a document query of each norm with turns in its answer to any plain text", () =>
+    Effect.sync(() => {
+      const matchers = normMatchers(
+        norms(...builtIn, "examples/office-hours.lisp"),
+      );
+      const error =
+        "acts you may send now: (propose :ontology norm-agreement :norm office-hours), (query-ref :ontology norm-discovery :norm office-hours)";
+
+      fc.assert(
+        fc.property(
+          fc.stringMatching(/^[A-Za-z][A-Za-z ,.?!']{0,79}$/u),
+          (text) => {
+            const message = Effect.runSync(from(bob, [alice, bob], text));
+            const result = Effect.runSync(
+              check("norms.unparsed", matchers, incoming(alice, message)),
+            );
+            expect(replyOf(result)).toMatchObject({
+              act: { fields: { reason: "plain-text", error } },
+            });
+          },
+        ),
+      );
+    }));
+
   it("passes plain text where chat is held", () =>
     Effect.gen(function* () {
       const message = yield* from(bob, [alice, bob], "Can we meet today?");

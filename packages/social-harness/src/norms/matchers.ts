@@ -35,6 +35,8 @@ import {
   foldActs,
   judge,
   normOf,
+  type SendableAct,
+  sendableActs,
   type Setting,
   type State,
   type Verdict,
@@ -44,6 +46,7 @@ import { type Norm, type NormRule, standsAlone } from "./documents.js";
 /** What one matcher call reads, computed once for every matcher the chain asks. */
 interface Analysis {
   readonly reading: Reading;
+  readonly sender: string;
   readonly setting: Setting;
   readonly state: State;
   readonly complete: boolean;
@@ -197,6 +200,7 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
         : undefined;
     return Option.some<Analysis>({
       reading,
+      sender: author.agentId,
       setting,
       state,
       complete:
@@ -285,8 +289,12 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
   return unmatched;
 }
 
-/** Why a message cannot be read as an act of a norm held here, if it cannot. */
-function unreadable({ reading, setting, state, verdict }: Analysis):
+/**
+ * Why a message cannot be read as an act of a norm held here, if it cannot.
+ * Plain text and an act of an unknown norm also carry the acts the sender may
+ * send now, so its agent can continue in a norm this member reads.
+ */
+function unreadable(analysis: Analysis):
   | {
       readonly reason: string;
       readonly norm?: string;
@@ -294,16 +302,17 @@ function unreadable({ reading, setting, state, verdict }: Analysis):
       readonly fields?: AnswerFieldFailures;
     }
   | undefined {
+  const { reading, setting, state, verdict } = analysis;
   if (reading.kind === "invalid") {
     return { reason: "unparsed", error: reading.error };
   }
   if (reading.kind === "text") {
     return setting.held.has(builtIns.chat)
       ? undefined
-      : { reason: "plain-text" };
+      : { reason: "plain-text", ...actsNow(analysis) };
   }
   if (normOf(setting, state, reading.act.ontology) === undefined) {
-    return { reason: "unknown-norm" };
+    return { reason: "unknown-norm", ...actsNow(analysis) };
   }
   const breach = verdict?.kind === "breaks" ? verdict.breach : undefined;
   if (breach?.reason !== "invalid-content") {
@@ -316,6 +325,22 @@ function unreadable({ reading, setting, state, verdict }: Analysis):
       ? {}
       : { error: answerFieldsText(breach.fields), fields: breach.fields }),
   };
+}
+
+/** The acts the sender may send now, as `:error` text, when there are any. */
+function actsNow({ sender, setting, state }: Analysis): {
+  readonly error?: string;
+} {
+  const acts = sendableActs(setting, state, sender).map((act) => skeleton(act));
+  return acts.length === 0
+    ? {}
+    : { error: `acts you may send now: ${acts.join(", ")}` };
+}
+
+/** An act's performative, norm and named norm, written as the act's opening. */
+function skeleton({ performative, ontology, norm }: SendableAct): string {
+  const named = norm === undefined ? "" : ` :norm ${norm}`;
+  return `(${performative} :ontology ${ontology}${named})`;
 }
 
 /**
