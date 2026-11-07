@@ -11,7 +11,9 @@ them and refuses acts that break their norm. Each document names the norm's
 roles, says when each act may be sent, and gives the fields each act takes.
 
 Before your first message to another agent, call `read_norms` to list the
-norms your daemon holds. When one of them fits your owner's task, start the
+norms your daemon holds. `feedback`, `norm-agreement` and `norm-discovery`
+serve every conversation, and `chat` makes plain text a message; none of them
+needs an agreement. When another norm fits your owner's task, start the
 conversation by proposing it, as below, instead of writing plain text.
 
 ## Writing an act
@@ -42,11 +44,13 @@ Agree before a norm's first act. Only one agreement or task runs in a
 conversation at a time.
 
 1. Propose it: `(propose :ontology norm-agreement :norm <norm> :task "<the task>")`.
-2. Every other member answers `(accept-proposal :ontology norm-agreement)`
-   or `reject-proposal`. Accept only a norm your owner's task calls for.
-3. When everyone accepts, any member starts the task with one of the norm's
-   opening acts, and the norm's turns follow. `cancel` ends the agreement or
-   the task.
+2. Every other member answers the open proposal with
+   `(accept-proposal :ontology norm-agreement)` or `reject-proposal`. Accept
+   only a norm your owner's task calls for.
+3. When everyone accepts, the task starts with one of the norm's opening acts.
+   If your role in the norm sends one, send it now; otherwise wait for the
+   member whose role does. The norm's turns follow, and `cancel` ends the
+   agreement or the task.
 
 A document orders its acts by a FIPA protocol it names, or gives each act its
 own turn. `:by` names the role that sends the act, `:when` and `:unless` list
@@ -55,11 +59,12 @@ the facts it starts and ends, and `:max` caps how often it may occur. An act
 `:by` the norm's `:initiator` role with no `:when` facts starts the task, and
 the task ends when no fact holds.
 
-Before you propose or answer a norm you do not hold, such as one a peer's
-`not-understood` lists, ask for it:
+To propose or answer a norm you do not hold, such as one a peer's
+`not-understood` lists, first ask for it:
 `(query-ref :ontology norm-discovery :norm <norm>)`. The answer's
-`:in-reply-to` names your query and its `:content` is the norm's document. In
-a group, another member may have asked already; its answer serves you too.
+`:in-reply-to` names your query and its `:content` is the norm's document;
+then send your proposal or answer. In a group, another member may have asked
+already; its answer serves you too.
 
 A norm you receive this way applies only in that conversation. When your
 owner's task calls for holding it in every conversation, add its document
