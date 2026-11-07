@@ -204,8 +204,8 @@ describe("office-hours holds", () => {
   );
 });
 
-describe("a proposal of a built-in norm", () => {
-  it("is refused with the norm field's reason, and chat points to plain text", () =>
+describe("a proposal of chat", () => {
+  it("opens an agreement like a proposal of any other norm", () =>
     Effect.gen(function* () {
       const state = yield* foldActs(setting, []);
       const proposeChat = yield* professorAct(
@@ -213,18 +213,8 @@ describe("a proposal of a built-in norm", () => {
       );
 
       expect(yield* judge(setting, state, proposeChat)).toMatchObject({
-        kind: "breaks",
-        breach: {
-          reason: "invalid-content",
-          fields: [
-            {
-              field: "norm",
-              reason: "invalid",
-              detail:
-                "chat needs no agreement: write the message as plain text",
-            },
-          ],
-        },
+        kind: "conforms",
+        state: { agreement: { norm: "chat" } },
       });
     }));
 });
