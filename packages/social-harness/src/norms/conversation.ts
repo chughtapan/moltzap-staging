@@ -51,7 +51,7 @@ export interface State {
   readonly fetched: ReadonlyMap<string, Norm>;
 }
 
-/** Why an act breaks its norm, what its sender may send instead, and the fields that failed. */
+/** Why an act breaks its norm, and the fields that failed. */
 interface Breach {
   readonly reason:
     | "out-of-turn"
@@ -60,7 +60,6 @@ interface Breach {
     | "unknown-instance"
     | "invalid-content";
   readonly norm: string;
-  readonly allowed?: readonly string[];
   readonly fields?: AnswerFieldFailures;
 }
 
@@ -118,7 +117,7 @@ export function judge(
 ): Effect.Effect<Verdict> {
   const norm = normOf(setting, state, sent.act.ontology);
   if (norm === undefined) {
-    return Effect.succeed(breaks("no-agreement", sent.act, []));
+    return Effect.succeed(breaks("no-agreement", sent.act));
   }
   switch (norm.name) {
     case builtIns.agreement:
@@ -141,7 +140,8 @@ export interface SendableAct {
  * The acts `sender` may send now: the next acts of the agreement or norm
  * instance in flight, the agreed norm's opening acts or, with nothing in
  * flight, a proposal of each norm held here that has turns and a query for
- * that norm's document.
+ * that norm's document. None while another member's turn is next. `cancel`,
+ * which any member may send at any time, is not listed.
  */
 export function sendableActs(
   setting: Setting,
@@ -150,12 +150,13 @@ export function sendableActs(
 ): readonly SendableAct[] {
   const { agreement, instance, agreed } = state;
   if (agreement !== undefined) {
-    return [...allowedActs(agreement.instance, sender), "cancel"].map(
-      (performative) => ({ performative, ontology: builtIns.agreement }),
-    );
+    return allowedActs(agreement.instance, sender).map((performative) => ({
+      performative,
+      ontology: builtIns.agreement,
+    }));
   }
   if (instance !== undefined) {
-    return [...allowedActs(instance, sender), "cancel"].map((performative) => ({
+    return allowedActs(instance, sender).map((performative) => ({
       performative,
       ontology: instance.norm,
     }));
@@ -226,15 +227,15 @@ function agreementAct(
     }
     const protocol = agreementNorm.protocol;
     if (protocol === undefined) {
-      return breaks("invalid-content", act, []);
+      return breaks("invalid-content", act);
     }
     const proposed = act.fields.norm;
     if (act.performative === "propose") {
       if (state.agreement !== undefined || state.instance !== undefined) {
-        return breaks("in-flight", act, []);
+        return breaks("in-flight", act);
       }
       if (typeof proposed !== "string") {
-        return breaks("invalid-content", act, ["propose"]);
+        return breaks("invalid-content", act);
       }
       const rest = Struct.omit(state, "agreed");
       return conforms({
@@ -247,14 +248,11 @@ function agreementAct(
     }
     const agreement = state.agreement;
     if (agreement === undefined) {
-      return breaks("unknown-instance", act, []);
+      return breaks("unknown-instance", act);
     }
     const advanced = advance(agreement.instance, act, sender);
     if (advanced === undefined) {
-      return breaks("out-of-turn", act, [
-        ...allowedActs(agreement.instance, sender),
-        "cancel",
-      ]);
+      return breaks("out-of-turn", act);
     }
     const rest = Struct.omit(state, "agreement");
     if (act.performative === "cancel") {
@@ -295,7 +293,7 @@ function discoveryAct(
     }
     const protocol = discoveryNorm.protocol;
     if (protocol === undefined) {
-      return breaks("invalid-content", act, []);
+      return breaks("invalid-content", act);
     }
     if (act.performative === "query-ref") {
       return conforms({
@@ -309,11 +307,11 @@ function discoveryAct(
     const asked = act.inReplyTo;
     const query = asked === undefined ? undefined : state.queries.get(asked);
     if (asked === undefined || query === undefined) {
-      return breaks("unknown-instance", act, []);
+      return breaks("unknown-instance", act);
     }
     const advanced = advance(query, act, sender);
     if (advanced === undefined) {
-      return breaks("out-of-turn", act, allowedActs(query, sender));
+      return breaks("out-of-turn", act);
     }
     const queries = new Map(state.queries);
     if (ended(advanced) || act.performative === "cancel") {
@@ -346,32 +344,28 @@ function normAct(
     }
     const protocol = norm.protocol ?? norm.turns;
     if (protocol === undefined) {
-      const performatives = Object.keys(norm.contents);
-      return performatives.includes(act.performative)
+      return Object.hasOwn(norm.contents, act.performative)
         ? conforms(state)
-        : breaks("out-of-turn", act, performatives);
+        : breaks("out-of-turn", act);
     }
     const current = state.instance;
     if (current === undefined) {
       if (!openingActs(protocol).includes(act.performative)) {
-        return breaks("out-of-turn", act, openingActs(protocol));
+        return breaks("out-of-turn", act);
       }
       if (state.agreed !== norm.name) {
-        return breaks("no-agreement", act, []);
+        return breaks("no-agreement", act);
       }
       const rest = Struct.omit(state, "agreed");
       const opened = open(setting, act, sender, protocol);
       return conforms(ended(opened) ? rest : { ...rest, instance: opened });
     }
     if (current.norm !== norm.name) {
-      return breaks("in-flight", act, []);
+      return breaks("in-flight", act);
     }
     const advanced = advance(current, act, sender);
     if (advanced === undefined) {
-      return breaks("out-of-turn", act, [
-        ...allowedActs(current, sender),
-        "cancel",
-      ]);
+      return breaks("out-of-turn", act);
     }
     const rest = Struct.omit(state, "instance");
     return conforms(
@@ -482,17 +476,6 @@ function conforms(state: State): Verdict {
   return { kind: "conforms", state };
 }
 
-function breaks(
-  reason: Breach["reason"],
-  act: Act,
-  allowed: readonly string[],
-): Verdict {
-  return {
-    kind: "breaks",
-    breach: {
-      reason,
-      norm: act.ontology,
-      ...(allowed.length === 0 ? {} : { allowed }),
-    },
-  };
+function breaks(reason: Breach["reason"], act: Act): Verdict {
+  return { kind: "breaks", breach: { reason, norm: act.ontology } };
 }

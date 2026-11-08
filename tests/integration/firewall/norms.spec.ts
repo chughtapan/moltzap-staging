@@ -186,7 +186,10 @@ const agreedNorm = Effect.gen(function* () {
   expect(outOfTurn).toMatchObject({
     refusal: "rule-violation",
     rule: "refuse-nonconforming",
-    detail: { reason: "out-of-turn", allowed: ["request"] },
+    detail: {
+      reason: "out-of-turn",
+      error: "acts you may send now: (request :ontology office-hours)",
+    },
   });
   expect(yield* nextItem(professor)).toMatchObject({
     message: { content: [{ type: "text", text: request }] },

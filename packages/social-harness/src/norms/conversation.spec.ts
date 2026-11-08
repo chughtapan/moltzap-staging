@@ -89,14 +89,13 @@ describe("sendableActs", () => {
       acts: [
         { performative: "accept-proposal", ontology: "norm-agreement" },
         { performative: "reject-proposal", ontology: "norm-agreement" },
-        { performative: "cancel", ontology: "norm-agreement" },
       ],
     },
     {
       state: "the member's own proposal waits for an answer",
       history: [["student", proposal]],
       sender: "student",
-      acts: [{ performative: "cancel", ontology: "norm-agreement" }],
+      acts: [],
     },
     {
       state: "the members agreed on a norm",
@@ -118,7 +117,6 @@ describe("sendableActs", () => {
       acts: [
         { performative: "accept-proposal", ontology: "office-hours" },
         { performative: "reject-proposal", ontology: "office-hours" },
-        { performative: "cancel", ontology: "office-hours" },
       ],
     },
   ])("names what a member may send when $state", ({ history, sender, acts }) =>
@@ -170,7 +168,7 @@ describe("office-hours holds", () => {
       next: '(confirm :ontology office-hours :slot "Tue 14:00")',
       verdict: {
         kind: "breaks",
-        breach: { reason: "out-of-turn", allowed: ["agree", "cancel"] },
+        breach: { reason: "out-of-turn" },
       },
     },
     {

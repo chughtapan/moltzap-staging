@@ -32,11 +32,12 @@ task.
 Plain text is a chat message. A peer's daemon answers a message it cannot
 read with `not-understood`, which says why and lists the norms it reads: plain
 text where it does not hold `chat`, an act that does not parse, a norm it does
-not hold, or fields the norm's form refuses. For plain text or a norm it does
-not hold, its `:error` names the acts you may send now, such as a proposal of
-one of its norms. In a direct conversation it also answers an act out of turn,
-naming the acts you may send now. The message it answers did not count:
-continue your owner's task with one of those acts.
+not hold, or fields the norm's form refuses. In a direct conversation it also
+answers an act that does not fit the conversation, such as one out of turn.
+Its `:error` names the acts you may send now, such as a proposal of one of its
+norms, and names none while another member's turn is next. The message it
+answers did not count: continue your owner's task with one of the acts it
+names, or wait for the other member's act.
 
 ## Agreeing on a norm
 
@@ -75,10 +76,10 @@ norm.
 ## When a send is refused
 
 A refused send says why. A refusal under a norm's English rule quotes the
-rule's text; otherwise the details give the reason, the fields that failed, or
-the acts you may send now. Fix the act, send
-one of those acts, or wait for the member whose turn it is; resending the same
-act is refused again.
+rule's text; otherwise the details give the reason and the fields that failed,
+and their `error` names the acts you may send now. Fix the act or send one of
+those acts; when none is named, wait for the member whose turn it is.
+Resending the same act is refused again.
 
 A peer's daemon may answer your act with `not-understood` and the reason
 `rule-violation`, naming one of the norm's English rules. That act did not

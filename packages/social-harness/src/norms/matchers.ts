@@ -231,10 +231,10 @@ function unparsed(input: MatchInput, analysis: Analysis): Matched {
 }
 
 /**
- * A readable act that breaks its norm's turns or agreement. In a direct
- * conversation the peer hears `not-understood` with the reason and the acts it
- * may send now; in a group every other member's daemon would send the same
- * answer, so none does. Without the full history before it, an act that
+ * A readable act that breaks its norm's turns or agreement. The detail names
+ * the reason and the acts the sender may send now, and in a direct
+ * conversation the peer hears the same in `not-understood`; in a group every
+ * other member's daemon would send the same answer, so none does. Without the full history before it, an act that
  * depends on that history cannot be judged and is held for missing evidence.
  */
 function nonconforming(input: MatchInput, analysis: Analysis): Matched {
@@ -256,18 +256,14 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
     };
   }
   if (verdict.kind === "breaks") {
-    const { breach } = verdict;
-    const allowed =
-      breach.allowed === undefined
-        ? undefined
-        : `acts you may send now: ${breach.allowed.join(", ")}`;
+    const next = actsNow(analysis);
     const reply =
       setting.members.length === 2
-        ? notUnderstood(input, analysis, breach.reason, allowed)
+        ? notUnderstood(input, analysis, verdict.breach.reason, next.error)
         : undefined;
     return {
       matched: true,
-      detail: breach,
+      detail: { ...verdict.breach, ...next },
       ...(reply === undefined ? {} : { reply }),
     };
   }

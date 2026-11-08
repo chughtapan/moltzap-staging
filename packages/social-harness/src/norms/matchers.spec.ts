@@ -411,12 +411,37 @@ describe("agreement answers", () => {
         detail: { reason: "unknown-instance" },
       });
     }));
+
+  it("names the answers to the open proposal when a member proposes over it", () =>
+    Effect.gen(function* () {
+      const pair = [alice, bob];
+      const proposal =
+        '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")';
+      const open = yield* from(alice, pair, proposal);
+      const over = yield* from(bob, pair, proposal);
+
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          holding("examples/office-hours.lisp"),
+          outgoing(over, [open]),
+        ),
+      ).toEqual({
+        matched: true,
+        detail: {
+          reason: "in-flight",
+          norm: "norm-agreement",
+          error:
+            "acts you may send now: (accept-proposal :ontology norm-agreement), (reject-proposal :ontology norm-agreement)",
+        },
+      });
+    }));
 });
 
 describe("norm instances", () => {
   const matchers = holding("examples/group-meeting.lisp");
 
-  it("names the acts a member may send instead of one out of turn", () =>
+  it("names the acts a member may send instead of one out of turn, and none while another member's turn is next", () =>
     Effect.gen(function* () {
       const history = [
         ...(yield* agreement(["accept-proposal", "accept-proposal"])),
@@ -435,9 +460,9 @@ describe("norm instances", () => {
 
       expect(
         yield* check("norms.nonconforming", matchers, outgoing(early, history)),
-      ).toMatchObject({
+      ).toEqual({
         matched: true,
-        detail: { reason: "out-of-turn", allowed: ["cancel"] },
+        detail: { reason: "out-of-turn", norm: "group-meeting" },
       });
       expect(
         yield* check(
@@ -449,7 +474,8 @@ describe("norm instances", () => {
         matched: true,
         detail: {
           reason: "out-of-turn",
-          allowed: ["propose", "refuse", "cancel"],
+          error:
+            "acts you may send now: (propose :ontology group-meeting), (refuse :ontology group-meeting)",
         },
       });
     }));
@@ -544,7 +570,7 @@ describe("a peer's act out of turn", () => {
           inReplyTo: early.msgId,
           fields: {
             reason: "out-of-turn",
-            error: "acts you may send now: request",
+            error: "acts you may send now: (request :ontology office-hours)",
           },
         },
       });
@@ -571,7 +597,7 @@ describe("a peer's act out of turn", () => {
         detail: {
           reason: "out-of-turn",
           norm: "group-meeting",
-          allowed: ["cfp"],
+          error: "acts you may send now: (cfp :ontology group-meeting)",
         },
       });
     }));
@@ -634,7 +660,10 @@ describe("office hours: offers and escalation", () => {
         yield* check("norms.nonconforming", matchers, outgoing(third, history)),
       ).toMatchObject({
         matched: true,
-        detail: { reason: "out-of-turn", allowed: ["failure", "cancel"] },
+        detail: {
+          reason: "out-of-turn",
+          error: "acts you may send now: (failure :ontology office-hours)",
+        },
       });
       expect(
         yield* check(
@@ -665,7 +694,10 @@ describe("office hours: offers and escalation", () => {
         ),
       ).toMatchObject({
         matched: true,
-        detail: { reason: "out-of-turn", allowed: ["propose", "cancel"] },
+        detail: {
+          reason: "out-of-turn",
+          error: "acts you may send now: (propose :ontology office-hours)",
+        },
       });
       expect(
         yield* check(
@@ -687,9 +719,9 @@ describe("office hours: offers and escalation", () => {
           matchers,
           outgoing(studentOffer, history),
         ),
-      ).toMatchObject({
+      ).toEqual({
         matched: true,
-        detail: { reason: "out-of-turn", allowed: ["cancel"] },
+        detail: { reason: "out-of-turn", norm: "office-hours" },
       });
     }));
 });
@@ -1094,7 +1126,7 @@ describe("a standalone norm", () => {
         yield* check("norms.nonconforming", matchers, outgoing(other)),
       ).toMatchObject({
         matched: true,
-        detail: { reason: "out-of-turn", allowed: ["inform"] },
+        detail: { reason: "out-of-turn" },
       });
     }));
 
