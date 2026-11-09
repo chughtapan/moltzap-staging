@@ -78,6 +78,8 @@ type DomainFailure =
 export interface McpConnectionSettings {
   readonly endpoint: URL;
   readonly credential: Redacted.Redacted;
+  /** The host explicitly trusts plaintext HTTP on this connection. */
+  readonly allowHttp?: boolean;
 }
 
 /**
@@ -104,14 +106,18 @@ export interface McpConnection {
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
 
-/** TLS and literal loopback can carry the private bearer without redirects. */
-export function safeCredentialEndpoint(endpoint: URL): boolean {
+/** TLS, literal loopback or host-approved HTTP can carry the private bearer. */
+export function safeCredentialEndpoint(
+  endpoint: URL,
+  allowHttp = false,
+): boolean {
   const privateAuthority =
     !endpoint.username && !endpoint.password && !endpoint.hash;
   const local =
     endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
   const secure =
-    endpoint.protocol === "https:" || (endpoint.protocol === "http:" && local);
+    endpoint.protocol === "https:" ||
+    (endpoint.protocol === "http:" && (local || allowHttp));
   return privateAuthority && secure;
 }
 
@@ -176,7 +182,7 @@ function acquireConnection(
         redirect: "error",
       },
     };
-    if (!safeCredentialEndpoint(endpoint)) {
+    if (!safeCredentialEndpoint(endpoint, settings.allowHttp)) {
       return yield* new McpConnectError({ reason: "transport-failed" });
     }
     const client = new Client(implementation, {
