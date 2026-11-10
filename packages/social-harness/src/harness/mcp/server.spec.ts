@@ -353,7 +353,10 @@ it("closes an active event stream with the listener's scope", () =>
     ).toBeInstanceOf(HttpClientError.RequestError);
   }));
 
+const sendTool = "send_message";
 const missingField = "text";
+const collectiveField = "collective";
+const textFields = ["to", missingField];
 const sendFields = ["to", missingField, "collective", "collectiveResponse"];
 
 describe("send_message arguments", () => {
@@ -371,6 +374,30 @@ describe("send_message arguments", () => {
   it("names text when a send has neither text nor a collective response", () =>
     Effect.gen(function* () {
       expect(yield* refusal({ to: "agent:bob" })).toContain(missingField);
+    }));
+
+  it("offers only a recipient and text when collectives are turned off", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({ hideCollectives: true });
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const { tools } = yield* Effect.tryPromise(() => client.listTools());
+      const send = tools.find((tool) => tool.name === sendTool);
+      expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual(
+        textFields,
+      );
+      const reply = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", {
+            name: sendTool,
+            arguments: { to: "agent:bob", text: "hello", collective: {} },
+          }),
+        ),
+      );
+      expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
+        collectiveField,
+      );
     }));
 
   it("names any field it does not know", () =>

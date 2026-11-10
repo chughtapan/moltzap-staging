@@ -108,6 +108,7 @@ export function runPolicyRuntime(policy: FirewallOptions) {
       const agent = yield* makeAgentMcpApp({
         webhook,
         stopped: yield* Deferred.make<undefined>(),
+        hideCollectives: settings.hideCollectives,
         implementation: { name: "policy-integration", version: "1" },
       }).pipe(Effect.provide(services));
       const app = yield* makeMcpHttpApp(settings.authentication, () =>

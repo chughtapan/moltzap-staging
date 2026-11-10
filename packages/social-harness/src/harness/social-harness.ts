@@ -197,7 +197,6 @@ export interface HarnessSettings<R> {
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
   readonly hideGroups?: boolean;
-  readonly hideCollectives?: boolean;
 }
 
 function makeHarness<R>(
@@ -327,14 +326,6 @@ function makeHarness<R>(
           const request = structuredClone(input);
           return Effect.gen(function* () {
             if (settings.hideGroups && request.to.startsWith("group:")) {
-              return yield* new SendError({ reason: "content-invalid" });
-            }
-            if (
-              settings.hideCollectives &&
-              ("collectiveResponse" in request ||
-                request.collective?.op === "gather" ||
-                request.collective?.op === "all_gather")
-            ) {
               return yield* new SendError({ reason: "content-invalid" });
             }
             const { card, communication } = yield* active;

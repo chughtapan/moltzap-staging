@@ -854,15 +854,6 @@ const hiddenSends: readonly SendRequest[] = [
     to: MessageAddressInput.make("group:bob,carol,http-signer"),
     text: "Hello",
   },
-  {
-    to: bobAddress,
-    text: "Which day?",
-    collective: {
-      op: "gather",
-      deadline: 60,
-      requestedSchema: { type: "object", properties: {} },
-    },
-  },
 ];
 it.each(hiddenSends)(
   "refuses a hidden capability before dispatch: $to",
@@ -878,7 +869,6 @@ it.each(hiddenSends)(
       });
       const runtime = yield* subject.open({
         hideGroups: true,
-        hideCollectives: true,
       });
       expect(
         yield* runtime.harness
