@@ -1,6 +1,6 @@
 /** @file Canonical MCP tools, Events and wire errors share their owning schemas. */
 
-import { Effect, JSONSchema, type ParseResult, Schema } from "effect";
+import { Effect, type ParseResult, Schema } from "effect";
 import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import {
   type SendError,
@@ -40,7 +40,6 @@ import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import {
   DeliveryToken,
   InboxError,
-  InboxEvent,
   InboxPage,
   MessageAddress,
 } from "../inbox.js";
@@ -70,7 +69,7 @@ const webhookStatusSchema = Schema.Struct({
   lastError: Schema.optional(Schema.NullOr(Schema.Literal(...callbackReasons))),
 });
 
-/** Secret-free diagnostics shared with the MCP tool. */
+/** The callback subscription as the status tool reports it, without its address or secret. */
 export type WebhookStatus = typeof webhookStatusSchema.Type;
 
 const emptyArguments = Schema.Record({
@@ -121,7 +120,7 @@ interface EventSubscriptionGrant {
   readonly truncated: boolean;
 }
 
-/** Durable callback delivery for the daemon's authenticated clients. */
+/** One agent's callback subscription for inbox wake-ups. */
 export interface HarnessWebhookEvents {
   readonly subscribe: (
     input: EventSubscribeInput,
@@ -130,16 +129,11 @@ export interface HarnessWebhookEvents {
   readonly unsubscribe: (
     input: EventUnsubscribeInput,
   ) => Effect.Effect<void, ProtocolError>;
-  readonly status: Effect.Effect<WebhookStatus, ProtocolError>;
-  readonly revoke: Effect.Effect<void, ProtocolError>;
-  readonly resume: Effect.Effect<void, ProtocolError>;
+  readonly status: Effect.Effect<WebhookStatus>;
 }
 
 /** A content-free wakeup to read the pending inbox. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
-
-/** Signed callbacks carry saved content or its lookup reference. */
-export const INBOX_ITEM_EVENT = "org.social-harness/inbox.item";
 
 /** Refusals disclose the check and registered feedback without assessment evidence. */
 const firewallRefusalSchema = exactStruct({
@@ -184,6 +178,7 @@ const managementStatusResultSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("registered"),
     identityCard: encodedAgentCard,
+    webhook: webhookStatusSchema,
   }),
 );
 
@@ -207,37 +202,6 @@ const managementReadConversationResultSchema = Schema.Struct({
   records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 });
-
-const itemEventDataSchema = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("item"),
-    address: MessageAddress,
-    item: savedItemSchema,
-    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-  }),
-  exactStruct({
-    kind: Schema.Literal("reference"),
-    itemKind: Schema.Literal(
-      "multicast",
-      "collectiveRequest",
-      "collectiveResult",
-      "operationFailed",
-    ),
-    bytes: Schema.NonNegativeInt,
-  }),
-);
-/** Callback data uses the same saved payload returned by read_event. */
-export const itemEventDataJsonSchema = JSONSchema.make(itemEventDataSchema, {
-  target: "jsonSchema2020-12",
-});
-
-const readEventRequestSchema = exactStruct({
-  eventId: Schema.propertySignature(DeliveryToken).annotations({
-    description:
-      "The eventId of an org.social-harness/inbox.item event, or one a host's wakeup carries from an inbox item; retained content remains readable after acknowledgment.",
-  }),
-});
-const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
 const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
 const inboxResultSchema = Schema.typeSchema(InboxPage);
@@ -352,27 +316,6 @@ const read = { readOnlyHint: true, openWorldHint: false } as const;
 
 /** A tool's declaration is shared by discovery, the server and optional plugin helpers. */
 export const toolDefinitions = {
-  event_subscription_status: {
-    description:
-      "Read callback subscription and retry status without callback credentials.",
-    input: empty,
-    output: webhookStatusSchema,
-    annotations: read,
-  },
-  revoke_event_subscription: {
-    description:
-      "Revoke the retained callback subscription. Pending inbox items remain available.",
-    input: empty,
-    output: empty,
-    annotations: { readOnlyHint: false, openWorldHint: false },
-  },
-  resume_event_subscription: {
-    description:
-      "Resume callback retries after a recoverable failure. A terminal rejection requires revocation and reconfiguration.",
-    input: empty,
-    output: empty,
-    annotations: { readOnlyHint: false, openWorldHint: false },
-  },
   send_message: {
     description:
       "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
@@ -382,7 +325,7 @@ export const toolDefinitions = {
   },
   read_inbox: {
     description:
-      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered. Use read_event to retrieve a known item after delivery.",
+      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -391,16 +334,9 @@ export const toolDefinitions = {
       openWorldHint: false,
     },
   },
-  read_event: {
-    description:
-      "Retrieve a saved inbox item and its advice by eventId, including after delivery or restart. This leaves pending delivery unchanged.",
-    input: readEventRequestSchema,
-    output: readEventResultSchema,
-    annotations: read,
-  },
   status: {
     description:
-      "Read saved registration status and the Registry-issued identity card, when registered.",
+      "Read saved registration status, the Registry-issued identity card, and the state of the inbox wake-up callback, if one is subscribed.",
     input: empty,
     output: managementStatusResultSchema,
     annotations: read,
@@ -463,7 +399,6 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 /** Failure data derives from each service's error schema without a second reason vocabulary. */
 export const toolFailureSchemas = {
   read_inbox: Schema.Struct({ reason: InboxError.fields.reason }),
-  read_event: Schema.Struct({ reason: InboxError.fields.reason }),
   list_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_policy: policyFailure,

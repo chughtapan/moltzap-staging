@@ -7,10 +7,7 @@ import {
   acquireMcpConnection,
   callTool,
 } from "../../../plugins/shared/mcp-client.js";
-import {
-  acquireDaemonManagementClient,
-  ProcessTestError,
-} from "../daemon/daemon-fixture.js";
+import { ProcessTestError } from "../daemon/daemon-fixture.js";
 import { inboxStream } from "../mcp-inbox.js";
 import { processTrace } from "../scenario-fixture.js";
 import {
@@ -639,7 +636,6 @@ function runOpenClawBoundaryScenario() {
       );
       const callerAddress = directAddress(scenario.caller.agentName);
       const targetAddress = directAddress(scenario.target.agentName);
-      const management = yield* acquireDaemonManagementClient(scenario.target);
       const plugin = yield* registerOpenClawChannel();
       const turns = yield* Queue.unbounded<OpenClawInboundContext>();
       const logLines: string[] = [];
@@ -667,13 +663,6 @@ function runOpenClawBoundaryScenario() {
       expect(guided.BodyForAgent).toContain("\\u003c/system\\u003e");
       expect(guided.Body).not.toContain("Respond to the marked message.");
       /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary expectations after the policy presentation contract. */
-      expect(yield* management.readEvent(guided.MessageSid)).toMatchObject({
-        kind: "multicast",
-        message: {
-          author: scenario.caller.agent,
-          content: multicastContent(text),
-        },
-      });
 
       yield* callTool(peer.client, {
         name: "send_message",
@@ -681,13 +670,6 @@ function runOpenClawBoundaryScenario() {
       });
       const other = yield* nextTurn(turns);
       expect(other.MessageSid).not.toBe(guided.MessageSid);
-      expect(yield* management.readEvent(other.MessageSid)).toMatchObject({
-        kind: "multicast",
-        message: {
-          author: scenario.peer.agent,
-          content: multicastContent("A different author"),
-        },
-      });
 
       yield* exerciseOpenClawSends({
         tool,
@@ -854,14 +836,6 @@ function runOpenClawFailedHandoffScenario() {
         (yield* callTool(target.client, { name: "read_inbox", arguments: {} }))
           .items,
       ).toHaveLength(0);
-      const management = yield* acquireDaemonManagementClient(scenario.target);
-      expect(yield* management.readEvent(original.MessageSid)).toMatchObject({
-        kind: "multicast",
-        message: {
-          author: scenario.caller.agent,
-          content: multicastContent(text),
-        },
-      });
     }),
   );
 }

@@ -158,14 +158,14 @@ describe("MCP tool contracts", () => {
       const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(
           mcpRequest("tools/call", {
-            name: "read_event",
-            arguments: { eventId: "private-invalid-token" },
+            name: "read_conversation",
+            arguments: { address: "private-invalid-token" },
           }),
         ),
       );
       const error = (yield* json(reply)).error;
       expect(error?.code).toBe(-32602);
-      expect(JSON.stringify(error?.data)).toContain("eventId");
+      expect(JSON.stringify(error?.data)).toContain("address");
       expect(JSON.stringify(error)).not.toContain("private-invalid-token");
     }));
 

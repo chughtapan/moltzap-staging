@@ -142,8 +142,8 @@ const qualifyInbox = (keys: readonly string[]) =>
         (yield* inbox.listInbox()).items.map((item) => item.deliveryToken),
       ).toEqual([pending.token]);
       const reopened = yield* makeInbox(key);
-      expect(yield* reopened.getInboxEvent(pending.token)).toEqual(
-        yield* inbox.getInboxEvent(pending.token),
+      expect((yield* reopened.listInbox()).items).toEqual(
+        (yield* inbox.listInbox()).items,
       );
     }
     expect(yield* sql`SELECT * FROM harness_items`).toHaveLength(0);

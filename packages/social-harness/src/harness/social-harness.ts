@@ -141,10 +141,6 @@ interface SocialHarnessService {
   readonly listInbox: (
     request?: PaginatedRequest,
   ) => Effect.Effect<InboxPage, InboxError>;
-  /** Saved content remains readable after acknowledgment and restart. */
-  readonly getInboxEvent: (
-    token: DeliveryToken,
-  ) => Effect.Effect<InboxEvent, InboxError>;
   /** Repeating an acknowledgment is harmless and does not answer a request. */
   readonly acknowledgeDelivery: (
     token: DeliveryToken,
@@ -480,10 +476,6 @@ function makeHarness<R>(
       listInbox: (request) =>
         requireRegistered(new InboxError({ reason: "not-registered" })).pipe(
           Effect.zipRight(inbox.listInbox(request)),
-        ),
-      getInboxEvent: (token) =>
-        requireRegistered(new InboxError({ reason: "not-registered" })).pipe(
-          Effect.zipRight(inbox.getInboxEvent(token)),
         ),
       acknowledgeDelivery: (token) =>
         requireRegistered(

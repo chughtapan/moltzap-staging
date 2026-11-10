@@ -348,15 +348,16 @@ it("recovers an interrupted check and retains its published view after edits, ac
     if (delivery === undefined) {
       return yield* Effect.dieMessage("Expected recovered delivery");
     }
-    const saved = yield* resumed.harness.getInboxEvent(delivery.deliveryToken);
+    const saved = {
+      address: delivery.address,
+      item: delivery.item,
+      guidance: delivery.guidance,
+    };
     expect(saved.guidance).toBeDefined();
     yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     expect((yield* resumed.harness.listInbox()).items).toEqual([]);
-    expect(
-      yield* resumed.harness.getInboxEvent(delivery.deliveryToken),
-    ).toEqual(saved);
     yield* subject.disconnectRegistry();
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
@@ -364,8 +365,8 @@ it("recovers an interrupted check and retains its published view after edits, ac
     yield* Scope.close(resumedScope, Exit.void);
     const reopened = yield* subject.open();
     expect(
-      yield* reopened.harness.getInboxEvent(delivery.deliveryToken),
-    ).toEqual(saved);
+      (yield* reopened.harness.readHistory({ address: bobAddress })).records,
+    ).toMatchObject([{ kind: "received", ...saved }]);
     yield* subject.deliver({ kind: "message", message });
     expect((yield* reopened.harness.listInbox()).items).toEqual([]);
   }));
@@ -668,9 +669,6 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     if (shown === undefined) {
       return yield* Effect.dieMessage("Expected original request");
     }
-    const originalView = yield* runtime.harness.getInboxEvent(
-      shown.deliveryToken,
-    );
     yield* runtime.harness.acknowledgeDelivery(shown.deliveryToken);
     completing = true;
     const own = yield* Answer.create({
@@ -718,9 +716,6 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     const ordered = assessed.slice().sort(compareAscii);
     expect(ordered).toEqual(
       [subject.bob.agentId, subject.carol.agentId].sort(compareAscii),
-    );
-    expect(yield* runtime.harness.getInboxEvent(shown.deliveryToken)).toEqual(
-      originalView,
     );
     expect(
       new Set(

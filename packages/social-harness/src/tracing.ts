@@ -8,8 +8,7 @@ export type RetryKind =
   | "catch-up"
   | "reanchor"
   | "outbound"
-  | "firewall-check"
-  | "webhook";
+  | "firewall-check";
 /** How a tracked operation finished. */
 export type RetryOutcome =
   | "certified"
@@ -17,7 +16,6 @@ export type RetryOutcome =
   | "recovered"
   | "sent"
   | "checked"
-  | "delivered"
   | "gave-up"
   | "interrupted"
   | "failed";

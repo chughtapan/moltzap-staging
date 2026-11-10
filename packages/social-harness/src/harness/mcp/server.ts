@@ -19,7 +19,6 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { randomUUID } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { OwnerAccount } from "../ownership.js";
@@ -54,12 +53,11 @@ import {
   eventSubscribeInput,
   eventUnsubscribeInput,
   type HarnessWebhookEvents,
-  INBOX_ITEM_EVENT,
   INBOX_PENDING_EVENT,
-  itemEventDataJsonSchema,
   sendErrorData,
   toolDefinitions,
 } from "./contracts.js";
+import { countPendingInbox, inboxPendingEvent } from "./webhook.js";
 
 interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
@@ -132,7 +130,7 @@ const installEvents = Effect.fn("installEvents")(function* (
                   {
                     name: INBOX_PENDING_EVENT,
                     description: "A wakeup to read the pending inbox.",
-                    delivery: ["push"],
+                    delivery: ["push", "webhook"],
                     inputSchema: {
                       type: "object",
                       properties: {},
@@ -146,18 +144,6 @@ const installEvents = Effect.fn("installEvents")(function* (
                       required: ["pendingCount"],
                     },
                   },
-                  {
-                    name: INBOX_ITEM_EVENT,
-                    description:
-                      "A saved inbox item or a reference retrieved through read_event.",
-                    delivery: ["webhook"],
-                    inputSchema: {
-                      type: "object",
-                      properties: {},
-                      additionalProperties: false,
-                    },
-                    payloadSchema: itemEventDataJsonSchema,
-                  },
                 ],
               })
             : Effect.fail(
@@ -170,7 +156,7 @@ const installEvents = Effect.fn("installEvents")(function* (
       Effect.gen(function* () {
         const input = yield* decodeEventArguments(eventSubscribeInput, raw);
         yield* registered;
-        yield* requireEvent(input.name, INBOX_ITEM_EVENT, input.cursor);
+        yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
         if (input.delivery.mode !== "webhook") {
           return yield* Effect.fail(
             new ProtocolError(-32602, "Unsupported delivery mode"),
@@ -181,31 +167,12 @@ const installEvents = Effect.fn("installEvents")(function* (
     unsubscribe: (raw) =>
       Effect.gen(function* () {
         const input = yield* decodeEventArguments(eventUnsubscribeInput, raw);
-        yield* requireEvent(input.name, INBOX_ITEM_EVENT);
+        yield* requireEvent(input.name, INBOX_PENDING_EVENT);
         yield* webhook.unsubscribe(input);
         return {};
       }),
   };
 }, Effect.withSpan("installEvents"));
-
-function pendingInbox(harness: Context.Tag.Service<typeof SocialHarness>) {
-  return Effect.gen(function* () {
-    let total = 0;
-    let cursor: string | undefined;
-    do {
-      const page = yield* harness.listInbox(
-        cursor === undefined ? {} : { cursor },
-      );
-      total += page.items.length;
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-    return total;
-  }).pipe(
-    Effect.catchTag("InboxError", () =>
-      Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
-    ),
-  );
-}
 
 function streamPending(
   harness: Context.Tag.Service<typeof SocialHarness>,
@@ -237,15 +204,15 @@ function streamPending(
       );
       yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
         Stream.runForEach(() =>
-          pendingInbox(harness).pipe(
+          countPendingInbox(harness).pipe(
+            Effect.catchTag("InboxError", () =>
+              Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
+            ),
             Effect.flatMap((count) =>
-              notify("notifications/events/event", {
-                eventId: `wake_${randomUUID()}`,
-                name: INBOX_PENDING_EVENT,
-                timestamp: new Date().toISOString(),
-                data: { pendingCount: count },
-                cursor: null,
-              }),
+              notify(
+                "notifications/events/event",
+                inboxPendingEvent(count, Date.now()),
+              ),
             ),
           ),
         ),
@@ -274,9 +241,8 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
 
   yield* installMessageTools(server, harness, registered, settings);
-  yield* installIdentityTools(server, identity);
+  yield* installIdentityTools(server, identity, settings.webhook);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
-  yield* installWebhookTools(server, settings.webhook, registered);
 
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
@@ -385,13 +351,6 @@ function installMessageTools(
       visible: registered,
     });
     yield* bind(server, {
-      name: "read_event",
-      definition: toolDefinitions.read_event,
-      execute: ({ eventId }) => harness.getInboxEvent(eventId),
-      failure: reasonError,
-      visible: registered,
-    });
-    yield* bind(server, {
       name: "list_conversations",
       definition: toolDefinitions.list_conversations,
       execute: harness.listConversations,
@@ -410,6 +369,7 @@ function installMessageTools(
 function installIdentityTools(
   server: Context.Tag.Service<typeof McpServer>,
   identity: Context.Tag.Service<typeof Identity>,
+  webhook: HarnessWebhookEvents,
 ) {
   return Effect.gen(function* () {
     yield* bind(server, {
@@ -424,7 +384,11 @@ function installIdentityTools(
           const identityCard = yield* Schema.encode(AgentIdentityCard)(
             state.identityCard,
           ).pipe(Effect.orDie);
-          return { kind: "registered" as const, identityCard };
+          return {
+            kind: "registered" as const,
+            identityCard,
+            webhook: yield* webhook.status,
+          };
         }),
       failure: reasonError,
       visible: Effect.succeed(true),
@@ -473,36 +437,6 @@ function installPolicyTools(
     });
   });
 }
-function installWebhookTools(
-  server: Context.Tag.Service<typeof McpServer>,
-  callback: HarnessWebhookEvents,
-  registered: Effect.Effect<boolean>,
-) {
-  return Effect.gen(function* () {
-    yield* bind(server, {
-      name: "event_subscription_status",
-      definition: toolDefinitions.event_subscription_status,
-      execute: () => callback.status,
-      failure: (error) => error,
-      visible: registered,
-    });
-    yield* bind(server, {
-      name: "revoke_event_subscription",
-      definition: toolDefinitions.revoke_event_subscription,
-      execute: () => callback.revoke.pipe(Effect.as({})),
-      failure: (error) => error,
-      visible: registered,
-    });
-    yield* bind(server, {
-      name: "resume_event_subscription",
-      definition: toolDefinitions.resume_event_subscription,
-      execute: () => callback.resume.pipe(Effect.as({})),
-      failure: (error) => error,
-      visible: registered,
-    });
-  });
-}
-
 function bind<A, I, B, J, E>(
   server: Context.Tag.Service<typeof McpServer>,
   options: {
