@@ -22,6 +22,7 @@ import {
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
 import { MessageAddressInput } from "../../communication/messages.js";
+import { HistoryError } from "../social-harness.js";
 import {
   INBOX_PENDING_EVENT,
   MAXIMUM_WAIT_SECONDS,
@@ -498,4 +499,26 @@ describe("send_message arguments", () => {
         { numRuns: 20 },
       ),
     ));
+});
+
+describe("a tool that fails", () => {
+  it("answers with its error's own message and reason", () =>
+    Effect.gen(function* () {
+      const failure = new HistoryError({ reason: "unknown-agent" });
+      const fixture = yield* mcpFixture({
+        harness: { readHistory: () => Effect.fail(failure) },
+      });
+      const reply = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", {
+            name: "read_conversation",
+            arguments: { address: serverAgent },
+          }),
+        ),
+      );
+      expect((yield* json(reply)).error).toMatchObject({
+        message: failure.message,
+        data: { reason: failure.reason },
+      });
+    }));
 });

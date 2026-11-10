@@ -17,27 +17,18 @@ import {
   Console,
   Data,
   Effect,
-  Option,
   Redacted,
   Schema,
   type Scope,
 } from "effect";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
-/** JSON-RPC's invalid-params code: the daemon refused the arguments itself. */
-const INVALID_PARAMS = -32602;
 const USAGE = "usage: node mcp.ts call TOOL [JSON]";
 
 /** A command that did not complete. `message` is what the reader sees. */
 class CommandError extends Data.TaggedError("CommandError")<{
   readonly message: string;
 }> {}
-
-/** The JSON-RPC error data the daemon attaches to a failed tool call. */
-const failureData = Schema.Struct({
-  reason: Schema.optional(Schema.String),
-  detail: Schema.optional(Schema.String),
-});
 
 const toolArguments = Schema.parseJson(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
@@ -179,38 +170,11 @@ function callTool(
   );
 }
 
-/**
- * Reasons whose JSON-RPC message from the daemon already names the cause: a
- * send the agent's own firewall refused (its reason, check and feedback), a
- * refused collective (each unreachable member or failing
- * field), and a refused policy edit (the failing rule and the problem).
- */
-const MESSAGE_REASONS: ReadonlySet<string> = new Set([
-  "firewall-refused",
-  "collective-failed",
-  "invalid-rule",
-  "fixed-rule",
-]);
-
-/**
- * Preserves daemon diagnostics for invalid arguments and MESSAGE_REASONS.
- * Otherwise reports the reason and detail.
- */
+/** The daemon's own message says what went wrong and what to do. */
 function toolFailure(tool: string, cause: unknown): CommandError {
-  if (!ProtocolError.isInstance(cause)) {
-    return commandError(`${tool} failed: ${String(cause)}`);
-  }
-  const { reason, detail } = Option.getOrElse(
-    Schema.decodeUnknownOption(failureData)(cause.data),
-    (): typeof failureData.Type => ({}),
+  return commandError(
+    `${tool} failed: ${ProtocolError.isInstance(cause) ? cause.message : String(cause)}`,
   );
-  const said =
-    cause.code === INVALID_PARAMS ||
-    reason === undefined ||
-    MESSAGE_REASONS.has(reason)
-      ? cause.message
-      : [reason, ...(detail === undefined ? [] : [detail])].join("; ");
-  return commandError(`${tool} failed: ${said}`);
 }
 
 function commandError(message: string): CommandError {

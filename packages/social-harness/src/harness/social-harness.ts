@@ -108,6 +108,17 @@ export type HistoryRecord =
 export interface ReadHistoryResult extends PaginatedResult {
   readonly records: readonly HistoryRecord[];
 }
+const historyFailureText = {
+  "not-registered": "this agent is not registered with Social Harness",
+  "invalid-address": "the address is not a valid agent: or group: address",
+  "unknown-agent": "an agent the address names is not a known agent",
+  "invalid-cursor":
+    "the cursor is not one this conversation returned; call again without a cursor",
+  "history-gap":
+    "part of this conversation is not available yet; try again shortly",
+  "persistence-failed": "the conversation could not be read; try again",
+} as const;
+
 /** History failure never exposes private protocol or persistence diagnostics. */
 export class HistoryError extends Schema.TaggedError<HistoryError>()(
   "HistoryError",
@@ -121,7 +132,11 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
       "persistence-failed",
     ),
   },
-) {}
+) {
+  override get message(): string {
+    return `reading failed: ${historyFailureText[this.reason]}`;
+  }
+}
 
 type CommunicationService = Context.Tag.Service<typeof Communication>;
 type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;

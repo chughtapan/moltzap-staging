@@ -23,8 +23,10 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { MessageAddressInput } from "../../communication/messages.js";
+import type { RequestError } from "../../communication/service.js";
 import type { OwnerAccount } from "../ownership.js";
-import { Firewall } from "../../firewall/service.js";
+import { issuesText, SendError } from "../../communication/errors.js";
+import { Firewall, type FirewallRefusal } from "../../firewall/service.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
 import { HeldNorms } from "../../norms/configuration.js";
@@ -76,8 +78,25 @@ interface AgentServerSettings {
   readonly implementation: { readonly name: string; readonly version: string };
 }
 
-const reasonError = (error: { readonly reason: string }) =>
-  new ProtocolError(-32603, "Operation failed", { reason: error.reason });
+/** A failed send as the wire carries it: its message, and data a caller can read back. */
+const sendFailure = (error: SendError | RequestError | FirewallRefusal) =>
+  new ProtocolError(-32603, error.message, sendErrorData(error));
+
+/** A send that ended without a declared result may or may not have been accepted. */
+const sendOutcomeUnknown = sendFailure(
+  new SendError({ reason: "outcome-unknown" }),
+);
+
+/** The answer for a tool that ended in a way it does not declare. */
+const unexpectedFailure = new ProtocolError(
+  -32603,
+  "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+);
+
+const reasonError = (error: {
+  readonly reason: string;
+  readonly message: string;
+}) => new ProtocolError(-32603, error.message, { reason: error.reason });
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
@@ -344,8 +363,8 @@ function installMessageTools(
     const send = {
       name: "send_message",
       execute: (request: SendRequest) => harness.send(request),
-      failure: (error: Effect.Effect.Error<ReturnType<typeof harness.send>>) =>
-        new ProtocolError(-32603, error.message, sendErrorData(error)),
+      failure: sendFailure,
+      unexpected: sendOutcomeUnknown,
       visible: registered,
     };
     yield* settings.hideCollectives
@@ -421,8 +440,8 @@ function installClientTools(
       name: "send_message",
       definition: clientToolDefinitions.send_message,
       execute: ({ text }) => harness.send({ to: serverAgent, text }),
-      failure: (error) =>
-        new ProtocolError(-32603, error.message, sendErrorData(error)),
+      failure: sendFailure,
+      unexpected: sendOutcomeUnknown,
       visible: registered,
     });
     yield* installReceiveTool(server, harness, registered);
@@ -488,7 +507,7 @@ function installNormTools(
           })),
         })),
       ),
-    failure: () => new ProtocolError(-32603, "read_norms failed"),
+    failure: reasonError,
     visible: registered,
   });
 }
@@ -535,6 +554,15 @@ function installPolicyTools(
     });
   });
 }
+/** A refusal of arguments that names each wrong field in its message and its data. */
+function invalidArguments(issues: ReturnType<typeof validationIssues>) {
+  return new ProtocolError(
+    -32602,
+    `Invalid tool arguments: ${issuesText(issues)}`,
+    { issues },
+  );
+}
+
 function bind<A, I, B, J, E>(
   server: Context.Tag.Service<typeof McpServer>,
   options: {
@@ -552,10 +580,13 @@ function bind<A, I, B, J, E>(
     };
     readonly execute: (input: A) => Effect.Effect<B, E>;
     readonly failure: (error: E) => ProtocolError;
+    /** What to answer when the tool ends in a way it does not declare. */
+    readonly unexpected?: ProtocolError;
     readonly visible: Effect.Effect<boolean>;
   },
 ) {
   const { name, definition, execute, failure, visible } = options;
+  const unexpected = options.unexpected ?? unexpectedFailure;
   return server.addTool({
     tool: new Tool({
       name,
@@ -576,48 +607,24 @@ function bind<A, I, B, J, E>(
           errors: "all",
         })(input).pipe(
           Effect.catchTag("ParseError", (error) =>
-            Effect.fail(
-              new ProtocolError(-32602, "Invalid tool arguments", {
-                issues: validationIssues(error),
-              }),
-            ),
+            Effect.fail(invalidArguments(validationIssues(error))),
           ),
         );
         const output = yield* execute(decoded).pipe(Effect.mapError(failure));
         const encoded = yield* Schema.encode(definition.output)(output, {
           onExcessProperty: "error",
-        }).pipe(
-          Effect.catchTag("ParseError", () =>
-            Effect.fail(
-              new ProtocolError(-32603, "Invalid operation result", {
-                reason:
-                  name === "send_message"
-                    ? "outcome-unknown"
-                    : "incompatible-daemon",
-              }),
-            ),
-          ),
-        );
+        }).pipe(Effect.catchTag("ParseError", () => Effect.fail(unexpected)));
         return new CallToolResult({
           content: [{ type: "text", text: JSON.stringify(encoded) }],
           structuredContent: encoded,
         });
       }).pipe(
-        // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- The wire boundary sanitizes defects while preserving every declared ProtocolError.
         Effect.catchAllCause((cause) => {
           const expected = Cause.failureOption(cause);
           if (Option.isSome(expected)) {
             return Effect.fail(expected.value);
           }
-          return Effect.fail(
-            new ProtocolError(
-              -32603,
-              "Operation failed",
-              name === "send_message"
-                ? { reason: "outcome-unknown" }
-                : undefined,
-            ),
-          );
+          return Effect.fail(unexpected);
         }),
       ),
   });
