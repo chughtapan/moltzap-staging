@@ -115,7 +115,7 @@ const heldNorms = Effect.gen(function* () {
           issuer: issuer.issuer,
           scope: requiredScope,
         },
-        agent: undefined,
+        agentName: undefined,
         normsDirectory: yield* normsDirectory(
           infrastructure.temporaryDirectory,
         ),
@@ -212,7 +212,7 @@ const serverOwnsNorms = Effect.gen(function* () {
           issuer: issuer.issuer,
           scope: requiredScope,
         },
-        agent: undefined,
+        agentName: undefined,
         normsDirectory: yield* normsDirectory(
           infrastructure.temporaryDirectory,
         ),

@@ -140,7 +140,6 @@ function expectFailedAgentIsolation(input: {
 function removeInitialCopies(fixture: DaemonProcessFixture) {
   return Effect.gen(function* () {
     const filesystem = yield* FileSystem.FileSystem;
-    yield* filesystem.remove(fixture.agentPrivateKeyFile);
     yield* filesystem.remove(fixture.admissionCredentialFile);
   });
 }
@@ -432,7 +431,7 @@ const openSharedDaemon = (
             issuer: issuer.issuer,
             scope: requiredScope,
           },
-          agent: undefined,
+          agentName: undefined,
         },
       },
     );

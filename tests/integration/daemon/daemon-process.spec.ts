@@ -391,11 +391,10 @@ const admissionLifetimeBehavior = Effect.scoped(
     const before = yield* readActiveStatus(fixture);
     yield* stopProcess(original);
     const filesystem = yield* FileSystem.FileSystem;
-    yield* filesystem.remove(fixture.agentPrivateKeyFile);
     yield* filesystem.remove(fixture.admissionCredentialFile);
     yield* filesystem.remove(fixture.mcpCredentialFile);
     yield* configureDaemonFixture(fixture, {
-      agent: undefined,
+      agentName: undefined,
       admissionCredential: undefined,
     });
     const recovered = yield* acquireDaemonProcess(fixture);

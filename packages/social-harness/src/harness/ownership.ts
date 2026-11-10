@@ -31,14 +31,6 @@ export const serverAgentOwner = {
   subject: "owner",
 };
 
-/** What a new agent is created with. The daemon generates whatever is left out. */
-interface RegistrationSeed {
-  readonly agentName: AgentName;
-  readonly principalId?: PrincipalId;
-  readonly operationId?: RegistrationId;
-  readonly privateKey?: Redacted.Redacted;
-}
-
 const profileRow = Schema.Struct({
   agent_key: Schema.UUID,
   agent_name: AgentName,
@@ -85,43 +77,12 @@ function readProfile(agentKey: string) {
   });
 }
 
-/** Reconfiguration may repeat the original seed, but cannot silently replace a saved identity. */
-function verifySeed(
-  profile: typeof profileRow.Type,
-  unlockKey: Redacted.Redacted<Uint8Array>,
-  seed?: RegistrationSeed,
-) {
-  if (seed === undefined) {
-    return Effect.void;
-  }
-  const same = <A>(saved: A, given?: A) =>
-    given === undefined || given === saved;
-  if (
-    profile.agent_name !== seed.agentName ||
-    !same(profile.principal_id, seed.principalId) ||
-    !same(profile.registration_operation_id, seed.operationId)
-  ) {
-    return Effect.fail(new OwnershipError());
-  }
-  const { privateKey } = seed;
-  if (privateKey === undefined) {
-    return Effect.void;
-  }
-  return openCredential(profile.private_key, profile.agent_key, unlockKey).pipe(
-    Effect.filterOrFail(
-      (saved) => Redacted.value(saved) === Redacted.value(privateKey),
-      () => new OwnershipError(),
-    ),
-    Effect.asVoid,
-  );
-}
-
 /** Concurrent first connections return one agent key with durable registration inputs. */
 export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
   function* (
     owner: OwnerAccount,
     unlockKey: Redacted.Redacted<Uint8Array>,
-    seed?: RegistrationSeed,
+    agentName?: AgentName,
   ) {
     const sql = yield* SqlClient.SqlClient;
     const queries = yield* makeQueries<OwnershipTables>();
@@ -137,7 +98,11 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
       withAgentTransaction(
         agentKey,
         readProfile(agentKey).pipe(
-          Effect.tap((profile) => verifySeed(profile, unlockKey, seed)),
+          Effect.filterOrFail(
+            (profile) =>
+              agentName === undefined || profile.agent_name === agentName,
+            () => new OwnershipError(),
+          ),
           Effect.as(agentKey),
         ),
       );
@@ -146,13 +111,10 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
       return yield* ownedKey(existing.agent_key);
     }
     const candidateKey = randomUUID();
-    const name = seed?.agentName ?? `agent-${randomBytes(12).toString("hex")}`;
-    const principal =
-      seed?.principalId ?? `prn_${randomBytes(16).toString("base64url")}`;
-    const operation =
-      seed?.operationId ?? `opn_${randomBytes(16).toString("base64url")}`;
-    const privateKey = seed?.privateKey ?? (yield* freshKey);
-    yield* AgentSigningAuthority.fromPkcs8(privateKey);
+    const name = agentName ?? `agent-${randomBytes(12).toString("hex")}`;
+    const principal = `prn_${randomBytes(16).toString("base64url")}`;
+    const operation = `opn_${randomBytes(16).toString("base64url")}`;
+    const privateKey = yield* freshKey;
     const sealed = yield* sealCredential(privateKey, candidateKey, unlockKey);
     return yield* sql.withTransaction(
       Effect.gen(function* () {

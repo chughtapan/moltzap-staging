@@ -63,18 +63,20 @@ export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
 function runDaemon() {
   return Effect.gen(function* () {
     const access = yield* databaseAccess;
-    const { settings, agent, serverAgentCredential } =
+    const { settings, agentName, serverAgentCredential } =
       yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
       yield* Communication.configureTransport(settings.transport);
       if (settings.authentication.kind === "local") {
-        yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agent);
+        yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agentName);
       }
       if (settings.transport.kind === "client-server") {
-        yield* getOrCreateOwnedAgent(serverAgentOwner, access.unlockKey, {
-          agentName: settings.transport.serverAgentName,
-        });
+        yield* getOrCreateOwnedAgent(
+          serverAgentOwner,
+          access.unlockKey,
+          settings.transport.serverAgentName,
+        );
       }
       const network = yield* Layer.build(networkLayer(settings));
       const selectApp = yield* makeAgentSelector(
