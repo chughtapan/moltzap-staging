@@ -10,8 +10,8 @@ import {
   AgentAddress,
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
-import { HISTORY_WIRE_VERSIONS } from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness";
+import { HISTORY_WIRE_VERSIONS } from "@social-harness/social-harness/test";
 import { Data, Effect, Fiber, Option, Schedule, Schema, Stream } from "effect";
 import { join, posix, resolve } from "node:path";
 import { expect, it, type TestContext } from "vitest";
@@ -42,7 +42,10 @@ const RESET_SKIP_REASON =
   "No post-reset release is published; the published-peers gate starts with the first release after the reset.";
 const workspaceRoot = resolve(import.meta.dirname, "../../..");
 const packages = {
-  "@moltzap/social-harness": join(workspaceRoot, "packages/social-harness"),
+  "@social-harness/social-harness": join(
+    workspaceRoot,
+    "packages/social-harness",
+  ),
 };
 
 /**
@@ -87,7 +90,7 @@ function releaseWireVersion(
   view = npmView,
   firstPostResetRelease = FIRST_POST_RESET_RELEASE,
 ) {
-  return view([`@moltzap/social-harness@${version}`]).pipe(
+  return view([`@social-harness/social-harness@${version}`]).pipe(
     Effect.flatMap(
       Schema.decodeUnknown(
         Schema.parseJson(
@@ -108,7 +111,7 @@ function releaseWireVersion(
         ? Effect.succeed(PRE_RESET_WIRE_VERSION)
         : Effect.fail(
             new ProcessTestError({
-              message: `@moltzap/social-harness@${version} is missing published sharnessWireVersion metadata`,
+              message: `@social-harness/social-harness@${version} is missing published sharnessWireVersion metadata`,
             }),
           );
     }),
@@ -117,7 +120,10 @@ function releaseWireVersion(
 
 /** Peer installation includes exact library-owned package pins from its published manifest. */
 function releaseClosure(version: string, view = npmView) {
-  return view([`@moltzap/social-harness@${version}`, "dependencies"]).pipe(
+  return view([
+    `@social-harness/social-harness@${version}`,
+    "dependencies",
+  ]).pipe(
     Effect.flatMap(
       Schema.decodeUnknown(
         Schema.parseJson(
@@ -128,9 +134,11 @@ function releaseClosure(version: string, view = npmView) {
     Effect.map(
       (pins): Readonly<Record<string, string>> => ({
         ...Object.fromEntries(
-          Object.entries(pins).filter(([name]) => name.startsWith("@moltzap/")),
+          Object.entries(pins).filter(([name]) =>
+            name.startsWith("@social-harness/"),
+          ),
         ),
-        "@moltzap/social-harness": version,
+        "@social-harness/social-harness": version,
       }),
     ),
   );
@@ -181,7 +189,7 @@ function exchange(from: DaemonProcessFixture, to: DaemonProcessFixture) {
 
 /** Calendar releases use npm's semver ordering; an unpublished name has no peers. */
 function publishedVersions(view = npmView) {
-  return view(["@moltzap/social-harness", "versions"]).pipe(
+  return view(["@social-harness/social-harness", "versions"]).pipe(
     Effect.catchIf(
       (error) => error instanceof Error && /\bE404\b/u.test(error.message),
       () => Effect.succeed("[]"),
@@ -493,7 +501,7 @@ const mixedRelease = Effect.scoped(
     const releases = yield* selectReleases(versions);
     if (releases.length === 0) {
       return versions.length === 0
-        ? "No calendar release is published under @moltzap/social-harness; the published-peers gate starts after its first release."
+        ? "No calendar release is published under @social-harness/social-harness; the published-peers gate starts after its first release."
         : RESET_SKIP_REASON;
     }
     yield* runCommand("docker", ["version"]).pipe(
@@ -705,7 +713,7 @@ it.each(["2099.101.0", "2099.102.0"])(
           Effect.sync(() => {
             expect(error).toMatchObject({
               _tag: "ProcessTestError",
-              message: `@moltzap/social-harness@${version} is missing published sharnessWireVersion metadata`,
+              message: `@social-harness/social-harness@${version} is missing published sharnessWireVersion metadata`,
             });
           }),
         ),

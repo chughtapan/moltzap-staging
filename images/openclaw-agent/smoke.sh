@@ -6,7 +6,7 @@ docker run --rm --network none --entrypoint node "${IMAGE}" /app/openclaw.mjs --
 docker run --rm --network none --entrypoint /home/node/.local/bin/claude "${IMAGE}" --version
 docker run --rm --network none --entrypoint node "${IMAGE}" --input-type=module --eval '
   const { createRequire } = await import("node:module");
-  const root = "/opt/social-harness/node_modules/@moltzap/openclaw-channel";
+  const root = "/opt/social-harness/node_modules/@social-harness/openclaw-channel";
   const sdk = createRequire(`${root}/dist/plugin.js`)
     .resolve("openclaw/plugin-sdk/channel-core");
   if (!sdk.startsWith("/app/")) {

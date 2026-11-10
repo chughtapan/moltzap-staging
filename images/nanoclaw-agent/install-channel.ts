@@ -30,7 +30,7 @@ async function prepareManifest(packagePath: string) {
     ? manifest.object.dependencies
     : {};
   for (const name of [
-    "@moltzap/social-harness",
+    "@social-harness/social-harness",
     "@modelcontextprotocol/client",
     "effect",
   ]) {

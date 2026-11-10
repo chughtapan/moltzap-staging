@@ -4,7 +4,7 @@ Communication accepts messages and questions, certifies them with their
 participants, and retains verified conversation history. The daemon uses this
 service beneath its message policy and host interface.
 
-Use [`Communication`](./service.ts) from `@moltzap/social-harness/service`.
+Use [`Communication`](./service.ts) from `@social-harness/social-harness/service`.
 Its layer captures the registered local identity, network clients and shared
 SQL connection. Callers submit messages and questions through `send`. A
 successful return means that work is saved, including when Router is offline.

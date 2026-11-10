@@ -3,7 +3,7 @@
 import { Command } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { WIRE_VERSION } from "@moltzap/social-harness";
+import { WIRE_VERSION } from "@social-harness/social-harness";
 import { Effect, Stream } from "effect";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,7 +110,7 @@ it(
         "--conditions=sharness-internal",
         "--input-type=module",
         "-e",
-        `import { startRegistry } from "@moltzap/registry/test"; startRegistry(${JSON.stringify({ emitted: WIRE_VERSION, live: [WIRE_VERSION], history: [WIRE_VERSION] })});`,
+        `import { startRegistry } from "@social-harness/registry/test"; startRegistry(${JSON.stringify({ emitted: WIRE_VERSION, live: [WIRE_VERSION], history: [WIRE_VERSION] })});`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain(`${requiredVariable} is required`);

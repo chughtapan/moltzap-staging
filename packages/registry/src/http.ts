@@ -1,6 +1,6 @@
 /** @file Authenticated Registry HTTP routes, bounded framing, and exact envelopes. */
 
-import type { AgentSigningAuthority } from "@moltzap/social-harness";
+import type { AgentSigningAuthority } from "@social-harness/social-harness";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -11,7 +11,7 @@ import {
   httpErrors,
   registryContract,
   wireVersions,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import { Cause, Effect, Option } from "effect";
 import type { RegistryStorage } from "./storage.js";
 import { verifyBootstrapRegistration } from "./admission.js";

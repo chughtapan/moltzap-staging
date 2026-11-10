@@ -6,8 +6,8 @@
  */
 
 import { NodeRuntime } from "@effect/platform-node";
-import { daemonLayer } from "@moltzap/social-harness/service";
-import { DecisionProviderOverride } from "@moltzap/social-harness/test";
+import { daemonLayer } from "@social-harness/social-harness/service";
+import { DecisionProviderOverride } from "@social-harness/social-harness/test";
 import { ConfigProvider, Effect, Layer } from "effect";
 import { markedProvider } from "./policy-fixture.js";
 

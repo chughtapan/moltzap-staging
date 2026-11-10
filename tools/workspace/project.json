@@ -103,11 +103,11 @@
         "lint:dependency-versions",
         {
           "target": "arch:check",
-          "projects": "@moltzap/*"
+          "projects": "@social-harness/*"
         },
         {
           "target": "lint",
-          "projects": "@moltzap/*"
+          "projects": "@social-harness/*"
         },
         {
           "target": "lint",
@@ -205,11 +205,11 @@
       "dependsOn": [
         {
           "projects": [
-            "@moltzap/social-harness",
-            "@moltzap/registry",
-            "@moltzap/router",
-            "@moltzap/openclaw-channel",
-            "@moltzap/nanoclaw-channel"
+            "@social-harness/social-harness",
+            "@social-harness/registry",
+            "@social-harness/router",
+            "@social-harness/openclaw-channel",
+            "@social-harness/nanoclaw-channel"
           ],
           "target": "build"
         }

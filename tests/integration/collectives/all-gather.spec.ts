@@ -1,6 +1,6 @@
 /** @file A requester and three members run all_gather operations through four real daemons. */
 
-import { SendError } from "@moltzap/social-harness";
+import { SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {

@@ -9,13 +9,13 @@ import {
   Message,
   Request,
   RequestedSchema,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Firewall,
   type FirewallOptions,
   Identity,
   Registry,
-} from "@moltzap/social-harness/service";
+} from "@social-harness/social-harness/service";
 import {
   acceptMessage,
   databaseConnection,
@@ -35,7 +35,7 @@ import {
   retireCollectiveOperation,
   transaction,
   withAgentTransaction,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import { Duration, Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { expect } from "vitest";

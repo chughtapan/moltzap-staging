@@ -1,5 +1,5 @@
 {
-  "name": "@moltzap/integration-tests",
+  "name": "@social-harness/integration-tests",
   "private": true,
   "description": "Cross-package process acceptance suites",
   "type": "module",
@@ -80,7 +80,7 @@
         "executor": "nx:run-commands",
         "cache": false,
         "dependsOn": [
-          "@moltzap/social-harness:build"
+          "@social-harness/social-harness:build"
         ],
         "options": {
           "cwd": "tests/integration",
@@ -102,9 +102,9 @@
         "cache": false,
         "executor": "nx:run-commands",
         "dependsOn": [
-          "@moltzap/social-harness:build",
-          "@moltzap/registry:build",
-          "@moltzap/router:build"
+          "@social-harness/social-harness:build",
+          "@social-harness/registry:build",
+          "@social-harness/router:build"
         ],
         "options": {
           "command": "vitest run --config tests/integration/vitest.published.config.ts",
@@ -122,10 +122,10 @@
     "@effect/vitest": "catalog:",
     "@electric-sql/pglite-socket": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@moltzap/openclaw-channel": "workspace:*",
-    "@moltzap/registry": "workspace:*",
-    "@moltzap/router": "workspace:*",
-    "@moltzap/social-harness": "workspace:*",
+    "@social-harness/openclaw-channel": "workspace:*",
+    "@social-harness/registry": "workspace:*",
+    "@social-harness/router": "workspace:*",
+    "@social-harness/social-harness": "workspace:*",
     "@testcontainers/postgresql": "catalog:",
     "@typescript/native": "catalog:",
     "effect": "catalog:",

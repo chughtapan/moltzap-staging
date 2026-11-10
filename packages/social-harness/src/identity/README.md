@@ -5,7 +5,7 @@ verified identity cards. Its state remains available while communication
 starts or recovers.
 
 Use the [`Identity` service](./service.ts) for local registration and peer
-resolution. Daemon composition imports it from `@moltzap/social-harness/service`
+resolution. Daemon composition imports it from `@social-harness/social-harness/service`
 and supplies its Registry client, signing authority and shared SQL connection.
 
 Registration returns after the Registry's verified identity card is saved

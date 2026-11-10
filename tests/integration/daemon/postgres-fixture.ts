@@ -3,7 +3,7 @@ import { SqlClient } from "@effect/sql";
 import {
   databaseConnection,
   migrateDaemon,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { Config, Context, Effect, Layer, Option, Redacted } from "effect";
 import { randomBytes } from "node:crypto";

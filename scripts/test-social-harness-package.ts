@@ -20,7 +20,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sourceRoot = ${JSON.stringify(`${workspaceRoot}/packages/social-harness/config/firewall`)};
-const installedRoot = fileURLToPath(new URL("../config/firewall/", import.meta.resolve("@moltzap/social-harness")));
+const installedRoot = fileURLToPath(new URL("../config/firewall/", import.meta.resolve("@social-harness/social-harness")));
 const entries = await readdir(sourceRoot, { recursive: true, withFileTypes: true });
 const rules = entries.filter((entry) => entry.isFile() && entry.name === "BEHAVIOR.md");
 if (rules.length === 0) throw new Error("source policy assets contain no rules");
@@ -63,7 +63,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
         "--conditions=sharness-test",
         "--input-type=module",
         "-e",
-        'await import("@moltzap/social-harness/test");',
+        'await import("@social-harness/social-harness/test");',
       ],
       {
         cwd: consumerRoot,
@@ -79,7 +79,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
 /** Source manifests select the entries an ordinary consumer can import. */
 function publicImports(): string {
   return workspacePackages(workspaceRoot)
-    .filter(({ name }) => name === "@moltzap/social-harness")
+    .filter(({ name }) => name === "@social-harness/social-harness")
     .flatMap(({ name, exports }) =>
       Object.entries(exports)
         .filter(
@@ -108,7 +108,7 @@ function verifyInternalResolution(consumerRoot: string) {
         "-e",
         `
 try {
-  await import("@moltzap/social-harness/internal");
+  await import("@social-harness/social-harness/internal");
   throw new Error("internal entry resolved without its condition");
 } catch (error) {
   if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
@@ -123,7 +123,7 @@ try {
         "--conditions=sharness-internal",
         "--input-type=module",
         "-e",
-        'await import("@moltzap/social-harness/internal");',
+        'await import("@social-harness/social-harness/internal");',
       ],
       { cwd: consumerRoot, env: { NODE_PATH: "" } },
     );

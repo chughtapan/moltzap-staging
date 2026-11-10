@@ -3,7 +3,7 @@
   "private": true,
   "description": "The installed Social Harness daemon and its production dependencies",
   "dependencies": {
-    "@moltzap/social-harness": "workspace:*",
+    "@social-harness/social-harness": "workspace:*",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:"
   },

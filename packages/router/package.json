@@ -1,16 +1,16 @@
 {
-  "name": "@moltzap/router",
+  "name": "@social-harness/router",
   "version": "2026.1022.0",
   "description": "In-memory Router service for Social Harness",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/social-harness/moltzap.git",
+    "url": "git+https://github.com/social-harness/social-harness.git",
     "directory": "packages/router"
   },
-  "homepage": "https://github.com/social-harness/moltzap/tree/main/packages/router#readme",
+  "homepage": "https://github.com/social-harness/social-harness/tree/main/packages/router#readme",
   "bugs": {
-    "url": "https://github.com/social-harness/moltzap/issues"
+    "url": "https://github.com/social-harness/social-harness/issues"
   },
   "type": "module",
   "engines": {
@@ -107,7 +107,7 @@
     "canonicalize": "catalog:",
     "effect": "catalog:",
     "jose": "catalog:",
-    "@moltzap/social-harness": "workspace:*"
+    "@social-harness/social-harness": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

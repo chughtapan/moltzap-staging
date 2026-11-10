@@ -3,7 +3,7 @@
 import type {
   DecisionProvider,
   DecisionRequest,
-} from "@moltzap/social-harness/service";
+} from "@social-harness/social-harness/service";
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import {

@@ -31,8 +31,8 @@
         "dependsOn": [
           {
             "projects": [
-              "@moltzap/social-harness",
-              "@moltzap/openclaw-channel"
+              "@social-harness/social-harness",
+              "@social-harness/openclaw-channel"
             ],
             "target": "build"
           }
@@ -42,7 +42,7 @@
           "parallel": false,
           "commands": [
             "rm -rf images/.workspace",
-            "pnpm deploy --filter @moltzap/openclaw-channel --prod --legacy images/.workspace"
+            "pnpm deploy --filter @social-harness/openclaw-channel --prod --legacy images/.workspace"
           ]
         }
       },

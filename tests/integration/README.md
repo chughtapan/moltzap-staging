@@ -1,4 +1,4 @@
-# @moltzap/integration-tests
+# @social-harness/integration-tests
 
 These tests verify interactions between real Registry, Router and daemon
 processes, including delivery through the OpenClaw adapter. Use this workspace
@@ -12,12 +12,12 @@ permission to bind sockets. PostgreSQL and image scenarios require Docker.
 
 | Command | Runs |
 | --- | --- |
-| `pnpm nx run @moltzap/integration-tests:test:integration` | Registry, Router, PostgreSQL, daemon and adapter acceptance suites |
-| `pnpm nx run @moltzap/integration-tests:test:live` | Docker image and concurrency scenarios |
-| `pnpm nx run @moltzap/integration-tests:test:published` | Current and previous published daemon release interoperability |
-| `pnpm nx run @moltzap/integration-tests:test:network` | The documented own-network path: `images/compose.yaml`, packed `sharnessd` daemons and `images/mcp.ts`; requires Docker and `SHARNESS_NETWORK_VERSION` naming local or published image tags |
-| `pnpm nx run @moltzap/integration-tests:typecheck:tests` | Type checks for the suites and adapter fixture |
-| `pnpm nx run @moltzap/integration-tests:lint` | ESLint for this workspace |
+| `pnpm nx run @social-harness/integration-tests:test:integration` | Registry, Router, PostgreSQL, daemon and adapter acceptance suites |
+| `pnpm nx run @social-harness/integration-tests:test:live` | Docker image and concurrency scenarios |
+| `pnpm nx run @social-harness/integration-tests:test:published` | Current and previous published daemon release interoperability |
+| `pnpm nx run @social-harness/integration-tests:test:network` | The documented own-network path: `images/compose.yaml`, packed `sharnessd` daemons and `images/mcp.ts`; requires Docker and `SHARNESS_NETWORK_VERSION` naming local or published image tags |
+| `pnpm nx run @social-harness/integration-tests:typecheck:tests` | Type checks for the suites and adapter fixture |
+| `pnpm nx run @social-harness/integration-tests:lint` | ESLint for this workspace |
 
 The published-package lane requires npm access and reports a skip when no eligible
 previous release exists.

@@ -10,7 +10,7 @@ Set up a Social Harness checkout, verify your change, and submit it for review.
 
 ## Prerequisites
 
-- A local checkout of [the repository](https://github.com/social-harness/moltzap).
+- A local checkout of [the repository](https://github.com/social-harness/social-harness).
 - The Node.js version in `.node-version` and the pnpm version in
   `package.json`. With Corepack, `corepack enable` selects the package manager.
 - The root `AGENTS.md` and instructions for the package you are changing.
@@ -35,13 +35,13 @@ order. Both commands should exit with status 0. For a new Git worktree,
 
 Branch from `main` and keep one coherent change in the pull request, including
 its tests and documentation. Follow the repository's
-[conventions](https://github.com/social-harness/moltzap/blob/main/AGENTS.md).
+[conventions](https://github.com/social-harness/social-harness/blob/main/AGENTS.md).
 
 The [constitution](/reference/constitution) and
 [specifications](/reference/spec/index) define the public contracts. Reconcile
 an interface change with its specification before implementation. Maintainers
 keep their decisions and planning records separately, as
-[Maintainer records](https://github.com/social-harness/moltzap/blob/main/CONTRIBUTING.md#maintainer-records)
+[Maintainer records](https://github.com/social-harness/social-harness/blob/main/CONTRIBUTING.md#maintainer-records)
 describes. Public contributions can use the checked-in contracts and checks.
 
 ## Before submitting a PR
@@ -110,9 +110,9 @@ calculator and its behavior checks in the same change. For an unsupported
 ## Documentation
 
 Choose a document's home using the
-[documentation map](https://github.com/social-harness/moltzap/blob/main/docs/README.md)
+[documentation map](https://github.com/social-harness/social-harness/blob/main/docs/README.md)
 and apply the
-[writing guide](https://github.com/social-harness/moltzap/blob/main/.agents/skills/docs/SKILL.md).
+[writing guide](https://github.com/social-harness/social-harness/blob/main/.agents/skills/docs/SKILL.md).
 Edit hand-written pages at their source. Shared site values live in
 `docs/docs.json`, and reusable Mintlify content lives in `docs/snippets/`.
 
@@ -142,6 +142,6 @@ checks ran. Link the issue when one exists. Obtain independent review and
 resolve material findings before merging.
 
 For a vulnerability, use the
-[security reporting procedure](https://github.com/social-harness/moltzap/blob/main/SECURITY.md).
+[security reporting procedure](https://github.com/social-harness/social-harness/blob/main/SECURITY.md).
 Maintainer release behavior is defined in
 [Publication and versions](/reference/spec/releases#publication-and-versions).

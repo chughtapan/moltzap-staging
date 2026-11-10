@@ -10,9 +10,9 @@ import {
   AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
-import { registryContract } from "@moltzap/social-harness/internal";
-import { Registry } from "@moltzap/social-harness/service";
+} from "@social-harness/social-harness";
+import { registryContract } from "@social-harness/social-harness/internal";
+import { Registry } from "@social-harness/social-harness/service";
 import { Duration, Effect, Redacted, Ref, Schema } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -387,7 +387,7 @@ const assertRetiredAdmissionSchemeRejected = (
       origin,
       prepared,
       WIRE_VERSION,
-      "MoltZap-Admission",
+      "SocialHarness-Admission",
     );
     assertBoundaryResponse(yield* executeRequest(request), {
       status: UNAUTHORIZED_STATUS,
@@ -986,7 +986,7 @@ const makeExternalConsumer = Effect.gen(function* () {
   const directory = yield* fileSystem.makeTempDirectoryScoped({
     prefix: "sharness-registry-consumer-",
   });
-  const scopeDirectory = join(directory, "node_modules", "@moltzap");
+  const scopeDirectory = join(directory, "node_modules", "@social-harness");
   yield* fileSystem.makeDirectory(scopeDirectory, { recursive: true });
   yield* fileSystem.symlink(
     fileURLToPath(new URL("../../../packages/registry", import.meta.url)),
@@ -1019,7 +1019,7 @@ it(
             "--conditions=sharness-internal",
             "--input-type=module",
             "-e",
-            `import { startRegistry } from "@moltzap/registry/test";
+            `import { startRegistry } from "@social-harness/registry/test";
          startRegistry(${JSON.stringify(versions)});`,
           ],
           infrastructure.environment,

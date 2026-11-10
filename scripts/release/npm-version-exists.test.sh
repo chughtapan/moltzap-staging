@@ -49,19 +49,19 @@ trap cleanup EXIT
 
 SCRIPT="$SCRIPT_DIR/npm-version-exists.sh"
 
-export NPM_MOCK_RESPONSES='{"@moltzap/social-harness@2026.901.0":"2026.901.0"}'
-assert_exit "published version exits 0" 0 "$SCRIPT" @moltzap/social-harness@2026.901.0
-assert_exit "missing version exits 1" 1 "$SCRIPT" @moltzap/social-harness@2026.901.1
-assert_exit "never-published name exits 1" 1 "$SCRIPT" @moltzap/unpublished-fixture@2026.901.0
+export NPM_MOCK_RESPONSES='{"@social-harness/social-harness@2026.901.0":"2026.901.0"}'
+assert_exit "published version exits 0" 0 "$SCRIPT" @social-harness/social-harness@2026.901.0
+assert_exit "missing version exits 1" 1 "$SCRIPT" @social-harness/social-harness@2026.901.1
+assert_exit "never-published name exits 1" 1 "$SCRIPT" @social-harness/unpublished-fixture@2026.901.0
 
-export NPM_MOCK_RESPONSES='{"@moltzap/social-harness@2026.901.0":{"exit":1,"body":"{\"error\":{\"code\":\"E503\"}}"}}'
-assert_exit "registry failure exits 2" 2 "$SCRIPT" @moltzap/social-harness@2026.901.0
+export NPM_MOCK_RESPONSES='{"@social-harness/social-harness@2026.901.0":{"exit":1,"body":"{\"error\":{\"code\":\"E503\"}}"}}'
+assert_exit "registry failure exits 2" 2 "$SCRIPT" @social-harness/social-harness@2026.901.0
 
-export NPM_MOCK_RESPONSES='{"@moltzap/social-harness@2026.901.0":{"exit":1,"body":""}}'
-assert_exit "failure without a body exits 2" 2 "$SCRIPT" @moltzap/social-harness@2026.901.0
+export NPM_MOCK_RESPONSES='{"@social-harness/social-harness@2026.901.0":{"exit":1,"body":""}}'
+assert_exit "failure without a body exits 2" 2 "$SCRIPT" @social-harness/social-harness@2026.901.0
 
-export NPM_MOCK_RESPONSES='{"@moltzap/social-harness@2026.901.0":{"exit":0,"body":""}}'
-assert_exit "empty success output exits 2" 2 "$SCRIPT" @moltzap/social-harness@2026.901.0
+export NPM_MOCK_RESPONSES='{"@social-harness/social-harness@2026.901.0":{"exit":0,"body":""}}'
+assert_exit "empty success output exits 2" 2 "$SCRIPT" @social-harness/social-harness@2026.901.0
 
 assert_exit "no argument exits 2" 2 "$SCRIPT"
 

@@ -9,7 +9,7 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "paths": {
-      "@moltzap/openclaw-channel": [
+      "@social-harness/openclaw-channel": [
         "../plugins/openclaw/src/index.ts"
       ]
     },

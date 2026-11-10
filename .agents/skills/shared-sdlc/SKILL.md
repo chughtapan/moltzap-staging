@@ -1,6 +1,6 @@
 ---
 name: shared-sdlc
-description: Plan, review, or hand off Social Harness and MoltZap work using the shared developer workflow.
+description: Plan, review, or hand off Social Harness and Social Harness work using the shared developer workflow.
 ---
 
 Read `README.md` in `DOCS_INTERNAL_ROOT` first for the everyday workflow, record

@@ -1,11 +1,11 @@
 ---
 name: checklist
-description: The project checklist for Social Harness and MoltZap. Read it before you plan, design, write, review or land any change in moltzap, deployment or evals.
+description: The project checklist for Social Harness. Read it before you plan, design, write, review or land any change in social-harness, deployment or evals.
 ---
 
 # Project checklist
 
-Every change in moltzap, deployment and evals meets these rules. A
+Every change in social-harness, deployment and evals meets these rules. A
 repository's `AGENTS.md` adds only what is specific to that repository; when
 the two disagree, stop and report the conflict. The project lead's reasons and
 words behind each rule are in docs-internal's
@@ -156,7 +156,7 @@ directly; these items do not restate them.
   its internal behaviour or a patch; existing patches are debt to remove. Use
   the host's own features and default names first.
 - [ ] Agent skills, the instruction files an agent reads, ship with the
-  library (`@moltzap/social-harness`). Each channel plugin, the package that
+  library (`@social-harness/social-harness`). Each channel plugin, the package that
   connects one host to the stack, takes them from there.
 - [ ] Let the container orchestrator provide isolation, start order and
   helper processes, and the runtime library retries and in-flight work. Read a

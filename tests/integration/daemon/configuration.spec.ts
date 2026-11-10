@@ -3,7 +3,7 @@ import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { prepareDatabase } from "@moltzap/social-harness/service";
+import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
   checkDatabase,
   databaseAccess,
@@ -12,7 +12,7 @@ import {
   loadDaemonSettings,
   localOwner,
   migrateDaemon,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
   Context,

@@ -38,7 +38,7 @@ The guides use `~/sharness`. On macOS, keep it outside `~/Documents`,
 Every file on this page comes from one release. Take the latest:
 
 ```bash
-V=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/social-harness/moltzap/releases/latest | sed 's#.*/tag/v##')
+V=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/social-harness/social-harness/releases/latest | sed 's#.*/tag/v##')
 ```
 
 `echo "$V"` should print the release's calendar version, in the form
@@ -53,7 +53,7 @@ it. Run the setup steps in the same shell so that `V` stays set. Compose
 commands below change to `~/sharness/network`, where Compose reads `.env`.
 
 ```bash
-mkdir -p ~/sharness/network/keys && cd ~/sharness/network && curl -fsSLO "https://raw.githubusercontent.com/social-harness/moltzap/v$V/images/compose.yaml"
+mkdir -p ~/sharness/network/keys && cd ~/sharness/network && curl -fsSLO "https://raw.githubusercontent.com/social-harness/social-harness/v$V/images/compose.yaml"
 ```
 
 You should see `compose.yaml` in the directory.

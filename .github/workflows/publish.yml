@@ -61,7 +61,7 @@ defaults:
 # Selection packs dependencies before their dependents.
 env:
   RELEASE_PACKAGES: packages/social-harness plugins/openclaw
-  IMAGE_CERTIFICATE_IDENTITY: https://github.com/social-harness/moltzap/.github/workflows/images.yml@refs/heads/main
+  IMAGE_CERTIFICATE_IDENTITY: https://github.com/social-harness/social-harness/.github/workflows/images.yml@refs/heads/main
   IMAGE_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
 
 jobs:
@@ -101,10 +101,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git fetch origin main --quiet
-          RELEASE_LINE=$(git log origin/main --format='%H %s' | grep -m1 ' chore(release): moltzap@' || true)
+          RELEASE_LINE=$(git log origin/main --format='%H %s' | grep -m1 ' chore(release): social-harness@' || true)
           if [ -n "$RELEASE_LINE" ]; then
             RELEASE_COMMIT=${RELEASE_LINE%% *}
-            VERSION=${RELEASE_LINE#* chore(release): moltzap@}
+            VERSION=${RELEASE_LINE#* chore(release): social-harness@}
             [[ "$VERSION" =~ ^[0-9]{4}\.[0-9]{3,4}\.[0-9]+$ ]] || {
               echo "ERROR: release commit $RELEASE_COMMIT has an unreadable version '$VERSION'"
               exit 1
@@ -219,7 +219,7 @@ jobs:
         env:
           MODE: ${{ steps.plan.outputs.mode }}
         run: |
-          WIRE_VERSION=$(node --input-type=module -e 'import { WIRE_VERSION } from "@moltzap/social-harness"; console.log(WIRE_VERSION)')
+          WIRE_VERSION=$(node --input-type=module -e 'import { WIRE_VERSION } from "@social-harness/social-harness"; console.log(WIRE_VERSION)')
           jq --arg v "$WIRE_VERSION" --arg mode "$MODE" '
             if $mode == "bump" or has("sharnessWireVersion")
             then .sharnessWireVersion = $v else . end' package.json > tmp.json
@@ -350,7 +350,7 @@ jobs:
             git add "$pkg/package.json"
             PUBLISHED="$PUBLISHED$(jq -r '"- \(.name)@\(.version)"' "$pkg/package.json")"$'\n'
           done
-          git commit -m "chore(release): moltzap@$VERSION" -m "Publishes:"$'\n'"$PUBLISHED"
+          git commit -m "chore(release): social-harness@$VERSION" -m "Publishes:"$'\n'"$PUBLISHED"
           git tag "v$VERSION"
           git bundle create "$RUNNER_TEMP/release.bundle" "refs/tags/v$VERSION" "^$GITHUB_SHA"
 
@@ -428,7 +428,7 @@ jobs:
           git fetch --quiet "$BUNDLE" "refs/tags/v$VERSION:refs/tags/v$VERSION"
           COMMIT=$(git rev-parse "refs/tags/v$VERSION^{commit}")
           [ "$(git show -s --format=%P "$COMMIT")" = "$GITHUB_SHA" ] || { echo "ERROR: the release commit's only parent is not $GITHUB_SHA"; exit 1; }
-          [ "$(git log -1 --format=%s "$COMMIT")" = "chore(release): moltzap@$VERSION" ] || { echo "ERROR: unexpected release commit subject"; exit 1; }
+          [ "$(git log -1 --format=%s "$COMMIT")" = "chore(release): social-harness@$VERSION" ] || { echo "ERROR: unexpected release commit subject"; exit 1; }
           # Every change, read raw without rename detection: regular files
           # only, deletions only of changelog fragments, paths only those a
           # release writes.
@@ -460,10 +460,10 @@ jobs:
           JS
           # A manifest is what npm installs, so a release may change only the
           # fields a release writes: the version, the recorded hashes and wire
-          # version, and the versions of @moltzap dependencies.
+          # version, and the versions of @social-harness dependencies.
           # shellcheck disable=SC2016 # The dollar signs are jq variables.
           RELEASE_FIELDS='del(.version, .sharnessContentHash, .sharnessHostCodeHash, .sharnessWireVersion)
-            | (.dependencies // {}) |= with_entries(if (.key | startswith("@moltzap/")) then .value = "" else . end)'
+            | (.dependencies // {}) |= with_entries(if (.key | startswith("@social-harness/")) then .value = "" else . end)'
           for manifest in $(git diff --name-only "$GITHUB_SHA" "$COMMIT" -- '*/package.json'); do
             BEFORE=$(git show "$GITHUB_SHA:$manifest" | jq -S "$RELEASE_FIELDS")
             AFTER=$(git show "$COMMIT:$manifest" | jq -S "$RELEASE_FIELDS")
@@ -539,7 +539,7 @@ jobs:
             echo "ERROR: GitHub OIDC token request env is missing; check id-token: write permissions"
             exit 1
           }
-          [ "$(git log -1 --format=%s "$RELEASE_COMMIT")" = "chore(release): moltzap@$VERSION" ] || {
+          [ "$(git log -1 --format=%s "$RELEASE_COMMIT")" = "chore(release): social-harness@$VERSION" ] || {
             echo "ERROR: $RELEASE_COMMIT is not the release commit of $VERSION"
             exit 1
           }

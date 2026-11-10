@@ -113,7 +113,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-toolchain
       - run: pnpm install --frozen-lockfile
-      - run: pnpm nx run @moltzap/integration-tests:test:published
+      - run: pnpm nx run @social-harness/integration-tests:test:published
 
   images:
     runs-on: ubuntu-latest
@@ -142,4 +142,4 @@ jobs:
       - name: Run the documented own-network path against these images
         env:
           SHARNESS_NETWORK_VERSION: ci
-        run: pnpm nx run @moltzap/integration-tests:test:network
+        run: pnpm nx run @social-harness/integration-tests:test:network

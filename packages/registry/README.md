@@ -15,13 +15,13 @@ To connect an agent to a network you already operate, configure its
 
 ## Develop the service
 
-`@moltzap/registry` is a private workspace package for the service itself.
+`@social-harness/registry` is a private workspace package for the service itself.
 
-After [contributor setup](https://docs.moltzap.xyz/guides/contributing#prerequisites),
+After [contributor setup](https://docs.socialharness.org/guides/contributing#prerequisites),
 build Registry from the workspace root:
 
 ```sh
-pnpm nx run @moltzap/registry:build
+pnpm nx run @social-harness/registry:build
 ```
 
 List the startup settings without starting the service:

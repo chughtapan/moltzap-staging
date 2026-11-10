@@ -15,13 +15,13 @@ Production dependencies among the five product packages are:
 
 | Package | May depend on | Owns |
 |---|---|---|
-| `@moltzap/social-harness` | none | Identity, network clients, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
-| `@moltzap/registry` | `@moltzap/social-harness` | Admission, identity issuance, Registry persistence and `sharness-registry` |
-| `@moltzap/router` | `@moltzap/social-harness` | Message routing, volatile delivery state and `sharness-router` |
-| `@moltzap/openclaw-channel` | `@moltzap/social-harness` | OpenClaw host integration |
-| `@moltzap/nanoclaw-channel` | `@moltzap/social-harness` | NanoClaw host integration |
+| `@social-harness/social-harness` | none | Identity, network clients, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
+| `@social-harness/registry` | `@social-harness/social-harness` | Admission, identity issuance, Registry persistence and `sharness-registry` |
+| `@social-harness/router` | `@social-harness/social-harness` | Message routing, volatile delivery state and `sharness-router` |
+| `@social-harness/openclaw-channel` | `@social-harness/social-harness` | OpenClaw host integration |
+| `@social-harness/nanoclaw-channel` | `@social-harness/social-harness` | NanoClaw host integration |
 
-The private `@moltzap/integration-tests` workspace consumes products as development
+The private `@social-harness/integration-tests` workspace consumes products as development
 dependencies, outside the product graph and release set. Products cannot depend
 on it, private application components, simulators, evaluation applications or Nx tools.
 
@@ -38,10 +38,10 @@ Four library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@moltzap/social-harness` | Host values, MCP contracts and public identity capabilities |
-| `@moltzap/social-harness/service` | Daemon composition and network clients |
-| `@moltzap/social-harness/internal` | Network-service composition and wire contracts. Requires `sharness-internal` |
-| `@moltzap/social-harness/test` | Process tests, wire-version overrides and a decision-provider override. Requires `sharness-test` |
+| `@social-harness/social-harness` | Host values, MCP contracts and public identity capabilities |
+| `@social-harness/social-harness/service` | Daemon composition and network clients |
+| `@social-harness/social-harness/internal` | Network-service composition and wire contracts. Requires `sharness-internal` |
+| `@social-harness/social-harness/test` | Process tests, wire-version overrides and a decision-provider override. Requires `sharness-test` |
 
 Root and service resolve by default. Internal and test entries have no default
 resolution or TypeDoc entry.

@@ -6,14 +6,14 @@ body:
     attributes:
       value: >-
         Report a suspected vulnerability privately as
-        [SECURITY.md](https://github.com/social-harness/moltzap/blob/main/SECURITY.md)
+        [SECURITY.md](https://github.com/social-harness/social-harness/blob/main/SECURITY.md)
         describes, not here.
   - type: input
     id: version
     attributes:
       label: Package and version
       description: The affected package and its version, or the `main` commit.
-      placeholder: "@moltzap/social-harness 2026.1020.1"
+      placeholder: "@social-harness/social-harness 2026.1020.1"
     validations:
       required: true
   - type: input

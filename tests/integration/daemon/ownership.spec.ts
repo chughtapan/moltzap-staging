@@ -2,13 +2,13 @@
 import { NodeContext } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { AgentSigningAuthority } from "@moltzap/social-harness";
+import { AgentSigningAuthority } from "@social-harness/social-harness";
 import {
   databaseConnection,
   getOrCreateOwnedAgent,
   loadAgentRegistration,
   migrateDaemon,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import { Context, Effect, Exit, Layer, Redacted } from "effect";
 import { expect } from "vitest";
 import { acquirePostgres } from "./postgres-fixture.js";

@@ -42,7 +42,7 @@ monitoring protocols, and revocable access control remain future work.
 
 ## Authority
 
-Read [AGENTS.md](https://github.com/social-harness/moltzap/blob/main/AGENTS.md), this constitution, and the
+Read [AGENTS.md](https://github.com/social-harness/social-harness/blob/main/AGENTS.md), this constitution, and the
 [specification](./spec/index.md) for the boundary you are changing. Public
 maintenance follows those contracts. Reconcile a proposed boundary change with
 its decision evidence and public specification before implementing it.
@@ -81,7 +81,7 @@ stack.
    accepted messages, ordered history and consumption state. Router delivery is volatile
    and content-blind. Conversations, fixed membership, protocols, certified
    records, retry identity, persistence, catch-up, and restart recovery belong
-   to endpoints in `@moltzap/social-harness`. Router owns none of those concepts.
+   to endpoints in `@social-harness/social-harness`. Router owns none of those concepts.
 
 The P2P evidence guarantees in items 5–11 and 14 apply to peer-certified records.
 Client/server delivery instead trusts the shared daemon and database for ordering

@@ -12,12 +12,12 @@ import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   httpErrors,
   routerContract,
   type VerifiedAgentRequest,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import canonicalize from "canonicalize";
 import {
   Brand,

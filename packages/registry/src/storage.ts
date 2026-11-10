@@ -8,13 +8,13 @@ import {
   type AgentPublicKey,
   type AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   agentIdentityCardSigning,
   httpErrors,
   registryContract,
   wireVersions,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import { Clock, Data, Effect, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 

@@ -13,14 +13,17 @@ import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
   type VerifiedAgentIdentityCard,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Registry,
   registryContract,
   Router,
   type routerContract,
-} from "@moltzap/social-harness/internal";
-import { signAgentRequest, WireVersions } from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/internal";
+import {
+  signAgentRequest,
+  WireVersions,
+} from "@social-harness/social-harness/test";
 import { Duration, Effect, Encoding, Layer, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";

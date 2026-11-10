@@ -1,12 +1,12 @@
 /** @file Cross-agent fanout restores row authority after nested failure and cancellation. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { AgentName } from "@moltzap/social-harness";
-import { Communication } from "@moltzap/social-harness/service";
+import { AgentName } from "@social-harness/social-harness";
+import { Communication } from "@social-harness/social-harness/service";
 import {
   databaseConnection,
   withAgentTransaction,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import { Context, Deferred, Effect, Fiber, Layer } from "effect";
 import { expect } from "vitest";
 import { acquirePostgres } from "./postgres-fixture.js";

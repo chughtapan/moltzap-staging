@@ -1,7 +1,7 @@
 /** @file Router process configuration, validation, defaults, and operator feedback. */
 
-import { AgentPublicKey, SignedMessage } from "@moltzap/social-harness";
-import { routerContract } from "@moltzap/social-harness/internal";
+import { AgentPublicKey, SignedMessage } from "@social-harness/social-harness";
+import { routerContract } from "@social-harness/social-harness/internal";
 import { Config, type ConfigError, Effect, Match, Schema } from "effect";
 
 /** ConfigError trees retain every missing field without printing rejected inputs. */

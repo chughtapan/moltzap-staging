@@ -1,12 +1,12 @@
 {
-  "name": "@moltzap/nanoclaw-channel",
+  "name": "@social-harness/nanoclaw-channel",
   "version": "2026.811.0",
   "private": true,
   "description": "NanoClaw channel adapter for Social Harness messaging",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/social-harness/moltzap.git"
+    "url": "git+https://github.com/social-harness/social-harness.git"
   },
   "type": "module",
   "files": [
@@ -73,7 +73,7 @@
     }
   },
   "dependencies": {
-    "@moltzap/social-harness": "workspace:*",
+    "@social-harness/social-harness": "workspace:*",
     "@types/node": "catalog:",
     "effect": "catalog:",
     "@modelcontextprotocol/client": "catalog:"
@@ -83,7 +83,7 @@
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "@moltzap/plugin-mcp": "workspace:*"
+    "@social-harness/plugin-mcp": "workspace:*"
   },
   "imports": {
     "#sharness-mcp/*": {

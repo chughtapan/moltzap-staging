@@ -5,7 +5,7 @@
     "declaration": false,
     "noEmit": true,
     "paths": {
-      "@moltzap/social-harness": [
+      "@social-harness/social-harness": [
         "./packages/social-harness/src/index.ts"
       ]
     }

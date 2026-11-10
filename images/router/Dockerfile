@@ -10,12 +10,12 @@ COPY scripts/build/clean-dist.ts scripts/build/clean-dist.ts
 COPY packages/social-harness/ packages/social-harness/
 COPY packages/router/ packages/router/
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
-RUN pnpm install --frozen-lockfile --filter @moltzap/router...
-RUN pnpm nx run @moltzap/router:build
-RUN pnpm deploy --filter @moltzap/router --prod --legacy /deploy
+RUN pnpm install --frozen-lockfile --filter @social-harness/router...
+RUN pnpm nx run @social-harness/router:build
+RUN pnpm deploy --filter @social-harness/router --prod --legacy /deploy
 
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
-LABEL org.opencontainers.image.source="https://github.com/social-harness/moltzap"
+LABEL org.opencontainers.image.source="https://github.com/social-harness/social-harness"
 LABEL org.opencontainers.image.description="Social Harness Router process"
 WORKDIR /app
 COPY --from=build /deploy/ /app/

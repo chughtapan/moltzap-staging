@@ -2,7 +2,10 @@
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { AgentIdentityCard, toolDefinitions } from "@moltzap/social-harness";
+import {
+  AgentIdentityCard,
+  toolDefinitions,
+} from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

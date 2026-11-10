@@ -690,12 +690,11 @@ interface RouterClientSettings {
  * Authenticates each call with the agent's signing authority. Router retains
  * accepted messages until eviction or restart. Endpoints verify delivery and
  * establish durable history. See the
- * [Router contract](https://github.com/social-harness/moltzap/blob/main/docs/reference/spec/communication/protocol.md#router).
+ * [Router contract](https://github.com/social-harness/social-harness/blob/main/docs/reference/spec/communication/protocol.md#router).
  */
-export class Router extends Context.Tag("@moltzap/social-harness/Router")<
-  Router,
-  RouterClientService
->() {
+export class Router extends Context.Tag(
+  "@social-harness/social-harness/Router",
+)<Router, RouterClientService>() {
   /**
    * `initial` appends under the observed Router instance. A `retry` checks exact
    * retained bytes without appending. The caller must be the sender. Acceptance

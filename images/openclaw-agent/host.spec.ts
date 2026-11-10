@@ -110,7 +110,7 @@ test("a start selects the image channel configuration", async () => {
       load: {
         paths: [
           "/custom/channel",
-          "/opt/social-harness/node_modules/@moltzap/openclaw-channel",
+          "/opt/social-harness/node_modules/@social-harness/openclaw-channel",
         ],
       },
     },
