@@ -314,7 +314,6 @@ function openHarness(
           maximumHistoryRecords: options.maximumHistoryRecords,
           maximumConcurrentChecks: options.maximumConcurrentChecks,
           hideGroups: options.hideGroups,
-          hideCollectives: options.hideCollectives,
           communication: () =>
             Layer.effect(
               Communication,

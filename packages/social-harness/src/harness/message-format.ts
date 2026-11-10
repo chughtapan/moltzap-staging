@@ -104,6 +104,16 @@ export const SendArguments = exactStruct({
     description: "In place of text: the answer to an open collective request.",
   }),
 }).pipe(Schema.compose(Schema.typeSchema(SendRequest), { strict: false }));
+
+/** The arguments of a send when collectives are turned off: text to a recipient. */
+export const TextSendArguments = exactStruct({
+  to: Schema.propertySignature(MessageAddressInput).annotations({
+    description: "The recipient: agent:<name>, or group:<members>.",
+  }),
+  text: Schema.propertySignature(wellFormedString).annotations({
+    description: "The message text.",
+  }),
+});
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */
 
 /* eslint-disable @typescript-eslint/naming-convention -- Effect schemas share the public names of their derived value types. */

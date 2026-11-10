@@ -149,7 +149,6 @@ function makeAgentApp(
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
           hideGroups: settings.hideGroups,
-          hideCollectives: settings.hideCollectives,
         },
         workers,
       ).pipe(
@@ -176,6 +175,7 @@ function makeAgentApp(
     const app = yield* makeAgentMcpApp({
       webhook,
       stopped,
+      hideCollectives: settings.hideCollectives,
       implementation: { name: "sharnessd", version: packageVersion },
     }).pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(
