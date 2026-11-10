@@ -19,13 +19,10 @@ export {
   replyAddress,
   SendRequest,
   type SendResult,
-  SendResultSchema,
 } from "./harness/message-format.js";
 /** Results and policy feedback that a host may show its agent. */
 export {
-  CollectiveResult,
   FirewallRefusal,
-  LocalGuidance,
   PermittedItem,
   Withheld,
 } from "./firewall/service.js";
@@ -40,46 +37,22 @@ export {
   InboxEntry,
   InboxError,
   InboxEvent,
-  InboxPage,
-  MessageAddress,
 } from "./harness/inbox.js";
 /** History uses the saved policy view and never rechecks old content. */
-export {
-  HistoryError,
-  type HistoryRecord,
-  type ListConversationsRequest,
-  type ListConversationsResult,
-  type ReadHistoryRequest,
-  type ReadHistoryResult,
-} from "./harness/social-harness.js";
-/** Registration failures are distinct from communication startup. */
-export { RegistrationError } from "./identity/service.js";
+export { HistoryError, type HistoryRecord } from "./harness/social-harness.js";
 /** Message, question, answer and collective result values. */
 export {
   Answer,
-  AnswerContent,
-  type AnswerInput,
-  AnswerOutcome,
-  CollectiveId,
   Message,
-  MessageOperation,
-  MessageReference,
-  PaginatedRequest,
-  PaginatedResult,
-  ReceivedRequest,
   Request,
   RequestedSchema,
   RequestError,
-  RequestResult,
-  ResultSources,
 } from "./communication/service.js";
 /** Names and addresses used in host messages. */
 export {
   AgentAddress,
   Content,
-  ContentPart,
   GroupAddress,
-  JsonValue,
   MessageAddressInput,
   MsgId,
 } from "./communication/messages.js";

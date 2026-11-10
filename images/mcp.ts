@@ -22,7 +22,6 @@ import {
   type Scope,
 } from "effect";
 
-const MCP_PROTOCOL_VERSION = "2026-07-28";
 const USAGE = "usage: node mcp.ts call TOOL [JSON]";
 
 /** A command that did not complete. `message` is what the reader sees. */
@@ -103,13 +102,7 @@ function connect(
       );
     }
     const credential = yield* readMcpCredential;
-    const client = new Client(
-      { name: "sharness-mcp", version: "1.0.0" },
-      {
-        capabilities: {},
-        versionNegotiation: { mode: { pin: MCP_PROTOCOL_VERSION } },
-      },
-    );
+    const client = new Client({ name: "sharness-mcp", version: "1.0.0" });
     return yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: (signal) =>

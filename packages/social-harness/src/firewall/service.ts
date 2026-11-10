@@ -160,7 +160,7 @@ export const LocalGuidance = Schema.Union(
 export type LocalGuidance = typeof LocalGuidance.Type;
 
 /** A request result after applying local policy to each peer-controlled part. */
-export const CollectiveResult = exactStruct({
+const CollectiveResult = exactStruct({
   kind: Schema.Literal("collectiveResult"),
   op: RequestOperation,
   operationId: CollectiveId,
@@ -175,7 +175,7 @@ export const CollectiveResult = exactStruct({
   ),
 });
 /** @useDeclaredType */
-export type CollectiveResult = typeof CollectiveResult.Type;
+type CollectiveResult = typeof CollectiveResult.Type;
 
 /** The exact content local policy permits the agent to receive. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.

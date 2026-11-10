@@ -8,10 +8,8 @@ export {
 } from "./identity/http-authentication.js";
 /** Signing and verification of Registry-issued identity cards. */
 export {
-  type AgentIdentityCardClaims,
   AgentIdentityCardDigest,
   agentIdentityCardSigning,
-  AgentIdentityCardVerificationError,
 } from "./identity/agent-cards.js";
 /** HTTP authentication for registered agents. */
 export {
@@ -30,6 +28,5 @@ export {
   HISTORY_WIRE_VERSIONS,
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
-  type WireVersion,
   wireVersions,
 } from "./version.js";

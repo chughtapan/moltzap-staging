@@ -161,7 +161,7 @@ function saveIdentity(
 }
 
 /** Callers can correct registration conflicts or replace a refused admission credential. */
-export class RegistrationError extends Schema.TaggedError<RegistrationError>()(
+class RegistrationError extends Schema.TaggedError<RegistrationError>()(
   "RegistrationError",
   {
     reason: Schema.Literal(

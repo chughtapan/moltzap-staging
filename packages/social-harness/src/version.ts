@@ -50,9 +50,6 @@ export const HISTORY_WIRE_VERSIONS = [
   ...RETIRED_WIRE_VERSIONS,
 ] as const;
 
-/** A version represented by retained protocol artifacts. */
-export type WireVersion = (typeof HISTORY_WIRE_VERSIONS)[number];
-
 /**
  * Injectable release policy lets process tests compose adjacent wire releases.
  * Production compositions use the binary's emitted version and acceptance sets.
