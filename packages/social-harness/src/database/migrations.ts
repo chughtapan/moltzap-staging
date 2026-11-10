@@ -12,10 +12,12 @@ import {
 // safer-arch-ignore no-trivial-sink-file: Versioned schema definitions remain separate from their deployment caller.
 
 /** A reset format distinguishes incompatible layouts independently of additive migration numbers. */
-const daemonDatabaseFormat = 3;
+const daemonDatabaseFormat = 4;
 
 const ownershipSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE database_format (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)`;
+  yield* sql`INSERT INTO database_format(singleton,version) VALUES(1,${daemonDatabaseFormat})`;
   yield* sql`CREATE TABLE daemon_settings (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1), settings TEXT NOT NULL
   )`;
@@ -267,7 +269,6 @@ const recordTables = Effect.gen(function* () {
     conversation_id TEXT NOT NULL,
     record_hash TEXT NOT NULL,
     ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0,1)),
     UNIQUE (agent_key, conversation_id, record_hash),
     UNIQUE(agent_key,conversation_id, ordinal),
     FOREIGN KEY (agent_key,conversation_id, record_hash)
@@ -313,12 +314,21 @@ const recordTables = Effect.gen(function* () {
     author_agent_id TEXT NOT NULL,
     msg_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
-    membership_hash TEXT,
     canonical_message ${binary} NOT NULL,
-    canonical_intent ${binary},
-    completed_record_hash TEXT,
     failure_reason TEXT,
-    UNIQUE (agent_key, author_agent_id, msg_id),
+    UNIQUE (agent_key, author_agent_id, msg_id)
+  )`);
+  yield* sql.unsafe(`CREATE TABLE prepared_messages (
+    agent_key TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    author_agent_id TEXT NOT NULL,
+    msg_id TEXT NOT NULL,
+    membership_hash TEXT NOT NULL,
+    canonical_intent ${binary} NOT NULL,
+    completed_record_hash TEXT,
+    PRIMARY KEY(agent_key,author_agent_id,msg_id),
+    FOREIGN KEY(agent_key,author_agent_id,msg_id)
+      REFERENCES message_intents(agent_key,author_agent_id,msg_id),
     FOREIGN KEY (agent_key,conversation_id, membership_hash)
       REFERENCES memberships(agent_key,conversation_id, membership_hash)
   )`);
@@ -365,13 +375,53 @@ const requestTables = Effect.gen(function* () {
   )`);
 });
 
+/** Message publication is independent of the protocol that establishes its order. */
+const messageSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const { binary, sequence } = yield* columnTypes;
+  yield* sql.unsafe(`CREATE TABLE message_log (
+    agent_key TEXT NOT NULL, sequence ${sequence}, conversation_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0), author_agent_id TEXT NOT NULL,
+    msg_id TEXT NOT NULL, canonical_message ${binary} NOT NULL,
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+    UNIQUE(agent_key,author_agent_id,msg_id), UNIQUE(agent_key,conversation_id,ordinal)
+  )`);
+  yield* sql`CREATE INDEX message_log_delivery ON message_log(agent_key,consumed,sequence)`;
+  yield* sql.unsafe(`CREATE TABLE communication_agents (
+    agent_key TEXT PRIMARY KEY, agent_id TEXT NOT NULL UNIQUE, canonical_card ${binary} NOT NULL
+  )`);
+  yield* sql`CREATE TABLE communication_mode(singleton INTEGER PRIMARY KEY CHECK(singleton=1), kind TEXT NOT NULL, server_name TEXT NOT NULL)`;
+  yield* sql`CREATE TABLE message_sequences(conversation_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL)`;
+  yield* sql.unsafe(`CREATE TABLE message_signatures (
+    agent_key TEXT NOT NULL, author_agent_id TEXT NOT NULL, msg_id TEXT NOT NULL,
+    signed_message ${binary} NOT NULL, PRIMARY KEY(agent_key,author_agent_id,msg_id)
+  )`);
+  yield* sql.onDialectOrElse({
+    pg: () =>
+      Effect.forEach(
+        ["message_log", "message_signatures"],
+        (table) =>
+          Effect.gen(function* () {
+            yield* sql`ALTER TABLE ${sql(table)} ENABLE ROW LEVEL SECURITY`;
+            yield* sql`ALTER TABLE ${sql(table)} FORCE ROW LEVEL SECURITY`;
+            yield* sql`CREATE POLICY agent_owner ON ${sql(table)}
+        USING(agent_key=current_setting('social_harness.agent_key',true))
+        WITH CHECK(agent_key=current_setting('social_harness.agent_key',true))`;
+          }),
+        { concurrency: 1 },
+      ),
+    orElse: () => Effect.void,
+  });
+});
+
 const communicationSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* conversationTables;
   yield* recordTables;
   yield* requestTables;
+  yield* messageSchema;
   yield* sql`CREATE INDEX message_intents_unresolved ON message_intents(agent_key,conversation_id)
-    WHERE completed_record_hash IS NULL`;
+    WHERE failure_reason IS NULL`;
   yield* sql`CREATE INDEX certified_records_by_hash ON certified_records(agent_key,record_hash)`;
   yield* sql`CREATE UNIQUE INDEX outbound_current_record ON outbound_messages(agent_key,conversation_id,record_hash)
     WHERE record_hash IS NOT NULL AND disposition<>'discarded'`;
@@ -393,6 +443,7 @@ const communicationSchema = Effect.gen(function* () {
           "reanchors",
           "outbound_messages",
           "message_intents",
+          "prepared_messages",
           "collective_operations",
           "collective_messages",
           "collective_answers",
@@ -475,6 +526,12 @@ export const checkDatabase = Effect.fn("checkDatabase")(
         }),
       orElse: () => Effect.void,
     });
+    const [format] = yield* sql<{
+      version: number;
+    }>`SELECT version FROM database_format WHERE singleton=1`;
+    if (format?.version !== daemonDatabaseFormat) {
+      return yield* new DatabasePreparationError({ reason: "schema" });
+    }
     const expected = yield* migrationLoader;
     const rows = yield* sql<{
       readonly migrationId: number;
@@ -551,12 +608,12 @@ export const prepareDatabase = Effect.gen(function* () {
   Effect.withSpan("prepareDatabase"),
 );
 
-/** Only an empty SQLite database or the supported reset format can receive migrations. */
+/** Only an empty database or the supported reset format can receive migrations. */
 function compatibleDatabase() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    if (sql.onDialectOrElse({ sqlite: () => false, orElse: () => true })) {
-      return;
+    if (sql.onDialectOrElse({ pg: () => true, orElse: () => false })) {
+      return yield* compatiblePostgres(sql);
     }
     const [version] = yield* sql.unsafe<
       Readonly<Record<"user_version", number>>
@@ -578,6 +635,33 @@ function compatibleDatabase() {
         readonly count: number;
       }>`SELECT COUNT(*) AS count FROM ${sql(migrationsTable)}`;
       if (Number(ledger?.count) !== 0) {
+        return yield* new DatabasePreparationError({ reason: "schema" });
+      }
+    }
+  });
+}
+
+/** A reset never treats an old PostgreSQL migration ledger as the current layout. */
+function compatiblePostgres(sql: SqlClient.SqlClient) {
+  return Effect.gen(function* () {
+    const tables = yield* sql<{
+      name: string;
+    }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
+    if (tables.some((table) => table.name === "database_format")) {
+      const [format] = yield* sql<{
+        version: number;
+      }>`SELECT version FROM database_format WHERE singleton=1`;
+      if (format?.version === daemonDatabaseFormat) {
+        return;
+      }
+      return yield* new DatabasePreparationError({ reason: "schema" });
+    }
+    if (tables.some((table) => table.name !== migrationsTable)) {
+      return yield* new DatabasePreparationError({ reason: "schema" });
+    }
+    if (tables.length > 0) {
+      const rows = yield* sql`SELECT 1 FROM ${sql(migrationsTable)} LIMIT 1`;
+      if (rows.length > 0) {
         return yield* new DatabasePreparationError({ reason: "schema" });
       }
     }

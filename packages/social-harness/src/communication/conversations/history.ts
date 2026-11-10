@@ -71,7 +71,7 @@ import {
   type StoredMembership,
   type MessageIntent as storedMessageIntent,
   type StoredOutboundMessage,
-} from "../store.js";
+} from "./store.js";
 
 /** A protocol fold selected by an evidence statement's signed subject. */
 export type EvidenceRoute =

@@ -16,6 +16,7 @@ import type {
 import type { Registry } from "../../identity/registry.js";
 import type { SendError } from "../errors.js";
 import type { Message } from "../messages.js";
+import type { EndpointStoreError } from "../store.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
@@ -53,16 +54,6 @@ import {
   type RouterWorkerSendError,
 } from "../router/connection.js";
 import {
-  consumeRecord,
-  type EndpointStoreError,
-  enqueueOutbound,
-  readRecordOutbound,
-  readUnconsumedRecords,
-  recoverStoredState,
-  type StagedRecord,
-  stageRecordAndOutbound,
-} from "../store.js";
-import {
   acceptEngineIngress,
   acceptEngineRecoveryIngress,
   resumeEngineFolds,
@@ -81,6 +72,15 @@ import {
   recoverCertifiedHistory,
   recoveryHeadAdvanced,
 } from "./recovery.js";
+import {
+  consumeRecord,
+  enqueueOutbound,
+  readRecordOutbound,
+  readUnconsumedRecords,
+  recoverStoredState,
+  type StagedRecord,
+  stageRecordAndOutbound,
+} from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: Conversation protocol composition remains encapsulated inside Communication.
 

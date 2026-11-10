@@ -22,6 +22,7 @@ import {
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, vi } from "vitest";
 import type { RegistryLookupResult } from "../../identity/registry.js";
+import type { EndpointRecovery, StoredOutboundMessage } from "./store.js";
 import {
   authoredMessage,
   forwardStoredOutbound,
@@ -111,12 +112,8 @@ import {
   RouterWorkerDiscontinuityError,
   type RouterWorkerIngress,
 } from "../router/connection.js";
-import * as testStore from "../store.js";
-import {
-  type EndpointRecovery,
-  initializeCommunication,
-  type StoredOutboundMessage,
-} from "../store.js";
+import * as testStoreMessages from "../store.js";
+import { initializeCommunication } from "../store.js";
 import { acceptEngineRecoveryIngress } from "./certification.js";
 import {
   type EndpointEngine,
@@ -136,6 +133,8 @@ import {
 } from "./history-sync.js";
 import { recoverEngineState } from "./history.js";
 import { catchUpRetryAttempts } from "./recovery.js";
+import * as testStoreProtocol from "./store.js";
+const testStore = { ...testStoreMessages, ...testStoreProtocol };
 
 /* eslint-disable max-lines, max-lines-per-function -- One exact cryptographic trace keeps protocol order and assertions together. */
 

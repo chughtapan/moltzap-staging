@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "id": "answer-norm-queries",
+      "applies": "incoming",
+      "match": "norms.query",
+      "action": "reply"
+    },
+    {
+      "id": "not-understood",
+      "applies": "incoming",
+      "match": "norms.unparsed",
+      "action": "reply"
+    },
+    {
+      "id": "answer-nonconforming",
+      "applies": "incoming",
+      "match": "norms.nonconforming",
+      "action": "reply"
+    },
+    {
+      "id": "refuse-unparsed",
+      "applies": "outgoing",
+      "match": "norms.unparsed",
+      "action": "deny"
+    },
+    {
+      "id": "refuse-nonconforming",
+      "applies": "outgoing",
+      "match": "norms.nonconforming",
+      "action": "deny"
+    },
+    {
+      "id": "owner-consent",
+      "applies": "outgoing",
+      "match": "norms.consent",
+      "action": "hold"
+    }
+  ]
+}

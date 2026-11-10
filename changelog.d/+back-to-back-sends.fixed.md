@@ -1,0 +1,1 @@
+A firewall check of an outgoing draft sees the agent's earlier sends that are not yet ordered instead of refusing the draft, and the example message policy no longer selects the plain-language rule, which read acts as host control syntax.

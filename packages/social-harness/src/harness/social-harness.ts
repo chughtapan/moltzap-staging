@@ -6,21 +6,27 @@ import {
   Clock,
   Context,
   Deferred,
+  type Duration,
   Effect,
   Fiber,
   FiberSet,
   Layer,
+  Option,
   PubSub,
   Queue,
   Schema,
   Scope,
   Stream,
 } from "effect";
+import { createHash } from "node:crypto";
+import type { FirewallEvidence } from "../firewall/chain.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
   GroupAddress,
   type MessageAddressInput,
+  messageFromParticipants,
+  MsgId,
 } from "../communication/messages.js";
 import {
   Answer,
@@ -39,8 +45,8 @@ import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
 import {
   Firewall,
-  type FirewallEvidence,
   type FirewallRefusal,
+  type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/service.js";
 import {
@@ -137,9 +143,13 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
-  /** Reads pending content without acknowledging it. */
+  /**
+   * Reads pending content without acknowledging it. With `wait`, a read that
+   * finds nothing waits up to that long, and returns as soon as an item is
+   * pending or empty when the wait ends.
+   */
   readonly listInbox: (
-    request?: PaginatedRequest,
+    request?: PaginatedRequest & { readonly wait?: Duration.Duration },
   ) => Effect.Effect<InboxPage, InboxError>;
   /** Repeating an acknowledgment is harmless and does not answer a request. */
   readonly acknowledgeDelivery: (
@@ -454,9 +464,6 @@ function makeHarness<R>(
             return {
               id: "kind" in value ? value.operationId : value.msgId,
               address: destination.address,
-              ...(decision.guidance === undefined
-                ? {}
-                : { guidance: decision.guidance }),
             };
           }).pipe(
             Effect.catchTag("InboxError", () =>
@@ -473,9 +480,13 @@ function makeHarness<R>(
             ),
           );
         }),
-      listInbox: (request) =>
+      listInbox: ({ wait, ...page } = {}) =>
         requireRegistered(new InboxError({ reason: "not-registered" })).pipe(
-          Effect.zipRight(inbox.listInbox(request)),
+          Effect.zipRight(
+            wait === undefined
+              ? inbox.listInbox(page)
+              : waitForInbox(inbox, changes, page, wait),
+          ),
         ),
       acknowledgeDelivery: (token) =>
         requireRegistered(
@@ -733,6 +744,7 @@ function checkIncoming(
       };
     }
     const decision = yield* firewall.checkIncoming(value, evidence);
+    const reply = yield* replyTo(value, decision, agentCardOf(card));
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
@@ -740,9 +752,83 @@ function checkIncoming(
     yield* sql.withTransaction(
       decision.save.pipe(
         Effect.zipRight(inbox.publish(entry, decision, expired)),
+        Effect.tap(() =>
+          reply === undefined
+            ? Effect.void
+            : communication.send(reply).pipe(
+                Effect.catchIf(
+                  (error) =>
+                    error._tag === "CommunicationError" &&
+                    error.reason === "message-conflict",
+                  () => Effect.void,
+                ),
+              ),
+        ),
       ),
     );
   });
+}
+
+/**
+ * The firewall's reply to a message it withheld, when a rule asked for one: an
+ * ordinary message from this agent to the same conversation. Its id derives
+ * from the withheld message, so checking that message again sends at most one
+ * reply. A reply that is not a valid message is not sent, and the message
+ * stays withheld.
+ */
+function replyTo(value: Incoming, decision: IncomingDecision, self: AgentCard) {
+  if (
+    decision.kind !== "withheld" ||
+    decision.reply === undefined ||
+    !("message" in value)
+  ) {
+    return Effect.succeed(undefined);
+  }
+  const withheld = value.message;
+  const text = decision.reply;
+  return Schema.decodeUnknown(MsgId)(
+    `msg_${createHash("sha256")
+      .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)
+      .digest("base64url")}`,
+  ).pipe(
+    Effect.flatMap((msgId) =>
+      messageFromParticipants(
+        self,
+        [withheld.author, ...withheld.recipients].filter(
+          (member) => member.agentId !== self.agentId,
+        ),
+        { msgId, content: [{ type: "text", text }] },
+      ),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+}
+
+/**
+ * Reads the inbox and, while it holds nothing, rereads after each change until
+ * `wait` ends. Subscribing before the first read keeps an item that arrives
+ * between that read and the wait from being missed.
+ */
+function waitForInbox(
+  inbox: Inbox,
+  changes: PubSub.PubSub<undefined>,
+  request: PaginatedRequest,
+  wait: Duration.Duration,
+) {
+  return Effect.gen(function* () {
+    const arrivals = yield* PubSub.subscribe(changes);
+    const read = inbox.listInbox(request);
+    const first = yield* read;
+    if (first.items.length > 0) {
+      return first;
+    }
+    const arrived = yield* Queue.take(arrivals).pipe(
+      Effect.zipRight(read),
+      Effect.repeat({ until: (page) => page.items.length > 0 }),
+      Effect.timeoutOption(wait),
+    );
+    return Option.isSome(arrived) ? arrived.value : yield* read;
+  }).pipe(Effect.scoped);
 }
 
 function evidenceFor(
@@ -783,6 +869,7 @@ function evidenceFor(
       return {
         history: [],
         earlierHistoryOmitted: false,
+        pendingOutgoing: [],
         gaps: ["The preceding conversation history is unavailable."],
       };
     }
@@ -803,14 +890,11 @@ function evidenceFor(
       history,
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
-      gaps: [
-        ...(page.pendingOutgoing
-          ? ["An earlier outgoing message is not yet complete."]
-          : []),
-        ...(recent.length < page.entries.length
+      pendingOutgoing: page.pendingOutgoing,
+      gaps:
+        recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
-          : []),
-      ],
+          : [],
     };
   });
 }

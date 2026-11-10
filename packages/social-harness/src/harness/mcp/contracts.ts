@@ -26,7 +26,6 @@ import {
   firewallDecisionsSchema,
   FirewallPolicyError,
   firewallRefusalReasonSchema,
-  nextActionSchema,
   policyReadSchema,
   policyUpdateResultSchema,
   policyUpdateSchema,
@@ -135,16 +134,16 @@ export interface HarnessWebhookEvents {
 /** A content-free wakeup to read the pending inbox. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
-/** Refusals disclose the check and registered feedback without assessment evidence. */
+/**
+ * Refusals disclose the check, the deciding chain rule, registered feedback and
+ * the rule's matcher detail, without assessment evidence.
+ */
 const firewallRefusalSchema = exactStruct({
   checkId: checkedGuidanceSchema.fields.checkId,
   refusal: firewallRefusalReasonSchema,
-  feedback: Schema.Array(
-    exactStruct({
-      nextAction: nextActionSchema,
-      text: Schema.NonEmptyString,
-    }),
-  ),
+  rule: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
+  feedback: Schema.Array(exactStruct({ text: Schema.NonEmptyString })),
+  detail: Schema.optionalWith(Schema.Unknown, { exact: true }),
 });
 
 const savedItemSchema = Schema.typeSchema(PermittedItem);
@@ -203,7 +202,15 @@ const managementReadConversationResultSchema = Schema.Struct({
   ...PaginatedResult.fields,
 });
 
-const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
+const inboxRequestSchema = exactStruct({
+  ...PaginatedRequest.fields,
+  wait: Schema.optional(
+    Schema.Positive.annotations({
+      description:
+        "Seconds to wait for an item when none is pending. Without it the read returns at once.",
+    }),
+  ),
+});
 const inboxResultSchema = Schema.typeSchema(InboxPage);
 const invocationValidationErrorSchema = Schema.Struct({
   reason: Schema.Literal("content-invalid"),
@@ -268,7 +275,9 @@ export function sendErrorData(
       reason: "firewall-refused",
       checkId: error.checkId,
       refusal: error.refusal,
+      ...(error.rule === undefined ? {} : { rule: error.rule }),
       feedback: error.feedback,
+      ...(error.detail === undefined ? {} : { detail: error.detail }),
     };
   }
   if (error._tag === "RequestError") {
@@ -314,6 +323,18 @@ const empty = Schema.Struct({}).annotations({
 });
 const read = { readOnlyHint: true, openWorldHint: false } as const;
 
+/** Each held norm's name, description and protocol, and the document that states its acts. */
+const readNormsResultSchema = exactStruct({
+  norms: Schema.Array(
+    exactStruct({
+      name: Schema.String,
+      description: Schema.String,
+      protocol: Schema.optionalWith(Schema.String, { exact: true }),
+      document: Schema.String,
+    }),
+  ),
+});
+
 /** A tool's declaration is shared by discovery, the server and optional plugin helpers. */
 export const toolDefinitions = {
   send_message: {
@@ -325,7 +346,7 @@ export const toolDefinitions = {
   },
   read_inbox: {
     description:
-      "Read pending inbox items and their saved advice. Follow nextCursor until absent. Reading marks returned items delivered.",
+      "Read pending inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Reading marks returned items delivered. Pass wait to wait that many seconds for an item when none is pending; the read returns as soon as one arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -357,14 +378,14 @@ export const toolDefinitions = {
   },
   read_policy: {
     description:
-      "Read active editable rules, fixed rules and the policy revision.",
+      "Read active editable rules, fixed rules, the names of the norms this agent holds, and the policy revision. Fixed rules include the English rules of held norms.",
     input: empty,
     output: policyReadSchema,
     annotations: read,
   },
   update_policy: {
     description:
-      "Add, remove or replace editable rules. A behavior is a complete BEHAVIOR.md document. Remove and add the same id to replace a rule. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
+      "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
     output: policyUpdateResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: false },
@@ -374,6 +395,13 @@ export const toolDefinitions = {
       "Read completed firewall decision summaries since inclusive Unix milliseconds. Summaries include the reason and registered advice without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
+    annotations: read,
+  },
+  read_norms: {
+    description:
+      "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+    input: empty,
+    output: readNormsResultSchema,
     annotations: read,
   },
 } as const;

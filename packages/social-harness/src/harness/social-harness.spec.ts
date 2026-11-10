@@ -3,6 +3,7 @@
 import { scopedLive as it } from "@effect/vitest";
 import {
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -281,12 +282,10 @@ it("checks each conversation in order while another conversation progresses", ()
         decide: (request) =>
           Effect.gen(function* () {
             const text = decisionState(request.state).candidate.text;
-            if (request.stage === "compliance") {
-              assessed.push(text);
-              if (text === "First") {
-                yield* Deferred.succeed(entered, undefined);
-                yield* Deferred.await(release);
-              }
+            assessed.push(text);
+            if (text === "First") {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
             }
             return decisionResponse(request);
           }),
@@ -340,7 +339,7 @@ it("recovers an interrupted check and retains its published view after edits, ac
       .open({
         policy: firewallOptions({
           decide: (request) =>
-            Effect.succeed(decisionResponse(request, "compliant", "required")),
+            Effect.succeed(decisionResponse(request, "compliant", 0.6)),
         }),
       })
       .pipe(Scope.extend(resumedScope));
@@ -461,6 +460,89 @@ it("withholds peer content from both the inbox and history", () =>
     ).toEqual([]);
   }));
 
+it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({
+      policy: firewallOptions(
+        {
+          decide: (request) =>
+            Effect.succeed(decisionResponse(request, "violation")),
+        },
+        "reply",
+      ),
+    });
+
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Private peer content"),
+    });
+    yield* waitForDecisions(runtime);
+
+    expect(subject.submitted).toMatchObject([
+      {
+        author: subject.self,
+        recipients: [subject.bob],
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+  }));
+
+it("returns a waiting read at once when an item is already pending", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Already here"),
+    });
+    yield* waitForInbox(runtime);
+
+    const page = yield* runtime.harness
+      .listInbox({ wait: Duration.minutes(5) })
+      .pipe(Effect.timeout("2 seconds"));
+
+    expect(page.items).toHaveLength(1);
+  }));
+
+it("ends a waiting read as soon as an item arrives", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+    const reading = yield* runtime.harness
+      .listInbox({ wait: Duration.minutes(5) })
+      .pipe(Effect.fork);
+
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Arrived while waiting"),
+    });
+    const page = yield* Fiber.join(reading).pipe(Effect.timeout("10 seconds"));
+
+    expect(page.items).toMatchObject([
+      {
+        item: {
+          message: {
+            content: [{ type: "text", text: "Arrived while waiting" }],
+          },
+        },
+      },
+    ]);
+  }));
+
+it("returns an empty page when the wait ends with nothing pending", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open();
+
+    const page = yield* runtime.harness.listInbox({
+      wait: Duration.millis(50),
+    });
+
+    expect(page.items).toEqual([]);
+  }));
+
 it("rolls back policy decisions when publication fails and recovers both on restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -526,7 +608,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
       message: yield* subject.message("Candidate"),
     });
     yield* waitForInbox(runtime);
-    const assessment = seen.find((request) => request.stage === "compliance");
+    const [assessment] = seen;
     if (assessment === undefined) {
       return yield* Effect.dieMessage("Expected assessment");
     }
@@ -644,7 +726,7 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     const options = firewallOptions({
       decide: (request) =>
         Effect.gen(function* () {
-          if (completing && request.stage === "compliance") {
+          if (completing) {
             assessed.push(decisionState(request.state).candidate.sender);
             yield* Deferred.succeed(entered, undefined);
             yield* Deferred.await(release);
@@ -906,7 +988,7 @@ it("uses the public invalid-answer reason without exposing the original answer",
         decide: (request) =>
           Effect.sync(() => {
             seen.push(request);
-            return decisionResponse(request, "compliant", "required");
+            return decisionResponse(request, "compliant", 0.6);
           }),
       }),
     });

@@ -1,0 +1,1 @@
+The firewall asks its decision provider one yes-or-no question per text rule: an unsure answer refuses an outgoing message so the agent can revise it and admits an incoming one with a reminder, and other admitted messages carry no reminder.

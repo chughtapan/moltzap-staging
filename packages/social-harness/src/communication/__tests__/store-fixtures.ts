@@ -6,7 +6,9 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
 import { migrateDaemon } from "../../database/migrations.js";
-import * as Store from "../store.js";
+import * as StoreProtocol from "../conversations/store.js";
+import * as StoreMessages from "../store.js";
+const storeOperations = { ...StoreMessages, ...StoreProtocol };
 /** The scope closes SQLite before its temporary state directory is removed. */
 export const openTestDatabase = (directory?: string) =>
   Effect.gen(function* () {
@@ -42,33 +44,48 @@ export type TestDatabase = Effect.Effect.Success<
 >;
 function testStore(agentKey: string) {
   return {
-    initializeCommunication: Store.initializeCommunication.bind(
+    initializeCommunication: storeOperations.initializeCommunication.bind(
       undefined,
       agentKey,
     ),
-    bindMessageIntent: Store.bindMessageIntent.bind(undefined, agentKey),
-    putConversationFoundation: Store.putConversationFoundation.bind(
+    bindMessageIntent: storeOperations.bindMessageIntent.bind(
       undefined,
       agentKey,
     ),
-    lockProposal: Store.lockProposal.bind(undefined, agentKey),
-    lockFirstMessageProposal: Store.lockFirstMessageProposal.bind(
+    putConversationFoundation: storeOperations.putConversationFoundation.bind(
       undefined,
       agentKey,
     ),
-    recoverStoredState: Store.recoverStoredState.bind(undefined, agentKey),
-    acceptMessage: Store.acceptMessage.bind(undefined, agentKey),
-    readAcceptedMessage: Store.readAcceptedMessage.bind(undefined, agentKey),
-    stageRecordAndOutbound: Store.stageRecordAndOutbound.bind(
+    lockProposal: storeOperations.lockProposal.bind(undefined, agentKey),
+    lockFirstMessageProposal: storeOperations.lockFirstMessageProposal.bind(
       undefined,
       agentKey,
     ),
-    mergeEvidence: Store.mergeEvidence.bind(undefined, agentKey),
-    applyCertifiedRecord: Store.applyCertifiedRecord.bind(undefined, agentKey),
-    enqueueOutbound: Store.enqueueOutbound.bind(undefined, agentKey),
-    beginOutbound: Store.beginOutbound.bind(undefined, agentKey),
-    completeOutbound: Store.completeOutbound.bind(undefined, agentKey),
+    recoverStoredState: storeOperations.recoverStoredState.bind(
+      undefined,
+      agentKey,
+    ),
+    acceptMessage: storeOperations.acceptMessage.bind(undefined, agentKey),
+    readAcceptedMessage: storeOperations.readAcceptedMessage.bind(
+      undefined,
+      agentKey,
+    ),
+    stageRecordAndOutbound: storeOperations.stageRecordAndOutbound.bind(
+      undefined,
+      agentKey,
+    ),
+    mergeEvidence: storeOperations.mergeEvidence.bind(undefined, agentKey),
+    applyCertifiedRecord: storeOperations.applyCertifiedRecord.bind(
+      undefined,
+      agentKey,
+    ),
+    enqueueOutbound: storeOperations.enqueueOutbound.bind(undefined, agentKey),
+    beginOutbound: storeOperations.beginOutbound.bind(undefined, agentKey),
+    completeOutbound: storeOperations.completeOutbound.bind(
+      undefined,
+      agentKey,
+    ),
     transaction: <A, E, R>(work: Effect.Effect<A, E, R>) =>
-      Store.transaction(agentKey, work),
+      storeOperations.transaction(agentKey, work),
   };
 }

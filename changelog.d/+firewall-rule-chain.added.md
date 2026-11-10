@@ -1,0 +1,1 @@
+The message firewall applies an ordered rule chain before its text rules: each rule names a registered matcher and an action (`allow`, `deny`, `reply` or `hold`), the first matching rule decides, and a rule or text rule whose action is `reply` answers the sender of a message it withholds with an ordinary message.

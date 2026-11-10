@@ -13,12 +13,19 @@ import {
   localOwner,
   migrateDaemon,
 } from "@moltzap/social-harness/test";
-import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
+import {
+  ConfigProvider,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
 import { randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Filesystem effects use FileSystem; Node supplies the POSIX permission constants.
 import { constants } from "node:fs";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 
@@ -35,9 +42,12 @@ const settings = {
   authentication: { kind: "local", credential: secret },
   registryOrigin: "https://registry.example",
   registrySignerPublicKey: signer,
-  routerOrigin: "https://router.example",
+  transport: { kind: "p2p", routerOrigin: "https://router.example" },
   admissionCredential: "test-admission-credential",
 };
+const shippedNorms = fileURLToPath(
+  new URL("../../../packages/social-harness/config/norms/", import.meta.url),
+);
 
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
@@ -147,10 +157,7 @@ it("requires the current settings file instead of retaining a stale SQL copy", (
 it("resolves policy references relative to the settings file", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const policy = {
-      format: "org.social-harness/message-policy/v2",
-      mode: "enforcement",
-    };
+    const policy = { format: "org.social-harness/message-policy/v2" };
     yield* test.filesystem.writeFileString(
       join(test.directory, "policy.json"),
       JSON.stringify(policy),
@@ -169,7 +176,6 @@ it("resolves provider credential references relative to the settings file", () =
       join(test.directory, "policy.json"),
       JSON.stringify({
         format: "org.social-harness/message-policy/v2",
-        mode: "enforcement",
         text: {},
         decisionProvider: { kind: "jev", model: "configured-model" },
       }),
@@ -189,6 +195,163 @@ it("resolves provider credential references relative to the settings file", () =
     if (provider?.kind === "jev") {
       expect(Redacted.value(provider.apiKey)).toBe(providerKey);
     }
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+/** A message policy file beside the settings, with a decision provider and its key when `judged`. */
+function messagePolicy(
+  test: Effect.Effect.Success<typeof fixture>,
+  judged: boolean,
+) {
+  return Effect.gen(function* () {
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "policy.json"),
+      JSON.stringify({
+        format: "org.social-harness/message-policy/v2",
+        ...(judged
+          ? { decisionProvider: { kind: "jev", model: "configured-model" } }
+          : {}),
+      }),
+    );
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "provider.key"),
+      "private-decision-provider-key",
+    );
+    return {
+      messagePolicyFile: "policy.json",
+      ...(judged ? { decisionProviderKeyFile: "provider.key" } : {}),
+    };
+  });
+}
+
+it("resolves the norms directory relative to the settings file", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const norms = join(test.directory, "norms");
+    yield* test.filesystem.makeDirectory(norms);
+    yield* test.filesystem.copyFile(
+      join(shippedNorms, "examples/chat.lisp"),
+      join(norms, "chat.lisp"),
+    );
+    yield* test.filesystem.copyFile(
+      join(shippedNorms, "rules.json"),
+      join(norms, "rules.json"),
+    );
+    yield* test.write({
+      ...settings,
+      ...(yield* messagePolicy(test, false)),
+      normsDirectory: "norms",
+    });
+    const loaded = yield* loadDaemonSettings(test.filename);
+    expect(loaded.settings.norms?.initial).toEqual([
+      yield* test.filesystem.readFileString(
+        join(shippedNorms, "examples/chat.lisp"),
+      ),
+    ]);
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+/** A norms directory holding the shipped `office-hours`, whose documents give English rules. */
+function normsWithRules(test: Effect.Effect.Success<typeof fixture>) {
+  return Effect.gen(function* () {
+    const norms = join(test.directory, "norms");
+    yield* test.filesystem.makeDirectory(norms);
+    yield* Effect.forEach(
+      ["examples/office-hours.lisp", "rules.json"],
+      (file) =>
+        test.filesystem.copyFile(
+          join(shippedNorms, file),
+          join(norms, file.replace("examples/", "")),
+        ),
+      { concurrency: 1 },
+    );
+  });
+}
+
+it("loads the decision provider that judges initial norms' English rules, though the policy has no text rules", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* normsWithRules(test);
+    yield* test.write({
+      ...settings,
+      ...(yield* messagePolicy(test, true)),
+      normsDirectory: "norms",
+    });
+
+    const loaded = yield* loadDaemonSettings(test.filename);
+
+    expect(loaded.settings.norms?.initial).toHaveLength(1);
+    expect(loaded.settings.messagePolicy?.policy.text).toBeUndefined();
+    expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it.each([
+  { what: "no message policy", policy: () => Effect.succeed({}) },
+  {
+    what: "a message policy without a decision provider",
+    policy: (test: Effect.Effect.Success<typeof fixture>) =>
+      messagePolicy(test, false),
+  },
+])("refuses initial norms with English rules under $what", ({ policy }) =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* normsWithRules(test);
+    yield* test.write({
+      ...settings,
+      ...(yield* policy(test)),
+      normsDirectory: "norms",
+    });
+
+    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+
+    expect(failure).toMatchObject({ reason: "norms" });
+  }).pipe(Effect.provide(NodeContext.layer)),
+);
+
+it("loads the shipped example message policy, each of whose fixed behaviors becomes a fixed rule", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const example = fileURLToPath(
+      new URL(
+        "../../../packages/social-harness/config/firewall/message-policy.json",
+        import.meta.url,
+      ),
+    );
+    const selected = yield* test.filesystem.readFileString(example).pipe(
+      Effect.flatMap(
+        Schema.decodeUnknown(
+          Schema.parseJson(
+            Schema.Struct({
+              text: Schema.Struct({
+                fixedBehaviors: Schema.Array(Schema.String),
+              }),
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* test.filesystem.writeFileString(
+      join(test.directory, "provider.key"),
+      "private-decision-provider-key",
+    );
+    yield* test.write({
+      ...settings,
+      messagePolicyFile: example,
+      decisionProviderKeyFile: "provider.key",
+    });
+
+    const loaded = yield* loadDaemonSettings(test.filename);
+
+    expect(loaded.settings.messagePolicy?.policy.text?.fixedRules).toHaveLength(
+      selected.text.fixedBehaviors.length,
+    );
+  }).pipe(Effect.provide(NodeContext.layer)));
+
+it("refuses a norms directory without its rule file", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.filesystem.makeDirectory(join(test.directory, "norms"));
+    yield* test.write({ ...settings, normsDirectory: "norms" });
+    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+    expect(failure).toMatchObject({ reason: "norms" });
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("accepts public OAuth settings without allocating an owner", () =>
@@ -489,7 +652,7 @@ it(
 );
 
 it(
-  "rolls back failed PostgreSQL domain migrations while leaving only an empty bookkeeping ledger",
+  "refuses incompatible PostgreSQL storage without modifying retained tables",
   () =>
     Effect.gen(function* () {
       const test = yield* postgresFixture;
@@ -501,13 +664,9 @@ it(
       expect(yield* test.sql`SELECT * FROM firewall_checks`).toEqual([
         { value: "retained obstruction" },
       ]);
-      expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual([]);
       expect(
         yield* test.sql`SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename`,
-      ).toEqual([
-        { tablename: "effect_sql_migrations" },
-        { tablename: "firewall_checks" },
-      ]);
+      ).toEqual([{ tablename: "firewall_checks" }]);
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,
 );

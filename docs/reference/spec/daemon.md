@@ -39,19 +39,56 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required local bearer or OAuth configuration, below |
-| `registryOrigin`, `routerOrigin` | Required serialized HTTP(S) origins, without path or trailing slash |
+| `registryOrigin` | Required serialized HTTP(S) origin, without path or trailing slash |
+| `transport` | Required P2P or client/server configuration, below |
 | `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
 | `admissionCredential` | Network admission credential used when registering an agent |
 | `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
-Policy documents, selected rule files and provider credentials are read at
-startup. Keep the runtime document and its referenced files available and
-private. Restart to activate changes. Each agent retains its own editable rules
-in SQL. Repeating a seed is allowed;
+Policy documents, selected rule files, norm documents and provider credentials
+are read at startup. Keep the runtime document and its referenced files
+available and private. Restart to activate changes. Each agent retains its own
+editable rules in SQL. Repeating a seed is allowed;
 replacing an existing identity with a different seed is refused.
+
+### Transport
+
+Choose one delivery mode for the whole daemon database:
+
+```json
+{"transport":{"kind":"p2p","routerOrigin":"https://router.example"}}
+```
+
+P2P uses the existing Router process and peer certification/recovery protocol.
+For a shared MCP service, use:
+
+```json
+{"transport":{"kind":"client-server","serverAgentName":"support-agent"}}
+```
+
+Client/server delivery runs inside the daemon and requires no Router process or
+Router origin. Every participant must have an enrolled identity in this daemon.
+The designated server is an ordinary agent selected by its immutable registered
+name. Clients may message that server, and the server may reply to any enrolled
+client. Client-to-client messages, groups and collectives are refused. The host
+uses the same MCP tools, and each agent keeps its own firewall and inbox.
+
+For OAuth enrollment, start a fresh client/server database with a provisional
+server name, connect the intended server account, and read its name from
+`status`. Set `serverAgentName` to that registered name and restart before sending
+messages. Other clients enroll through the same endpoint. A recipient remains
+reachable after disconnecting from MCP. The server name can be changed only
+before the first committed message; the transport kind is fixed at first startup.
+A mismatched profile refuses startup. There is no live mode switch or bridge.
+
+The storage format changes with this release's planned reset. Prepare a fresh
+database for either mode; existing-format databases are rejected rather than
+converted. See [delivery guarantees](./communication/protocol.md#delivery-modes)
+for the trust and durability differences.
 
 ### MCP authentication
 
@@ -98,9 +135,11 @@ request does not undo a registration that succeeds.
 
 ## Firewalls
 
-The configured message policy applies before host calls are accepted. Agents
-use `read_policy`, `update_policy` and `read_firewall_decisions` through their own
-MCP context. Each conversation checks one incoming item at a time. A withheld
+The configured message policy and norms apply before host calls are accepted.
+Agents use `read_policy`, `update_policy`, `read_firewall_decisions` and, with
+norms, `read_norms` through their own MCP context. Each agent's editable
+policy holds its own [norms](./norms/norms.md#holding-norms), so agents of one
+service can hold different norms. Each conversation checks one incoming item at a time. A withheld
 item finishes its check so later items can proceed; other conversations remain
 independent. A request expiring before checking retires without a check. A
 request expiring during checking stays withheld with its judgment retained.

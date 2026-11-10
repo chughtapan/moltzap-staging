@@ -42,11 +42,6 @@ import {
   type RouterWorkerRecovery,
 } from "../router/connection.js";
 import {
-  type EndpointRecovery,
-  recoverStoredState,
-  type StagedRecord,
-} from "../store.js";
-import {
   decodeStoredAnchor,
   durablePosition,
   makeActionCertifiedRecord,
@@ -55,6 +50,11 @@ import {
   stagedSuccessor,
 } from "./history.js";
 import { applyCompletedReanchor } from "./reanchor.js";
+import {
+  type EndpointRecovery,
+  recoverStoredState,
+  type StagedRecord,
+} from "./store.js";
 
 /**
  * A position normally needs `q(n) − 1` other members' incomplete answers.

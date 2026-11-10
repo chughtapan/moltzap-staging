@@ -54,10 +54,11 @@ choices explicit.
 Items are grouped by the layer that owns them. Items 1 and 16 govern the whole
 stack.
 
-1. **Two network services and endpoint state.** Registry is the identity
-   control plane. Router is the data plane. Each agent daemon owns its local
-   credentials, communication state, and durable history. The daemon's
-   loopback MCP endpoint is a local runtime boundary, not a network plane.
+1. **Configurable communication and agent state.** Registry is the identity
+   control plane. P2P communication uses Router as its opaque data plane;
+   client/server communication uses one trusted shared daemon and SQL database.
+   Each agent retains its own credentials, communication state, firewall and
+   durable history. MCP is the authenticated host boundary in either mode.
 
 ### L1 Unforgeable, Verifiable Identities
 
@@ -76,10 +77,17 @@ stack.
    injection, such as the simulator's, operates only after Router ordering and
    does not add a Router hook or weaken the production service guarantees.
 
-4. **Communication includes endpoint history.** Router delivery is volatile
+4. **Communication includes retained history.** Both delivery modes share
+   accepted messages, ordered history and consumption state. Router delivery is volatile
    and content-blind. Conversations, fixed membership, protocols, certified
    records, retry identity, persistence, catch-up, and restart recovery belong
    to endpoints in `@moltzap/social-harness`. Router owns none of those concepts.
+
+The P2P evidence guarantees in items 5–11 and 14 apply to peer-certified records.
+Client/server delivery instead trusts the shared daemon and database for ordering
+and durability, retaining author signatures without a peer quorum or verifiable
+order certificate. It supports only direct client-to-server and server-to-client
+messages. Identity, personal firewall and host contracts remain common.
 
 5. **Action validity and durability are independent.** A norm determines the
    exact action-validity evidence. Durability votes only attest that a member
@@ -144,7 +152,7 @@ stack.
 
 ### L4 Shared Collaboration Norms
 
-13. **Norms build on certified communication.** Gate 1 uses unanimous
+13. **Norms build on communication.** In P2P, Gate 1 uses unanimous
     fixed-member FIRST_MESSAGE and author-inclusive threshold-certified MESSAGE.
     Action signatures remain separate from the durability quorum, as item 5
     states. Further task and norm vocabularies, including contracts, compose
@@ -179,7 +187,17 @@ stack.
 
 ## Current profile
 
-### Trust, safety, and progress
+### Client/server trust and progress
+
+Client/server mode trusts the shared daemon and SQL database for plaintext custody,
+isolation, total order per client/server pair and durable retention. Agents still
+have distinct Registry identities and signing authorities. Delivery commits both
+participants' views atomically and survives MCP disconnection and daemon restart.
+Registry availability is needed for enrollment and uncached identity resolution;
+Router and peer quorums are unused. No Byzantine storage or order-proof guarantee
+is claimed for this mode.
+
+### P2P trust, safety, and progress
 
 - Registry is correct and non-equivocating when it enforces uniqueness and
   attests immutable agent identity cards. A malicious or equivocating Registry is
@@ -219,7 +237,7 @@ belong to [Package boundaries](./spec/package-boundaries.md).
 An implementation must not answer these choices accidentally:
 
 1. Dynamic membership, pruning and garbage collection, public observers,
-   malicious or replicated Registry/Router profiles, richer norm vocabularies,
-   dispute protocols, and cross-history audit conventions.
+   malicious or replicated Registry/Router profiles, dispute protocols, and
+   cross-history audit conventions.
 2. Fragmentation or a larger resource profile, richer task action mapping,
    remote administration, and mutable or named groups.

@@ -1,6 +1,14 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
+import {
+  Data,
+  Effect,
+  Option,
+  ParseResult,
+  Redacted,
+  Schema,
+  Struct,
+} from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -12,21 +20,16 @@ import { AgentCard } from "../identity/agent-cards.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-/** Registered feedback names one repair action independently of a judgment. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Checking and host projection share this configuration-owned action grammar; public entries do not expose its constructor.
-export const nextActionSchema = Schema.Literal(
-  "revise",
-  "wait",
-  "stop",
-  "seek-approval",
-);
-
-/** Operational holds remain distinct from a settled rule violation. */
+/**
+ * Operational holds remain distinct from a settled rule violation. A draft
+ * that a rule holds for the owner, who has not approved it, has its own reason.
+ */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Assessment, saved summaries and host projection share one refusal grammar; package entry points expose opaque values.
 export const firewallRefusalReasonSchema = Schema.Literal(
   "rule-violation",
   "unresolved-evidence",
   "check-unavailable",
+  "owner-approval-required",
 );
 
 /** Trusted callers supply facts. Visibility limits what guidance may reference. */
@@ -39,21 +42,25 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 
 /**
  * Registers natural-language policy, admission guidance and refusal feedback.
- * Validation requires nonempty text without restricting its language.
+ * Validation requires nonempty text without restricting its language. An
+ * incoming message that violates a rule whose `action` is `reply` is withheld,
+ * and its sender receives the rule's feedback text as a message; `deny`, the
+ * default, withholds it silently.
  * The message policy specification defines who owns each rule and how edits
  * are validated.
  */
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
-  feedback: Schema.optional(
-    Schema.Struct({
-      text: Schema.NonEmptyString,
-      nextAction: nextActionSchema,
-    }),
-  ),
+  feedback: Schema.optional(exactStruct({ text: Schema.NonEmptyString })),
+  action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
+  /**
+   * A matcher the daemon registers, such as the one for a norm rule's acts.
+   * The provider is asked about the rule only for messages it matches.
+   */
+  match: Schema.optional(Schema.NonEmptyTrimmedString),
 }) {}
 
 /** Bounds apply to one complete text assessment. */
@@ -74,7 +81,11 @@ export class TextPolicySettings extends Schema.Class<TextPolicySettings>(
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-const editableRuleSchema = exactStruct(TextRule.fields);
+/**
+ * An editable rule names no matcher: matchers come with the daemon's
+ * configuration, so only a fixed rule can be scoped to one.
+ */
+const editableRuleSchema = exactStruct(Struct.omit(TextRule.fields, "match"));
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
@@ -86,24 +97,38 @@ export const editableDocumentSchema = Schema.Array(editableRuleSchema).pipe(
 
 const behaviorAddition = exactStruct({ behavior: Schema.String });
 
-/** Removing and adding the same editable id replaces it in one activation. */
+/** A norm document for the agent to hold, which the daemon's norms read. */
+const normAddition = exactStruct({ norm: Schema.String });
+
+/** A norm the agent holds, by name, for it to stop holding. */
+const normRemoval = exactStruct({ norm: Schema.NonEmptyString });
+
+/**
+ * Removing and adding the same editable id, or a norm of the same name,
+ * replaces it in one activation.
+ */
 export const policyUpdateSchema = exactStruct({
   add: Schema.optional(
-    Schema.Array(Schema.Union(editableRuleSchema, behaviorAddition)).pipe(
-      Schema.maxItems(MAXIMUM_EDITABLE_RULES),
-    ),
+    Schema.Array(
+      Schema.Union(editableRuleSchema, behaviorAddition, normAddition),
+    ).pipe(Schema.maxItems(MAXIMUM_EDITABLE_RULES)),
   ),
   remove: Schema.optional(
-    Schema.Array(TextRule.fields.id).pipe(
+    Schema.Array(Schema.Union(TextRule.fields.id, normRemoval)).pipe(
       Schema.maxItems(MAXIMUM_EDITABLE_RULES),
     ),
   ),
 });
 
-/** The digest identifies the entire active installation, including fixed policy. */
+/**
+ * The digest identifies the entire active installation, including fixed
+ * policy and held norms. `fixedRules` include the English rules of the norms
+ * the agent holds, and `norms` names those norms.
+ */
 export const policyReadSchema = exactStruct({
   rules: editableDocumentSchema,
   fixedRules: Schema.Array(TextRule),
+  norms: Schema.Array(Schema.String),
   activeRevision: Schema.NonEmptyString,
 });
 
@@ -128,8 +153,9 @@ const firewallActivationSchema = exactStruct({
 /**
  * Contains one row per peer without message content or provider traces.
  * `decidedBy[].advice` contains registered feedback or admission guidance.
- * `from` identifies fixed or editable rules. `checkedRuleIds` includes every
- * rule with a finding.
+ * `from` identifies a chain rule, or a fixed or editable text rule.
+ * `checkedRuleIds` lists the rules the check judged: a rule that does not
+ * apply to the message, by its direction or its matcher, is not listed.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
@@ -139,7 +165,7 @@ export const firewallDecisionSummarySchema = exactStruct({
   decidedBy: Schema.Array(
     exactStruct({
       ruleId: Schema.NonEmptyString,
-      from: Schema.Literal("fixed", "editable"),
+      from: Schema.Literal("chain", "fixed", "editable"),
       advice: Schema.optional(Schema.NonEmptyString),
     }),
   ),
@@ -173,25 +199,29 @@ const policyProblemSchema = Schema.Literal(
   "frontmatter",
   "schema",
   "too-large",
+  "invalid-norm",
 );
 
 const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   "duplicate-id":
-    "its id is already in the policy; remove that rule in the same update to replace it, or use another id",
+    "the policy already has a rule with this id or a norm with this name; remove it in the same update to replace it",
   "unknown-id":
-    "no editable rule has this id; read_policy lists the editable rules",
-  "editable-limit": `the update would leave more than ${String(MAXIMUM_EDITABLE_RULES)} editable rules; remove some rules first`,
+    "no editable rule has this id and no held norm has this name; read_policy lists both",
+  "editable-limit": `the update would leave more than ${String(MAXIMUM_EDITABLE_RULES)} editable rules or held norms; remove some first`,
   frontmatter:
     "the BEHAVIOR.md needs valid YAML frontmatter between --- lines (no code fence or other text before it)",
   schema:
-    "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance and feedback",
-  "too-large": "the BEHAVIOR.md is over 64 KiB",
+    "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance, feedback and action",
+  "too-large": "the document is over 64 KiB",
+  "invalid-norm":
+    "it is not a norm document this daemon can hold: the daemon reads no norms, the document does not parse, or it names a built-in norm",
 };
 
 const policyReasonText: Readonly<
   Record<FirewallPolicyError["reason"], string>
 > = {
-  "not-configured": "the message policy has no text block",
+  "not-configured":
+    "the daemon has no message policy, or its policy has no decisionProvider to judge text rules",
   "invalid-rule": "the update is invalid",
   "fixed-rule":
     "it is a fixed rule of the owner's policy, which update_policy cannot add, remove or replace",
@@ -263,7 +293,7 @@ export type BehaviorFailure =
   | "duplicate-id"
   | "editable-limit";
 
-/** Only policy and provider file locations enter the loader. */
+/** Policy and provider file locations. */
 export interface PolicyConfiguration {
   readonly messagePolicyFile?: string;
   readonly decisionProviderKeyFile?: Redacted.Redacted;
@@ -299,23 +329,17 @@ const failureMessages: Readonly<
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
-/**
- * An unavailable provider holds messages in enforcement mode and admits them in
- * guidance mode. Only Jev requires a provider key.
- */
-const decisionProvider = Schema.Union(
-  Schema.Struct({
-    kind: Schema.Literal("jev"),
-    model: Schema.NonEmptyTrimmedString,
-  }),
-  Schema.Struct({ kind: Schema.Literal("unavailable") }),
-);
+/** Jev decides natural-language rules with the key `decisionProviderKeyFile` holds. */
+const decisionProvider = Schema.Struct({
+  kind: Schema.Literal("jev"),
+  model: Schema.NonEmptyTrimmedString,
+});
 
 const textRules = Schema.optionalWith(Schema.Array(TextRule), {
   default: () => [],
 });
 const defaultTextSettings = {
-  minimumProbability: 0.5,
+  minimumProbability: 0.8,
   maximumRequestBytes: 384_000,
   timeoutMilliseconds: 15_000,
 };
@@ -328,14 +352,15 @@ const defaultSettings = {
 
 const textDocument = Schema.Struct({
   fixedRules: textRules,
-  initialRules: textRules,
+  initialRules: Schema.optionalWith(Schema.Array(editableRuleSchema), {
+    default: () => [],
+  }),
   fixedBehaviors: Schema.optional(Schema.Array(Schema.String)),
   initialBehaviors: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const document = Schema.Struct({
   format: Schema.Literal(messagePolicyFormat),
-  mode: Schema.Literal("guidance", "enforcement"),
   text: Schema.optional(textDocument),
   decisionProvider: Schema.optional(decisionProvider),
   textSettings: Schema.optionalWith(Schema.Struct(TextPolicySettings.fields), {
@@ -385,8 +410,8 @@ export const decodeMessagePolicy = Schema.decodeUnknown(
   { onExcessProperty: "error" },
 );
 
-/** Limits each `BEHAVIOR.md` to 64 KiB. */
-export const MAXIMUM_BEHAVIOR_BYTES = 65_536;
+/** Limits each `BEHAVIOR.md`, and each norm document an edit adds, to 64 KiB. */
+export const MAXIMUM_DOCUMENT_BYTES = 65_536;
 
 /** YAML defines frontmatter syntax. Only Social Harness metadata rejects unknown fields. */
 const behaviorFrontmatter = Schema.Struct({
@@ -397,6 +422,7 @@ const behaviorFrontmatter = Schema.Struct({
       applies: TextRule.fields.applies,
       guidance: TextRule.fields.guidance,
       feedback: TextRule.fields.feedback,
+      action: TextRule.fields.action,
     }),
   }),
 });
@@ -404,13 +430,11 @@ const behaviorFrontmatter = Schema.Struct({
 type BehaviorRefusal = "frontmatter" | "schema";
 
 /** Loading validates provider parameters. Construction binds execution. */
-type LoadedDecisionProvider =
-  | { readonly kind: "unavailable" }
-  | {
-      readonly kind: "jev";
-      readonly model: string;
-      readonly apiKey: Redacted.Redacted;
-    };
+interface LoadedDecisionProvider {
+  readonly kind: "jev";
+  readonly model: string;
+  readonly apiKey: Redacted.Redacted;
+}
 
 const MAXIMUM_POLICY_BYTES = 1_048_576;
 
@@ -425,12 +449,14 @@ const decisionProviderKey = Schema.Trim.pipe(
   ),
 );
 
-/** Runtime configuration retains resolved rules and redacts the provider credential. */
+/**
+ * Runtime configuration retains resolved rules and redacts the provider
+ * credential. A policy that names no `decisionProvider` has no provider.
+ */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with resolved daemon configuration.
 export const installedMessagePolicy = Schema.Struct({
   policy: MessagePolicy,
-  provider: Schema.Union(
-    Schema.Struct({ kind: Schema.Literal("unavailable") }),
+  provider: Schema.optional(
     Schema.Struct({
       kind: Schema.Literal("jev"),
       model: Schema.String,
@@ -442,15 +468,25 @@ export const installedMessagePolicy = Schema.Struct({
 /** Contains validated policy and the provider parameters it selects. */
 export type LoadedMessagePolicy = typeof installedMessagePolicy.Type;
 
-/** Setup reads bounded UTF-8 credential files before validating the provider's token grammar. */
+/**
+ * Setup reads bounded UTF-8 credential files before validating the provider's
+ * token grammar. Like the policy file, the key file is read at its resolved
+ * path, so a symbolic link to it works, as a Kubernetes Secret volume
+ * presents every key.
+ */
 export function readPolicyCredential(
   path: Redacted.Redacted,
   grammar: Schema.Schema<string>,
 ) {
-  return readBoundedFile(Redacted.value(path), 16_384, () =>
-    policyConfigurationError("decision-provider-key-file"),
-  ).pipe(
-    Effect.mapError(() => ({ stage: "file" as const })),
+  return Effect.tryPromise({
+    try: () => realpath(Redacted.value(path)),
+    catch: () => ({ stage: "file" as const }),
+  }).pipe(
+    Effect.flatMap((canonical) =>
+      readBoundedFile(canonical, 16_384, () =>
+        policyConfigurationError("decision-provider-key-file"),
+      ).pipe(Effect.mapError(() => ({ stage: "file" as const }))),
+    ),
     Effect.flatMap((bytes) =>
       Effect.try({
         try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
@@ -489,13 +525,14 @@ export const loadMessagePolicy = (
       ),
     );
     const resolved = yield* resolveBehaviors(policy, dirname(path));
+    const provider = yield* loadDecisionProvider(
+      resolved,
+      configuration,
+      readCredential,
+    );
     return Option.some({
       policy: resolved,
-      provider: yield* loadDecisionProvider(
-        policy,
-        configuration,
-        readCredential,
-      ),
+      ...(provider === undefined ? {} : { provider }),
     });
   }).pipe(Effect.withSpan("loadMessagePolicy"));
 
@@ -508,7 +545,6 @@ interface BehaviorState {
 /** Operational evidence limits are part of the installed policy identity. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installation validates fixed settings with the same grammar retained audits decode.
 export const firewallConfigurationSchema = Schema.Struct({
-  mode: Schema.Literal("guidance", "enforcement"),
   facts: Schema.Array(OwnerFact),
   maximumHistoryRecords: Schema.Int.pipe(Schema.between(1, 1024)),
   maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
@@ -519,7 +555,7 @@ export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
  * Maps a `BEHAVIOR.md` to an editable rule. Callers must bound `bytes` by
- * {@link MAXIMUM_BEHAVIOR_BYTES}. Only a closed failure category reaches
+ * {@link MAXIMUM_DOCUMENT_BYTES}. Only a closed failure category reaches
  * `refused`. YAML diagnostics stay private.
  */
 export function decodeBehavior<Failure>(
@@ -619,7 +655,7 @@ function readBehavior(root: string, directory: string, path: string) {
     }
     const bytes = yield* readBoundedFile(
       locations.file,
-      MAXIMUM_BEHAVIOR_BYTES,
+      MAXIMUM_DOCUMENT_BYTES,
       refused,
     );
     return yield* decodeBehavior(bytes, refused);
@@ -659,7 +695,10 @@ function resolveBehaviors(policy: MessagePolicy, root: string) {
     const resolved: MessagePolicy = {
       ...policy,
       text: {
-        fixedRules: [...text.fixedRules, ...fixed],
+        fixedRules: [
+          ...text.fixedRules,
+          ...fixed.map((rule) => new TextRule(rule)),
+        ],
         initialRules: [...text.initialRules, ...initial],
       },
     };
@@ -808,14 +847,21 @@ function editSubject(
     : (place ?? rule);
 }
 
+/**
+ * A policy that names a `decisionProvider` reads its key, even without text
+ * rules of its own: the norms an agent holds can add rules for it to judge.
+ */
 function loadDecisionProvider(
   policy: MessagePolicy,
   configuration: PolicyConfiguration,
   readCredential: CredentialReader,
-): Effect.Effect<LoadedDecisionProvider, MessagePolicyConfigurationError> {
+): Effect.Effect<
+  LoadedDecisionProvider | undefined,
+  MessagePolicyConfigurationError
+> {
   const setting = policy.decisionProvider;
-  if (policy.text === undefined || setting?.kind !== "jev") {
-    return Effect.succeed({ kind: "unavailable" });
+  if (setting === undefined) {
+    return Effect.succeed(undefined);
   }
   return jevKey(configuration, readCredential).pipe(
     Effect.map((apiKey) => ({

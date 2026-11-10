@@ -67,6 +67,22 @@
       "reason": "Policy configuration and failures"
     },
     {
+      "file": "firewall/chain.ts",
+      "reason": "Rule chain: rules, matchers and their evaluation"
+    },
+    {
+      "file": "norms/matchers.ts",
+      "reason": "Norm checks a rule chain names"
+    },
+    {
+      "file": "norms/documents.ts",
+      "reason": "Norm documents"
+    },
+    {
+      "file": "norms/configuration.ts",
+      "reason": "A daemon's norms directory and the chain it applies"
+    },
+    {
       "file": "harness/startup.ts",
       "reason": "Process construction and trusted embedding services"
     },
@@ -97,6 +113,10 @@
     {
       "file": "communication/store.ts",
       "reason": "One private communication store owns SQL operations and row types."
+    },
+    {
+      "file": "firewall/editable-policy.ts",
+      "reason": "Editable policy edits and the norm documents the norms layer compiles"
     }
   ],
   "compositionRoots": [
@@ -169,9 +189,21 @@
       "entrypoints": [
         "src/firewall/service.ts",
         "src/firewall/check.ts",
-        "src/firewall/rules.ts"
+        "src/firewall/rules.ts",
+        "src/firewall/chain.ts",
+        "src/firewall/editable-policy.ts"
       ],
       "reason": "Policy, assessment and permitted content"
+    },
+    {
+      "name": "norms",
+      "roots": [
+        "src/norms"
+      ],
+      "entrypoints": [
+        "src/norms/configuration.ts"
+      ],
+      "reason": "Agreed norms: FIPA acts, protocols and the checks firewall rules name"
     },
     {
       "name": "harness",
@@ -230,6 +262,13 @@
         "vendor"
       ],
       "reason": "Host calls coordinate lower services"
+    },
+    {
+      "name": "norms",
+      "folders": [
+        "norms"
+      ],
+      "reason": "Norms check acts through matchers the firewall's rules name"
     },
     {
       "name": "firewall",

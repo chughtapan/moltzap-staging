@@ -252,6 +252,8 @@ function decodeToolResult(
       return Schema.decodeUnknown(
         toolDefinitions.read_firewall_decisions.output,
       )(value);
+    case "read_norms":
+      return Schema.decodeUnknown(toolDefinitions.read_norms.output)(value);
     default:
       return name satisfies never;
   }
@@ -341,6 +343,7 @@ function managementFailure(
       );
     case "send_message":
     case "status":
+    case "read_norms":
       return new McpToolError({ tool: name, reason: "tool-failed" });
     default:
       return name satisfies never;

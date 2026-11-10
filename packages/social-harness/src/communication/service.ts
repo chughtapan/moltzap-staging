@@ -15,32 +15,27 @@ import {
   Schema,
   Scope,
 } from "effect";
-import { randomBytes } from "node:crypto";
 import type {
-  AgentPublicKey,
-  AgentSigningAuthority,
-} from "../identity/keys.js";
+  CommunicationService,
+  CommunicationSettings,
+  Incoming,
+  Outgoing,
+} from "./contract.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import {
   type ClientRepresentationError,
-  decodeCanonical,
   encodeCanonical,
-  exactStruct,
   sameBytes,
 } from "../encoding/canonical-json.js";
 import {
-  compareAscii,
-  decodeCanonicalBase64Url,
-} from "../encoding/identifier.js";
-import {
   type AgentPublicKey as agentAgentPublicKey,
-  AgentCard,
   agentCardOf,
   AgentIdentityCard,
   type AgentName,
   type VerifiedAgentIdentityCard,
 } from "../identity/agent-cards.js";
 import { Registry } from "../identity/registry.js";
+import { makeClientServer } from "./client-server/delivery.js";
 import { makeRequests } from "./collectives.js";
 import {
   type EndpointEngine,
@@ -53,28 +48,26 @@ import {
   verifyStoredMembership,
 } from "./conversations/history.js";
 import {
+  checkPublishedRecords,
+  readMemberships,
+  readRecentConversation,
+  readUnpreparedMessages,
+} from "./conversations/store.js";
+import {
   CommunicationError,
   isTerminalSendFailure,
   SendError,
 } from "./errors.js";
+import { messageHistory } from "./history.js";
 import {
-  type CollectiveId,
   compareAgentIds,
-  conversationNameKey,
-  conversationSortKey,
-  maximumMembers,
   Message,
   messageInterpretation,
   messageMembers,
   type MessageReference,
-  type PaginatedRequest,
-  type PaginatedResult,
-  ReceivedRequest,
-  Request,
   type RequestError,
-  RequestResult,
-  ResultSources,
 } from "./messages.js";
+import { bindCommunicationMode } from "./mode.js";
 import {
   type DecodedOuterBody,
   decodeOuterBody,
@@ -92,125 +85,39 @@ import {
 import {
   type EndpointStoreError,
   failMessage,
-  hasPendingMessages,
   initializeCommunication,
   readAcceptedMessage,
-  readStoredConversation as readConversation,
-  readMemberships,
-  readRecentConversation,
-  readUnpreparedMessages,
   acceptMessage as storedAcceptMessage,
+  type StoredMessage,
 } from "./store.js";
 
-/** All conversation members, in ascending agent-name order. */
-export type Conversation = readonly [
-  Message["author"],
-  Message["author"],
-  ...Array<Message["author"]>,
-];
-/** Omit cursor to begin a live participant traversal. */
-export interface ConversationQuery extends PaginatedRequest {}
-/** A missing nextCursor ends the live traversal. */
-interface ConversationPage extends PaginatedResult {
-  readonly conversations: readonly Conversation[];
-}
-/** Selects a paged forward traversal or one bounded recent window. */
-export type HistoryQuery =
-  | (PaginatedRequest & {
-      readonly members: Conversation;
-      readonly order?: "oldest";
-      readonly afterMessage?: MessageReference;
-    })
-  | {
-      readonly members: Conversation;
-      readonly order: "newest";
-      readonly limit: number;
-      readonly beforeMessage?: MessageReference;
-    };
-/** Messages retain conversation order and count only their encoded value bytes. */
-export interface HistoryPage extends PaginatedResult {
-  readonly entries: ReadonlyArray<{
-    readonly message: Message;
-    readonly messageBytes: number;
-  }>;
-  readonly earlierMessagesOmitted: boolean;
-  readonly pendingOutgoing: boolean;
-}
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Named Effect schemas and their decoded values share one public contract. */
-/** Encodes the fixed semantic work that Communication accepts. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
-export const Outgoing = Schema.Union(Message, Request);
-/** Final outgoing work is fixed before policy assessment. */
-export type Outgoing = typeof Outgoing.Type;
-/** Incoming work retains encoded Message values at storage boundaries. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
-export const Incoming = Schema.Union(
-  exactStruct({ kind: Schema.Literal("message"), message: Message }),
-  exactStruct({ kind: Schema.Literal("request"), message: ReceivedRequest }),
-  exactStruct({
-    kind: Schema.Literal("result"),
-    result: RequestResult,
-    sources: ResultSources,
-  }),
-  exactStruct({
-    kind: Schema.Literal("request-failed"),
-    request: Request,
-    error: Schema.String,
-  }),
-);
-/** Incoming work awaits local policy before the host receives it. */
-export type Incoming = typeof Incoming.Type;
-
-interface CommunicationService {
-  /**
-   * Returns after durable acceptance. Certification continues in the layer's
-   * scope after caller cancellation. Retry the same `Message` or `Request`,
-   * retaining its `msgId` or `operationId`.
-   */
-  readonly send: (
-    value: Outgoing,
-  ) => Effect.Effect<void, CommunicationError | RequestError>;
-  /** Checks current answer eligibility without reserving the request. */
-  readonly getRequest: (
-    operationId: CollectiveId,
-  ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
-  /**
-   * Waits for a locally authored message to certify, or reports its retained
-   * terminal failure. Unknown references fail with `unknown-message`.
-   * Cancellation stops this wait and leaves accepted work running.
-   */
-  readonly waitForMessage: (
-    reference: MessageReference,
-  ) => Effect.Effect<Message, CommunicationError>;
-  /**
-   * Calls the handler for incoming work and retires the item after success.
-   * Failed or interrupted handling leaves it pending. Failed retirement can
-   * replay a successfully handled item, so handlers must tolerate repeats.
-   */
-  readonly consume: <E, R>(
-    handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
-  ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
-  /** Finds a retained certified conversation by all member names, including self. */
-  readonly getConversation: (
-    names: readonly AgentName[],
-  ) => Effect.Effect<Conversation | undefined, CommunicationError>;
-  /** Lists retained conversations. Cursors expire when this service instance ends. */
-  readonly listConversations: (
-    query?: ConversationQuery,
-  ) => Effect.Effect<ConversationPage, CommunicationError>;
-  /** Reads verified application messages. Continuation cursors require this service instance. */
-  readonly readHistory: (
-    query: HistoryQuery,
-  ) => Effect.Effect<HistoryPage, CommunicationError>;
-}
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
+/** Semantic handoffs are shared by every delivery mode. */
+export {
+  type Conversation,
+  type ConversationQuery,
+  type HistoryPage,
+  type HistoryQuery,
+  Incoming,
+  Outgoing,
+} from "./contract.js";
 
 /** Owns durable message delivery, request completion and verified history. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService
 >() {
+  /** Configuration is checked before the daemon serves or restores any agent. */
+  static configureTransport(
+    transport:
+      | { readonly kind: "p2p" }
+      | { readonly kind: "client-server"; readonly serverAgentName: AgentName },
+  ) {
+    return bindCommunicationMode(
+      transport.kind,
+      transport.kind === "client-server" ? transport.serverAgentName : "",
+    );
+  }
+
   /**
    * Runs delivery and request workers until the layer's scope closes. Reopen
    * the same SQL store with the same identity and key to resume accepted work.
@@ -218,15 +125,13 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
   static layer(settings: CommunicationSettings) {
     return Layer.scoped(Communication, makeCommunicationLayer(settings));
   }
-}
 
-/** Signing and Registry authority belong to the one configured local agent. */
-interface CommunicationSettings {
-  readonly agentKey: string;
-  readonly identityCard: VerifiedAgentIdentityCard;
-  readonly maximumHistoryRecords?: number;
-  readonly signingAuthority: AgentSigningAuthority;
-  readonly registrySignerPublicKey: AgentPublicKey;
+  /** Direct client/server delivery shares message storage with peer communication. */
+  static clientServerLayer(
+    settings: CommunicationSettings & { readonly serverAgentName: AgentName },
+  ) {
+    return Layer.scoped(Communication, makeClientServer(settings));
+  }
 }
 
 interface Environment {
@@ -234,7 +139,6 @@ interface Environment {
   readonly sql: SqlClient;
   readonly registry: Context.Tag.Service<typeof Registry>;
   readonly router: Context.Tag.Service<typeof Router>;
-  readonly session: string;
   readonly failure: Deferred.Deferred<never, CommunicationError>;
   readonly scope: Scope.Scope;
   readonly ready: Deferred.Deferred<EndpointEngine>;
@@ -277,180 +181,6 @@ const initializationFailureReasons = {
   Record<EngineInitializationError["reason"], CommunicationError["reason"]>
 >;
 
-// safer-arch-ignore no-module-cycle: History imports only service contract types; the service supplies its implementation.
-
-const conversationCursor = Schema.Struct({
-  operation: Schema.Literal("conversations"),
-  session: Schema.String,
-  after: Schema.String,
-});
-
-const historyCursor = Schema.Struct({
-  operation: Schema.Literal("history"),
-  session: Schema.String,
-  conversation: Schema.String,
-  after: Schema.String,
-  position: Schema.String,
-});
-
-const membershipRow = Schema.Struct({
-  conversation_id: Schema.String,
-  membership_hash: Schema.String,
-  canonical_membership: Schema.Uint8ArrayFromSelf,
-  sort_key: Schema.String,
-});
-
-const listConversations = Effect.fn("Communication.listConversations")(
-  function* (
-    agentKey: string,
-    query: ConversationQuery,
-    reader: {
-      readonly local: VerifiedAgentIdentityCard;
-      readonly signer: agentAgentPublicKey;
-      readonly session: string;
-    },
-  ) {
-    const { local, signer, session } = reader;
-    let after = "";
-    if (query.cursor !== undefined) {
-      const cursor = yield* decodeCursor(conversationCursor, query.cursor);
-      if (cursor.session !== session) {
-        return yield* invalidCursor();
-      }
-      after = cursor.after;
-    }
-    const sql = yield* SqlClient;
-    const rows = yield* withAgentTransaction(
-      agentKey,
-      sql<Readonly<Record<string, unknown>>>`
-      SELECT membership.conversation_id,membership.membership_hash,membership.canonical_membership,membership.sort_key
-      FROM memberships AS membership JOIN conversation_state AS state
-        ON state.agent_key=membership.agent_key AND state.conversation_id=membership.conversation_id
-      WHERE membership.agent_key=${agentKey} AND state.head_record_hash IS NOT NULL AND membership.sort_key > ${after}
-      ORDER BY membership.sort_key LIMIT 51`,
-    );
-    const selected = rows.slice(0, 50);
-    const conversations = yield* Effect.forEach(
-      selected,
-      (row) => conversationEntry(row, local, signer),
-      { concurrency: 1 },
-    );
-    const last = selected.at(-1);
-    const nextCursor =
-      rows.length > 50 && last !== undefined
-        ? yield* encodeCursor(conversationCursor)({
-            operation: "conversations",
-            session,
-            after: yield* Schema.decodeUnknown(Schema.String)(last.sort_key),
-          })
-        : undefined;
-    return {
-      conversations,
-      ...(nextCursor === undefined ? {} : { nextCursor }),
-    } satisfies ConversationPage;
-  },
-  mapHistoryErrors,
-);
-
-const getConversation = Effect.fn("Communication.getConversation")(function* (
-  agentKey: string,
-  names: readonly AgentName[],
-  local: VerifiedAgentIdentityCard,
-  signer: agentAgentPublicKey,
-) {
-  if (
-    names.length < 2 ||
-    names.length > maximumMembers ||
-    new Set(names).size !== names.length ||
-    !names.includes(local.agentName)
-  ) {
-    return yield* new CommunicationError({ reason: "membership-invalid" });
-  }
-  const sql = yield* SqlClient;
-  const [row] = yield* withAgentTransaction(
-    agentKey,
-    sql<Readonly<Record<string, unknown>>>`
-    SELECT membership.conversation_id,membership.membership_hash,membership.canonical_membership,membership.sort_key
-    FROM memberships AS membership JOIN conversation_state AS state
-      ON state.agent_key=membership.agent_key AND state.conversation_id=membership.conversation_id
-    WHERE membership.agent_key=${agentKey} AND state.head_record_hash IS NOT NULL AND membership.sort_key=${conversationNameKey(names, local.agentName)}`,
-  );
-  return row === undefined
-    ? undefined
-    : yield* conversationEntry(row, local, signer);
-}, mapHistoryErrors);
-
-/** History returns only application messages, preserving one fixed private-log boundary. */
-const readHistory = Effect.fn("Communication.readHistory")(function* (
-  agentKey: string,
-  query: HistoryQuery,
-  reader: {
-    readonly local: VerifiedAgentIdentityCard;
-    readonly signer: agentAgentPublicKey;
-    readonly session: string;
-    readonly maximumHistoryRecords: number;
-  },
-) {
-  const { local, signer, session, maximumHistoryRecords } = reader;
-  const members = query.members;
-  const conversationId = yield* historyConversationId(
-    query,
-    local,
-    maximumHistoryRecords,
-  );
-  const resume =
-    query.order !== "newest" && query.cursor !== undefined
-      ? yield* decodeCursor(historyCursor, query.cursor)
-      : undefined;
-  const after =
-    query.order !== "newest" && query.afterMessage !== undefined
-      ? `${query.afterMessage.authorAgentId}:${query.afterMessage.msgId}`
-      : "";
-  if (
-    resume !== undefined &&
-    (resume.session !== session ||
-      resume.conversation !== conversationId ||
-      resume.after !== after)
-  ) {
-    return yield* invalidCursor();
-  }
-  const [stored] = yield* readMemberships(agentKey, conversationId);
-  if (stored === undefined) {
-    if (query.order === "newest" && query.beforeMessage === undefined) {
-      return {
-        entries: [],
-        earlierMessagesOmitted: false,
-        pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
-      };
-    }
-    return yield* historyGap();
-  }
-  const verified = yield* verifyStoredMembership(stored, signer);
-  const byName = (left: AgentCard, right: AgentCard) =>
-    compareAscii(left.agentName, right.agentName);
-  if (
-    !Schema.equivalence(Schema.Array(AgentCard))(
-      [...members].sort(byName),
-      verified.members.map(agentCardOf).sort(byName),
-    )
-  ) {
-    return yield* new CommunicationError({ reason: "membership-invalid" });
-  }
-  const page =
-    query.order === "newest"
-      ? yield* readNewest(agentKey, query, conversationId, signer)
-      : yield* readOldest(agentKey, query, {
-          conversationId,
-          signer,
-          session,
-          initialPosition: resume?.position,
-        });
-  return {
-    ...page,
-    pendingOutgoing: yield* hasPendingMessages(agentKey, conversationId),
-  } satisfies HistoryPage;
-}, mapHistoryErrors);
-
 /** Caller failures distinguish refusal from retained or uncertain progress. */
 export { CommunicationError } from "./errors.js";
 /** Messages and requests retain the same semantic values at every service handoff. */
@@ -483,6 +213,7 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
   const agentKey = settings.agentKey;
 
   return Effect.gen(function* () {
+    yield* bindCommunicationMode("p2p");
     yield* initializeCommunication(agentKey, settings.identityCard).pipe(
       Effect.catchTag(
         "EndpointStoreError",
@@ -501,7 +232,6 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
       faults: yield* Deferred.make<never, EndpointStoreError>(),
       failure: yield* Deferred.make<never, CommunicationError>(),
       consumer: yield* Effect.makeSemaphore(1),
-      session: randomBytes(16).toString("base64url"),
     };
     yield* acquireCommunication(environment, settings.identityCard, workers);
     const provideSql = Effect.provideService(SqlClient, environment.sql);
@@ -521,6 +251,18 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
         provideSql,
         Effect.raceFirst(Deferred.await(environment.failure)),
       );
+    const history = messageHistory({
+      agentKey,
+      check: checkPublishedRecords(agentKey).pipe(mapHistoryErrors),
+      local: settings.identityCard,
+      maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
+      verify: (rows) =>
+        verifyPublishedMessages(
+          agentKey,
+          settings.registrySignerPublicKey,
+          rows,
+        ),
+    });
     return {
       send: (value) => capture(acceptOutgoing(environment, requests, value)),
       getRequest: (operationId) => capture(requests.getRequest(operationId)),
@@ -532,32 +274,10 @@ function makeCommunicationLayer(settings: CommunicationSettings) {
             Effect.raceFirst(requests.failed),
           ),
         ),
-      getConversation: (names) =>
-        capture(
-          getConversation(
-            agentKey,
-            names,
-            settings.identityCard,
-            settings.registrySignerPublicKey,
-          ),
-        ),
+      getConversation: (names) => capture(history.getConversation(names)),
       listConversations: (query = {}) =>
-        capture(
-          listConversations(agentKey, query, {
-            local: settings.identityCard,
-            signer: settings.registrySignerPublicKey,
-            session: environment.session,
-          }),
-        ),
-      readHistory: (query) =>
-        capture(
-          readHistory(agentKey, query, {
-            local: settings.identityCard,
-            signer: settings.registrySignerPublicKey,
-            session: environment.session,
-            maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
-          }),
-        ),
+        capture(history.listConversations(query)),
+      readHistory: (query) => capture(history.readHistory(query)),
     } satisfies Context.Tag.Service<typeof Communication>;
   }).pipe(
     Effect.mapError(workerFailure),
@@ -941,247 +661,6 @@ function workerFailure(error: WorkerFailure): CommunicationError {
   return new CommunicationError({ reason: workerFailureReasons[error._tag] });
 }
 
-function conversationEntry(
-  row: Readonly<Record<string, unknown>>,
-  local: VerifiedAgentIdentityCard,
-  signer: agentAgentPublicKey,
-): Effect.Effect<Conversation, CommunicationError> {
-  return Effect.gen(function* () {
-    const stored = yield* Schema.decodeUnknown(membershipRow)(row);
-    const membership = yield* verifyStoredMembership(
-      {
-        conversationId: stored.conversation_id,
-        membershipHash: stored.membership_hash,
-        canonicalMembership: stored.canonical_membership,
-      },
-      signer,
-    );
-    const members = membership.members
-      .map(agentCardOf)
-      .sort((left, right) => compareAscii(left.agentName, right.agentName));
-    if (
-      !members.some((member) => member.agentId === local.agentId) ||
-      conversationSortKey(members, local.agentId) !== stored.sort_key
-    ) {
-      return yield* historyGap();
-    }
-    const [first, second, ...rest] = members;
-    if (first === undefined || second === undefined) {
-      return yield* historyGap();
-    }
-    return [first, second, ...rest] satisfies Conversation;
-  }).pipe(mapHistoryErrors);
-}
-
-/** Typed participants still need a coherent local selection and a bounded window. */
-function historyConversationId(
-  query: HistoryQuery,
-  local: VerifiedAgentIdentityCard,
-  maximumHistoryRecords: number,
-) {
-  return Effect.gen(function* () {
-    const members = query.members;
-    if (
-      members.length < 2 ||
-      members.length > maximumMembers ||
-      new Set(members.map((member) => member.agentId)).size !==
-        members.length ||
-      new Set(members.map((member) => member.agentName)).size !== members.length
-    ) {
-      return yield* new CommunicationError({ reason: "membership-invalid" });
-    }
-    if (
-      query.order === "newest" &&
-      (!Number.isSafeInteger(query.limit) ||
-        query.limit < 1 ||
-        query.limit > maximumHistoryRecords)
-    ) {
-      return yield* new CommunicationError({ reason: "content-invalid" });
-    }
-    if (!members.some((member) => member.agentId === local.agentId)) {
-      return yield* new CommunicationError({ reason: "membership-invalid" });
-    }
-    const ids = members.map((member) => member.agentId).sort(compareAgentIds);
-    const [first, second, ...rest] = ids;
-    if (first === undefined || second === undefined) {
-      return yield* historyGap();
-    }
-    return yield* deriveConversationId([first, second, ...rest]);
-  });
-}
-
-function readOldest(
-  agentKey: string,
-  query: Extract<HistoryQuery, { readonly order?: "oldest" }>,
-  reader: {
-    readonly conversationId: string;
-    readonly signer: agentAgentPublicKey;
-    readonly session: string;
-    readonly initialPosition?: string;
-  },
-) {
-  const { conversationId, signer, session, initialPosition } = reader;
-  return Effect.gen(function* () {
-    const after =
-      query.afterMessage === undefined
-        ? ""
-        : `${query.afterMessage.authorAgentId}:${query.afterMessage.msgId}`;
-    let position = initialPosition;
-    const entries: Array<{
-      readonly message: Message;
-      readonly messageBytes: number;
-    }> = [];
-    let firstPage = true;
-    while (firstPage || position !== undefined) {
-      firstPage = false;
-      const request =
-        position === undefined
-          ? {
-              conversationId,
-              ...(query.afterMessage === undefined
-                ? {}
-                : {
-                    afterRecordHash: yield* boundaryRecord(
-                      agentKey,
-                      conversationId,
-                      query.afterMessage,
-                    ),
-                  }),
-              maximumRecords: 50 - entries.length,
-            }
-          : { continuation: position, maximumRecords: 50 - entries.length };
-      const page = yield* readConversation(agentKey, request);
-      const records = yield* readStoredHistory(signer, page, page.records);
-      entries.push(...(yield* applicationEntries(records)));
-      position = page.continuation ?? undefined;
-      if (entries.length === 50 || position === undefined) {
-        break;
-      }
-    }
-    if (
-      position !== undefined &&
-      !(yield* hasLaterApplicationMessage(agentKey, position, signer))
-    ) {
-      position = undefined;
-    }
-    const nextCursor =
-      position === undefined
-        ? undefined
-        : yield* encodeCursor(historyCursor)({
-            operation: "history",
-            session,
-            conversation: conversationId,
-            after,
-            position,
-          });
-    return {
-      entries,
-      ...(nextCursor === undefined ? {} : { nextCursor }),
-      earlierMessagesOmitted: query.afterMessage !== undefined,
-    };
-  });
-}
-
-/** A continuation is present only when an application message remains in its fixed window. */
-function hasLaterApplicationMessage(
-  agentKey: string,
-  initialPosition: string,
-  signer: agentAgentPublicKey,
-) {
-  return Effect.gen(function* () {
-    let position: string | undefined = initialPosition;
-    while (position !== undefined) {
-      const page: Effect.Effect.Success<ReturnType<typeof readConversation>> =
-        yield* readConversation(agentKey, { continuation: position });
-      const records = yield* readStoredHistory(signer, page, page.records);
-      for (const record of records) {
-        if (yield* isApplicationMessage(record.message)) {
-          return true;
-        }
-      }
-      position = page.continuation ?? undefined;
-    }
-    return false;
-  });
-}
-
-function readNewest(
-  agentKey: string,
-  query: Extract<HistoryQuery, { readonly order: "newest" }>,
-  conversationId: string,
-  signer: agentAgentPublicKey,
-) {
-  return Effect.gen(function* () {
-    let before =
-      query.beforeMessage === undefined
-        ? undefined
-        : yield* boundaryRecord(agentKey, conversationId, query.beforeMessage);
-    const entries: Array<{
-      readonly message: Message;
-      readonly messageBytes: number;
-    }> = [];
-    while (entries.length <= query.limit) {
-      const snapshot = yield* readRecentConversation(agentKey, {
-        conversationId,
-        maximumRecords: Math.min(50, query.limit + 1 - entries.length),
-        ...(before === undefined ? {} : { candidateRecordHash: before }),
-      });
-      const records = yield* readStoredHistory(
-        signer,
-        snapshot,
-        snapshot.records,
-      );
-      const boundary = before;
-      const candidates =
-        boundary === undefined
-          ? records
-          : records.filter((record) => record.recordHash !== boundary);
-      if (candidates.length === 0) {
-        break;
-      }
-      entries.push(...(yield* applicationEntries(candidates)));
-      before = candidates.at(-1)?.recordHash;
-    }
-    return {
-      entries: entries.slice(0, query.limit).reverse(),
-      earlierMessagesOmitted: entries.length > query.limit,
-    };
-  });
-}
-
-function applicationEntries(
-  records: ReadonlyArray<{ readonly message: Message }>,
-) {
-  return Effect.forEach(
-    records,
-    (record) =>
-      Effect.gen(function* () {
-        if (!(yield* isApplicationMessage(record.message))) {
-          return [];
-        }
-        return [
-          {
-            message: record.message,
-            messageBytes: (yield* encodeCanonical(Message, record.message))
-              .byteLength,
-          },
-        ];
-      }),
-    { concurrency: 1 },
-  ).pipe(Effect.map((entries) => entries.flat()));
-}
-
-/** Reserved close and malformed traffic stays in the private log. */
-function isApplicationMessage(message: Message) {
-  return messageInterpretation(message).pipe(
-    Effect.match({
-      onFailure: () => false,
-      onSuccess: (value) =>
-        Option.isNone(value) || value.value.kind !== "close",
-    }),
-  );
-}
-
 function boundaryRecord(
   agentKey: string,
   conversationId: string,
@@ -1201,21 +680,6 @@ function boundaryRecord(
     }
     return yield* Schema.decodeUnknown(RecordHash)(row.record_hash);
   });
-}
-
-function decodeCursor<A, I>(schema: Schema.Schema<A, I>, cursor: string) {
-  return Effect.fromNullable(decodeCanonicalBase64Url(cursor)).pipe(
-    Effect.mapError(invalidCursor),
-    Effect.flatMap((bytes) => decodeCanonical(schema, bytes)),
-    Effect.mapError(invalidCursor),
-  );
-}
-
-function encodeCursor<A, I>(schema: Schema.Schema<A, I>) {
-  return (cursor: A) =>
-    encodeCanonical(schema, cursor).pipe(
-      Effect.map((bytes) => Buffer.from(bytes).toString("base64url")),
-    );
 }
 
 function mapHistoryErrors<A, E, R>(effect: Effect.Effect<A, E, R>) {
@@ -1262,4 +726,51 @@ function invalidCursor() {
 
 function historyGap() {
   return new CommunicationError({ reason: "history-gap" });
+}
+
+/** A valid certificate must certify the exact shared message and its retained position. */
+function verifyPublishedMessages(
+  agentKey: string,
+  signer: agentAgentPublicKey,
+  rows: readonly StoredMessage[],
+) {
+  return Effect.forEach(
+    rows,
+    (row) =>
+      Effect.gen(function* () {
+        const hash = yield* boundaryRecord(agentKey, row.conversationId, {
+          authorAgentId: row.message.author.agentId,
+          msgId: row.message.msgId,
+        });
+        const sql = yield* SqlClient;
+        const [position] = yield* withAgentTransaction(
+          agentKey,
+          sql<{
+            ordinal: number;
+          }>`SELECT ordinal FROM certified_records WHERE agent_key=${agentKey} AND conversation_id=${row.conversationId} AND record_hash=${hash}`,
+        );
+        const snapshot = yield* readRecentConversation(agentKey, {
+          conversationId: row.conversationId,
+          maximumRecords: 1,
+          candidateRecordHash: hash,
+        });
+        const verified = yield* readStoredHistory(
+          signer,
+          snapshot,
+          snapshot.records,
+        );
+        const record = verified.find((item) => item.recordHash === hash);
+        if (
+          record === undefined ||
+          position?.ordinal !== row.ordinal ||
+          !sameBytes(
+            yield* encodeCanonical(Message, record.message),
+            yield* encodeCanonical(Message, row.message),
+          )
+        ) {
+          return yield* historyGap();
+        }
+      }),
+    { concurrency: 1, discard: true },
+  ).pipe(mapHistoryErrors);
 }

@@ -63,7 +63,7 @@ export function openCollectives(input: FixtureInput = {}) {
     const complete = database
       .run(
         database.sql.unsafe(
-          "UPDATE message_intents SET completed_record_hash=msg_id WHERE completed_record_hash IS NULL AND failure_reason IS NULL",
+          "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE failure_reason IS NULL ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
         ),
       )
       .pipe(Effect.asVoid);
@@ -238,7 +238,7 @@ function createTransport(
         if (!input.pendingCompletion) {
           const sql = yield* SqlClient;
           yield* sql.unsafe(
-            "UPDATE message_intents SET completed_record_hash=msg_id WHERE author_agent_id=? AND msg_id=?",
+            "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE author_agent_id=? AND msg_id=? ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
             [message.author.agentId, message.msgId],
           );
         }

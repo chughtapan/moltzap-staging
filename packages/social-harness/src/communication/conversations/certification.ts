@@ -49,19 +49,7 @@ import {
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
 } from "../router/connection.js";
-import {
-  applyCertifiedRecord,
-  type ConversationFoundation,
-  type EndpointStoreError,
-  isSemanticStoreRejection,
-  lockFirstMessageProposal,
-  lockProposal,
-  promoteRecord,
-  type ProposalLock,
-  readRecordOutbound,
-  mergeEvidence as storedMergeEvidence,
-  supersedeProposalLock,
-} from "../store.js";
+import { type EndpointStoreError, isSemanticStoreRejection } from "../store.js";
 import {
   evidenceMatchesFold,
   type EvidenceRoute,
@@ -74,6 +62,17 @@ import {
   stagedRecord,
   storedCertifiedRecord,
 } from "./history.js";
+import {
+  applyCertifiedRecord,
+  type ConversationFoundation,
+  lockFirstMessageProposal,
+  lockProposal,
+  promoteRecord,
+  type ProposalLock,
+  readRecordOutbound,
+  mergeEvidence as storedMergeEvidence,
+  supersedeProposalLock,
+} from "./store.js";
 
 // safer-arch-ignore no-module-cycle: Conversation state imports are type-only; runtime dependencies point into the algorithms.
 // safer-arch-ignore no-fat-orchestrator: One private operation owns the complete certification lifecycle inside Communication.
