@@ -48,6 +48,7 @@ import {
   loadAgentRegistration,
   localOwner,
   type OwnerAccount,
+  serverAgentOwner,
 } from "./ownership.js";
 import { SocialHarness } from "./social-harness.js";
 
@@ -62,19 +63,29 @@ export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
 function runDaemon() {
   return Effect.gen(function* () {
     const access = yield* databaseAccess;
-    const { settings, agent } = yield* loadDaemonSettings();
+    const { settings, agent, serverAgentCredential } =
+      yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
       yield* Communication.configureTransport(settings.transport);
       if (settings.authentication.kind === "local") {
         yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agent);
       }
+      if (settings.transport.kind === "client-server") {
+        yield* getOrCreateOwnedAgent(serverAgentOwner, access.unlockKey, {
+          agentName: settings.transport.serverAgentName,
+        });
+      }
       const network = yield* Layer.build(networkLayer(settings));
       const selectApp = yield* makeAgentSelector(
         settings,
         access.unlockKey,
       ).pipe(Effect.provide(network));
-      const app = yield* makeMcpHttpApp(settings.authentication, selectApp);
+      const app = yield* makeMcpHttpApp(
+        settings.authentication,
+        selectApp,
+        serverAgentCredential,
+      );
       yield* serveMcp(settings.port, app, settings.host);
       yield* Console.log(
         `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
@@ -143,15 +154,22 @@ const withheldReply = (hasNorms: boolean) =>
     : "Your message was not accepted: it breaks a rule this agent applies to incoming messages.";
 
 /**
- * An agent's part in client/server mode, or `peer` in P2P mode. The server
- * agent is the one whose registered name the settings give; every other agent
- * of the daemon is a client.
+ * An agent's part: a peer in P2P mode, or in client/server mode the server
+ * agent or one of its clients. The server agent is the one whose registered
+ * name the settings give. A client knows the server agent's address, the only
+ * one it exchanges messages with.
  */
 const roleOf = (settings: DaemonSettings, agentName: string) => {
   if (settings.transport.kind !== "client-server") {
-    return "peer";
+    return { kind: "peer" } as const;
   }
-  return settings.transport.serverAgentName === agentName ? "server" : "client";
+  const { serverAgentName } = settings.transport;
+  return serverAgentName === agentName
+    ? ({ kind: "server" } as const)
+    : ({
+        kind: "client",
+        serverAgent: MessageAddressInput.make(`agent:${serverAgentName}`),
+      } as const);
 };
 
 /** What every agent of the daemon is built from. */
@@ -199,7 +217,7 @@ function agentChecks(
 ) {
   const { settings, norms } = daemon;
   const firewall =
-    role === "client"
+    role.kind === "client"
       ? Firewall.layer(agentKey)
       : Firewall.layer(
           agentKey,
@@ -211,7 +229,7 @@ function agentChecks(
     return firewall;
   }
   return (
-    role === "client" ? serverAgentsNorms(daemon) : HeldNorms.layer(norms)
+    role.kind === "client" ? serverAgentsNorms(daemon) : HeldNorms.layer(norms)
   ).pipe(Layer.provideMerge(firewall));
 }
 
@@ -268,9 +286,8 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
             }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
-          hideGroups:
-            settings.transport.kind === "client-server" || settings.hideGroups,
-          ...(role === "server"
+          hideGroups: role.kind !== "peer" || settings.hideGroups,
+          ...(role.kind === "server"
             ? { withheldReply: withheldReply(norms !== undefined) }
             : {}),
         },
@@ -283,7 +300,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
         ),
       ),
     );
-    if (role === "server") {
+    if (role.kind === "server") {
       yield* Ref.set(
         daemon.serverAgentNorms,
         Context.getOption(services, HeldNorms),
@@ -305,16 +322,9 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
     const app = yield* makeAgentMcpApp({
       webhook,
       stopped,
-      hideCollectives:
-        settings.transport.kind === "client-server" || settings.hideCollectives,
+      hideCollectives: role.kind !== "peer" || settings.hideCollectives,
       serverAgent:
-        settings.transport.kind === "client-server" && role === "client"
-          ? Option.some(
-              MessageAddressInput.make(
-                `agent:${settings.transport.serverAgentName}`,
-              ),
-            )
-          : Option.none(),
+        role.kind === "client" ? Option.some(role.serverAgent) : Option.none(),
       implementation: { name: "sharnessd", version: packageVersion },
     }).pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(

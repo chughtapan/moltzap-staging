@@ -1,0 +1,1 @@
+In client/server mode the daemon creates and registers the server agent under `serverAgentName` when it starts, and the server agent signs in with the secret in `SHARNESS_SERVER_AGENT_CREDENTIAL`. Setting up the server agent no longer takes two starts.

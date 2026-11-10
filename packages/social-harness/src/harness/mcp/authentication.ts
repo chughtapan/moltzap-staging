@@ -1,11 +1,15 @@
-/** @file Request admission for one owner's configured OAuth resource or local bearer. */
+/** @file Request admission by OAuth, the local bearer, or the server agent's credential. */
 
 import { FetchHttpClient, HttpClient } from "@effect/platform";
-import { Data, Effect, Redacted, Schema } from "effect";
+import { Data, Effect, Option, Redacted, Schema } from "effect";
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { DaemonSettings } from "../config.js";
-import { localOwner, type OwnerAccount } from "../ownership.js";
+import {
+  localOwner,
+  type OwnerAccount,
+  serverAgentOwner,
+} from "../ownership.js";
 
 const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
   new URL(
@@ -19,7 +23,7 @@ export type McpAuthentication = DaemonSettings["authentication"];
 type OAuthResource = Extract<McpAuthentication, { readonly kind: "oauth" }>;
 
 /** The verified account selects an agent; expiry bounds the admitted response stream. */
-export interface McpAdmission {
+interface McpAdmission {
   readonly owner: OwnerAccount;
   readonly expiresAt?: number;
 }
@@ -45,15 +49,57 @@ export const protectedResourceResponse = (oauth: OAuthResource): Response =>
     { headers: { "cache-control": "no-store" } },
   );
 
-/** One cached verifier serves every request, including Events and receipts. */
+/** Decides whether a request is admitted, and as which owner. */
+type Admit = (
+  request: Request,
+) => Effect.Effect<McpAdmission, AuthenticationRefused>;
+
+/** Admits by `first`, or by `second` when `first` refuses. */
+const either =
+  (first: Admit, second: Admit): Admit =>
+  (request) =>
+    Effect.orElse(first(request), () => second(request));
+
+/**
+ * One cached verifier serves every request, including Events and receipts. A
+ * request carrying the server agent's credential is admitted as the server
+ * agent; any other goes through the configured authentication.
+ */
 export function makeRequestAdmission(
   authentication: McpAuthentication,
-): Effect.Effect<
-  (request: Request) => Effect.Effect<McpAdmission, AuthenticationRefused>,
-  AuthenticationRefused
-> {
+  serverAgentCredential: Option.Option<Redacted.Redacted>,
+): Effect.Effect<Admit, AuthenticationRefused> {
+  return Effect.map(configuredAdmission(authentication), (admit) =>
+    Option.match(serverAgentCredential, {
+      onNone: () => admit,
+      onSome: (credential) =>
+        either(bearerAdmission(credential, serverAgentOwner), admit),
+    }),
+  );
+}
+
+/** Rejected requests disclose only the standard discovery challenge. */
+export function authenticationChallenge(
+  authentication: McpAuthentication,
+): Response {
+  const challenge =
+    authentication.kind === "local"
+      ? "Bearer"
+      : `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.resource)}"`;
+  return new Response("Unauthorized", {
+    status: 401,
+    headers: { "www-authenticate": challenge, "cache-control": "no-store" },
+  });
+}
+
+/** Admission by the configured local bearer or OAuth resource. */
+function configuredAdmission(
+  authentication: McpAuthentication,
+): Effect.Effect<Admit, AuthenticationRefused> {
   if (authentication.kind === "local") {
-    return Effect.succeed(bearerAdmission(authentication.credential));
+    return Effect.succeed(
+      bearerAdmission(authentication.credential, localOwner),
+    );
   }
   const oauth = authentication;
   return discoverKeys(oauth).pipe(
@@ -84,20 +130,6 @@ export function makeRequestAdmission(
   );
 }
 
-/** Rejected requests disclose only the standard discovery challenge. */
-export function authenticationChallenge(
-  authentication: McpAuthentication,
-): Response {
-  const challenge =
-    authentication.kind === "local"
-      ? "Bearer"
-      : `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.resource)}"`;
-  return new Response("Unauthorized", {
-    status: 401,
-    headers: { "www-authenticate": challenge, "cache-control": "no-store" },
-  });
-}
-
 const digest = (value: string): Uint8Array =>
   createHash("sha256").update(value).digest();
 
@@ -106,12 +138,13 @@ function bearer(request: Request): string {
   return /^Bearer +/iu.test(value) ? value.replace(/^Bearer +/iu, "") : "";
 }
 
-function bearerAdmission(credential: Redacted.Redacted) {
+/** Admits a request whose bearer is `credential`, as `owner`. */
+function bearerAdmission(credential: Redacted.Redacted, owner: OwnerAccount) {
   return (
     request: Request,
   ): Effect.Effect<McpAdmission, AuthenticationRefused> =>
     timingSafeEqual(digest(bearer(request)), digest(Redacted.value(credential)))
-      ? Effect.succeed({ owner: localOwner })
+      ? Effect.succeed({ owner })
       : Effect.fail(new AuthenticationRefused());
 }
 

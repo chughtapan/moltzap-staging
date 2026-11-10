@@ -30,7 +30,6 @@ import { processTrace } from "../scenario-fixture.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
-  configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   type ProcessInfrastructure,
@@ -40,6 +39,19 @@ import {
 } from "./daemon-fixture.js";
 import { connect, issuerFixture, requiredScope } from "./oauth-fixture.js";
 import { acquirePostgres } from "./postgres-fixture.js";
+
+/** An account that owns one agent of the daemon. */
+interface Owner {
+  readonly issuer: string;
+  readonly subject: string;
+}
+
+/** In client/server mode Alice is the server agent, which the daemon creates and its own credential admits. */
+const SERVER_AGENT_NAME = "alice-server";
+const SERVER_AGENT_OWNER: Owner = {
+  issuer: "urn:social-harness:server-agent",
+  subject: "owner",
+};
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and closed tool outcomes are external conformance contracts. */
 /** The existing tools return each caller's retained view without consuming delivery. */
@@ -73,12 +85,18 @@ function expectConversation(
 }
 
 /** The public challenge must not allocate durable owner state. */
-function expectUnauthenticated(endpoint: URL, sql: SqlClient.SqlClient) {
+function expectUnauthenticated(
+  endpoint: URL,
+  sql: SqlClient.SqlClient,
+  ownersAtStart: number,
+) {
   return Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     const refused = yield* client.post(endpoint.href);
     expect(refused.status).toBe(401);
-    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(
+      ownersAtStart,
+    );
   }).pipe(Effect.provide(NodeHttpClient.layer));
 }
 
@@ -87,6 +105,7 @@ function expectFailedAgentIsolation(input: {
   readonly sql: SqlClient.SqlClient;
   readonly fixture: DaemonProcessFixture;
   readonly running: RunningProcess;
+  readonly aliceOwner: Owner;
   readonly aliceToken: string;
   readonly bobToken: string;
   readonly expectedStatus: unknown;
@@ -95,7 +114,7 @@ function expectFailedAgentIsolation(input: {
   return Effect.gen(function* () {
     const [alice] = yield* sql<
       Record<"agent_key", string>
-    >`SELECT agent_key FROM owner_bindings WHERE subject = 'alice'`;
+    >`SELECT agent_key FROM owner_bindings WHERE issuer = ${input.aliceOwner.issuer} AND subject = ${input.aliceOwner.subject}`;
     if (alice === undefined) {
       return yield* Effect.dieMessage("Expected Alice's owner binding");
     }
@@ -157,7 +176,7 @@ function cancelFirstAcquisition(input: {
   readonly infrastructure: ProcessInfrastructure;
   readonly endpoint: URL;
   readonly sql: SqlClient.SqlClient;
-  readonly issuer: string;
+  readonly aliceOwner: Owner;
   readonly aliceToken: string;
   readonly bob: Client;
   readonly bobStatus: unknown;
@@ -185,12 +204,22 @@ function cancelFirstAcquisition(input: {
       })
       .pipe(Effect.either, Effect.forkScoped);
     const before = yield* Effect.iterate(
-      yield* ownerProfile(input.sql, input.issuer, "alice"),
+      yield* ownerProfile(
+        input.sql,
+        input.aliceOwner.issuer,
+        input.aliceOwner.subject,
+      ),
       {
         while: (profile) => profile === undefined,
         body: () =>
           Effect.sleep("10 millis").pipe(
-            Effect.andThen(ownerProfile(input.sql, input.issuer, "alice")),
+            Effect.andThen(
+              ownerProfile(
+                input.sql,
+                input.aliceOwner.issuer,
+                input.aliceOwner.subject,
+              ),
+            ),
           ),
       },
     ).pipe(Effect.timeout("10 seconds"));
@@ -205,9 +234,13 @@ function cancelFirstAcquisition(input: {
     yield* Effect.sync(resume);
     const alice = yield* connect(input.endpoint, input.aliceToken);
     const status = yield* call(alice, { name: "status", arguments: {} });
-    expect(yield* ownerProfile(input.sql, input.issuer, "alice")).toEqual(
-      before,
-    );
+    expect(
+      yield* ownerProfile(
+        input.sql,
+        input.aliceOwner.issuer,
+        input.aliceOwner.subject,
+      ),
+    ).toEqual(before);
     return { alice, status };
   }).pipe(Effect.provide(NodeHttpClient.layer));
 }
@@ -389,7 +422,7 @@ const openSharedDaemon = (
             ? {
                 transport: {
                   kind: "client-server",
-                  serverAgentName: "bootstrap",
+                  serverAgentName: SERVER_AGENT_NAME,
                 },
               }
             : {}),
@@ -406,17 +439,22 @@ const openSharedDaemon = (
     const sql = yield* openRuntimeDatabase(fixture);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     yield* removeInitialCopies(fixture);
-    let daemon = yield* acquireDaemonProcess(fixture);
-    yield* expectUnauthenticated(fixture.endpoint, sql);
-    const aliceToken = yield* issuer.token("alice", resource.href);
+    const daemon = yield* acquireDaemonProcess(fixture);
+    yield* expectUnauthenticated(fixture.endpoint, sql, central ? 1 : 0);
+    const aliceOwner = central
+      ? SERVER_AGENT_OWNER
+      : { issuer: issuer.issuer, subject: "alice" };
+    const aliceToken = central
+      ? fixture.serverAgentCredential
+      : yield* issuer.token("alice", resource.href);
     const bobToken = yield* issuer.token("bob", resource.href);
-    let bob = yield* connect(fixture.endpoint, bobToken);
+    const bob = yield* connect(fixture.endpoint, bobToken);
     const b = yield* call(bob, { name: "status", arguments: {} });
-    let { alice, status: a } = yield* cancelFirstAcquisition({
+    const { alice, status: a } = yield* cancelFirstAcquisition({
       infrastructure,
       endpoint: fixture.endpoint,
       sql,
-      issuer: issuer.issuer,
+      aliceOwner,
       aliceToken,
       bob,
       bobStatus: b,
@@ -428,18 +466,6 @@ const openSharedDaemon = (
       Schema.decodeUnknown(AgentIdentityCard)(a.identityCard),
       Schema.decodeUnknown(AgentIdentityCard)(b.identityCard),
     ]);
-    if (central) {
-      yield* stopProcess(daemon);
-      yield* configureDaemonFixture(fixture, {
-        transport: {
-          kind: "client-server",
-          serverAgentName: aliceCard.agentName,
-        },
-      });
-      daemon = yield* acquireDaemonProcess(fixture);
-      alice = yield* connect(fixture.endpoint, aliceToken);
-      bob = yield* connect(fixture.endpoint, bobToken);
-    }
     const bobAddress = AgentAddress.make(`agent:${bobCard.agentName}`);
     const aliceAddress = AgentAddress.make(`agent:${aliceCard.agentName}`);
     return {
@@ -449,6 +475,7 @@ const openSharedDaemon = (
       fixture,
       sql,
       daemon,
+      aliceOwner,
       aliceToken,
       bobToken,
       alice,
@@ -527,6 +554,7 @@ const scenario = (
       sql,
       daemon,
       issuer,
+      aliceOwner,
       aliceToken,
       bobToken,
       alice,
@@ -601,6 +629,7 @@ const scenario = (
       sql,
       fixture,
       running: restoredDaemon,
+      aliceOwner,
       aliceToken,
       bobToken,
       expectedStatus: b,

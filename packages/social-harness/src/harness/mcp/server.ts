@@ -16,6 +16,7 @@ import {
   JSONSchema,
   Match,
   Option,
+  type Redacted,
   Schema,
   type Scope,
   Stream,
@@ -333,8 +334,12 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   selectApp: (
     owner: OwnerAccount,
   ) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>,
+  serverAgentCredential: Option.Option<Redacted.Redacted>,
 ) {
-  const admit = yield* makeRequestAdmission(authentication);
+  const admit = yield* makeRequestAdmission(
+    authentication,
+    serverAgentCredential,
+  );
   return guardMcp(selectApp, authentication, admit);
 });
 

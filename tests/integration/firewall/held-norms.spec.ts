@@ -27,10 +27,8 @@ import { callTool as call } from "../../../plugins/shared/mcp-client.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
-  configureDaemonFixture,
   makeDaemonProcessFixture,
   reservePort,
-  stopProcess,
 } from "../daemon/daemon-fixture.js";
 import {
   connect,
@@ -207,7 +205,7 @@ const serverOwnsNorms = Effect.gen(function* () {
     {
       settings: {
         port,
-        transport: { kind: "client-server", serverAgentName: "bootstrap" },
+        transport: { kind: "client-server", serverAgentName: "norms-server" },
         authentication: {
           kind: "oauth",
           resource: resource.href,
@@ -221,21 +219,12 @@ const serverOwnsNorms = Effect.gen(function* () {
       },
     },
   );
-  const serverToken = yield* issuer.token("server", resource.href);
   const clientToken = yield* issuer.token("client", resource.href);
-  const enrolling = yield* acquireDaemonProcess(fixture);
-  const serverAddress = yield* connect(fixture.endpoint, serverToken).pipe(
-    Effect.flatMap(addressOf),
-  );
-  yield* stopProcess(enrolling);
-  yield* configureDaemonFixture(fixture, {
-    transport: {
-      kind: "client-server",
-      serverAgentName: serverAddress.slice("agent:".length),
-    },
-  });
   yield* acquireDaemonProcess(fixture);
-  const server = yield* connect(fixture.endpoint, serverToken);
+  const server = yield* connect(
+    fixture.endpoint,
+    fixture.serverAgentCredential,
+  );
   const client = yield* connect(fixture.endpoint, clientToken);
 
   yield* call(server, {

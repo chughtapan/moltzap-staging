@@ -125,15 +125,15 @@ const publicOAuth = exactStruct({
     { default: () => [] },
   ),
 });
+/** A secret a caller presents as an HTTP bearer. */
+const bearerSecret = Schema.String.pipe(
+  Schema.minLength(32),
+  Schema.maxLength(512),
+  Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
+);
 const localBearer = exactStruct({
   kind: Schema.Literal("local"),
-  credential: Schema.Redacted(
-    Schema.String.pipe(
-      Schema.minLength(32),
-      Schema.maxLength(512),
-      Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
-    ),
-  ),
+  credential: Schema.Redacted(bearerSecret),
 });
 
 const commonFields = {
@@ -196,6 +196,7 @@ export const processHelp = [
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
   "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
   "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key",
+  "SHARNESS_SERVER_AGENT_CREDENTIAL: in client/server mode, the secret the server agent signs in with",
   "Deployment prepares the database schema and encryption verifier before startup.",
   "Standard OTEL_* variables configure telemetry.",
 ].join("\n");
@@ -290,9 +291,38 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
   );
   return {
     settings: captured,
+    serverAgentCredential: yield* serverAgentCredential(captured),
     ...(document.agent === undefined ? {} : { agent: document.agent }),
   };
 }, Effect.withSpan("loadDaemonSettings"));
+
+/**
+ * The secret the server agent signs in with, from the environment so that it
+ * is never written to a file. Client/server mode requires it. P2P mode has no
+ * server agent and does not read it.
+ */
+function serverAgentCredential(captured: DaemonSettings) {
+  return Effect.gen(function* () {
+    const configured = yield* Config.option(
+      Config.redacted("SHARNESS_SERVER_AGENT_CREDENTIAL"),
+    ).pipe(Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()));
+    if (captured.transport.kind !== "client-server") {
+      return Option.none<Redacted.Redacted>();
+    }
+    if (Option.isNone(configured)) {
+      return yield* refused(
+        "environment",
+        "Set SHARNESS_SERVER_AGENT_CREDENTIAL to the secret the server agent signs in with: 32 to 512 letters, digits or -._~+/ characters",
+      );
+    }
+    return Schema.is(bearerSecret)(Redacted.value(configured.value))
+      ? configured
+      : yield* refused(
+          "environment",
+          "SHARNESS_SERVER_AGENT_CREDENTIAL must be 32 to 512 letters, digits or -._~+/ characters",
+        );
+  });
+}
 
 /** The settings document's norms directory, read and checked. */
 function configuredNorms(directory: string) {
