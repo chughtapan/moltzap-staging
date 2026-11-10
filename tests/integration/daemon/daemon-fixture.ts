@@ -1069,22 +1069,15 @@ function managementOperations(client: Client): DaemonManagementClient {
     identityCard: () =>
       management.status().pipe(
         Effect.flatMap((status) =>
-          status.kind === "registered"
-            ? Schema.decodeUnknown(AgentIdentityCard)(status.identityCard).pipe(
-                Effect.catchTag(
-                  "ParseError",
-                  (cause) =>
-                    new ProcessTestError({
-                      message: "the daemon's identity card did not decode",
-                      cause,
-                    }),
-                ),
-              )
-            : Effect.fail(
-                new ProcessTestError({
-                  message: "the daemon has not registered",
-                }),
-              ),
+          Schema.decodeUnknown(AgentIdentityCard)(status.identityCard),
+        ),
+        Effect.catchTag(
+          "ParseError",
+          (cause) =>
+            new ProcessTestError({
+              message: "the daemon's identity card did not decode",
+              cause,
+            }),
         ),
       ),
     status: () =>

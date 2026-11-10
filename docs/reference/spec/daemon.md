@@ -150,9 +150,10 @@ that cannot start or whose worker stops receives HTTP 503; other agents keep
 serving. A stopped worker context requires a daemon restart to recover.
 
 The daemon generates each agent's principal, registration operation and signing
-key and saves them. Network registration reuses the same operation and signing
-key after interruption. `status` reports the saved identity. Canceling a
-request does not undo a registration that succeeds.
+key and saves them. An agent registers with the Registry before it serves its
+first request, and its saved identity card is reused after that. An agent that
+cannot register is unavailable until a later request registers it with the same
+operation and signing key.
 
 ## Firewalls
 
@@ -182,9 +183,8 @@ using JSON Schema 2020-12.
 
 ## MCP interface
 
-The daemon exposes one tool catalog for registration, status, messaging,
-history, policy and delivery. One authenticated connection
-can call every operation. Operations that use an identity require registration.
+The daemon exposes one tool catalog for status, messaging, history, policy and
+delivery. One authenticated connection can call every operation.
 
 The firewall checks new messages. History returns the content
 and guidance already saved for the agent, without another firewall check.

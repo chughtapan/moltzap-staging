@@ -1,7 +1,7 @@
 /** @file Saves local registration and resolves verified agent identities. */
 
-import { SqlClient } from "@effect/sql";
-import { Context, Data, Effect, Layer, Option, Ref, Schema } from "effect";
+import type { SqlClient } from "@effect/sql";
+import { Context, Data, Effect, Layer, Schema } from "effect";
 
 import { executeQuery, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
@@ -170,8 +170,6 @@ export class RegistrationError extends Schema.TaggedError<RegistrationError>()(
       "key_already_registered",
       "idempotency_conflict",
       "dependency-unavailable",
-      "persistence-failed",
-      "incompatible-daemon",
     ),
   },
 ) {}
@@ -183,30 +181,24 @@ export interface RegistrationRequest {
   readonly agentName: AgentName;
 }
 
-/** A saved identity is available before communication recovery finishes. */
-export type IdentityState =
-  | Readonly<{ kind: "unregistered" }>
-  | Readonly<{ kind: "registered"; identityCard: VerifiedAgentIdentityCard }>;
-
 interface IdentityService {
-  /** Reports saved registration independently of communication startup. */
-  readonly me: () => Effect.Effect<IdentityState>;
-  /** Saves the verified card before returning. Retry an interrupted call with the same request. */
-  readonly register: (
-    request: RegistrationRequest,
-  ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
+  /** This agent's registered identity. */
+  readonly me: VerifiedAgentIdentityCard;
   /** Resolves names in input order and identifies the first name that fails. */
   readonly resolve: (
     names: readonly AgentName[],
   ) => Effect.Effect<readonly AgentCard[], IdentityError>;
 }
 
-/** Reports saved registration and resolves other agents to verified identities. */
+/** Holds this agent's registered identity and resolves other agents to verified identities. */
 export class Identity extends Context.Tag("SocialHarness/Identity")<
   Identity,
   IdentityService
 >() {
-  /** Verifies saved registration against the configured Registry signer and agent key. */
+  /**
+   * Opens the saved identity, checked against the Registry signer and agent
+   * key, or registers the agent and saves its card when none is saved.
+   */
   static readonly layer = identityLayer;
 }
 
@@ -214,60 +206,36 @@ interface IdentitySettings {
   readonly agentKey: string;
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly signingAuthority: AgentSigningAuthority;
+  readonly registration: RegistrationRequest;
 }
 
 function identityLayer(
   settings: IdentitySettings,
-): Layer.Layer<Identity, IdentityError, Registry | SqlClient.SqlClient> {
+): Layer.Layer<
+  Identity,
+  IdentityError | RegistrationError,
+  Registry | SqlClient.SqlClient
+> {
   return Layer.effect(
     Identity,
     Effect.gen(function* () {
-      const current = yield* Ref.make(
-        Option.fromNullable(
-          yield* readSavedIdentity({
-            agentKey: settings.agentKey,
-            registrySignerPublicKey: settings.registrySignerPublicKey,
-            agentPublicKey: AgentSigningAuthority.publicKey(
-              settings.signingAuthority,
-            ),
-          }),
+      const registry = yield* Registry;
+      const saved = yield* readSavedIdentity({
+        agentKey: settings.agentKey,
+        registrySignerPublicKey: settings.registrySignerPublicKey,
+        agentPublicKey: AgentSigningAuthority.publicKey(
+          settings.signingAuthority,
         ),
-      );
-      return yield* makeIdentity(settings, current);
+      });
+      return Identity.of({
+        me: saved ?? (yield* register(settings, registry)),
+        resolve: (names) =>
+          Effect.forEach(names, (name) => resolveAgent(registry, name), {
+            concurrency: 1,
+          }),
+      });
     }),
   );
-}
-
-function makeIdentity(
-  settings: IdentitySettings,
-  current: Ref.Ref<Option.Option<VerifiedAgentIdentityCard>>,
-) {
-  return Effect.gen(function* () {
-    const registry = yield* Registry;
-    const sql = yield* SqlClient.SqlClient;
-    const gate = yield* Effect.makeSemaphore(1);
-    return Identity.of({
-      me: () =>
-        Ref.get(current).pipe(
-          Effect.map(
-            (card): IdentityState =>
-              Option.isSome(card)
-                ? { kind: "registered", identityCard: card.value }
-                : { kind: "unregistered" },
-          ),
-        ),
-      register: (request) =>
-        gate.withPermits(1)(
-          registerLocal(request, settings, registry, current).pipe(
-            Effect.provideService(SqlClient.SqlClient, sql),
-          ),
-        ),
-      resolve: (names) =>
-        Effect.forEach(names, (name) => resolveAgent(registry, name), {
-          concurrency: 1,
-        }),
-    });
-  });
 }
 
 function resolveAgent(
@@ -299,41 +267,22 @@ function resolveFailure(agentName: AgentName): IdentityError {
   return new IdentityError({ reason: "dependency-unavailable", agentName });
 }
 
-function registerLocal(
-  request: RegistrationRequest,
+/** Registers with the same operation, principal, name and key on every attempt, so a retry is safe. */
+function register(
   settings: IdentitySettings,
   registry: Context.Tag.Service<typeof Registry>,
-  current: Ref.Ref<Option.Option<VerifiedAgentIdentityCard>>,
 ) {
   return Effect.gen(function* () {
     const result = yield* registry
       .register({
-        request: { ...request },
+        request: settings.registration,
         signingAuthority: settings.signingAuthority,
       })
       .pipe(Effect.mapError(registrationFailure));
     if (result.kind !== "registered") {
       return yield* new RegistrationError({ reason: result.kind });
     }
-    const card = result.identityCard;
-    yield* saveIdentity(settings.agentKey, card).pipe(
-      Effect.catchTag("IdentityError", (error) =>
-        Effect.fail(
-          new RegistrationError({
-            reason:
-              error.reason === "persistence-failed"
-                ? "persistence-failed"
-                : "incompatible-daemon",
-          }),
-        ),
-      ),
-      Effect.tap(() =>
-        Ref.update(current, (saved) =>
-          Option.isSome(saved) ? saved : Option.some(card),
-        ),
-      ),
-      Effect.uninterruptible,
-    );
-    return card;
+    yield* saveIdentity(settings.agentKey, result.identityCard);
+    return result.identityCard;
   });
 }

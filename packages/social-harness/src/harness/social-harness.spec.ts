@@ -142,84 +142,32 @@ function localFailure(subject: Fixture, recipient?: AgentCard) {
 }
 
 // @agent-code-guard/regression-only: These timelines cover cancellation, restart, ordering and atomic publication through real SQLite.
-it("requires saved registration before serving agent operations", () =>
+it("reuses the saved identity without calling the Registry again", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({ registerOnStart: false });
-    expect(yield* runtime.harness.listInbox().pipe(Effect.flip)).toMatchObject({
-      reason: "not-registered",
-    });
-    expect(
-      yield* runtime.harness
-        .send({ to: bobAddress, text: "Hello" })
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "not-registered" });
-    expect(
-      yield* runtime.harness
-        .readHistory({ address: bobAddress })
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "not-registered" });
-    expect(
-      yield* runtime.harness.listConversations().pipe(Effect.flip),
-    ).toMatchObject({ reason: "not-registered" });
-  }));
-
-it("finishes registration and activates communication when the caller cancels", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const entered = yield* Deferred.make<undefined>();
-    const release = yield* Deferred.make<undefined>();
     const scope = yield* Scope.make();
-    const runtime = yield* subject
-      .open({
-        registerOnStart: false,
-        beforeRegistration: Deferred.succeed(entered, undefined).pipe(
-          Effect.zipRight(Deferred.await(release)),
-        ),
-      })
-      .pipe(Scope.extend(scope));
-    const caller = yield* runtime.harness
-      .register(subject.request)
-      .pipe(Effect.forkScoped);
-    yield* Deferred.await(entered);
-    expect(Exit.isInterrupted(yield* Fiber.interrupt(caller))).toBe(true);
-    yield* Deferred.succeed(release, undefined);
-    yield* Deferred.await(subject.activated).pipe(Effect.timeout("10 seconds"));
-    expect(yield* runtime.identity.me()).toMatchObject({
-      kind: "registered",
-    });
-    yield* runtime.harness.send({
-      to: bobAddress,
-      text: "Registration completed",
-    });
+    const runtime = yield* subject.open().pipe(Scope.extend(scope));
     yield* Scope.close(scope, Exit.void);
     const reopened = yield* subject.open({
       beforeRegistration: Effect.dieMessage(
         "Saved registration must not call Registry again",
       ),
     });
-    expect(yield* reopened.identity.me()).toMatchObject({
-      kind: "registered",
-    });
+    expect(reopened.identity.me).toEqual(runtime.identity.me);
     expect((yield* reopened.harness.listInbox()).items).toEqual([]);
   }));
 
-it("serves saved identity and inbox while communication starts", () =>
+it("serves the inbox while communication starts", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
     const runtime = yield* subject.open({
-      registerOnStart: false,
       startCommunication: Deferred.succeed(entered, undefined).pipe(
         Effect.zipRight(Deferred.await(release)),
       ),
     });
-    yield* runtime.harness
-      .register(subject.request)
-      .pipe(Effect.timeout("5 seconds"));
     yield* Deferred.await(entered);
-    expect(yield* runtime.identity.me()).toMatchObject({ kind: "registered" });
     expect((yield* runtime.harness.listInbox()).items).toEqual([]);
     yield* Deferred.succeed(release, undefined);
     yield* runtime.harness.send({

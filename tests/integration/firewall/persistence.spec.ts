@@ -80,8 +80,8 @@ const scenario = Effect.gen(function* () {
     );
     const identity = Identity.layer({
       agentKey,
-      signingAuthority: registration.signingAuthority,
       registrySignerPublicKey: settings.registrySignerPublicKey,
+      ...registration,
     }).pipe(
       Layer.provide(
         Registry.layer({
@@ -98,8 +98,7 @@ const scenario = Effect.gen(function* () {
       Layer.provideMerge(identity),
     );
     const result = yield* Effect.gen(function* () {
-      const identityService = yield* Identity;
-      const card = yield* identityService.register(registration.registration);
+      const card = (yield* Identity).me;
       const firewall = yield* Firewall;
       const message = yield* Message.create({
         author: card,
@@ -134,8 +133,8 @@ const scenario = Effect.gen(function* () {
   yield* Effect.gen(function* () {
     const identity = Identity.layer({
       agentKey: saved.agentKey,
-      signingAuthority: saved.registration.signingAuthority,
       registrySignerPublicKey: saved.settings.registrySignerPublicKey,
+      ...saved.registration,
     }).pipe(
       Layer.provide(
         Registry.layer({

@@ -61,8 +61,6 @@ const registerFixture = (fixture: DaemonProcessFixture) =>
   Effect.scoped(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.status()).toMatchObject({ kind: "registered" });
-
       const registered = yield* management.identityCard();
       const agentCard = registered;
       expect(agentCard).toMatchObject({

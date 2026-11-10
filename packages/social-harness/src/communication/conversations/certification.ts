@@ -493,7 +493,6 @@ const reproposalDispositionByReason = {
   "membership-invalid": "fail",
   "network-unavailable": "ignore",
   "delivery-pending": "ignore",
-  "not-registered": "fail",
   "persistence-failed": "fail",
   "unknown-agent": "fail",
   "version-mismatch": "fail",

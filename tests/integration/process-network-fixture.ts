@@ -133,17 +133,15 @@ function readAgent(fixture: DaemonProcessFixture) {
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       const status = yield* management.status();
-      return status.kind === "registered"
-        ? yield* Schema.decodeUnknown(AgentIdentityCard)(
-            status.identityCard,
-          ).pipe(
-            Effect.map(({ agentId, agentName, principalId }) => ({
-              agentId,
-              agentName,
-              principalId,
-            })),
-          )
-        : yield* processTestError("started daemon is not registered");
+      return yield* Schema.decodeUnknown(AgentIdentityCard)(
+        status.identityCard,
+      ).pipe(
+        Effect.map(({ agentId, agentName, principalId }) => ({
+          agentId,
+          agentName,
+          principalId,
+        })),
+      );
     }),
   );
 }

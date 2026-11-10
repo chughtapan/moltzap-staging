@@ -20,16 +20,6 @@ import {
 import { RegistrationId, Registry, RegistryError } from "./registry.js";
 import { Identity } from "./service.js";
 
-function requestFor(fixture: IdentityFixture) {
-  return {
-    operationId: RegistrationId.make(
-      `opn_${Encoding.encodeBase64Url(new Uint8Array(16))}`,
-    ),
-    principalId: fixture.identityCard.principalId,
-    agentName: fixture.identityCard.agentName,
-  };
-}
-
 function registryFor(
   fixture: IdentityFixture,
 ): Context.Tag.Service<typeof Registry> {
@@ -58,6 +48,7 @@ function openIdentity(
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         fixture.registryAuthority,
       ),
+      registration: requestFor(fixture),
     }).pipe(
       Layer.provide(Layer.succeed(Registry, registry)),
       Layer.provide(
@@ -67,6 +58,16 @@ function openIdentity(
       ),
     ),
   ).pipe(Effect.map((context) => Context.get(context, Identity)));
+}
+
+function requestFor(fixture: IdentityFixture) {
+  return {
+    operationId: RegistrationId.make(
+      `opn_${Encoding.encodeBase64Url(new Uint8Array(16))}`,
+    ),
+    principalId: fixture.identityCard.principalId,
+    agentName: fixture.identityCard.agentName,
+  };
 }
 
 it("keeps two agents' saved identity cards separate in one database", () =>
@@ -88,8 +89,6 @@ it("keeps two agents' saved identity cards separate in one database", () =>
       registryFor(second),
       { agentKey: "second" },
     );
-    yield* firstIdentity.register(requestFor(first));
-    yield* secondIdentity.register(requestFor(second));
     const reopenedFirst = yield* openIdentity(
       filename,
       first,
@@ -102,8 +101,8 @@ it("keeps two agents' saved identity cards separate in one database", () =>
       registryFor(second),
       { agentKey: "second" },
     );
-    expect(yield* reopenedFirst.me()).toEqual(yield* firstIdentity.me());
-    expect(yield* reopenedSecond.me()).toEqual(yield* secondIdentity.me());
+    expect(reopenedFirst.me).toEqual(firstIdentity.me);
+    expect(reopenedSecond.me).toEqual(secondIdentity.me);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 describe("Identity", () => {
@@ -123,14 +122,7 @@ describe("Identity", () => {
             fixture,
             registryFor(fixture),
           );
-          expect(yield* identity.me()).toEqual({ kind: "unregistered" });
-          expect(yield* identity.register(requestFor(fixture))).toBe(
-            fixture.identityCard,
-          );
-          expect(yield* identity.me()).toEqual({
-            kind: "registered",
-            identityCard: fixture.identityCard,
-          });
+          expect(identity.me).toBe(fixture.identityCard);
         }),
       );
       yield* Effect.scoped(
@@ -140,25 +132,19 @@ describe("Identity", () => {
             register: () =>
               Effect.dieMessage("a saved registration is not sent again"),
           });
-          expect(yield* identity.me()).toEqual({
-            kind: "registered",
-            identityCard: fixture.identityCard,
-          });
+          expect(identity.me).toEqual(fixture.identityCard);
         }),
       );
     }).pipe(Effect.provide(NodeContext.layer)));
 
-  it("keeps a refused registration unregistered", () =>
+  it("does not open when the Registry refuses the name", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
-      const identity = yield* openIdentity(":memory:", fixture, {
+      const refusal = yield* openIdentity(":memory:", fixture, {
         ...registryFor(fixture),
         register: () => Effect.succeed({ kind: "name_taken" }),
-      });
-      expect(
-        yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
-      ).toMatchObject({ reason: "name_taken" });
-      expect(yield* identity.me()).toEqual({ kind: "unregistered" });
+      }).pipe(Effect.flip);
+      expect(refusal).toMatchObject({ reason: "name_taken" });
     }));
 
   it("refuses saved registration when the configured signing key changes", () =>
@@ -172,12 +158,7 @@ describe("Identity", () => {
       const filename = join(directory, "identity.sqlite3");
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const identity = yield* openIdentity(
-            filename,
-            fixture,
-            registryFor(fixture),
-          );
-          yield* identity.register(requestFor(fixture));
+          yield* openIdentity(filename, fixture, registryFor(fixture));
         }),
       );
       const refusal = yield* openIdentity(
@@ -188,17 +169,14 @@ describe("Identity", () => {
       expect(refusal).toMatchObject({ reason: "incompatible-daemon" });
     }).pipe(Effect.provide(NodeContext.layer)));
 
-  it("projects admission refusal without assigning registration", () =>
+  it("does not open when the Registry refuses admission", () =>
     Effect.gen(function* () {
       const fixture = yield* makeIdentityFixture;
-      const identity = yield* openIdentity(":memory:", fixture, {
+      const refusal = yield* openIdentity(":memory:", fixture, {
         ...registryFor(fixture),
         register: () => new RegistryError({ reason: "admission-refused" }),
-      });
-      expect(
-        yield* identity.register(requestFor(fixture)).pipe(Effect.flip),
-      ).toMatchObject({ reason: "admission-refused" });
-      expect(yield* identity.me()).toEqual({ kind: "unregistered" });
+      }).pipe(Effect.flip);
+      expect(refusal).toMatchObject({ reason: "admission-refused" });
     }));
 
   it("resolves cards in input order and identifies the first missing name", () =>

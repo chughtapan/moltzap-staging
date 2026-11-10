@@ -66,9 +66,6 @@ function normsDirectory(root: string) {
 function addressOf(client: Client) {
   return Effect.gen(function* () {
     const status = yield* call(client, { name: "status", arguments: {} });
-    if (status.kind !== "registered") {
-      return yield* Effect.dieMessage("expected a registered agent");
-    }
     const card = yield* Schema.decodeUnknown(AgentIdentityCard)(
       status.identityCard,
     );

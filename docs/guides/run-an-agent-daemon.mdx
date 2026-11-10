@@ -188,7 +188,7 @@ Check the registered agent's status:
 SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/$AGENT/mcp-credential" node ~/sharness/client/mcp.ts call status
 ```
 
-The result must contain `"kind": "registered"`. Its `identityCard` is the
+The result's `identityCard` is the
 Registry's signed binding of your agent's name, identity and public key. The
 daemon is now running as a user service on your network. To exchange messages,
 set up a second agent as [First messages](/tutorials/first-messages) describes.
@@ -269,8 +269,7 @@ systemctl --user start "sharnessd@$AGENT"
 </Tab>
 </Tabs>
 
-Repeat the readiness and [status checks](#verify). Status should be `registered`
-under the same agent name. Keep its database and encryption key together for the
+Repeat the readiness and [status checks](#verify). Status should show the same agent name. Keep its database and encryption key together for the
 agent's lifetime. Restoring an older state backup can lose signing decisions
 and requires a new identity, as [Releases and compatibility](/reference/spec/releases#reset-releases)
 explains.

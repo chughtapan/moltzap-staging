@@ -476,7 +476,6 @@ function sendFailure(error: SendError) {
       return new CommunicationError({ reason: "certification-unavailable" });
     case "invalid-address":
     case "unknown-agent":
-    case "not-registered":
       return new CommunicationError({ reason: "membership-invalid" });
     case "content-invalid":
     case "membership-invalid":

@@ -108,9 +108,7 @@ function identity(fixture: DaemonProcessFixture) {
       Schema.decode(Schema.parseJson(toolDefinitions.status.output))(stdout),
     ),
     Effect.flatMap((status) =>
-      status.kind === "registered"
-        ? Schema.decodeUnknown(AgentIdentityCard)(status.identityCard)
-        : Effect.dieMessage("operator status did not contain a saved identity"),
+      Schema.decodeUnknown(AgentIdentityCard)(status.identityCard),
     ),
   );
 }

@@ -268,6 +268,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
       agentKey,
       signingAuthority: registration.signingAuthority,
       registrySignerPublicKey: settings.registrySignerPublicKey,
+      registration: registration.registration,
     });
     const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
@@ -302,11 +303,6 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
       yield* Ref.set(
         daemon.serverAgentNorms,
         Context.getOption(services, HeldNorms),
-      );
-    }
-    if ((yield* Context.get(services, Identity).me()).kind === "unregistered") {
-      yield* Context.get(services, SocialHarness).register(
-        registration.registration,
       );
     }
     const callbackClient = yield* Layer.build(webhookHttpClientLayer);
@@ -366,7 +362,6 @@ export {
 /** Local identity and registration remain independent of delivery recovery. */
 export {
   Identity,
-  type IdentityState,
   RegistrationError,
   type RegistrationRequest,
 } from "../identity/service.js";

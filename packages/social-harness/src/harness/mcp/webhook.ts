@@ -219,18 +219,14 @@ const checkRegistration = (runtime: WebhookRuntime, id: string) =>
 const activateRegistration = (
   runtime: WebhookRuntime,
   input: EventSubscribeInput,
-  verification: {
-    readonly generation: number;
-    readonly authorize: Effect.Effect<void, ProtocolError>;
-  },
+  generation: number,
 ) =>
   runtime.gate.withPermits(1)(
     Effect.gen(function* () {
-      yield* verification.authorize;
       const { url, secret } = input.delivery;
       const id = subscriptionId(url);
       yield* checkRegistration(runtime, id);
-      if (verification.generation !== runtime.generation) {
+      if (generation !== runtime.generation) {
         return yield* Effect.fail(
           new ProtocolError(-32012, "Subscription changed during verification"),
         );
@@ -249,11 +245,7 @@ const activateRegistration = (
     }).pipe(Effect.uninterruptible),
   );
 
-const subscribe = (
-  runtime: WebhookRuntime,
-  input: EventSubscribeInput,
-  authorize: Effect.Effect<void, ProtocolError>,
-) =>
+const subscribe = (runtime: WebhookRuntime, input: EventSubscribeInput) =>
   Effect.gen(function* () {
     const { url, secret } = input.delivery;
     if (webhookUrl(url) === undefined || !validWebhookSecret(secret)) {
@@ -263,16 +255,10 @@ const subscribe = (
     }
     const id = subscriptionId(url);
     const generation = yield* runtime.gate.withPermits(1)(
-      authorize.pipe(
-        Effect.zipRight(checkRegistration(runtime, id)),
-        Effect.map(() => runtime.generation),
-      ),
+      checkRegistration(runtime, id).pipe(Effect.map(() => runtime.generation)),
     );
     yield* verify(runtime, { id, url, secret });
-    return yield* activateRegistration(runtime, input, {
-      generation,
-      authorize,
-    });
+    return yield* activateRegistration(runtime, input, generation);
   });
 
 /** The number of items waiting in the inbox. */
@@ -460,8 +446,7 @@ const unsubscribe = (runtime: WebhookRuntime, url: string) =>
   });
 
 const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
-  subscribe: (input, authorize) =>
-    subscribe(runtime, input, authorize ?? Effect.void),
+  subscribe: (input) => subscribe(runtime, input),
   unsubscribe: (input) =>
     runtime.gate.withPermits(1)(unsubscribe(runtime, input.delivery.url)),
   status: runtime.gate.withPermits(1)(Effect.sync(() => status(runtime))),
