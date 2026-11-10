@@ -336,11 +336,8 @@ function writeAgentFiles(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(join(directory, "state"), { recursive: true });
-    const keyFile = join(directory, "agent-key.pem");
     const admissionFile = join(directory, "admission-credential");
     const mcpCredentialFile = join(directory, MCP_CREDENTIAL_FILE);
-    const privateKey = makePrivateKeyPem();
-    yield* fs.writeFileString(keyFile, privateKey, { mode: 0o600 });
     yield* fs.writeFileString(admissionFile, network.admissionCredential, {
       mode: 0o600,
     });
@@ -362,12 +359,7 @@ function writeAgentFiles(
         )(network.registrySigner),
         transport: { kind: "p2p", routerOrigin: network.routerOrigin },
         admissionCredential: network.admissionCredential,
-        agent: {
-          agentName: name,
-          principalId: `prn_${randomBytes(16).toString("base64url")}`,
-          operationId: `opn_${randomBytes(16).toString("base64url")}`,
-          privateKey,
-        },
+        agentName: name,
       }),
       { mode: 0o600 },
     );

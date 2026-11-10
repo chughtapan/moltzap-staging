@@ -15,7 +15,6 @@ import {
   AgentPublicKey,
   AgentSigningAuthority,
   type MessageAddressInput,
-  PrincipalId,
   toolDefinitions,
   type ToolResult,
 } from "@social-harness/social-harness";
@@ -47,13 +46,6 @@ import {
   markedPolicy,
   writeMessagePolicy,
 } from "../firewall/policy-fixture.js";
-
-/** The name, principal and operation a fixture daemon registers with when it starts. */
-const registrationSeed = Schema.Struct({
-  operationId: Schema.String,
-  principalId: PrincipalId,
-  agentName: AgentName,
-});
 
 type ManagementStatusResult = ToolResult<"status">;
 
@@ -109,14 +101,12 @@ export interface ProcessInfrastructure {
  */
 export interface DaemonProcessFixture {
   readonly agentName: AgentName;
-  readonly registration: typeof registrationSeed.Type;
   readonly endpoint: URL;
   readonly environment: Readonly<Record<string, string>>;
   /** The bearer the server agent signs in with when the daemon runs in client/server mode. */
   readonly serverAgentCredential: string;
   readonly configureLocator?: Redacted.Redacted;
   readonly stateDirectory: string;
-  readonly agentPrivateKeyFile: string;
   readonly admissionCredentialFile: string;
   readonly mcpCredentialFile: string;
   readonly mcpCredential: Redacted.Redacted;
@@ -655,9 +645,6 @@ export const acquireProcessInfrastructure = acquireProcessInfrastructureFrom({
   router: ROUTER_BINARY,
 });
 
-const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
-  `${prefix}${randomBytes(16).toString("base64url")}`;
-
 /** Creates one independent daemon key, credential file, and durable state path. */
 export const makeDaemonProcessFixture = (
   infrastructure: ProcessInfrastructure,
@@ -684,16 +671,9 @@ export const makeDaemonProcessFixture = (
         : yield* reservePort;
     const directory = join(infrastructure.temporaryDirectory, name);
     const stateDirectory = join(directory, "state");
-    const keyPath = join(directory, "agent-key.pem");
     const credentialPath = join(directory, "admission.txt");
     yield* makeDirectory(stateDirectory);
     const credentials = yield* makeMcpCredential(directory);
-    const privateKey = makePrivateKeyPem();
-    const registration = Schema.decodeUnknownSync(registrationSeed)({
-      operationId: makeIdentifier("opn_"),
-      principalId: makeIdentifier("prn_"),
-      agentName,
-    });
     const setupFile = join(directory, "setup.json");
     const serverAgentCredential = randomBytes(32).toString("base64url");
     const environment = {
@@ -725,7 +705,7 @@ export const makeDaemonProcessFixture = (
           routerOrigin: infrastructure.routerOrigin.origin,
         },
         admissionCredential: ADMISSION_CREDENTIAL,
-        agent: { ...registration, privateKey },
+        agentName,
         ...(firewall && setupChanges.messagePolicyFile === undefined
           ? yield* markedPolicyFiles(directory)
           : {}),
@@ -751,22 +731,14 @@ export const makeDaemonProcessFixture = (
             ),
           }),
     });
-    yield* Effect.all(
-      [
-        writePrivateFile(keyPath, privateKey),
-        writePrivateFile(credentialPath, ADMISSION_CREDENTIAL),
-      ] as const,
-      { concurrency: 2, discard: true },
-    );
+    yield* writePrivateFile(credentialPath, ADMISSION_CREDENTIAL);
     return {
       agentName,
-      registration,
       ...(options.database === undefined
         ? {}
         : { configureLocator: options.database.configureLocator }),
       endpoint: new URL(`http://${LOOPBACK_HOST}:${port}/mcp`),
       stateDirectory,
-      agentPrivateKeyFile: keyPath,
       admissionCredentialFile: credentialPath,
       ...credentials,
       environment,
@@ -782,7 +754,10 @@ export function configureDaemonFixture(
 ) {
   return Effect.gen(function* () {
     const filesystem = yield* FileSystem.FileSystem;
-    const filename = join(dirname(fixture.agentPrivateKeyFile), "setup.json");
+    const filename = join(
+      dirname(fixture.admissionCredentialFile),
+      "setup.json",
+    );
     const current = yield* filesystem
       .readFileString(filename)
       .pipe(

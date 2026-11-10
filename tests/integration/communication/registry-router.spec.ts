@@ -21,10 +21,22 @@ import {
   type routerContract,
 } from "@social-harness/social-harness/internal";
 import {
+  databaseAccess,
+  databaseConnection,
+  getOrCreateOwnedAgent,
+  loadAgentRegistration,
+  localOwner,
   signAgentRequest,
   WireVersions,
 } from "@social-harness/social-harness/test";
-import { Duration, Effect, Encoding, Layer, Schema } from "effect";
+import {
+  ConfigProvider,
+  Duration,
+  Effect,
+  Encoding,
+  Layer,
+  Schema,
+} from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -1003,7 +1015,6 @@ it(
 /** Every concurrently registered daemon identity resolves through the Router. */
 const concurrentRegistration = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
-  const fileSystem = yield* FileSystem.FileSystem;
   const runRouter = makeRouterRunner(infrastructure.routerOrigin);
   const fixtures = yield* acquireDaemonProcesses(infrastructure);
   yield* Effect.forEach(
@@ -1014,10 +1025,22 @@ const concurrentRegistration = Effect.gen(function* () {
         const registered = yield* management.identityCard();
         const identityCard = registered;
         expect(identityCard.agentName).toBe(fixture.agentName);
-        const privateKey = yield* fileSystem.readFileString(
-          fixture.agentPrivateKeyFile,
+        const access = yield* databaseAccess.pipe(
+          Effect.withConfigProvider(
+            ConfigProvider.fromMap(
+              new Map(Object.entries(fixture.environment)),
+            ),
+          ),
         );
-        const signingAuthority = yield* makeSigningAuthority(privateKey);
+        const { signingAuthority } = yield* getOrCreateOwnedAgent(
+          localOwner,
+          access.unlockKey,
+        ).pipe(
+          Effect.flatMap((agentKey) =>
+            loadAgentRegistration(agentKey, access.unlockKey),
+          ),
+          Effect.provide(databaseConnection(access.locator)),
+        );
         const result = yield* runRouter(
           Router.poll({
             request: {},

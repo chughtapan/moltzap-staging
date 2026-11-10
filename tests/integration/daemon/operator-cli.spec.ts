@@ -40,10 +40,7 @@ it(
       );
       yield* acquireDaemonProcess(alice);
       yield* acquireDaemonProcess(other);
-      expect(yield* identity(alice)).toMatchObject({
-        agentName: alice.agentName,
-        principalId: alice.registration.principalId,
-      });
+      expect((yield* identity(alice)).agentName).toBe(alice.agentName);
       expect((yield* identity(other)).agentName).toBe(other.agentName);
     }),
   ),
@@ -75,9 +72,7 @@ it(
         registryOrigin: infrastructure.registryOrigin.origin,
       });
       yield* acquireDaemonProcess(fixture);
-      expect((yield* identity(fixture)).principalId).toBe(
-        fixture.registration.principalId,
-      );
+      expect((yield* identity(fixture)).agentName).toBe(fixture.agentName);
     }),
   ),
   120_000,

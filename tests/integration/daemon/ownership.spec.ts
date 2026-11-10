@@ -2,7 +2,10 @@
 import { NodeContext } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { AgentSigningAuthority } from "@social-harness/social-harness";
+import {
+  AgentName,
+  AgentSigningAuthority,
+} from "@social-harness/social-harness";
 import {
   databaseConnection,
   getOrCreateOwnedAgent,
@@ -111,17 +114,17 @@ it("rejects a credential substituted from another agent or unlocked with another
     expect(Exit.isFailure(wrongKey)).toBeTruthy();
   }).pipe(Effect.provide(database)));
 
-it("rejects attempts to replace the saved identity", () =>
+it("refuses to rename a saved agent", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
-    const agentKey = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    const hydrated = yield* loadAgentRegistration(agentKey, unlockKey);
+    yield* getOrCreateOwnedAgent(owner, unlockKey);
     const sql = yield* SqlClient.SqlClient;
     const before = yield* sql`SELECT * FROM agent_profiles`;
-    const changed = yield* getOrCreateOwnedAgent(owner, unlockKey, {
-      ...hydrated.registration,
-      privateKey: Redacted.make("replacement"),
-    }).pipe(Effect.exit);
+    const changed = yield* getOrCreateOwnedAgent(
+      owner,
+      unlockKey,
+      AgentName.make("another"),
+    ).pipe(Effect.exit);
     expect(Exit.isFailure(changed)).toBe(true);
     expect(yield* sql`SELECT * FROM agent_profiles`).toEqual(before);
   }).pipe(Effect.provide(database)));

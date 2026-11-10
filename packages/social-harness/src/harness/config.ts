@@ -22,12 +22,7 @@ import {
   loadMessagePolicy,
   readPolicyCredential,
 } from "../firewall/rules.js";
-import {
-  AgentName,
-  AgentPublicKey,
-  PrincipalId,
-} from "../identity/agent-cards.js";
-import { RegistrationId } from "../identity/registry.js";
+import { AgentName, AgentPublicKey } from "../identity/agent-cards.js";
 import {
   initialNormsHaveRules,
   installedNorms,
@@ -170,22 +165,16 @@ const settings = exactStruct({
 /** Process settings contain resolved policy and credential values for this startup. */
 export type DaemonSettings = typeof settings.Type;
 
-const seed = exactStruct({
-  agentName: AgentName,
-  principalId: PrincipalId,
-  operationId: RegistrationId,
-  privateKey: Schema.Redacted(Schema.NonEmptyString),
-});
 const setup = exactStruct({
   ...commonFields,
-  agent: Schema.optional(seed),
+  agentName: Schema.optional(AgentName),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),
 }).pipe(
   Schema.filter(
     (value) =>
-      value.authentication.kind === "local" || value.agent === undefined,
+      value.authentication.kind === "local" || value.agentName === undefined,
   ),
 );
 
@@ -272,7 +261,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
   }
   const values = Struct.omit(
     document,
-    "agent",
+    "agentName",
     "messagePolicyFile",
     "decisionProviderKeyFile",
     "normsDirectory",
@@ -292,7 +281,9 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
   return {
     settings: captured,
     serverAgentCredential: yield* serverAgentCredential(captured),
-    ...(document.agent === undefined ? {} : { agent: document.agent }),
+    ...(document.agentName === undefined
+      ? {}
+      : { agentName: document.agentName }),
   };
 }, Effect.withSpan("loadDaemonSettings"));
 

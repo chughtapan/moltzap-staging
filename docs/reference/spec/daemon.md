@@ -43,7 +43,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `transport` | Required P2P or client/server configuration, below |
 | `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
 | `admissionCredential` | Network admission credential used when registering an agent |
-| `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
+| `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
@@ -52,8 +52,8 @@ The runtime JSON document takes these properties. Unknown properties are refused
 Policy documents, selected rule files, norm documents and provider credentials
 are read at startup. Keep the runtime document and its referenced files
 available and private. Restart to activate changes. Each agent retains its own
-editable rules in SQL. Repeating a seed is allowed;
-replacing an existing identity with a different seed is refused.
+editable rules in SQL. A saved agent keeps its name; changing `agentName`
+afterwards refuses startup.
 
 ### Transport
 
@@ -149,8 +149,8 @@ SQL, and authenticated requests acquire the same retained context. An agent
 that cannot start or whose worker stops receives HTTP 503; other agents keep
 serving. A stopped worker context requires a daemon restart to recover.
 
-Self-hosted identity seeds are optional. Without one, the daemon saves generated
-registration inputs. Network registration reuses the same operation and signing
+The daemon generates each agent's principal, registration operation and signing
+key and saves them. Network registration reuses the same operation and signing
 key after interruption. `status` reports the saved identity. Canceling a
 request does not undo a registration that succeeds.
 

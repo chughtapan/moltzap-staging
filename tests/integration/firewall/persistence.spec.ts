@@ -66,13 +66,13 @@ const scenario = Effect.gen(function* () {
     Effect.withConfigProvider(configuration),
   );
   const saved = yield* Effect.gen(function* () {
-    const { settings, agent } = yield* loadDaemonSettings().pipe(
+    const { settings, agentName } = yield* loadDaemonSettings().pipe(
       Effect.withConfigProvider(configuration),
     );
     const agentKey = yield* getOrCreateOwnedAgent(
       localOwner,
       access.unlockKey,
-      agent,
+      agentName,
     );
     const registration = yield* loadAgentRegistration(
       agentKey,
