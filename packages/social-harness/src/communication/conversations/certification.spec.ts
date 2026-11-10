@@ -93,7 +93,7 @@ import {
   RouterWorkerTransportError,
   RouterWorkerUnavailableError,
 } from "../router/connection.js";
-import * as testStore from "../store.js";
+import * as testStoreMessages from "../store.js";
 import { initializeCommunication } from "../store.js";
 import {
   type EndpointEngine,
@@ -103,6 +103,8 @@ import {
   makeEndpointEngine,
 } from "./conversation.js";
 import { readStoredRecord } from "./history.js";
+import * as testStoreProtocol from "./store.js";
+const testStore = { ...testStoreMessages, ...testStoreProtocol };
 
 /* eslint-disable max-lines, max-lines-per-function -- The full protocol traces share one four-endpoint harness and keep controlled Router phases beside durable assertions. */
 

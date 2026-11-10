@@ -29,6 +29,7 @@ import { processTrace } from "../scenario-fixture.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
   type ProcessInfrastructure,
@@ -292,10 +293,41 @@ function openRuntimeDatabase(fixture: DaemonProcessFixture) {
   });
 }
 
-/** The observation bound allows a remote PostgreSQL tunnel's round trips; it is not a delivery latency assertion. */
-const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
+/** Host history publishes incoming messages only after their asynchronous firewall checks finish. */
+function awaitConversationMessages(
+  client: Client,
+  address: AgentAddress,
+  count: number,
+) {
+  const read = call(client, {
+    name: "read_conversation",
+    arguments: { address },
+  }).pipe(
+    Effect.map((page) =>
+      page.records.flatMap((record) =>
+        record.kind === "result" ? [] : [record.message.msgId],
+      ),
+    ),
+  );
+  const initial: readonly string[] = [];
+  return Effect.iterate(initial, {
+    while: (ids) => ids.length < count,
+    body: () => read.pipe(Effect.tap(() => Effect.sleep("20 millis"))),
+  }).pipe(Effect.timeout("20 seconds"));
+}
+
+/** Enrollment remains independent of transport, including bootstrap server selection. */
+const openSharedDaemon = (
+  central: boolean,
+  database?: Effect.Effect.Success<typeof acquirePostgres>,
+) =>
   Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
+    if (central) {
+      yield* Effect.acquireRelease(infrastructure.holdRouter, (release) =>
+        Effect.sync(release),
+      );
+    }
     const issuer = yield* issuerFixture;
     const port = yield* reservePort;
     const resource = new URL(`https://127.0.0.1:${port}/mcp`);
@@ -307,6 +339,14 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
         database,
         settings: {
           port,
+          ...(central
+            ? {
+                transport: {
+                  kind: "client-server",
+                  serverAgentName: "bootstrap",
+                },
+              }
+            : {}),
           authentication: {
             kind: "oauth",
             resource: resource.href,
@@ -320,13 +360,13 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     const sql = yield* openRuntimeDatabase(fixture);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     yield* removeInitialCopies(fixture);
-    const daemon = yield* acquireDaemonProcess(fixture);
+    let daemon = yield* acquireDaemonProcess(fixture);
     yield* expectUnauthenticated(fixture.endpoint, sql);
     const aliceToken = yield* issuer.token("alice", resource.href);
     const bobToken = yield* issuer.token("bob", resource.href);
-    const bob = yield* connect(fixture.endpoint, bobToken);
+    let bob = yield* connect(fixture.endpoint, bobToken);
     const b = yield* call(bob, { name: "status", arguments: {} });
-    const { alice, status: a } = yield* cancelFirstAcquisition({
+    let { alice, status: a } = yield* cancelFirstAcquisition({
       infrastructure,
       endpoint: fixture.endpoint,
       sql,
@@ -342,8 +382,117 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
       Schema.decodeUnknown(AgentIdentityCard)(a.identityCard),
       Schema.decodeUnknown(AgentIdentityCard)(b.identityCard),
     ]);
+    if (central) {
+      yield* stopProcess(daemon);
+      yield* configureDaemonFixture(fixture, {
+        transport: {
+          kind: "client-server",
+          serverAgentName: aliceCard.agentName,
+        },
+      });
+      daemon = yield* acquireDaemonProcess(fixture);
+      alice = yield* connect(fixture.endpoint, aliceToken);
+      bob = yield* connect(fixture.endpoint, bobToken);
+    }
     const bobAddress = AgentAddress.make(`agent:${bobCard.agentName}`);
     const aliceAddress = AgentAddress.make(`agent:${aliceCard.agentName}`);
+    return {
+      infrastructure,
+      issuer,
+      resource,
+      fixture,
+      sql,
+      daemon,
+      aliceToken,
+      bobToken,
+      alice,
+      bob,
+      a,
+      b,
+      aliceCard,
+      bobCard,
+      bobAddress,
+      aliceAddress,
+    };
+  });
+
+function expectCentralExchange(
+  shared: Effect.Effect.Success<ReturnType<typeof openSharedDaemon>>,
+  recovered: Client,
+  initialIds: readonly string[],
+) {
+  const { fixture, aliceToken, issuer, resource, bobAddress, aliceAddress } =
+    shared;
+  return Effect.gen(function* () {
+    const sender = yield* connect(fixture.endpoint, aliceToken);
+    const concurrent = yield* Effect.all(
+      [0, 1, 2, 3, 4, 5].map((index) =>
+        call(index % 2 === 0 ? sender : recovered, {
+          name: "send_message",
+          arguments: {
+            input: {
+              to: index % 2 === 0 ? bobAddress : aliceAddress,
+              text: `concurrent ${index}`,
+            },
+          },
+        }),
+      ),
+      { concurrency: 6 },
+    );
+    const expectedCount = concurrent.length + initialIds.length;
+    const serverIds = yield* awaitConversationMessages(
+      sender,
+      bobAddress,
+      expectedCount,
+    );
+    const clientIds = yield* awaitConversationMessages(
+      recovered,
+      aliceAddress,
+      expectedCount,
+    );
+    expect(serverIds).toEqual(clientIds);
+    expect(new Set(serverIds)).toEqual(
+      new Set([...initialIds, ...concurrent.map((message) => message.id)]),
+    );
+    const thirdToken = yield* issuer.token("carol", resource.href);
+    const third = yield* connect(fixture.endpoint, thirdToken);
+    yield* call(third, { name: "status", arguments: {} });
+    expect(
+      yield* call(third, {
+        name: "send_message",
+        arguments: {
+          input: { to: bobAddress, text: "client-to-client refused" },
+        },
+      }).pipe(Effect.isFailure),
+    ).toBe(true);
+  });
+}
+
+/** The observation bound allows a remote PostgreSQL tunnel's round trips; it is not a delivery latency assertion. */
+const scenario = (
+  database?: Effect.Effect.Success<typeof acquirePostgres>,
+  central = false,
+) =>
+  Effect.gen(function* () {
+    const shared = yield* database === undefined
+      ? openSharedDaemon(central)
+      : openSharedDaemon(central, database);
+    const {
+      fixture,
+      sql,
+      daemon,
+      issuer,
+      aliceToken,
+      bobToken,
+      alice,
+      bob,
+      a,
+      b,
+      aliceCard,
+      bobCard,
+      bobAddress,
+      aliceAddress,
+    } = shared;
     expect(aliceCard.agentId).not.toBe(bobCard.agentId);
     const again = yield* connect(fixture.endpoint, aliceToken);
     expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
@@ -403,6 +552,12 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     yield* expectDeliveredEvent(recovered, unread);
     yield* expectDeliveredEvent(recovered, entry);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(2);
+    if (central) {
+      yield* expectCentralExchange(shared, recovered, [
+        sent.id,
+        restartMessage.id,
+      ]);
+    }
     yield* expectFailedAgentIsolation({
       sql,
       fixture,
@@ -422,6 +577,24 @@ it(
 it(
   "recovers signed peer delivery through one PostgreSQL-backed MCP daemon with a restricted login",
   processTrace(Effect.scoped(acquirePostgres.pipe(Effect.flatMap(scenario)))),
+  240_000,
+);
+
+it(
+  "delivers and recovers through one central MCP daemon while Router is unavailable",
+  processTrace(Effect.scoped(scenario(undefined, true))),
+  180_000,
+);
+
+it(
+  "delivers and recovers centrally with PostgreSQL row isolation and no Router",
+  processTrace(
+    Effect.scoped(
+      acquirePostgres.pipe(
+        Effect.flatMap((database) => scenario(database, true)),
+      ),
+    ),
+  ),
   240_000,
 );
 

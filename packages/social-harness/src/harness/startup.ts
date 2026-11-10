@@ -61,6 +61,7 @@ function runDaemon() {
     const { settings, agent } = yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
+      yield* Communication.configureTransport(settings.transport);
       if (settings.authentication.kind === "local") {
         yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agent);
       }
@@ -159,18 +160,36 @@ function makeAgentApp(
       SocialHarness.layer(
         {
           agentKey,
-          communication: (identityCard) =>
-            Communication.layer({
+          communication: (identityCard) => {
+            const options = {
               agentKey,
               identityCard,
               signingAuthority: registration.signingAuthority,
               registrySignerPublicKey: settings.registrySignerPublicKey,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
-            }),
+            };
+            return settings.transport.kind === "client-server"
+              ? Communication.clientServerLayer({
+                  ...options,
+                  serverAgentName: settings.transport.serverAgentName,
+                })
+              : Communication.layer(options).pipe(
+                  Layer.provide(
+                    Router.layer({
+                      origin: settings.transport.routerOrigin,
+                      sendTimeout: Duration.seconds(30),
+                      pollTimeout: Duration.seconds(35),
+                    }).pipe(Layer.provide(NodeHttpClient.layer)),
+                  ),
+                );
+          },
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
-          hideGroups: settings.hideGroups,
-          hideCollectives: settings.hideCollectives,
+          hideGroups:
+            settings.transport.kind === "client-server" || settings.hideGroups,
+          hideCollectives:
+            settings.transport.kind === "client-server" ||
+            settings.hideCollectives,
         },
         workers,
       ).pipe(
@@ -217,18 +236,11 @@ function makeAgentApp(
 }
 
 function networkLayer(settings: DaemonSettings) {
-  return Layer.merge(
-    Registry.layer({
-      origin: settings.registryOrigin,
-      registrySignerPublicKey: settings.registrySignerPublicKey,
-      requestTimeout: Duration.seconds(30),
-    }),
-    Router.layer({
-      origin: settings.routerOrigin,
-      sendTimeout: Duration.seconds(30),
-      pollTimeout: Duration.seconds(35),
-    }),
-  ).pipe(Layer.provide(NodeHttpClient.layer));
+  return Registry.layer({
+    origin: settings.registryOrigin,
+    registrySignerPublicKey: settings.registrySignerPublicKey,
+    requestTimeout: Duration.seconds(30),
+  }).pipe(Layer.provide(NodeHttpClient.layer));
 }
 
 /** Deployment prepares schema and encryption metadata before the serving process starts. */

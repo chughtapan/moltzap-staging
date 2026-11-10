@@ -103,7 +103,7 @@ export default [
     },
   },
   {
-    files: ["src/communication/store.ts"],
+    files: ["src/communication/conversations/store.ts"],
     rules: {
       "max-lines": [
         "error",

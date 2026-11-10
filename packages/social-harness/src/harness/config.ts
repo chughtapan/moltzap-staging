@@ -145,7 +145,13 @@ const commonFields = {
   authentication: Schema.Union(localBearer, publicOAuth),
   registryOrigin: origin,
   registrySignerPublicKey: AgentPublicKey,
-  routerOrigin: origin,
+  transport: Schema.Union(
+    exactStruct({ kind: Schema.Literal("p2p"), routerOrigin: origin }),
+    exactStruct({
+      kind: Schema.Literal("client-server"),
+      serverAgentName: AgentName,
+    }),
+  ),
   admissionCredential: Schema.optional(credential),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   hideCollectives: Schema.optionalWith(Schema.Boolean, {

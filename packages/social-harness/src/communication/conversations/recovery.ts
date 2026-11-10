@@ -56,12 +56,6 @@ import {
   RouterWorkerRecoveryError,
 } from "../router/connection.js";
 import {
-  discardOutbound,
-  type EndpointRecovery,
-  recoverStoredState,
-  type StoredOutboundMessage,
-} from "../store.js";
-import {
   acceptCatchUpIncomplete,
   acceptCatchUpPage,
   acceptCatchUpRequest,
@@ -90,6 +84,12 @@ import {
   type ReanchorRun,
   startReanchorRun,
 } from "./reanchor.js";
+import {
+  discardOutbound,
+  type EndpointRecovery,
+  recoverStoredState,
+  type StoredOutboundMessage,
+} from "./store.js";
 
 /**
  * Delay before a conversation's first catch-up retry. One second is well past

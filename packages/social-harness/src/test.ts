@@ -43,7 +43,6 @@ export {
   readAcceptedMessage,
   readCollectiveOperation,
   readCollectiveOperationIds,
-  readUnpreparedMessages,
   retireCollectiveOperation,
   transaction,
 } from "./communication/store.js";
@@ -63,5 +62,8 @@ export { Router } from "./communication/router/client.js";
 
 /** Policy process fixtures use the same per-agent webhook capability as startup. */
 export { makeWebhookEvents } from "./harness/mcp/webhook.js";
+/** Peer preparation is exposed only to the explicit test entry. */
+export { readUnpreparedMessages } from "./communication/conversations/store.js";
+
 /** Trusted process fixtures supply the production callback HTTP client. */
 export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";

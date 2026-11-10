@@ -717,7 +717,10 @@ export const makeDaemonProcessFixture = (
         registrySignerPublicKey: Schema.decodeUnknownSync(
           Schema.parseJson(AgentPublicKey),
         )(infrastructure.registrySignerPublicKeyJson),
-        routerOrigin: infrastructure.routerOrigin.origin,
+        transport: {
+          kind: "p2p",
+          routerOrigin: infrastructure.routerOrigin.origin,
+        },
         admissionCredential: ADMISSION_CREDENTIAL,
         agent: { ...registration, privateKey },
         ...(firewall && setupChanges.messagePolicyFile === undefined
@@ -732,28 +735,16 @@ export const makeDaemonProcessFixture = (
         processTestError("daemon settings are invalid", cause),
       ),
     );
-    yield* prepareDatabase.pipe(
-      Effect.provide(NodeFileSystem.layer),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries({
-              ...environment,
-              ...(options.database === undefined
-                ? {}
-                : {
-                    SHARNESS_DATABASE_URL: Redacted.value(
-                      options.database.configureLocator,
-                    ),
-                  }),
-            }),
-          ),
-        ),
-      ),
-      Effect.mapError((cause) =>
-        processTestError("daemon configuration failed", cause),
-      ),
-    );
+    yield* prepareFixtureDatabase({
+      ...environment,
+      ...(options.database === undefined
+        ? {}
+        : {
+            SHARNESS_DATABASE_URL: Redacted.value(
+              options.database.configureLocator,
+            ),
+          }),
+    });
     yield* Effect.all(
       [
         writePrivateFile(keyPath, privateKey),
@@ -1189,4 +1180,17 @@ function pauseProcess(running: RunningProcess) {
       running.child.kill("SIGCONT");
     };
   });
+}
+
+/** Preparation uses deployment credentials while the child receives only its runtime locator. */
+function prepareFixtureDatabase(environment: Readonly<Record<string, string>>) {
+  return prepareDatabase.pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.withConfigProvider(
+      ConfigProvider.fromMap(new Map(Object.entries(environment))),
+    ),
+    Effect.mapError((cause) =>
+      processTestError("daemon configuration failed", cause),
+    ),
+  );
 }

@@ -33,15 +33,14 @@ import {
   MessageIntent as MessageIntentSchema,
   type VerifiedMembership,
 } from "../records.js";
+import { type EndpointStoreError, failMessage } from "../store.js";
+import { anchorHashAtHead } from "./history.js";
+import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
 import {
   bindMessageIntent,
   type ConversationFoundation,
-  type EndpointStoreError,
-  failMessage,
   type MessageIntent as StoredMessageIntent,
-} from "../store.js";
-import { anchorHashAtHead } from "./history.js";
-import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
+} from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: Immutable intent binding and protocol proposal share the engine gate and durable conversation binding.
 

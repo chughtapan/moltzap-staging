@@ -378,7 +378,7 @@ function writeAgentFiles(
         registrySignerPublicKey: yield* Schema.decodeUnknown(
           Schema.parseJson(Schema.Unknown),
         )(network.registrySigner),
-        routerOrigin: network.routerOrigin,
+        transport: { kind: "p2p", routerOrigin: network.routerOrigin },
         admissionCredential: network.admissionCredential,
         agent: {
           agentName: name,

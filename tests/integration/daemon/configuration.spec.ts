@@ -42,7 +42,7 @@ const settings = {
   authentication: { kind: "local", credential: secret },
   registryOrigin: "https://registry.example",
   registrySignerPublicKey: signer,
-  routerOrigin: "https://router.example",
+  transport: { kind: "p2p", routerOrigin: "https://router.example" },
   admissionCredential: "test-admission-credential",
 };
 const shippedNorms = fileURLToPath(
@@ -652,7 +652,7 @@ it(
 );
 
 it(
-  "rolls back failed PostgreSQL domain migrations while leaving only an empty bookkeeping ledger",
+  "refuses incompatible PostgreSQL storage without modifying retained tables",
   () =>
     Effect.gen(function* () {
       const test = yield* postgresFixture;
@@ -664,13 +664,9 @@ it(
       expect(yield* test.sql`SELECT * FROM firewall_checks`).toEqual([
         { value: "retained obstruction" },
       ]);
-      expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual([]);
       expect(
         yield* test.sql`SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename`,
-      ).toEqual([
-        { tablename: "effect_sql_migrations" },
-        { tablename: "firewall_checks" },
-      ]);
+      ).toEqual([{ tablename: "firewall_checks" }]);
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,
 );

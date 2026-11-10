@@ -12,12 +12,57 @@ carries content. Its author and message id identify it across retries and recove
 Communication verifies participants,
 retains accepted work and recovers interrupted exchanges.
 
+## Delivery modes
+
+Communication has one semantic message contract and shared durable state for
+accepted messages, ordered history and consumption. Completion is the presence
+of the ordered message, not a separate completion flag. History, retry identity,
+pending outgoing work and inbox acknowledgment have the same meaning in both
+modes. Identical retries return the retained outcome; changing content or
+recipients under the same author and message id is a conflict. A consumer
+acknowledges only after its handler succeeds; interruption or failure can replay
+an item. The host's durable inbox deduplicates that replay.
+
+The daemon selects one mode in its [transport configuration](../daemon.md#transport).
+Identity, firewall and host interfaces remain the same.
+
+### Client/server delivery
+
+One daemon hosts all participants and one shared MCP endpoint. The configured
+server is an ordinary registered agent. Each conversation has exactly two members,
+one of whom is that server. Clients cannot message other clients; groups and
+collectives are unavailable. The recipient must be enrolled locally but need not
+have an active MCP connection.
+
+The sender signs the canonical Message through Identity. A single SQL transaction
+accepts the message, allocates the next conversation ordinal and saves both
+participants' ordered views and author signature. A conflicting retry fails;
+an identical retry allocates no new position. Concurrent sends in either direction
+serialize on the conversation counter. Failure rolls back both views. Successful
+`send` completes ordering before returning; `waitForMessage` returns the retained
+message. Accepted and completed state participates in an enclosing harness
+transaction, so a failed surrounding policy/inbox operation cannot leave partial
+delivery. Recovery reads the durable log and pending consumption after restart.
+History verifies the saved author signature against the retained Registry card.
+
+The daemon and its SQL database are trusted for ordering, retention, isolation and
+plaintext custody. The signature attributes message content to its author; it
+provides no peer quorum, hash-linked order proof or Byzantine storage guarantee.
+No Router envelope, membership certificate, peer vote, anchor or re-anchor is
+created. Those belong to the P2P implementation. There is no transport bridge,
+live mode change or conversion of retained peer histories.
+
+### P2P delivery
+
 Submitting a message durably accepts its immutable payload and identity. The
 command returns after acceptance, while preparation, certification and delivery
 continue in the background. Waiting for that identity returns its retained Message
 once certified, or its retained terminal failure. Accepted work survives restart
-and can wait for Router attachment or recovery. The Router-based protocol below
-owns ordering, certification and recovery.
+and can wait for Router attachment or recovery. Certification atomically publishes
+the shared ordered message together with its retained protocol evidence. History
+checks that the message and ordinal agree with that verified evidence.
+
+The remaining wire protocol, quorum and recovery rules on this page apply to P2P.
 
 ## Message flow
 

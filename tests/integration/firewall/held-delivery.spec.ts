@@ -204,7 +204,9 @@ it(
 
 /** Points one daemon's Router traffic at the hold proxy instead of the Router. */
 function throughProxy(fixture: DaemonProcessFixture, routerOrigin: URL) {
-  return configureDaemonFixture(fixture, { routerOrigin: routerOrigin.origin });
+  return configureDaemonFixture(fixture, {
+    transport: { kind: "p2p", routerOrigin: routerOrigin.origin },
+  });
 }
 
 function waitForHeldDelivery(pair: HeldPair) {

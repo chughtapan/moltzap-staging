@@ -42,7 +42,7 @@ import {
 import { batch, emptyBatch, pollCursor } from "./__tests__/router-fixtures.js";
 import {
   encodeCollectiveContent,
-  type Message,
+  Message,
   messageFromIntent,
   messageFromParticipants,
   mintMsgId,
@@ -766,4 +766,53 @@ it("claims one answer when the reply is submitted as an ordinary Message", () =>
     expect(
       yield* communication.getRequest(request.operationId).pipe(Effect.flip),
     ).toMatchObject({ failure: { kind: "request-answered" } });
+  }));
+
+it("rejects a changed or missing shared message despite retained peer certificates", () =>
+  Effect.gen(function* () {
+    const subject = yield* conversationIdentityFixture;
+    const record = yield* buildCertifiedFirstMessage(
+      subject.remote,
+      subject.local,
+      subject.membership,
+      subject.anchor.routerInstanceId,
+    );
+    yield* subject.run(
+      storeCertifiedFirstMessage(
+        subject.store,
+        subject.local.card,
+        subject.membership,
+        record,
+      ),
+    );
+    const message = yield* messageFromIntent(
+      subject.membership.members.map(agentCardOf),
+      record.actionCertifiedRecord.recordCore.action.messageIntent,
+    );
+    const { communication } = yield* openCommunication(
+      subject,
+      Router.of({ poll: () => Effect.never, send: () => Effect.never }),
+    );
+    const members: Conversation = [
+      agentCardOf(subject.local.card),
+      agentCardOf(subject.remote.card),
+    ];
+    expect(
+      (yield* communication.readHistory({ members })).entries,
+    ).toHaveLength(1);
+    const changed = yield* encodeCanonical(Message, {
+      ...message,
+      content: [{ type: "text", text: "changed projection" }],
+    });
+    yield* subject.sql`UPDATE message_log SET canonical_message=${changed}`;
+    expect(
+      yield* communication.readHistory({ members }).pipe(Effect.flip),
+    ).toMatchObject({ reason: "history-gap" });
+    yield* subject.sql`DELETE FROM message_log`;
+    expect(
+      yield* communication.listConversations().pipe(Effect.flip),
+    ).toMatchObject({ reason: "history-gap" });
+    expect(
+      yield* communication.readHistory({ members }).pipe(Effect.flip),
+    ).toMatchObject({ reason: "history-gap" });
   }));
