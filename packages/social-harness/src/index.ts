@@ -13,13 +13,9 @@ export {
 /** Send requests, accepted-work receipts and agent-facing text for host integrations. */
 export {
   groupMembers,
-  type GuidanceBodyOrigin,
   MessageTextError,
   parseMessageText,
-  renderCollectiveRequest,
-  renderCollectiveResult,
-  renderContent,
-  renderLocalGuidance,
+  renderInboxItem,
   replyAddress,
   SendRequest,
   type SendResult,

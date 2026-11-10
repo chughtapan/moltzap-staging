@@ -3,15 +3,10 @@ import {
   type DeliveryAcknowledgeError,
   type FirewallRefusal,
   groupMembers,
-  type GuidanceBodyOrigin,
   MessageAddressInput,
   packageVersion,
   parseMessageText,
-  type PermittedItem,
-  renderCollectiveRequest,
-  renderCollectiveResult,
-  renderContent,
-  renderLocalGuidance,
+  renderInboxItem,
   type RequestError,
   type SendError,
 } from "@social-harness/social-harness";
@@ -27,7 +22,6 @@ import {
   Schema,
   Scope,
 } from "effect";
-import { absurd } from "effect/Function";
 import { randomUUID } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
@@ -111,7 +105,6 @@ interface OutboundText {
 }
 
 interface ProjectedItem {
-  readonly origin: GuidanceBodyOrigin;
   readonly id: string;
   readonly address: MessageAddressInput;
   readonly sender: string;
@@ -220,7 +213,6 @@ function fromEndpoint(
     address,
     sender: ENDPOINT_SENDER,
     text,
-    origin: "endpoint",
   });
 }
 
@@ -504,31 +496,21 @@ class HarnessChannelAdapter {
     if (config === null) {
       return Effect.void;
     }
-    const projected = projectItem(
-      delivery.item,
-      delivery.deliveryToken,
-      delivery.address,
+    const rendered = renderInboxItem(
+      delivery,
+      `Send the answer once as the whole text of send_message to ${delivery.address}.`,
     );
-    let text = projected.text;
-    if (delivery.guidance !== undefined) {
-      text =
-        delivery.item.kind === "collectiveRequest"
-          ? renderCollectiveRequest(
-              delivery.item,
-              `Send the answer once as the whole text of send_message to ${delivery.address}.`,
-              delivery.guidance,
-            )
-          : renderLocalGuidance(delivery.guidance, {
-              text: projected.text,
-              origin: projected.origin,
-            });
-    }
     return this.handToHost(
       config,
-      projected.address,
+      delivery.address,
       endpointInbound({
-        ...projected,
-        text,
+        id: delivery.deliveryToken,
+        address: delivery.address,
+        sender:
+          rendered.author === undefined
+            ? ENDPOINT_SENDER
+            : `agent:${rendered.author.agentName}`,
+        text: rendered.textForAgent,
       }),
     );
   }
@@ -577,53 +559,6 @@ class HarnessChannelAdapter {
           reason: `NanoClaw inbound callback failed for ${address}: ${String(cause)}`,
         }),
     }).pipe(Effect.asVoid);
-  }
-}
-
-/** Each item keeps its canonical attribution and conversation before guidance is added. */
-function projectItem(
-  item: PermittedItem,
-  eventId: string,
-  address: MessageAddressInput,
-): ProjectedItem {
-  switch (item.kind) {
-    case "multicast":
-      return {
-        origin: "peer",
-        id: eventId,
-        address: address,
-        sender: `agent:${item.message.author.agentName}`,
-        text: renderContent(item.message.content),
-      };
-    case "collectiveRequest":
-      return {
-        origin: "peer",
-        id: eventId,
-        address: address,
-        sender: `agent:${item.message.author.agentName}`,
-        text: renderCollectiveRequest(
-          item,
-          `Send the answer once as the whole text of send_message to ${address}.`,
-        ),
-      };
-    case "collectiveResult":
-      return {
-        origin: "endpoint",
-        id: eventId,
-        address,
-        sender: ENDPOINT_SENDER,
-        text: renderCollectiveResult(item),
-      };
-    case "operationFailed":
-      return {
-        origin: "endpoint",
-        id: eventId,
-        address,
-        sender: ENDPOINT_SENDER,
-        text: item.error,
-      };
-    default:
-      return absurd(item);
   }
 }
 
