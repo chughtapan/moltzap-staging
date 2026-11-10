@@ -4,7 +4,7 @@
 # release tags both images with its version. Ports bind to 127.0.0.1 only.
 name: sharness-network
 
-x-registry-image: &registry-image "ghcr.io/social-harness/registry:${SHARNESS_NETWORK_VERSION:?set SHARNESS_NETWORK_VERSION to a release version. Docs: https://docs.moltzap.xyz/guides/run-a-local-network#required-variable}"
+x-registry-image: &registry-image "ghcr.io/social-harness/registry:${SHARNESS_NETWORK_VERSION:?set SHARNESS_NETWORK_VERSION to a release version}"
 
 services:
   database:
@@ -29,7 +29,7 @@ services:
     environment:
       SHARNESS_REGISTRY_POSTGRESQL_URL: postgresql://postgres:postgres@database:5432/postgres
       SHARNESS_REGISTRY_SQL_POOL_SIZE: "1"
-      SHARNESS_REGISTRY_ADMISSION_CREDENTIAL: "${SHARNESS_NETWORK_ADMISSION_CREDENTIAL:?set SHARNESS_NETWORK_ADMISSION_CREDENTIAL to the network's admission secret. Docs: https://docs.moltzap.xyz/guides/run-a-local-network#required-variable}"
+      SHARNESS_REGISTRY_ADMISSION_CREDENTIAL: "${SHARNESS_NETWORK_ADMISSION_CREDENTIAL:?set SHARNESS_NETWORK_ADMISSION_CREDENTIAL to the network's admission secret}"
       SHARNESS_REGISTRY_SIGNING_PRIVATE_KEY_PATH: /keys/registry-signing.pem
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/healthz').then((r)=>process.exit(r.status===204?0:1),()=>process.exit(1))"]
@@ -37,7 +37,7 @@ services:
       timeout: 5s
       retries: 60
   router:
-    image: "ghcr.io/social-harness/router:${SHARNESS_NETWORK_VERSION:?set SHARNESS_NETWORK_VERSION to a release version. Docs: https://docs.moltzap.xyz/guides/run-a-local-network#required-variable}"
+    image: "ghcr.io/social-harness/router:${SHARNESS_NETWORK_VERSION:?set SHARNESS_NETWORK_VERSION to a release version}"
     depends_on:
       registry:
         condition: service_healthy
@@ -45,7 +45,7 @@ services:
       - "127.0.0.1:${SHARNESS_NETWORK_ROUTER_PORT:-3002}:3002"
     environment:
       SHARNESS_ROUTER_REGISTRY_ORIGIN: http://registry:3001
-      SHARNESS_ROUTER_REGISTRY_SIGNER_PUBLIC_KEY: "${SHARNESS_NETWORK_REGISTRY_SIGNER:?set SHARNESS_NETWORK_REGISTRY_SIGNER to the Registry signer's compact public JWK. Docs: https://docs.moltzap.xyz/guides/run-a-local-network#required-variable}"
+      SHARNESS_ROUTER_REGISTRY_SIGNER_PUBLIC_KEY: "${SHARNESS_NETWORK_REGISTRY_SIGNER:?set SHARNESS_NETWORK_REGISTRY_SIGNER to the Registry signer's compact public JWK}"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/healthz').then((r)=>process.exit(r.status===204?0:1),()=>process.exit(1))"]
       interval: 1s

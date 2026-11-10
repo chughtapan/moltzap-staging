@@ -48,7 +48,7 @@ prepare() {
 has_openai_profile() {
   local profiles
   profiles="$(node "${ENTRY}" models auth list --provider openai --json)" || {
-    echo "[social harness openclaw host] auth profile listing failed; not starting the gateway. Docs: https://github.com/social-harness/moltzap/tree/main/images/openclaw-agent#openclaw-host-image" >&2
+    echo "[social harness openclaw host] auth profile listing failed; not starting the gateway." >&2
     exit 1
   }
   local has_profile

@@ -9,9 +9,7 @@ const IMAGE_CHANNEL =
 async function configureChannel(): Promise<undefined> {
   const path = process.env.OPENCLAW_CONFIG_PATH;
   if (path === undefined || path.length === 0) {
-    throw new Error(
-      "OPENCLAW_CONFIG_PATH is required. Docs: https://github.com/social-harness/moltzap/tree/main/images/openclaw-agent#openclaw-host-image",
-    );
+    throw new Error("OPENCLAW_CONFIG_PATH is required");
   }
   const config: unknown = JSON.parse(await readFile(path, "utf8"));
   if (!selectChannel(config)) {

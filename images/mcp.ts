@@ -31,28 +31,19 @@ const MCP_PROTOCOL_VERSION = "2026-07-28";
 /** JSON-RPC's invalid-params code: the daemon refused the arguments itself. */
 const INVALID_PARAMS = -32602;
 const REGISTRATION_FILE = "registration.json";
-const DOCS = "https://docs.moltzap.xyz/guides/run-an-agent-daemon#";
 const USAGE =
   "usage: node mcp.ts register NAME, or node mcp.ts call TOOL [JSON]";
 
-/**
- * A command that did not complete. `message` is what the reader sees, and
- * `entry` is the troubleshooting anchor that explains it.
- */
+/** A command that did not complete. `message` is what the reader sees. */
 class CommandError extends Data.TaggedError("CommandError")<{
   readonly message: string;
-  readonly entry: string;
 }> {}
 
-/**
- * A tool call that failed. `refused` marks a final daemon refusal, and
- * `entry` is the troubleshooting anchor that explains it.
- */
+/** A tool call that failed. `refused` marks a final daemon refusal. */
 class ToolFailure extends Data.TaggedError("ToolFailure")<{
   readonly message: string;
   readonly refused: boolean;
   readonly registrationReason?: RegistrationError["reason"];
-  readonly entry: string;
 }> {}
 
 const statusResult = Schema.Union(
@@ -82,7 +73,7 @@ const toolArguments = Schema.parseJson(
 
 const program = Effect.gen(function* () {
   const url = yield* Config.url("SHARNESS_MCP_URL").pipe(
-    Effect.mapError(() => commandError(USAGE, "helper-usage")),
+    Effect.mapError(() => commandError(USAGE)),
   );
   // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- two positional commands; the helper installs no @effect/cli
   const [command, first, second = "{}"] = process.argv.slice(2);
@@ -92,14 +83,12 @@ const program = Effect.gen(function* () {
   if (command === "call" && first !== undefined) {
     return yield* call(url, first, second);
   }
-  return yield* Effect.fail(commandError(USAGE, "helper-usage"));
+  return yield* Effect.fail(commandError(USAGE));
 }).pipe(Effect.scoped);
 
 NodeRuntime.runMain(
   program.pipe(
-    Effect.tapError((error) =>
-      Console.error(`${error.message}\nDocs: ${DOCS}${error.entry}`),
-    ),
+    Effect.tapError((error) => Console.error(error.message)),
     Effect.provide(NodeContext.layer),
   ),
   { disableErrorReporting: true },
@@ -116,9 +105,7 @@ function register(
   return Effect.gen(function* () {
     const client = yield* connect(url);
     const status = yield* callTool(client, "status", {}).pipe(
-      Effect.mapError((failure) =>
-        commandError(failure.message, failure.entry),
-      ),
+      Effect.mapError((failure) => commandError(failure.message)),
       Effect.flatMap((result) => decode(statusResult, result, "status")),
     );
     if (status.kind === "unregistered") {
@@ -129,7 +116,6 @@ function register(
       return yield* Effect.fail(
         commandError(
           `this daemon is already registered as agent:${registeredName}`,
-          "already-registered",
         ),
       );
     }
@@ -152,14 +138,13 @@ function submit(
       Effect.catchTag("ToolFailure", (failure) => {
         const error =
           failure.registrationReason === undefined
-            ? commandError(failure.message, "register-failed")
+            ? commandError(failure.message)
             : registrationFailure(failure.registrationReason, name);
         return failure.refused
           ? forgetRequest().pipe(Effect.zipRight(Effect.fail(error)))
           : Effect.fail(
               commandError(
                 `${error.message}; rerun the same command, which repeats the request saved in ${REGISTRATION_FILE}`,
-                error.entry,
               ),
             );
       }),
@@ -178,31 +163,24 @@ function registrationFailure(
     case "name_taken":
       return commandError(
         `register agent:${name}: name_taken; another agent holds this name, so choose another`,
-        "name-taken",
       );
     case "key_already_registered":
       return commandError(
         `register agent:${name}: key_already_registered; this daemon's key belongs to another registered agent`,
-        "key-already-registered",
       );
     case "idempotency_conflict":
       return commandError(
         `register agent:${name}: idempotency_conflict; the Registry already saw this operation id with another request`,
-        "idempotency-conflict",
       );
     case "admission-refused":
       return commandError(
         "register failed: The Registry refused the admission credential",
-        "the-registry-refused-the-admission-credential",
       );
     case "dependency-unavailable":
     case "persistence-failed":
     case "incompatible-daemon":
     default:
-      return commandError(
-        `register agent:${name}: ${reason}`,
-        "register-failed",
-      );
+      return commandError(`register agent:${name}: ${reason}`);
   }
 }
 
@@ -216,15 +194,12 @@ function call(
       Effect.mapError(() =>
         commandError(
           `the arguments must be one JSON object, such as '{"input":{"to":"agent:bob","text":"Hi"}}'`,
-          "helper-usage",
         ),
       ),
     );
     const client = yield* connect(url);
     const result = yield* callTool(client, tool, parsed).pipe(
-      Effect.mapError((failure) =>
-        commandError(failure.message, failure.entry),
-      ),
+      Effect.mapError((failure) => commandError(failure.message)),
     );
     yield* Console.log(JSON.stringify(result, null, 2));
   });
@@ -252,7 +227,6 @@ function savedOrNewRequest(
         return yield* Effect.fail(
           commandError(
             `${REGISTRATION_FILE} registers agent:${saved.agentName}; rerun with that name, or delete ${REGISTRATION_FILE} to choose another`,
-            "registration-json",
           ),
         );
       }
@@ -299,10 +273,7 @@ const readMcpCredential = Effect.gen(function* () {
     "SHARNESS_MCP_CREDENTIAL_FILE",
   ).pipe(
     Effect.mapError(() =>
-      commandError(
-        "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
-        "mcp-credential-file",
-      ),
+      commandError("SHARNESS_MCP_CREDENTIAL_FILE must name a readable file"),
     ),
   );
   const fs = yield* FileSystem.FileSystem;
@@ -310,10 +281,7 @@ const readMcpCredential = Effect.gen(function* () {
     .readFileString(Redacted.value(credentialFile))
     .pipe(
       Effect.mapError(() =>
-        commandError(
-          "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
-          "mcp-credential-file",
-        ),
+        commandError("SHARNESS_MCP_CREDENTIAL_FILE must name a readable file"),
       ),
     );
   return Redacted.make(credential);
@@ -326,7 +294,6 @@ function connect(
     if (!safeCredentialEndpoint(url)) {
       return yield* commandError(
         "MCP URL must use HTTPS or literal HTTP loopback without embedded credentials or fragments",
-        "could-not-connect",
       );
     }
     const credential = yield* readMcpCredential;
@@ -354,7 +321,6 @@ function connect(
         catch: () =>
           commandError(
             `could not connect to ${url.href}; check that sharnessd is running and that SHARNESS_MCP_URL names its port`,
-            "could-not-connect",
           ),
       }).pipe(Effect.as(client)),
       () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
@@ -392,7 +358,6 @@ function callTool(
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n")}`,
               refused: false,
-              entry: "tool-failed",
             }),
           )
         : Effect.succeed(result.structuredContent),
@@ -416,14 +381,13 @@ const MESSAGE_REASONS: ReadonlySet<string> = new Set([
 
 /**
  * Preserves daemon diagnostics for invalid arguments and MESSAGE_REASONS.
- * Otherwise reports the reason and detail. Firewall refusals have their own help entry.
+ * Otherwise reports the reason and detail.
  */
 function toolFailure(tool: string, cause: unknown): ToolFailure {
   if (!ProtocolError.isInstance(cause)) {
     return new ToolFailure({
       message: `${tool} failed: ${String(cause)}`,
       refused: false,
-      entry: "tool-failed",
     });
   }
   const { reason, detail } = Option.getOrElse(
@@ -451,7 +415,6 @@ function toolFailure(tool: string, cause: unknown): ToolFailure {
     message: `${tool} failed: ${said}`,
     refused: cause.code === INVALID_PARAMS || registrationRefused,
     ...(registrationReason === undefined ? {} : { registrationReason }),
-    entry: reason === "firewall-refused" ? "firewall-refused" : "tool-failed",
   });
 }
 
@@ -464,19 +427,15 @@ function decode<A, I>(
     Effect.mapError(() =>
       commandError(
         `${tool} returned a result this script does not read: ${JSON.stringify(value)}`,
-        "result-not-read",
       ),
     ),
   );
 }
 
 function fileError(detail: string): CommandError {
-  return commandError(
-    `could not use ${REGISTRATION_FILE}: ${detail}`,
-    "registration-json",
-  );
+  return commandError(`could not use ${REGISTRATION_FILE}: ${detail}`);
 }
 
-function commandError(message: string, entry: string): CommandError {
-  return new CommandError({ message, entry });
+function commandError(message: string): CommandError {
+  return new CommandError({ message });
 }

@@ -71,7 +71,6 @@ it(
       expect(refused.stderr).toContain(
         `already registered as agent:${other.agentName}`,
       );
-      expect(refused.stderr).toContain("Docs: ");
       const changed = yield* operator(other, ["register", other.agentName]);
       expect(changed.exitCode).toBe(0);
       expect((yield* identity(other)).agentName).toBe(other.agentName);

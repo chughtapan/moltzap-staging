@@ -78,7 +78,7 @@ export class DatabaseAccessError extends Data.TaggedError(
   "DatabaseAccessError",
 ) {
   override get message(): string {
-    return "Set SHARNESS_DATABASE_URL and a canonical base64url-encoded 32-byte SHARNESS_DATABASE_KEY. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration";
+    return "Set SHARNESS_DATABASE_URL and a canonical base64url-encoded 32-byte SHARNESS_DATABASE_KEY";
   }
 }
 

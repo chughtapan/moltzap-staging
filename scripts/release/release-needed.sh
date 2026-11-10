@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 commit="${GATE_COMMIT:-${GITHUB_SHA:?GATE_COMMIT or GITHUB_SHA must name the commit to gate}}"
 
 if [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
-  echo 'ERROR: The release gate requires full history; fetch with depth 0. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions' >&2
+  echo 'ERROR: The release gate requires full history; fetch with depth 0.' >&2
   exit 1
 fi
 
@@ -48,7 +48,7 @@ if ! head_wire=$(git show "$commit:$source_path" |
   ' "$SCRIPT_DIR/read-wire-version.ts") ||
   ! release_wire=$(git show "$release_commit:$wire_path" |
     jq -er '.sharnessWireVersion | strings | select(length > 0)'); then
-  echo "ERROR: Cannot read WIRE_VERSION from $source_path or sharnessWireVersion from $wire_path. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions" >&2
+  echo "ERROR: Cannot read WIRE_VERSION from $source_path or sharnessWireVersion from $wire_path." >&2
   exit 1
 fi
 if [[ "$head_wire" != "$release_wire" ]]; then
@@ -67,7 +67,7 @@ while IFS= read -r manifest; do
   git cat-file -e "$release_commit:$release_manifest" 2>/dev/null || continue
   if ! head_version=$(git show "$commit:$manifest" | jq -er '.version | strings | split(".") | map(tonumber)') ||
     ! release_version=$(git show "$release_commit:$release_manifest" | jq -er '.version | strings | split(".") | map(tonumber)'); then
-    echo "ERROR: Cannot read version from $manifest. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions" >&2
+    echo "ERROR: Cannot read version from $manifest." >&2
     exit 1
   fi
   if jq -en --argjson head "$head_version" \

@@ -32,7 +32,7 @@ import {
   callTool,
   type McpConnection,
 } from "../../../plugins/shared/mcp-client.js";
-import { agentResetDocsLink } from "../expected-contracts.js";
+import { incompatibleDatabaseRemedy } from "../expected-contracts.js";
 import { inboxStream } from "../mcp-inbox.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
@@ -412,7 +412,7 @@ const admissionLifetimeBehavior = Effect.scoped(
       },
     });
     expect(failure.exitCode).not.toBe(0);
-    expect(failure.logs).toContain(agentResetDocsLink);
+    expect(failure.logs).toContain(incompatibleDatabaseRemedy);
   }),
 );
 

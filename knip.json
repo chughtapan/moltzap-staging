@@ -7,7 +7,6 @@
         "scripts/test-*-package.ts",
         "images/*.ts",
         "scripts/docs/check-mermaid.ts",
-        "scripts/docs/check-code-links.ts",
         "scripts/docs/vitest.config.ts",
         "scripts/docs/*.spec.ts",
         "scripts/repo/check-agent-files.ts",

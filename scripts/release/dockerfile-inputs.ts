@@ -258,6 +258,6 @@ function serviceStage(line: string, service: string): boolean {
 
 function refuse(line: DockerLine): never {
   throw new ImageInputError({
-    message: `Unsupported Dockerfile form in ${line.file} line ${line.number}: ${line.text}. Docs: https://docs.moltzap.xyz/guides/contributing#unsupported-dockerfile-form`,
+    message: `Unsupported Dockerfile form in ${line.file} line ${line.number}: ${line.text}. Write the instruction the way the other image recipes do, or teach this file to read the new form.`,
   });
 }

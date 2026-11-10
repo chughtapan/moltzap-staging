@@ -30,9 +30,6 @@ import {
 import { RegistrationId } from "../identity/registry.js";
 import { packageVersion } from "../version.js";
 
-const configurationDocs =
-  "https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration";
-
 /** Messages identify the failed operation without disclosing documents or credentials. */
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
@@ -44,7 +41,7 @@ export class DaemonConfigurationError extends Data.TaggedError(
 const refused = (reason: DaemonConfigurationError["reason"], message: string) =>
   new DaemonConfigurationError({
     reason,
-    message: `${message}. Docs: ${configurationDocs}`,
+    message,
   });
 
 const origin = Schema.String.pipe(
@@ -187,8 +184,6 @@ export const processHelp = [
   "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key",
   "Deployment prepares the database schema and encryption verifier before startup.",
   "Standard OTEL_* variables configure telemetry.",
-  "",
-  `Docs: ${configurationDocs}`,
 ].join("\n");
 
 /** Policy references resolve against the runtime document, independent of the process directory. */
@@ -334,7 +329,7 @@ function spanExportUrl(
       new DaemonConfigurationError({
         reason: "environment",
         message:
-          "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf. Docs: https://opentelemetry.io/docs/specs/otel/protocol/exporter/#specify-protocol",
+          "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
       }),
     );
   }
@@ -347,7 +342,7 @@ function spanExportUrl(
         new DaemonConfigurationError({
           reason: "environment",
           message:
-            "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL. Docs: https://opentelemetry.io/docs/specs/otel/protocol/exporter/#endpoint-urls-for-otlphttp",
+            "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
         }),
       );
 }
