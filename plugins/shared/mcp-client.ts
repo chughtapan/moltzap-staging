@@ -15,7 +15,6 @@ import {
   FirewallRefusal,
   HistoryError,
   InboxError,
-  RegistrationError,
   RequestError,
   SendError,
   toolDefinitions,
@@ -59,20 +58,14 @@ export type ToolFailure<Name extends ToolName> = Name extends "send_message"
           ? InboxError
           : Name extends "search_conversations" | "read_conversation"
             ? HistoryError
-            : Name extends "register"
-              ? RegistrationError
-              : Name extends
-                    | "policy_read"
-                    | "policy_update"
-                    | "firewall_decisions"
-                ? FirewallPolicyError
-                : never);
+            : Name extends
+                  | "policy_read"
+                  | "policy_update"
+                  | "firewall_decisions"
+              ? FirewallPolicyError
+              : never);
 
-type DomainFailure =
-  | InboxError
-  | HistoryError
-  | RegistrationError
-  | FirewallPolicyError;
+type DomainFailure = InboxError | HistoryError | FirewallPolicyError;
 
 /** Native channels connect with the daemon credential supplied by their host. */
 export interface McpConnectionSettings {
@@ -255,8 +248,6 @@ function decodeToolResult(
       return Schema.decodeUnknown(toolDefinitions.read_inbox.output)(value);
     case "read_event":
       return Schema.decodeUnknown(toolDefinitions.read_event.output)(value);
-    case "register":
-      return Schema.decodeUnknown(toolDefinitions.register.output)(value);
     case "status":
       return Schema.decodeUnknown(toolDefinitions.status.output)(value);
     case "search_conversations":
@@ -351,11 +342,6 @@ function managementFailure(
       return decode(
         toolFailureSchemas.read_conversation,
         (data) => new HistoryError(data),
-      );
-    case "register":
-      return decode(
-        toolFailureSchemas.register,
-        (data) => new RegistrationError(data),
       );
     case "policy_read":
       return decode(

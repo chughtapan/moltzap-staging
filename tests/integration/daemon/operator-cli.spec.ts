@@ -1,4 +1,4 @@
-/** @file The documented operator CLI registers against real daemon and network processes. */
+/** @file The documented operator CLI calls real daemon and network processes. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
@@ -15,19 +15,15 @@ import {
   configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   reservePort,
 } from "./daemon-fixture.js";
 
 const CLI = fileURLToPath(new URL("../../../images/mcp.ts", import.meta.url));
 const TEST_DIRECTORY = fileURLToPath(new URL("../.cache/", import.meta.url));
-const registrationFile = (fixture: DaemonProcessFixture) =>
-  join(fixture.stateDirectory, "registration.json");
 
-// @agent-code-guard/regression-only: Operator retries must use saved registration identity, recover a lost reply, and discard a final name conflict.
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exit codes, tool status and closed failure reasons are the CLI's public contract. */
 it(
-  "reports the saved identity, clears an obsolete request and refuses a different name",
+  "reports the identity each daemon registered when it started",
   processTrace(
     Effect.gen(function* () {
       const infrastructure = yield* acquireProcessInfrastructure;
@@ -41,38 +37,10 @@ it(
       );
       yield* acquireDaemonProcess(alice);
       yield* acquireDaemonProcess(other);
-      const fs = yield* FileSystem.FileSystem;
-      const request = makeRegistrationRequest(alice);
-      yield* fs.writeFileString(
-        registrationFile(alice),
-        JSON.stringify(request),
-      );
-
-      const registered = yield* operator(alice, ["register", alice.agentName]);
-      expect(registered.exitCode, registered.stderr).toBe(0);
-      expect(registered.stdout.trim()).toBe(
-        `already registered: agent:${alice.agentName}`,
-      );
-      expect((yield* identity(alice)).principalId).toBe(request.principalId);
-
-      yield* fs.writeFileString(
-        registrationFile(alice),
-        JSON.stringify(request),
-      );
-      const recovered = yield* operator(alice, ["register", alice.agentName]);
-      expect(recovered.exitCode).toBe(0);
-      expect(recovered.stdout.trim()).toBe(
-        `already registered: agent:${alice.agentName}`,
-      );
-      expect(yield* fs.exists(registrationFile(alice))).toBe(false);
-
-      const refused = yield* operator(other, ["register", alice.agentName]);
-      expect(refused.exitCode).toBe(1);
-      expect(refused.stderr).toContain(
-        `already registered as agent:${other.agentName}`,
-      );
-      const changed = yield* operator(other, ["register", other.agentName]);
-      expect(changed.exitCode).toBe(0);
+      expect(yield* identity(alice)).toMatchObject({
+        agentName: alice.agentName,
+        principalId: alice.registration.principalId,
+      });
       expect((yield* identity(other)).agentName).toBe(other.agentName);
     }),
   ),
@@ -81,7 +49,7 @@ it(
 
 // @agent-code-guard/regression-only: A failed first registration must reuse the SQL identity after its dependency is repaired.
 it(
-  "reuses the saved registration after a dependency failure and daemon restart",
+  "registers with the saved identity once an unreachable Registry is repaired",
   processTrace(
     Effect.gen(function* () {
       const infrastructure = yield* acquireProcessInfrastructure;
@@ -95,10 +63,7 @@ it(
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* acquireDaemonProcess(unavailable);
-          const failed = yield* operator(fixture, [
-            "register",
-            fixture.agentName,
-          ]);
+          const failed = yield* operator(fixture, ["call", "status"]);
           expect(failed.exitCode).toBe(1);
           expect(failed.stderr).toContain("could not connect");
         }),
@@ -107,8 +72,6 @@ it(
         registryOrigin: infrastructure.registryOrigin.origin,
       });
       yield* acquireDaemonProcess(fixture);
-      const retried = yield* operator(fixture, ["register", fixture.agentName]);
-      expect(retried.exitCode).toBe(0);
       expect((yield* identity(fixture)).principalId).toBe(
         fixture.registration.principalId,
       );

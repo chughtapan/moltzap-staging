@@ -93,9 +93,8 @@ serving. A stopped worker context requires a daemon restart to recover.
 
 Self-hosted identity seeds are optional. Without one, the daemon saves generated
 registration inputs. Network registration reuses the same operation and signing
-key after interruption. `status` reports the saved identity, while `register`
-remains available to trusted embeddings. Canceling a request does not undo a
-registration that succeeds.
+key after interruption. `status` reports the saved identity. Canceling a
+request does not undo a registration that succeeds.
 
 ## Firewalls
 

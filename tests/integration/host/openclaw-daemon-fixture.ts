@@ -27,7 +27,6 @@ import {
   acquireProcessInfrastructure,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   ProcessTestError,
 } from "../daemon/daemon-fixture.js";
 import { registeredDaemonStatus } from "../expected-contracts.js";
@@ -752,9 +751,7 @@ function registerFixture(fixture: DaemonProcessFixture) {
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
       const initial = yield* management.status();
-      const registered = yield* management.register(
-        makeRegistrationRequest(fixture),
-      );
+      const registered = yield* management.identityCard();
       expect(initial).toEqual({
         kind: registeredDaemonStatus,
         identityCard: yield* Schema.encode(AgentIdentityCard)(registered).pipe(

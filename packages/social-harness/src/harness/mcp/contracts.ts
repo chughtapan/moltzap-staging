@@ -36,13 +36,7 @@ import {
   LocalGuidance,
   PermittedItem,
 } from "../../firewall/service.js";
-import {
-  AgentIdentityCard,
-  AgentName,
-  PrincipalId,
-} from "../../identity/agent-cards.js";
-import { RegistrationId } from "../../identity/registry.js";
-import { RegistrationError } from "../../identity/service.js";
+import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import {
   DeliveryToken,
   InboxError,
@@ -183,23 +177,6 @@ const historyRecord = Schema.Union(
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );
-
-const managementRegisterRequestSchema = exactStruct({
-  operationId: Schema.propertySignature(RegistrationId).annotations({
-    description:
-      "Registration retry identity (opn_ plus canonical base64url for 16 bytes); reuse it for the same registration attempt.",
-  }),
-  principalId: Schema.propertySignature(PrincipalId).annotations({
-    description:
-      "Principal represented by this agent (prn_ plus canonical base64url for 16 bytes).",
-  }),
-  agentName: Schema.propertySignature(AgentName).annotations({
-    description:
-      "Immutable Registry-wide handle: 3 to 32 lowercase letters, digits, or single separating hyphens.",
-  }),
-});
-
-const managementRegisterResultSchema = encodedAgentCard;
 
 /** Saved identity is visible while communication activation proceeds. */
 const managementStatusResultSchema = Schema.Union(
@@ -428,18 +405,6 @@ export const toolDefinitions = {
     output: readEventResultSchema,
     annotations: read,
   },
-  register: {
-    description:
-      "Register this daemon's configured key for a principal and immutable agent name. Reuse operationId when retrying the same registration. Supply the network's admission credential through daemon setup.",
-    input: managementRegisterRequestSchema,
-    output: managementRegisterResultSchema,
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
   status: {
     description:
       "Read saved registration status and the Registry-issued identity card, when registered.",
@@ -508,7 +473,6 @@ export const toolFailureSchemas = {
   read_event: Schema.Struct({ reason: InboxError.fields.reason }),
   search_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
-  register: Schema.Struct({ reason: RegistrationError.fields.reason }),
   policy_read: policyFailure,
   policy_update: policyFailure,
   firewall_decisions: policyFailure,

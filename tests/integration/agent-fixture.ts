@@ -22,7 +22,6 @@ import {
   type DaemonProcessFixture,
   type FirewallMode,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
 } from "./daemon/daemon-fixture.js";
 import { inboxStream } from "./mcp-inbox.js";
 
@@ -61,9 +60,7 @@ const joinParticipant = (fixture: DaemonProcessFixture, agent: AgentCard) =>
 export const registerFixture = (fixture: DaemonProcessFixture) =>
   Effect.scoped(
     acquireDaemonManagementClient(fixture).pipe(
-      Effect.flatMap((management) =>
-        management.register(makeRegistrationRequest(fixture)),
-      ),
+      Effect.flatMap((management) => management.identityCard()),
     ),
   );
 

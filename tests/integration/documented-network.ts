@@ -174,26 +174,9 @@ function ownNetworkPath(
       { concurrency: 3 },
     );
 
-    yield* expectOutput(
-      alice,
-      ["register", "alice"],
-      ["already registered: agent:alice"],
-    );
-    yield* expectOutput(
-      alice,
-      ["register", "alice"],
-      ["already registered: agent:alice"],
-    );
-    yield* expectOutput(
-      bob,
-      ["register", "bob"],
-      ["already registered: agent:bob"],
-    );
-    yield* expectRefusal(
-      carol,
-      ["register", "alice"],
-      ["already registered as agent:carol"],
-    );
+    yield* expectOutput(alice, ["call", "status"], ['"agentName": "alice"']);
+    yield* expectOutput(bob, ["call", "status"], ['"agentName": "bob"']);
+    yield* expectOutput(carol, ["call", "status"], ['"agentName": "carol"']);
     yield* expectOutput(alice, ["call", "status"], ['"kind": "registered"']);
 
     yield* expectOutput(alice, ["call", "send_message", sendTo("bob")], ["{"]);

@@ -16,8 +16,8 @@ import {
   AgentSigningAuthority,
   type MessageAddressInput,
   PermittedItem,
+  PrincipalId,
   toolDefinitions,
-  type ToolRequest,
   type ToolResult,
 } from "@moltzap/social-harness";
 import {
@@ -45,9 +45,12 @@ import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-type ManagementRegisterRequest = ToolRequest<"register">["arguments"];
-
-type ManagementRegisterResult = AgentIdentityCard;
+/** The name, principal and operation a fixture daemon registers with when it starts. */
+const registrationSeed = Schema.Struct({
+  operationId: Schema.String,
+  principalId: PrincipalId,
+  agentName: AgentName,
+});
 
 type ManagementStatusResult = ToolResult<"status">;
 
@@ -105,7 +108,7 @@ export interface ProcessInfrastructure {
  */
 export interface DaemonProcessFixture {
   readonly agentName: AgentName;
-  readonly registration: ManagementRegisterRequest;
+  readonly registration: typeof registrationSeed.Type;
   readonly endpoint: URL;
   readonly environment: Readonly<Record<string, string>>;
   readonly configureLocator?: Redacted.Redacted;
@@ -120,9 +123,11 @@ export interface DaemonProcessFixture {
 
 /** Private management calls used to bootstrap and inspect a real daemon. */
 export interface DaemonManagementClient {
-  readonly register: (
-    input: ManagementRegisterRequest,
-  ) => Effect.Effect<ManagementRegisterResult, ProcessTestError>;
+  /** The identity card the daemon registered with when it started. */
+  readonly identityCard: () => Effect.Effect<
+    AgentIdentityCard,
+    ProcessTestError
+  >;
   readonly status: () => Effect.Effect<
     ManagementStatusResult,
     ProcessTestError
@@ -684,9 +689,7 @@ export const makeDaemonProcessFixture = (
     yield* makeDirectory(stateDirectory);
     const credentials = yield* makeMcpCredential(directory);
     const privateKey = makePrivateKeyPem();
-    const registration = Schema.decodeUnknownSync(
-      toolDefinitions.register.input,
-    )({
+    const registration = Schema.decodeUnknownSync(registrationSeed)({
       operationId: makeIdentifier("opn_"),
       principalId: makeIdentifier("prn_"),
       agentName,
@@ -913,10 +916,6 @@ export const awaitDaemonStartupFailure = (
   }).pipe(Effect.withSpan("awaitDaemonStartupFailure"));
 
 /** Creates exact one-shot bootstrap fields for a fixture's configured identity. */
-export const makeRegistrationRequest = (
-  fixture: DaemonProcessFixture,
-): ManagementRegisterRequest => fixture.registration;
-
 const callAndDecode = <A, I>(input: {
   readonly client: Client;
   readonly name: string;
@@ -1088,13 +1087,27 @@ function managementOperations(client: Client): DaemonManagementClient {
         arguments: { eventId },
         schema: Schema.Struct({ item: PermittedItem }),
       }).pipe(Effect.map(({ item }) => item)),
-    register: (request) =>
-      callAndDecode({
-        client,
-        name: "register",
-        arguments: { ...request },
-        schema: AgentIdentityCard,
-      }),
+    identityCard: () =>
+      management.status().pipe(
+        Effect.flatMap((status) =>
+          status.kind === "registered"
+            ? Schema.decodeUnknown(AgentIdentityCard)(status.identityCard).pipe(
+                Effect.catchTag(
+                  "ParseError",
+                  (cause) =>
+                    new ProcessTestError({
+                      message: "the daemon's identity card did not decode",
+                      cause,
+                    }),
+                ),
+              )
+            : Effect.fail(
+                new ProcessTestError({
+                  message: "the daemon has not registered",
+                }),
+              ),
+        ),
+      ),
     status: () =>
       callAndDecode({
         client,

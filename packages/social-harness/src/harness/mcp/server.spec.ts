@@ -129,69 +129,6 @@ describe("MCP authentication and discovery", () => {
         ),
       ).toEqual({ items: [] });
     }));
-
-  it("hides active tools until registration is retained", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture({ registered: false });
-      const client = yield* connectInProcessClient((input, init) =>
-        fixture.fetch(new Request(input, init)),
-      );
-      const initial = yield* Effect.tryPromise(() => client.listTools());
-      expect(initial.tools.map((tool) => tool.name)).toEqual([
-        "status",
-        "register",
-      ]);
-      yield* Effect.tryPromise(() =>
-        client.callTool({
-          name: "register",
-          arguments: {
-            operationId: `opn_${"A".repeat(22)}`,
-            principalId: fixture.card.principalId,
-            agentName: fixture.card.agentName,
-          },
-        }),
-      );
-      expect(
-        (yield* Effect.tryPromise(() => client.listTools())).tools.map(
-          (tool) => tool.name,
-        ),
-      ).toContain("send_message");
-    }));
-  it("delivers registration tool changes through a stock notification subscription", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture({ registered: false });
-      const client = yield* connectInProcessClient((input, init) =>
-        fixture.fetch(new Request(input, init)),
-      );
-      const changed = yield* Deferred.make<undefined>();
-      client.setNotificationHandler("notifications/tools/list_changed", () => {
-        Effect.runFork(Deferred.succeed(changed, undefined));
-      });
-      const subscription = yield* Effect.acquireRelease(
-        Effect.tryPromise(() => client.listen({ toolsListChanged: true })),
-        (listening) =>
-          Effect.tryPromise(() => listening.close()).pipe(Effect.ignore),
-      );
-      expect(subscription.honoredFilter.toolsListChanged).toBe(true);
-      yield* Effect.tryPromise(() =>
-        client.callTool({
-          name: "register",
-          arguments: {
-            operationId: `opn_${"A".repeat(22)}`,
-            principalId: fixture.card.principalId,
-            agentName: fixture.card.agentName,
-          },
-        }),
-      );
-      yield* Deferred.await(changed).pipe(Effect.timeout("2 seconds"));
-      expect(
-        (yield* Effect.tryPromise(() => client.listTools())).tools.map(
-          (tool) => tool.name,
-        ),
-      ).toContain("send_message");
-      yield* Effect.tryPromise(() => subscription.close());
-      expect(yield* Effect.tryPromise(() => subscription.closed)).toBe("local");
-    }));
 });
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.

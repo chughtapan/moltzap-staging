@@ -285,18 +285,6 @@ describe("management failures", () => {
       tag: "HistoryError",
     },
     {
-      request: {
-        name: "register",
-        arguments: Schema.decodeUnknownSync(toolDefinitions.register.input)({
-          operationId: `opn_${"A".repeat(22)}`,
-          principalId: `prn_${"A".repeat(22)}`,
-          agentName: "alice",
-        }),
-      },
-      data: { reason: "admission-refused" },
-      tag: "RegistrationError",
-    },
-    {
       request: { name: "policy_read", arguments: {} },
       data: { reason: "approval-refused" },
       tag: "FirewallPolicyError",

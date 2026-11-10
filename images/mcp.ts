@@ -1,11 +1,9 @@
 /**
- * @file Calls sharnessd at SHARNESS_MCP_URL from the command line.
- * `register NAME` first checks status, then reuses registration.json in the
- * current directory until a final answer. Rerunning after a lost answer
- * recovers the identity or repeats the saved request.
+ * @file Calls one sharnessd tool at SHARNESS_MCP_URL from the command line.
  *
- * `call TOOL [JSON]` defaults to {} and prints the structured result.
- * Failures exit 1 and print the reason and Docs troubleshooting link to stderr.
+ * `call TOOL [JSON]` sends the JSON object as the tool's arguments, {} when
+ * omitted, and prints the structured result. A failure exits 1 and prints the
+ * reason to stderr.
  */
 import { FileSystem } from "@effect/platform";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
@@ -14,7 +12,6 @@ import {
   ProtocolError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { AgentIdentityCard, RegistrationError } from "@moltzap/social-harness";
 import {
   Config,
   Console,
@@ -25,41 +22,16 @@ import {
   Schema,
   type Scope,
 } from "effect";
-import { randomBytes } from "node:crypto";
 
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 /** JSON-RPC's invalid-params code: the daemon refused the arguments itself. */
 const INVALID_PARAMS = -32602;
-const REGISTRATION_FILE = "registration.json";
-const USAGE =
-  "usage: node mcp.ts register NAME, or node mcp.ts call TOOL [JSON]";
+const USAGE = "usage: node mcp.ts call TOOL [JSON]";
 
 /** A command that did not complete. `message` is what the reader sees. */
 class CommandError extends Data.TaggedError("CommandError")<{
   readonly message: string;
 }> {}
-
-/** A tool call that failed. `refused` marks a final daemon refusal. */
-class ToolFailure extends Data.TaggedError("ToolFailure")<{
-  readonly message: string;
-  readonly refused: boolean;
-  readonly registrationReason?: RegistrationError["reason"];
-}> {}
-
-const statusResult = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("unregistered") }),
-  Schema.Struct({
-    kind: Schema.Literal("registered"),
-    identityCard: AgentIdentityCard,
-  }),
-);
-
-/** The `register` request, saved so that a rerun repeats it exactly. */
-const savedRequest = Schema.Struct({
-  operationId: Schema.String,
-  principalId: Schema.String,
-  agentName: Schema.String,
-});
 
 /** The JSON-RPC error data the daemon attaches to a failed tool call. */
 const failureData = Schema.Struct({
@@ -77,9 +49,6 @@ const program = Effect.gen(function* () {
   );
   // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- two positional commands; the helper installs no @effect/cli
   const [command, first, second = "{}"] = process.argv.slice(2);
-  if (command === "register" && first !== undefined) {
-    return yield* register(url, first);
-  }
   if (command === "call" && first !== undefined) {
     return yield* call(url, first, second);
   }
@@ -93,96 +62,6 @@ NodeRuntime.runMain(
   ),
   { disableErrorReporting: true },
 );
-
-/**
- * Registers the daemon at `url` under `name`, or confirms it is already
- * registered under that name.
- */
-function register(
-  url: URL,
-  name: string,
-): Effect.Effect<void, CommandError, FileSystem.FileSystem | Scope.Scope> {
-  return Effect.gen(function* () {
-    const client = yield* connect(url);
-    const status = yield* callTool(client, "status", {}).pipe(
-      Effect.mapError((failure) => commandError(failure.message)),
-      Effect.flatMap((result) => decode(statusResult, result, "status")),
-    );
-    if (status.kind === "unregistered") {
-      return yield* submit(client, name);
-    }
-    const registeredName = status.identityCard.agentName;
-    if (registeredName !== name) {
-      return yield* Effect.fail(
-        commandError(
-          `this daemon is already registered as agent:${registeredName}`,
-        ),
-      );
-    }
-    yield* forgetRequest();
-    return yield* Console.log(`already registered: agent:${name}`);
-  });
-}
-
-/**
- * Sends the saved or a new `register` request for `name`. A final answer
- * deletes the saved request. A failed call keeps it for the rerun.
- */
-function submit(
-  client: Client,
-  name: string,
-): Effect.Effect<void, CommandError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const request = yield* savedOrNewRequest(name);
-    const answer = yield* callTool(client, "register", request).pipe(
-      Effect.catchTag("ToolFailure", (failure) => {
-        const error =
-          failure.registrationReason === undefined
-            ? commandError(failure.message)
-            : registrationFailure(failure.registrationReason, name);
-        return failure.refused
-          ? forgetRequest().pipe(Effect.zipRight(Effect.fail(error)))
-          : Effect.fail(
-              commandError(
-                `${error.message}; rerun the same command, which repeats the request saved in ${REGISTRATION_FILE}`,
-              ),
-            );
-      }),
-    );
-    const identityCard = yield* decode(AgentIdentityCard, answer, "register");
-    yield* forgetRequest();
-    return yield* Console.log(`registered agent:${identityCard.agentName}`);
-  });
-}
-
-function registrationFailure(
-  reason: RegistrationError["reason"],
-  name: string,
-): CommandError {
-  switch (reason) {
-    case "name_taken":
-      return commandError(
-        `register agent:${name}: name_taken; another agent holds this name, so choose another`,
-      );
-    case "key_already_registered":
-      return commandError(
-        `register agent:${name}: key_already_registered; this daemon's key belongs to another registered agent`,
-      );
-    case "idempotency_conflict":
-      return commandError(
-        `register agent:${name}: idempotency_conflict; the Registry already saw this operation id with another request`,
-      );
-    case "admission-refused":
-      return commandError(
-        "register failed: The Registry refused the admission credential",
-      );
-    case "dependency-unavailable":
-    case "persistence-failed":
-    case "incompatible-daemon":
-    default:
-      return commandError(`register agent:${name}: ${reason}`);
-  }
-}
 
 function call(
   url: URL,
@@ -198,73 +77,9 @@ function call(
       ),
     );
     const client = yield* connect(url);
-    const result = yield* callTool(client, tool, parsed).pipe(
-      Effect.mapError((failure) => commandError(failure.message)),
-    );
+    const result = yield* callTool(client, tool, parsed);
     yield* Console.log(JSON.stringify(result, null, 2));
   });
-}
-
-/**
- * The request saved in `registration.json` for `name`, or a new one created
- * there before it is sent. Creation fails rather than replace a request
- * another run saved at the same moment.
- */
-function savedOrNewRequest(
-  name: string,
-): Effect.Effect<
-  typeof savedRequest.Type,
-  CommandError,
-  FileSystem.FileSystem
-> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    if (yield* fs.exists(REGISTRATION_FILE)) {
-      const saved = yield* fs
-        .readFileString(REGISTRATION_FILE)
-        .pipe(Effect.flatMap(Schema.decode(Schema.parseJson(savedRequest))));
-      if (saved.agentName !== name) {
-        return yield* Effect.fail(
-          commandError(
-            `${REGISTRATION_FILE} registers agent:${saved.agentName}; rerun with that name, or delete ${REGISTRATION_FILE} to choose another`,
-          ),
-        );
-      }
-      return saved;
-    }
-    const request = {
-      operationId: `opn_${randomBytes(16).toString("base64url")}`,
-      principalId: `prn_${randomBytes(16).toString("base64url")}`,
-      agentName: name,
-    };
-    yield* fs.writeFileString(
-      REGISTRATION_FILE,
-      `${JSON.stringify(request, null, 2)}\n`,
-      { flag: "wx", mode: 0o600 },
-    );
-    return request;
-  }).pipe(
-    Effect.catchTags({
-      BadArgument: (error) => Effect.fail(fileError(error.message)),
-      SystemError: (error) => Effect.fail(fileError(error.message)),
-      ParseError: (error) => Effect.fail(fileError(error.message)),
-    }),
-  );
-}
-
-function forgetRequest(): Effect.Effect<
-  void,
-  CommandError,
-  FileSystem.FileSystem
-> {
-  return Effect.flatMap(FileSystem.FileSystem, (fs) =>
-    fs.remove(REGISTRATION_FILE, { force: true }),
-  ).pipe(
-    Effect.catchTags({
-      BadArgument: (error) => Effect.fail(fileError(error.message)),
-      SystemError: (error) => Effect.fail(fileError(error.message)),
-    }),
-  );
 }
 
 /** Secret file paths and contents stay redacted outside the authenticated transport. */
@@ -344,7 +159,7 @@ function callTool(
   client: Client,
   tool: string,
   args: Readonly<Record<string, unknown>>,
-): Effect.Effect<unknown, ToolFailure> {
+): Effect.Effect<unknown, CommandError> {
   return Effect.tryPromise({
     try: (signal) =>
       client.callTool({ name: tool, arguments: { ...args } }, { signal }),
@@ -353,12 +168,11 @@ function callTool(
     Effect.flatMap((result) =>
       result.isError === true
         ? Effect.fail(
-            new ToolFailure({
-              message: `${tool} failed: ${result.content
+            commandError(
+              `${tool} failed: ${result.content
                 .flatMap((part) => (part.type === "text" ? [part.text] : []))
                 .join("\n")}`,
-              refused: false,
-            }),
+            ),
           )
         : Effect.succeed(result.structuredContent),
     ),
@@ -366,13 +180,12 @@ function callTool(
 }
 
 /**
- * Reasons whose JSON-RPC message from the daemon already names the cause: an
- * admission refusal, a send the agent's own firewall refused (its check and
+ * Reasons whose JSON-RPC message from the daemon already names the cause: a
+ * send the agent's own firewall refused (its check and
  * next action), a refused collective (each unreachable member or failing
  * field), and a refused policy edit (the failing rule and the problem).
  */
 const MESSAGE_REASONS: ReadonlySet<string> = new Set([
-  "admission-refused",
   "firewall-refused",
   "collective-failed",
   "invalid-rule",
@@ -383,57 +196,21 @@ const MESSAGE_REASONS: ReadonlySet<string> = new Set([
  * Preserves daemon diagnostics for invalid arguments and MESSAGE_REASONS.
  * Otherwise reports the reason and detail.
  */
-function toolFailure(tool: string, cause: unknown): ToolFailure {
+function toolFailure(tool: string, cause: unknown): CommandError {
   if (!ProtocolError.isInstance(cause)) {
-    return new ToolFailure({
-      message: `${tool} failed: ${String(cause)}`,
-      refused: false,
-    });
+    return commandError(`${tool} failed: ${String(cause)}`);
   }
   const { reason, detail } = Option.getOrElse(
     Schema.decodeUnknownOption(failureData)(cause.data),
     (): typeof failureData.Type => ({}),
   );
-  const registrationReason =
-    tool === "register"
-      ? Option.getOrUndefined(
-          Schema.decodeUnknownOption(RegistrationError.fields.reason)(reason),
-        )
-      : undefined;
   const said =
     cause.code === INVALID_PARAMS ||
     reason === undefined ||
     MESSAGE_REASONS.has(reason)
       ? cause.message
       : [reason, ...(detail === undefined ? [] : [detail])].join("; ");
-  const registrationRefused =
-    registrationReason === "admission-refused" ||
-    registrationReason === "name_taken" ||
-    registrationReason === "key_already_registered" ||
-    registrationReason === "idempotency_conflict";
-  return new ToolFailure({
-    message: `${tool} failed: ${said}`,
-    refused: cause.code === INVALID_PARAMS || registrationRefused,
-    ...(registrationReason === undefined ? {} : { registrationReason }),
-  });
-}
-
-function decode<A, I>(
-  schema: Schema.Schema<A, I>,
-  value: unknown,
-  tool: string,
-): Effect.Effect<A, CommandError> {
-  return Schema.decodeUnknown(schema)(value).pipe(
-    Effect.mapError(() =>
-      commandError(
-        `${tool} returned a result this script does not read: ${JSON.stringify(value)}`,
-      ),
-    ),
-  );
-}
-
-function fileError(detail: string): CommandError {
-  return commandError(`could not use ${REGISTRATION_FILE}: ${detail}`);
+  return commandError(`${tool} failed: ${said}`);
 }
 
 function commandError(message: string): CommandError {

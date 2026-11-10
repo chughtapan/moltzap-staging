@@ -46,7 +46,6 @@ import {
   daemonListening,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   managedProcess,
   type ProcessInfrastructure,
   ProcessTestError,
@@ -64,9 +63,7 @@ const registerFixture = (fixture: DaemonProcessFixture) =>
       const management = yield* acquireDaemonManagementClient(fixture);
       expect(yield* management.status()).toMatchObject({ kind: "registered" });
 
-      const registered = yield* management.register(
-        makeRegistrationRequest(fixture),
-      );
+      const registered = yield* management.identityCard();
       const agentCard = registered;
       expect(agentCard).toMatchObject({
         agentName: fixture.agentName,
