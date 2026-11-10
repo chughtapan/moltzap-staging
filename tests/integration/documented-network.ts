@@ -172,7 +172,7 @@ function ownNetworkPath(
     yield* expectRefusal(
       alice,
       ["call", "send_message", sendTo("nobody")],
-      ["send_message failed: unknown-agent"],
+      ["an agent the address names is not a known agent"],
     );
     return "own-network path passed";
   });

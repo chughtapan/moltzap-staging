@@ -378,12 +378,12 @@ the port in the agent's `env` file.
 
 <a id="tool-failed" />
 
-### `<tool> failed: <reason>`
+### `<tool> failed: <message>`
 
-The daemon refused or could not complete the call, and `<reason>` says why.
-For `send_message`, `unknown-agent` means no agent has that name, and
-`delivery-pending` means the message will still be sent: do not send it again.
-`outcome-unknown` or a timeout means it may have been sent. Read the sending
+The daemon refused or could not complete the call, and the message says why
+and what to do. For `send_message`, "the message is pending" means it will
+still be sent: do not send it again. "the message may or may not have been
+sent", or a timeout, means it may have been sent. Read the sending
 agent's conversation before deciding whether to send again. For Alice on
 port `4101` sending to Bob:
 
