@@ -186,7 +186,6 @@ interface Network {
 }
 interface OpenOptions
   extends Omit<HarnessSettings<never>, "communication" | "agentKey"> {
-  readonly registerOnStart?: boolean;
   readonly policy?: FirewallOptions;
   readonly beforeRegistration?: Effect.Effect<undefined>;
   readonly startCommunication?: Effect.Effect<undefined, CommunicationError>;
@@ -240,7 +239,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
     self,
     bob,
     carol,
-    request,
     submitted: network.submitted,
     activated: network.activated,
     open: (options: OpenOptions = {}) =>
@@ -287,6 +285,7 @@ function openHarness(
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         environment.identity.registryAuthority,
       ),
+      registration: request,
     }).pipe(
       Layer.provideMerge(registryFor(environment, options)),
       Layer.provideMerge(
@@ -332,16 +331,9 @@ function openHarness(
       ),
     ).pipe(Effect.provide(provided));
     const harness = Context.get(context, SocialHarness);
-    const local = Context.get(services, Identity);
-    if (
-      options.registerOnStart !== false &&
-      (yield* local.me()).kind === "unregistered"
-    ) {
-      yield* harness.register(request);
-    }
     return {
       harness,
-      identity: local,
+      identity: Context.get(services, Identity),
       firewall,
       failed: FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
     };

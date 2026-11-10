@@ -121,7 +121,6 @@ interface EventSubscriptionGrant {
 export interface HarnessWebhookEvents {
   readonly subscribe: (
     input: EventSubscribeInput,
-    authorize?: Effect.Effect<void, ProtocolError>,
   ) => Effect.Effect<EventSubscriptionGrant, ProtocolError>;
   readonly unsubscribe: (
     input: EventUnsubscribeInput,
@@ -169,15 +168,11 @@ const historyRecord = Schema.Union(
   }),
 );
 
-/** Saved identity is visible while communication activation proceeds. */
-const managementStatusResultSchema = Schema.Union(
-  Schema.Struct({ kind: Schema.Literal("unregistered") }),
-  Schema.Struct({
-    kind: Schema.Literal("registered"),
-    identityCard: encodedAgentCard,
-    webhook: webhookStatusSchema,
-  }),
-);
+/** The identity is readable while communication is still starting. */
+const managementStatusResultSchema = Schema.Struct({
+  identityCard: encodedAgentCard,
+  webhook: webhookStatusSchema,
+});
 
 /** Canonically ordered local-conversation page selector. */
 export const managementListConversationsRequestSchema = exactStruct({
@@ -448,7 +443,7 @@ export const toolDefinitions = {
   status: {
     failure: failsUntyped,
     description:
-      "Read saved registration status, the Registry-issued identity card, and the state of the inbox wake-up callback, if one is subscribed.",
+      "Read this agent's Registry-issued identity card and the state of the inbox wake-up callback, if one is subscribed.",
     input: empty,
     output: managementStatusResultSchema,
     annotations: read,

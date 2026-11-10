@@ -32,7 +32,6 @@ export const sendFailureReasons = [
   "membership-invalid",
   "content-invalid",
   "message-conflict",
-  "not-registered",
   "version-mismatch",
   "certification-unavailable",
   "persistence-failed",
@@ -65,7 +64,6 @@ const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "content-invalid": "the message content is invalid",
   "message-conflict":
     "the message identity already belongs to different content or recipients",
-  "not-registered": "this agent is not registered with Social Harness",
   "version-mismatch": "Social Harness is unavailable (version mismatch)",
   "certification-unavailable":
     "Social Harness is unavailable (certification unavailable)",

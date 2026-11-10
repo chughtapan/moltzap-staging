@@ -227,7 +227,6 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
       })),
     );
   const harness = SocialHarness.of({
-    register: () => Effect.dieMessage("Unexpected registration"),
     send: () => Effect.dieMessage("Unexpected send"),
     listInbox: (request = {}) =>
       sql<{

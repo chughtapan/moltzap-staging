@@ -74,7 +74,6 @@ export type InboxPage = typeof InboxPage.Type;
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schemas. */
 
 const inboxFailureText = {
-  "not-registered": "this agent is not registered with Social Harness",
   "invalid-cursor":
     "the cursor is not one this inbox returned; call again without a cursor",
   "invalid-event": "a saved inbox item could not be read",
@@ -84,7 +83,6 @@ const inboxFailureText = {
 /** Inbox reads reject unusable cursors and unavailable retained items. */
 export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
   reason: Schema.Literal(
-    "not-registered",
     "invalid-cursor",
     "invalid-event",
     "persistence-failed",
@@ -100,7 +98,6 @@ export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowl
   "DeliveryAcknowledgeError",
   {
     reason: Schema.Literal(
-      "not-registered",
       "unknown-delivery",
       "delivery-conflict",
       "persistence-failed",

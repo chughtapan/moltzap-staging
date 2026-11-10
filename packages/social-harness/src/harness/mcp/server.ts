@@ -136,19 +136,7 @@ const installEvents = Effect.fn("installEvents")(function* (
   webhook: HarnessWebhookEvents,
 ) {
   const harness = yield* SocialHarness;
-  const identity = yield* Identity;
   const server = yield* McpServer;
-  const registered = identity
-    .me()
-    .pipe(
-      Effect.flatMap((status) =>
-        status.kind === "registered"
-          ? Effect.void
-          : Effect.fail(
-              new ProtocolError(-32012, "Endpoint is not registered"),
-            ),
-      ),
-    );
   server.events.current = {
     list: (raw) =>
       decodeEventArguments(eventListInput, raw).pipe(
@@ -180,18 +168,17 @@ const installEvents = Effect.fn("installEvents")(function* (
               ),
         ),
       ),
-    stream: (raw) => streamPending(harness, registered, raw),
+    stream: (raw) => streamPending(harness, raw),
     subscribe: (raw) =>
       Effect.gen(function* () {
         const input = yield* decodeEventArguments(eventSubscribeInput, raw);
-        yield* registered;
         yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
         if (input.delivery.mode !== "webhook") {
           return yield* Effect.fail(
             new ProtocolError(-32602, "Unsupported delivery mode"),
           );
         }
-        return yield* webhook.subscribe(input, registered);
+        return yield* webhook.subscribe(input);
       }),
     unsubscribe: (raw) =>
       Effect.gen(function* () {
@@ -205,13 +192,11 @@ const installEvents = Effect.fn("installEvents")(function* (
 
 function streamPending(
   harness: Context.Tag.Service<typeof SocialHarness>,
-  registered: Effect.Effect<void, ProtocolError>,
   raw: unknown,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
       const input = yield* decodeEventArguments(eventStreamInput, raw);
-      yield* registered;
       yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
       const context = yield* McpServerClient;
       const notify = context.notify;
@@ -259,9 +244,6 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const identity = yield* Identity;
   const firewall = yield* Firewall;
   const server = yield* McpServer.make;
-  const registered = identity
-    .me()
-    .pipe(Effect.map((state) => state.kind === "registered"));
   yield* installEvents(settings.webhook).pipe(
     Effect.provideService(McpServer, server),
   );
@@ -272,20 +254,16 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
 
   yield* Option.match(settings.serverAgent, {
     onNone: () =>
-      installMessageTools(server, harness, registered, settings).pipe(
-        Effect.zipRight(
-          installPolicyTools(server, firewall, registered, policyConfigured),
-        ),
+      installMessageTools(server, harness, settings).pipe(
+        Effect.zipRight(installPolicyTools(server, firewall, policyConfigured)),
       ),
-    onSome: (serverAgent) =>
-      installClientTools(server, harness, registered, serverAgent),
+    onSome: (serverAgent) => installClientTools(server, harness, serverAgent),
   });
   yield* installIdentityTools(server, identity, settings.webhook);
   if (Option.isSome(norms)) {
     yield* installNormTools(
       server,
       norms.value,
-      registered,
       Option.isSome(settings.serverAgent)
         ? clientToolDefinitions.read_norms
         : toolDefinitions.read_norms,
@@ -361,7 +339,6 @@ function safeLocalUrl(value: string): boolean {
 function installMessageTools(
   server: Context.Tag.Service<typeof McpServer>,
   harness: Context.Tag.Service<typeof SocialHarness>,
-  registered: Effect.Effect<boolean>,
   settings: Pick<AgentServerSettings, "hideCollectives">,
 ) {
   return Effect.gen(function* () {
@@ -370,7 +347,6 @@ function installMessageTools(
       execute: (request: SendRequest) => harness.send(request),
       failure: sendFailure,
       unexpected: sendOutcomeUnknown,
-      visible: registered,
     };
     yield* settings.hideCollectives
       ? bind(server, {
@@ -383,20 +359,18 @@ function installMessageTools(
           },
         })
       : bind(server, { ...send, definition: toolDefinitions.send_message });
-    yield* installReceiveTool(server, harness, registered);
+    yield* installReceiveTool(server, harness);
     yield* bind(server, {
       name: "list_conversations",
       definition: toolDefinitions.list_conversations,
       execute: harness.listConversations,
       failure: reasonError,
-      visible: registered,
     });
     yield* bind(server, {
       name: "read_conversation",
       definition: toolDefinitions.read_conversation,
       execute: harness.readHistory,
       failure: reasonError,
-      visible: registered,
     });
   });
 }
@@ -404,7 +378,6 @@ function installMessageTools(
 function installReceiveTool(
   server: Context.Tag.Service<typeof McpServer>,
   harness: Context.Tag.Service<typeof SocialHarness>,
-  registered: Effect.Effect<boolean>,
 ) {
   return bind(server, {
     name: "receive_messages",
@@ -426,7 +399,6 @@ function installReceiveTool(
       return page;
     }),
     failure: reasonError,
-    visible: registered,
   });
 }
 
@@ -437,7 +409,6 @@ function installReceiveTool(
 function installClientTools(
   server: Context.Tag.Service<typeof McpServer>,
   harness: Context.Tag.Service<typeof SocialHarness>,
-  registered: Effect.Effect<boolean>,
   serverAgent: MessageAddressInput,
 ) {
   return Effect.gen(function* () {
@@ -447,15 +418,13 @@ function installClientTools(
       execute: ({ text }) => harness.send({ to: serverAgent, text }),
       failure: sendFailure,
       unexpected: sendOutcomeUnknown,
-      visible: registered,
     });
-    yield* installReceiveTool(server, harness, registered);
+    yield* installReceiveTool(server, harness);
     yield* bind(server, {
       name: "read_conversation",
       definition: clientToolDefinitions.read_conversation,
       execute: (page) => harness.readHistory({ ...page, address: serverAgent }),
       failure: reasonError,
-      visible: registered,
     });
   });
 }
@@ -470,21 +439,14 @@ function installIdentityTools(
       definition: toolDefinitions.status,
       execute: () =>
         Effect.gen(function* () {
-          const state = yield* identity.me();
-          if (state.kind === "unregistered") {
-            return state;
-          }
-          const identityCard = yield* Schema.encode(AgentIdentityCard)(
-            state.identityCard,
-          ).pipe(Effect.orDie);
           return {
-            kind: "registered" as const,
-            identityCard,
+            identityCard: yield* Schema.encode(AgentIdentityCard)(
+              identity.me,
+            ).pipe(Effect.orDie),
             webhook: yield* webhook.status,
           };
         }),
       failure: reasonError,
-      visible: Effect.succeed(true),
     });
   });
 }
@@ -493,7 +455,6 @@ function installIdentityTools(
 function installNormTools(
   server: Context.Tag.Service<typeof McpServer>,
   norms: Context.Tag.Service<typeof HeldNorms>,
-  registered: Effect.Effect<boolean>,
   definition:
     | typeof toolDefinitions.read_norms
     | typeof clientToolDefinitions.read_norms,
@@ -513,14 +474,12 @@ function installNormTools(
         })),
       ),
     failure: reasonError,
-    visible: registered,
   });
 }
 
 function installPolicyTools(
   server: Context.Tag.Service<typeof McpServer>,
   firewall: Context.Tag.Service<typeof Firewall>,
-  registered: Effect.Effect<boolean>,
   policyConfigured: Effect.Effect<boolean>,
 ) {
   return Effect.gen(function* () {
@@ -529,11 +488,7 @@ function installPolicyTools(
       definition: toolDefinitions.read_policy,
       execute: () => firewall.readPolicy(),
       failure: reasonError,
-      visible: Effect.zipWith(
-        registered,
-        policyConfigured,
-        (active, configured) => active && configured,
-      ),
+      visible: policyConfigured,
     });
     yield* bind(server, {
       name: "update_policy",
@@ -544,18 +499,13 @@ function installPolicyTools(
           reason: error.reason,
           ...error.data,
         }),
-      visible: Effect.zipWith(
-        registered,
-        policyConfigured,
-        (active, configured) => active && configured,
-      ),
+      visible: policyConfigured,
     });
     yield* bind(server, {
       name: "read_firewall_decisions",
       definition: toolDefinitions.read_firewall_decisions,
       execute: firewall.readDecisions,
       failure: reasonError,
-      visible: registered,
     });
   });
 }
@@ -587,7 +537,7 @@ function bind<A, I, B, J, E>(
     readonly failure: (error: E) => ProtocolError;
     /** What to answer when the tool ends in a way it does not declare. */
     readonly unexpected?: ProtocolError;
-    readonly visible: Effect.Effect<boolean>;
+    readonly visible?: Effect.Effect<boolean>;
   },
 ) {
   const { name, definition, execute, failure, visible } = options;
@@ -604,7 +554,7 @@ function bind<A, I, B, J, E>(
         ...definition.annotations,
       }),
     }),
-    visible,
+    ...(visible === undefined ? {} : { visible }),
     handle: (input) =>
       Effect.gen(function* () {
         const decoded = yield* Schema.decodeUnknown(definition.input, {

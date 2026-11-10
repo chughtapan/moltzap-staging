@@ -46,7 +46,6 @@ const mcpTestHeaders = {
 /** Overrides are semantic service operations, without an adapter operation bag. */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
-    readonly registered?: boolean;
     readonly hideCollectives?: boolean;
     readonly serverAgent?: MessageAddressInput;
     readonly serverAgentCredential?: Redacted.Redacted;
@@ -62,22 +61,11 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     authority,
     registryKeys: generateKeyPairSync("ed25519"),
   });
-  const registered = yield* Ref.make(options.registered ?? true);
-  const register = () => Ref.set(registered, true).pipe(Effect.as(card));
   const identity = Identity.of({
-    me: () =>
-      Ref.get(registered).pipe(
-        Effect.map((active) =>
-          active
-            ? { kind: "registered" as const, identityCard: card }
-            : { kind: "unregistered" as const },
-        ),
-      ),
-    register,
+    me: card,
     resolve: () => Effect.dieMessage("Unexpected identity resolution"),
   });
   const harness = SocialHarness.of({
-    register,
     send: () => Effect.dieMessage("Unexpected send"),
     listInbox: () => Effect.succeed({ items: [] }),
     acknowledgeDelivery: () => Effect.void,

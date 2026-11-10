@@ -347,13 +347,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         }
         const chainRevision =
           rules === undefined ? "" : yield* chainDigest(rules);
-        const localAgent = Effect.gen(function* () {
-          const state = yield* identity.me();
-          if (state.kind !== "registered") {
-            return yield* new CheckInputError({ reason: "context" });
-          }
-          return agentCardOf(state.identityCard);
-        });
+        const localAgent = agentCardOf(identity.me);
         const installed: Installation = {
           store,
           ...(policy === undefined ? {} : { policy }),
@@ -435,7 +429,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                   visibility: [],
                 } satisfies IncomingDecision;
               }
-              const agent = yield* localAgent;
+              const agent = localAgent;
               if (value.kind === "result") {
                 return yield* checkResult(installed, agent, value, evidence);
               }
@@ -535,7 +529,7 @@ interface Installation {
   readonly store: FirewallStore;
   readonly policy?: Policy;
   readonly chain?: Chain;
-  readonly localAgent: Effect.Effect<AgentCard, CheckInputError>;
+  readonly localAgent: AgentCard;
   readonly revision: () => string;
 }
 
@@ -718,7 +712,7 @@ function decide(
         ? []
         : yield* assess(
             installed.policy,
-            yield* installed.localAgent,
+            installed.localAgent,
             unmatched,
             direction,
           );
@@ -745,7 +739,7 @@ function chainDecision(
       direction,
       message: candidate.value,
       evidence: candidate.evidence,
-      self: yield* installed.localAgent,
+      self: installed.localAgent,
     });
     if (outcome.kind === "unmatched") {
       return undefined;

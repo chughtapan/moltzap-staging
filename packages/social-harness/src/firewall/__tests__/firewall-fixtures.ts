@@ -81,6 +81,13 @@ export function withFirewall<A, E, R>(
     registrySignerPublicKey: AgentSigningAuthority.publicKey(
       fixture.registryAuthority,
     ),
+    registration: {
+      operationId: RegistrationId.make(
+        `opn_${Encoding.encodeBase64Url(new Uint8Array(16))}`,
+      ),
+      principalId: fixture.identityCard.principalId,
+      agentName: fixture.identityCard.agentName,
+    },
   }).pipe(
     Layer.provide(
       Layer.succeed(
@@ -107,14 +114,6 @@ export function withFirewall<A, E, R>(
   );
   return Effect.scoped(
     Effect.gen(function* () {
-      const local = yield* Identity;
-      yield* local.register({
-        operationId: RegistrationId.make(
-          `opn_${Encoding.encodeBase64Url(new Uint8Array(16))}`,
-        ),
-        principalId: fixture.identityCard.principalId,
-        agentName: fixture.identityCard.agentName,
-      });
       return yield* use(yield* Firewall, agentCardOf(fixture.identityCard));
     }).pipe(Effect.provide(services), Effect.withSpan("withFirewall")),
   );

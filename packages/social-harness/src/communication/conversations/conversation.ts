@@ -141,7 +141,6 @@ const resumeDispositionBySendReason = {
   "membership-invalid": "fail-representation",
   "network-unavailable": "ignore",
   "delivery-pending": "ignore",
-  "not-registered": "fail-representation",
   "persistence-failed": "fail-persistence",
   "unknown-agent": "fail-representation",
   "version-mismatch": "fail-representation",

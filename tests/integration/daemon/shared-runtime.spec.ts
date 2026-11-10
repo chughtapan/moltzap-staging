@@ -458,9 +458,6 @@ const openSharedDaemon = (
       bob,
       bobStatus: b,
     });
-    if (a.kind !== "registered" || b.kind !== "registered") {
-      return yield* Effect.dieMessage("Expected registered OAuth agents");
-    }
     const [aliceCard, bobCard] = yield* Effect.all([
       Schema.decodeUnknown(AgentIdentityCard)(a.identityCard),
       Schema.decodeUnknown(AgentIdentityCard)(b.identityCard),

@@ -8,7 +8,6 @@ import {
   Deferred,
   type Duration,
   Effect,
-  Fiber,
   FiberSet,
   Layer,
   Option,
@@ -54,15 +53,10 @@ import {
   agentCardOf,
   type VerifiedAgentIdentityCard,
 } from "../identity/agent-cards.js";
-import {
-  Identity,
-  IdentityError,
-  type RegistrationError,
-  type RegistrationRequest,
-} from "../identity/service.js";
+import { Identity, IdentityError } from "../identity/service.js";
 import {
   catalogCursor,
-  DeliveryAcknowledgeError,
+  type DeliveryAcknowledgeError,
   type DeliveryToken,
   historyCursor,
   InboxError,
@@ -109,7 +103,6 @@ export interface ReadHistoryResult extends PaginatedResult {
   readonly records: readonly HistoryRecord[];
 }
 const historyFailureText = {
-  "not-registered": "this agent is not registered with Social Harness",
   "invalid-address": "the address is not a valid agent: or group: address",
   "unknown-agent": "an agent the address names is not a known agent",
   "invalid-cursor":
@@ -124,7 +117,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
   "HistoryError",
   {
     reason: Schema.Literal(
-      "not-registered",
       "invalid-address",
       "unknown-agent",
       "invalid-cursor",
@@ -142,14 +134,6 @@ type CommunicationService = Context.Tag.Service<typeof Communication>;
 type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, saved inbox and history operations for one agent. */
 interface SocialHarnessService {
-  /**
-   * Saves registration and starts communication without waiting for recovery.
-   * Cancellation preserves successful registration.
-   * Retry with the same request, including `operationId`.
-   */
-  readonly register: (
-    request: RegistrationRequest,
-  ) => Effect.Effect<VerifiedAgentIdentityCard, RegistrationError>;
   /**
    * Checks policy and saves permitted work for delivery. The receipt identifies
    * accepted work and its canonical conversation, without confirming peer receipt.
@@ -245,13 +229,11 @@ function makeHarness<R>(
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity = settings.maximumConcurrentChecks ?? 4;
     const historyLimit = settings.maximumHistoryRecords ?? 256;
-    let activated = false;
-    const activate = Effect.fn(function* (card: VerifiedAgentIdentityCard) {
-      if (activated) {
-        return;
-      }
-      activated = true;
-      const runtime = Layer.build(settings.communication(card)).pipe(
+    const card = identity.me;
+    yield* supervise(
+      workers,
+      scope,
+      Layer.build(settings.communication(card)).pipe(
         Effect.provide(environment),
         Effect.provideService(Scope.Scope, scope),
         Effect.tapErrorCause((cause) => Deferred.failCause(ready, cause)),
@@ -272,39 +254,12 @@ function makeHarness<R>(
             );
           }),
         ),
-      );
-      yield* supervise(workers, scope, runtime);
-    });
-    const self = Effect.gen(function* () {
-      const state = yield* identity.me();
-      return state.kind === "registered" ? state.identityCard : undefined;
-    });
-    const active = Effect.gen(function* () {
-      const card = yield* self;
-      if (card === undefined) {
-        return yield* new SendError({ reason: "not-registered" });
-      }
-      yield* activate(card);
-      const communication = yield* Deferred.await(ready).pipe(
-        Effect.mapError(sendFailure),
-      );
-      return { card, communication };
-    });
-    const register = (request: RegistrationRequest) =>
-      identity
-        .register(request)
-        .pipe(
-          Effect.tap(activate),
-          Effect.forkIn(scope),
-          Effect.flatMap(Fiber.join),
-        );
-    const saved = yield* self;
-    if (saved !== undefined) {
-      yield* activate(saved);
-    }
+      ),
+    );
+    const active = Deferred.await(ready).pipe(Effect.mapError(sendFailure));
     const pending = new Set<string>();
     const checkPending = Effect.gen(function* () {
-      const { card, communication } = yield* active;
+      const communication = yield* active;
       for (const entry of yield* inbox.pending(capacity)) {
         if (pending.size >= capacity) {
           break;
@@ -336,19 +291,8 @@ function makeHarness<R>(
       scope,
       Queue.take(wake).pipe(Effect.zipRight(checkPending), Effect.forever),
     );
-    if (saved !== undefined) {
-      yield* Queue.offer(wake, undefined);
-    }
-    function requireRegistered<E>(failure: E) {
-      return self.pipe(
-        Effect.flatMap((card) =>
-          card === undefined ? Effect.fail(failure) : Effect.succeed(card),
-        ),
-      );
-    }
+    yield* Queue.offer(wake, undefined);
     return SocialHarness.of({
-      register: (request) =>
-        register(request).pipe(Effect.tap(() => Queue.offer(wake, undefined))),
       send: (input) =>
         Effect.suspend(() => {
           const request = structuredClone(input);
@@ -356,7 +300,7 @@ function makeHarness<R>(
             if (settings.hideGroups && request.to.startsWith("group:")) {
               return yield* new SendError({ reason: "content-invalid" });
             }
-            const { card, communication } = yield* active;
+            const communication = yield* active;
             const author = agentCardOf(card);
             const destination = yield* canonicalMessageAddress(
               request.to,
@@ -503,20 +447,13 @@ function makeHarness<R>(
           );
         }),
       listInbox: ({ wait, ...page } = {}) =>
-        requireRegistered(new InboxError({ reason: "not-registered" })).pipe(
-          Effect.zipRight(
-            wait === undefined
-              ? inbox.listInbox(page)
-              : waitForInbox(inbox, changes, page, wait),
-          ),
-        ),
-      acknowledgeDelivery: (token) =>
-        requireRegistered(
-          new DeliveryAcknowledgeError({ reason: "not-registered" }),
-        ).pipe(Effect.zipRight(inbox.acknowledgeDelivery(token))),
+        wait === undefined
+          ? inbox.listInbox(page)
+          : waitForInbox(inbox, changes, page, wait),
+      acknowledgeDelivery: inbox.acknowledgeDelivery,
       listConversations: (request = {}) =>
         Effect.gen(function* () {
-          const { card, communication } = yield* active;
+          const communication = yield* active;
           const position =
             request.cursor === undefined
               ? undefined
@@ -570,7 +507,7 @@ function makeHarness<R>(
         }).pipe(Effect.mapError(historyFailure)),
       readHistory: (request) =>
         Effect.gen(function* () {
-          const { card, communication } = yield* active;
+          const communication = yield* active;
           const destination = yield* canonicalMessageAddress(
             request.address,
             card.agentName,
@@ -1021,9 +958,6 @@ function historyFailure(error: unknown): HistoryError {
           ? "unknown-agent"
           : "persistence-failed",
     });
-  }
-  if (error instanceof SendError && error.reason === "not-registered") {
-    return new HistoryError({ reason: "not-registered" });
   }
   if (error instanceof CommunicationError) {
     if (error.reason === "invalid-cursor" || error.reason === "history-gap") {

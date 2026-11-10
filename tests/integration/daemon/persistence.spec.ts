@@ -1,15 +1,19 @@
 /** @file Qualifies shared-agent persistence on SQLite and restricted-role PostgreSQL. */
-import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
   AgentCard,
+  AgentId,
   AgentSigningAuthority,
   InboxEvent,
   Message,
   Request,
   RequestedSchema,
 } from "@social-harness/social-harness";
+import {
+  agentIdentityCardSigning,
+  WIRE_VERSION,
+} from "@social-harness/social-harness/internal";
 import {
   Firewall,
   type FirewallOptions,
@@ -36,15 +40,7 @@ import {
   transaction,
   withAgentTransaction,
 } from "@social-harness/social-harness/test";
-import {
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-} from "effect";
+import { Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
@@ -273,12 +269,37 @@ const qualifyFirewall = (keys: readonly string[]) =>
       ),
     );
     const signer = AgentSigningAuthority.publicKey(authority);
-    const registry = Registry.layer({
-      origin: new URL("https://registry.example"),
-      registrySignerPublicKey: signer,
-      requestTimeout: Duration.seconds(5),
-      admissionCredential: Option.none(),
-    }).pipe(Layer.provide(NodeHttpClient.layer));
+    const registry = Layer.succeed(
+      Registry,
+      Registry.of({
+        register: ({ request, signingAuthority }) =>
+          agentIdentityCardSigning
+            .sign(
+              {
+                kind: "agentCard",
+                sharnessVersion: WIRE_VERSION,
+                agentId: AgentId.make(
+                  `agt_${randomBytes(16).toString("base64url")}`,
+                ),
+                principalId: request.principalId,
+                agentName: request.agentName,
+                publicKey: AgentSigningAuthority.publicKey(signingAuthority),
+                issuedAt: Schema.decodeSync(agentIdentityCardSigning.issuedAt)(
+                  "2026-08-27T12:00:00Z",
+                ),
+              },
+              authority,
+            )
+            .pipe(
+              Effect.map(
+                (identityCard) =>
+                  ({ kind: "registered", identityCard }) as const,
+              ),
+              Effect.orDie,
+            ),
+        lookup: () => Effect.succeed({ kind: "not_found" }),
+      }),
+    );
     const options: FirewallOptions = {
       facts: [],
       settings: {
@@ -318,8 +339,8 @@ const qualifyFirewall = (keys: readonly string[]) =>
       }
       const identity = Identity.layer({
         agentKey: key,
-        signingAuthority: authority,
         registrySignerPublicKey: signer,
+        ...(yield* loadAgentRegistration(key, unlockKey)),
       }).pipe(Layer.provide(registry));
       const configured = Firewall.layer(key, options).pipe(
         Layer.provide(identity),

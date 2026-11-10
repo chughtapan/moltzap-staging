@@ -153,9 +153,9 @@ function ownNetworkPath(
       { concurrency: 3 },
     );
 
-    yield* expectOutput(alice, ["call", "status"], ['"kind": "registered"']);
-    yield* expectOutput(bob, ["call", "status"], ['"kind": "registered"']);
-    yield* expectOutput(carol, ["call", "status"], ['"kind": "registered"']);
+    yield* expectOutput(alice, ["call", "status"], ['"identityCard"']);
+    yield* expectOutput(bob, ["call", "status"], ['"identityCard"']);
+    yield* expectOutput(carol, ["call", "status"], ['"identityCard"']);
 
     yield* expectOutput(alice, ["call", "send_message", sendTo("bob")], ["{"]);
     yield* expectOutput(

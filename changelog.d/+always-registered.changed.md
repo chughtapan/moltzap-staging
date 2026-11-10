@@ -1,0 +1,1 @@
+An agent registers before it serves its first request, so `status` always returns an identity card and no longer has a `kind`. The `not-registered` failure and the `Endpoint is not registered` protocol error are removed.
