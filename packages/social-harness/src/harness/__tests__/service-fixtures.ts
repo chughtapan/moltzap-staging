@@ -287,7 +287,6 @@ function openHarness(
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         environment.identity.registryAuthority,
       ),
-      admissionCredential: Effect.succeed(Redacted.make("test-admission")),
     }).pipe(
       Layer.provideMerge(registryFor(environment, options)),
       Layer.provideMerge(

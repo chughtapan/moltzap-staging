@@ -36,7 +36,15 @@ import {
   transaction,
   withAgentTransaction,
 } from "@social-harness/social-harness/test";
-import { Duration, Effect, Exit, Layer, Redacted, Schema } from "effect";
+import {
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from "effect";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
@@ -269,6 +277,7 @@ const qualifyFirewall = (keys: readonly string[]) =>
       origin: new URL("https://registry.example"),
       registrySignerPublicKey: signer,
       requestTimeout: Duration.seconds(5),
+      admissionCredential: Option.none(),
     }).pipe(Layer.provide(NodeHttpClient.layer));
     const options: FirewallOptions = {
       facts: [],
@@ -311,7 +320,6 @@ const qualifyFirewall = (keys: readonly string[]) =>
         agentKey: key,
         signingAuthority: authority,
         registrySignerPublicKey: signer,
-        admissionCredential: Effect.succeed(Redacted.make("qualification")),
       }).pipe(Layer.provide(registry));
       const configured = Firewall.layer(key, options).pipe(
         Layer.provide(identity),

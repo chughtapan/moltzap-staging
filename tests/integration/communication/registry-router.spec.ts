@@ -24,7 +24,7 @@ import {
   signAgentRequest,
   WireVersions,
 } from "@social-harness/social-harness/test";
-import { Duration, Effect, Encoding, Layer, Redacted, Schema } from "effect";
+import { Duration, Effect, Encoding, Layer, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -220,7 +220,6 @@ const registerAgent = (name: string, runRegistry: RegistryRunner) =>
     const result = yield* runRegistry(
       Registry.register({
         request,
-        admissionCredential: Redacted.make(ADMISSION_CREDENTIAL),
         signingAuthority,
       }),
     );
@@ -861,6 +860,7 @@ const runEndToEndBehavior = Effect.gen(function* () {
   const runRegistry = makeRegistryRunner(
     infrastructure.registryOrigin,
     infrastructure.registrySignerPublicKey,
+    ADMISSION_CREDENTIAL,
   );
   const firstRouter = makeRouterRunner(infrastructure.routerOrigin);
   const agents = yield* registerAgents(runRegistry);
@@ -911,6 +911,7 @@ it(
         makeRegistryRunner(
           infrastructure.registryOrigin,
           infrastructure.registrySignerPublicKey,
+          ADMISSION_CREDENTIAL,
         ),
       );
       const error = yield* Router.poll({
@@ -949,6 +950,7 @@ it(
       const runRegistry = makeRegistryRunner(
         infrastructure.registryOrigin,
         infrastructure.registrySignerPublicKey,
+        ADMISSION_CREDENTIAL,
       );
       const error = yield* runRegistry(
         Registry.lookup({

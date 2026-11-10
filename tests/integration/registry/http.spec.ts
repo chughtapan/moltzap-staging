@@ -164,14 +164,13 @@ const assertRegistrationPrecedence = (
     ).toBe(NOT_FOUND_KIND);
   });
 
-const assertWrongAdmission = (runRegistry: RegistryRunner) =>
+const assertWrongAdmission = (
+  runRegistry: RegistryRunner,
+  withWrongCredential: RegistryRunner,
+) =>
   Effect.gen(function* () {
     const prepared = yield* prepareAgent("wrong-admission");
-    const rejected = yield* callRegister(
-      runRegistry,
-      prepared,
-      "wrong-admission-credential",
-    ).pipe(
+    const rejected = yield* callRegister(withWrongCredential, prepared).pipe(
       Effect.as(false),
       Effect.catchTag("RegistryError", (error) =>
         error.reason === "admission-refused"
@@ -661,7 +660,14 @@ const exerciseFirstRun = (
     const first = yield* registerAgent("first-agent", captured.run);
     const runRegistry = makeRegistryRunner(origin, registrySignerPublicKey);
     yield* assertRegistrationPrecedence(first, runRegistry);
-    yield* assertWrongAdmission(runRegistry);
+    yield* assertWrongAdmission(
+      runRegistry,
+      makeRegistryRunner(
+        origin,
+        registrySignerPublicKey,
+        "wrong-admission-credential",
+      ),
+    );
     yield* assertIdentityPointForgeryRejected(origin, runRegistry);
     yield* assertBootstrapVersionPrecedence(origin, runRegistry);
     yield* assertRetiredAdmissionSchemeRejected(origin, runRegistry);

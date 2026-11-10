@@ -5,7 +5,15 @@ import {
   HttpClientError,
   HttpClientResponse,
 } from "@effect/platform";
-import { Duration, Effect, Either, Layer, Redacted, Schema } from "effect";
+import {
+  Duration,
+  Effect,
+  Either,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { encodeCanonicalJson } from "../encoding/canonical-json.js";
@@ -34,6 +42,8 @@ const CONNECTION_ERROR_TAG = "connection";
 const TIMEOUT_ERROR_TAG = "timeout";
 const CLIENT_ORIGIN = new URL("http://registry.example:3011");
 const CLIENT_TIMEOUT = Duration.seconds(5);
+/** The network secret every client in these tests is configured with. */
+const admissionCredential = Option.some(Redacted.make("admission-token="));
 const SHORT_CLIENT_TIMEOUT = Duration.millis(5);
 
 const makePrivateKeyPem = (): string => {
@@ -105,6 +115,7 @@ const runLookup = (
         origin: CLIENT_ORIGIN,
         registrySignerPublicKey,
         requestTimeout: requestTimeout ?? CLIENT_TIMEOUT,
+        admissionCredential,
       }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
     ),
     Effect.either,
@@ -421,6 +432,7 @@ const assertRegistrationClientBehavior = (fixture: ClientFixture) =>
       origin: CLIENT_ORIGIN,
       registrySignerPublicKey: fixture.registrySignerPublicKey,
       requestTimeout: CLIENT_TIMEOUT,
+      admissionCredential,
     }).pipe(
       Layer.provide(
         Layer.succeed(
@@ -431,7 +443,6 @@ const assertRegistrationClientBehavior = (fixture: ClientFixture) =>
     );
     const mismatchedRegistration = yield* Registry.register({
       request: registrationRequest,
-      admissionCredential: Redacted.make("admission-token="),
       signingAuthority: agentSigningAuthority,
     }).pipe(Effect.provide(registrationLayer), Effect.either);
     expect(outcomeName(mismatchedRegistration)).toBe(INVALID_RESPONSE_TAG);
@@ -466,13 +477,13 @@ const assertWrongKeyRegistration = (fixture: ClientFixture) =>
       origin: CLIENT_ORIGIN,
       registrySignerPublicKey: fixture.registrySignerPublicKey,
       requestTimeout: CLIENT_TIMEOUT,
+      admissionCredential,
     }).pipe(
       Layer.provide(Layer.succeed(HttpClient.HttpClient, responseClient(body))),
     );
 
     const outcome = yield* Registry.register({
       request,
-      admissionCredential: Redacted.make("admission-token="),
       signingAuthority,
     }).pipe(Effect.provide(registryLayer), Effect.either);
 
@@ -512,6 +523,43 @@ describe("Registry client contracts", () => {
     ));
 });
 
+it("refuses to register without an admission credential, before sending anything", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fixture = yield* makeClientFixture;
+      const signingAuthority = yield* AgentSigningAuthority.fromPkcs8(
+        Redacted.make(makePrivateKeyPem()),
+      );
+      const refusal = yield* Registry.register({
+        request: makeRequest("no-admission"),
+        signingAuthority,
+      }).pipe(
+        Effect.provide(
+          Registry.layer({
+            origin: CLIENT_ORIGIN,
+            registrySignerPublicKey: fixture.registrySignerPublicKey,
+            requestTimeout: CLIENT_TIMEOUT,
+            admissionCredential: Option.none(),
+          }).pipe(
+            Layer.provide(
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() =>
+                  Effect.dieMessage("nothing is sent without a credential"),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(refusal).toMatchObject({
+        _tag: "RegistryError",
+        reason: "admission-refused",
+      });
+    }),
+  ));
+
 it("reports a refused admission credential through RegistryError", () =>
   Effect.runPromise(
     Effect.gen(function* () {
@@ -526,13 +574,13 @@ it("reports a refused admission credential through RegistryError", () =>
       const refusal = yield* Registry.register({
         request,
         signingAuthority,
-        admissionCredential: Redacted.make("refused-credential"),
       }).pipe(
         Effect.provide(
           Registry.layer({
             origin: CLIENT_ORIGIN,
             registrySignerPublicKey: fixture.registrySignerPublicKey,
             requestTimeout: CLIENT_TIMEOUT,
+            admissionCredential,
           }).pipe(
             Layer.provide(
               Layer.succeed(

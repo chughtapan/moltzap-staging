@@ -508,14 +508,17 @@ const makeOperationId = () =>
 const makePrincipalId = () =>
   Schema.decodeUnknownSync(PrincipalId)(`prn_${randomIdentifierPayload()}`);
 
+/** A client of the Registry at `origin` that registers with `credential`. */
 const makeRegistryRunner = (
   origin: URL,
   registrySignerPublicKey: ReturnType<typeof AgentSigningAuthority.publicKey>,
+  credential = ADMISSION_CREDENTIAL,
 ): RegistryRunner => {
   const registryLayer = Registry.layer({
     origin,
     registrySignerPublicKey,
     requestTimeout: Duration.seconds(5),
+    admissionCredential: Option.some(Redacted.make(credential)),
   }).pipe(Layer.provide(NodeHttpClient.layer));
   return (effect) => effect.pipe(Effect.provide(registryLayer));
 };
@@ -540,6 +543,7 @@ const makeCapturedRegistryRunner = (
       origin,
       registrySignerPublicKey,
       requestTimeout: Duration.seconds(5),
+      admissionCredential: Option.some(Redacted.make(ADMISSION_CREDENTIAL)),
     }).pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client)));
     const run: RegistryRunner = (effect) =>
       effect.pipe(Effect.provide(registryLayer));
@@ -662,14 +666,7 @@ const makeVersionedBootstrapRequest = (
 const callRegister = (
   runRegistry: RegistryRunner,
   prepared: Pick<RegisteredAgent, "request" | "signingAuthority">,
-  credential = ADMISSION_CREDENTIAL,
-) =>
-  runRegistry(
-    Registry.register({
-      ...prepared,
-      admissionCredential: Redacted.make(credential),
-    }),
-  );
+) => runRegistry(Registry.register({ ...prepared }));
 
 const registerAgent = (name: string, runRegistry: RegistryRunner) =>
   Effect.gen(function* () {
