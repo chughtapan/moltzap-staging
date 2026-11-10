@@ -21,6 +21,7 @@ import {
 } from "../__tests__/mcp-fixtures.js";
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
+import { MessageAddressInput } from "../../communication/messages.js";
 import {
   INBOX_PENDING_EVENT,
   MAXIMUM_WAIT_SECONDS,
@@ -360,6 +361,17 @@ it("closes an active event stream with the listener's scope", () =>
     ).toBeInstanceOf(HttpClientError.RequestError);
   }));
 
+const serverAgent = MessageAddressInput.make("agent:bob");
+const sendReceipt = Schema.decodeUnknownSync(
+  toolDefinitions.send_message.output,
+)({ id: digest("msg_", 1), address: serverAgent });
+const clientText = "hello";
+const clientTools = [
+  "read_conversation",
+  "receive_messages",
+  "send_message",
+  "status",
+];
 const sendTool = "send_message";
 const receiveTool = "receive_messages";
 const missingField = "text";
@@ -422,6 +434,46 @@ describe("send_message arguments", () => {
       expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
         `at most ${String(MAXIMUM_WAIT_SECONDS)}`,
       );
+    }));
+
+  it("gives a client in client/server mode tools that name no recipient", () =>
+    Effect.gen(function* () {
+      const sent: unknown[] = [];
+      const read: unknown[] = [];
+      const fixture = yield* mcpFixture({
+        serverAgent,
+        harness: {
+          send: (request) =>
+            Effect.sync(() => {
+              sent.push(request);
+              return sendReceipt;
+            }),
+          readHistory: (request) =>
+            Effect.sync(() => {
+              read.push(request);
+              return { records: [] };
+            }),
+        },
+      });
+      const client = yield* connectInProcessClient((input, init) =>
+        fixture.fetch(new Request(input, init)),
+      );
+      const { tools } = yield* Effect.tryPromise(() => client.listTools());
+      expect(new Set(tools.map((tool) => tool.name))).toEqual(
+        new Set(clientTools),
+      );
+      const send = tools.find((tool) => tool.name === sendTool);
+      expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual([
+        missingField,
+      ]);
+      yield* Effect.tryPromise(() =>
+        client.callTool({ name: sendTool, arguments: { text: clientText } }),
+      );
+      yield* Effect.tryPromise(() =>
+        client.callTool({ name: "read_conversation", arguments: {} }),
+      );
+      expect(sent).toEqual([{ to: serverAgent, text: clientText }]);
+      expect(read).toEqual([{ address: serverAgent }]);
     }));
 
   it("names any field it does not know", () =>

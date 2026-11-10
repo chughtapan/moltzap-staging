@@ -13,9 +13,11 @@ import {
   Fiber,
   FiberSet,
   Layer,
+  Option,
   type Redacted,
   ScopedCache,
 } from "effect";
+import { MessageAddressInput } from "../communication/messages.js";
 import { Router } from "../communication/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
@@ -215,6 +217,16 @@ function makeAgentApp(
       stopped,
       hideCollectives:
         settings.transport.kind === "client-server" || settings.hideCollectives,
+      serverAgent:
+        settings.transport.kind === "client-server" &&
+        settings.transport.serverAgentName !==
+          registration.registration.agentName
+          ? Option.some(
+              MessageAddressInput.make(
+                `agent:${settings.transport.serverAgentName}`,
+              ),
+            )
+          : Option.none(),
       implementation: { name: "sharnessd", version: packageVersion },
     }).pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(

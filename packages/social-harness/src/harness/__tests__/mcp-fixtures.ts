@@ -12,6 +12,7 @@ import {
   Deferred,
   Effect,
   Layer,
+  Option,
   Redacted,
   Ref,
   type Scope,
@@ -20,6 +21,7 @@ import {
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { MessageAddressInput } from "../../communication/messages.js";
 import type { McpAuthentication } from "../mcp/authentication.js";
 import { issueTestCard, makeTestAuthority } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
@@ -46,6 +48,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly registered?: boolean;
     readonly hideCollectives?: boolean;
+    readonly serverAgent?: MessageAddressInput;
     readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
@@ -110,6 +113,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     webhook,
     stopped,
     hideCollectives: options.hideCollectives ?? false,
+    serverAgent: Option.fromNullable(options.serverAgent),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

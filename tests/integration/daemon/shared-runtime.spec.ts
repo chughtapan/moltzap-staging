@@ -6,6 +6,7 @@ import { SqlClient } from "@effect/sql";
 import {
   AgentAddress,
   AgentIdentityCard,
+  toolDefinitions,
 } from "@social-harness/social-harness";
 import {
   databaseAccess,
@@ -20,6 +21,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Option,
   Schema,
 } from "effect";
 import { expect, it } from "vitest";
@@ -43,20 +45,19 @@ import { acquirePostgres } from "./postgres-fixture.js";
 /** The existing tools return each caller's retained view without consuming delivery. */
 function expectConversation(
   client: Client,
-  address: AgentAddress,
+  conversation: Conversation,
   kind: "sent" | "received",
   messageIds: readonly string[],
 ) {
   return Effect.gen(function* () {
-    const catalog = yield* call(client, {
-      name: "list_conversations",
-      arguments: {},
-    });
-    expect(catalog.addresses).toContain(address);
-    const page = yield* call(client, {
-      name: "read_conversation",
-      arguments: { address },
-    });
+    if (Option.isSome(conversation.address)) {
+      const catalog = yield* call(client, {
+        name: "list_conversations",
+        arguments: {},
+      });
+      expect(catalog.addresses).toContain(conversation.address.value);
+    }
+    const page = yield* conversation.read(client);
     expect(page.records.map((record) => record.kind)).toEqual(
       messageIds.map(() => kind),
     );
@@ -290,24 +291,75 @@ function openRuntimeDatabase(fixture: DaemonProcessFixture) {
 /** Host history publishes incoming messages only after their asynchronous firewall checks finish. */
 function awaitConversationMessages(
   client: Client,
-  address: AgentAddress,
+  conversation: Conversation,
   count: number,
 ) {
-  const read = call(client, {
-    name: "read_conversation",
-    arguments: { address },
-  }).pipe(
-    Effect.map((page) =>
-      page.records.flatMap((record) =>
-        record.kind === "result" ? [] : [record.message.msgId],
+  const read = conversation
+    .read(client)
+    .pipe(
+      Effect.map((page) =>
+        page.records.flatMap((record) =>
+          record.kind === "result" ? [] : [record.message.msgId],
+        ),
       ),
-    ),
-  );
+    );
   const initial: readonly string[] = [];
   return Effect.iterate(initial, {
     while: (ids) => ids.length < count,
     body: () => read.pipe(Effect.tap(() => Effect.sleep("20 millis"))),
   }).pipe(Effect.timeout("20 seconds"));
+}
+
+/** How an agent reads one of its conversations, and the address it is listed under. */
+interface Conversation {
+  readonly address: Option.Option<AgentAddress>;
+  readonly read: (
+    client: Client,
+  ) => Effect.Effect<
+    typeof toolDefinitions.read_conversation.output.Type,
+    unknown
+  >;
+}
+
+/** A conversation an agent names by its address. */
+function conversationWith(address: AgentAddress): Conversation {
+  return {
+    address: Option.some(address),
+    read: (client) =>
+      call(client, { name: "read_conversation", arguments: { address } }),
+  };
+}
+
+/** A client's conversation with the server agent, the only one it has and so not named. */
+const clientConversation: Conversation = {
+  address: Option.none(),
+  read: (client) =>
+    callAsClient(
+      client,
+      "read_conversation",
+      {},
+      toolDefinitions.read_conversation.output,
+    ),
+};
+
+/**
+ * Calls a tool the way a client in client/server mode does. Its send_message
+ * and read_conversation name no recipient and no conversation.
+ */
+function callAsClient<A, I>(
+  client: Client,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  output: Schema.Schema<A, I>,
+) {
+  return Effect.tryPromise(() =>
+    client.callTool({ name, arguments: { ...input } }),
+  ).pipe(
+    Effect.filterOrFail((result) => result.isError !== true),
+    Effect.flatMap((result) =>
+      Schema.decodeUnknown(output)(result.structuredContent),
+    ),
+  );
 }
 
 /** Enrollment remains independent of transport, including bootstrap server selection. */
@@ -415,31 +467,34 @@ function expectCentralExchange(
   recovered: Client,
   initialIds: readonly string[],
 ) {
-  const { fixture, aliceToken, issuer, resource, bobAddress, aliceAddress } =
-    shared;
+  const { fixture, aliceToken, issuer, resource, bobAddress } = shared;
   return Effect.gen(function* () {
     const sender = yield* connect(fixture.endpoint, aliceToken);
     const concurrent = yield* Effect.all(
       [0, 1, 2, 3, 4, 5].map((index) =>
-        call(index % 2 === 0 ? sender : recovered, {
-          name: "send_message",
-          arguments: {
-            to: index % 2 === 0 ? bobAddress : aliceAddress,
-            text: `concurrent ${index}`,
-          },
-        }),
+        index % 2 === 0
+          ? call(sender, {
+              name: "send_message",
+              arguments: { to: bobAddress, text: `concurrent ${index}` },
+            })
+          : callAsClient(
+              recovered,
+              "send_message",
+              { text: `concurrent ${index}` },
+              toolDefinitions.send_message.output,
+            ),
       ),
       { concurrency: 6 },
     );
     const expectedCount = concurrent.length + initialIds.length;
     const serverIds = yield* awaitConversationMessages(
       sender,
-      bobAddress,
+      conversationWith(bobAddress),
       expectedCount,
     );
     const clientIds = yield* awaitConversationMessages(
       recovered,
-      aliceAddress,
+      clientConversation,
       expectedCount,
     );
     expect(serverIds).toEqual(clientIds);
@@ -484,6 +539,9 @@ const scenario = (
       aliceAddress,
     } = shared;
     expect(aliceCard.agentId).not.toBe(bobCard.agentId);
+    const bobReads = central
+      ? clientConversation
+      : conversationWith(aliceAddress);
     const again = yield* connect(fixture.endpoint, aliceToken);
     expect(yield* call(again, { name: "status", arguments: {} })).toEqual(a);
     const sent = yield* call(alice, {
@@ -502,8 +560,10 @@ const scenario = (
       (yield* call(alice, { name: "receive_messages", arguments: {} })).items,
     ).toHaveLength(0);
     yield* expectEmptyInbox(bob);
-    yield* expectConversation(alice, bobAddress, "sent", [sent.id]);
-    yield* expectConversation(bob, aliceAddress, "received", [sent.id]);
+    yield* expectConversation(alice, conversationWith(bobAddress), "sent", [
+      sent.id,
+    ]);
+    yield* expectConversation(bob, bobReads, "received", [sent.id]);
     const restartMessage = yield* call(alice, {
       name: "send_message",
       arguments: {
@@ -523,7 +583,7 @@ const scenario = (
     expect(yield* call(recovered, { name: "status", arguments: {} })).toEqual(
       b,
     );
-    yield* expectConversation(recovered, aliceAddress, "received", [
+    yield* expectConversation(recovered, bobReads, "received", [
       sent.id,
       restartMessage.id,
     ]);

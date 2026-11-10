@@ -22,6 +22,7 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
+import type { MessageAddressInput } from "../../communication/messages.js";
 import type { OwnerAccount } from "../ownership.js";
 import { Firewall } from "../../firewall/service.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
@@ -50,6 +51,7 @@ import {
   protectedResourceResponse,
 } from "./authentication.js";
 import {
+  clientToolDefinitions,
   eventListInput,
   eventStreamInput,
   eventSubscribeInput,
@@ -65,6 +67,11 @@ interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
   /** Leaves questions and answers out of send_message, which then sends text only. */
   readonly hideCollectives: boolean;
+  /**
+   * Set when this agent is a client in client/server mode: the address of the
+   * server agent, the only agent it exchanges messages with.
+   */
+  readonly serverAgent: Option.Option<MessageAddressInput>;
   readonly stopped: Deferred.Deferred<undefined>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
@@ -243,9 +250,17 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
   const norms = yield* Effect.serviceOption(HeldNorms);
 
-  yield* installMessageTools(server, harness, registered, settings);
+  yield* Option.match(settings.serverAgent, {
+    onNone: () =>
+      installMessageTools(server, harness, registered, settings).pipe(
+        Effect.zipRight(
+          installPolicyTools(server, firewall, registered, policyConfigured),
+        ),
+      ),
+    onSome: (serverAgent) =>
+      installClientTools(server, harness, registered, serverAgent),
+  });
   yield* installIdentityTools(server, identity, settings.webhook);
-  yield* installPolicyTools(server, firewall, registered, policyConfigured);
   if (Option.isSome(norms)) {
     yield* installNormTools(server, norms.value, registered);
   }
@@ -337,28 +352,7 @@ function installMessageTools(
           },
         })
       : bind(server, { ...send, definition: toolDefinitions.send_message });
-    yield* bind(server, {
-      name: "receive_messages",
-      definition: toolDefinitions.receive_messages,
-      execute: Effect.fn(function* ({ wait, ...request }) {
-        const page = yield* harness.listInbox({
-          ...request,
-          ...(wait === undefined ? {} : { wait: Duration.seconds(wait) }),
-        });
-        for (const item of page.items) {
-          yield* harness
-            .acknowledgeDelivery(item.deliveryToken)
-            .pipe(
-              Effect.catchTag("DeliveryAcknowledgeError", () =>
-                Effect.fail(new InboxError({ reason: "persistence-failed" })),
-              ),
-            );
-        }
-        return page;
-      }),
-      failure: reasonError,
-      visible: registered,
-    });
+    yield* installReceiveTool(server, harness, registered);
     yield* bind(server, {
       name: "list_conversations",
       definition: toolDefinitions.list_conversations,
@@ -370,6 +364,65 @@ function installMessageTools(
       name: "read_conversation",
       definition: toolDefinitions.read_conversation,
       execute: harness.readHistory,
+      failure: reasonError,
+      visible: registered,
+    });
+  });
+}
+/** Binds the tool that hands over pending inbox items and marks them delivered. */
+function installReceiveTool(
+  server: Context.Tag.Service<typeof McpServer>,
+  harness: Context.Tag.Service<typeof SocialHarness>,
+  registered: Effect.Effect<boolean>,
+) {
+  return bind(server, {
+    name: "receive_messages",
+    definition: toolDefinitions.receive_messages,
+    execute: Effect.fn(function* ({ wait, ...request }) {
+      const page = yield* harness.listInbox({
+        ...request,
+        ...(wait === undefined ? {} : { wait: Duration.seconds(wait) }),
+      });
+      for (const item of page.items) {
+        yield* harness
+          .acknowledgeDelivery(item.deliveryToken)
+          .pipe(
+            Effect.catchTag("DeliveryAcknowledgeError", () =>
+              Effect.fail(new InboxError({ reason: "persistence-failed" })),
+            ),
+          );
+      }
+      return page;
+    }),
+    failure: reasonError,
+    visible: registered,
+  });
+}
+
+/**
+ * The tools of a client in client/server mode. It sends to and reads its
+ * conversation with the server agent, and names neither.
+ */
+function installClientTools(
+  server: Context.Tag.Service<typeof McpServer>,
+  harness: Context.Tag.Service<typeof SocialHarness>,
+  registered: Effect.Effect<boolean>,
+  serverAgent: MessageAddressInput,
+) {
+  return Effect.gen(function* () {
+    yield* bind(server, {
+      name: "send_message",
+      definition: clientToolDefinitions.send_message,
+      execute: ({ text }) => harness.send({ to: serverAgent, text }),
+      failure: (error) =>
+        new ProtocolError(-32603, error.message, sendErrorData(error)),
+      visible: registered,
+    });
+    yield* installReceiveTool(server, harness, registered);
+    yield* bind(server, {
+      name: "read_conversation",
+      definition: clientToolDefinitions.read_conversation,
+      execute: (page) => harness.readHistory({ ...page, address: serverAgent }),
       failure: reasonError,
       visible: registered,
     });
