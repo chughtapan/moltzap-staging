@@ -343,7 +343,7 @@ function installMessageTools(
     yield* bind(server, {
       name: "send_message",
       definition: toolDefinitions.send_message,
-      execute: ({ input }) => harness.send(input),
+      execute: (request) => harness.send(request),
       failure: (error) =>
         new ProtocolError(-32603, error.message, sendErrorData(error)),
       visible: registered,

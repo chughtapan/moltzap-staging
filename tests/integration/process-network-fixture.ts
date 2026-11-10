@@ -118,7 +118,7 @@ async function networkEndpoint(
           Effect.flatMap((decoded) =>
             callTool(harness.client, {
               name: "send_message",
-              arguments: { input: decoded },
+              arguments: decoded,
             }),
           ),
         ),

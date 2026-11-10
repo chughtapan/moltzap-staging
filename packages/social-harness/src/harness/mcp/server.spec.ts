@@ -10,6 +10,7 @@ import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { Ajv } from "ajv";
 import { Deferred, Effect, Exit, Fiber, Schema, Scope, Stream } from "effect";
+import * as fc from "fast-check";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
@@ -44,7 +45,7 @@ const json = (reply: Response) =>
   );
 const send = {
   name: "send_message",
-  arguments: { input: { to: "agent:bob", text: "hello" } },
+  arguments: { to: "agent:bob", text: "hello" },
 };
 
 it("publishes signed identity schemas accepted by native draft-07 and 2020 clients", () =>
@@ -351,3 +352,47 @@ it("closes an active event stream with the listener's scope", () =>
       ),
     ).toBeInstanceOf(HttpClientError.RequestError);
   }));
+
+const missingField = "text";
+const sendFields = ["to", missingField, "collective", "collectiveResponse"];
+
+describe("send_message arguments", () => {
+  const refusal = (sent: Readonly<Record<string, unknown>>) =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      const reply = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", { name: "send_message", arguments: sent }),
+        ),
+      );
+      return JSON.stringify((yield* json(reply)).error?.data);
+    });
+
+  it("names text when a send has neither text nor a collective response", () =>
+    Effect.gen(function* () {
+      expect(yield* refusal({ to: "agent:bob" })).toContain(missingField);
+    }));
+
+  it("names any field it does not know", () =>
+    Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(
+          fc
+            .stringMatching(/^[a-z]{4,12}$/u)
+            .filter((name) => !sendFields.includes(name)),
+          (name) =>
+            refusal({ to: "agent:bob", text: "hello", [name]: true }).pipe(
+              Effect.tap((data) =>
+                Effect.sync(() => {
+                  expect(data).toContain(name);
+                }),
+              ),
+              Effect.asVoid,
+              Effect.scoped,
+              Effect.runPromise,
+            ),
+        ),
+        { numRuns: 20 },
+      ),
+    ));
+});

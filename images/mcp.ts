@@ -72,7 +72,7 @@ function call(
     const parsed = yield* Schema.decode(toolArguments)(json).pipe(
       Effect.mapError(() =>
         commandError(
-          `the arguments must be one JSON object, such as '{"input":{"to":"agent:bob","text":"Hi"}}'`,
+          `the arguments must be one JSON object, such as '{"to":"agent:bob","text":"Hi"}'`,
         ),
       ),
     );

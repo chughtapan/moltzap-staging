@@ -241,7 +241,7 @@ function waitForHeldDelivery(pair: HeldPair) {
     const heldSend = yield* Effect.forkScoped(
       callTool(sender.client, {
         name: "send_message",
-        arguments: { input: { to: targetAddress, text: heldText } },
+        arguments: { to: targetAddress, text: heldText },
       }),
     );
     yield* awaitParkedResponse(proxy.parkedResponses);
@@ -288,7 +288,7 @@ function replyToReleasedDelivery(state: HeldDelivery) {
     const { target, senderAddress, targetAgent, senderInbox } = state;
     yield* callTool(target.client, {
       name: "send_message",
-      arguments: { input: { to: senderAddress, text: replyText } },
+      arguments: { to: senderAddress, text: replyText },
     });
     const reply = yield* Queue.take(senderInbox);
     expect(reply.item).toMatchObject({
@@ -316,7 +316,7 @@ function followUpHeldDelivery(state: HeldDelivery) {
     } = state;
     yield* callTool(sender.client, {
       name: "send_message",
-      arguments: { input: { to: targetAddress, text: followUpText } },
+      arguments: { to: targetAddress, text: followUpText },
     });
     const followUp = yield* Queue.take(targetInbox);
     expect(followUp.item).toMatchObject({

@@ -154,10 +154,8 @@ function exchange(from: DaemonProcessFixture, to: DaemonProcessFixture) {
       yield* callTool(sender.client, {
         name: "send_message",
         arguments: {
-          input: {
-            to: Schema.decodeUnknownSync(AgentAddress)(`agent:${to.agentName}`),
-            text,
-          },
+          to: Schema.decodeUnknownSync(AgentAddress)(`agent:${to.agentName}`),
+          text,
         },
       });
       const received = yield* Fiber.join(waiting).pipe(

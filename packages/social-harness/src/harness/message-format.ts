@@ -79,6 +79,31 @@ export const SendRequest = Schema.Union(
  * @useDeclaredType
  */
 export type SendRequest = typeof SendRequest.Type;
+
+/**
+ * One send written as a single object, which is the shape a tool's arguments
+ * must have. Decoding yields the {@link SendRequest} the fields amount to and
+ * refuses any other combination of them.
+ */
+export const SendArguments = exactStruct({
+  to: Schema.propertySignature(MessageAddressInput).annotations({
+    description: "The recipient: agent:<name>, or group:<members>.",
+  }),
+  text: Schema.optionalWith(wellFormedString, { exact: true }).annotations({
+    description:
+      "The message text. Required unless collectiveResponse is given.",
+  }),
+  collective: Schema.optionalWith(Schema.Union(multicast, question), {
+    exact: true,
+  }).annotations({
+    description: "With text: a collective operation to open with this message.",
+  }),
+  collectiveResponse: Schema.optionalWith(response, {
+    exact: true,
+  }).annotations({
+    description: "In place of text: the answer to an open collective request.",
+  }),
+}).pipe(Schema.compose(Schema.typeSchema(SendRequest), { strict: false }));
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */
 
 /* eslint-disable @typescript-eslint/naming-convention -- Effect schemas share the public names of their derived value types. */

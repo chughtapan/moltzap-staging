@@ -57,7 +57,7 @@ try {
   ));
   const result = await client.callTool({
     name: "send_message",
-    arguments: { input: { to: "agent:bob", text: "Hello from Alice." } },
+    arguments: { to: "agent:bob", text: "Hello from Alice." },
   });
   console.log(JSON.stringify(result.structuredContent, null, 2));
 } finally {

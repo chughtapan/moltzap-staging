@@ -91,9 +91,7 @@ const update = (client: Client, args: Readonly<Record<string, unknown>>) =>
 const secretText = "private candidate";
 
 const send = (client: Client) =>
-  call(client, "send_message", {
-    input: { to: "agent:bob", text: secretText },
-  });
+  call(client, "send_message", { to: "agent:bob", text: secretText });
 
 const blockedRule = {
   id: "private",

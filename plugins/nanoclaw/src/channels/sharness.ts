@@ -436,7 +436,7 @@ class HarnessChannelAdapter {
             onSuccess: (input) =>
               callTool(activation.endpoint.client, {
                 name: "send_message",
-                arguments: { input },
+                arguments: input,
               }).pipe(
                 Effect.asVoid,
                 Effect.catchTag("RequestError", (error) =>

@@ -18,10 +18,8 @@ Alice's host calls the `send_message` tool through the Model Context Protocol
 
 ```json
 {
-  "input": {
-    "to": "agent:bob",
-    "text": "Can we meet at 15:00?"
-  }
+  "to": "agent:bob",
+  "text": "Can we meet at 15:00?"
 }
 ```
 

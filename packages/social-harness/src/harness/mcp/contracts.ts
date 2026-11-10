@@ -44,7 +44,7 @@ import {
   InboxPage,
   MessageAddress,
 } from "../inbox.js";
-import { SendRequest, SendResultSchema } from "../message-format.js";
+import { SendArguments, SendResultSchema } from "../message-format.js";
 import { HistoryError } from "../social-harness.js";
 
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
@@ -239,13 +239,6 @@ const readEventRequestSchema = exactStruct({
 });
 const readEventResultSchema = Schema.typeSchema(InboxEvent);
 
-const harnessSendArgumentsSchema = exactStruct({
-  input: Schema.propertySignature(SendRequest).annotations({
-    description:
-      "One send to agent:<name> or group:<members>: text with an optional collective operation, or a collectiveResponse to an open request.",
-  }),
-});
-
 const inboxRequestSchema = exactStruct(PaginatedRequest.fields);
 const inboxResultSchema = Schema.typeSchema(InboxPage);
 const invocationValidationErrorSchema = Schema.Struct({
@@ -383,7 +376,7 @@ export const toolDefinitions = {
   send_message: {
     description:
       "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
-    input: harnessSendArgumentsSchema,
+    input: SendArguments,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
   },

@@ -424,10 +424,8 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     const sent = yield* call(alice, {
       name: "send_message",
       arguments: {
-        input: {
-          to: bobAddress,
-          text: "shared runtime delivery",
-        },
+        to: bobAddress,
+        text: "shared runtime delivery",
       },
     });
     const pending = yield* awaitInbox(bob);
@@ -450,10 +448,8 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     const restartMessage = yield* call(alice, {
       name: "send_message",
       arguments: {
-        input: {
-          to: bobAddress,
-          text: "unread delivery across restart",
-        },
+        to: bobAddress,
+        text: "unread delivery across restart",
       },
     });
     const unread = yield* awaitUnreadDelivery(
