@@ -458,6 +458,29 @@ it("withholds peer content from both the inbox and history", () =>
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toEqual([]);
+    expect(subject.submitted).toEqual([]);
+  }));
+
+it("answers a message that broke a rule with the configured reply when no rule gave one", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const withheldReply = "Your message was not accepted.";
+    const runtime = yield* subject.open({
+      withheldReply,
+      policy: firewallOptions({
+        decide: (request) =>
+          Effect.succeed(decisionResponse(request, "violation")),
+      }),
+    });
+    yield* subject.deliver({
+      kind: "message",
+      message: yield* subject.message("Private peer content"),
+    });
+    yield* waitForDecisions(runtime);
+    expect(subject.submitted).toMatchObject([
+      { content: [{ type: "text", text: withheldReply }] },
+    ]);
+    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
   }));
 
 it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>

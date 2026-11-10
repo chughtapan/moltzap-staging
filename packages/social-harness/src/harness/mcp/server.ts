@@ -262,7 +262,14 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   });
   yield* installIdentityTools(server, identity, settings.webhook);
   if (Option.isSome(norms)) {
-    yield* installNormTools(server, norms.value, registered);
+    yield* installNormTools(
+      server,
+      norms.value,
+      registered,
+      Option.isSome(settings.serverAgent)
+        ? clientToolDefinitions.read_norms
+        : toolDefinitions.read_norms,
+    );
   }
 
   const app = yield* makeHttpApp(settings.implementation).pipe(
@@ -463,10 +470,13 @@ function installNormTools(
   server: Context.Tag.Service<typeof McpServer>,
   norms: Context.Tag.Service<typeof HeldNorms>,
   registered: Effect.Effect<boolean>,
+  definition:
+    | typeof toolDefinitions.read_norms
+    | typeof clientToolDefinitions.read_norms,
 ) {
   return bind(server, {
     name: "read_norms",
-    definition: toolDefinitions.read_norms,
+    definition,
     execute: () =>
       norms.read().pipe(
         Effect.map((held) => ({

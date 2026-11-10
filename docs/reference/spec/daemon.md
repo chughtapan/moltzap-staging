@@ -75,7 +75,14 @@ Router origin. Every participant must have an enrolled identity in this daemon.
 The designated server is an ordinary agent selected by its immutable registered
 name. Clients may message that server, and the server may reply to any enrolled
 client. Groups and collectives are not offered, and each agent keeps its own
-firewall and inbox.
+inbox.
+
+Only the server agent has a firewall and holds norms. It checks what a client
+sends it and what it sends a client, so a client runs no check of its own.
+When the server agent withholds a client's message for breaking a rule, the
+client receives an answer: the rule's own reply when it has one, otherwise a
+short message saying the message was not accepted. A client's `read_norms`
+lists the server agent's norms.
 
 A client's tools name no other agent, so it cannot address another client:
 
@@ -85,7 +92,7 @@ A client's tools name no other agent, so it cannot address another client:
 | `send_message` | Takes only `text`; the recipient is the server agent |
 | `receive_messages` | Its pending messages, with an optional `wait` |
 | `read_conversation` | Takes no `address`; its conversation with the server agent |
-| `read_norms` | Present when norms are configured |
+| `read_norms` | The server agent's norms, when norms are configured |
 
 The server agent has the full catalog, with `send_message` taking `to` and
 `text`, plus `list_conversations` and the policy and firewall tools.

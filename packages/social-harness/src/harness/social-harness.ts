@@ -203,6 +203,12 @@ export interface HarnessSettings<R> {
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
   readonly hideGroups?: boolean;
+  /**
+   * What to tell the sender of a message the firewall withheld for breaking a
+   * rule, when no rule supplied a reply of its own. Without it such a sender
+   * is told nothing.
+   */
+  readonly withheldReply?: string;
 }
 
 function makeHarness<R>(
@@ -297,6 +303,7 @@ function makeHarness<R>(
             entry,
             card,
             historyLimit,
+            Option.fromNullable(settings.withheldReply),
           ).pipe(
             Effect.zipRight(PubSub.publish(changes, undefined)),
             Effect.ensuring(
@@ -683,6 +690,7 @@ function checkIncoming(
   entry: PendingItem,
   card: VerifiedAgentIdentityCard,
   limit: number,
+  withheldReply: Option.Option<string>,
 ) {
   return Effect.gen(function* () {
     const value = entry.incoming;
@@ -744,7 +752,12 @@ function checkIncoming(
       };
     }
     const decision = yield* firewall.checkIncoming(value, evidence);
-    const reply = yield* replyTo(value, decision, agentCardOf(card));
+    const reply = yield* replyTo(
+      value,
+      decision,
+      agentCardOf(card),
+      withheldReply,
+    );
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
@@ -770,22 +783,31 @@ function checkIncoming(
 }
 
 /**
- * The firewall's reply to a message it withheld, when a rule asked for one: an
- * ordinary message from this agent to the same conversation. Its id derives
+ * The reply to a message the firewall withheld: an ordinary message from this
+ * agent to the same conversation. A rule's own reply is used when it gave one;
+ * otherwise `withheldReply` answers a message that broke a rule. Its id derives
  * from the withheld message, so checking that message again sends at most one
  * reply. A reply that is not a valid message is not sent, and the message
  * stays withheld.
  */
-function replyTo(value: Incoming, decision: IncomingDecision, self: AgentCard) {
-  if (
-    decision.kind !== "withheld" ||
-    decision.reply === undefined ||
-    !("message" in value)
-  ) {
+function replyTo(
+  value: Incoming,
+  decision: IncomingDecision,
+  self: AgentCard,
+  withheldReply: Option.Option<string>,
+) {
+  if (decision.kind !== "withheld" || !("message" in value)) {
+    return Effect.succeed(undefined);
+  }
+  const text =
+    decision.reply ??
+    (decision.reason === "rule-violation"
+      ? Option.getOrUndefined(withheldReply)
+      : undefined);
+  if (text === undefined) {
     return Effect.succeed(undefined);
   }
   const withheld = value.message;
-  const text = decision.reply;
   return Schema.decodeUnknown(MsgId)(
     `msg_${createHash("sha256")
       .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)

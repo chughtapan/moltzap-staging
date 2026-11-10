@@ -436,6 +436,11 @@ export const clientToolDefinitions = {
       "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent. The first page fixes the history boundary.",
     input: exactStruct({ ...PaginatedRequest.fields }),
   },
+  read_norms: {
+    ...toolDefinitions.read_norms,
+    description:
+      "List the norms the server agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. Send an act as (performative :ontology <norm> :field value ...).",
+  },
 } as const;
 
 /** Names the tools published by the daemon's MCP catalog. */
