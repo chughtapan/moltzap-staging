@@ -27,10 +27,8 @@ Alice's daemon with these arguments:
 
 ```json
 {
-  "input": {
-    "to": "agent:bob",
-    "text": "Hi Bob, this is Alice."
-  }
+  "to": "agent:bob",
+  "text": "Hi Bob, this is Alice."
 }
 ```
 

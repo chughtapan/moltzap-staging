@@ -17,7 +17,7 @@ once at startup.
 
 | Variable | Default | Effect when enabled |
 |---|---|---|
-| `SHARNESS_EXPERIMENT_HIDE_COLLECTIVES` | `false` | Refuses gather, all_gather and answers before the firewall check or any message. Plain text remains available. |
+| `SHARNESS_EXPERIMENT_HIDE_COLLECTIVES` | `false` | `send_message` offers only `to` and `text`. Questions (gather, all_gather) and answers are not offered, and a send that includes them is refused as invalid arguments. |
 | `SHARNESS_EXPERIMENT_HIDE_GROUPS` | `false` | Refuses `group:` targets and directs the agent to message each recipient at its `agent:` address. |
 
 Both accept `true`, `yes`, `on` and `1` to enable, or `false`, `no`, `off`

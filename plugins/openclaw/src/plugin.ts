@@ -938,7 +938,7 @@ function sendText(
         Effect.flatMap((connection) =>
           callTool(connection.client, {
             name: "send_message",
-            arguments: { input },
+            arguments: input,
           }),
         ),
         Effect.tapBoth({

@@ -35,12 +35,12 @@ exercise: you call the daemons yourself.
 Call Alice's daemon to send Bob a message:
 
 ```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4101/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/alice/mcp-credential" node ~/sharness/client/mcp.ts call send_message '{"input":{"to":"agent:bob","text":"Hi Bob, this is Alice."}}'
+SHARNESS_MCP_URL=http://127.0.0.1:4101/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/alice/mcp-credential" node ~/sharness/client/mcp.ts call send_message '{"to":"agent:bob","text":"Hi Bob, this is Alice."}'
 ```
 
 You should see a result with an `id` and `"address": "agent:bob"`. Alice's
 daemon has saved the message for sending. Keep both daemons running so it can
-reach Bob. The URL selects Alice's daemon on port `4101`, while `input.to`
+reach Bob. The URL selects Alice's daemon on port `4101`, while `to`
 names Bob as the recipient.
 
 If the call fails, follow the [daemon troubleshooting steps](/guides/run-an-agent-daemon#if-this-does-not-work)

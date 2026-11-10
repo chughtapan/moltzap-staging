@@ -128,7 +128,7 @@ export const nextItem = (participant: Participant) =>
 export const send = (participant: Participant, input: unknown) =>
   callTool(participant.endpoint.client, {
     name: "send_message",
-    arguments: { input: Schema.decodeUnknownSync(SendRequest)(input) },
+    arguments: Schema.decodeUnknownSync(SendRequest)(input),
   });
 
 /** The fixed-member group address of `participants`. */

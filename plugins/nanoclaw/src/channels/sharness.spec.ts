@@ -214,7 +214,7 @@ describe("NanoClaw messages", () => {
     expect(fake.call).toHaveBeenCalledTimes(1);
     expect(fake.call.mock.calls[0]?.[0]).toEqual({
       name: "send_message",
-      arguments: { input: { to: address, text: messageText } },
+      arguments: { to: address, text: messageText },
     });
   });
   it("reports an uncertain send without creating another send", async () => {

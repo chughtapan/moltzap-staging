@@ -35,7 +35,11 @@ import {
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
 import { InboxError } from "../inbox.js";
-import { validationIssues } from "../message-format.js";
+import {
+  type SendRequest,
+  TextSendArguments,
+  validationIssues,
+} from "../message-format.js";
 import { SocialHarness } from "../social-harness.js";
 import {
   authenticationChallenge,
@@ -59,6 +63,8 @@ import {
 
 interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
+  /** Leaves questions and answers out of send_message, which then sends text only. */
+  readonly hideCollectives: boolean;
   readonly stopped: Deferred.Deferred<undefined>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
@@ -267,7 +273,7 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
     .readPolicy()
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
 
-  yield* installMessageTools(server, harness, registered);
+  yield* installMessageTools(server, harness, registered, settings);
   yield* installIdentityTools(server, identity);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
   yield* installWebhookTools(server, settings.webhook, registered);
@@ -338,16 +344,27 @@ function installMessageTools(
   server: Context.Tag.Service<typeof McpServer>,
   harness: Context.Tag.Service<typeof SocialHarness>,
   registered: Effect.Effect<boolean>,
+  settings: Pick<AgentServerSettings, "hideCollectives">,
 ) {
   return Effect.gen(function* () {
-    yield* bind(server, {
+    const send = {
       name: "send_message",
-      definition: toolDefinitions.send_message,
-      execute: ({ input }) => harness.send(input),
-      failure: (error) =>
+      execute: (request: SendRequest) => harness.send(request),
+      failure: (error: Effect.Effect.Error<ReturnType<typeof harness.send>>) =>
         new ProtocolError(-32603, error.message, sendErrorData(error)),
       visible: registered,
-    });
+    };
+    yield* settings.hideCollectives
+      ? bind(server, {
+          ...send,
+          definition: {
+            ...toolDefinitions.send_message,
+            description:
+              "Send a message. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+            input: TextSendArguments,
+          },
+        })
+      : bind(server, { ...send, definition: toolDefinitions.send_message });
     yield* bind(server, {
       name: "read_inbox",
       definition: toolDefinitions.read_inbox,

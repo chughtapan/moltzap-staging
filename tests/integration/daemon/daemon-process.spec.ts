@@ -130,7 +130,7 @@ const beforeRestartText = "sent before the daemon restarts";
 const certifiedSend = (endpoint: McpConnection, input: SendRequest) =>
   callTool(endpoint.client, {
     name: "send_message",
-    arguments: { input: input },
+    arguments: input,
   }).pipe(Effect.asVoid);
 
 const fromRestartedText = "sent by the restarted daemon";
@@ -661,10 +661,8 @@ function exchangeInitialMessagesAndExpectDelivery(state: ProcessScenario) {
       const sent = yield* callTool(caller.client, {
         name: "send_message",
         arguments: {
-          input: {
-            to: targetAddress,
-            text: initialText,
-          },
+          to: targetAddress,
+          text: initialText,
         },
       });
       const targetInbound = yield* Fiber.join(targetDelivery);
@@ -681,7 +679,7 @@ function exchangeInitialMessagesAndExpectDelivery(state: ProcessScenario) {
 
       yield* callTool(target.client, {
         name: "send_message",
-        arguments: { input: { to: callerAddress, text: responseText } },
+        arguments: { to: callerAddress, text: responseText },
       });
       const callerInbound = yield* Fiber.join(callerDelivery);
       expect(callerInbound.item).toMatchObject({
@@ -776,7 +774,7 @@ function requireDelivery(
 function sendOrQueue(endpoint: McpConnection, input: SendRequest) {
   return callTool(endpoint.client, {
     name: "send_message",
-    arguments: { input: input },
+    arguments: input,
   }).pipe(
     Effect.asVoid,
     Effect.catchIf(

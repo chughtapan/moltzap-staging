@@ -226,7 +226,8 @@ describe("send outcomes", () => {
     const client = new Client(implementation);
     const called = vi.spyOn(client, "callTool").mockRejectedValue(error);
     const input = Schema.decodeUnknownSync(toolDefinitions.send_message.input)({
-      input: { to: "agent:bob", text: "hello" },
+      to: "agent:bob",
+      text: "hello",
     });
     return callTool(client, { name: "send_message", arguments: input }).pipe(
       Effect.flip,
@@ -250,7 +251,8 @@ describe("send outcomes", () => {
       structuredContent: { private: "invalid-result" },
     });
     const input = Schema.decodeUnknownSync(toolDefinitions.send_message.input)({
-      input: { to: "agent:bob", text: "hello" },
+      to: "agent:bob",
+      text: "hello",
     });
     return callTool(client, { name: "send_message", arguments: input }).pipe(
       Effect.flip,

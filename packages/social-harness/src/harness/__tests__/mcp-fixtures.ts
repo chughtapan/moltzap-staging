@@ -46,6 +46,7 @@ const mcpTestHeaders = {
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly registered?: boolean;
+    readonly hideCollectives?: boolean;
     readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
@@ -109,6 +110,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const agentApp = yield* makeAgentMcpApp({
     webhook,
     stopped,
+    hideCollectives: options.hideCollectives ?? false,
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

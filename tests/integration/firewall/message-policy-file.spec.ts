@@ -175,7 +175,8 @@ function expectDocumentRulesPublished(client: Client) {
 function expectUnavailableSendHeld(client: Client) {
   return Effect.gen(function* () {
     const refused = yield* call(client, "send_message", {
-      input: { to: "agent:bob", text: "Can we meet on Tuesday?" },
+      to: "agent:bob",
+      text: "Can we meet on Tuesday?",
     }).pipe(Effect.flip);
     expect(JSON.stringify(refused)).toContain(unavailablePolicyRemedy);
   });

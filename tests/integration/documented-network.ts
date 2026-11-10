@@ -219,7 +219,7 @@ function expectSendRefusals(
 
 /** The `send_message` arguments Run sharnessd passes: `text` to `name`. */
 function sendTo(name: string, text = MESSAGE): string {
-  return JSON.stringify({ input: { to: `agent:${name}`, text } });
+  return JSON.stringify({ to: `agent:${name}`, text });
 }
 
 /**
