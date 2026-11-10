@@ -280,7 +280,7 @@ configuration.
 | `facilitator` | Only the facilitator in owner facts starts questions for two or more members. |
 
 Each participant supplies the facilitator's verified AgentId; names alone are
-insufficient. `policy_update` changes no owner facts. Ordinary text budgets and
+insufficient. `update_policy` changes no owner facts. Ordinary text budgets and
 decisions apply.
 
 <a id="editable-text-policy" />
@@ -293,11 +293,11 @@ cannot reuse fixed rule ids. Initial rules seed a missing saved policy.
 Every edit passes the configured approval step before changing rules.
 The default approves automatically. A host can replace it with a confirmation
 interaction. A proposed replacement cannot authorize itself. Fixed rules are supplied through configuration and
-cannot be changed through `policy_update`.
+cannot be changed through `update_policy`.
 
 Rule replacement and its change record save together. An edit either applies
 in full or leaves the previous rules active.
-`policy_read` reports editable and fixed rules with their current revision.
+`read_policy` reports editable and fixed rules with their current revision.
 
 The complete replacement activates before return. Remove/add of one id is
 atomic replacement; adding existing ids without removal, unknown removals or

@@ -786,7 +786,7 @@ function assertFixtureHistory(
   return Effect.scoped(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.searchConversations()).toEqual({
+      expect(yield* management.listConversations()).toEqual({
         addresses: [peerAddress],
       });
       const history = yield* management.readConversation(peerAddress);

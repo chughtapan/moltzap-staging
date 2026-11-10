@@ -392,8 +392,8 @@ function installMessageTools(
       visible: registered,
     });
     yield* bind(server, {
-      name: "search_conversations",
-      definition: toolDefinitions.search_conversations,
+      name: "list_conversations",
+      definition: toolDefinitions.list_conversations,
       execute: harness.listConversations,
       failure: reasonError,
       visible: registered,
@@ -439,8 +439,8 @@ function installPolicyTools(
 ) {
   return Effect.gen(function* () {
     yield* bind(server, {
-      name: "policy_read",
-      definition: toolDefinitions.policy_read,
+      name: "read_policy",
+      definition: toolDefinitions.read_policy,
       execute: () => firewall.readPolicy(),
       failure: reasonError,
       visible: Effect.zipWith(
@@ -450,8 +450,8 @@ function installPolicyTools(
       ),
     });
     yield* bind(server, {
-      name: "policy_update",
-      definition: toolDefinitions.policy_update,
+      name: "update_policy",
+      definition: toolDefinitions.update_policy,
       execute: firewall.updatePolicy,
       failure: (error) =>
         new ProtocolError(-32603, error.message, {
@@ -465,8 +465,8 @@ function installPolicyTools(
       ),
     });
     yield* bind(server, {
-      name: "firewall_decisions",
-      definition: toolDefinitions.firewall_decisions,
+      name: "read_firewall_decisions",
+      definition: toolDefinitions.read_firewall_decisions,
       execute: firewall.readDecisions,
       failure: reasonError,
       visible: registered,

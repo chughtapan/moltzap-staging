@@ -56,12 +56,12 @@ export type ToolFailure<Name extends ToolName> = Name extends "send_message"
       | McpToolError
       | (Name extends "read_inbox" | "read_event"
           ? InboxError
-          : Name extends "search_conversations" | "read_conversation"
+          : Name extends "list_conversations" | "read_conversation"
             ? HistoryError
             : Name extends
-                  | "policy_read"
-                  | "policy_update"
-                  | "firewall_decisions"
+                  | "read_policy"
+                  | "update_policy"
+                  | "read_firewall_decisions"
               ? FirewallPolicyError
               : never);
 
@@ -250,22 +250,22 @@ function decodeToolResult(
       return Schema.decodeUnknown(toolDefinitions.read_event.output)(value);
     case "status":
       return Schema.decodeUnknown(toolDefinitions.status.output)(value);
-    case "search_conversations":
-      return Schema.decodeUnknown(toolDefinitions.search_conversations.output)(
+    case "list_conversations":
+      return Schema.decodeUnknown(toolDefinitions.list_conversations.output)(
         value,
       );
     case "read_conversation":
       return Schema.decodeUnknown(toolDefinitions.read_conversation.output)(
         value,
       );
-    case "policy_read":
-      return Schema.decodeUnknown(toolDefinitions.policy_read.output)(value);
-    case "policy_update":
-      return Schema.decodeUnknown(toolDefinitions.policy_update.output)(value);
-    case "firewall_decisions":
-      return Schema.decodeUnknown(toolDefinitions.firewall_decisions.output)(
-        value,
-      );
+    case "read_policy":
+      return Schema.decodeUnknown(toolDefinitions.read_policy.output)(value);
+    case "update_policy":
+      return Schema.decodeUnknown(toolDefinitions.update_policy.output)(value);
+    case "read_firewall_decisions":
+      return Schema.decodeUnknown(
+        toolDefinitions.read_firewall_decisions.output,
+      )(value);
     default:
       return name satisfies never;
   }
@@ -333,9 +333,9 @@ function managementFailure(
         toolFailureSchemas.read_event,
         (data) => new InboxError(data),
       );
-    case "search_conversations":
+    case "list_conversations":
       return decode(
-        toolFailureSchemas.search_conversations,
+        toolFailureSchemas.list_conversations,
         (data) => new HistoryError(data),
       );
     case "read_conversation":
@@ -343,19 +343,19 @@ function managementFailure(
         toolFailureSchemas.read_conversation,
         (data) => new HistoryError(data),
       );
-    case "policy_read":
+    case "read_policy":
       return decode(
-        toolFailureSchemas.policy_read,
+        toolFailureSchemas.read_policy,
         (data) => new FirewallPolicyError(data),
       );
-    case "policy_update":
+    case "update_policy":
       return decode(
-        toolFailureSchemas.policy_update,
+        toolFailureSchemas.update_policy,
         (data) => new FirewallPolicyError(data),
       );
-    case "firewall_decisions":
+    case "read_firewall_decisions":
       return decode(
-        toolFailureSchemas.firewall_decisions,
+        toolFailureSchemas.read_firewall_decisions,
         (data) => new FirewallPolicyError(data),
       );
     case "event_subscription_status":

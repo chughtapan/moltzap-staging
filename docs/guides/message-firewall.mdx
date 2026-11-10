@@ -96,7 +96,7 @@ messages, while guidance admits them. It makes no provider calls.
 
 1. Start in guidance mode with your selected provider. Send representative
    messages and inspect their retained checks with the owner
-   `firewall_decisions` tool.
+   `read_firewall_decisions` tool.
 2. Confirm that the selected rules and registered advice match your intended
    policy. Include allowed messages and messages that should be refused.
 3. Switch to enforcement only after assessing that behavior for your
@@ -154,15 +154,15 @@ editable rules its SQL database holds. `invalid-rule` means an initial or
 stored rule is invalid, such as one id given twice. `fixed-rule` means an
 initial or stored rule reuses the id of a fixed rule. Rename the
 initial rule in the file. A stored rule, such as a norm the agent added with
-`policy_update`, keeps its id: take the colliding fixed rule out of the file,
-start the daemon, remove the stored rule with `policy_update`
+`update_policy`, keeps its id: take the colliding fixed rule out of the file,
+start the daemon, remove the stored rule with `update_policy`
 `{"remove": ["<id>"]}`, then put the fixed rule back and restart.
 
 For `build-failed`, check the
 [request budget](/reference/spec/firewall/message-policy#editable-text-policy).
 A reduced `textSettings.maximumRequestBytes` can reject stored rules. Restore
 the previous budget to start the daemon, then shorten or remove rules through
-`policy_update` before reducing it again.
+`update_policy` before reducing it again.
 
 <a id="stored-text-rules" />
 
@@ -174,15 +174,15 @@ The error begins:
 messagePolicyFile configures no natural-language policy, but the SQL database holds natural-language rules
 ```
 
-The daemon retains initial rules and rules added through `policy_update`
+The daemon retains initial rules and rules added through `update_policy`
 across restarts. Restore the `text` block and a decision provider, then
 restart. `{"kind": "unavailable"}` is sufficient to manage rules while
 assessments remain unavailable.
 
 To remove the rules, use the owner tools:
 
-1. Read the editable rule ids from `policy_read`.
-2. Remove them with `policy_update`, using `{"remove": ["<id>"]}` for each id.
+1. Read the editable rule ids from `read_policy`.
+2. Remove them with `update_policy`, using `{"remove": ["<id>"]}` for each id.
 3. Remove the `text` block and restart.
 
 Keep the SQL database and its encryption key. Replacing them loses conversations

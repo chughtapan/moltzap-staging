@@ -179,7 +179,7 @@ const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   "duplicate-id":
     "its id is already in the policy; remove that rule in the same update to replace it, or use another id",
   "unknown-id":
-    "no editable rule has this id; policy_read lists the editable rules",
+    "no editable rule has this id; read_policy lists the editable rules",
   "editable-limit": `the update would leave more than ${String(MAXIMUM_EDITABLE_RULES)} editable rules; remove some rules first`,
   frontmatter:
     "the BEHAVIOR.md needs valid YAML frontmatter between --- lines (no code fence or other text before it)",
@@ -194,7 +194,7 @@ const policyReasonText: Readonly<
   "not-configured": "the message policy has no text block",
   "invalid-rule": "the update is invalid",
   "fixed-rule":
-    "it is a fixed rule of the owner's policy, which policy_update cannot add, remove or replace",
+    "it is a fixed rule of the owner's policy, which update_policy cannot add, remove or replace",
   "approval-refused": "the host did not approve this policy update",
   "build-failed": "the new rules could not be installed",
   "persistence-failed": "the rules could not be stored",

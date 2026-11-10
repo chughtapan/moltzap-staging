@@ -54,7 +54,7 @@ const registrationSeed = Schema.Struct({
 
 type ManagementStatusResult = ToolResult<"status">;
 
-type ManagementSearchConversationsResult = ToolResult<"search_conversations">;
+type ManagementListConversationsResult = ToolResult<"list_conversations">;
 
 type ManagementReadConversationResult = ToolResult<"read_conversation">;
 
@@ -132,8 +132,8 @@ export interface DaemonManagementClient {
     ManagementStatusResult,
     ProcessTestError
   >;
-  readonly searchConversations: () => Effect.Effect<
-    ManagementSearchConversationsResult,
+  readonly listConversations: () => Effect.Effect<
+    ManagementListConversationsResult,
     ProcessTestError
   >;
   readonly readConversation: (
@@ -1115,12 +1115,12 @@ function managementOperations(client: Client): DaemonManagementClient {
         arguments: {},
         schema: toolDefinitions.status.output,
       }),
-    searchConversations: () =>
+    listConversations: () =>
       callAndDecode({
         client,
-        name: "search_conversations",
+        name: "list_conversations",
         arguments: {},
-        schema: toolDefinitions.search_conversations.output,
+        schema: toolDefinitions.list_conversations.output,
       }),
     readConversation: (address) =>
       callAndDecode({

@@ -75,7 +75,7 @@ const readSchema = Schema.Struct({
 });
 
 const read = (client: Client) =>
-  call(client, "policy_read").pipe(
+  call(client, "read_policy").pipe(
     Effect.flatMap(Schema.decodeUnknown(readSchema)),
   );
 
@@ -84,7 +84,7 @@ const updateSchema = Schema.Struct({
 });
 
 const update = (client: Client, args: Readonly<Record<string, unknown>>) =>
-  call(client, "policy_update", args).pipe(
+  call(client, "update_policy", args).pipe(
     Effect.flatMap(Schema.decodeUnknown(updateSchema)),
   );
 
@@ -236,8 +236,8 @@ const authenticatedPolicyEdits = Effect.gen(function* () {
   const catalog = yield* Effect.tryPromise(() => client.listTools());
   expect(catalog.tools).toEqual(
     arrayContaining([
-      objectContaining({ name: "policy_read" }),
-      objectContaining({ name: "policy_update" }),
+      objectContaining({ name: "read_policy" }),
+      objectContaining({ name: "update_policy" }),
     ]),
   );
   yield* update(client, { add: [blockedRule] });

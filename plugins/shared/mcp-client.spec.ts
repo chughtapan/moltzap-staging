@@ -282,12 +282,12 @@ describe("management failures", () => {
       tag: "InboxError",
     },
     {
-      request: { name: "search_conversations", arguments: {} },
+      request: { name: "list_conversations", arguments: {} },
       data: { reason: "invalid-cursor" },
       tag: "HistoryError",
     },
     {
-      request: { name: "policy_read", arguments: {} },
+      request: { name: "read_policy", arguments: {} },
       data: { reason: "approval-refused" },
       tag: "FirewallPolicyError",
     },

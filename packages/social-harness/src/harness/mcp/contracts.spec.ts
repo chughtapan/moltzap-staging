@@ -6,8 +6,8 @@ import { testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import {
   decodeHarnessSendErrorData,
-  managementSearchConversationsRequestSchema,
-  managementSearchConversationsResultSchema,
+  managementListConversationsRequestSchema,
+  managementListConversationsResultSchema,
 } from "./contracts.js";
 
 describe("message operation contracts", () => {
@@ -56,7 +56,7 @@ describe("management and history contracts", () => {
   describe("conversation pagination", () => {
     it("accepts a cursor without interpreting its contents", () => {
       expect(
-        Schema.decodeUnknownSync(managementSearchConversationsRequestSchema)({
+        Schema.decodeUnknownSync(managementListConversationsRequestSchema)({
           cursor: "opaque-position",
         }),
       ).toEqual({ cursor: "opaque-position" });
@@ -67,12 +67,10 @@ describe("management and history contracts", () => {
         nextCursor: "opaque-position",
       };
       expect(
-        Schema.decodeUnknownSync(managementSearchConversationsResultSchema)(
-          page,
-        ),
+        Schema.decodeUnknownSync(managementListConversationsResultSchema)(page),
       ).toEqual(page);
       expect(() =>
-        Schema.decodeUnknownSync(managementSearchConversationsResultSchema)({
+        Schema.decodeUnknownSync(managementListConversationsResultSchema)({
           addresses: [...page.addresses].reverse(),
         }),
       ).toThrow();

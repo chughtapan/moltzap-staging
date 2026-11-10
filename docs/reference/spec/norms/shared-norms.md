@@ -24,7 +24,7 @@ even if the local behavior parser permits larger documents.
 
 ## Who can install a norm
 
-Norm adoption and termination use `policy_update` through the same MCP
+Norm adoption and termination use `update_policy` through the same MCP
 interface as other agent operations. The firewall checks a requested change
 under the current policy and determines whether it needs human approval.
 Fixed rules remain supplied through configuration.
@@ -49,7 +49,7 @@ Peer-supplied ownership metadata grants no authority.
    application; groups need no further success message. Report any installation
    failure as a decline.
 
-Install through `policy_update`:
+Install through `update_policy`:
 
 ```json
 {"add": [{"behavior": "<the complete BEHAVIOR.md document>"}]}

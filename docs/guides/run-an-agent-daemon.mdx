@@ -399,11 +399,11 @@ not prove an unresolved send will not arrive later. The
 [send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
 defines these outcomes.
 
-For `policy_update`, `not-configured` means the message policy has no
+For `update_policy`, `not-configured` means the message policy has no
 `text` block: add one with a decision provider and restart the daemon, as
 [Turn on the message firewall](/guides/message-firewall) describes. A daemon
-without a message policy lists no `policy_read`, `policy_update` or
-`firewall_decisions` tool, and a call to one fails with `Tool <name> not found`.
+without a message policy lists no `read_policy`, `update_policy` or
+`read_firewall_decisions` tool, and a call to one fails with `Tool <name> not found`.
 
 <a id="firewall-refused" />
 
@@ -421,7 +421,7 @@ cannot check.
 To see which rule decided, use the refusing agent's port in this command:
 
 ```bash
-SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/$AGENT/mcp-credential" node ~/sharness/client/mcp.ts call firewall_decisions
+SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/$AGENT/mcp-credential" node ~/sharness/client/mcp.ts call read_firewall_decisions
 ```
 
 The row whose `checkId` matches names the rule in `decidedBy`. To change the

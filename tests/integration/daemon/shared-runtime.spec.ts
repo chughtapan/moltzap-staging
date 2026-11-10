@@ -123,7 +123,7 @@ function expectConversation(
 ) {
   return Effect.gen(function* () {
     const catalog = yield* call(client, {
-      name: "search_conversations",
+      name: "list_conversations",
       arguments: {},
     });
     expect(catalog.addresses).toContain(address);
