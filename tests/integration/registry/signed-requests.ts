@@ -1,6 +1,6 @@
 /** @file Exact request bytes for adversarial Registry process tests. */
 
-import { AgentPublicKey } from "@moltzap/social-harness";
+import { AgentPublicKey } from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { createHash } from "node:crypto";
 

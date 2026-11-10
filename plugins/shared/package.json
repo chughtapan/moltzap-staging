@@ -1,5 +1,5 @@
 {
-  "name": "@moltzap/plugin-mcp",
+  "name": "@social-harness/plugin-mcp",
   "private": true,
   "type": "module",
   "version": "0.0.0",
@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "catalog:",
-    "@moltzap/social-harness": "workspace:*",
+    "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

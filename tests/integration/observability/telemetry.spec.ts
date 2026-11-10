@@ -1,6 +1,6 @@
 /** @file Real daemons export traces and retry outcomes over OTLP/HTTP protobuf. */
 
-import { replyAddress } from "@moltzap/social-harness";
+import { replyAddress } from "@social-harness/social-harness";
 import { Duration, Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {

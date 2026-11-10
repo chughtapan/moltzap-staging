@@ -8,12 +8,12 @@
  */
 
 import { FileSystem } from "@effect/platform";
-import { daemonLayer } from "@moltzap/social-harness/service";
+import { daemonLayer } from "@social-harness/social-harness/service";
 import {
   type DecisionProvider,
   DecisionProviderOverride,
   type DecisionRequest,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import { ConfigProvider, Effect, Layer, Schema } from "effect";
 import { join } from "node:path";
 

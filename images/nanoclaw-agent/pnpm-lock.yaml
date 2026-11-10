@@ -17,9 +17,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: link:../../workspace/node_modules/@modelcontextprotocol/client
         version: link:../../workspace/node_modules/@modelcontextprotocol/client
-      '@moltzap/social-harness':
-        specifier: link:../../workspace/node_modules/@moltzap/social-harness
-        version: link:../../workspace/node_modules/@moltzap/social-harness
+      '@social-harness/social-harness':
+        specifier: link:../../workspace/node_modules/@social-harness/social-harness
+        version: link:../../workspace/node_modules/@social-harness/social-harness
       '@onecli-sh/sdk':
         specifier: 2.2.1
         version: 2.2.1

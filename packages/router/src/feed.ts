@@ -3,8 +3,8 @@ import type {
   AgentId,
   EnvelopeId,
   LiveSignedMessage,
-} from "@moltzap/social-harness";
-import type { routerContract } from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness";
+import type { routerContract } from "@social-harness/social-harness/internal";
 import { Data, Effect, Ref } from "effect";
 
 /** Greatest private feed order representable by this Router process. */

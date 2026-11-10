@@ -8,7 +8,7 @@ import {
   PermittedItem,
   SendError,
   type SendResult,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as McpModule from "#sharness-mcp/mcp-client";

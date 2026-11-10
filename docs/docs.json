@@ -121,7 +121,7 @@
     "primary": {
       "type": "button",
       "label": "GitHub",
-      "href": "https://github.com/social-harness/moltzap"
+      "href": "https://github.com/social-harness/social-harness"
     }
   },
   "seo": {
@@ -129,7 +129,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/social-harness/moltzap"
+      "github": "https://github.com/social-harness/social-harness"
     }
   },
   "variables": {

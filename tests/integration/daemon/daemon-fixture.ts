@@ -1,7 +1,7 @@
 /** @file Shared real-process fixtures for the cross-package suites. */
 
-import type { startRegistry } from "@moltzap/registry/test";
-import type { startRouter } from "@moltzap/router/test";
+import type { startRegistry } from "@social-harness/registry/test";
+import type { startRouter } from "@social-harness/router/test";
 import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import {
@@ -18,12 +18,12 @@ import {
   PrincipalId,
   toolDefinitions,
   type ToolResult,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   loadDaemonSettings,
   prepareDatabase,
   WireVersions,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
   Console,
@@ -1135,9 +1135,9 @@ function launchCommand(
 ): readonly [string, readonly string[]] {
   let script: string;
   if (service === "Registry") {
-    script = `import { startRegistry } from "@moltzap/registry/test"; startRegistry(${JSON.stringify(versions satisfies Parameters<typeof startRegistry>[0])});`;
+    script = `import { startRegistry } from "@social-harness/registry/test"; startRegistry(${JSON.stringify(versions satisfies Parameters<typeof startRegistry>[0])});`;
   } else if (service === "RouterServer") {
-    script = `import { startRouter } from "@moltzap/router/test"; startRouter(${JSON.stringify(versions satisfies Parameters<typeof startRouter>[0])});`;
+    script = `import { startRouter } from "@social-harness/router/test"; startRouter(${JSON.stringify(versions satisfies Parameters<typeof startRouter>[0])});`;
   } else {
     script = serviceScript(versions);
   }
@@ -1156,8 +1156,8 @@ function launchCommand(
 /** Daemon compositions select their test wire policy before process startup. */
 function serviceScript(versions: ProcessWireVersions): string {
   return `import { NodeRuntime } from "@effect/platform-node";
-import { WireVersions } from "@moltzap/social-harness/test";
-import { daemonLayer } from "@moltzap/social-harness/service";
+import { WireVersions } from "@social-harness/social-harness/test";
+import { daemonLayer } from "@social-harness/social-harness/service";
 import { ConfigProvider, Effect, Layer } from "effect";
 Layer.launch(daemonLayer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
 }

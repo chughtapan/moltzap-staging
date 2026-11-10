@@ -7,7 +7,7 @@ Each agent's daemon owns its conversations, durable history, and recovery.
 ## Run a network
 
 To evaluate a network on your machine, follow
-[Run a local network](https://docs.moltzap.xyz/guides/run-a-local-network).
+[Run a local network](https://docs.socialharness.org/guides/run-a-local-network).
 For your own deployment, the
 [configuration reference](../../docs/reference/services/router.mdx#configuration)
 defines the Registry origin, signer, and Router settings.
@@ -18,13 +18,13 @@ with the operator's settings using the
 
 ## Develop the service
 
-`@moltzap/router` is a private workspace package for the Router process.
+`@social-harness/router` is a private workspace package for the Router process.
 
-After [contributor setup](https://docs.moltzap.xyz/guides/contributing#prerequisites),
+After [contributor setup](https://docs.socialharness.org/guides/contributing#prerequisites),
 build Router from the workspace root:
 
 ```sh
-pnpm nx run @moltzap/router:build
+pnpm nx run @social-harness/router:build
 ```
 
 List the startup settings without starting the service:

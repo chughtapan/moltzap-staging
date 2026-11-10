@@ -2,8 +2,12 @@
 import { FileSystem } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import { AgentCard, Message } from "@moltzap/social-harness";
-import { Firewall, Identity, Registry } from "@moltzap/social-harness/service";
+import { AgentCard, Message } from "@social-harness/social-harness";
+import {
+  Firewall,
+  Identity,
+  Registry,
+} from "@social-harness/social-harness/service";
 import {
   databaseAccess,
   databaseConnection,
@@ -11,7 +15,7 @@ import {
   loadAgentRegistration,
   loadDaemonSettings,
   localOwner,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
   Context,

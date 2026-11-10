@@ -1,10 +1,10 @@
-# @moltzap/nanoclaw-channel
+# @social-harness/nanoclaw-channel
 
 NanoClaw channel adapter and integration canary. Publication follows `docs/reference/spec/releases.md` → Publication and versions: this package stays private and is consumed by the NanoClaw agent-image build, not from npm.
 
 ## Adapter boundary
 
-This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
+This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
 or another adapter. NanoClaw creates it through the native channel registry,
 and it connects the stock MCP client to the configured MCP URL. It
@@ -19,7 +19,7 @@ raw Router credential, network client, or local store.
   syntactically valid Client `MessageAddressInput` before friendly aliases and
   let that validated route reach this channel, with an accurate capability line
   in the existing destination prompt. The image, not the overlay, copies the
-  skills `@moltzap/social-harness` ships into NanoClaw's shared container skills
+  skills `@social-harness/social-harness` ships into NanoClaw's shared container skills
   unchanged. Do not extend the host ABI, inbound
   router, inbox, session model, persistence, retry policy, or runtime driver.
 - Render each inbound item kind in one fixed form, switching on `kind`

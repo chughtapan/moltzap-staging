@@ -3,8 +3,11 @@ import {
   type AgentId,
   AgentId as AgentIdSchema,
   type LiveSignedMessage,
-} from "@moltzap/social-harness";
-import { httpErrors, routerContract } from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness";
+import {
+  httpErrors,
+  routerContract,
+} from "@social-harness/social-harness/internal";
 import canonicalize from "canonicalize";
 import {
   Data,

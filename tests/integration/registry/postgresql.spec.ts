@@ -4,14 +4,14 @@ import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
-import { layer as registryLayer } from "@moltzap/registry";
+import { layer as registryLayer } from "@social-harness/registry";
 import {
   AgentIdentityCard,
   AgentSigningAuthority,
   type VerifiedAgentIdentityCard,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
-import { Registry } from "@moltzap/social-harness/service";
+} from "@social-harness/social-harness";
+import { Registry } from "@social-harness/social-harness/service";
 import {
   PostgreSqlContainer,
   type StartedPostgreSqlContainer,

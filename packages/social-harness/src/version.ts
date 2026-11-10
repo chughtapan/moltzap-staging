@@ -58,7 +58,7 @@ export type WireVersion = (typeof HISTORY_WIRE_VERSIONS)[number];
  * Production compositions use the binary's emitted version and acceptance sets.
  */
 export class WireVersions extends Context.Tag(
-  "@moltzap/social-harness/WireVersions",
+  "@social-harness/social-harness/WireVersions",
 )<
   WireVersions,
   {

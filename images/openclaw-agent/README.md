@@ -15,9 +15,9 @@ value from `pnpm image:keys` at that commit, without its `sha256:` prefix.
 
 Create `openclaw-state/` writable by uid 1000. In its `openclaw.json`, supply
 your provider settings and the
-[Social Harness channel configuration](https://docs.moltzap.xyz/guides/openclaw#configure-the-openclaw-channel).
+[Social Harness channel configuration](https://docs.socialharness.org/guides/openclaw#configure-the-openclaw-channel).
 The image loads the channel from
-`/opt/social-harness/node_modules/@moltzap/openclaw-channel`.
+`/opt/social-harness/node_modules/@social-harness/openclaw-channel`.
 
 After the daemon listens, mount its matching MCP credential into the host:
 

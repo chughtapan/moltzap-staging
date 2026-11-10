@@ -1,6 +1,6 @@
 /** @file Three real daemons run gather operations end to end. */
 
-import { RequestError, SendError } from "@moltzap/social-harness";
+import { RequestError, SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {

@@ -1,7 +1,7 @@
 /** @file Black-box Router binary tests for framing, configuration, bounds, and shutdown. */
 import { HttpClient } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
-import { WIRE_VERSION } from "@moltzap/social-harness";
+import { WIRE_VERSION } from "@social-harness/social-harness";
 import { Data, Duration, Effect, Option } from "effect";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createPublicKey, generateKeyPairSync } from "node:crypto";

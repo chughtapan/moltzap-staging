@@ -15,7 +15,7 @@ if [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
 fi
 
 subject=$(git log -1 --format=%s "$commit")
-if [[ "$subject" == 'chore(release): moltzap@'* ]]; then
+if [[ "$subject" == 'chore(release): social-harness@'* ]]; then
   echo '::notice::Release commits do not start a release.' >&2
   echo skip
   exit 0
@@ -28,14 +28,14 @@ if [[ -z "$fragments" ]]; then
   exit 0
 fi
 release_line=$(git log "$commit" --format='%H %s' |
-  grep -m1 '^[0-9a-f]* chore(release): moltzap@' || true)
+  grep -m1 '^[0-9a-f]* chore(release): social-harness@' || true)
 release_commit=${release_line%% *}
 if [[ -z "$release_commit" ]]; then
   echo '::notice::No earlier release exists; starting a Social Harness release.' >&2
   echo release
   exit 0
 fi
-wire_manifest=$(git grep -l -E '"name"[[:space:]]*:[[:space:]]*"@moltzap/social-harness"' "$release_commit" -- ':(glob)packages/*/package.json' || true)
+wire_manifest=$(git grep -l -E '"name"[[:space:]]*:[[:space:]]*"@social-harness/social-harness"' "$release_commit" -- ':(glob)packages/*/package.json' || true)
 wire_path=${wire_manifest#*:}
 source_path=packages/social-harness/src/version.ts
 if ! head_wire=$(git show "$commit:$source_path" |

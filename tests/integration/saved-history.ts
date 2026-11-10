@@ -1,6 +1,6 @@
 /** @file Message content exposed by saved daemon history views. */
 
-import type { HistoryRecord, Message } from "@moltzap/social-harness";
+import type { HistoryRecord, Message } from "@social-harness/social-harness";
 import assert from "node:assert/strict";
 
 /** Direct-message scenarios require a saved multicast view for every received record. */

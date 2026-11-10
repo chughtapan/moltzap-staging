@@ -11,7 +11,7 @@ import {
   httpErrors,
   routerContract,
   type VerifiedAgentRequest,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import canonicalize from "canonicalize";
 import { Cause, Effect, Option, Schema } from "effect";
 import type { RouterFeed } from "./feed.js";

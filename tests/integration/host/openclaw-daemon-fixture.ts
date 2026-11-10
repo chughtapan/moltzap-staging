@@ -1,6 +1,6 @@
 /** @file Real-daemon fixtures and the OpenClaw host contract used by adapter acceptance. */
 
-import openClawPlugin from "@moltzap/openclaw-channel";
+import openClawPlugin from "@social-harness/openclaw-channel";
 import {
   AgentAddress,
   type AgentCard,
@@ -8,7 +8,7 @@ import {
   GroupAddress,
   type InboxEntry,
   type PermittedItem,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Deferred,
   Duration,

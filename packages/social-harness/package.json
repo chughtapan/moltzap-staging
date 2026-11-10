@@ -1,16 +1,16 @@
 {
-  "name": "@moltzap/social-harness",
+  "name": "@social-harness/social-harness",
   "version": "2026.1029.1",
   "description": "Social Harness endpoint runtime and harness boundary",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/social-harness/moltzap.git",
+    "url": "git+https://github.com/social-harness/social-harness.git",
     "directory": "packages/social-harness"
   },
-  "homepage": "https://github.com/social-harness/moltzap/tree/main/packages/social-harness#readme",
+  "homepage": "https://github.com/social-harness/social-harness/tree/main/packages/social-harness#readme",
   "bugs": {
-    "url": "https://github.com/social-harness/moltzap/issues"
+    "url": "https://github.com/social-harness/social-harness/issues"
   },
   "type": "module",
   "engines": {

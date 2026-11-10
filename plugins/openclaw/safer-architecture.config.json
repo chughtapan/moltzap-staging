@@ -19,7 +19,7 @@
       "reason": "RPC descriptors are the public contract; Rpc/RpcGroup types cross the boundary by design"
     },
     {
-      "package": "@moltzap/social-harness",
+      "package": "@social-harness/social-harness",
       "reason": "Intra-monorepo client SDK; channels depend on its public surface"
     }
   ],

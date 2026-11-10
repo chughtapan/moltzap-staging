@@ -42,7 +42,7 @@ const MESSAGE = "Hi Bob, this is Alice.";
 const MCP_CREDENTIAL_FILE = "mcp-credential";
 const PREPARE_DATABASE = [
   'import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";',
-  'import { prepareDatabase } from "@moltzap/social-harness/service";',
+  'import { prepareDatabase } from "@social-harness/social-harness/service";',
   'import { Effect } from "effect";',
   "prepareDatabase.pipe(Effect.provide(NodeFileSystem.layer), NodeRuntime.runMain);",
 ].join("\n");

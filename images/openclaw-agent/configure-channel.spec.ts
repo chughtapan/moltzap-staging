@@ -53,7 +53,9 @@ test("abandoned channel writes do not block installing the image channel", async
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
     plugins: {
       load: {
-        paths: ["/opt/social-harness/node_modules/@moltzap/openclaw-channel"],
+        paths: [
+          "/opt/social-harness/node_modules/@social-harness/openclaw-channel",
+        ],
       },
     },
   });
@@ -126,7 +128,9 @@ test("initializes channel loading in a stock host configuration", async (context
   assert.partialDeepStrictEqual(JSON.parse(await readFile(path, "utf8")), {
     plugins: {
       load: {
-        paths: ["/opt/social-harness/node_modules/@moltzap/openclaw-channel"],
+        paths: [
+          "/opt/social-harness/node_modules/@social-harness/openclaw-channel",
+        ],
       },
     },
   });

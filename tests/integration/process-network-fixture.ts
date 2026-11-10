@@ -6,7 +6,7 @@ import {
   type PermittedItem,
   SendRequest,
   type SendResult,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
 import {
   acquireMcpConnection,

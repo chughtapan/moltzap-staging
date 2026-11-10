@@ -1,8 +1,11 @@
 /** @file Runs one volatile Router process and its authenticated HTTP listener. */
 import { HttpServer } from "@effect/platform";
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
-import { WIRE_VERSION } from "@moltzap/social-harness";
-import { Authentication, Registry } from "@moltzap/social-harness/internal";
+import { WIRE_VERSION } from "@social-harness/social-harness";
+import {
+  Authentication,
+  Registry,
+} from "@social-harness/social-harness/internal";
 import { Console, Data, Duration, Effect, Layer } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer.make requires Node's server factory at this adapter boundary.
 import { createServer } from "node:http";

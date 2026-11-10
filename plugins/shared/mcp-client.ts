@@ -22,7 +22,7 @@ import {
   type ToolName,
   type ToolRequest,
   type ToolResult,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Data,
   Duration,

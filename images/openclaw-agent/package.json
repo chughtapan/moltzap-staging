@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@moltzap/openclaw-channel": "workspace:*"
+    "@social-harness/openclaw-channel": "workspace:*"
   },
   "files": [
     "package.json"

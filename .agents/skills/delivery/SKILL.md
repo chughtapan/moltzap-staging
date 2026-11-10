@@ -1,6 +1,6 @@
 ---
 name: delivery
-description: How changes are verified, merged and released across moltzap, deployment and evals. Read it before you verify, merge or release a change, or brief another agent to.
+description: How changes are verified, merged and released across social-harness, deployment and evals. Read it before you verify, merge or release a change, or brief another agent to.
 ---
 
 # Delivering changes quickly
@@ -10,7 +10,7 @@ it:
 
 | Repository | Role |
 | --- | --- |
-| `social-harness/moltzap` | The core MoltZap library, released to npm |
+| `social-harness/social-harness` | The core Social Harness library, released to npm |
 | `social-harness/deployment` | Hosting: the container images agents run in, built on the library |
 | `social-harness/evals` | Evaluation tools that run those images |
 

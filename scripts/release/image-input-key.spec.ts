@@ -1788,7 +1788,7 @@ function realImageFixture(): string {
     write(
       repo,
       `images/${service}/Dockerfile`,
-      docker.replaceAll("@moltzap/", "@fixture/"),
+      docker.replaceAll("@social-harness/", "@fixture/"),
     );
   }
   for (const file of ["scripts/build/clean-dist.ts"]) {

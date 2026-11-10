@@ -12,8 +12,8 @@ import {
   SendError,
   type SendRequest,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
-import { WireVersions } from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness";
+import { WireVersions } from "@social-harness/social-harness/test";
 import {
   Effect,
   Fiber,
@@ -419,8 +419,8 @@ const admissionLifetimeBehavior = Effect.scoped(
  */
 const retiredWindowDaemon = `
   import { NodeRuntime } from "@effect/platform-node";
-  import { WIRE_VERSION } from "@moltzap/social-harness"; import { WireVersions } from "@moltzap/social-harness/test";
-  import { daemonLayer } from "@moltzap/social-harness/service";
+  import { WIRE_VERSION } from "@social-harness/social-harness"; import { WireVersions } from "@social-harness/social-harness/test";
+  import { daemonLayer } from "@social-harness/social-harness/service";
   import { ConfigProvider, Effect, Layer } from "effect";
   Layer.launch(daemonLayer).pipe(
     Effect.provideService(WireVersions, { live: [], history: [WIRE_VERSION] }),

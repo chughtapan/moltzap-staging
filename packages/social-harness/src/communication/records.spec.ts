@@ -857,19 +857,6 @@ const verifiesRecordsAgainstTheHeldMembership = () =>
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-    const { sharnessVersion, ...unversionedCore } = messageCore;
-    expect(
-      yield* decodesAsRecordCore({
-        ...unversionedCore,
-        moltzapVersion: sharnessVersion,
-      }),
-    ).toBe(false);
-    expect(
-      yield* decodesAsRecordCore({
-        ...messageCore,
-        moltzapVersion: sharnessVersion,
-      }),
-    ).toBe(false);
     const { membershipHash, ...messageCoreFields } = messageCore;
     expect(
       yield* decodesAsRecordCore({

@@ -6,7 +6,7 @@
       "reason": "Foundational Effect runtime; intentionally part of the public contract"
     },
     {
-      "package": "@moltzap/social-harness",
+      "package": "@social-harness/social-harness",
       "reason": "Intra-monorepo client SDK; channels depend on its public surface"
     }
   ],

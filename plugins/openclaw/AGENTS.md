@@ -1,4 +1,4 @@
-# @moltzap/openclaw-channel
+# @social-harness/openclaw-channel
 
 OpenClaw gateway channel plugin. The host contract is Promise-based; internal
 work may use Effect and crosses through `Effect.runPromise` only at the plugin
@@ -6,7 +6,7 @@ surface. The channel id is `"sharness"`.
 
 ## Adapter boundary
 
-This adapter consumes public `@moltzap/social-harness` capabilities only. It must not
+This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
 import Identity, Router, protocol, server, Client internals, simulator, evals,
 or another adapter. It uses the stock MCP client and the shared inbox receiver. It
 does not acquire a daemon, profile, Registry admission material, signing key,
@@ -38,10 +38,10 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   explicit `agent:` or `group:` target through the `message` tool. The model's
   `send` and `reply` reach the plugin's actions, which add no tool parameter;
   `message.send.text` serves OpenClaw's core-forced sends. Every path reads
-  its text with `@moltzap/social-harness`'s `parseMessageText`. The daemon
+  its text with `@social-harness/social-harness`'s `parseMessageText`. The daemon
   enforces experiment switches on every send; the channel surfaces its refusal
   unchanged. The host decides which tools invoke those callbacks.
-- Install the skills `@moltzap/social-harness` ships unchanged; the build copies them
+- Install the skills `@social-harness/social-harness` ships unchanged; the build copies them
   into `dist/skills`.
 - Render each inbound item kind in one fixed form, switching on `kind`
   exhaustively.

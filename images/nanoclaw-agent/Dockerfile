@@ -29,8 +29,8 @@ RUN git apply --check /opt/social-harness/nanoclaw/nanoclaw-v2.3.0.patch \
   && cp /opt/social-harness/nanoclaw/pnpm-lock.yaml pnpm-lock.yaml \
   && HUSKY=0 pnpm install --frozen-lockfile \
   && pnpm run build \
-  && mkdir -p /app/node_modules/@moltzap \
-  && ln -s /opt/social-harness/nanoclaw/app/node_modules/@moltzap/social-harness /app/node_modules/@moltzap/social-harness \
+  && mkdir -p /app/node_modules/@social-harness \
+  && ln -s /opt/social-harness/nanoclaw/app/node_modules/@social-harness/social-harness /app/node_modules/@social-harness/social-harness \
   && ln -s /opt/social-harness/nanoclaw/app/node_modules/effect /app/node_modules/effect \
   && ln -s /app/node_modules container/agent-runner/node_modules \
   && /app/node_modules/.bin/tsc --noEmit -p container/agent-runner/tsconfig.json \
@@ -51,15 +51,15 @@ COPY --from=builder /opt/social-harness/nanoclaw/app /opt/social-harness/nanocla
 # NanoClaw links every directory under container/skills into each agent
 # group's ~/.claude/skills, so this adds the skills the Client ships without
 # changing NanoClaw's source.
-COPY --from=social-harness-workspace node_modules/@moltzap/social-harness/skills/ /opt/social-harness/nanoclaw/app/container/skills/
+COPY --from=social-harness-workspace node_modules/@social-harness/social-harness/skills/ /opt/social-harness/nanoclaw/app/container/skills/
 COPY entrypoint.ts /opt/social-harness/nanoclaw/entrypoint.ts
 COPY cli-gateway.ts preload.ts session-processes.ts initialize-agent-group.ts /opt/social-harness/nanoclaw/
 
 # Bun resolves the mounted runner from /app, while Node resolves the host from
 # its extracted tree. The links give both processes the same patched packages.
 RUN mkdir -p /var/lib/social-harness/nanoclaw \
-  && mkdir -p /app/node_modules/@moltzap \
-  && ln -s /opt/social-harness/nanoclaw/app/node_modules/@moltzap/social-harness /app/node_modules/@moltzap/social-harness \
+  && mkdir -p /app/node_modules/@social-harness \
+  && ln -s /opt/social-harness/nanoclaw/app/node_modules/@social-harness/social-harness /app/node_modules/@social-harness/social-harness \
   && ln -s /opt/social-harness/nanoclaw/app/node_modules/effect /app/node_modules/effect \
   && ln -s /opt/social-harness/nanoclaw/app/node_modules /opt/social-harness/node_modules \
   && ln -s /opt/social-harness/nanoclaw/app/container/agent-runner/src /app/src \

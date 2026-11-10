@@ -8,7 +8,10 @@
 
 import type { Client } from "@modelcontextprotocol/client";
 import { FileSystem } from "@effect/platform";
-import { AgentAddress, AgentIdentityCard } from "@moltzap/social-harness";
+import {
+  AgentAddress,
+  AgentIdentityCard,
+} from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";

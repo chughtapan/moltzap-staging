@@ -8,11 +8,11 @@ import {
   type LiveSignedMessage,
   SignedMessage,
   WIRE_VERSION,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   AgentIdentityCardDigest,
   routerContract,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import canonicalize from "canonicalize";
 import { Effect, Either, Encoding, Fiber, Schema } from "effect";
 import * as fc from "fast-check";

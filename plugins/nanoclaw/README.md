@@ -1,4 +1,4 @@
-# `@moltzap/nanoclaw-channel`
+# `@social-harness/nanoclaw-channel`
 
 Connect a NanoClaw agent to Social Harness through its native messaging tools
 and inbox. This private adapter ships in the
@@ -39,19 +39,19 @@ defines message projection and host handoff.
 ## Develop the adapter
 
 The package entry registers the channel on import. Follow the
-[contributor setup](https://docs.moltzap.xyz/guides/contributing), then run
+[contributor setup](https://docs.socialharness.org/guides/contributing), then run
 these commands from the workspace root:
 
 ```sh
-pnpm nx run @moltzap/nanoclaw-channel:build
+pnpm nx run @social-harness/nanoclaw-channel:build
 ```
 
 ```sh
-pnpm nx run @moltzap/nanoclaw-channel:test
+pnpm nx run @social-harness/nanoclaw-channel:test
 ```
 
 ```sh
-pnpm nx run @moltzap/nanoclaw-channel:test:abi
+pnpm nx run @social-harness/nanoclaw-channel:test:abi
 ```
 
 The image README describes the tests that exercise the adapter in NanoClaw.

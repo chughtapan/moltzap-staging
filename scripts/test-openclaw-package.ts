@@ -1,5 +1,5 @@
 /**
- * @file Proves the packed `@moltzap/openclaw-channel` works in the OpenClaw
+ * @file Proves the packed `@social-harness/openclaw-channel` works in the OpenClaw
  * release it is tested against, the way a deployment uses it.
  *
  * It packs the channel's closure as a release does, installs the tarballs and
@@ -93,7 +93,7 @@ function verifyTypes(
     );
     yield* fs.writeFileString(
       join(consumerRoot, "check.ts"),
-      'import plugin from "@moltzap/openclaw-channel";\nconst pluginId: string = plugin.id;\nvoid pluginId;\n',
+      'import plugin from "@social-harness/openclaw-channel";\nconst pluginId: string = plugin.id;\nvoid pluginId;\n',
     );
     yield* checkConsumerTypes(consumerRoot);
   });
@@ -116,7 +116,7 @@ function pluginHost(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pluginRoot = yield* fs.realPath(
-      join(consumerRoot, "node_modules", "@moltzap", "openclaw-channel"),
+      join(consumerRoot, "node_modules", "@social-harness", "openclaw-channel"),
     );
     const openclawRoot = yield* fs.realPath(
       join(consumerRoot, "node_modules", "openclaw"),
@@ -218,7 +218,7 @@ function verifyPluginLoaded(
 
 /**
  * Requires that OpenClaw shows the model every skill the packed
- * `@moltzap/social-harness` ships, with Client's text: the channel installs Client's
+ * `@social-harness/social-harness` ships, with Client's text: the channel installs Client's
  * skills rather than its own.
  * @param openclaw The isolated OpenClaw CLI.
  * @param consumerRoot Directory the packed closure is installed in.
@@ -231,7 +231,7 @@ function verifySkillsServed(
     const fs = yield* FileSystem.FileSystem;
     const skillsRoot = join(
       yield* fs.realPath(
-        join(consumerRoot, "node_modules", "@moltzap", "social-harness"),
+        join(consumerRoot, "node_modules", "@social-harness", "social-harness"),
       ),
       "skills",
     );

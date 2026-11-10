@@ -11,7 +11,7 @@ communicate. The [upgrade guide](../../guides/upgrades.mdx) covers operator step
 
 ## Publication and versions
 
-`@moltzap/social-harness` and `@moltzap/openclaw-channel` publish independently to
+`@social-harness/social-harness` and `@social-harness/openclaw-channel` publish independently to
 npm. Registry, Router and NanoClaw remain private. Registry, Router, daemon and
 OpenClaw agent ship as signed images. NanoClaw builds locally. Integration tests
 are outside the product release set.
@@ -23,7 +23,7 @@ dependencies pin exact manifest versions, so dependency changes also select
 dependents. Installed closures resolve versions tested together. Package, wire,
 MCP and stored-schema versions advance independently.
 
-Publish from `main` with npm provenance through the [workflow](https://github.com/social-harness/moltzap/blob/main/.github/workflows/publish.yml).
+Publish from `main` with npm provenance through the [workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/publish.yml).
 Merges release after CI passes with a changelog fragment, excluding release
 commits, changes from the last release's wire version and lowered package versions. Resets, resumes and abandoned
 releases dispatch manually. Merges during unfinished releases enter the next
@@ -34,7 +34,7 @@ merge-triggered or manual release.
 | Field | Meaning |
 | --- | --- |
 | `sharnessContentHash` | Packed files, executable bits and packed manifest excluding version and recorded hashes. Equality means equal code; missing or changed hashes select publication. |
-| `sharnessHostCodeHash` | Packed OpenClaw code and sibling modules reachable through exports, excluding manifest versions, recorded hashes and `@moltzap/*` pins. Determines host restart; daemon-only changes leave it unchanged. |
+| `sharnessHostCodeHash` | Packed OpenClaw code and sibling modules reachable through exports, excluding manifest versions, recorded hashes and `@social-harness/*` pins. Determines host restart; daemon-only changes leave it unchanged. |
 | `sharnessWireVersion` | Artifact's emitted wire version, used for publication and resume compatibility. |
 
 ## Wire compatibility window
@@ -96,12 +96,12 @@ Consumers may pin version and digest together, for example
 
 ### Image signatures
 
-The [image workflow](https://github.com/social-harness/moltzap/blob/main/.github/workflows/images.yml)
+The [image workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/images.yml)
 cosign-keyless signs indexes before publishing input tags. Verification requires:
 
 | Attribute | Required value |
 | --- | --- |
-| Certificate identity | `https://github.com/social-harness/moltzap/.github/workflows/images.yml@refs/heads/main` |
+| Certificate identity | `https://github.com/social-harness/social-harness/.github/workflows/images.yml@refs/heads/main` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
 Verify and preserve existing input tags. Unsigned indexes fail publication.
@@ -136,5 +136,5 @@ A non-live previous release fails. Skip only before first publication, or when
 the previous release predates the reset boundary and lies outside retained history. Missing wire metadata
 at or after that boundary fails. Npm outages permit skips only after retries with
 an explicit reason. Synthetic fixtures cannot establish published compatibility.
-[Integration suites](https://github.com/social-harness/moltzap/blob/main/tests/integration/README.md)
+[Integration suites](https://github.com/social-harness/social-harness/blob/main/tests/integration/README.md)
 own executable checks.

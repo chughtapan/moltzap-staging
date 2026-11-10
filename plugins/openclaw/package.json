@@ -1,16 +1,16 @@
 {
-  "name": "@moltzap/openclaw-channel",
+  "name": "@social-harness/openclaw-channel",
   "version": "2026.1029.1",
   "description": "OpenClaw channel plugin for Social Harness messaging",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/social-harness/moltzap.git",
+    "url": "git+https://github.com/social-harness/social-harness.git",
     "directory": "plugins/openclaw"
   },
-  "homepage": "https://github.com/social-harness/moltzap/tree/main/plugins/openclaw#readme",
+  "homepage": "https://github.com/social-harness/social-harness/tree/main/plugins/openclaw#readme",
   "bugs": {
-    "url": "https://github.com/social-harness/moltzap/issues"
+    "url": "https://github.com/social-harness/social-harness/issues"
   },
   "type": "module",
   "engines": {
@@ -86,7 +86,7 @@
     }
   },
   "dependencies": {
-    "@moltzap/social-harness": "workspace:*",
+    "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:",
     "@modelcontextprotocol/client": "catalog:"
   },
@@ -98,7 +98,7 @@
     "openclaw": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "@moltzap/plugin-mcp": "workspace:*"
+    "@social-harness/plugin-mcp": "workspace:*"
   },
   "peerDependencies": {
     "openclaw": ">=2026.10.3"

@@ -49,7 +49,7 @@ replace the host image with this image and mount NanoClaw's state directory.
 Keep the MCP credential mount and its environment setting.
 NanoClaw uses the channel compiled into its image.
 See the [daemon contract](../../docs/reference/spec/daemon.md) for settings and
-[Upgrades](https://docs.moltzap.xyz/guides/upgrades) for daemon release selection.
+[Upgrades](https://docs.socialharness.org/guides/upgrades) for daemon release selection.
 
 ## Build and check locally
 
@@ -76,7 +76,7 @@ the runner's tool and final output. After building the daemon image, run:
 ```sh
 DAEMON_INTEGRATION_IMAGE=social-harness-daemon:local \
 NANOCLAW_INTEGRATION_IMAGE=social-harness-nanoclaw:local \
-  pnpm nx run @moltzap/integration-tests:test:live
+  pnpm nx run @social-harness/integration-tests:test:live
 ```
 
 These tests run separate host and daemon containers sharing one network

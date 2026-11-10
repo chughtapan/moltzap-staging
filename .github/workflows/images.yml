@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_CERTIFICATE_IDENTITY: https://github.com/social-harness/moltzap/.github/workflows/images.yml@refs/heads/main
+  IMAGE_CERTIFICATE_IDENTITY: https://github.com/social-harness/social-harness/.github/workflows/images.yml@refs/heads/main
   IMAGE_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
 
 defaults:

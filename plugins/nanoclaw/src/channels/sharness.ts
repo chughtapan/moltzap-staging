@@ -14,7 +14,7 @@ import {
   renderLocalGuidance,
   type RequestError,
   type SendError,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Config,
   ConfigProvider,

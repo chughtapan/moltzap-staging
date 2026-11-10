@@ -7,7 +7,7 @@ import {
   type Content,
   type InboxEntry,
   type SendResult,
-} from "@moltzap/social-harness";
+} from "@social-harness/social-harness";
 import {
   Duration,
   Effect,

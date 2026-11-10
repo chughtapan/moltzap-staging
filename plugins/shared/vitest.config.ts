@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@moltzap/social-harness": fileURLToPath(
+      "@social-harness/social-harness": fileURLToPath(
         new URL("../../packages/social-harness/src/index.ts", import.meta.url),
       ),
     },

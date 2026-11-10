@@ -1,4 +1,4 @@
-# @moltzap/social-harness
+# @social-harness/social-harness
 
 This package implements the agent daemon and its MCP interface for hosts. Read the [library boundary](../../docs/reference/spec/package-boundaries.md#library-entries)
 and the contract for the area you change:

@@ -49,18 +49,18 @@ main() {
   git init --quiet --initial-branch=main
   mkdir -p packages/social-harness/src plugins/openclaw changelog.d
   printf '%s\n' 'export const WIRE_VERSION = "2026.1021.3";' > packages/social-harness/src/version.ts
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1024.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
-  sed 's|@moltzap/social-harness|@moltzap/openclaw-channel|' packages/social-harness/package.json > plugins/openclaw/package.json
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1024.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
+  sed 's|@social-harness/social-harness|@social-harness/openclaw-channel|' packages/social-harness/package.json > plugins/openclaw/package.json
   touch changelog.d/template.md changelog.d/consumed.Fixed.md
   commit_tip 'fix: previous change'
   rm changelog.d/consumed.Fixed.md
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1025.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
-  sed 's|@moltzap/social-harness|@moltzap/openclaw-channel|' packages/social-harness/package.json > plugins/openclaw/package.json
-  commit_tip 'chore(release): moltzap@2026.1025.1'
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1025.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
+  sed 's|@social-harness/social-harness|@social-harness/openclaw-channel|' packages/social-harness/package.json > plugins/openclaw/package.json
+  commit_tip 'chore(release): social-harness@2026.1025.1'
 
   new_case
   touch changelog.d/new.Fixed.md
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1025.1"}' > packages/social-harness/package.json
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1025.1"}' > packages/social-harness/package.json
   commit_tip 'fix: new change'
   check 'fragments present' release 0 'need a Social Harness release'
   rm changelog.d/new.Fixed.md
@@ -68,12 +68,12 @@ main() {
 
   new_case
   mv packages/social-harness packages/previous-library
-  commit_tip 'chore(release): moltzap@2026.1025.2'
+  commit_tip 'chore(release): social-harness@2026.1025.2'
   mv packages/previous-library packages/social-harness
   touch changelog.d/new.Fixed.md
   commit_tip 'chore: align library directory'
   check 'library directory rename preserves release admission' release
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1024.1"}' > packages/social-harness/package.json
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1024.1"}' > packages/social-harness/package.json
   commit_tip 'fix: revert library version after directory rename'
   check 'renamed library still detects reverted release versions' skip 0 'older than the last release'
 
@@ -84,7 +84,7 @@ main() {
   check 'working tree fragments do not trigger publication' skip
 
   new_case
-  commit_tip 'chore(release): moltzap@2026.1025.1'
+  commit_tip 'chore(release): social-harness@2026.1025.1'
   check 'release-commit head' skip 0 'Release commits do not start a release'
 
   new_case
@@ -102,9 +102,9 @@ main() {
   check 'unreadable head wire fails' '' 1 packages/social-harness/src/version.ts
 
   new_case
-  printf '%s\n' '{"name":"@moltzap/social-harness"}' > packages/social-harness/package.json
-  commit_tip 'chore(release): moltzap@2026.1025.2'
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1025.2","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
+  printf '%s\n' '{"name":"@social-harness/social-harness"}' > packages/social-harness/package.json
+  commit_tip 'chore(release): social-harness@2026.1025.2'
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1025.2","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
   touch changelog.d/new.Fixed.md
   commit_tip 'fix: restore readable head'
   check 'unreadable release wire fails' '' 1 packages/social-harness/package.json
@@ -116,7 +116,7 @@ main() {
 
   new_case
   touch changelog.d/new.Fixed.md
-  printf '%s\n' '{"name":"@moltzap/openclaw-channel","version":"2026.1024.1"}' > plugins/openclaw/package.json
+  printf '%s\n' '{"name":"@social-harness/openclaw-channel","version":"2026.1024.1"}' > plugins/openclaw/package.json
   commit_tip 'fix: revert package version with new notes'
   check 'lower package version skips without restored fragments' skip 0 'older than the last release'
 
@@ -131,21 +131,21 @@ main() {
 
   new_case
   touch changelog.d/new.Fixed.md
-  printf '%s\n' '{"name":"@moltzap/openclaw-channel","version":"next"}' > plugins/openclaw/package.json
+  printf '%s\n' '{"name":"@social-harness/openclaw-channel","version":"next"}' > plugins/openclaw/package.json
   commit_tip 'fix: unreadable manifest version'
   check 'unreadable manifest version fails' '' 1 'Cannot read version'
 
   new_case
   mkdir -p packages/new-service
-  printf '%s\n' '{"name":"@moltzap/new-service","version":"next"}' > packages/new-service/package.json
+  printf '%s\n' '{"name":"@social-harness/new-service","version":"next"}' > packages/new-service/package.json
   touch changelog.d/new.Fixed.md
   commit_tip 'feat: add Social Harness service'
   check 'manifest absent at last release is ignored by revert check' release
 
   new_case
   mkdir -p plugins/receiver
-  printf '%s\n' '{"name":"@moltzap/receiver-plugin","private":true}' > plugins/receiver/package.json
-  commit_tip 'chore(release): moltzap@2026.1025.2'
+  printf '%s\n' '{"name":"@social-harness/receiver-plugin","private":true}' > plugins/receiver/package.json
+  commit_tip 'chore(release): social-harness@2026.1025.2'
   touch changelog.d/new.Fixed.md
   commit_tip 'fix: change beside a private connector'
   check 'private manifest without a version is ignored by revert check' release
@@ -153,7 +153,7 @@ main() {
   new_case
   mkdir -p packages/social-harness/fixture
   printf '%s\n' '{"name":"nested-fixture","version":"2026.1025.1"}' > packages/social-harness/fixture/package.json
-  commit_tip 'chore(release): moltzap@2026.1025.2'
+  commit_tip 'chore(release): social-harness@2026.1025.2'
   printf '%s\n' '{"name":"nested-fixture","version":"2026.1024.1"}' > packages/social-harness/fixture/package.json
   touch changelog.d/new.Fixed.md
   commit_tip 'test: change nested fixture version'
@@ -174,7 +174,7 @@ main() {
   cd "$TEMP_DIR/first-release"
   git init --quiet --initial-branch=main
   mkdir -p packages/social-harness changelog.d
-  printf '%s\n' '{"name":"@moltzap/social-harness","version":"2026.1025.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
+  printf '%s\n' '{"name":"@social-harness/social-harness","version":"2026.1025.1","sharnessWireVersion":"2026.1021.3"}' > packages/social-harness/package.json
   touch changelog.d/first.Fixed.md
   commit_tip 'fix: first change'
   check 'no earlier release' release 0 'No earlier release'

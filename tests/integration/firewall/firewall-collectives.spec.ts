@@ -10,7 +10,7 @@
  * the answers it receives, a member checks the question it is asked.
  */
 
-import { FirewallRefusal } from "@moltzap/social-harness";
+import { FirewallRefusal } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {

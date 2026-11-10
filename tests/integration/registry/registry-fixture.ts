@@ -7,9 +7,9 @@ import {
   AgentSigningAuthority,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "@moltzap/social-harness";
-import { registryContract } from "@moltzap/social-harness/internal";
-import { Registry } from "@moltzap/social-harness/service";
+} from "@social-harness/social-harness";
+import { registryContract } from "@social-harness/social-harness/internal";
+import { Registry } from "@social-harness/social-harness/service";
 import {
   Clock,
   Data,

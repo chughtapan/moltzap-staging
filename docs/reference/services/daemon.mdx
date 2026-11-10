@@ -28,7 +28,7 @@ Generic OpenClaw and NanoClaw images install their channels from the same
 workspace commit as the daemon image. Each image runs its installed code.
 The daemon runs in its own container and mounts its private runtime settings,
 database access and persistent state. OpenClaw loads its bundled channel from
-`/opt/social-harness/node_modules/@moltzap/openclaw-channel`.
+`/opt/social-harness/node_modules/@social-harness/openclaw-channel`.
 
 The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`.
 For a local sidecar, both containers share a network namespace and use loopback.

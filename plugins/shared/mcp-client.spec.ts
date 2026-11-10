@@ -16,7 +16,7 @@ import {
   loopbackMcpEndpoint,
   mcpTestCredential,
 } from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
-import { toolDefinitions } from "@moltzap/social-harness";
+import { toolDefinitions } from "@social-harness/social-harness";
 import { acquireMcpConnection, callTool } from "./mcp-client.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
@@ -269,7 +269,7 @@ describe("send outcomes", () => {
 
 describe("management failures", () => {
   const failures: readonly {
-    readonly request: import("@moltzap/social-harness").ToolRequest;
+    readonly request: import("@social-harness/social-harness").ToolRequest;
     readonly data: { readonly reason: string };
     readonly tag: string;
   }[] = [

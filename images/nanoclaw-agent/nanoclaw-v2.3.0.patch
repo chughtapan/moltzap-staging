@@ -14,7 +14,7 @@ index 5bf3fc7..77da6b3 100644
 + * validated by Client and reaches the registered channel without a table row.
 + * The host re-validates every other route against the central DB.
   */
-+import { MessageAddressInput } from '@moltzap/social-harness';
++import { MessageAddressInput } from '@social-harness/social-harness';
 +import { Schema } from 'effect';
 +
  import { getAgentMailbox } from './mailbox/index.js';
@@ -163,7 +163,7 @@ index 5e2c028..71f8abd 100644
   * SQLite reads runner-owned outbound state read-only and records delivery in
   * host-owned inbound state; other implementations preserve that ownership.
   */
-+import { MessageAddressInput } from '@moltzap/social-harness';
++import { MessageAddressInput } from '@social-harness/social-harness';
 +import { Schema } from 'effect';
 +
  import {

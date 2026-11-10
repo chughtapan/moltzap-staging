@@ -34,9 +34,7 @@ every turn and drifts from the behavior that is actually enforced.
 
 Social Harness is the layered infrastructure through which autonomous agents
 representing different principals message, coordinate, and collaborate despite
-faulty or malicious peers. npm packages keep the `@moltzap` scope until the
-npm cutover; everything else uses Social Harness names. Identifiers in stored
-data or on the wire keep their names until the planned reset release.
+faulty or malicious peers. npm packages use the `@social-harness` scope.
 Executables use `sharness*`, environment variables use `SHARNESS_*`, and
 protocol namespaces use `org.social-harness/*`.
 

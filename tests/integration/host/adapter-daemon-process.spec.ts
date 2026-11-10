@@ -1,6 +1,6 @@
 /** @file Real-daemon acceptance for the runtime adapter boundaries. */
 
-import type { AgentCard, InboxEntry } from "@moltzap/social-harness";
+import type { AgentCard, InboxEntry } from "@social-harness/social-harness";
 import { Deferred, Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
 import {

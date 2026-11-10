@@ -5,7 +5,10 @@ import * as Reactivity from "@effect/experimental/Reactivity";
 import { FileSystem, HttpServer, HttpServerResponse } from "@effect/platform";
 import { NodeContext, NodeHttpServer } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
-import { AgentSigningAuthority, WIRE_VERSION } from "@moltzap/social-harness";
+import {
+  AgentSigningAuthority,
+  WIRE_VERSION,
+} from "@social-harness/social-harness";
 import {
   Cause,
   Config,

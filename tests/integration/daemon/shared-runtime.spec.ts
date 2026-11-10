@@ -3,13 +3,16 @@ import type { Client } from "@modelcontextprotocol/client";
 import { FileSystem, HttpBody, HttpClient } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import { AgentAddress, AgentIdentityCard } from "@moltzap/social-harness";
+import {
+  AgentAddress,
+  AgentIdentityCard,
+} from "@social-harness/social-harness";
 import {
   databaseAccess,
   databaseConnection,
   makeInbox,
   withAgentTransaction,
-} from "@moltzap/social-harness/test";
+} from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
   Context,

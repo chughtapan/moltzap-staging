@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 const IMAGE_CHANNEL =
-  "/opt/social-harness/node_modules/@moltzap/openclaw-channel";
+  "/opt/social-harness/node_modules/@social-harness/openclaw-channel";
 
 async function configureChannel(): Promise<undefined> {
   const path = process.env.OPENCLAW_CONFIG_PATH;

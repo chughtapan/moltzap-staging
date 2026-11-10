@@ -1,13 +1,13 @@
 /** @file Registry-owned bootstrap admission before durable registration. */
 
 import type { HttpServerRequest } from "@effect/platform";
-import { AgentPublicKey } from "@moltzap/social-harness";
+import { AgentPublicKey } from "@social-harness/social-harness";
 import {
   httpErrors,
   registryContract,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
-} from "@moltzap/social-harness/internal";
+} from "@social-harness/social-harness/internal";
 import { Effect, Redacted, Schema } from "effect";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { RegistryStorage } from "./storage.js";

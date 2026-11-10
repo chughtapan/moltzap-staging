@@ -1,16 +1,16 @@
 {
-  "name": "@moltzap/registry",
+  "name": "@social-harness/registry",
   "version": "2026.1022.0",
   "description": "Private Registry HTTP process and PostgreSQL persistence",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/social-harness/moltzap.git",
+    "url": "git+https://github.com/social-harness/social-harness.git",
     "directory": "packages/registry"
   },
-  "homepage": "https://github.com/social-harness/moltzap/tree/main/packages/registry#readme",
+  "homepage": "https://github.com/social-harness/social-harness/tree/main/packages/registry#readme",
   "bugs": {
-    "url": "https://github.com/social-harness/moltzap/issues"
+    "url": "https://github.com/social-harness/social-harness/issues"
   },
   "type": "module",
   "engines": {
@@ -105,7 +105,7 @@
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
     "effect": "catalog:",
-    "@moltzap/social-harness": "workspace:*"
+    "@social-harness/social-harness": "workspace:*"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

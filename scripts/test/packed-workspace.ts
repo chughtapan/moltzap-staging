@@ -369,7 +369,7 @@ function recordWireVersion(
   name: string,
   archive: string,
 ): Effect.Effect<void, GateError> {
-  if (name !== "@moltzap/social-harness") {
+  if (name !== "@social-harness/social-harness") {
     return Effect.void;
   }
   return Effect.try({

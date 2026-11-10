@@ -8,7 +8,10 @@ import {
   type StreamableHTTPClientTransportOptions,
   SUBSCRIPTION_ID_META_KEY,
 } from "@modelcontextprotocol/client";
-import { INBOX_PENDING_EVENT, packageVersion } from "@moltzap/social-harness";
+import {
+  INBOX_PENDING_EVENT,
+  packageVersion,
+} from "@social-harness/social-harness";
 import { Data, Deferred, Effect, Queue, Schema, Stream, Take } from "effect";
 import { randomUUID } from "node:crypto";
 

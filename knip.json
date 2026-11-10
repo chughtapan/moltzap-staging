@@ -42,7 +42,7 @@
         "*.ts"
       ],
       "ignoreDependencies": [
-        "@moltzap/plugin-mcp"
+        "@social-harness/plugin-mcp"
       ]
     },
     "plugins/openclaw": {
@@ -55,7 +55,7 @@
         "*.ts"
       ],
       "ignoreDependencies": [
-        "@moltzap/plugin-mcp",
+        "@social-harness/plugin-mcp",
         "@modelcontextprotocol/client"
       ]
     },
@@ -106,7 +106,7 @@
         "*.ts"
       ],
       "ignoreDependencies": [
-        "@moltzap/openclaw-channel",
+        "@social-harness/openclaw-channel",
         "openclaw"
       ]
     },
@@ -124,7 +124,7 @@
     },
     "images/daemon": {
       "ignoreDependencies": [
-        "@moltzap/social-harness",
+        "@social-harness/social-harness",
         "@effect/platform-node",
         "effect"
       ]
