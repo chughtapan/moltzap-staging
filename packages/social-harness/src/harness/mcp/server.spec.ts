@@ -9,7 +9,17 @@ import {
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { Ajv } from "ajv";
-import { Deferred, Effect, Exit, Fiber, Schema, Scope, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import * as fc from "fast-check";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
@@ -18,10 +28,12 @@ import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
+  mcpTestCredential,
 } from "../__tests__/mcp-fixtures.js";
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
 import { MessageAddressInput } from "../../communication/messages.js";
+import { localOwner, serverAgentOwner } from "../ownership.js";
 import { HistoryError } from "../social-harness.js";
 import {
   INBOX_PENDING_EVENT,
@@ -520,5 +532,38 @@ describe("a tool that fails", () => {
         message: failure.message,
         data: { reason: failure.reason },
       });
+    }));
+});
+
+describe("the server agent's credential", () => {
+  const credential = Redacted.make("server-agent-credential-000000000001");
+  const withBearer = (bearer: string) =>
+    mcpRequest(
+      "tools/list",
+      {},
+      { headers: { authorization: `Bearer ${bearer}` } },
+    );
+
+  it("admits its bearer as the server agent and leaves other bearers to the configured authentication", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture({ serverAgentCredential: credential });
+      const asServerAgent = yield* Effect.tryPromise(() =>
+        fixture.fetch(withBearer(Redacted.value(credential))),
+      );
+      const asLocalOwner = yield* Effect.tryPromise(() =>
+        fixture.fetch(withBearer(Redacted.value(mcpTestCredential))),
+      );
+      const refused = yield* Effect.tryPromise(() =>
+        fixture.fetch(withBearer(`${Redacted.value(credential)}x`)),
+      );
+      expect([asServerAgent.ok, asLocalOwner.ok, refused.ok]).toEqual([
+        true,
+        true,
+        false,
+      ]);
+      expect(yield* Ref.get(fixture.owners)).toEqual([
+        serverAgentOwner,
+        localOwner,
+      ]);
     }));
 });

@@ -112,6 +112,8 @@ export interface DaemonProcessFixture {
   readonly registration: typeof registrationSeed.Type;
   readonly endpoint: URL;
   readonly environment: Readonly<Record<string, string>>;
+  /** The bearer the server agent signs in with when the daemon runs in client/server mode. */
+  readonly serverAgentCredential: string;
   readonly configureLocator?: Redacted.Redacted;
   readonly stateDirectory: string;
   readonly agentPrivateKeyFile: string;
@@ -693,8 +695,10 @@ export const makeDaemonProcessFixture = (
       agentName,
     });
     const setupFile = join(directory, "setup.json");
+    const serverAgentCredential = randomBytes(32).toString("base64url");
     const environment = {
       SHARNESS_CONFIG_FILE: setupFile,
+      SHARNESS_SERVER_AGENT_CREDENTIAL: serverAgentCredential,
       SHARNESS_DATABASE_URL:
         options.database === undefined
           ? pathToFileURL(
@@ -729,6 +733,9 @@ export const makeDaemonProcessFixture = (
       }),
     );
     yield* loadDaemonSettings(setupFile).pipe(
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(environment))),
+      ),
       Effect.provide(NodeFileSystem.layer),
       Effect.mapError((cause) =>
         processTestError("daemon settings are invalid", cause),
@@ -763,6 +770,7 @@ export const makeDaemonProcessFixture = (
       admissionCredentialFile: credentialPath,
       ...credentials,
       environment,
+      serverAgentCredential,
       ...(firewall ? { firewall } : {}),
     };
   }).pipe(Effect.withSpan("makeDaemonProcessFixture"));
@@ -790,7 +798,11 @@ export function configureDaemonFixture(
       filename,
       JSON.stringify({ ...current, ...changes }),
     );
-    yield* loadDaemonSettings(filename);
+    yield* loadDaemonSettings(filename).pipe(
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
+      ),
+    );
     return fixture;
   }).pipe(
     Effect.provide(NodeFileSystem.layer),

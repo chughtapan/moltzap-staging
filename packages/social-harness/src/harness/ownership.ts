@@ -25,11 +25,18 @@ export const localOwner = {
   subject: "owner",
 };
 
+/** The owner of the server agent, which signs in with the daemon's own credential. */
+export const serverAgentOwner = {
+  issuer: "urn:social-harness:server-agent",
+  subject: "owner",
+};
+
+/** What a new agent is created with. The daemon generates whatever is left out. */
 interface RegistrationSeed {
   readonly agentName: AgentName;
-  readonly principalId: PrincipalId;
-  readonly operationId: RegistrationId;
-  readonly privateKey: Redacted.Redacted;
+  readonly principalId?: PrincipalId;
+  readonly operationId?: RegistrationId;
+  readonly privateKey?: Redacted.Redacted;
 }
 
 const profileRow = Schema.Struct({
@@ -87,17 +94,25 @@ function verifySeed(
   if (seed === undefined) {
     return Effect.void;
   }
+  const same = <A>(saved: A, given?: A) =>
+    given === undefined || given === saved;
+  if (
+    profile.agent_name !== seed.agentName ||
+    !same(profile.principal_id, seed.principalId) ||
+    !same(profile.registration_operation_id, seed.operationId)
+  ) {
+    return Effect.fail(new OwnershipError());
+  }
+  const { privateKey } = seed;
+  if (privateKey === undefined) {
+    return Effect.void;
+  }
   return openCredential(profile.private_key, profile.agent_key, unlockKey).pipe(
-    Effect.flatMap((key) => {
-      const sameRegistration =
-        profile.agent_name === seed.agentName &&
-        profile.principal_id === seed.principalId &&
-        profile.registration_operation_id === seed.operationId;
-      return sameRegistration &&
-        Redacted.value(key) === Redacted.value(seed.privateKey)
-        ? Effect.void
-        : Effect.fail(new OwnershipError());
-    }),
+    Effect.filterOrFail(
+      (saved) => Redacted.value(saved) === Redacted.value(privateKey),
+      () => new OwnershipError(),
+    ),
+    Effect.asVoid,
   );
 }
 
@@ -136,7 +151,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
       seed?.principalId ?? `prn_${randomBytes(16).toString("base64url")}`;
     const operation =
       seed?.operationId ?? `opn_${randomBytes(16).toString("base64url")}`;
-    const privateKey = seed === undefined ? yield* freshKey : seed.privateKey;
+    const privateKey = seed?.privateKey ?? (yield* freshKey);
     yield* AgentSigningAuthority.fromPkcs8(privateKey);
     const sealed = yield* sealCredential(privateKey, candidateKey, unlockKey);
     return yield* sql.withTransaction(

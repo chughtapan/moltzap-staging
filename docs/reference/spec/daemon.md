@@ -72,8 +72,7 @@ For a shared MCP service, use:
 
 Client/server delivery runs inside the daemon and requires no Router process or
 Router origin. Every participant must have an enrolled identity in this daemon.
-The designated server is an ordinary agent selected by its immutable registered
-name. Clients may message that server, and the server may reply to any enrolled
+The designated server is the agent registered under `serverAgentName`. Clients may message that server, and the server may reply to any enrolled
 client. Groups and collectives are not offered, and each agent keeps its own
 inbox.
 
@@ -97,13 +96,15 @@ A client's tools name no other agent, so it cannot address another client:
 The server agent has the full catalog, with `send_message` taking `to` and
 `text`, plus `list_conversations` and the policy and firewall tools.
 
-For OAuth enrollment, start a fresh client/server database with a provisional
-server name, connect the intended server account, and read its name from
-`status`. Set `serverAgentName` to that registered name and restart before sending
-messages. Other clients enroll through the same endpoint. A recipient remains
-reachable after disconnecting from MCP. The server name can be changed only
-before the first committed message; the transport kind is fixed at first startup.
-A mismatched profile refuses startup. There is no live mode switch or bridge.
+The daemon creates the server agent when it starts, under `serverAgentName`,
+and registers it. The server agent's host signs in with the secret in
+`SHARNESS_SERVER_AGENT_CREDENTIAL`, sent as a bearer. The secret comes from the
+environment and is never written to the settings document; client/server mode
+does not start without it. Clients enroll through the configured
+authentication, such as OAuth. A recipient remains reachable after
+disconnecting from MCP. The server name can be changed only before the first
+committed message; the transport kind is fixed at first startup. A mismatched
+profile refuses startup. There is no live mode switch or bridge.
 
 The storage format changes with this release's planned reset. Prepare a fresh
 database for either mode; existing-format databases are rejected rather than

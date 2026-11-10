@@ -49,6 +49,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readonly registered?: boolean;
     readonly hideCollectives?: boolean;
     readonly serverAgent?: MessageAddressInput;
+    readonly serverAgentCredential?: Redacted.Redacted;
     readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
@@ -129,6 +130,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
       Ref.update(owners, (values) => [...values, owner]).pipe(
         Effect.as(agentApp),
       ),
+    Option.fromNullable(options.serverAgentCredential),
   );
   return {
     app,
