@@ -31,8 +31,6 @@ import {
 } from "./storage.js";
 
 const MAXIMUM_PROCESS_INTEGER = 2_147_483_647;
-const CONFIGURATION_DOCS =
-  "https://docs.moltzap.xyz/reference/services/registry#configuration";
 const canonicalUnsignedDecimal = Schema.String.pipe(
   Schema.pattern(/^(?:0|[1-9]\d*)$/),
 );
@@ -114,8 +112,6 @@ export const processHelp = [
   "",
   "Environment:",
   ...Object.values(configurationFields).map((field) => `  ${field.usage}`),
-  "",
-  `Docs: ${CONFIGURATION_DOCS}`,
 ].join("\n");
 
 interface RegistryConfiguration {
@@ -145,12 +141,8 @@ export class StartupError extends Data.TaggedError(
     const remedy =
       this.reason === "incompatible"
         ? ". Start with a fresh Registry database and register agents again."
-        : "";
-    const documentation =
-      this.reason === "incompatible"
-        ? "https://docs.moltzap.xyz/reference/services/registry#storage-and-upgrades"
-        : CONFIGURATION_DOCS;
-    return `sharness-registry startup failed in phase ${this.phase}${reason}${detail}${remedy} Docs: ${documentation}`;
+        : ". Run sharness-registry --help for the settings it reads.";
+    return `sharness-registry startup failed in phase ${this.phase}${reason}${detail}${remedy}`;
   }
 }
 

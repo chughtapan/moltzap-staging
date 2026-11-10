@@ -347,7 +347,7 @@ export const EDITS: readonly Edit[] = Object.freeze([
 const UPDATE_RECOVERY_HELPER = "package-update-activation-recovery.mjs";
 
 const USAGE =
-  "usage: patch-openclaw.ts DIST_ROOT [--base-image REF] [--marker PATH] [--dry-run]. Docs: https://github.com/social-harness/moltzap/tree/main/images/openclaw-agent#openclaw-host-image";
+  "usage: patch-openclaw.ts DIST_ROOT [--base-image REF] [--marker PATH] [--dry-run]";
 
 if (import.meta.main) {
   await main();

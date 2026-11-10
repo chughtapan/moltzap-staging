@@ -7,5 +7,6 @@ export const registeredDaemonStatus = "registered";
 export const unavailablePolicyRemedy =
   "A required policy check is unavailable.";
 
-/** Recovery diagnostics provide a public documentation link. */
-export const agentResetDocsLink = "Docs: https://docs.moltzap.xyz/";
+/** A database the daemon cannot open with its key tells the operator what to prepare. */
+export const incompatibleDatabaseRemedy =
+  "prepare a compatible database with its existing unlock key";

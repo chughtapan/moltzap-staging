@@ -40,8 +40,8 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
 /**
  * Registers natural-language policy, admission guidance and refusal feedback.
  * Validation requires nonempty text without restricting its language.
- * The [editable policy contract](https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy)
- * defines ownership and edit validation.
+ * The message policy specification defines who owns each rule and how edits
+ * are validated.
  */
 export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
@@ -200,9 +200,6 @@ const policyReasonText: Readonly<
   "persistence-failed": "the rules could not be stored",
 };
 
-const editRefusalDocs =
-  "Docs: https://docs.moltzap.xyz/reference/spec/firewall/message-policy#editable-text-policy";
-
 /**
  * Failed edits preserve active and saved rules. `ruleId` and `path` locate the
  * failure, such as `["add", 0]`. `problem` explains an invalid rule. Messages
@@ -232,10 +229,7 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
       this.problem === undefined
         ? policyReasonText[this.reason]
         : policyProblemText[this.problem];
-    const text = subject === undefined ? cause : `${subject}: ${cause}`;
-    return ["invalid-rule", "fixed-rule", "build-failed"].includes(this.reason)
-      ? `${text}. ${editRefusalDocs}`
-      : text;
+    return subject === undefined ? cause : `${subject}: ${cause}`;
   }
 
   /** Returns available rule, path and problem details for error data. */
@@ -290,33 +284,17 @@ export type CredentialReader = (
   grammar: Schema.Schema<string>,
 ) => Effect.Effect<Redacted.Redacted, { readonly stage: "file" | "value" }>;
 
-const POLICY_SPEC =
-  "https://docs.moltzap.xyz/reference/spec/firewall/message-policy";
-
-const FIREWALL_GUIDE = "https://docs.moltzap.xyz/guides/message-firewall";
-
 const failureMessages: Readonly<
-  Record<
-    MessagePolicyConfigurationFailure,
-    { readonly text: string; readonly docs: string }
-  >
+  Record<MessagePolicyConfigurationFailure, string>
 > = {
-  "message-policy-file": {
-    text: "messagePolicyFile must name a readable regular file of at most 1 MiB",
-    docs: `${FIREWALL_GUIDE}#message-policy-file`,
-  },
-  "message-policy": {
-    text: "messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document",
-    docs: `${FIREWALL_GUIDE}#message-policy-document`,
-  },
-  "decision-provider-key-file": {
-    text: "decisionProviderKeyFile must name a readable file for the message policy's jev decision provider",
-    docs: `${FIREWALL_GUIDE}#decision-provider-key-file`,
-  },
-  "decision-provider-key": {
-    text: "decisionProviderKeyFile must contain one key without inner whitespace",
-    docs: `${FIREWALL_GUIDE}#decision-provider-key`,
-  },
+  "message-policy-file":
+    "messagePolicyFile must name a readable regular file of at most 1 MiB",
+  "message-policy":
+    "messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document",
+  "decision-provider-key-file":
+    "decisionProviderKeyFile must name a readable file for the message policy's jev decision provider",
+  "decision-provider-key":
+    "decisionProviderKeyFile must contain one key without inner whitespace",
 };
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
@@ -815,10 +793,7 @@ function invalidPolicy(
   ];
   return new MessagePolicyConfigurationError({
     reason: "message-policy",
-    message: policyFailureMessage(
-      "message-policy",
-      `; invalid at ${paths.join(", ")}`,
-    ),
+    message: `${failureMessages["message-policy"]}; invalid at ${paths.join(", ")}`,
   });
 }
 
@@ -878,36 +853,9 @@ function policyConfigurationError(
   return new MessagePolicyConfigurationError({
     reason,
     behaviorReason,
-    message: policyFailureMessage(
-      reason,
-      path === "" ? "" : `; invalid at ${path}${category}`,
-      { path },
-    ),
+    message:
+      path === ""
+        ? failureMessages[reason]
+        : `${failureMessages[reason]}; invalid at ${path}${category}`,
   });
-}
-
-/**
- * Links behavior failures to their rules and other failures to troubleshooting.
- * `link.docs` overrides that target. An empty value omits the link.
- */
-function policyFailureMessage(
-  reason: MessagePolicyConfigurationFailure,
-  detail: string,
-  link: { readonly path?: string; readonly docs?: string } = {},
-): string {
-  const docs = failureDocs(reason, link);
-  return docs === ""
-    ? `${failureMessages[reason].text}${detail}`
-    : `${failureMessages[reason].text}${detail}. Docs: ${docs}`;
-}
-
-function failureDocs(
-  reason: MessagePolicyConfigurationFailure,
-  link: { readonly path?: string; readonly docs?: string },
-): string {
-  const path = link.path ?? "";
-  if (/^text\.(?:fixed|initial)Behaviors\./u.test(path)) {
-    return `${POLICY_SPEC}#behaviors`;
-  }
-  return link.docs ?? failureMessages[reason].docs;
 }

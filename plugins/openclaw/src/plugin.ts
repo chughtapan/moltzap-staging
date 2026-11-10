@@ -497,8 +497,7 @@ function acquireAccountEndpoint() {
       try: () => readFile(Redacted.value(credentialFile), "utf8"),
       catch: () =>
         new OpenClawConfigurationError({
-          detail:
-            "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
+          detail: "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
         }),
     });
     return yield* acquireMcpConnection(

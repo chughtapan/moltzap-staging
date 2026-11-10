@@ -163,9 +163,8 @@ and a check fails when the copy disagrees with its source.
   signature gives. Never issue/spec/phase numbers, change narration
   (formerly, no longer, renamed from), or design alternatives. Rewrite
   touched comments in the same PR; history lives in git, not code.
-- A new or touched user-facing error with a known fix, and a new or
-  touched CLI `--help`, ends with a `Docs:` URL to the heading that
-  matches its error text or command.
+- A user-facing error with a known fix says what to do. Error messages and
+  CLI `--help` text carry no documentation links.
 
 Effect idiom, typed errors, exhaustive switches, and cast bans are enforced by
 the `agent-code-guard` eslint rules. Read their output rather than a summary

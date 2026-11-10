@@ -446,7 +446,7 @@ export class DatabasePreparationError extends Data.TaggedError(
   readonly reason: "schema" | "key" | "preparation";
 }> {
   override get message(): string {
-    return `Database ${this.reason} check failed; prepare a compatible database with its existing unlock key before starting the daemon. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration`;
+    return `Database ${this.reason} check failed; prepare a compatible database with its existing unlock key before starting the daemon`;
   }
 }
 

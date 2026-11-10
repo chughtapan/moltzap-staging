@@ -388,8 +388,7 @@ class HarnessChannelAdapter {
             Effect.catchTag("ConfigError", () =>
               Effect.fail(
                 new ChannelError({
-                  reason:
-                    "SHARNESS_MCP_CREDENTIAL_FILE is required. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
+                  reason: "SHARNESS_MCP_CREDENTIAL_FILE is required",
                 }),
               ),
             ),
@@ -399,7 +398,7 @@ class HarnessChannelAdapter {
             catch: () =>
               new ChannelError({
                 reason:
-                  "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file. Docs: https://docs.moltzap.xyz/guides/run-an-agent-daemon#mcp-credential-file",
+                  "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
               }),
           });
           return yield* acquireMcpConnection(

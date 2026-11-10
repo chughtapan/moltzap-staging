@@ -286,7 +286,7 @@ jobs:
             image="ghcr.io/social-harness/$service"
             until digest=$(docker buildx imagetools inspect "$image:inputs-$key" --format '{{.Manifest.Digest}}'); do
               if (( SECONDS >= deadline )); then
-                echo "ERROR: the images workflow must publish $service key $key and the ghcr.io/social-harness/{registry,router} packages must be public and pull anonymously; rerun once both conditions hold. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions" >&2
+                echo "ERROR: the images workflow must publish $service key $key and the ghcr.io/social-harness/{registry,router} packages must be public and pull anonymously; rerun once both conditions hold." >&2
                 exit 1
               fi
               remaining=$((deadline - SECONDS))
@@ -296,7 +296,7 @@ jobs:
             [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
             ref="$image@$digest"
             docker buildx imagetools inspect "$ref" >/dev/null || {
-              echo "ERROR: the ghcr.io/social-harness/{registry,router} packages must be public and pull anonymously before release. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions" >&2
+              echo "ERROR: the ghcr.io/social-harness/{registry,router} packages must be public and pull anonymously before release." >&2
               exit 1
             }
             cosign verify \
@@ -723,7 +723,7 @@ jobs:
             image="ghcr.io/social-harness/$service"
             until digest=$(docker buildx imagetools inspect "$image:inputs-$key" --format '{{.Manifest.Digest}}'); do
               if (( SECONDS >= deadline )); then
-                echo "ERROR: images.yml has not published $image:inputs-$key for release $VERSION. Re-run images.yml's run for the release commit $RELEASE_COMMIT, then re-run this job. Docs: https://docs.moltzap.xyz/reference/spec/releases#publication-and-versions" >&2
+                echo "ERROR: images.yml has not published $image:inputs-$key for release $VERSION. Re-run images.yml's run for the release commit $RELEASE_COMMIT, then re-run this job." >&2
                 exit 1
               fi
               remaining=$((deadline - SECONDS))

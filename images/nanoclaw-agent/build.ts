@@ -26,7 +26,7 @@ const BUILD_TIMEOUT_MILLIS = 45 * 60 * 1_000;
 const BUILD_OUTPUT_BYTES = 32 * 1024 * 1024;
 const IMAGE_REFERENCE = /^[a-z0-9][a-z0-9._/-]*:\w[\w.-]{0,127}$/u;
 const USAGE =
-  "usage: build.ts --tag NAME:TAG | build.ts stage DIRECTORY | build.ts lock. Docs: https://github.com/social-harness/moltzap/tree/main/images/nanoclaw-agent#nanoclaw-host-image";
+  "usage: build.ts --tag NAME:TAG | build.ts stage DIRECTORY | build.ts lock";
 
 /** Stock NanoClaw: the upstream revision and the sha256 of its GitHub archive. */
 export const NANOCLAW_SOURCE = Object.freeze({

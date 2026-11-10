@@ -22,7 +22,7 @@ program.pipe(
     error._tag === "DatabaseAccessError" ||
     error._tag === "DatabasePreparationError"
       ? error.message
-      : "Daemon configuration or startup failed. Docs: https://docs.moltzap.xyz/reference/spec/daemon#process-and-configuration",
+      : "The daemon could not start. Check SHARNESS_CONFIG_FILE, SHARNESS_DATABASE_URL and SHARNESS_DATABASE_KEY; run sharnessd --help for what each must hold.",
   ).pipe(
     Effect.andThen(Effect.sync(() => { process.exitCode = 1; })),
   )),
