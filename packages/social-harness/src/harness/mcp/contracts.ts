@@ -188,12 +188,12 @@ const managementStatusResultSchema = Schema.Union(
 );
 
 /** Canonically ordered local-conversation page selector. */
-export const managementSearchConversationsRequestSchema = exactStruct({
+export const managementListConversationsRequestSchema = exactStruct({
   ...PaginatedRequest.fields,
 });
 
 /** At most fifty canonical addresses and an opaque position for the next page. */
-export const managementSearchConversationsResultSchema = Schema.Struct({
+export const managementListConversationsResultSchema = Schema.Struct({
   addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
@@ -405,11 +405,11 @@ export const toolDefinitions = {
     output: managementStatusResultSchema,
     annotations: read,
   },
-  search_conversations: {
+  list_conversations: {
     description:
       "List canonical conversation addresses with completed messages or saved local results. Follow nextCursor until absent. Use read_conversation to read one address.",
-    input: managementSearchConversationsRequestSchema,
-    output: managementSearchConversationsResultSchema,
+    input: managementListConversationsRequestSchema,
+    output: managementListConversationsResultSchema,
     annotations: read,
   },
   read_conversation: {
@@ -419,21 +419,21 @@ export const toolDefinitions = {
     output: managementReadConversationResultSchema,
     annotations: read,
   },
-  policy_read: {
+  read_policy: {
     description:
       "Read active editable rules, fixed rules and the policy revision.",
     input: empty,
     output: policyReadSchema,
     annotations: read,
   },
-  policy_update: {
+  update_policy: {
     description:
       "Add, remove or replace editable rules. A behavior is a complete BEHAVIOR.md document. Remove and add the same id to replace a rule. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
     output: policyUpdateResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: false },
   },
-  firewall_decisions: {
+  read_firewall_decisions: {
     description:
       "Read completed firewall decision summaries since inclusive Unix milliseconds. Summaries include the reason and registered advice without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
@@ -464,11 +464,11 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 export const toolFailureSchemas = {
   read_inbox: Schema.Struct({ reason: InboxError.fields.reason }),
   read_event: Schema.Struct({ reason: InboxError.fields.reason }),
-  search_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
+  list_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
-  policy_read: policyFailure,
-  policy_update: policyFailure,
-  firewall_decisions: policyFailure,
+  read_policy: policyFailure,
+  update_policy: policyFailure,
+  read_firewall_decisions: policyFailure,
 } as const;
 
 function addressesAreOrdered(addresses: readonly string[]): boolean {

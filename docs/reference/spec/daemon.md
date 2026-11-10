@@ -99,7 +99,7 @@ request does not undo a registration that succeeds.
 ## Firewalls
 
 The configured message policy applies before host calls are accepted. Agents
-use `policy_read`, `policy_update` and `firewall_decisions` through their own
+use `read_policy`, `update_policy` and `read_firewall_decisions` through their own
 MCP context. Each conversation checks one incoming item at a time. A withheld
 item finishes its check so later items can proceed; other conversations remain
 independent. A request expiring before checking retires without a check. A
@@ -135,7 +135,7 @@ does not establish human confirmation.
 
 ### History and diagnostics
 
-Use `search_conversations` and `read_conversation` to retrieve the authenticated
+Use `list_conversations` and `read_conversation` to retrieve the authenticated
 agent's retained messages, permitted incoming views and local collective
 results. History remains available after inbox delivery and daemon restart.
 Failed send invocations return their existing tool errors and emit structured

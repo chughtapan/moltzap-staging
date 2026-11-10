@@ -297,7 +297,7 @@ const readDurableHistory = (
   Effect.scoped(
     Effect.gen(function* () {
       const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.searchConversations()).toEqual({
+      expect(yield* management.listConversations()).toEqual({
         addresses: [address],
       });
       const history = yield* management.readConversation(address);

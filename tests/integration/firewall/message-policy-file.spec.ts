@@ -84,7 +84,7 @@ const unavailableTextPolicy = Effect.gen(function* () {
   const scenario = yield* acquirePolicyFileScenario;
   yield* expectDocumentRulesPublished(scenario.client);
   yield* expectUnavailableSendHeld(scenario.client);
-  const feed = yield* call(scenario.client, "firewall_decisions");
+  const feed = yield* call(scenario.client, "read_firewall_decisions");
   expect(feed).toMatchObject({
     decisions: [
       {
@@ -103,10 +103,10 @@ const olderMcpClient = Effect.gen(function* () {
   const client = yield* connect(scenario.fixture, OLDER_CLIENT);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
   expect(catalog.tools).toEqual(
-    arrayContaining([objectContaining({ name: "policy_read" })]),
+    arrayContaining([objectContaining({ name: "read_policy" })]),
   );
 
-  const policy = yield* call(client, "policy_read").pipe(
+  const policy = yield* call(client, "read_policy").pipe(
     Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
   );
   expect(policy.fixedRules).toEqual(
@@ -163,7 +163,7 @@ describe("stock sharnessd with a message-policy file", () => {
 
 function expectDocumentRulesPublished(client: Client) {
   return Effect.gen(function* () {
-    const policy = yield* call(client, "policy_read").pipe(
+    const policy = yield* call(client, "read_policy").pipe(
       Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
     );
     expect(policy.fixedRules).toEqual(

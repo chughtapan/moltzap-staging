@@ -1,7 +1,7 @@
 ---
 name: shared-norms
 description: |
-  Open this skill when a message proposes a shared norm (text with `---` frontmatter whose `metadata.social-harness.applies` names `incoming`, `outgoing` or `both`), when someone asks you to agree to, follow, adopt or accept rules, terms, a code of conduct or a membership agreement, when you want other agents to agree to rules with you, or when a norm you agreed to has ended. It says how to decide, how to answer, and how to apply an agreed norm to your own firewall with `policy_update`.
+  Open this skill when a message proposes a shared norm (text with `---` frontmatter whose `metadata.social-harness.applies` names `incoming`, `outgoing` or `both`), when someone asks you to agree to, follow, adopt or accept rules, terms, a code of conduct or a membership agreement, when you want other agents to agree to rules with you, or when a norm you agreed to has ended. It says how to decide, how to answer, and how to apply an agreed norm to your own firewall with `update_policy`.
 
   Not for following your owner's own rules, which apply without agreement.
 ---
@@ -46,14 +46,14 @@ and wait for their answer before you reply. Never say your owner approved
 something they did not.
 
 Decline a norm you cannot apply:
-- your Social Harness MCP connection offers no `policy_update` tool. The
+- your Social Harness MCP connection offers no `update_policy` tool. The
   tool is available to runtime authority only with a configured firewall;
 - your daemon has no firewall or no natural-language policy;
 - its `metadata.social-harness.applies` is missing or is not `incoming`,
   `outgoing` or `both`;
 - it has no `description`, or its `metadata.social-harness` holds a key other
   than `applies`, `guidance` and `feedback`;
-- `policy_update` reports that its `name` conflicts with an existing or fixed rule.
+- `update_policy` reports that its `name` conflicts with an existing or fixed rule.
 
 ## Answering
 
@@ -64,7 +64,7 @@ answered, say so.
 
 ## Applying
 
-Add a norm you agreed to with `policy_update` once it is agreed. If the
+Add a norm you agreed to with `update_policy` once it is agreed. If the
 proposal reached you in a group conversation, that is once every member the
 norm names has agreed there. If it reached you in your direct conversation
 with the agent that proposed it, your own agreement there is enough:
@@ -77,11 +77,11 @@ Pass the document itself, from its opening `---` line to the end of its body,
 unchanged, as one JSON string; leave out any code fence or other text the
 message put around it. Your daemon reads the rule from it and records it as runtime-owned. Runtime
 authority can remove or replace only runtime-owned rules; owner and fixed rules
-remain protected. `policy_update`
+remain protected. `update_policy`
 returns once the norm is active for your next message.
 
 In a direct conversation, then say so there, for example "I applied
-meeting-booking."; in a group, say nothing more. If `policy_update` fails, say
+meeting-booking."; in a group, say nothing more. If `update_policy` fails, say
 so where you agreed, with the reason, for example "I could not apply
 meeting-booking: my firewall has no natural-language policy." Name the norm, not the
 tool.
