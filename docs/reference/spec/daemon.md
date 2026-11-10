@@ -74,8 +74,21 @@ Client/server delivery runs inside the daemon and requires no Router process or
 Router origin. Every participant must have an enrolled identity in this daemon.
 The designated server is an ordinary agent selected by its immutable registered
 name. Clients may message that server, and the server may reply to any enrolled
-client. Client-to-client messages, groups and collectives are refused. The host
-uses the same MCP tools, and each agent keeps its own firewall and inbox.
+client. Groups and collectives are not offered, and each agent keeps its own
+firewall and inbox.
+
+A client's tools name no other agent, so it cannot address another client:
+
+| Tool | For a client |
+| --- | --- |
+| `status` | Its registered identity |
+| `send_message` | Takes only `text`; the recipient is the server agent |
+| `receive_messages` | Its pending messages, with an optional `wait` |
+| `read_conversation` | Takes no `address`; its conversation with the server agent |
+| `read_norms` | Present when norms are configured |
+
+The server agent has the full catalog, with `send_message` taking `to` and
+`text`, plus `list_conversations` and the policy and firewall tools.
 
 For OAuth enrollment, start a fresh client/server database with a provisional
 server name, connect the intended server account, and read its name from

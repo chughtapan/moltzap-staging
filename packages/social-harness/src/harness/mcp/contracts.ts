@@ -6,6 +6,7 @@ import {
   type SendError,
   sendFailureReasons,
 } from "../../communication/errors.js";
+import { wellFormedString } from "../../communication/messages.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
@@ -411,6 +412,29 @@ export const toolDefinitions = {
     input: empty,
     output: readNormsResultSchema,
     annotations: read,
+  },
+} as const;
+
+/**
+ * How two tools read for a client in client/server mode. A client talks only
+ * to the server agent, so it names no recipient and no conversation.
+ */
+export const clientToolDefinitions = {
+  send_message: {
+    ...toolDefinitions.send_message,
+    description:
+      "Send a message to the server agent. Returns the accepted send id. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+    input: exactStruct({
+      text: Schema.propertySignature(wellFormedString).annotations({
+        description: "The message text.",
+      }),
+    }),
+  },
+  read_conversation: {
+    ...toolDefinitions.read_conversation,
+    description:
+      "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent. The first page fixes the history boundary.",
+    input: exactStruct({ ...PaginatedRequest.fields }),
   },
 } as const;
 
