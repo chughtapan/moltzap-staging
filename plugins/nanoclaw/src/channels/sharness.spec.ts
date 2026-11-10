@@ -79,12 +79,11 @@ function connection() {
       yield* Effect.addFinalizer(() => Effect.sync(released));
       return {
         client,
-        consumeInbox: (options, accept) =>
+        consumeInbox: (accept) =>
           // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The adapter opens and closes this fixture in its activation scope.
           Effect.acquireUseRelease(
             Stream.fromQueue(inbox).pipe(
               Stream.runForEach((entry) => accept(entry)),
-              Effect.zipLeft(options.onReady ?? Effect.void),
               Effect.interruptible,
               Effect.forkIn(scope),
             ),

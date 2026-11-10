@@ -536,7 +536,7 @@ function consumeInboundMessages(
   endpoint: McpConnection,
 ) {
   return Effect.raceFirst(
-    endpoint.consumeInbox({ receiveMode: "push" }, (delivery) =>
+    endpoint.consumeInbox((delivery) =>
       handleInboxEntry(ctx, runtime, delivery),
     ),
     Effect.tryPromise({

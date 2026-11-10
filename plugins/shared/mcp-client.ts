@@ -18,7 +18,6 @@ import {
 } from "@social-harness/social-harness";
 import {
   Data,
-  Duration,
   Effect,
   Fiber,
   Option,
@@ -61,15 +60,6 @@ export interface McpConnectionSettings {
   readonly allowHttp?: boolean;
 }
 
-/**
- * Polling is the default. The `onReady` callback runs before the first poll or
- * after the push stream becomes active, before reading pending items.
- */
-export interface InboxOptions {
-  readonly receiveMode?: "push" | "poll";
-  readonly onReady?: Effect.Effect<void>;
-}
-
 /** Inbox values contain a stable lookup token, content and saved local advice. */
 export type InboxEntry = ToolResult<"receive_messages">["items"][number];
 
@@ -80,7 +70,6 @@ export type InboxEntry = ToolResult<"receive_messages">["items"][number];
 export interface McpConnection {
   readonly client: Client;
   readonly consumeInbox: <E, R>(
-    options: InboxOptions,
     accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
@@ -225,18 +214,13 @@ function acquireConnection(
     return {
       client,
       consumeInbox: <E, R>(
-        options: InboxOptions,
         accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-      ) => {
-        const ready = options.onReady ?? Effect.void;
-        const wakeups =
-          options.receiveMode === "push"
-            ? inboxWakeups(endpoint, transportOptions, ready).pipe(
-                Stream.as(undefined),
-              )
-            : pollingWakeups(options);
-        return runReception({ client, receiving, scope }, wakeups, accept);
-      },
+      ) =>
+        runReception(
+          { client, receiving, scope },
+          inboxWakeups(endpoint, transportOptions).pipe(Stream.as(undefined)),
+          accept,
+        ),
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
 }
@@ -320,11 +304,4 @@ function receiveInbox<E, R>(
       );
     }),
   );
-}
-
-function pollingWakeups(options: Pick<InboxOptions, "onReady">) {
-  return Stream.concat(
-    Stream.fromEffect(options.onReady ?? Effect.void),
-    Stream.tick(Duration.millis(250)),
-  ).pipe(Stream.as(undefined));
 }
