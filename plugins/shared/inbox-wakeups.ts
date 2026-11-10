@@ -256,13 +256,12 @@ const watchSilence = (state: Reception) =>
 
 /**
  * Subscribe before reading the inbox so arrivals during catch-up remain visible.
- * Notifications carry no message content. The `onReady` callback runs after
- * activation. The owning scope cancels the stream, which has no request timeout.
+ * Notifications carry no message content. The owning scope cancels the
+ * stream, which has no request timeout.
  */
 export const inboxWakeups = (
   endpoint: URL,
   options: StreamableHTTPClientTransportOptions,
-  onReady?: Effect.Effect<void>,
 ): Stream.Stream<boolean, McpReceiveError> =>
   Stream.unwrapScoped(
     Effect.gen(function* () {
@@ -282,7 +281,6 @@ export const inboxWakeups = (
       yield* Effect.addFinalizer(() => close(state));
       yield* open(state);
       yield* watchSilence(state);
-      yield* onReady ?? Effect.void;
       return Stream.fromQueue(queue).pipe(
         Stream.flattenTake,
         Stream.tap(() =>

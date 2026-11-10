@@ -60,33 +60,30 @@ const inboxFixture = Effect.gen(function* () {
 });
 
 describe("shared inbox reception", () => {
-  it.each(["poll", "push"] as const)(
-    "records delivery before host acceptance over %s",
-    (receiveMode) =>
-      Effect.gen(function* () {
-        const fixture = yield* inboxFixture;
-        const connection = yield* acquireMcpConnection(
-          { endpoint: fixture.endpoint, credential: mcpTestCredential },
-          implementation,
-        );
-        const entered = yield* Deferred.make<void>();
-        const accepted = yield* Deferred.make<void>();
-        const consume = connection.consumeInbox;
-        const options = { onReady: Effect.void, receiveMode };
-        const receiver = yield* consume(options, (received) => {
+  it("records delivery before host acceptance", () =>
+    Effect.gen(function* () {
+      const fixture = yield* inboxFixture;
+      const connection = yield* acquireMcpConnection(
+        { endpoint: fixture.endpoint, credential: mcpTestCredential },
+        implementation,
+      );
+      const entered = yield* Deferred.make<void>();
+      const accepted = yield* Deferred.make<void>();
+      const receiver = yield* connection
+        .consumeInbox((received) => {
           expect(received).toEqual(entry);
           return Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Deferred.await(accepted)),
           );
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(entered);
-        expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
-        yield* Deferred.succeed(accepted, undefined);
-        yield* Deferred.await(fixture.receipt);
-        yield* Fiber.interrupt(receiver);
-        expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
-      }).pipe(Effect.scoped, Effect.runPromise),
-  );
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+      yield* Deferred.succeed(accepted, undefined);
+      yield* Deferred.await(fixture.receipt);
+      yield* Fiber.interrupt(receiver);
+      expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
+    }).pipe(Effect.scoped, Effect.runPromise));
 
   it("keeps a failed callback from undoing delivery", () =>
     Effect.gen(function* () {
@@ -97,7 +94,7 @@ describe("shared inbox reception", () => {
       );
       expect(
         yield* connection
-          .consumeInbox({}, () => Effect.fail("host-refused"))
+          .consumeInbox(() => Effect.fail("host-refused"))
           .pipe(Effect.flip),
       ).toBe("host-refused");
       expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
@@ -114,7 +111,7 @@ describe("shared inbox reception", () => {
       const entered = yield* Deferred.make<void>();
       const interrupted = yield* Deferred.make<void>();
       const receiver = yield* connection
-        .consumeInbox({}, () =>
+        .consumeInbox(() =>
           Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Effect.never),
             Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),

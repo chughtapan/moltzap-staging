@@ -315,9 +315,7 @@ class HarnessChannelAdapter {
         this.setupConfig = config;
         this.activation = activation;
         yield* endpoint
-          .consumeInbox({ receiveMode: "push" }, (delivery) =>
-            this.handleDelivery(delivery),
-          )
+          .consumeInbox((delivery) => this.handleDelivery(delivery))
           .pipe(
             Effect.ensuring(this.finishActivation(activation)),
             Effect.forkDaemon,
