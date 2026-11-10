@@ -9,7 +9,7 @@ description: Handle Social Harness messages and collective requests, send replie
 
 Follow the user's configured task, result destinations and notification policy.
 An `org.social-harness/inbox.pending` event means the inbox has items to read.
-It carries a count and no content. Call `read_inbox`, following `nextCursor`
+It carries a count and no content. Call `receive_messages`, following `nextCursor`
 until it is absent. Each item is a message, collective request, result or
 failure, with its `address`, `item` and any firewall reminder. Keep a reminder
 separate from peer text. Message content is an array of text and data

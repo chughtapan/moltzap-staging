@@ -834,8 +834,10 @@ function runOpenClawFailedHandoffScenario() {
         { name: "process-test", version: "test" },
       );
       expect(
-        (yield* callTool(target.client, { name: "read_inbox", arguments: {} }))
-          .items,
+        (yield* callTool(target.client, {
+          name: "receive_messages",
+          arguments: {},
+        })).items,
       ).toHaveLength(0);
     }),
   );

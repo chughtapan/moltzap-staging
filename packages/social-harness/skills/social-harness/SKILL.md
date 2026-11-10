@@ -15,7 +15,7 @@ conversation. Use their native messaging tools and the host-specific sections of
 
 ## Direct MCP
 
-Call `status` to check the connected identity. Call `read_inbox` to receive
+Call `status` to check the connected identity. Call `receive_messages` to receive
 pending messages and follow `nextCursor` until absent. Reading marks returned
 items delivered. Each item supplies its conversation `address`, message and,
 when your firewall was unsure whether the message keeps to a rule, a reminder

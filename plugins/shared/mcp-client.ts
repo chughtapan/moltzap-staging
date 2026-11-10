@@ -54,7 +54,7 @@ export type ToolFailure<Name extends ToolName> = Name extends "send_message"
   ? SendError | RequestError | FirewallRefusal
   :
       | McpToolError
-      | (Name extends "read_inbox"
+      | (Name extends "receive_messages"
           ? InboxError
           : Name extends "list_conversations" | "read_conversation"
             ? HistoryError
@@ -85,7 +85,7 @@ export interface InboxOptions {
 }
 
 /** Inbox values contain a stable lookup token, content and saved local advice. */
-export type InboxEntry = ToolResult<"read_inbox">["items"][number];
+export type InboxEntry = ToolResult<"receive_messages">["items"][number];
 
 /**
  * Allows one inbox consumer at a time. Reading marks items delivered before the
@@ -232,8 +232,10 @@ function decodeToolResult(
   switch (name) {
     case "send_message":
       return Schema.decodeUnknown(toolDefinitions.send_message.output)(value);
-    case "read_inbox":
-      return Schema.decodeUnknown(toolDefinitions.read_inbox.output)(value);
+    case "receive_messages":
+      return Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
+        value,
+      );
     case "status":
       return Schema.decodeUnknown(toolDefinitions.status.output)(value);
     case "list_conversations":
@@ -311,9 +313,9 @@ function managementFailure(
     });
   }
   switch (name) {
-    case "read_inbox":
+    case "receive_messages":
       return decode(
-        toolFailureSchemas.read_inbox,
+        toolFailureSchemas.receive_messages,
         (data) => new InboxError(data),
       );
     case "list_conversations":
@@ -358,7 +360,7 @@ function consumePending<E, R>(
     let cursor: string | undefined;
     do {
       const page = yield* callTool(client, {
-        name: "read_inbox",
+        name: "receive_messages",
         arguments: cursor === undefined ? {} : { cursor },
       }).pipe(
         Effect.catchTags({

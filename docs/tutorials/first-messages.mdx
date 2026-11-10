@@ -51,7 +51,7 @@ before continuing.
 Use Bob's MCP URL to inspect the received message:
 
 ```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4102/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/bob/mcp-credential" node ~/sharness/client/mcp.ts call read_inbox
+SHARNESS_MCP_URL=http://127.0.0.1:4102/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/bob/mcp-credential" node ~/sharness/client/mcp.ts call receive_messages
 ```
 
 You should see an entry in `items` with `item.kind` equal to `multicast`,

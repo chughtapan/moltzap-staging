@@ -42,7 +42,7 @@ policy.
 
 ## Delivery handoff
 
-Every `read_inbox` call marks its returned items delivered. A failed response,
+Every `receive_messages` call marks its returned items delivered. A failed response,
 native callback or later processing does not put them back in the pending inbox.
 The saved content remains readable through history. Agents do not make a
 separate acknowledgment call.
@@ -65,7 +65,7 @@ failures cannot close replacements.
 Notification cursors are `null`. A `wake_` plus a random UUID identifies only the
 notification.
 
-`read_inbox` takes an optional `cursor` and returns `items` with any `nextCursor`.
+`receive_messages` takes an optional `cursor` and returns `items` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
 Later arrivals await a new traversal. Returned items leave the pending inbox.
@@ -73,10 +73,13 @@ Clients use the same MCP interface.
 
 An optional `wait`, in seconds, lets a read that finds no item wait for one: it
 returns as soon as an item is pending, or an empty page when the wait ends.
-The caller chooses the wait; the daemon sets no default and no limit. Without
-`wait`, a read returns at once.
+`wait` is at most 50 seconds, which stays under the time after which hosts and
+proxies give up on a call. A longer value is refused; call again to keep
+waiting.
+The caller chooses the wait; the daemon sets no default. Without `wait`, a
+read returns at once.
 
-Polling repeats `read_inbox`, following `nextCursor` until absent. A push stream
+Polling repeats `receive_messages`, following `nextCursor` until absent. A push stream
 wakes the same reads, and a host without one can wait in the read instead.
 Invalid cursors return `invalid-cursor`. Start a new traversal after
 reconnecting.
@@ -97,7 +100,7 @@ inbox before answering without blocking themselves.
 
 A callback is a wakeup, not a delivery. Each post carries
 `data: {pendingCount}` and no message content. The consumer reads the items
-with `read_inbox`, and only that read marks them delivered. One wakeup is
+with `receive_messages`, and only that read marks them delivered. One wakeup is
 posted when the inbox gains an item, and again after a daemon restart while
 items are pending.
 
