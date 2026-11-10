@@ -88,7 +88,7 @@ export const wellFormedString = Schema.String.pipe(
 
 /* eslint-disable agent-code-guard/no-nullish-type-aliases -- JSON includes null as a first-class value. */
 /** A value accepted by the closed semantic content boundary. */
-export type JsonValue =
+type JsonValue =
   | null
   | boolean
   | number
@@ -98,7 +98,7 @@ export type JsonValue =
 /* eslint-enable agent-code-guard/no-nullish-type-aliases -- Restore the absence rule outside JSON values. */
 
 /** Runtime validation for the closed recursive JSON value. */
-export const JsonValue: Schema.Schema<JsonValue> = Schema.suspend(() =>
+const JsonValue: Schema.Schema<JsonValue> = Schema.suspend(() =>
   Schema.Union(
     Schema.Null,
     Schema.Boolean,
@@ -972,8 +972,7 @@ const MessageHeader = MessageParticipants.pipe(
 );
 
 /** Decoded request and reply meaning stays outside signed content bytes. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP composes the owning decoded operation schema without parsing reserved content.
-export const MessageOperation = Schema.Union(
+const MessageOperation = Schema.Union(
   exactStruct({
     kind: Schema.Literal("request"),
     op: RequestOperation,
@@ -986,7 +985,7 @@ export const MessageOperation = Schema.Union(
   exactStruct({ kind: Schema.Literal("response"), ...DeclineResponse.fields }),
 );
 /** Communication derives operation metadata from reserved content. */
-export type MessageOperation = typeof MessageOperation.Type;
+type MessageOperation = typeof MessageOperation.Type;
 
 const encodedMessage = MessageHeader.pipe(
   Schema.extend(exactStruct({ content: Content })),

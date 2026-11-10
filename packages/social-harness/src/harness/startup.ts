@@ -351,36 +351,19 @@ function networkLayer(settings: DaemonSettings) {
 export { prepareDatabase } from "../database/migrations.js";
 
 /** Trusted embeddings use the same services as the process's MCP adapter. */
-export {
-  type ListConversationsRequest,
-  type ListConversationsResult,
-  type ReadHistoryRequest,
-  type ReadHistoryResult,
-  type SendRequest,
-  SocialHarness,
-} from "./social-harness.js";
+export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** Local identity and registration remain independent of delivery recovery. */
-export {
-  Identity,
-  RegistrationError,
-  type RegistrationRequest,
-} from "../identity/service.js";
+export { Identity } from "../identity/service.js";
 /** Message transport owns requests, replies and verified history. */
-export { Communication, CommunicationError } from "../communication/service.js";
+export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
-export {
-  Firewall,
-  type FirewallOptions,
-  FirewallRefusal,
-} from "../firewall/service.js";
+export { Firewall, type FirewallOptions } from "../firewall/service.js";
 /** Network services expose complete calls through their owning layers. */
 export {
   RegistrationId,
   Registry,
   RegistryError,
 } from "../identity/registry.js";
-/** Authentication supplies verified attribution before operation decoding. */
-export { Authentication } from "../identity/http-authentication.js";
 
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/check.js";

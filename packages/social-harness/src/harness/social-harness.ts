@@ -75,13 +75,13 @@ import {
 /** Host input is resolved before a communication value is constructed. */
 export type { SendRequest } from "./message-format.js";
 /** Start a live conversation-list traversal by omitting cursor. */
-export interface ListConversationsRequest extends PaginatedRequest {}
+interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
-export interface ListConversationsResult extends PaginatedResult {
+interface ListConversationsResult extends PaginatedResult {
   readonly addresses: readonly MessageAddress[];
 }
 /** Keep address unchanged when supplying the next cursor. */
-export interface ReadHistoryRequest extends PaginatedRequest {
+interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
 }
 /** History preserves sent messages and the saved view of received content. */

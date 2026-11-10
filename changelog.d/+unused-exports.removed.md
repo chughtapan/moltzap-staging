@@ -1,0 +1,1 @@
+The package entries no longer export names that nothing imports, among them `SendResultSchema`, `CollectiveResult`, `LocalGuidance`, `InboxPage`, `MessageAddress`, `RegistrationError`, `JsonValue` and the request and result types of the harness service. The operator script `mcp.ts` negotiates the MCP protocol version instead of pinning one.

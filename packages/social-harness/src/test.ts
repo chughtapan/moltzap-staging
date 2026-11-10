@@ -8,14 +8,10 @@ export { signAgentRequest } from "./identity/http-authentication.js";
 export { DecisionProviderOverride } from "./firewall/service.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
-  CheckInputError,
-  checkMessage,
   type DecisionProvider,
   DecisionProviderError,
   type DecisionRequest,
-  type DecisionResponse,
   type Message,
-  type MessageContext,
 } from "./firewall/check.js";
 
 /** Trusted database qualification uses the same schema, ownership and inbox operations as the daemon. */
@@ -48,7 +44,7 @@ export {
 } from "./communication/store.js";
 
 /** Integration fixtures compose the existing domain services without startup overrides. */
-export { loadDaemonSettings, spanExport } from "./harness/config.js";
+export { loadDaemonSettings } from "./harness/config.js";
 /** Retained registration inputs are shared with process fixtures. */
 export { loadAgentRegistration, localOwner } from "./harness/ownership.js";
 /** Policy fixtures use the production MCP catalogue and authentication guard. */

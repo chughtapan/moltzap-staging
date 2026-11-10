@@ -187,15 +187,12 @@ export { CommunicationError } from "./errors.js";
 export {
   AcceptResponse,
   Answer,
-  AnswerContent,
-  type AnswerInput,
   AnswerOutcome,
   CollectiveId,
   DeadlineSeconds,
   DeclineResponse,
   decodeCollectiveFailure,
   Message,
-  MessageOperation,
   MessageReference,
   PaginatedRequest,
   PaginatedResult,
@@ -204,7 +201,6 @@ export {
   RequestedSchema,
   RequestError,
   RequestOperation,
-  RequestResult,
   ResultSources,
 } from "./messages.js";
 
