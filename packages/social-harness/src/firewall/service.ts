@@ -260,7 +260,12 @@ export type IncomingDecision = {
       readonly item: PermittedItem;
       readonly guidance?: LocalGuidance;
     }
-  | { readonly kind: "withheld"; readonly reply?: string }
+  | {
+      readonly kind: "withheld";
+      /** Why the message was withheld. */
+      readonly reason: RefusalReason;
+      readonly reply?: string;
+    }
 );
 /** Message assessment, policy edits and saved decision summaries. */
 interface FirewallService {
@@ -470,6 +475,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               const { reply } = decision.refusal;
               return {
                 kind: "withheld",
+                reason: decision.refusal.reason,
                 save,
                 visibility,
                 ...(reply === undefined ? {} : { reply }),

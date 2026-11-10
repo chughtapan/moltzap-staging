@@ -1,0 +1,1 @@
+In client/server mode only the server agent has a firewall and holds norms. A client runs no check of its own, its `read_norms` lists the server agent's norms, and it is answered when the server agent withholds its message for breaking a rule.

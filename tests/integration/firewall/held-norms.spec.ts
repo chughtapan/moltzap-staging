@@ -1,9 +1,15 @@
 /**
- * @file One shared daemon serves two OAuth agents that hold different norms.
+ * @file One shared daemon serves OAuth agents and the norms they hold.
+ *
+ * In P2P mode two agents hold different norms.
  * Each agent starts with the norms directory's initial norms and changes its
  * own through its MCP context, and its firewall applies the norms it holds:
  * an agent that stops holding `chat` answers plain text with `not-understood`
  * and refuses its own, while the other agent on the same daemon reads it.
+ *
+ * In client/server mode only the server agent holds norms. A client reads the
+ * server agent's norms, sends without a check of its own, and is answered when
+ * the server agent does not accept its message.
  */
 
 import type { Client } from "@modelcontextprotocol/client";
@@ -21,8 +27,10 @@ import { callTool as call } from "../../../plugins/shared/mcp-client.js";
 import {
   acquireDaemonProcess,
   acquireProcessInfrastructure,
+  configureDaemonFixture,
   makeDaemonProcessFixture,
   reservePort,
+  stopProcess,
 } from "../daemon/daemon-fixture.js";
 import {
   connect,
@@ -176,3 +184,90 @@ it(
 );
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */
+
+/** The names of the tools the daemon offers `client`. */
+function toolNames(client: Client) {
+  return Effect.tryPromise(() => client.listTools()).pipe(
+    Effect.map(({ tools }) => tools.map((tool) => tool.name)),
+  );
+}
+
+const policyTool = "update_policy";
+const droppedNorm = "chat";
+
+const serverOwnsNorms = Effect.gen(function* () {
+  const infrastructure = yield* acquireProcessInfrastructure;
+  const issuer = yield* issuerFixture;
+  const port = yield* reservePort;
+  const resource = new URL(`https://127.0.0.1:${port}/mcp`);
+  const fixture = yield* makeDaemonProcessFixture(
+    infrastructure,
+    "server-norms",
+    true,
+    {
+      settings: {
+        port,
+        transport: { kind: "client-server", serverAgentName: "bootstrap" },
+        authentication: {
+          kind: "oauth",
+          resource: resource.href,
+          issuer: issuer.issuer,
+          scope: requiredScope,
+        },
+        agent: undefined,
+        normsDirectory: yield* normsDirectory(
+          infrastructure.temporaryDirectory,
+        ),
+      },
+    },
+  );
+  const serverToken = yield* issuer.token("server", resource.href);
+  const clientToken = yield* issuer.token("client", resource.href);
+  const enrolling = yield* acquireDaemonProcess(fixture);
+  const serverAddress = yield* connect(fixture.endpoint, serverToken).pipe(
+    Effect.flatMap(addressOf),
+  );
+  yield* stopProcess(enrolling);
+  yield* configureDaemonFixture(fixture, {
+    transport: {
+      kind: "client-server",
+      serverAgentName: serverAddress.slice("agent:".length),
+    },
+  });
+  yield* acquireDaemonProcess(fixture);
+  const server = yield* connect(fixture.endpoint, serverToken);
+  const client = yield* connect(fixture.endpoint, clientToken);
+
+  yield* call(server, {
+    name: policyTool,
+    arguments: { remove: [{ norm: droppedNorm }] },
+  });
+  const serverNorms = yield* call(server, {
+    name: "read_norms",
+    arguments: {},
+  });
+  const clientNorms = yield* Effect.tryPromise(() =>
+    client.callTool({ name: "read_norms", arguments: {} }),
+  );
+  const sent = yield* Effect.tryPromise(() =>
+    client.callTool({
+      name: "send_message",
+      arguments: { text: "Can we meet today?" },
+    }),
+  );
+  const answer = yield* firstDelivery(client);
+
+  expect(yield* toolNames(client)).not.toContain(policyTool);
+  expect(serverNorms.norms.map((norm) => norm.name)).not.toContain(droppedNorm);
+  expect(clientNorms.structuredContent).toEqual(serverNorms);
+  expect(sent.isError).not.toBe(true);
+  expect(answer).toMatch(
+    /^\(not-understood :ontology feedback .*:reason "plain-text"/u,
+  );
+});
+
+it(
+  "in client/server mode gives a client the server agent's norms and an answer when its message is not accepted",
+  processTrace(serverOwnsNorms),
+  HELD_NORMS_TEST_TIMEOUT_MS,
+);

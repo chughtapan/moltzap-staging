@@ -15,6 +15,7 @@ import {
   Layer,
   Option,
   type Redacted,
+  Ref,
   ScopedCache,
 } from "effect";
 import { MessageAddressInput } from "../communication/messages.js";
@@ -22,6 +23,7 @@ import { Router } from "../communication/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
+import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
 import { Registry } from "../identity/registry.js";
 import { Identity, IdentityError } from "../identity/service.js";
@@ -94,10 +96,16 @@ function makeAgentSelector(
       settings.norms === undefined
         ? undefined
         : yield* serviceNorms(settings.norms);
+    const serverAgentNorms = yield* Ref.make(
+      Option.none<Context.Tag.Service<typeof HeldNorms>>(),
+    );
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
-        makeAgentApp(settings, agentKey, unlockKey, norms),
+        makeAgentApp(
+          { settings, unlockKey, serverAgentNorms, norms },
+          agentKey,
+        ),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -128,18 +136,112 @@ function makeAgentSelector(
   }).pipe(Effect.withSpan("makeAgentSelector"));
 }
 
+/** What a message withheld by the server agent's firewall is answered with. */
+const withheldReply = (hasNorms: boolean) =>
+  hasNorms
+    ? "Your message was not accepted: it breaks a rule this agent applies to incoming messages. Call read_norms to see which messages it accepts."
+    : "Your message was not accepted: it breaks a rule this agent applies to incoming messages.";
+
 /**
- * One agent's retained services and MCP app. Its firewall applies the
- * service's policy and the norms the agent holds in its own editable policy.
+ * An agent's part in client/server mode, or `peer` in P2P mode. The server
+ * agent is the one whose registered name the settings give; every other agent
+ * of the daemon is a client.
  */
-function makeAgentApp(
-  settings: DaemonSettings,
+const roleOf = (settings: DaemonSettings, agentName: string) => {
+  if (settings.transport.kind !== "client-server") {
+    return "peer";
+  }
+  return settings.transport.serverAgentName === agentName ? "server" : "client";
+};
+
+/** What every agent of the daemon is built from. */
+interface DaemonResources {
+  readonly settings: DaemonSettings;
+  readonly unlockKey: Redacted.Redacted<Uint8Array>;
+  /** The server agent's norms, once it has started, for its clients to read. */
+  readonly serverAgentNorms: Ref.Ref<
+    Option.Option<Context.Tag.Service<typeof HeldNorms>>
+  >;
+  readonly norms?: ServiceNorms;
+}
+
+/** Norms a client reads: the ones the server agent holds. */
+const serverAgentsNorms = (daemon: DaemonResources) =>
+  Layer.succeed(
+    HeldNorms,
+    HeldNorms.of({
+      read: () =>
+        Ref.get(daemon.serverAgentNorms).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new FirewallPolicyError({ reason: "not-configured" }),
+                ),
+              onSome: (held) => held.read(),
+            }),
+          ),
+        ),
+    }),
+  );
+
+/**
+ * The firewall and norms an agent runs with. A peer or the server agent
+ * applies the service's policy and the norms it holds in its own editable
+ * policy. A client applies none: the server agent's firewall checks what the
+ * client sends it and what it sends the client, and the client reads the
+ * server agent's norms.
+ */
+function agentChecks(
+  daemon: DaemonResources,
   agentKey: string,
-  unlockKey: Redacted.Redacted<Uint8Array>,
-  norms?: ServiceNorms,
+  role: ReturnType<typeof roleOf>,
 ) {
+  const { settings, norms } = daemon;
+  const firewall =
+    role === "client"
+      ? Firewall.layer(agentKey)
+      : Firewall.layer(
+          agentKey,
+          settings.messagePolicy,
+          norms?.chain,
+          norms?.documents,
+        );
+  if (norms === undefined) {
+    return firewall;
+  }
+  return (
+    role === "client" ? serverAgentsNorms(daemon) : HeldNorms.layer(norms)
+  ).pipe(Layer.provideMerge(firewall));
+}
+
+/** How an agent's messages travel: inside this daemon, or through the Router to peers. */
+function agentCommunication(
+  settings: DaemonSettings,
+  options: Parameters<typeof Communication.layer>[0],
+) {
+  return settings.transport.kind === "client-server"
+    ? Communication.clientServerLayer({
+        ...options,
+        serverAgentName: settings.transport.serverAgentName,
+      })
+    : Communication.layer(options).pipe(
+        Layer.provide(
+          Router.layer({
+            origin: settings.transport.routerOrigin,
+            sendTimeout: Duration.seconds(30),
+            pollTimeout: Duration.seconds(35),
+          }).pipe(Layer.provide(NodeHttpClient.layer)),
+        ),
+      );
+}
+
+/** One agent's retained services and MCP app. */
+function makeAgentApp(daemon: DaemonResources, agentKey: string) {
+  const { settings, unlockKey, norms } = daemon;
   return Effect.gen(function* () {
     const registration = yield* loadAgentRegistration(agentKey, unlockKey);
+    const role = roleOf(settings, registration.registration.agentName);
     const workers = yield* FiberSet.make();
     const stopped = yield* Deferred.make<undefined>();
     const identity = Identity.layer({
@@ -152,53 +254,41 @@ function makeAgentApp(
           : Effect.succeed(settings.admissionCredential),
     });
     const policy = settings.messagePolicy?.policy;
-    const firewall = Firewall.layer(
-      agentKey,
-      settings.messagePolicy,
-      norms?.chain,
-      norms?.documents,
-    ).pipe(Layer.provideMerge(identity));
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
           agentKey,
-          communication: (identityCard) => {
-            const options = {
+          communication: (identityCard) =>
+            agentCommunication(settings, {
               agentKey,
               identityCard,
               signingAuthority: registration.signingAuthority,
               registrySignerPublicKey: settings.registrySignerPublicKey,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
-            };
-            return settings.transport.kind === "client-server"
-              ? Communication.clientServerLayer({
-                  ...options,
-                  serverAgentName: settings.transport.serverAgentName,
-                })
-              : Communication.layer(options).pipe(
-                  Layer.provide(
-                    Router.layer({
-                      origin: settings.transport.routerOrigin,
-                      sendTimeout: Duration.seconds(30),
-                      pollTimeout: Duration.seconds(35),
-                    }).pipe(Layer.provide(NodeHttpClient.layer)),
-                  ),
-                );
-          },
+            }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
           hideGroups:
             settings.transport.kind === "client-server" || settings.hideGroups,
+          ...(role === "server"
+            ? { withheldReply: withheldReply(norms !== undefined) }
+            : {}),
         },
         workers,
       ).pipe(
         Layer.provideMerge(
-          norms === undefined
-            ? firewall
-            : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall)),
+          agentChecks(daemon, agentKey, role).pipe(
+            Layer.provideMerge(identity),
+          ),
         ),
       ),
     );
+    if (role === "server") {
+      yield* Ref.set(
+        daemon.serverAgentNorms,
+        Context.getOption(services, HeldNorms),
+      );
+    }
     if ((yield* Context.get(services, Identity).me()).kind === "unregistered") {
       yield* Context.get(services, SocialHarness).register(
         registration.registration,
@@ -218,9 +308,7 @@ function makeAgentApp(
       hideCollectives:
         settings.transport.kind === "client-server" || settings.hideCollectives,
       serverAgent:
-        settings.transport.kind === "client-server" &&
-        settings.transport.serverAgentName !==
-          registration.registration.agentName
+        settings.transport.kind === "client-server" && role === "client"
           ? Option.some(
               MessageAddressInput.make(
                 `agent:${settings.transport.serverAgentName}`,
