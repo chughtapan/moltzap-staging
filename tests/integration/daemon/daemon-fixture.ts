@@ -43,6 +43,10 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  markedPolicy,
+  writeMessagePolicy,
+} from "../firewall/policy-fixture.js";
 
 /** The name, principal and operation a fixture daemon registers with when it starts. */
 const registrationSeed = Schema.Struct({
@@ -63,9 +67,6 @@ interface ProcessWireVersions {
   readonly live: readonly string[];
   readonly history: readonly string[];
 }
-
-/** The mode of the firewall a daemon fixture installs; absent for `sharnessd` itself. */
-export type FirewallMode = "guidance" | "enforcement";
 
 /** One closed process-fixture failure with captured child output when available. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -102,8 +103,9 @@ export interface ProcessInfrastructure {
 
 /**
  * Exact reusable process inputs for one daemon identity and state directory.
- * A fixture with a `firewall` mode runs `firewall-daemon.ts`, which installs
- * that firewall; one without runs `sharnessd`.
+ * A fixture with `firewall` runs `firewall-daemon.ts`: the daemon's own
+ * composition with the marked decision provider and, unless its settings name
+ * another, the marked message policy. One without runs `sharnessd`.
  */
 export interface DaemonProcessFixture {
   readonly agentName: AgentName;
@@ -116,7 +118,7 @@ export interface DaemonProcessFixture {
   readonly admissionCredentialFile: string;
   readonly mcpCredentialFile: string;
   readonly mcpCredential: Redacted.Redacted;
-  readonly firewall?: FirewallMode;
+  readonly firewall?: true;
   readonly wireVersions?: ProcessWireVersions;
 }
 
@@ -658,7 +660,7 @@ const makeIdentifier = (prefix: "opn_" | "prn_"): string =>
 export const makeDaemonProcessFixture = (
   infrastructure: ProcessInfrastructure,
   name: string,
-  firewall?: FirewallMode,
+  firewall = false,
   options: {
     readonly settings?: Readonly<Record<string, unknown>>;
     readonly database?: {
@@ -700,9 +702,6 @@ export const makeDaemonProcessFixture = (
             ).href.replace(/^file:/u, "sqlite:")
           : Redacted.value(options.database.runtimeLocator),
       SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
-      ...(firewall === undefined
-        ? {}
-        : { SHARNESS_TEST_FIREWALL_MODE: firewall }),
     };
     yield* writePrivateFile(
       setupFile,
@@ -717,9 +716,15 @@ export const makeDaemonProcessFixture = (
         registrySignerPublicKey: Schema.decodeUnknownSync(
           Schema.parseJson(AgentPublicKey),
         )(infrastructure.registrySignerPublicKeyJson),
-        routerOrigin: infrastructure.routerOrigin.origin,
+        transport: {
+          kind: "p2p",
+          routerOrigin: infrastructure.routerOrigin.origin,
+        },
         admissionCredential: ADMISSION_CREDENTIAL,
         agent: { ...registration, privateKey },
+        ...(firewall && setupChanges.messagePolicyFile === undefined
+          ? yield* markedPolicyFiles(directory)
+          : {}),
         ...setupChanges,
       }),
     );
@@ -729,28 +734,16 @@ export const makeDaemonProcessFixture = (
         processTestError("daemon settings are invalid", cause),
       ),
     );
-    yield* prepareDatabase.pipe(
-      Effect.provide(NodeFileSystem.layer),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(
-          new Map(
-            Object.entries({
-              ...environment,
-              ...(options.database === undefined
-                ? {}
-                : {
-                    SHARNESS_DATABASE_URL: Redacted.value(
-                      options.database.configureLocator,
-                    ),
-                  }),
-            }),
-          ),
-        ),
-      ),
-      Effect.mapError((cause) =>
-        processTestError("daemon configuration failed", cause),
-      ),
-    );
+    yield* prepareFixtureDatabase({
+      ...environment,
+      ...(options.database === undefined
+        ? {}
+        : {
+            SHARNESS_DATABASE_URL: Redacted.value(
+              options.database.configureLocator,
+            ),
+          }),
+    });
     yield* Effect.all(
       [
         writePrivateFile(keyPath, privateKey),
@@ -770,7 +763,7 @@ export const makeDaemonProcessFixture = (
       admissionCredentialFile: credentialPath,
       ...credentials,
       environment,
-      ...(firewall === undefined ? {} : { firewall }),
+      ...(firewall ? { firewall } : {}),
     };
   }).pipe(Effect.withSpan("makeDaemonProcessFixture"));
 
@@ -802,6 +795,16 @@ export function configureDaemonFixture(
   }).pipe(
     Effect.provide(NodeFileSystem.layer),
     Effect.withSpan("configureDaemonFixture"),
+  );
+}
+
+/** Writes the marked message policy a firewall fixture's daemon reads, and the settings naming it. */
+function markedPolicyFiles(directory: string) {
+  return writeMessagePolicy(directory, markedPolicy()).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.mapError((cause) =>
+      processTestError("firewall policy could not be written", cause),
+    ),
   );
 }
 
@@ -1179,4 +1182,17 @@ function pauseProcess(running: RunningProcess) {
       running.child.kill("SIGCONT");
     };
   });
+}
+
+/** Preparation uses deployment credentials while the child receives only its runtime locator. */
+function prepareFixtureDatabase(environment: Readonly<Record<string, string>>) {
+  return prepareDatabase.pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.withConfigProvider(
+      ConfigProvider.fromMap(new Map(Object.entries(environment))),
+    ),
+    Effect.mapError((cause) =>
+      processTestError("daemon configuration failed", cause),
+    ),
+  );
 }

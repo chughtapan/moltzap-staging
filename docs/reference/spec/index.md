@@ -18,7 +18,7 @@ The [constitution](../constitution.md#the-constitution) governs them. The
 | Host communication | [Messaging](./host/messaging.md), [adapters](./host/adapters.md), [handoff](./host/receiving.md#delivery-handoff) |
 | Agent daemon | [Daemon](./daemon.md) |
 | Local permission | [Message policy](./firewall/message-policy.md) |
-| Shared rules | [Norms](./norms/shared-norms.md) |
+| Agreed norms | [Norms](./norms/norms.md) |
 | Institutional evidence | [Institutions](./institutions.md) |
 | Package ownership and imports | [Boundaries](./package-boundaries.md) |
 | Publication and compatibility | [Releases](./releases.md) |

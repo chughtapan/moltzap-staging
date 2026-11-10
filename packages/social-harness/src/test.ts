@@ -4,6 +4,8 @@
 export { HISTORY_WIRE_VERSIONS, WireVersions } from "./version.js";
 /** HTTP signing for process fixtures. */
 export { signAgentRequest } from "./identity/http-authentication.js";
+/** Replaces a configured decision provider around the daemon's own composition. */
+export { DecisionProviderOverride } from "./firewall/service.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
   CheckInputError,
@@ -41,7 +43,6 @@ export {
   readAcceptedMessage,
   readCollectiveOperation,
   readCollectiveOperationIds,
-  readUnpreparedMessages,
   retireCollectiveOperation,
   transaction,
 } from "./communication/store.js";
@@ -61,5 +62,8 @@ export { Router } from "./communication/router/client.js";
 
 /** Policy process fixtures use the same per-agent webhook capability as startup. */
 export { makeWebhookEvents } from "./harness/mcp/webhook.js";
+/** Peer preparation is exposed only to the explicit test entry. */
+export { readUnpreparedMessages } from "./communication/conversations/store.js";
+
 /** Trusted process fixtures supply the production callback HTTP client. */
 export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";

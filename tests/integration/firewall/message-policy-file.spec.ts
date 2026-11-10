@@ -1,4 +1,4 @@
-/** @file A configured text policy loads through the stock daemon and holds sends when its provider is unavailable. */
+/** @file A runtime policy file loads through the stock daemon, and an invalid one refuses startup until its reference is removed. */
 
 import { FileSystem } from "@effect/platform";
 import {
@@ -19,15 +19,11 @@ import {
   makeDaemonProcessFixture,
   stopProcess,
 } from "../daemon/daemon-fixture.js";
-import { unavailablePolicyRemedy } from "../expected-contracts.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
 
 const FORMAT = "org.social-harness/message-policy/v2";
 
-const CURRENT_CLIENT: ClientOptions = {
-  versionNegotiation: { mode: { pin: "2026-07-28" } },
-};
 /**
  * A 2025-11-25 client: the SDK pins only 2026-07-28 and later, so this one
  * runs the `initialize` handshake offering and accepting only 2025-11-25.
@@ -39,21 +35,18 @@ const OLDER_CLIENT: ClientOptions = {
 
 const acquirePolicyFileScenario = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
-  const bob = yield* makeDaemonProcessFixture(infrastructure, "bob");
-  yield* acquireDaemonProcess(bob);
-  const bobManagement = yield* acquireDaemonManagementClient(bob);
-  yield* bobManagement.identityCard();
   const stock = yield* makeDaemonProcessFixture(infrastructure, "alice");
   const fs = yield* FileSystem.FileSystem;
   const directory = join(infrastructure.temporaryDirectory, "alice-policy");
   yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
   const policyFile = join(directory, "message-policy.json");
+  const keyFile = join(directory, "decision-provider-key");
+  yield* fs.writeFileString(keyFile, "test-key", { mode: 0o600 });
   yield* fs.writeFileString(
     policyFile,
     JSON.stringify({
       format: FORMAT,
-      mode: "enforcement",
-      decisionProvider: { kind: "unavailable" },
+      decisionProvider: { kind: "jev", model: "jev-1.13.0" },
       text: {
         fixedRules: [
           {
@@ -68,39 +61,21 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
   );
   const alice = yield* configureDaemonFixture(stock, {
     messagePolicyFile: policyFile,
+    decisionProviderKeyFile: keyFile,
   });
   yield* acquireDaemonProcess(alice);
   const management = yield* acquireDaemonManagementClient(alice);
   yield* management.identityCard();
-  const client = yield* connect(alice);
-  return { client, fixture: alice };
+  return alice;
 });
 
 const fixedRulesSchema = Schema.Struct({
   fixedRules: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
 
-const unavailableTextPolicy = Effect.gen(function* () {
-  const scenario = yield* acquirePolicyFileScenario;
-  yield* expectDocumentRulesPublished(scenario.client);
-  yield* expectUnavailableSendHeld(scenario.client);
-  const feed = yield* call(scenario.client, "read_firewall_decisions");
-  expect(feed).toMatchObject({
-    decisions: [
-      {
-        direction: "outgoing",
-        outcome: "hold",
-        disposition: "withheld",
-        reason: "check-unavailable",
-        decidedBy: [{ ruleId: "owner-privacy", from: "fixed" }],
-      },
-    ],
-  });
-});
-
 const olderMcpClient = Effect.gen(function* () {
-  const scenario = yield* acquirePolicyFileScenario;
-  const client = yield* connect(scenario.fixture, OLDER_CLIENT);
+  const alice = yield* acquirePolicyFileScenario;
+  const client = yield* connect(alice, OLDER_CLIENT);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
   expect(catalog.tools).toEqual(
     arrayContaining([objectContaining({ name: "read_policy" })]),
@@ -149,40 +124,13 @@ describe("stock sharnessd with a message-policy file", () => {
   );
 
   it(
-    "holds a send when the configured decision provider is unavailable",
-    processTrace(unavailableTextPolicy.pipe(Effect.scoped)),
-    60_000,
-  );
-
-  it(
     "rejects an invalid runtime policy file and recovers after its reference is removed",
     processTrace(invalidDocument.pipe(Effect.scoped)),
     60_000,
   );
 });
 
-function expectDocumentRulesPublished(client: Client) {
-  return Effect.gen(function* () {
-    const policy = yield* call(client, "read_policy").pipe(
-      Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
-    );
-    expect(policy.fixedRules).toEqual(
-      arrayContaining([objectContaining({ id: "owner-privacy" })]),
-    );
-  });
-}
-
-function expectUnavailableSendHeld(client: Client) {
-  return Effect.gen(function* () {
-    const refused = yield* call(client, "send_message", {
-      to: "agent:bob",
-      text: "Can we meet on Tuesday?",
-    }).pipe(Effect.flip);
-    expect(JSON.stringify(refused)).toContain(unavailablePolicyRemedy);
-  });
-}
-
-function connect(fixture: DaemonProcessFixture, negotiation = CURRENT_CLIENT) {
+function connect(fixture: DaemonProcessFixture, negotiation: ClientOptions) {
   return Effect.acquireRelease(
     Effect.gen(function* () {
       const client = new Client(

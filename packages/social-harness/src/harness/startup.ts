@@ -23,6 +23,11 @@ import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall } from "../firewall/service.js";
 import { Registry } from "../identity/registry.js";
 import { Identity, IdentityError } from "../identity/service.js";
+import {
+  HeldNorms,
+  type ServiceNorms,
+  serviceNorms,
+} from "../norms/configuration.js";
 import { packageVersion, WIRE_VERSION } from "../version.js";
 import {
   type DaemonSettings,
@@ -56,6 +61,7 @@ function runDaemon() {
     const { settings, agent } = yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
+      yield* Communication.configureTransport(settings.transport);
       if (settings.authentication.kind === "local") {
         yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agent);
       }
@@ -82,9 +88,14 @@ function makeAgentSelector(
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
+    const norms =
+      settings.norms === undefined
+        ? undefined
+        : yield* serviceNorms(settings.norms);
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
-      lookup: (agentKey: string) => makeAgentApp(settings, agentKey, unlockKey),
+      lookup: (agentKey: string) =>
+        makeAgentApp(settings, agentKey, unlockKey, norms),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -115,10 +126,15 @@ function makeAgentSelector(
   }).pipe(Effect.withSpan("makeAgentSelector"));
 }
 
+/**
+ * One agent's retained services and MCP app. Its firewall applies the
+ * service's policy and the norms the agent holds in its own editable policy.
+ */
 function makeAgentApp(
   settings: DaemonSettings,
   agentKey: string,
   unlockKey: Redacted.Redacted<Uint8Array>,
+  norms?: ServiceNorms,
 ) {
   return Effect.gen(function* () {
     const registration = yield* loadAgentRegistration(agentKey, unlockKey);
@@ -134,28 +150,50 @@ function makeAgentApp(
           : Effect.succeed(settings.admissionCredential),
     });
     const policy = settings.messagePolicy?.policy;
+    const firewall = Firewall.layer(
+      agentKey,
+      settings.messagePolicy,
+      norms?.chain,
+      norms?.documents,
+    ).pipe(Layer.provideMerge(identity));
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
           agentKey,
-          communication: (identityCard) =>
-            Communication.layer({
+          communication: (identityCard) => {
+            const options = {
               agentKey,
               identityCard,
               signingAuthority: registration.signingAuthority,
               registrySignerPublicKey: settings.registrySignerPublicKey,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
-            }),
+            };
+            return settings.transport.kind === "client-server"
+              ? Communication.clientServerLayer({
+                  ...options,
+                  serverAgentName: settings.transport.serverAgentName,
+                })
+              : Communication.layer(options).pipe(
+                  Layer.provide(
+                    Router.layer({
+                      origin: settings.transport.routerOrigin,
+                      sendTimeout: Duration.seconds(30),
+                      pollTimeout: Duration.seconds(35),
+                    }).pipe(Layer.provide(NodeHttpClient.layer)),
+                  ),
+                );
+          },
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
-          hideGroups: settings.hideGroups,
+          hideGroups:
+            settings.transport.kind === "client-server" || settings.hideGroups,
         },
         workers,
       ).pipe(
         Layer.provideMerge(
-          Firewall.layer(agentKey, settings.messagePolicy).pipe(
-            Layer.provideMerge(identity),
-          ),
+          norms === undefined
+            ? firewall
+            : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall)),
         ),
       ),
     );
@@ -175,7 +213,8 @@ function makeAgentApp(
     const app = yield* makeAgentMcpApp({
       webhook,
       stopped,
-      hideCollectives: settings.hideCollectives,
+      hideCollectives:
+        settings.transport.kind === "client-server" || settings.hideCollectives,
       implementation: { name: "sharnessd", version: packageVersion },
     }).pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(
@@ -196,18 +235,11 @@ function makeAgentApp(
 }
 
 function networkLayer(settings: DaemonSettings) {
-  return Layer.merge(
-    Registry.layer({
-      origin: settings.registryOrigin,
-      registrySignerPublicKey: settings.registrySignerPublicKey,
-      requestTimeout: Duration.seconds(30),
-    }),
-    Router.layer({
-      origin: settings.routerOrigin,
-      sendTimeout: Duration.seconds(30),
-      pollTimeout: Duration.seconds(35),
-    }),
-  ).pipe(Layer.provide(NodeHttpClient.layer));
+  return Registry.layer({
+    origin: settings.registryOrigin,
+    registrySignerPublicKey: settings.registrySignerPublicKey,
+    requestTimeout: Duration.seconds(30),
+  }).pipe(Layer.provide(NodeHttpClient.layer));
 }
 
 /** Deployment prepares schema and encryption metadata before the serving process starts. */

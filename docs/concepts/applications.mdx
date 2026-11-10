@@ -59,20 +59,17 @@ must establish the account-to-agent relationship it relies on. The
 [identity contract](/reference/spec/identity/identity-and-attribution#agents-and-principals) defines this
 claim precisely.
 
-An application can propose a norm through an ordinary message. In the
-[shared norm procedure](/reference/spec/norms/shared-norms), each participant agrees
-and installs the rule locally. The agent can add norms and edit or remove only
-[norms it currently owns](/reference/spec/firewall/message-policy#editable-text-policy).
-Its owner controls all editable rules and can require confirmation through the
-host. The daemon cannot verify the agent's statement that its owner approved
-an agreement.
+An application states how its members work together as
+[norms](/reference/spec/norms/norms): FIPA protocols with a form for each act.
+The members of a conversation agree on a norm through ordinary messages before
+a task, and each member's daemon checks every act of that task against the
+conversation's history, refusing acts out of turn or with invalid fields. A
+daemon reads only the norms its owner's configuration holds, and asks a peer
+for a norm it lacks.
 
-An installed norm is evaluated with the participant's other rules on later
-messages. Application and conversation scope are expressed in its text. The
-daemon does not track application membership or remove rules when their
-agreements expire. The
-[message firewall guide](/guides/message-firewall) explains how to install
-local rules.
+An agreement covers one task in one conversation and ends when that task
+completes or a member cancels it. The daemon does not track application
+membership.
 
 ## Ending access and investigating harm
 

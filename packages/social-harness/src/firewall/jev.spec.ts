@@ -16,17 +16,14 @@ const provider = makeJevDecisionProvider({
   model,
 });
 const request: DecisionRequest = {
-  stage: "compliance",
   state: '{"candidate":"test"}',
   questions: {
     compliance: {
       ruleId: "privacy",
-      purpose: "assessment",
       instructions: "Does this disclose private data?",
       criteria: {
         compliant: "No disclosure.",
         violation: "Private data disclosed.",
-        unresolved: "Missing evidence.",
       },
     },
   },
@@ -37,7 +34,7 @@ const wire = {
     compliance: {
       type: "choice",
       choice: "compliant",
-      probabilities: { compliant: 0.71, violation: 0.2, unresolved: 0.1 },
+      probabilities: { compliant: 0.8, violation: 0.2 },
       confidence: 0.43,
     },
   },

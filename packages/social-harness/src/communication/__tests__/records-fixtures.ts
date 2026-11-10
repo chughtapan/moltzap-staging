@@ -9,7 +9,7 @@ import type { AgentSigningAuthority } from "../../identity/keys.js";
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
-} from "../store.js";
+} from "../conversations/store.js";
 import type { TestDatabase } from "./store-fixtures.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {

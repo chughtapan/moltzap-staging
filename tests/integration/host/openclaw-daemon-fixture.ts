@@ -355,7 +355,7 @@ export function groupAddress(agentNames: readonly string[]) {
 /** Starts and registers two isolated daemon endpoints under the caller’s scope. */
 export function acquireScenario(
   prefix: string,
-  firewall?: "guidance" | "enforcement",
+  firewall = false,
 ): Effect.Effect<Scenario, ProcessTestError, Scope.Scope> {
   return Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;
@@ -381,7 +381,7 @@ export function acquireScenario(
 /** Starts three registered daemons so all-gather exercises multiple remote members. */
 export function acquireGroupScenario(
   prefix: string,
-  firewall?: "guidance" | "enforcement",
+  firewall = false,
 ): Effect.Effect<GroupScenario, ProcessTestError, Scope.Scope> {
   return Effect.gen(function* () {
     const infrastructure = yield* acquireProcessInfrastructure;

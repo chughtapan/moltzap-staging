@@ -62,11 +62,15 @@ import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 type Main = Context.Tag.Service<typeof SocialHarness>;
 type Policy = Context.Tag.Service<typeof Firewall>;
 
-/** Deterministic judgments still exercise the real question and advice construction. */
+/**
+ * Deterministic judgments still exercise the real question construction. Every
+ * rule gets `compliance` at `probability`; below the policy's bar, an answer is
+ * unsure.
+ */
 export function decisionResponse(
   request: DecisionRequest,
-  compliance = "compliant",
-  expectation = "none",
+  compliance: "compliant" | "violation" = "compliant",
+  probability = 1,
 ): DecisionResponse {
   return {
     provider: "test",
@@ -74,25 +78,18 @@ export function decisionResponse(
     raw: "private model explanation",
     usage: {},
     answers: Object.fromEntries(
-      Object.entries(request.questions).map(([id, question]) => {
-        const choices = Object.keys(question.criteria);
-        let preferred = expectation;
-        if (question.purpose === "subject") {
-          preferred = expectation === "required" ? "relevant" : "irrelevant";
-        } else if (request.stage === "compliance") {
-          preferred = compliance;
-        }
-        const selected = choices.includes(preferred) ? preferred : "unresolved";
-        return [
-          id,
-          {
-            choice: selected,
-            probabilities: Object.fromEntries(
-              choices.map((choice) => [choice, Number(choice === selected)]),
-            ),
-          },
-        ];
-      }),
+      Object.entries(request.questions).map(([id, question]) => [
+        id,
+        {
+          choice: compliance,
+          probabilities: Object.fromEntries(
+            Object.keys(question.criteria).map((choice) => [
+              choice,
+              choice === compliance ? probability : 1 - probability,
+            ]),
+          ),
+        },
+      ]),
     ),
   };
 }
@@ -109,10 +106,16 @@ export const decisionState = Schema.decodeUnknownSync(
   ),
 );
 
-/** One natural-language rule makes assessment order and retained advice observable. */
-export function firewallOptions(provider: DecisionProvider): FirewallOptions {
+/**
+ * One natural-language rule makes assessment order and retained advice
+ * observable. With `action`, the rule replies to or silently withholds the
+ * incoming messages it rejects.
+ */
+export function firewallOptions(
+  provider: DecisionProvider,
+  action?: "deny" | "reply",
+): FirewallOptions {
   return {
-    mode: "enforcement",
     facts: [],
     settings: {
       timeoutMilliseconds: 10_000,
@@ -126,15 +129,13 @@ export function firewallOptions(provider: DecisionProvider): FirewallOptions {
           applies: "both",
           text: "Protect the owner's private information.",
           guidance: "Check before sharing private information.",
-          feedback: {
-            text: "Keep private information private.",
-            nextAction: "stop",
-          },
+          feedback: { text: "Keep private information private." },
+          ...(action === undefined ? {} : { action }),
         },
       ],
       provider,
       settings: {
-        minimumProbability: 0.5,
+        minimumProbability: 0.8,
         maximumRequestBytes: 100_000,
         timeoutMilliseconds: 5_000,
       },
@@ -519,7 +520,7 @@ function historyPage(
         .byteLength,
     })),
     earlierMessagesOmitted,
-    pendingOutgoing: false,
+    pendingOutgoing: [],
     ...(nextCursor === undefined ? {} : { nextCursor }),
   };
 }

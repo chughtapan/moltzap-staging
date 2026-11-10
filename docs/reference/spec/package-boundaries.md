@@ -41,7 +41,7 @@ Four library entries expose named exports:
 | `@moltzap/social-harness` | Host values, MCP contracts and public identity capabilities |
 | `@moltzap/social-harness/service` | Daemon composition and network clients |
 | `@moltzap/social-harness/internal` | Network-service composition and wire contracts. Requires `sharness-internal` |
-| `@moltzap/social-harness/test` | Process tests and wire-version overrides. Requires `sharness-test` |
+| `@moltzap/social-harness/test` | Process tests, wire-version overrides and a decision-provider override. Requires `sharness-test` |
 
 Root and service resolve by default. Internal and test entries have no default
 resolution or TypeDoc entry.
@@ -65,6 +65,7 @@ Each module owns its contract and the representations it exchanges:
 | [Communication](./communication/protocol.md) | Ordered messages, routing and recovery |
 | [Collectives](./communication/collectives.md) | Requests, answers and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
+| [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
 
 Each AgentId has one configured [daemon](./daemon.md) and loopback `/mcp`
 endpoint. Signing keys, admission credentials, network clients and stores remain

@@ -4,10 +4,8 @@
  * `images/compose.yaml` starts the images tagged `SHARNESS_NETWORK_VERSION`
  * from a `.env` written as Run a local network writes it, three `sharnessd`
  * daemons register their saved identities, and `images/mcp.ts` confirms them and sends a
- * message. Bob's daemon runs an explicit text policy with an unavailable
- * provider, so a held send shows its check and the next action.
- * The gate passes when each step prints what the guides say it prints and
- * each refusal exits 1 with the reason the guides name.
+ * message. The gate passes when each step prints what the guides say it
+ * prints and each refusal exits 1 with the reason the guides name.
  */
 import { Command, type CommandExecutor, FileSystem } from "@effect/platform";
 import {
@@ -48,25 +46,6 @@ const PREPARE_DATABASE = [
   'import { Effect } from "effect";',
   "prepareDatabase.pipe(Effect.provide(NodeFileSystem.layer), NodeRuntime.runMain);",
 ].join("\n");
-
-/** An unavailable provider exercises configured enforcement without a paid model. */
-const FIREWALL_POLICY = JSON.stringify({
-  format: "org.social-harness/message-policy/v2",
-  mode: "enforcement",
-  decisionProvider: { kind: "unavailable" },
-  text: {
-    fixedRules: [
-      {
-        id: "owner-privacy",
-        applies: "outgoing",
-        text: "Keep the owner's private information confidential.",
-      },
-    ],
-  },
-});
-
-/** Ordinary message text must remain withheld when a required check cannot run. */
-const HELD_TEXT = "Can we meet on Tuesday?";
 
 /** How long the path may take, including any image pull Compose makes. */
 const GATE_DEADLINE = Duration.minutes(6);
@@ -168,7 +147,7 @@ function ownNetworkPath(
     const [alice, bob, carol] = yield* Effect.all(
       [
         startDaemon(consumerRoot, network, "alice"),
-        startDaemon(consumerRoot, network, "bob", FIREWALL_POLICY),
+        startDaemon(consumerRoot, network, "bob"),
         startDaemon(consumerRoot, network, "carol"),
       ],
       { concurrency: 3 },
@@ -190,36 +169,18 @@ function ownNetworkPath(
         ),
       ),
     );
-    yield* expectSendRefusals(alice, bob);
-    return "own-network path passed";
-  });
-}
-
-/**
- * Requires the send refusals the guides name: a recipient no agent holds, and
- * a send bob's own firewall refuses, which prints its check and next action.
- */
-function expectSendRefusals(
-  alice: Daemon,
-  bob: Daemon,
-): Effect.Effect<void, GateError, CommandExecutor.CommandExecutor> {
-  return Effect.gen(function* () {
     yield* expectRefusal(
       alice,
       ["call", "send_message", sendTo("nobody")],
       ["send_message failed: unknown-agent"],
     );
-    yield* expectRefusal(
-      bob,
-      ["call", "send_message", sendTo("alice", HELD_TEXT)],
-      ["send_message failed:", "check-unavailable", "wait:"],
-    );
+    return "own-network path passed";
   });
 }
 
-/** The `send_message` arguments Run sharnessd passes: `text` to `name`. */
-function sendTo(name: string, text = MESSAGE): string {
-  return JSON.stringify({ to: `agent:${name}`, text });
+/** The `send_message` arguments Run sharnessd passes: `MESSAGE` to `name`. */
+function sendTo(name: string): string {
+  return JSON.stringify({ to: `agent:${name}`, text: MESSAGE });
 }
 
 /**
@@ -313,14 +274,12 @@ function writeNetworkFiles(
  * @param consumerRoot Directory holding the installed packages.
  * @param network Settings the daemon joins with.
  * @param name Agent name, also the daemon's directory name.
- * @param policy A message-policy document for the daemon's firewall, if any.
  * @returns Where the helper reaches the daemon.
  */
 function startDaemon(
   consumerRoot: string,
   network: Network,
   name: string,
-  policy?: string,
 ): Effect.Effect<Daemon, GateError, GateServices | Scope.Scope> {
   return Effect.gen(function* () {
     const directory = join(consumerRoot, "agents", name);
@@ -328,7 +287,6 @@ function startDaemon(
     const environment = yield* writeAgentFiles(directory, network, {
       port,
       name,
-      policy,
     });
     const prepared = yield* runProcess(
       process.execPath,
@@ -368,21 +326,13 @@ function startDaemon(
   });
 }
 
-/**
- * Writes the agent's private key and credentials beside its state directory.
- * A configured policy is saved as `message-policy.json` and named in
- * the runtime settings document, as Turn on the message firewall does.
- */
+/** Writes the agent's private key and credentials beside its state directory. */
 function writeAgentFiles(
   directory: string,
   network: Network,
-  input: {
-    readonly port: number;
-    readonly name: string;
-    readonly policy?: string;
-  },
+  input: { readonly port: number; readonly name: string },
 ): Effect.Effect<Record<string, string>, GateError, FileSystem.FileSystem> {
-  const { port, name, policy } = input;
+  const { port, name } = input;
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(join(directory, "state"), { recursive: true });
@@ -399,10 +349,6 @@ function writeAgentFiles(
       randomBytes(32).toString("base64url"),
       { mode: 0o600 },
     );
-    const policyFile = join(directory, "message-policy.json");
-    if (policy !== undefined) {
-      yield* fs.writeFileString(policyFile, policy);
-    }
     const bearer = yield* fs.readFileString(mcpCredentialFile);
     yield* fs.writeFileString(
       join(directory, "settings.json"),
@@ -414,7 +360,7 @@ function writeAgentFiles(
         registrySignerPublicKey: yield* Schema.decodeUnknown(
           Schema.parseJson(Schema.Unknown),
         )(network.registrySigner),
-        routerOrigin: network.routerOrigin,
+        transport: { kind: "p2p", routerOrigin: network.routerOrigin },
         admissionCredential: network.admissionCredential,
         agent: {
           agentName: name,
@@ -422,7 +368,6 @@ function writeAgentFiles(
           operationId: `opn_${randomBytes(16).toString("base64url")}`,
           privateKey,
         },
-        ...(policy === undefined ? {} : { messagePolicyFile: policyFile }),
       }),
       { mode: 0o600 },
     );

@@ -31,7 +31,7 @@ import {
   beginOutbound,
   completeOutbound,
   type StoredOutboundMessage,
-} from "../store.js";
+} from "../conversations/store.js";
 import {
   type PollCursor,
   Router,

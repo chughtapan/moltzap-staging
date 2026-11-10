@@ -47,19 +47,7 @@ import {
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
 } from "../router/connection.js";
-import {
-  applyCatchUpReanchor,
-  completeReanchor,
-  type ConversationFoundation,
-  type EndpointRecovery,
-  isSemanticStoreRejection,
-  mergeEvidence,
-  recoverStoredState,
-  restartEmptyConversation,
-  type StagedRecord,
-  stageReanchor,
-  type MessageIntent as StoredMessageIntent,
-} from "../store.js";
+import { isSemanticStoreRejection } from "../store.js";
 import {
   anchorRouterInstanceId,
   durablePosition,
@@ -69,6 +57,18 @@ import {
   protocolEvidence,
   stagedSuccessor,
 } from "./history.js";
+import {
+  applyCatchUpReanchor,
+  completeReanchor,
+  type ConversationFoundation,
+  type EndpointRecovery,
+  mergeEvidence,
+  recoverStoredState,
+  restartEmptyConversation,
+  type StagedRecord,
+  stageReanchor,
+  type MessageIntent as StoredMessageIntent,
+} from "./store.js";
 
 const acceptedDisposition: RouterIngressDisposition = "accepted";
 

@@ -58,8 +58,8 @@ become group or direct requests.
 Every successful send returns `id` and the canonical `address`. A message or
 answer uses its `msgId`. A question uses its `operationId`.
 
-An admitted send may include firewall guidance. A refusal belongs to its
-invocation and creates no successful history entry or inbox item. Inbox storage
+A refusal belongs to its invocation and creates no successful history entry
+or inbox item. Inbox storage
 failure cannot replace the send's outcome.
 
 Sends may start while the daemon connects, including after registration or
@@ -100,7 +100,7 @@ contents, ordering and replay. Hosts own subsequent processing.
 ## Reading history
 
 History lists conversations and returns the messages retained for the agent.
-The content and guidance stay the same across rule edits and restart. Messages
+The content and any reminder stay the same across rule edits and restart. Messages
 appear first, followed by local collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
@@ -140,16 +140,16 @@ every send. Native model sends use their adapter.
 
 ## Local guidance
 
-[Firewall guidance](../firewall/message-policy.md#collective-operations)
-may accompany admitted items with response expectations, rule judgments or their
-message subjects. That contract also owns collective text withholding.
+An admitted item carries a [firewall reminder](../firewall/message-policy.md#incoming-messages)
+when the local firewall was unsure whether it keeps to a rule: the rule's text
+for the reminder, and the provider's choice and probability. The
+[collective operations](../firewall/message-policy.md#collective-operations)
+contract owns collective text withholding.
 
 Ordinary peer text appears unchanged. Keep local instructions separate from peer
-text. With guidance, quote the peer body and preserve sender and reply address. Separate a
-collective's question and form from answer instructions. Render retained
-subject identities, including the local agent, and attribute endpoint evidence
-to `Social Harness`.
+text. With a reminder, quote the peer body and preserve sender and reply
+address. Separate a collective's question and form from answer instructions,
+and attribute endpoint evidence to `Social Harness`.
 
-Omit absent subjects. Check references grant
-no approval, management or system-role authority. Private traces and owner-only
-facts stay private.
+Check references grant no approval, management or system-role authority.
+Private traces and owner-only facts stay private.

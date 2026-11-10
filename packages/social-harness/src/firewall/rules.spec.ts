@@ -13,13 +13,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
 import {
   decodeMessagePolicy,
   loadMessagePolicy,
-  MAXIMUM_BEHAVIOR_BYTES,
+  MAXIMUM_DOCUMENT_BYTES,
   type PolicyConfiguration,
   readPolicyCredential as readCredential,
 } from "./rules.js";
@@ -31,7 +31,6 @@ describe("policy documents", () => {
   const policyFormat = "org.social-harness/message-policy/v2";
   const baseDocument = {
     format: policyFormat,
-    mode: "guidance",
     text: {
       fixedRules: [
         {
@@ -42,15 +41,10 @@ describe("policy documents", () => {
       ],
     },
   };
-  const unavailableDocument = {
-    ...baseDocument,
-    decisionProvider: { kind: "unavailable" },
-  };
   const jevDocument = {
     ...baseDocument,
     decisionProvider: { kind: "jev", model: "jev-1.13.0" },
   };
-
   afterEach(() => {
     for (const directory of directories.splice(0)) {
       rmSync(directory, { recursive: true, force: true });
@@ -100,8 +94,7 @@ describe("policy documents", () => {
       "a document over 1 MiB",
       () => ({
         messagePolicyFile: file({
-          ...baseDocument,
-          decisionProvider: { kind: "unavailable" },
+          ...jevDocument,
           facts: [
             {
               id: "large",
@@ -162,6 +155,33 @@ describe("policy documents", () => {
       expect(error.message).not.toContain("private-mode-value");
     }));
 
+  it("reads the provider key through symbolic links, as a Kubernetes Secret volume presents it", () =>
+    Effect.gen(function* () {
+      const mount = directory();
+      mkdirSync(join(mount, "..2026_11_06_00_00_00.000000000"));
+      writeFileSync(
+        join(mount, "..2026_11_06_00_00_00.000000000", "jev.key"),
+        "key-value",
+        { mode: 0o600 },
+      );
+      symlinkSync("..2026_11_06_00_00_00.000000000", join(mount, "..data"));
+      symlinkSync(join("..data", "jev.key"), join(mount, "jev.key"));
+
+      const installed = yield* loadConfigured(
+        {
+          messagePolicyFile: file(jevDocument),
+          decisionProviderKeyFile: Redacted.make(join(mount, "jev.key")),
+        },
+        readCredential,
+      );
+
+      expect(
+        installed.provider === undefined
+          ? undefined
+          : Redacted.value(installed.provider.apiKey),
+      ).toBe("key-value");
+    }));
+
   it("installs the document with its key and Client's default settings", () =>
     Effect.gen(function* () {
       const installed = yield* loadConfigured(
@@ -175,7 +195,6 @@ describe("policy documents", () => {
         readCredential,
       );
       const options = installed.policy;
-      expect(options.mode).toBe("guidance");
       expect(options.maximumConcurrentChecks).toBe(2);
       expect(options.maximumHistoryRecords).toBeUndefined();
       expect(options.settings.timeoutMilliseconds).toBeGreaterThan(0);
@@ -187,30 +206,33 @@ describe("policy documents", () => {
         model: "jev-1.13.0",
       });
       expect(
-        installed.provider.kind === "jev"
-          ? Redacted.value(installed.provider.apiKey)
-          : undefined,
+        installed.provider === undefined
+          ? undefined
+          : Redacted.value(installed.provider.apiKey),
       ).toBe("key-value");
+    }));
+
+  it("loads the provider a policy names without text rules, for the rules of the norms agents hold", () =>
+    Effect.gen(function* () {
+      const installed = yield* loadConfigured(
+        {
+          messagePolicyFile: file({
+            format: policyFormat,
+            decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+          }),
+          decisionProviderKeyFile: Redacted.make(file("key-value")),
+        },
+        readCredential,
+      );
+
+      expect(installed.policy.text).toBeUndefined();
+      expect(installed.provider).toMatchObject({ kind: "jev" });
     }));
 
   it("decodes the example policy the message firewall guide documents", () =>
     Effect.gen(function* () {
       const policy = yield* decodeMessagePolicy(guideExample());
-      expect(policy.mode).toBe("guidance");
       expect(policy.text?.fixedBehaviors?.length).toBeGreaterThan(0);
-    }));
-
-  it("installs natural-language rules with an unavailable provider without reading a key file", () =>
-    Effect.gen(function* () {
-      const installed = yield* loadConfigured(
-        {
-          messagePolicyFile: file(unavailableDocument),
-          decisionProviderKeyFile: Redacted.make(join(directory(), "absent")),
-        },
-        readCredential,
-      );
-      expect(installed.policy.text?.fixedRules).toHaveLength(1);
-      expect(installed.provider).toEqual({ kind: "unavailable" });
     }));
 
   /** The JSON policy between the example markers of the message firewall guide. */
@@ -252,7 +274,7 @@ describe("policy documents", () => {
   it("accepts non-English editable rules", () =>
     Effect.gen(function* () {
       const document = {
-        ...unavailableDocument,
+        ...jevDocument,
         text: {
           initialRules: [
             {
@@ -289,12 +311,15 @@ describe("policy documents", () => {
         new URL("../../config/firewall/message-policy.json", import.meta.url),
       );
       const loaded = yield* loadConfigured(
-        { messagePolicyFile: path },
+        {
+          messagePolicyFile: path,
+          decisionProviderKeyFile: Redacted.make(file("key-value")),
+        },
         readCredential,
       );
       const rules = loaded.policy.text?.fixedRules ?? [];
       expect(rules.length).toBeGreaterThan(0);
-      expect(loaded.provider).toEqual({ kind: "unavailable" });
+      expect(loaded.provider?.kind).toBe("jev");
     }));
 });
 
@@ -333,7 +358,6 @@ metadata:
     applies: both
     feedback:
       text: Wait until working hours.
-      nextAction: wait
 ---
 
 ${behaviorBody}
@@ -358,10 +382,10 @@ Ask before starting a conversation.
     writeFileSync(join(root, "fixed", "BEHAVIOR.md"), fixed);
     writeFileSync(join(root, "initial", "BEHAVIOR.md"), initial);
     const path = join(root, "policy.json");
+    writeFileSync(join(root, "key"), "key-value");
     const document = {
       format: policyFormat,
-      mode: "guidance",
-      decisionProvider: { kind: "unavailable" },
+      decisionProvider: { kind: "jev", model: "jev-1.13.0" },
       text: {
         fixedRules: [fixedInlineRule],
         initialRules: [initialInlineRule],
@@ -380,7 +404,13 @@ Ask before starting a conversation.
   }
 
   function loaded(path: string) {
-    return loadMessagePolicy({ messagePolicyFile: path }, readCredential).pipe(
+    return loadMessagePolicy(
+      {
+        messagePolicyFile: path,
+        decisionProviderKeyFile: Redacted.make(join(dirname(path), "key")),
+      },
+      readCredential,
+    ).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.die("expected a configured message policy"),
@@ -394,7 +424,7 @@ Ask before starting a conversation.
     "accepts a behavior at the 64 KiB byte limit",
     Effect.fn(function* () {
       const { path } = fixture(
-        behaviorDocument.padEnd(MAXIMUM_BEHAVIOR_BYTES, " "),
+        behaviorDocument.padEnd(MAXIMUM_DOCUMENT_BYTES, " "),
       );
       const { policy } = yield* loaded(path);
       expect(policy.text?.fixedRules).toContainEqual(
@@ -525,8 +555,8 @@ Ask before starting a conversation.
       "schema",
       "fixed",
       behaviorDocument.replace(
-        "nextAction: wait",
-        "nextAction: private-invalid-behavior",
+        "      text: Wait until working hours.",
+        "      text: Wait until working hours.\n      private-invalid-behavior: true",
       ),
     ],
     [
@@ -539,7 +569,7 @@ Ask before starting a conversation.
       "oversized file",
       "too-large",
       "fixed",
-      behaviorDocument.padEnd(MAXIMUM_BEHAVIOR_BYTES + 1, " "),
+      behaviorDocument.padEnd(MAXIMUM_DOCUMENT_BYTES + 1, " "),
     ],
     [
       "duplicate fixed inline id",
