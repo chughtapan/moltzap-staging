@@ -13,18 +13,12 @@ import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import {
   type AgentCard,
   groupMembers,
-  type GuidanceBodyOrigin,
-  type Message,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
   type MessageTextError,
   packageVersion,
   parseMessageText,
-  type PermittedItem,
-  renderCollectiveRequest,
-  renderCollectiveResult,
-  renderContent,
-  renderLocalGuidance,
+  renderInboxItem,
   type SendRequest,
   type SendResult,
 } from "@social-harness/social-harness";
@@ -37,7 +31,6 @@ import {
   Redacted,
   Schema,
 } from "effect";
-import { absurd } from "effect/Function";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
@@ -146,8 +139,6 @@ interface TurnSender {
  */
 interface HostTurn {
   readonly id: string;
-  /** Whether a peer authored the turn or the endpoint emitted it. */
-  readonly origin: GuidanceBodyOrigin;
   readonly kind: "direct" | "group";
   readonly address: MessageAddressInputValue;
   readonly sender: TurnSender;
@@ -580,64 +571,28 @@ function handleInboxEntry(
   runtime: OpenClawAccountRuntime,
   delivery: InboxEntry,
 ) {
-  const projected = inboundItemTurn(
-    delivery.item,
-    delivery.deliveryToken,
-    delivery.address,
+  const id = delivery.deliveryToken;
+  const rendered = renderInboxItem(
+    delivery,
+    requestAnswerInstructions(delivery.address),
   );
-  const guidance = delivery.guidance;
-  const turn: HostTurn =
-    guidance === undefined
-      ? projected
-      : {
-          ...projected,
-          bodyForAgent:
-            delivery.item.kind === "collectiveRequest"
-              ? renderCollectiveRequest(
-                  delivery.item,
-                  requestAnswerInstructions(delivery.address),
-                  guidance,
-                )
-              : renderLocalGuidance(guidance, {
-                  text: projected.body,
-                  origin: projected.origin,
-                }),
-        };
+  const turn: HostTurn = {
+    ...addressedTurn(
+      {
+        id,
+        sender:
+          rendered.author === undefined
+            ? { id: `sharness:${id}`, name: ENDPOINT_SENDER_NAME }
+            : agentSender(rendered.author),
+      },
+      delivery.address,
+      rendered.text,
+    ),
+    bodyForAgent: rendered.textForAgent,
+  };
   return logInbound(ctx, turn).pipe(
     Effect.zipRight(runOpenClawTurn(ctx, runtime, turn)),
   );
-}
-
-/**
- * Gathers enter the requester's conversation. All_gathers enter the group.
- * Results and failures are attributed to Social Harness in the conversation
- * the operation addressed.
- */
-function inboundItemTurn(
-  item: PermittedItem,
-  eventId: string,
-  address: MessageAddressInputValue,
-): HostTurn {
-  switch (item.kind) {
-    case "multicast":
-      return multicastTurn(item.message, eventId, address);
-    case "collectiveRequest":
-      return addressedTurn(
-        {
-          id: eventId,
-          origin: "peer",
-          sender: agentSender(item.message.author),
-        },
-        address,
-        renderCollectiveRequest(item, requestAnswerInstructions(address)),
-      );
-    case "collectiveResult":
-      return endpointTurn(eventId, address, renderCollectiveResult(item));
-    case "operationFailed":
-      return endpointTurn(eventId, address, item.error);
-    default:
-      return absurd(item);
-  }
 }
 
 /** Reply instructions belong to the endpoint rather than the peer's quoted question. */
@@ -645,44 +600,12 @@ function requestAnswerInstructions(to: MessageAddressInputValue): string {
   return `Send the answer once as the whole message text, with the message tool's reply action or send to ${to}.`;
 }
 
-function multicastTurn(
-  message: Message,
-  eventId: string,
-  address: MessageAddressInputValue,
-): HostTurn {
-  return addressedTurn(
-    {
-      id: eventId,
-      origin: "peer",
-      sender: agentSender(message.author),
-    },
-    address,
-    renderContent(message.content),
-  );
-}
-
-function endpointTurn(
-  id: string,
-  address: MessageAddressInputValue,
-  body: string,
-): HostTurn {
-  return addressedTurn(
-    {
-      id,
-      origin: "endpoint",
-      sender: { id: `sharness:${id}`, name: ENDPOINT_SENDER_NAME },
-    },
-    address,
-    body,
-  );
-}
-
 /**
  * A turn in the conversation `address` names: a group address makes a group
  * turn listing its members.
  */
 function addressedTurn(
-  author: Pick<HostTurn, "id" | "origin" | "sender">,
+  author: Pick<HostTurn, "id" | "sender">,
   address: MessageAddressInputValue,
   body: string,
 ): HostTurn {

@@ -11,6 +11,7 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
+import { absurd } from "effect/Function";
 import type { CheckedGuidance } from "../firewall/check.js";
 import type { LocalGuidance, PermittedItem } from "../firewall/service.js";
 import { SendError, type ValidationIssue } from "../communication/errors.js";
@@ -37,7 +38,7 @@ import {
 } from "../communication/service.js";
 import { exactStruct } from "../encoding/canonical-json.js";
 import { compareAscii } from "../encoding/identifier.js";
-import { AgentName } from "../identity/agent-cards.js";
+import { type AgentCard, AgentName } from "../identity/agent-cards.js";
 import { MessageAddress } from "./inbox.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
@@ -165,15 +166,6 @@ type CollectiveResultItem = Extract<
 >;
 type MemberOutcome = CollectiveResultItem["outcomes"][number]["outcome"];
 
-/** Renders one content part per line, preserving text and serializing data as JSON. */
-export function renderContent(content: Content): string {
-  return content
-    .map((part) =>
-      part.type === "text" ? part.text : (JSON.stringify(part.value) ?? "null"),
-    )
-    .join("\n");
-}
-
 /**
  * Returns a canonical group's members as `agent:` addresses in address order.
  * Direct addresses return an empty list.
@@ -188,50 +180,46 @@ export function groupMembers(address: MessageAddressInput): readonly string[] {
 }
 
 /**
- * Renders a peer question, deadline, response form and answer instructions.
- * `howToAnswer` names the host's tool for sending the answer. Local guidance
- * quotes the peer question separately from instructions.
+ * What a host shows its agent for one received item. `author` is the peer it
+ * is from, and is absent for a result or failure, which Social Harness reports
+ * itself. `textForAgent` adds the firewall's guidance to `text` when the item
+ * has any. `howToAnswer` names the host's tool for answering a question.
  */
-export function renderCollectiveRequest(
-  item: CollectiveRequestItem,
+export function renderInboxItem(
+  entry: { readonly item: PermittedItem; readonly guidance?: LocalGuidance },
   howToAnswer: string,
-  guidance?: LocalGuidance,
-): string {
-  const body = renderCollectiveQuestion({
-    author: item.message.author,
-    recipients: item.message.recipients,
-    ...item.message.operation,
+): {
+  readonly author?: AgentCard;
+  readonly text: string;
+  readonly textForAgent: string;
+} {
+  const { item, guidance } = entry;
+  const guided = (text: string, origin: "peer" | "endpoint") => ({
+    text,
+    textForAgent:
+      guidance === undefined
+        ? text
+        : renderLocalGuidance(guidance, { text, origin }),
   });
-  const operationId = JSON.stringify(item.message.operation.operationId);
-  const answerInstructions = [
-    `Answer with: {"action":"accept","operationId":${operationId},"content":{...}} where content matches the form, or {"action":"decline","operationId":${operationId}}`,
-    howToAnswer,
-  ];
-  if (guidance === undefined) {
-    return [body, ...answerInstructions].join("\n");
+  switch (item.kind) {
+    case "multicast":
+      return {
+        author: item.message.author,
+        ...guided(renderContent(item.message.content), "peer"),
+      };
+    case "collectiveRequest":
+      return {
+        author: item.message.author,
+        text: renderCollectiveRequest(item, howToAnswer),
+        textForAgent: renderCollectiveRequest(item, howToAnswer, guidance),
+      };
+    case "collectiveResult":
+      return guided(renderCollectiveResult(item), "endpoint");
+    case "operationFailed":
+      return guided(item.error, "endpoint");
+    default:
+      return absurd(item);
   }
-  return [
-    renderLocalGuidance(guidance, { text: body, origin: "peer" }),
-    ...answerInstructions,
-  ].join("\n");
-}
-
-/**
- * Renders the question and one outcome per member. JSON quoting prevents peer
- * question text from appearing as another member's outcome.
- */
-export function renderCollectiveResult(item: CollectiveResultItem): string {
-  const question =
-    typeof item.question === "string"
-      ? JSON.stringify(item.question)
-      : `(withheld: ${renderWithheld(item.question)})`;
-  return [
-    `${item.op} result: ${question}`,
-    ...item.outcomes.map(
-      ({ member, outcome }) =>
-        `- agent:${member.agentName}: ${renderOutcome(outcome)}`,
-    ),
-  ].join("\n");
 }
 
 /** Direct replies reach the author. Group replies keep every participant. */
@@ -244,49 +232,6 @@ export function replyAddress(message: Pick<Message, "author" | "recipients">) {
           .sort(compareAscii)
           .join(",")}`,
       );
-}
-
-/** Attribution of the body quoted alongside local instructions. */
-export type GuidanceBodyOrigin = "peer" | "endpoint";
-
-/**
- * Renders the reminders for an admitted message the local firewall was unsure
- * about, separately from quoted content and its peer or endpoint attribution.
- */
-export function renderLocalGuidance(
-  guidance: LocalGuidance,
-  quoted?: { text: string; origin: GuidanceBodyOrigin },
-): string {
-  const entries =
-    "answers" in guidance
-      ? [
-          ...guidance.answers.map(({ member, ...checked }) => ({
-            for: `agent:${member.agentName}`,
-            ...checked,
-          })),
-          ...(guidance.question === undefined
-            ? []
-            : [{ for: "question", ...guidance.question }]),
-        ]
-      : [guidance];
-  const heading =
-    "answers" in guidance
-      ? "Social Harness reminder for this result, by answer and question: the local firewall could not tell whether these parts keep to these rules"
-      : `Social Harness reminder (${guidance.checkId}): the local firewall could not tell whether this message keeps to these rules`;
-  const instructions = entries.map((entry) => ({
-    ...("for" in entry ? { for: entry.for } : {}),
-    checkId: entry.checkId,
-    instructions: renderInstructions(entry),
-  }));
-  const advice = `${heading}:\n${quoteForAgent(instructions)}`;
-  if (quoted === undefined) {
-    return advice;
-  }
-  const label =
-    quoted.origin === "endpoint"
-      ? "Social Harness item, quoting peer answers (quoted content)"
-      : "Peer message (quoted content)";
-  return `${advice}\n\n${label}:\n${quoteForAgent(quoted.text)}`;
 }
 
 const COLLECTING_OPERATIONS = ["gather", "all_gather"] as const;
@@ -359,6 +304,102 @@ export function validationIssues(error: ParseResult.ParseError) {
   const issues: ValidationIssue[] = [];
   appendIssues(error.issue, [], issues);
   return issues;
+}
+
+/** Renders one content part per line, preserving text and serializing data as JSON. */
+function renderContent(content: Content): string {
+  return content
+    .map((part) =>
+      part.type === "text" ? part.text : (JSON.stringify(part.value) ?? "null"),
+    )
+    .join("\n");
+}
+
+/**
+ * Renders a peer question, deadline, response form and answer instructions.
+ * `howToAnswer` names the host's tool for sending the answer. Local guidance
+ * quotes the peer question separately from instructions.
+ */
+function renderCollectiveRequest(
+  item: CollectiveRequestItem,
+  howToAnswer: string,
+  guidance?: LocalGuidance,
+): string {
+  const body = renderCollectiveQuestion({
+    author: item.message.author,
+    recipients: item.message.recipients,
+    ...item.message.operation,
+  });
+  const operationId = JSON.stringify(item.message.operation.operationId);
+  const answerInstructions = [
+    `Answer with: {"action":"accept","operationId":${operationId},"content":{...}} where content matches the form, or {"action":"decline","operationId":${operationId}}`,
+    howToAnswer,
+  ];
+  if (guidance === undefined) {
+    return [body, ...answerInstructions].join("\n");
+  }
+  return [
+    renderLocalGuidance(guidance, { text: body, origin: "peer" }),
+    ...answerInstructions,
+  ].join("\n");
+}
+
+/**
+ * Renders the question and one outcome per member. JSON quoting prevents peer
+ * question text from appearing as another member's outcome.
+ */
+function renderCollectiveResult(item: CollectiveResultItem): string {
+  const question =
+    typeof item.question === "string"
+      ? JSON.stringify(item.question)
+      : `(withheld: ${renderWithheld(item.question)})`;
+  return [
+    `${item.op} result: ${question}`,
+    ...item.outcomes.map(
+      ({ member, outcome }) =>
+        `- agent:${member.agentName}: ${renderOutcome(outcome)}`,
+    ),
+  ].join("\n");
+}
+
+/**
+ * Renders the reminders for an admitted message the local firewall was unsure
+ * about, separately from quoted content and its peer or endpoint attribution.
+ */
+function renderLocalGuidance(
+  guidance: LocalGuidance,
+  quoted?: { text: string; origin: "peer" | "endpoint" },
+): string {
+  const entries =
+    "answers" in guidance
+      ? [
+          ...guidance.answers.map(({ member, ...checked }) => ({
+            for: `agent:${member.agentName}`,
+            ...checked,
+          })),
+          ...(guidance.question === undefined
+            ? []
+            : [{ for: "question", ...guidance.question }]),
+        ]
+      : [guidance];
+  const heading =
+    "answers" in guidance
+      ? "Social Harness reminder for this result, by answer and question: the local firewall could not tell whether these parts keep to these rules"
+      : `Social Harness reminder (${guidance.checkId}): the local firewall could not tell whether this message keeps to these rules`;
+  const instructions = entries.map((entry) => ({
+    ...("for" in entry ? { for: entry.for } : {}),
+    checkId: entry.checkId,
+    instructions: renderInstructions(entry),
+  }));
+  const advice = `${heading}:\n${quoteForAgent(instructions)}`;
+  if (quoted === undefined) {
+    return advice;
+  }
+  const label =
+    quoted.origin === "endpoint"
+      ? "Social Harness item, quoting peer answers (quoted content)"
+      : "Peer message (quoted content)";
+  return `${advice}\n\n${label}:\n${quoteForAgent(quoted.text)}`;
 }
 
 function invalidAddress(): SendError {
