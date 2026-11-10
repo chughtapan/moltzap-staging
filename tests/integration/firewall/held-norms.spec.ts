@@ -11,6 +11,7 @@ import { FileSystem } from "@effect/platform";
 import {
   AgentAddress,
   AgentIdentityCard,
+  MAXIMUM_WAIT_SECONDS,
 } from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { basename, join } from "node:path";
@@ -69,16 +70,15 @@ function addressOf(client: Client) {
   });
 }
 
-/** The text of the first item in `client`'s inbox, once one arrives. */
+/**
+ * The text of the first item in `client`'s inbox. One call waits for it: the
+ * daemon answers as soon as the item arrives.
+ */
 function firstDelivery(client: Client) {
-  return readInbox(client).pipe(
-    Effect.flatMap((first) =>
-      Effect.iterate(first, {
-        while: (page) => page.items.length === 0,
-        body: () =>
-          Effect.sleep("50 millis").pipe(Effect.andThen(readInbox(client))),
-      }),
-    ),
+  return call(client, {
+    name: "receive_messages",
+    arguments: { wait: MAXIMUM_WAIT_SECONDS },
+  }).pipe(
     Effect.map(({ items }) => {
       const item = items[0]?.item;
       return item !== undefined && "message" in item
@@ -89,10 +89,6 @@ function firstDelivery(client: Client) {
     }),
     Effect.timeout("60 seconds"),
   );
-}
-
-function readInbox(client: Client) {
-  return call(client, { name: "read_inbox", arguments: {} });
 }
 
 const heldNorms = Effect.gen(function* () {

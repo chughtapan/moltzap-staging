@@ -338,8 +338,8 @@ function installMessageTools(
         })
       : bind(server, { ...send, definition: toolDefinitions.send_message });
     yield* bind(server, {
-      name: "read_inbox",
-      definition: toolDefinitions.read_inbox,
+      name: "receive_messages",
+      definition: toolDefinitions.receive_messages,
       execute: Effect.fn(function* ({ wait, ...request }) {
         const page = yield* harness.listInbox({
           ...request,

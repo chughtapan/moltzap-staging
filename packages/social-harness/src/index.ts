@@ -3,6 +3,7 @@
 
 /** MCP tool arguments, results and failures derive from these schemas. */
 export {
+  MAXIMUM_WAIT_SECONDS,
   toolDefinitions,
   toolFailureSchemas,
   type ToolName,

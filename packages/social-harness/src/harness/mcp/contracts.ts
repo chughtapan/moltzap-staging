@@ -202,12 +202,20 @@ const managementReadConversationResultSchema = Schema.Struct({
   ...PaginatedResult.fields,
 });
 
+/**
+ * The longest a receive_messages call may wait. It stays under the time after
+ * which hosts and proxies give up on a tool call.
+ */
+export const MAXIMUM_WAIT_SECONDS = 50;
+
 const inboxRequestSchema = exactStruct({
   ...PaginatedRequest.fields,
   wait: Schema.optional(
-    Schema.Positive.annotations({
-      description:
-        "Seconds to wait for an item when none is pending. Without it the read returns at once.",
+    Schema.Number.pipe(
+      Schema.positive(),
+      Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
+    ).annotations({
+      description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for a message when none is pending. Call receive_messages again to keep waiting. Without wait the call returns at once.`,
     }),
   ),
 });
@@ -344,9 +352,9 @@ export const toolDefinitions = {
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
-  read_inbox: {
+  receive_messages: {
     description:
-      "Read pending inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Reading marks returned items delivered. Pass wait to wait that many seconds for an item when none is pending; the read returns as soon as one arrives, or empty when the wait ends.",
+      "Receive pending messages and other inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Returned items are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an item arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -426,7 +434,7 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 
 /** Failure data derives from each service's error schema without a second reason vocabulary. */
 export const toolFailureSchemas = {
-  read_inbox: Schema.Struct({ reason: InboxError.fields.reason }),
+  receive_messages: Schema.Struct({ reason: InboxError.fields.reason }),
   list_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
   read_policy: policyFailure,

@@ -21,7 +21,11 @@ import {
 } from "../__tests__/mcp-fixtures.js";
 import { digest } from "../../__tests__/agents.js";
 import { SendError } from "../../communication/errors.js";
-import { INBOX_PENDING_EVENT, toolDefinitions } from "./contracts.js";
+import {
+  INBOX_PENDING_EVENT,
+  MAXIMUM_WAIT_SECONDS,
+  toolDefinitions,
+} from "./contracts.js";
 import { serveMcp } from "./server.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
@@ -117,15 +121,18 @@ describe("MCP authentication and discovery", () => {
         fixture.fetch(new Request(input, init)),
       );
       const listed = yield* Effect.tryPromise(() => client.listTools());
-      expect(listed.tools.map((tool) => tool.name)).toContain("read_inbox");
-      expect(
-        listed.tools.find((tool) => tool.name === "read_inbox")?.outputSchema,
-      ).toBeDefined();
-      const reply = yield* Effect.tryPromise(() =>
-        client.callTool({ name: "read_inbox", arguments: {} }),
+      expect(listed.tools.map((tool) => tool.name)).toContain(
+        "receive_messages",
       );
       expect(
-        yield* Schema.decodeUnknown(toolDefinitions.read_inbox.output)(
+        listed.tools.find((tool) => tool.name === "receive_messages")
+          ?.outputSchema,
+      ).toBeDefined();
+      const reply = yield* Effect.tryPromise(() =>
+        client.callTool({ name: "receive_messages", arguments: {} }),
+      );
+      expect(
+        yield* Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
           reply.structuredContent,
         ),
       ).toEqual({ items: [] });
@@ -143,7 +150,7 @@ describe("MCP tool contracts", () => {
           fixture.fetch(
             mcpRequest(
               "tools/call",
-              { name: "read_inbox", arguments: {} },
+              { name: "receive_messages", arguments: {} },
               { id },
             ),
           ),
@@ -233,7 +240,7 @@ describe("MCP tool contracts", () => {
         fixture.fetch(
           mcpRequest(
             "tools/call",
-            { name: "read_inbox", arguments: {} },
+            { name: "receive_messages", arguments: {} },
             { id: "waiting", signal: abort.signal },
           ),
         ),
@@ -354,6 +361,7 @@ it("closes an active event stream with the listener's scope", () =>
   }));
 
 const sendTool = "send_message";
+const receiveTool = "receive_messages";
 const missingField = "text";
 const collectiveField = "collective";
 const textFields = ["to", missingField];
@@ -397,6 +405,22 @@ describe("send_message arguments", () => {
       );
       expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
         collectiveField,
+      );
+    }));
+
+  it("refuses a receive_messages wait longer than the limit, naming the limit", () =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      const reply = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", {
+            name: receiveTool,
+            arguments: { wait: MAXIMUM_WAIT_SECONDS + 1 },
+          }),
+        ),
+      );
+      expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
+        `at most ${String(MAXIMUM_WAIT_SECONDS)}`,
       );
     }));
 

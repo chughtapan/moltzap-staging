@@ -80,13 +80,13 @@ To inspect Bob's inbox, use Bob's credential file and change the URL to port
 `4102`. Replace the send call inside the open connection with:
 
 ```ts
-const result = await client.callTool({ name: "read_inbox", arguments: {} });
+const result = await client.callTool({ name: "receive_messages", arguments: {} });
 console.log(JSON.stringify(result.structuredContent, null, 2));
 ```
 
 The result contains `items` and may include `nextCursor`. Each item supplies its
 conversation `address`, `deliveryToken`, content and any local guidance. Reading
-marks returned items delivered. To continue the same traversal, call `read_inbox` with
+marks returned items delivered. To continue the same traversal, call `receive_messages` with
 `arguments: { cursor: "<nextCursor>" }` until `nextCursor` is absent. Begin a new
 traversal after reconnecting or when checking for later arrivals.
 

@@ -21,19 +21,21 @@ import { acquireMcpConnection, callTool } from "./mcp-client.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
-const entry = Schema.decodeUnknownSync(toolDefinitions.read_inbox.output)({
-  items: [
-    {
-      deliveryToken: `dlv_${"A".repeat(43)}`,
-      address: "agent:bob",
-      item: {
-        kind: "operationFailed",
-        operationId: `col_${"A".repeat(64)}`,
-        error: "request failed",
+const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
+  {
+    items: [
+      {
+        deliveryToken: `dlv_${"A".repeat(43)}`,
+        address: "agent:bob",
+        item: {
+          kind: "operationFailed",
+          operationId: `col_${"A".repeat(64)}`,
+          error: "request failed",
+        },
       },
-    },
-  ],
-}).items[0];
+    ],
+  },
+).items[0];
 if (entry === undefined) throw new Error("Fixture has no inbox entry");
 afterEach(() => vi.restoreAllMocks());
 

@@ -8,7 +8,7 @@ import {
 /** Each successful inbox read records delivery before entries reach the test. */
 export function inboxStream(connection: McpConnection) {
   return Stream.repeatEffect(
-    callTool(connection.client, { name: "read_inbox", arguments: {} }),
+    callTool(connection.client, { name: "receive_messages", arguments: {} }),
   ).pipe(
     Stream.flatMap((page) =>
       page.items.length === 0

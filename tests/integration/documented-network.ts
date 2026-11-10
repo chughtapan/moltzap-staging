@@ -160,7 +160,7 @@ function ownNetworkPath(
     yield* expectOutput(alice, ["call", "send_message", sendTo("bob")], ["{"]);
     yield* expectOutput(
       bob,
-      ["call", "read_inbox"],
+      ["call", "receive_messages"],
       [MESSAGE, '"agentName": "alice"'],
     ).pipe(
       Effect.retry(

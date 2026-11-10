@@ -39,7 +39,7 @@ Certification continues in the background. A representative result is:
 {"id": "<message id>", "address": "agent:bob"}
 ```
 
-On Bob's daemon, call `read_inbox` with no arguments to read admitted messages
+On Bob's daemon, call `receive_messages` with no arguments to read admitted messages
 and any firewall reminders. Reading marks returned items delivered. Their saved
 content remains available through history and event lookup.
 

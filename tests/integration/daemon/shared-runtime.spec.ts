@@ -215,7 +215,7 @@ function cancelFirstAcquisition(input: {
 function expectEmptyInbox(client: Client) {
   return Effect.gen(function* () {
     expect(
-      (yield* call(client, { name: "read_inbox", arguments: {} })).items,
+      (yield* call(client, { name: "receive_messages", arguments: {} })).items,
     ).toHaveLength(0);
   });
 }
@@ -223,12 +223,14 @@ function expectEmptyInbox(client: Client) {
 function awaitInbox(client: Client) {
   return Effect.gen(function* () {
     return yield* Effect.iterate(
-      yield* call(client, { name: "read_inbox", arguments: {} }),
+      yield* call(client, { name: "receive_messages", arguments: {} }),
       {
         while: (page) => page.items.length === 0,
         body: () =>
           Effect.sleep("50 millis").pipe(
-            Effect.andThen(call(client, { name: "read_inbox", arguments: {} })),
+            Effect.andThen(
+              call(client, { name: "receive_messages", arguments: {} }),
+            ),
           ),
       },
     );
@@ -497,7 +499,7 @@ const scenario = (
       return yield* Effect.dieMessage("Expected Bob's delivery");
     }
     expect(
-      (yield* call(alice, { name: "read_inbox", arguments: {} })).items,
+      (yield* call(alice, { name: "receive_messages", arguments: {} })).items,
     ).toHaveLength(0);
     yield* expectEmptyInbox(bob);
     yield* expectConversation(alice, bobAddress, "sent", [sent.id]);

@@ -25,7 +25,7 @@ Alice's host calls the `send_message` tool through the Model Context Protocol
 
 The result identifies the accepted message by its `id` and destination `address`.
 Certification continues in the background. Bob's daemon offers the message
-through `read_inbox` after certification and incoming policy checks. Bob can
+through `receive_messages` after certification and incoming policy checks. Bob can
 answer through his own daemon.
 
 ## Try it
