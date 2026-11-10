@@ -1,4 +1,4 @@
-/** @file A scripted Dot webhook callback and the inbox items it receives. */
+/** @file A scripted webhook callback and an inbox whose items wake it. */
 
 import {
   type HttpBody,
@@ -10,6 +10,7 @@ import {
   Effect,
   Exit,
   Match,
+  PubSub,
   Redacted,
   Ref,
   Schema,
@@ -19,9 +20,9 @@ import {
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
-import { LocalGuidance, PermittedItem } from "../../firewall/service.js";
+import { type LocalGuidance, PermittedItem } from "../../firewall/service.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../inbox.js";
-import { INBOX_ITEM_EVENT } from "../mcp/contracts.js";
+import { INBOX_PENDING_EVENT } from "../mcp/contracts.js";
 import { makeWebhookEvents } from "../mcp/webhook.js";
 import { SocialHarness } from "../social-harness.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
@@ -32,9 +33,9 @@ export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
 /** The callback address of the scripted subscription. */
 export const url = "https://callback.example/events";
 
-/** A runtime subscription to inbox items, delivered to the scripted callback. */
+/** A subscription that wakes the scripted callback when the inbox has items. */
 export const input = {
-  name: INBOX_ITEM_EVENT,
+  name: INBOX_PENDING_EVENT,
   arguments: {},
   cursor: null,
   delivery: { mode: "webhook", url, secret },
@@ -46,34 +47,20 @@ const verification = Schema.Struct({
   challenge: Schema.String,
 });
 
-/** One event occurrence posted to the callback, by value or by reference. */
-const occurrence = Schema.Struct({
+/** One wake-up posted to the callback. */
+const wakeUp = Schema.Struct({
   eventId: Schema.String,
   name: Schema.String,
   timestamp: Schema.String,
-  data: Schema.Union(
-    Schema.Struct({
-      kind: Schema.Literal("item"),
-      address: Schema.String,
-      item: Schema.typeSchema(PermittedItem),
-      guidance: Schema.optional(LocalGuidance),
-    }),
-    Schema.Struct({
-      kind: Schema.Literal("reference"),
-      itemKind: Schema.String,
-      bytes: Schema.Number,
-    }),
-  ),
+  data: Schema.Struct({ pendingCount: Schema.Number }),
   cursor: Schema.Null,
 });
 
 /** Any body the callback receives, decoded from its JSON. */
-const callback = Schema.parseJson(Schema.Union(verification, occurrence));
+const callback = Schema.parseJson(Schema.Union(verification, wakeUp));
 
-/** Decode one event occurrence from the JSON text the callback received. */
-export const decodeOccurrence = Schema.decodeUnknownSync(
-  Schema.parseJson(occurrence),
-);
+/** Decode one wake-up from the JSON text the callback received. */
+export const decodeWakeUp = Schema.decodeUnknownSync(Schema.parseJson(wakeUp));
 
 /**
  * The exact bytes of a callback request, as text.
@@ -111,7 +98,7 @@ const callbackResponse = (
  * @param byte Distinguishes one fixture token from another.
  * @returns A delivery token that differs for each `byte`.
  */
-export const token = (byte: number) =>
+const token = (byte: number) =>
   Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", byte));
 
 /**
@@ -119,7 +106,7 @@ export const token = (byte: number) =>
  * @param text The failure the item reports.
  * @returns An inbox item that reports `text` as its failure.
  */
-export const item = (text = "failed request") =>
+const item = (text = "failed request") =>
   Schema.decodeUnknownSync(PermittedItem)({
     kind: "operationFailed",
     operationId: collectiveOperationId(testAgentCard("agent:alice").agentId, 1),
@@ -139,7 +126,7 @@ export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
 /**
  * Webhook events over `store` whose callback is scripted: it records each
  * post, echoes verification challenges, and answers with the status the test
- * sets, running `onEvent` before it answers an event.
+ * sets, running `onEvent` before it answers a wake-up.
  */
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
@@ -206,6 +193,7 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
     "CREATE TABLE IF NOT EXISTS callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0)",
   );
   const payload = Schema.parseJson(Schema.typeSchema(InboxEvent));
+  const changes = yield* PubSub.unbounded<undefined>();
   const save = (
     deliveryToken: DeliveryToken,
     item: typeof PermittedItem.Type,
@@ -220,24 +208,8 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
         (bytes) =>
           sql`INSERT INTO callback_fixture(token,payload) VALUES (${deliveryToken},${bytes})`,
       ),
+      Effect.zipRight(PubSub.publish(changes, undefined)),
       Effect.asVoid,
-    );
-  const getInboxEvent = (deliveryToken: DeliveryToken) =>
-    sql<{
-      readonly payload: string;
-    }>`SELECT payload FROM callback_fixture WHERE token=${deliveryToken}`.pipe(
-      Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? Effect.fail(new InboxError({ reason: "unknown-event" }))
-          : Schema.decodeUnknown(payload)(rows[0].payload).pipe(
-              Effect.catchTag("ParseError", () =>
-                Effect.fail(new InboxError({ reason: "persistence-failed" })),
-              ),
-            ),
-      ),
-      Effect.catchTag("SqlError", () =>
-        Effect.fail(new InboxError({ reason: "persistence-failed" })),
-      ),
     );
   const acknowledgeDelivery = (deliveryToken: DeliveryToken) =>
     sql`UPDATE callback_fixture SET acknowledged=1 WHERE token=${deliveryToken}`.pipe(
@@ -278,11 +250,10 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
             Effect.fail(new InboxError({ reason: "persistence-failed" })),
         }),
       ),
-    getInboxEvent,
     acknowledgeDelivery,
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
-    inboxChanged: Stream.never,
+    inboxChanged: Stream.fromPubSub(changes),
   });
   const pending = sql<{
     readonly total: number;

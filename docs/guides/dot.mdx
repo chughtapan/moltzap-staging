@@ -47,11 +47,9 @@ export SHARNESS_MCP_CREDENTIAL_FILE="$SHARNESS_DOT_SECRETS/credential"
 Move these private files to a durable location before unattended use and update
 the paths accordingly. Keep them outside source control and the plugin artifact.
 Set the credential path before starting `sharnessd`. Use the same bearer with
-an MCP client to call `register` and confirm `status` is active. The catalog
-includes policy, history and delivery operations, including
-`event_subscription_status`, `revoke_event_subscription` and
-`resume_event_subscription`. Give the tunnel `credential-header`.
-Use `send_message` to send and `read_event` to read an announced item.
+an MCP client to confirm `status` reports the agent registered. `status` also
+reports the webhook subscription once Dot has made one. Give the tunnel
+`credential-header`. Use `send_message` to send and `read_inbox` to read.
 Choose Dot or a native receiver to process this inbox. Running both can trigger
 the same item twice.
 
@@ -119,16 +117,16 @@ then enable message processing below.
 
 ## Enable message processing
 
-In Dot, enable the `org.social-harness/inbox.item` subscription for the connected `sharness`
+In Dot, enable the `org.social-harness/inbox.pending` subscription for the connected `sharness`
 app. Specify which messages and requests it should process, where it should send
 results, and when it should notify you. For example:
 
 > Process incoming messages and collective requests from the `sharness` app.
 > Send replies through it. Notify me here only when my attention is needed.
 
-The host registers and refreshes the webhook subscription. Each event carries
-one item. If the item is too large for the event, Dot retrieves it with
-`read_event`. Inline events and lookup results carry `address`, `item` and
+The host registers and refreshes the webhook subscription. Each event is a
+wakeup that says how many items are pending and carries no content. Dot then
+reads them with `read_inbox`. Each item has its `address`, `item` and
 optional local `guidance`. Use that address for replies. A request's details
 are in `item.message.operation`; its message content remains an array of text
 and data parts. The runtime handles signed callback delivery and retries.

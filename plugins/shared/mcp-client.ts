@@ -54,7 +54,7 @@ export type ToolFailure<Name extends ToolName> = Name extends "send_message"
   ? SendError | RequestError | FirewallRefusal
   :
       | McpToolError
-      | (Name extends "read_inbox" | "read_event"
+      | (Name extends "read_inbox"
           ? InboxError
           : Name extends "list_conversations" | "read_conversation"
             ? HistoryError
@@ -230,24 +230,10 @@ function decodeToolResult(
   value: unknown,
 ): Effect.Effect<ToolResult<ToolName>, ParseResult.ParseError> {
   switch (name) {
-    case "event_subscription_status":
-      return Schema.decodeUnknown(
-        toolDefinitions.event_subscription_status.output,
-      )(value);
-    case "revoke_event_subscription":
-      return Schema.decodeUnknown(
-        toolDefinitions.revoke_event_subscription.output,
-      )(value);
-    case "resume_event_subscription":
-      return Schema.decodeUnknown(
-        toolDefinitions.resume_event_subscription.output,
-      )(value);
     case "send_message":
       return Schema.decodeUnknown(toolDefinitions.send_message.output)(value);
     case "read_inbox":
       return Schema.decodeUnknown(toolDefinitions.read_inbox.output)(value);
-    case "read_event":
-      return Schema.decodeUnknown(toolDefinitions.read_event.output)(value);
     case "status":
       return Schema.decodeUnknown(toolDefinitions.status.output)(value);
     case "list_conversations":
@@ -328,11 +314,6 @@ function managementFailure(
         toolFailureSchemas.read_inbox,
         (data) => new InboxError(data),
       );
-    case "read_event":
-      return decode(
-        toolFailureSchemas.read_event,
-        (data) => new InboxError(data),
-      );
     case "list_conversations":
       return decode(
         toolFailureSchemas.list_conversations,
@@ -358,9 +339,6 @@ function managementFailure(
         toolFailureSchemas.read_firewall_decisions,
         (data) => new FirewallPolicyError(data),
       );
-    case "event_subscription_status":
-    case "revoke_event_subscription":
-    case "resume_event_subscription":
     case "send_message":
     case "status":
       return new McpToolError({ tool: name, reason: "tool-failed" });

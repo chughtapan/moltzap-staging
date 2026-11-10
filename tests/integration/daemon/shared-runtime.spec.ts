@@ -12,11 +12,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  AgentAddress,
-  AgentIdentityCard,
-  type InboxEntry,
-} from "@moltzap/social-harness";
+import { AgentAddress, AgentIdentityCard } from "@moltzap/social-harness";
 import {
   databaseAccess,
   databaseConnection,
@@ -285,19 +281,12 @@ function cancelFirstAcquisition(input: {
   }).pipe(Effect.provide(NodeHttpClient.layer));
 }
 
-/** Consuming the inbox preserves its saved event for the authenticated owner. */
-function expectDeliveredEvent(client: Client, entry: InboxEntry) {
+/** A read removes the items it returns from the pending inbox. */
+function expectEmptyInbox(client: Client) {
   return Effect.gen(function* () {
     expect(
       (yield* call(client, { name: "read_inbox", arguments: {} })).items,
     ).toHaveLength(0);
-    const { deliveryToken, ...event } = entry;
-    expect(
-      yield* call(client, {
-        name: "read_event",
-        arguments: { eventId: deliveryToken },
-      }),
-    ).toEqual(event);
   });
 }
 
@@ -436,13 +425,7 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     expect(
       (yield* call(alice, { name: "read_inbox", arguments: {} })).items,
     ).toHaveLength(0);
-    expect(
-      yield* call(alice, {
-        name: "read_event",
-        arguments: { eventId: entry.deliveryToken },
-      }).pipe(Effect.isFailure),
-    ).toBe(true);
-    yield* expectDeliveredEvent(bob, entry);
+    yield* expectEmptyInbox(bob);
     yield* expectConversation(alice, bobAddress, "sent", [sent.id]);
     yield* expectConversation(bob, aliceAddress, "received", [sent.id]);
     const restartMessage = yield* call(alice, {
@@ -470,8 +453,7 @@ const scenario = (database?: Effect.Effect.Success<typeof acquirePostgres>) =>
     ]);
     const restored = yield* awaitInbox(recovered);
     expect(restored.items).toEqual([unread]);
-    yield* expectDeliveredEvent(recovered, unread);
-    yield* expectDeliveredEvent(recovered, entry);
+    yield* expectEmptyInbox(recovered);
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(2);
     yield* expectFailedAgentIsolation({
       sql,

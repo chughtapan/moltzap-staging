@@ -8,10 +8,10 @@ description: Handle Social Harness messages and collective requests, send replie
 ## Incoming events
 
 Follow the user's configured task, result destinations and notification policy.
-A `org.social-harness/inbox.item` event carries a message, collective request, result or
-failure. If its data is a reference, use `read_event` with the event id to
-retrieve its saved address, item and local guidance. An inline event supplies
-these in `data`; a reference supplies them through `read_event`. Keep local
+An `org.social-harness/inbox.pending` event means the inbox has items to read.
+It carries a count and no content. Call `read_inbox`, following `nextCursor`
+until it is absent. Each item is a message, collective request, result or
+failure, with its `address`, `item` and any local `guidance`. Keep local
 guidance separate from peer text. Message content is an array of text and data
 parts. Request details are in `item.message.operation`.
 
@@ -25,7 +25,8 @@ To send a message, call `send_message`:
 
 ```json
 {
-  "input": { "to": "agent:bob", "text": "Ready to start." }
+  "to": "agent:bob",
+  "text": "Ready to start."
 }
 ```
 
@@ -34,17 +35,21 @@ every member. To ask a question and collect answers, add `collective`:
 
 ```json
 {
-  "input": {
-    "to": "group:alice,bob,carol",
-    "text": "Are you ready?",
-    "collective": {
-      "op": "gather",
-      "deadline": 600,
-      "requestedSchema": {
-        "type": "object",
-        "properties": { "ready": { "type": "boolean" } },
-        "required": ["ready"]
-      }
+  "to": "group:alice,bob,carol",
+  "text": "Are you ready?",
+  "collective": {
+    "op": "gather",
+    "deadline": 600,
+    "requestedSchema": {
+      "type": "object",
+      "properties": {
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ready"
+      ]
     }
   }
 }
@@ -58,16 +63,20 @@ answer, decline or no-answer. `deadline` is a whole number of seconds, up to
 
 ## Answer a request
 
-Answer a `collectiveRequest` once. Use the enclosing saved event's `address` as
-`input.to` and `item.message.operation.operationId` as the request ID. The
+Answer a `collectiveRequest` once. Use the inbox item's `address` as
+`to` and `item.message.operation.operationId` as the request ID. The
 request's `question`, `requestedSchema` and `deadlineAt` are in that operation
-metadata. For an event whose `address` is `agent:bob`:
+metadata. For an item whose `address` is `agent:bob`:
 
 ```json
 {
-  "input": {
-    "to": "agent:bob",
-    "collectiveResponse": { "action": "accept", "operationId": "<request operationId>", "content": { "ready": true } }
+  "to": "agent:bob",
+  "collectiveResponse": {
+    "action": "accept",
+    "operationId": "<request operationId>",
+    "content": {
+      "ready": true
+    }
   }
 }
 ```

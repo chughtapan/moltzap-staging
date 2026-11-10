@@ -50,13 +50,9 @@ it("retains the same peer message independently and rejects foreign event and ac
     expect(
       (yield* second.visibleMessages([message]))[0]?.visibleToAgent,
     ).toBeFalsy();
-    const foreignRead = yield* second
-      .getInboxEvent(firstItem.token)
-      .pipe(Effect.exit);
     const foreignAck = yield* second
       .acknowledgeDelivery(firstItem.token)
       .pipe(Effect.exit);
-    expect(Exit.isFailure(foreignRead)).toBeTruthy();
     expect(Exit.isFailure(foreignAck)).toBeTruthy();
     yield* second.publish(secondItem, decision);
     yield* first.acknowledgeDelivery(firstItem.token);
@@ -65,9 +61,6 @@ it("retains the same peer message independently and rejects foreign event and ac
     expect(retained.items.map((item) => item.deliveryToken)).toEqual([
       secondItem.token,
     ]);
-    expect(yield* reopened.getInboxEvent(secondItem.token)).toEqual(
-      yield* first.getInboxEvent(firstItem.token),
-    );
     expect((yield* first.listInbox()).items).toHaveLength(0);
   }).pipe(
     Effect.provide(databaseConnection(Redacted.make("sqlite::memory:"))),

@@ -274,14 +274,6 @@ describe("management failures", () => {
     readonly tag: string;
   }[] = [
     {
-      request: {
-        name: "read_event",
-        arguments: { eventId: entry.deliveryToken },
-      },
-      data: { reason: "unknown-event" },
-      tag: "InboxError",
-    },
-    {
       request: { name: "list_conversations", arguments: {} },
       data: { reason: "invalid-cursor" },
       tag: "HistoryError",

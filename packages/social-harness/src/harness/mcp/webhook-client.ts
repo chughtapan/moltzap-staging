@@ -26,7 +26,7 @@ export class WebhookCallbackError extends Data.TaggedError(
   "WebhookCallbackError",
 )<{
   readonly reason: WebhookFailureReason;
-  readonly discardOccurrence?: boolean;
+  readonly terminal?: boolean;
 }> {}
 
 /** One immutable event or verification body, signed separately on each attempt. */
@@ -221,7 +221,7 @@ const executeWebhook = (
       return yield* Effect.fail(
         new WebhookCallbackError({
           reason: response.status >= 500 ? "http_5xx" : "http_4xx",
-          discardOccurrence: response.status === 410 || response.status === 413,
+          terminal: response.status === 410 || response.status === 413,
         }),
       );
     }

@@ -26,7 +26,6 @@ import { openTestDatabase } from "../../communication/__tests__/store-fixtures.j
 import { FirewallPolicyError } from "../../firewall/rules.js";
 import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity/service.js";
-import { InboxError } from "../inbox.js";
 import { makeAgentMcpApp, makeMcpHttpApp } from "../mcp/server.js";
 import { webhookHttpClientLayer } from "../mcp/webhook-client.js";
 import { makeWebhookEvents } from "../mcp/webhook.js";
@@ -77,8 +76,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     register,
     send: () => Effect.dieMessage("Unexpected send"),
     listInbox: () => Effect.succeed({ items: [] }),
-    getInboxEvent: () =>
-      Effect.fail(new InboxError({ reason: "unknown-event" })),
     acknowledgeDelivery: () => Effect.void,
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),

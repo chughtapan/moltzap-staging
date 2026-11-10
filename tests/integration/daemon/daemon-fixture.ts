@@ -15,7 +15,6 @@ import {
   AgentPublicKey,
   AgentSigningAuthority,
   type MessageAddressInput,
-  PermittedItem,
   PrincipalId,
   toolDefinitions,
   type ToolResult,
@@ -139,9 +138,6 @@ export interface DaemonManagementClient {
   readonly readConversation: (
     address: MessageAddressInput,
   ) => Effect.Effect<ManagementReadConversationResult, ProcessTestError>;
-  readonly readEvent: (
-    eventId: string,
-  ) => Effect.Effect<PermittedItem, ProcessTestError>;
   readonly callExpectingProtocolError: (
     name: string,
     toolArguments: Readonly<Record<string, unknown>>,
@@ -1080,13 +1076,6 @@ function startNetworkRouter(
 
 function managementOperations(client: Client): DaemonManagementClient {
   const management: DaemonManagementClient = {
-    readEvent: (eventId) =>
-      callAndDecode({
-        client,
-        name: "read_event",
-        arguments: { eventId },
-        schema: Schema.Struct({ item: PermittedItem }),
-      }).pipe(Effect.map(({ item }) => item)),
     identityCard: () =>
       management.status().pipe(
         Effect.flatMap((status) =>

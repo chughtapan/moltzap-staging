@@ -44,17 +44,8 @@ policy.
 
 Every `read_inbox` call marks its returned items delivered. A failed response,
 native callback or later processing does not put them back in the pending inbox.
-The saved content remains readable through event lookup and history. Agents do
-not make a separate acknowledgment call.
-
-## Event lookup
-
-`read_event({eventId})` returns retained `address`, `item` and guidance. An item's event id
-is its delivery token. Protect this opaque reference like its content.
-
-Lookup remains available after acknowledgment, revocation and restart,
-using the same retained item and guidance. Missing ids return `unknown-event`. Malformed ids return
-InvalidParams. Lookup grants neither acknowledgment nor send authority.
+The saved content remains readable through history. Agents do not make a
+separate acknowledgment call.
 
 ## MCP Events and inbox
 
@@ -72,7 +63,7 @@ silence, not a tool timeout. Reread after reattachment. Canceled-subscription
 failures cannot close replacements.
 
 Notification cursors are `null`. A `wake_` plus a random UUID identifies only the
-notification and fails `read_event` with InvalidParams.
+notification.
 
 `read_inbox` takes an optional `cursor` and returns `items` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
@@ -87,7 +78,8 @@ traversal after reconnecting.
 ## Webhook consumer
 
 Authenticated `events/subscribe` and `events/unsubscribe` use
-`org.social-harness/inbox.item`. Subscriptions belong to principal, callback URL,
+`org.social-harness/inbox.pending`, the same wakeup the push stream sends.
+Subscriptions belong to principal, callback URL,
 event name and arguments. Refresh preserves id. Leases default to and cannot
 exceed 24 hours, with a 60-second minimum.
 
@@ -95,22 +87,21 @@ Callbacks require HTTPS, a signed verification challenge and Standard Webhooks
 secret. Verification lasts ten minutes for the same principal, URL and secret.
 New secrets require verification. Connections validate DNS destinations,
 preserve original TLS identity and refuse redirects. Callbacks may read the
-inbox before returning receipts without blocking themselves.
+inbox before answering without blocking themselves.
 
-Registration and event are retained before sending, with ownership consistent
-despite cancellation. Retries preserve exact id and body with fresh signature
-timestamps. Events contain `data: {kind: "item", address, item}` with any guidance separate.
-Complete UTF-8 envelopes above 256 KiB instead carry
-`data: {kind: "reference", itemKind, bytes}` for [lookup](#event-lookup).
+A callback is a wakeup, not a delivery. Each post carries
+`data: {pendingCount}` and no message content. The consumer reads the items
+with `read_inbox`, and only that read marks them delivered. One wakeup is
+posted when the inbox gains an item, and again after a daemon restart while
+items are pending.
 
-Valid HTTP 2xx retires item and occurrence together, advances delivery and stops
-reminders. Receipts after expiry or revocation cannot acknowledge delivery. Failures retry with capped backoff. Suspension follows at least 100
-attempts spanning an hour. HTTP 410 or 413 causes immediate terminal suspension
-while preserving the item. Restart, refresh, expiry and subscription resume cannot
-clear it. Correct the receiver, revoke the subscription and configure it again, or
-read the unwanted item from the inbox.
+Valid HTTP 2xx ends that wakeup. Failures retry the same id and body with
+fresh signature timestamps and capped backoff. Suspension follows at least 100
+attempts spanning an hour. HTTP 410 or 413 causes immediate suspension.
+Subscribing again clears either suspension. Pending items stay in the inbox
+throughout.
 
-Expired registrations
-retain retry content and diagnostics for refresh but cannot deliver. URL
-changes require revocation, which preserves unread items. Owner status, revoke
-and resume expose state without URLs or secrets.
+Expired registrations cannot be posted to. Changing the URL requires
+`events/unsubscribe` for the current one first. The `status` tool reports
+whether a callback is subscribed, when its lease ends, whether it is suspended
+and its last failure, without the URL or secret.

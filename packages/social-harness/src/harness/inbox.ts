@@ -79,7 +79,6 @@ export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
     "not-registered",
     "invalid-cursor",
     "invalid-event",
-    "unknown-event",
     "persistence-failed",
   ),
 }) {}
@@ -300,23 +299,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         : {}),
     } satisfies InboxPage;
   });
-  const getInboxEvent = Effect.fn(function* (token: DeliveryToken) {
-    const rows = yield* SqlSchema.findAll({
-      Request: DeliveryToken,
-      Result: savedRow,
-      execute: (token) =>
-        run(
-          storedItems()
-            .select(["sequence", "token", "address", "view"])
-            .where("token", "=", token)
-            .where("view", "is not", null),
-        ),
-    })(token);
-    const row = rows[0];
-    return row === undefined
-      ? yield* new InboxError({ reason: "unknown-event" })
-      : yield* decodeCanonical(InboxEvent, row.view);
-  });
   const publish = Effect.fn(function* (
     item: PendingItem,
     decision: IncomingDecision,
@@ -427,14 +409,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       ),
     listInbox: (request?: typeof PaginatedRequest.Type) =>
       listInbox(request ?? {}).pipe(
-        Effect.catchAll((error) =>
-          error instanceof InboxError
-            ? Effect.fail(error)
-            : Effect.fail(persistenceFailure()),
-        ),
-      ),
-    getInboxEvent: (token: DeliveryToken) =>
-      getInboxEvent(token).pipe(
         Effect.catchAll((error) =>
           error instanceof InboxError
             ? Effect.fail(error)
