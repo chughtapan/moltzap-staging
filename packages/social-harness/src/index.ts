@@ -4,14 +4,12 @@
 /** MCP tool arguments, results and failures derive from these schemas. */
 export {
   MAXIMUM_WAIT_SECONDS,
+  type ToolCallFailure,
   toolDefinitions,
-  toolFailureSchemas,
   type ToolName,
   type ToolRequest,
   type ToolResult,
 } from "./harness/mcp/contracts.js";
-/** Clients distinguish a refused send from an unknown outcome using this decoder. */
-export { decodeHarnessSendErrorData } from "./harness/mcp/contracts.js";
 /** Send requests, accepted-work receipts and agent-facing text for host integrations. */
 export {
   groupMembers,

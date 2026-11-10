@@ -10,15 +10,8 @@ import {
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
 import {
-  decodeHarnessSendErrorData,
-  FirewallPolicyError,
-  FirewallRefusal,
-  HistoryError,
-  InboxError,
-  RequestError,
-  SendError,
+  type ToolCallFailure,
   toolDefinitions,
-  toolFailureSchemas,
   type ToolName,
   type ToolRequest,
   type ToolResult,
@@ -27,9 +20,8 @@ import {
   Data,
   Duration,
   Effect,
-  Either,
   Fiber,
-  type ParseResult,
+  Option,
   Redacted,
   Ref,
   Schema,
@@ -49,23 +41,17 @@ export class McpToolError extends Data.TaggedError("McpToolError")<{
   readonly reason: "tool-failed" | "transport-failed" | "decode-failed";
 }> {}
 
-/** A send retains its closed domain refusal and uncertain-acceptance classification. */
-export type ToolFailure<Name extends ToolName> = Name extends "send_message"
-  ? SendError | RequestError | FirewallRefusal
-  :
-      | McpToolError
-      | (Name extends "receive_messages"
-          ? InboxError
-          : Name extends "list_conversations" | "read_conversation"
-            ? HistoryError
-            : Name extends
-                  | "read_policy"
-                  | "update_policy"
-                  | "read_firewall_decisions"
-              ? FirewallPolicyError
-              : never);
+type FailureContract<Name extends ToolName> =
+  (typeof toolDefinitions)[Name]["failure"];
 
-type DomainFailure = InboxError | HistoryError | FirewallPolicyError;
+/**
+ * How calling a tool can fail: the failure its definition reads from the
+ * daemon's answer, and {@link McpToolError} for a tool whose definition does
+ * not read every failure.
+ */
+export type ToolFailure<Name extends ToolName> =
+  | Option.Option.Value<ReturnType<FailureContract<Name>["read"]>>
+  | (FailureContract<Name>["total"] extends true ? never : McpToolError);
 
 /** Native channels connect with the daemon credential supplied by their host. */
 export interface McpConnectionSettings {
@@ -126,39 +112,69 @@ export function acquireMcpConnection(
   return acquireConnection({ ...settings, endpoint }, { ...implementation });
 }
 
+/** What a caller is told when a tool's definition does not read a failure. */
+const reasons = {
+  refused: "tool-failed",
+  unanswered: "transport-failed",
+  unreadable: "decode-failed",
+} as const;
+
 export function callTool<Name extends ToolName>(
   client: Pick<Client, "callTool">,
   request: ToolRequest & { readonly name: Name },
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
-/** Calls the named MCP tool once. An uncertain send never triggers a retry. */
+/**
+ * Calls the named MCP tool once and never retries. The tool's definition
+ * decodes its result and reads its failures.
+ */
 export function callTool(
   client: Pick<Client, "callTool">,
   request: ToolRequest,
 ): Effect.Effect<unknown, unknown> {
+  const definition: ToolContract = toolDefinitions[request.name];
+  const fail = (failure: ToolCallFailure) =>
+    Option.getOrElse(
+      definition.failure.read(failure),
+      () =>
+        new McpToolError({ tool: request.name, reason: reasons[failure.kind] }),
+    );
   return Effect.tryPromise({
     try: (signal) => client.callTool(request, { signal }),
-    catch: (error) =>
-      request.name === "send_message"
-        ? sendFailure(error)
-        : managementFailure(request.name, error),
+    catch: (cause) => fail(observed(cause)),
   }).pipe(
-    Effect.flatMap((response) => {
-      if (response.isError === true) {
-        return Effect.fail(
-          request.name === "send_message"
-            ? new SendError({ reason: "outcome-unknown" })
-            : new McpToolError({ tool: request.name, reason: "tool-failed" }),
-        );
-      }
-      return decodeToolResult(request.name, response.structuredContent).pipe(
-        Effect.mapError(() =>
-          request.name === "send_message"
-            ? new SendError({ reason: "outcome-unknown" })
-            : new McpToolError({ tool: request.name, reason: "decode-failed" }),
-        ),
-      );
-    }),
+    Effect.flatMap((response) =>
+      response.isError === true
+        ? Effect.fail(fail({ kind: "refused", data: undefined }))
+        : Schema.decodeUnknown(definition.output)(
+            response.structuredContent,
+          ).pipe(
+            Effect.map((result): unknown => result),
+            Effect.mapError(() => fail({ kind: "unreadable" })),
+          ),
+    ),
   );
+}
+
+/** The part of any tool's definition a call needs: its result and how its failures read. */
+interface ToolContract {
+  readonly output: Schema.Schema.AnyNoContext;
+  readonly failure: {
+    readonly read: (failure: ToolCallFailure) => Option.Option<unknown>;
+  };
+}
+
+/** What a rejected call says about whether the daemon received the request. */
+function observed(cause: unknown): ToolCallFailure {
+  if (ProtocolError.isInstance(cause)) {
+    return { kind: "refused", data: cause.data };
+  }
+  const refusedBeforeTheTool =
+    SdkHttpError.isInstance(cause) &&
+    [400, 401, 403, 404, 405].includes(cause.status);
+  return {
+    kind: "unanswered",
+    sent: !(refusedBeforeTheTool || connectionRefused(cause)),
+  };
 }
 
 function acquireConnection(
@@ -223,133 +239,6 @@ function acquireConnection(
       },
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
-}
-
-function decodeToolResult(
-  name: ToolName,
-  value: unknown,
-): Effect.Effect<ToolResult<ToolName>, ParseResult.ParseError> {
-  switch (name) {
-    case "send_message":
-      return Schema.decodeUnknown(toolDefinitions.send_message.output)(value);
-    case "receive_messages":
-      return Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
-        value,
-      );
-    case "status":
-      return Schema.decodeUnknown(toolDefinitions.status.output)(value);
-    case "list_conversations":
-      return Schema.decodeUnknown(toolDefinitions.list_conversations.output)(
-        value,
-      );
-    case "read_conversation":
-      return Schema.decodeUnknown(toolDefinitions.read_conversation.output)(
-        value,
-      );
-    case "read_policy":
-      return Schema.decodeUnknown(toolDefinitions.read_policy.output)(value);
-    case "update_policy":
-      return Schema.decodeUnknown(toolDefinitions.update_policy.output)(value);
-    case "read_firewall_decisions":
-      return Schema.decodeUnknown(
-        toolDefinitions.read_firewall_decisions.output,
-      )(value);
-    case "read_norms":
-      return Schema.decodeUnknown(toolDefinitions.read_norms.output)(value);
-    default:
-      return name satisfies never;
-  }
-}
-
-function sendFailure(
-  cause: unknown,
-): SendError | RequestError | FirewallRefusal {
-  if (!ProtocolError.isInstance(cause)) {
-    const httpRefused =
-      SdkHttpError.isInstance(cause) &&
-      [400, 401, 403, 404, 405].includes(cause.status);
-    const refused = httpRefused || connectionRefused(cause);
-    return new SendError({
-      reason: refused ? "network-unavailable" : "outcome-unknown",
-    });
-  }
-  const decoded = Effect.runSync(
-    decodeHarnessSendErrorData(cause.data).pipe(Effect.either),
-  );
-  return Either.match(decoded, {
-    onLeft: () => new SendError({ reason: "outcome-unknown" }),
-    onRight: (data) => {
-      if ("refusal" in data) {
-        return new FirewallRefusal(data);
-      }
-      if ("failure" in data) {
-        return new RequestError({
-          failure: data.failure,
-          ...(data.operationId === undefined
-            ? {}
-            : { operationId: data.operationId }),
-        });
-      }
-      return new SendError(data);
-    },
-  });
-}
-
-function managementFailure(
-  name: ToolName,
-  cause: unknown,
-): DomainFailure | McpToolError {
-  if (!ProtocolError.isInstance(cause)) {
-    return new McpToolError({ tool: name, reason: "transport-failed" });
-  }
-  const data = cause.data;
-  function decode<A, I, E>(
-    schema: Schema.Schema<A, I>,
-    create: (data: A) => E,
-  ): E | McpToolError {
-    return Either.match(Schema.decodeUnknownEither(schema)(data), {
-      onLeft: () => new McpToolError({ tool: name, reason: "tool-failed" }),
-      onRight: create,
-    });
-  }
-  switch (name) {
-    case "receive_messages":
-      return decode(
-        toolFailureSchemas.receive_messages,
-        (data) => new InboxError(data),
-      );
-    case "list_conversations":
-      return decode(
-        toolFailureSchemas.list_conversations,
-        (data) => new HistoryError(data),
-      );
-    case "read_conversation":
-      return decode(
-        toolFailureSchemas.read_conversation,
-        (data) => new HistoryError(data),
-      );
-    case "read_policy":
-      return decode(
-        toolFailureSchemas.read_policy,
-        (data) => new FirewallPolicyError(data),
-      );
-    case "update_policy":
-      return decode(
-        toolFailureSchemas.update_policy,
-        (data) => new FirewallPolicyError(data),
-      );
-    case "read_firewall_decisions":
-      return decode(
-        toolFailureSchemas.read_firewall_decisions,
-        (data) => new FirewallPolicyError(data),
-      );
-    case "send_message":
-    case "status":
-    case "read_norms":
-      return new McpToolError({ tool: name, reason: "tool-failed" });
-    default:
-      return name satisfies never;
-  }
 }
 
 function consumePending<E, R>(
