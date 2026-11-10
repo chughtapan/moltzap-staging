@@ -10,6 +10,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   Redacted,
   Schema,
 } from "effect";
@@ -92,10 +93,9 @@ export type RegistryLookupResult =
   | Readonly<{ kind: "found"; identityCard: VerifiedAgentIdentityCard }>
   | Readonly<{ kind: "not_found" }>;
 
-/** The admission credential authorizes registration, and the signing authority proves possession of the agent key. */
+/** The signing authority proves possession of the agent key being registered. */
 type RegistryRegisterCall = Readonly<{
   request: Omit<RegistryRegisterRequest, "publicKey">;
-  admissionCredential: Redacted.Redacted;
   signingAuthority: AgentSigningAuthority;
 }>;
 
@@ -260,11 +260,16 @@ export class Registry extends Context.Tag("SocialHarness/Registry")<
     Registry,
     (service) => service.lookup,
   );
-  /** Pins transport, deadline and Registry signing authority for this client. */
+  /**
+   * Pins transport, deadline and Registry signing authority for this client.
+   * `admissionCredential` is the network's secret that authorizes
+   * registration; without it a registration is refused before it is sent.
+   */
   static readonly layer = (input: {
     readonly origin: URL;
     readonly registrySignerPublicKey: AgentPublicKey;
     readonly requestTimeout: Duration.Duration;
+    readonly admissionCredential: Option.Option<Redacted.Redacted>;
   }): Layer.Layer<Registry, never, HttpClient.HttpClient> =>
     Layer.effect(Registry, makeRegistryService(input));
 }
@@ -273,6 +278,7 @@ function makeRegistryService(input: {
   readonly origin: URL;
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly requestTimeout: Duration.Duration;
+  readonly admissionCredential: Option.Option<Redacted.Redacted>;
 }): Effect.Effect<
   Context.Tag.Service<typeof Registry>,
   never,
@@ -285,12 +291,15 @@ function makeRegistryService(input: {
   return Effect.map(
     HttpClient.HttpClient,
     (client): Context.Tag.Service<typeof Registry> => {
-      const register = makeRegister({
-        client,
-        origin,
-        registrySignerPublicKey: input.registrySignerPublicKey,
-        requestTimeout,
-      });
+      const register = makeRegister(
+        {
+          client,
+          origin,
+          registrySignerPublicKey: input.registrySignerPublicKey,
+          requestTimeout,
+        },
+        input.admissionCredential,
+      );
       const lookup = makeLookup({
         client,
         origin,
@@ -445,7 +454,9 @@ const withDeadline = <A, E>(
 
 const makeSignedRegistrationRequest = (
   input: RegistryClientInput,
-  call: RegistryRegisterCall,
+  call: RegistryRegisterCall & {
+    readonly admissionCredential: Redacted.Redacted;
+  },
   registerRequest: typeof RegistryRegisterRequest.Type,
 ) =>
   Effect.gen(function* () {
@@ -509,12 +520,19 @@ const decodeRegistrationResult = (
 
 function makeRegister(
   input: RegistryClientInput,
+  admissionCredential: Option.Option<Redacted.Redacted>,
 ): (
   call: RegistryRegisterCall,
 ) => Effect.Effect<RegistryRegisterResult, RegistryError> {
   return (candidate) =>
     Effect.gen(function* () {
-      const call = candidate;
+      if (Option.isNone(admissionCredential)) {
+        return yield* new RegistryError({ reason: "admission-refused" });
+      }
+      const call = {
+        ...candidate,
+        admissionCredential: admissionCredential.value,
+      };
       const registerRequest = {
         ...call.request,
         publicKey: AgentSigningAuthority.publicKey(call.signingAuthority),

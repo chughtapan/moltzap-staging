@@ -26,7 +26,7 @@ import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
 import { Registry } from "../identity/registry.js";
-import { Identity, IdentityError } from "../identity/service.js";
+import { Identity } from "../identity/service.js";
 import {
   HeldNorms,
   type ServiceNorms,
@@ -266,10 +266,6 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
       agentKey,
       signingAuthority: registration.signingAuthority,
       registrySignerPublicKey: settings.registrySignerPublicKey,
-      admissionCredential:
-        settings.admissionCredential === undefined
-          ? Effect.fail(new IdentityError({ reason: "incompatible-daemon" }))
-          : Effect.succeed(settings.admissionCredential),
     });
     const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
@@ -349,6 +345,7 @@ function networkLayer(settings: DaemonSettings) {
     origin: settings.registryOrigin,
     registrySignerPublicKey: settings.registrySignerPublicKey,
     requestTimeout: Duration.seconds(30),
+    admissionCredential: Option.fromNullable(settings.admissionCredential),
   }).pipe(Layer.provide(NodeHttpClient.layer));
 }
 
@@ -367,7 +364,6 @@ export {
 /** Local identity and registration remain independent of delivery recovery. */
 export {
   Identity,
-  IdentityError,
   type IdentityState,
   RegistrationError,
   type RegistrationRequest,

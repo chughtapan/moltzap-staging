@@ -4,7 +4,7 @@ import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Context, Effect, Encoding, Layer, Redacted } from "effect";
+import { Context, Effect, Encoding, Layer } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { migrateDaemon } from "../database/migrations.js";
@@ -48,7 +48,6 @@ function openIdentity(
   fixture: IdentityFixture,
   registry: Context.Tag.Service<typeof Registry>,
   options: {
-    readonly admissionCredential?: Effect.Effect<Redacted.Redacted>;
     readonly agentKey?: string;
   } = {},
 ) {
@@ -59,9 +58,6 @@ function openIdentity(
       registrySignerPublicKey: AgentSigningAuthority.publicKey(
         fixture.registryAuthority,
       ),
-      admissionCredential:
-        options.admissionCredential ??
-        Effect.succeed(Redacted.make("test-admission")),
     }).pipe(
       Layer.provide(Layer.succeed(Registry, registry)),
       Layer.provide(
@@ -139,16 +135,11 @@ describe("Identity", () => {
       );
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const identity = yield* openIdentity(
-            filename,
-            fixture,
-            registryFor(fixture),
-            {
-              admissionCredential: Effect.dieMessage(
-                "saved registration does not read admission",
-              ),
-            },
-          );
+          const identity = yield* openIdentity(filename, fixture, {
+            ...registryFor(fixture),
+            register: () =>
+              Effect.dieMessage("a saved registration is not sent again"),
+          });
           expect(yield* identity.me()).toEqual({
             kind: "registered",
             identityCard: fixture.identityCard,

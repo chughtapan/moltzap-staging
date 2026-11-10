@@ -22,6 +22,7 @@ import {
   Duration,
   Effect,
   Layer,
+  Option,
   Schema,
 } from "effect";
 import { randomBytes } from "node:crypto";
@@ -77,22 +78,19 @@ const scenario = Effect.gen(function* () {
       agentKey,
       access.unlockKey,
     );
-    if (settings.admissionCredential === undefined) {
-      return yield* Effect.dieMessage(
-        "Expected network admission in qualification settings",
-      );
-    }
     const identity = Identity.layer({
       agentKey,
       signingAuthority: registration.signingAuthority,
       registrySignerPublicKey: settings.registrySignerPublicKey,
-      admissionCredential: Effect.succeed(settings.admissionCredential),
     }).pipe(
       Layer.provide(
         Registry.layer({
           origin: settings.registryOrigin,
           registrySignerPublicKey: settings.registrySignerPublicKey,
           requestTimeout: Duration.seconds(5),
+          admissionCredential: Option.fromNullable(
+            settings.admissionCredential,
+          ),
         }).pipe(Layer.provide(NodeHttpClient.layer)),
       ),
     );
@@ -138,15 +136,13 @@ const scenario = Effect.gen(function* () {
       agentKey: saved.agentKey,
       signingAuthority: saved.registration.signingAuthority,
       registrySignerPublicKey: saved.settings.registrySignerPublicKey,
-      admissionCredential: Effect.dieMessage(
-        "Reopening must use the saved registration",
-      ),
     }).pipe(
       Layer.provide(
         Registry.layer({
           origin: saved.settings.registryOrigin,
           registrySignerPublicKey: saved.settings.registrySignerPublicKey,
           requestTimeout: Duration.seconds(5),
+          admissionCredential: Option.none(),
         }).pipe(Layer.provide(NodeHttpClient.layer)),
       ),
     );

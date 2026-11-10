@@ -6,7 +6,7 @@ import {
   Authentication,
   Registry,
 } from "@social-harness/social-harness/internal";
-import { Console, Data, Duration, Effect, Layer } from "effect";
+import { Console, Data, Duration, Effect, Layer, Option } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer.make requires Node's server factory at this adapter boundary.
 import { createServer } from "node:http";
 import {
@@ -126,6 +126,7 @@ export namespace RouterServer {
       origin: configuration.registryOrigin,
       registrySignerPublicKey: configuration.registrySignerPublicKey,
       requestTimeout: Duration.millis(configuration.registryLookupTimeoutMs),
+      admissionCredential: Option.none(),
     }).pipe(Layer.provide(NodeHttpClient.layer));
     return Layer.unwrapEffect(
       Effect.gen(function* () {

@@ -1,16 +1,7 @@
 /** @file Saves local registration and resolves verified agent identities. */
 
 import { SqlClient } from "@effect/sql";
-import {
-  Context,
-  Data,
-  Effect,
-  Layer,
-  Option,
-  type Redacted,
-  Ref,
-  Schema,
-} from "effect";
+import { Context, Data, Effect, Layer, Option, Ref, Schema } from "effect";
 
 import { executeQuery, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
@@ -223,7 +214,6 @@ interface IdentitySettings {
   readonly agentKey: string;
   readonly registrySignerPublicKey: AgentPublicKey;
   readonly signingAuthority: AgentSigningAuthority;
-  readonly admissionCredential: Effect.Effect<Redacted.Redacted, unknown>;
 }
 
 function identityLayer(
@@ -309,9 +299,6 @@ function resolveFailure(agentName: AgentName): IdentityError {
   return new IdentityError({ reason: "dependency-unavailable", agentName });
 }
 
-const admissionFailure = () =>
-  new RegistrationError({ reason: "incompatible-daemon" });
-
 function registerLocal(
   request: RegistrationRequest,
   settings: IdentitySettings,
@@ -319,13 +306,9 @@ function registerLocal(
   current: Ref.Ref<Option.Option<VerifiedAgentIdentityCard>>,
 ) {
   return Effect.gen(function* () {
-    const admissionCredential = yield* settings.admissionCredential.pipe(
-      Effect.mapError(admissionFailure),
-    );
     const result = yield* registry
       .register({
         request: { ...request },
-        admissionCredential,
         signingAuthority: settings.signingAuthority,
       })
       .pipe(Effect.mapError(registrationFailure));

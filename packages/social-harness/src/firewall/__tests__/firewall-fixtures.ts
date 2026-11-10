@@ -1,7 +1,7 @@
 /** @file Shared fixtures for firewall service tests: a registered agent's firewall, messages, rules and a test provider. */
 
 import { SqliteClient } from "@effect/sql-sqlite-node";
-import { type Context, Effect, Encoding, Layer, Redacted } from "effect";
+import { type Context, Effect, Encoding, Layer } from "effect";
 import type { IdentityFixture } from "../../identity/__tests__/authentication-fixtures.js";
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
@@ -81,7 +81,6 @@ export function withFirewall<A, E, R>(
     registrySignerPublicKey: AgentSigningAuthority.publicKey(
       fixture.registryAuthority,
     ),
-    admissionCredential: Effect.succeed(Redacted.make("test-admission")),
   }).pipe(
     Layer.provide(
       Layer.succeed(
