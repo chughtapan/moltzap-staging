@@ -2,7 +2,11 @@
 import { FileSystem } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import { AgentCard, Message } from "@social-harness/social-harness";
+import {
+  AgentCard,
+  AgentPublicKey,
+  Message,
+} from "@social-harness/social-harness";
 import {
   Firewall,
   Identity,
@@ -23,6 +27,7 @@ import {
   Effect,
   Layer,
   Option,
+  type Redacted,
   Schema,
 } from "effect";
 import { randomBytes } from "node:crypto";
@@ -47,6 +52,18 @@ const evidence = {
 const scenario = Effect.gen(function* () {
   const infrastructure = yield* acquireProcessInfrastructure;
   const database = yield* acquirePostgres;
+  const registrySignerPublicKey = yield* Schema.decodeUnknown(
+    Schema.parseJson(AgentPublicKey),
+  )(infrastructure.registrySignerPublicKeyJson);
+  const registryWith = (
+    admissionCredential: Option.Option<Redacted.Redacted>,
+  ) =>
+    Registry.layer({
+      origin: infrastructure.registryOrigin,
+      registrySignerPublicKey,
+      requestTimeout: Duration.seconds(5),
+      admissionCredential,
+    }).pipe(Layer.provide(NodeHttpClient.layer));
   const filesystem = yield* FileSystem.FileSystem;
   const policyFile = join(infrastructure.temporaryDirectory, "policy.json");
   yield* filesystem.writeFileString(
@@ -81,17 +98,10 @@ const scenario = Effect.gen(function* () {
     const identity = Identity.layer({
       agentKey,
       signingAuthority: registration.signingAuthority,
-      registrySignerPublicKey: settings.registrySignerPublicKey,
+      registrySignerPublicKey,
     }).pipe(
       Layer.provide(
-        Registry.layer({
-          origin: settings.registryOrigin,
-          registrySignerPublicKey: settings.registrySignerPublicKey,
-          requestTimeout: Duration.seconds(5),
-          admissionCredential: Option.fromNullable(
-            settings.admissionCredential,
-          ),
-        }).pipe(Layer.provide(NodeHttpClient.layer)),
+        registryWith(Option.fromNullable(settings.admissionCredential)),
       ),
     );
     const configured = Firewall.layer(agentKey, settings.messagePolicy).pipe(
@@ -135,17 +145,8 @@ const scenario = Effect.gen(function* () {
     const identity = Identity.layer({
       agentKey: saved.agentKey,
       signingAuthority: saved.registration.signingAuthority,
-      registrySignerPublicKey: saved.settings.registrySignerPublicKey,
-    }).pipe(
-      Layer.provide(
-        Registry.layer({
-          origin: saved.settings.registryOrigin,
-          registrySignerPublicKey: saved.settings.registrySignerPublicKey,
-          requestTimeout: Duration.seconds(5),
-          admissionCredential: Option.none(),
-        }).pipe(Layer.provide(NodeHttpClient.layer)),
-      ),
-    );
+      registrySignerPublicKey,
+    }).pipe(Layer.provide(registryWith(Option.none())));
     const services = yield* Layer.build(
       Firewall.layer(saved.agentKey, saved.settings.messagePolicy).pipe(
         Layer.provide(identity),

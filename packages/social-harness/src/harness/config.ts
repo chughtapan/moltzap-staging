@@ -140,8 +140,8 @@ const commonFields = {
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication: Schema.Union(localBearer, publicOAuth),
-  registryOrigin: origin,
-  registrySignerPublicKey: AgentPublicKey,
+  registryOrigin: Schema.optional(origin),
+  registrySignerPublicKey: Schema.optional(AgentPublicKey),
   transport: Schema.Union(
     exactStruct({ kind: Schema.Literal("p2p"), routerOrigin: origin }),
     exactStruct({
@@ -229,6 +229,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
       ),
     ),
   );
+  yield* checkRegistry(document);
   const root = dirname(resolve(selected));
   const norms =
     document.normsDirectory === undefined
@@ -295,6 +296,29 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
     ...(document.agent === undefined ? {} : { agent: document.agent }),
   };
 }, Effect.withSpan("loadDaemonSettings"));
+
+/**
+ * P2P peers need a Registry they share. A client/server daemon may leave the
+ * Registry out and name its agents itself.
+ */
+function checkRegistry(document: typeof setup.Type) {
+  const configured = [
+    document.registryOrigin,
+    document.registrySignerPublicKey,
+  ].filter((value) => value !== undefined).length;
+  if (configured === 1) {
+    return refused(
+      "document",
+      "Set registryOrigin and registrySignerPublicKey together, or leave both out in client/server mode to use the daemon's own Registry",
+    );
+  }
+  return configured === 0 && document.transport.kind === "p2p"
+    ? refused(
+        "document",
+        "P2P mode needs the Registry its peers share: set registryOrigin and registrySignerPublicKey",
+      )
+    : Effect.void;
+}
 
 /**
  * The secret the server agent signs in with, from the environment so that it

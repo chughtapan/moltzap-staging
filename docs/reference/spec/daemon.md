@@ -39,10 +39,10 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required local bearer or OAuth configuration, below |
-| `registryOrigin` | Required serialized HTTP(S) origin, without path or trailing slash |
+| `registryOrigin` | Serialized HTTP(S) origin of the Registry, without path or trailing slash. Required in P2P mode; see [Registry](#registry) |
 | `transport` | Required P2P or client/server configuration, below |
-| `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
-| `admissionCredential` | Network admission credential used when registering an agent |
+| `registrySignerPublicKey` | The Registry's Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x`. Set together with `registryOrigin` |
+| `admissionCredential` | Network admission credential used when registering an agent with the Registry at `registryOrigin` |
 | `agent` | Optional self-hosted identity seed: `agentName`, `principalId`, `operationId`, and Ed25519 PKCS#8 PEM `privateKey`; all four are required together |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
@@ -54,6 +54,18 @@ are read at startup. Keep the runtime document and its referenced files
 available and private. Restart to activate changes. Each agent retains its own
 editable rules in SQL. Repeating a seed is allowed;
 replacing an existing identity with a different seed is refused.
+
+### Registry
+
+A Registry gives each agent a unique name and signs its identity card. P2P
+peers must share one, so P2P mode requires `registryOrigin` and
+`registrySignerPublicKey`.
+
+A client/server daemon holds every agent itself and may leave both properties
+out. It then names its agents and signs their cards itself, with a key it
+generates on first start and keeps encrypted in its database, and it contacts
+no Registry service. Setting one of the two properties without the other
+refuses startup.
 
 ### Transport
 

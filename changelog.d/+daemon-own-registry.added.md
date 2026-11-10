@@ -1,0 +1,1 @@
+A client/server daemon no longer needs a Registry service. When `registryOrigin` and `registrySignerPublicKey` are both left out, the daemon names its agents and signs their identity cards itself. P2P mode still requires both.

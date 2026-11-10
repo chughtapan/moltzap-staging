@@ -18,6 +18,7 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
+import type { AgentPublicKey } from "../identity/keys.js";
 import { MessageAddressInput } from "../communication/messages.js";
 import { Router } from "../communication/router/client.js";
 import { Communication } from "../communication/service.js";
@@ -25,6 +26,7 @@ import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { FirewallPolicyError } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
+import { localRegistry } from "../identity/local-registry.js";
 import { Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
 import {
@@ -76,11 +78,12 @@ function runDaemon() {
           agentName: settings.transport.serverAgentName,
         });
       }
-      const network = yield* Layer.build(networkLayer(settings));
+      const registry = yield* openRegistry(settings, access.unlockKey);
       const selectApp = yield* makeAgentSelector(
         settings,
         access.unlockKey,
-      ).pipe(Effect.provide(network));
+        registry.registrySignerPublicKey,
+      ).pipe(Effect.provide(yield* Layer.build(registry.layer)));
       const app = yield* makeMcpHttpApp(
         settings.authentication,
         selectApp,
@@ -99,6 +102,7 @@ function runDaemon() {
 function makeAgentSelector(
   settings: DaemonSettings,
   unlockKey: Redacted.Redacted<Uint8Array>,
+  registrySignerPublicKey: AgentPublicKey,
 ) {
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
@@ -114,7 +118,13 @@ function makeAgentSelector(
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
         makeAgentApp(
-          { settings, unlockKey, serverAgentNorms, norms },
+          {
+            settings,
+            unlockKey,
+            registrySignerPublicKey,
+            serverAgentNorms,
+            norms,
+          },
           agentKey,
         ),
       timeToLive: (exit) =>
@@ -176,6 +186,8 @@ const roleOf = (settings: DaemonSettings, agentName: string) => {
 interface DaemonResources {
   readonly settings: DaemonSettings;
   readonly unlockKey: Redacted.Redacted<Uint8Array>;
+  /** The key identity cards are checked against. */
+  readonly registrySignerPublicKey: AgentPublicKey;
   /** The server agent's norms, once it has started, for its clients to read. */
   readonly serverAgentNorms: Ref.Ref<
     Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -265,7 +277,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
     const identity = Identity.layer({
       agentKey,
       signingAuthority: registration.signingAuthority,
-      registrySignerPublicKey: settings.registrySignerPublicKey,
+      registrySignerPublicKey: daemon.registrySignerPublicKey,
     });
     const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
@@ -277,7 +289,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
               agentKey,
               identityCard,
               signingAuthority: registration.signingAuthority,
-              registrySignerPublicKey: settings.registrySignerPublicKey,
+              registrySignerPublicKey: daemon.registrySignerPublicKey,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
             }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
@@ -340,13 +352,27 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
   }).pipe(Effect.withSpan("makeAgentApp"));
 }
 
-function networkLayer(settings: DaemonSettings) {
-  return Registry.layer({
-    origin: settings.registryOrigin,
-    registrySignerPublicKey: settings.registrySignerPublicKey,
-    requestTimeout: Duration.seconds(30),
-    admissionCredential: Option.fromNullable(settings.admissionCredential),
-  }).pipe(Layer.provide(NodeHttpClient.layer));
+/**
+ * The Registry that names this daemon's agents: the one the settings point
+ * at, or the daemon's own when they point at none.
+ */
+function openRegistry(
+  settings: DaemonSettings,
+  unlockKey: Redacted.Redacted<Uint8Array>,
+) {
+  const { registryOrigin, registrySignerPublicKey } = settings;
+  if (registryOrigin === undefined || registrySignerPublicKey === undefined) {
+    return localRegistry(unlockKey);
+  }
+  return Effect.succeed({
+    registrySignerPublicKey,
+    layer: Registry.layer({
+      origin: registryOrigin,
+      registrySignerPublicKey,
+      requestTimeout: Duration.seconds(30),
+      admissionCredential: Option.fromNullable(settings.admissionCredential),
+    }).pipe(Layer.provide(NodeHttpClient.layer)),
+  });
 }
 
 /** Deployment prepares schema and encryption metadata before the serving process starts. */

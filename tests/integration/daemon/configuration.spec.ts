@@ -379,6 +379,12 @@ it.each([
   { ...settings, porrt: settings.port },
   { ...settings, port: 0 },
   { ...settings, registryOrigin: "https://registry.example/path" },
+  { ...settings, registryOrigin: undefined },
+  {
+    ...settings,
+    registryOrigin: undefined,
+    registrySignerPublicKey: undefined,
+  },
 ])(
   "rejects invalid settings without disclosing their credentials: %j",
   (document) =>
@@ -484,10 +490,10 @@ it("rolls back additive schema changes and migration rows when the retained key 
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.prepare;
-    yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
-    yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+    yield* test.sql`DROP TABLE local_registry_agents`;
+    yield* test.sql`DROP TABLE local_registry_signer`;
     yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-    const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+    const metadata = yield* test.sql`SELECT * FROM database_encryption`;
     const migrations = yield* test.sql`SELECT * FROM effect_sql_migrations`;
     const failure = yield* prepareDatabase.pipe(
       Effect.withConfigProvider(
@@ -499,7 +505,9 @@ it("rolls back additive schema changes and migration rows when the retained key 
       Effect.flip,
     );
     expect(failure).toMatchObject({ reason: "key" });
-    expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
+      metadata,
+    );
     expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual(
       migrations,
     );
@@ -677,10 +685,10 @@ it(
     Effect.gen(function* () {
       const test = yield* postgresFixture;
       yield* test.prepare;
-      yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
-      yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+      yield* test.sql`DROP TABLE local_registry_agents`;
+      yield* test.sql`DROP TABLE local_registry_signer`;
       yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-      const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+      const metadata = yield* test.sql`SELECT * FROM database_encryption`;
       const migrations =
         yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
       const provider = ConfigProvider.fromMap(
@@ -695,7 +703,9 @@ it(
           Effect.flip,
         ),
       ).toMatchObject({ reason: "key" });
-      expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+      expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
+        metadata,
+      );
       expect(
         yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
       ).toEqual(migrations);
