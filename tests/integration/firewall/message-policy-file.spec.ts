@@ -17,7 +17,6 @@ import {
   configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   stopProcess,
 } from "../daemon/daemon-fixture.js";
 import { unavailablePolicyRemedy } from "../expected-contracts.js";
@@ -43,7 +42,7 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
   const bob = yield* makeDaemonProcessFixture(infrastructure, "bob");
   yield* acquireDaemonProcess(bob);
   const bobManagement = yield* acquireDaemonManagementClient(bob);
-  yield* bobManagement.register(makeRegistrationRequest(bob));
+  yield* bobManagement.identityCard();
   const stock = yield* makeDaemonProcessFixture(infrastructure, "alice");
   const fs = yield* FileSystem.FileSystem;
   const directory = join(infrastructure.temporaryDirectory, "alice-policy");
@@ -72,7 +71,7 @@ const acquirePolicyFileScenario = Effect.gen(function* () {
   });
   yield* acquireDaemonProcess(alice);
   const management = yield* acquireDaemonManagementClient(alice);
-  yield* management.register(makeRegistrationRequest(alice));
+  yield* management.identityCard();
   const client = yield* connect(alice);
   return { client, fixture: alice };
 });

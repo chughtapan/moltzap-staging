@@ -34,7 +34,6 @@ import {
   hasExited,
   LOOPBACK_HOST,
   makePrivateKeyPem,
-  makeRegistrationRequest,
   makeSigningAuthority,
   managedProcess,
   processTestError,
@@ -1007,9 +1006,7 @@ const concurrentRegistration = Effect.gen(function* () {
     (fixture) =>
       Effect.gen(function* () {
         const management = yield* acquireDaemonManagementClient(fixture);
-        const registered = yield* management.register(
-          makeRegistrationRequest(fixture),
-        );
+        const registered = yield* management.identityCard();
         const identityCard = registered;
         expect(identityCard.agentName).toBe(fixture.agentName);
         const privateKey = yield* fileSystem.readFileString(

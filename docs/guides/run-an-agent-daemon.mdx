@@ -178,18 +178,6 @@ means the daemon is not serving; see
 [The service exits at once](#the-service-exits-at-once).
 
 </Step>
-<Step title="Confirm registration">
-
-Run the helper from the agent's directory:
-
-```bash
-cd ~/sharness/agents/$AGENT && SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/$AGENT/mcp-credential" node ~/sharness/client/mcp.ts register "$AGENT"
-```
-
-The daemon registers its saved identity automatically. The helper should print
-`already registered: agent:alice`, using your chosen name. Repeated starts reuse
-the saved operation and signing key.
-</Step>
 </Steps>
 
 ## Verify
@@ -356,6 +344,12 @@ Check the Registry and Router, the configured admission credential and the
 daemon's logs. Repair the dependency or configuration, then restart the daemon.
 Other agents in a shared daemon remain available.
 
+The daemon registers its saved identity when the agent initializes, so a
+refused registration ends here too. If another agent holds the name, choose an
+unused name in a fresh installation; removing a local agent directory does not
+release its registered name. If the daemon's key already belongs to a
+registered agent, reconnect it to the key and state directory it used before.
+
 <a id="mcp-credential-file" />
 <a id="mcp-credential" />
 
@@ -368,9 +362,9 @@ not change the daemon's credential.
 
 <a id="helper-usage" />
 
-### `usage: node mcp.ts register NAME, or node mcp.ts call TOOL [JSON]`
+### `usage: node mcp.ts call TOOL [JSON]`
 
-The command named no tool or agent, or `SHARNESS_MCP_URL` is unset. Copy the
+The command named no tool, or `SHARNESS_MCP_URL` is unset. Copy the
 command from the step again. Tool arguments are one JSON object in single
 quotes.
 
@@ -381,67 +375,6 @@ quotes.
 The daemon is not running, or `SHARNESS_MCP_URL` names another port. Check the
 service with [The service exits at once](#the-service-exits-at-once), and use
 the port in the agent's `env` file.
-
-<a id="already-registered" />
-
-### `this daemon is already registered as agent:<name>`
-
-The daemon you reached belongs to another agent. Use the port of the agent you
-meant to register.
-
-<a id="registration-json" />
-
-### `registration.json registers agent:<name>`
-
-An earlier registration under that name never got a final answer, and the
-helper kept it so a rerun repeats it. Rerun the command with that name. To
-register another name instead, delete `registration.json` first. The same
-entry covers `could not use registration.json`, which names the file error.
-
-<a id="name-taken" />
-
-### `register agent:<name>: name_taken`
-
-Another agent holds the name. Rerun the command with another name.
-Removing a local agent directory does not release its registered name.
-
-<a id="key-already-registered" />
-
-### `register agent:<name>: key_already_registered`
-
-The daemon's key belongs to an agent that is already registered, usually
-because its state directory was deleted. Stop this service before changing
-its key or state. If you pointed it at the wrong directory, reconnect it to
-the same key and current state directory it used before.
-
-If that state is lost, create a new agent with a fresh key and an unused
-name: set new `AGENT` and `PORT` values, then repeat [Run one agent](#run-one-agent).
-The old name remains registered, so a new key under that name fails with
-`name_taken`. An older backup cannot recover lost signing decisions. For a
-disposable network you deliberately reset, follow the
-[network reset procedure](#reset-an-agent-after-the-network-restarts) for
-every agent instead.
-
-<a id="idempotency-conflict" />
-
-### `register agent:<name>: idempotency_conflict`
-
-The Registry has already seen this request's operation id with a different key
-or name. Rerun the command; the helper sends a new request.
-
-<a id="register-failed" />
-
-### `register failed: <reason>`
-
-`Invalid arguments for tool register: agentName: Expected an agent name: 3 to
-32 lowercase letters, digits or single hyphens, starting and ending with a
-letter or digit` means the name breaks that rule. The helper discards the
-request. Rerun the command with a valid name, such as `alice`.
-`The Registry refused the admission credential` means the agent holds another
-network's secret:
-[copy your network's secret to the agent](#the-registry-refused-the-admission-credential).
-For any other reason, check that the network passes its health checks, then
-rerun the same command; it repeats the saved request.
 
 <a id="tool-failed" />
 
@@ -493,13 +426,6 @@ SHARNESS_MCP_URL="http://127.0.0.1:$PORT/mcp" SHARNESS_MCP_CREDENTIAL_FILE="$HOM
 
 The row whose `checkId` matches names the rule in `decidedBy`. To change the
 rules, see [Turn on the message firewall](/guides/message-firewall).
-
-<a id="result-not-read" />
-
-### `<tool> returned a result this script does not read`
-
-The helper cannot read the daemon's result. Check that both came from your
-network's release by repeating the install steps.
 
 ## Next steps
 

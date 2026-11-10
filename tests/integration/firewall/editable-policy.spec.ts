@@ -29,7 +29,6 @@ import {
   configureDaemonFixture,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
@@ -41,7 +40,7 @@ const pair = Effect.gen(function* () {
   const bob = yield* makeDaemonProcessFixture(infrastructure, "bob");
   yield* acquireDaemonProcess(bob);
   const management = yield* acquireDaemonManagementClient(bob);
-  yield* management.register(makeRegistrationRequest(bob));
+  yield* management.identityCard();
   return { alice, bob };
 });
 
@@ -133,7 +132,6 @@ const acquirePolicyCheckScenario = Effect.gen(function* () {
     },
   });
   const client = yield* connect(alice);
-  yield* register(client, alice);
   return { entered, release, client };
 });
 
@@ -170,7 +168,6 @@ const persistAndValidate = Effect.gen(function* () {
   };
   const runtime = yield* start(alice, fixedOptions);
   const client = yield* connect(alice);
-  yield* register(client, alice);
   const changed = yield* update(client, { add: [blockedRule] });
   expect(
     yield* update(client, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
@@ -208,7 +205,6 @@ const concurrentEdits = Effect.gen(function* () {
   const { alice } = yield* pair;
   const runtime = yield* start(alice, options);
   const client = yield* connect(alice);
-  yield* register(client, alice);
   const additions = [
     fixedRule,
     { ...fixedRule, id: "second" },
@@ -239,7 +235,6 @@ const authenticatedPolicyEdits = Effect.gen(function* () {
   });
   yield* start(alice, options);
   const client = yield* connect(alice, token);
-  yield* register(client, alice);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
   expect(catalog.tools).toEqual(
     arrayContaining([
@@ -356,10 +351,6 @@ function connect(fixture: DaemonProcessFixture, bearer?: string) {
     );
     return client;
   });
-}
-
-function register(client: Client, fixture: DaemonProcessFixture) {
-  return call(client, "register", { ...makeRegistrationRequest(fixture) });
 }
 
 function call(

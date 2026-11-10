@@ -64,13 +64,7 @@ interface AgentServerSettings {
 }
 
 const reasonError = (error: { readonly reason: string }) =>
-  new ProtocolError(
-    -32603,
-    error.reason === "admission-refused"
-      ? "The Registry refused the admission credential. Supply this network’s admission credential and register again."
-      : "Operation failed",
-    { reason: error.reason },
-  );
+  new ProtocolError(-32603, "Operation failed", { reason: error.reason });
 const loopback = (host: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(host);
 
@@ -274,7 +268,7 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
 
   yield* installMessageTools(server, harness, registered);
-  yield* installIdentityTools(server, harness, identity);
+  yield* installIdentityTools(server, identity);
   yield* installPolicyTools(server, firewall, registered, policyConfigured);
   yield* installWebhookTools(server, settings.webhook, registered);
 
@@ -398,7 +392,6 @@ function installMessageTools(
 }
 function installIdentityTools(
   server: Context.Tag.Service<typeof McpServer>,
-  harness: Context.Tag.Service<typeof SocialHarness>,
   identity: Context.Tag.Service<typeof Identity>,
 ) {
   return Effect.gen(function* () {
@@ -416,19 +409,6 @@ function installIdentityTools(
           ).pipe(Effect.orDie);
           return { kind: "registered" as const, identityCard };
         }),
-      failure: reasonError,
-      visible: Effect.succeed(true),
-    });
-    yield* bind(server, {
-      name: "register",
-      definition: toolDefinitions.register,
-      execute: (request) =>
-        harness.register(request).pipe(
-          Effect.tap(() => server.toolsChanged),
-          Effect.flatMap((identityCard) =>
-            Schema.encode(AgentIdentityCard)(identityCard).pipe(Effect.orDie),
-          ),
-        ),
       failure: reasonError,
       visible: Effect.succeed(true),
     });

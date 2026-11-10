@@ -32,7 +32,6 @@ import {
   acquireProcessInfrastructureFrom,
   type DaemonProcessFixture,
   makeDaemonProcessFixture,
-  makeRegistrationRequest,
   ProcessTestError,
 } from "../daemon/daemon-fixture.js";
 import { inboxStream } from "../mcp-inbox.js";
@@ -478,7 +477,7 @@ function certifyPair(
       );
       for (const fixture of [peer, local]) {
         const management = yield* acquireDaemonManagementClient(fixture);
-        yield* management.register(makeRegistrationRequest(fixture));
+        yield* management.identityCard();
       }
       yield* exchange(local, peer);
       yield* exchange(peer, local);
