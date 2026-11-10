@@ -1,11 +1,8 @@
 /** @file Canonical MCP tools, Events and wire errors share their owning schemas. */
 
-import { Effect, type ParseResult, Schema } from "effect";
+import { Effect, Either, Option, type ParseResult, Schema } from "effect";
 import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
-import {
-  type SendError,
-  sendFailureReasons,
-} from "../../communication/errors.js";
+import { SendError, sendFailureReasons } from "../../communication/errors.js";
 import { wellFormedString } from "../../communication/messages.js";
 import {
   CollectiveId,
@@ -14,7 +11,7 @@ import {
   MessageReference,
   PaginatedRequest,
   PaginatedResult,
-  type RequestError,
+  RequestError,
 } from "../../communication/service.js";
 import { exactStruct } from "../../encoding/canonical-json.js";
 import {
@@ -32,7 +29,7 @@ import {
   policyUpdateSchema,
 } from "../../firewall/rules.js";
 import {
-  type FirewallRefusal,
+  FirewallRefusal,
   LocalGuidance,
   PermittedItem,
 } from "../../firewall/service.js";
@@ -305,7 +302,7 @@ export function sendErrorData(
 }
 
 /** Decodes JSON-RPC refusal data while preserving send and collective details. */
-export function decodeHarnessSendErrorData(
+function decodeSendErrorData(
   value: unknown,
 ): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> {
   return Schema.decodeUnknown(harnessSendErrorDataSchema)(value).pipe(
@@ -319,6 +316,73 @@ export function decodeHarnessSendErrorData(
     ),
   );
 }
+
+/**
+ * How a tool call ended without a result, as its caller saw it. `refused`
+ * carries the error data the daemon answered with. `unanswered` says whether
+ * the request can have reached the daemon. `unreadable` is an answer that is
+ * not the tool's result.
+ */
+export type ToolCallFailure =
+  | { readonly kind: "refused"; readonly data: unknown }
+  | { readonly kind: "unanswered"; readonly sent: boolean }
+  | { readonly kind: "unreadable" };
+
+/** A tool whose refusals carry `data`, which `make` turns into its typed failure. */
+const failsWith = <A, I, E>(data: Schema.Schema<A, I>, make: (data: A) => E) =>
+  ({
+    total: false,
+    read: (failure: ToolCallFailure): Option.Option<E> =>
+      failure.kind === "refused"
+        ? Option.map(Schema.decodeUnknownOption(data)(failure.data), make)
+        : Option.none(),
+  }) as const;
+
+/** A tool with no typed failure of its own. */
+const failsUntyped = {
+  total: false,
+  read: (): Option.Option<never> => Option.none(),
+} as const;
+
+/**
+ * A send reads every failure. One that may have reached the daemon without a
+ * readable answer has an unknown outcome, so its caller must not send again.
+ */
+const sendFails = {
+  total: true,
+  read: (
+    failure: ToolCallFailure,
+  ): Option.Option<SendError | RequestError | FirewallRefusal> => {
+    if (failure.kind === "unanswered" && !failure.sent) {
+      return Option.some(new SendError({ reason: "network-unavailable" }));
+    }
+    if (failure.kind !== "refused") {
+      return Option.some(new SendError({ reason: "outcome-unknown" }));
+    }
+    return Option.some(
+      Either.match(
+        Effect.runSync(Effect.either(decodeSendErrorData(failure.data))),
+        {
+          onLeft: () => new SendError({ reason: "outcome-unknown" }),
+          onRight: (data) => {
+            if ("refusal" in data) {
+              return new FirewallRefusal(data);
+            }
+            if ("failure" in data) {
+              return new RequestError({
+                failure: data.failure,
+                ...(data.operationId === undefined
+                  ? {}
+                  : { operationId: data.operationId }),
+              });
+            }
+            return new SendError(data);
+          },
+        },
+      ),
+    );
+  },
+} as const;
 
 const policyFailure = Schema.Struct({
   reason: FirewallPolicyError.fields.reason,
@@ -344,9 +408,22 @@ const readNormsResultSchema = exactStruct({
   ),
 });
 
-/** A tool's declaration is shared by discovery, the server and optional plugin helpers. */
+const historyFails = failsWith(
+  Schema.Struct({ reason: HistoryError.fields.reason }),
+  (data) => new HistoryError(data),
+);
+const policyFails = failsWith(
+  policyFailure,
+  (data) => new FirewallPolicyError(data),
+);
+
+/**
+ * Each tool's contract: its description, argument and result schemas, and how
+ * its failures read. Discovery, the server and callers all derive from it.
+ */
 export const toolDefinitions = {
   send_message: {
+    failure: sendFails,
     description:
       "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
     input: SendArguments,
@@ -354,6 +431,10 @@ export const toolDefinitions = {
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
   receive_messages: {
+    failure: failsWith(
+      Schema.Struct({ reason: InboxError.fields.reason }),
+      (data) => new InboxError(data),
+    ),
     description:
       "Receive pending messages and other inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Returned items are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an item arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
@@ -365,6 +446,7 @@ export const toolDefinitions = {
     },
   },
   status: {
+    failure: failsUntyped,
     description:
       "Read saved registration status, the Registry-issued identity card, and the state of the inbox wake-up callback, if one is subscribed.",
     input: empty,
@@ -372,6 +454,7 @@ export const toolDefinitions = {
     annotations: read,
   },
   list_conversations: {
+    failure: historyFails,
     description:
       "List canonical conversation addresses with completed messages or saved local results. Follow nextCursor until absent. Use read_conversation to read one address.",
     input: managementListConversationsRequestSchema,
@@ -379,6 +462,7 @@ export const toolDefinitions = {
     annotations: read,
   },
   read_conversation: {
+    failure: historyFails,
     description:
       "Read saved sent messages, permitted incoming items and local results in one conversation. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
     input: managementReadConversationRequestSchema,
@@ -386,6 +470,7 @@ export const toolDefinitions = {
     annotations: read,
   },
   read_policy: {
+    failure: policyFails,
     description:
       "Read active editable rules, fixed rules, the names of the norms this agent holds, and the policy revision. Fixed rules include the English rules of held norms.",
     input: empty,
@@ -393,6 +478,7 @@ export const toolDefinitions = {
     annotations: read,
   },
   update_policy: {
+    failure: policyFails,
     description:
       "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
@@ -400,6 +486,7 @@ export const toolDefinitions = {
     annotations: { readOnlyHint: false, openWorldHint: false },
   },
   read_firewall_decisions: {
+    failure: policyFails,
     description:
       "Read completed firewall decision summaries since inclusive Unix milliseconds. Summaries include the reason and registered advice without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
@@ -407,6 +494,7 @@ export const toolDefinitions = {
     annotations: read,
   },
   read_norms: {
+    failure: failsUntyped,
     description:
       "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
     input: empty,
@@ -460,16 +548,6 @@ export type ToolRequest<Name extends ToolName = ToolName> = {
 export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
   (typeof toolDefinitions)[Name]["output"]
 >;
-
-/** Failure data derives from each service's error schema without a second reason vocabulary. */
-export const toolFailureSchemas = {
-  receive_messages: Schema.Struct({ reason: InboxError.fields.reason }),
-  list_conversations: Schema.Struct({ reason: HistoryError.fields.reason }),
-  read_conversation: Schema.Struct({ reason: HistoryError.fields.reason }),
-  read_policy: policyFailure,
-  update_policy: policyFailure,
-  read_firewall_decisions: policyFailure,
-} as const;
 
 function addressesAreOrdered(addresses: readonly string[]): boolean {
   return isStrictlyAscending(addresses, compareAscii);

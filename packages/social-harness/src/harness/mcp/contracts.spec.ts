@@ -1,54 +1,79 @@
 /** @file MCP values validate their public message and management behavior. */
 
-import { Effect, Either, Schema } from "effect";
+import { Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import {
-  decodeHarnessSendErrorData,
   managementListConversationsRequestSchema,
   managementListConversationsResultSchema,
+  toolDefinitions,
 } from "./contracts.js";
 
 describe("message operation contracts", () => {
-  describe("MCP send failures", () => {
+  describe("a refused send", () => {
+    const read = (data: unknown) =>
+      Option.getOrThrow(
+        toolDefinitions.send_message.failure.read({ kind: "refused", data }),
+      );
+
     it.each(["membership-invalid", "network-unavailable"])(
-      "retains a member's closed refusal %s",
+      "keeps a member's closed refusal %s",
       (reason) => {
         const failure = {
-          reason: "collective-failed",
-          operationId: collectiveOperationId(testAgentCard("alice").agentId),
-          failure: {
-            kind: "members-unreachable",
-            members: [{ member: testAgentCard("bob"), reason }],
-          },
+          kind: "members-unreachable",
+          members: [{ member: testAgentCard("bob"), reason }],
         };
-        expect(Effect.runSync(decodeHarnessSendErrorData(failure))).toEqual(
-          failure,
+        const operationId = collectiveOperationId(
+          testAgentCard("alice").agentId,
         );
+        expect(
+          read({ reason: "collective-failed", operationId, failure }),
+        ).toMatchObject({ _tag: "RequestError", operationId, failure });
       },
     );
     it.each([
       { reason: "firewall-refused", checkId: "incomplete" },
       { reason: "collective-failed" },
-    ])("requires a complete domain refusal: %j", (value) => {
-      expect(
-        Either.match(
-          Effect.runSync(decodeHarnessSendErrorData(value).pipe(Effect.either)),
-          { onLeft: () => true, onRight: () => false },
-        ),
-      ).toBe(true);
+    ])("treats an incomplete refusal as an unknown outcome: %j", (value) => {
+      expect(read(value)).toMatchObject({
+        _tag: "SendError",
+        reason: "outcome-unknown",
+      });
     });
-    it("reads an additive plain failure without retaining transport data", () => {
+    it("reads a plain failure without keeping fields it does not know", () => {
+      const unknownField = "private transport";
+      const failure = read({
+        reason: "network-unavailable",
+        addedLater: unknownField,
+      });
+      expect(failure).toMatchObject({ reason: "network-unavailable" });
+      expect(JSON.stringify(failure)).not.toContain(unknownField);
+    });
+  });
+
+  describe("a send with no readable answer", () => {
+    it("is unavailable when the request cannot have reached the daemon", () => {
       expect(
-        Effect.runSync(
-          decodeHarnessSendErrorData({
-            reason: "network-unavailable",
-            addedLater: "private transport",
+        Option.getOrThrow(
+          toolDefinitions.send_message.failure.read({
+            kind: "unanswered",
+            sent: false,
           }),
         ),
-      ).toEqual({ reason: "network-unavailable" });
+      ).toMatchObject({ reason: "network-unavailable" });
     });
+    it.each([
+      { kind: "unanswered", sent: true },
+      { kind: "unreadable" },
+    ] as const)(
+      "has an unknown outcome when it may have been received: $kind",
+      (failure) => {
+        expect(
+          Option.getOrThrow(toolDefinitions.send_message.failure.read(failure)),
+        ).toMatchObject({ reason: "outcome-unknown" });
+      },
+    );
   });
 });
 
