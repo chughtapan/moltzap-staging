@@ -27,13 +27,11 @@ export interface CheckConfiguration {
 }
 
 /**
- * Requires verified attribution, prepared message bytes and a configured
- * provider. `outOfScope` names rules whose matcher does not match this
- * message: they are not applicable, and the provider is not asked about them.
+ * The captured policy with its provider. `outOfScope` names rules whose
+ * matcher does not match this message: they are not applicable, and the
+ * provider is not asked about them.
  */
 export interface CheckMessageInput extends CheckConfiguration {
-  readonly event: MessageEvent;
-  readonly context: MessageContext;
   readonly provider?: DecisionProvider;
   readonly outOfScope?: readonly string[];
 }
@@ -132,14 +130,13 @@ export class MessageContext extends Schema.Class<MessageContext>(
   gaps: Schema.Array(Schema.NonEmptyString),
 }) {}
 
-/** A direction is assigned by the boundary method, not by a peer's payload. */
-const messageEvent = Schema.Union(
-  Schema.Struct({ direction: Schema.Literal("incoming"), message: Message }),
-  Schema.Struct({ direction: Schema.Literal("outgoing"), message: Message }),
-);
-
-/** Direction determines whether the message is received or still an unsent draft. */
-export type MessageEvent = typeof messageEvent.Type;
+/**
+ * A received message or a draft not yet sent. The boundary method assigns the
+ * direction, not a peer's payload.
+ */
+type MessageEvent =
+  | { readonly direction: "incoming"; readonly message: Message }
+  | { readonly direction: "outgoing"; readonly message: Message };
 
 /**
  * An unsure judgment admits an incoming message with its rule's reminder and
@@ -178,20 +175,6 @@ export interface CapturedInput {
 export class CheckInputError extends Data.TaggedError("CheckInputError")<{
   readonly reason: "settings" | "rules" | "message" | "context";
 }> {}
-
-/**
- * Assesses supplied rules and evidence without reading configuration or storage.
- * Captures and freezes the evidence before inference.
- */
-export const checkMessage = Effect.fn("Firewall.checkMessage")(function* (
-  input: CheckMessageInput,
-): Effect.fn.Return<FirewallCheck, CheckInputError> {
-  if (input.rules.length > 0 && input.textSettings === undefined) {
-    return yield* new CheckInputError({ reason: "settings" });
-  }
-  const captured = yield* captureInput(input.event, input.context);
-  return yield* checkCapturedMessage(input, captured);
-});
 
 /**
  * Provider failure produces a hold judgment. Findings and traces stay private.
@@ -254,8 +237,6 @@ export class DecisionProviderError extends Data.TaggedError(
     | "defect";
   readonly status?: number;
   readonly response?: string;
-  /** Retains provider, model and usage when they were parsed before failure. */
-  readonly accounting?: Pick<DecisionResponse, "provider" | "model" | "usage">;
 }> {}
 
 /** Injected providers receive frozen requests and return validated responses. */
@@ -287,7 +268,7 @@ type TextTrace = {
 );
 
 interface TextCheck {
-  readonly event: typeof messageEvent.Type;
+  readonly event: MessageEvent;
   readonly context: MessageContext;
   readonly revision: string;
   readonly rules: readonly TextRule[];
@@ -355,9 +336,13 @@ const complianceQuestion = {
     "Does this exact candidate break the rule? For an outgoing draft, assess the local agent's draft. For an incoming message, assess the peer sender and the peer-authored candidate. Do not add scheduling, approval, or tool-receipt requirements absent from the rule. Missing tool logs do not prove a tool action did not happen.",
 };
 
-/** Assesses previously captured evidence without saving the result. */
+/**
+ * Assesses captured evidence against the supplied rules without reading
+ * configuration or storage, and without saving the result. Requires verified
+ * attribution from the caller.
+ */
 export function checkCapturedMessage(
-  input: Omit<CheckMessageInput, "event" | "context">,
+  input: CheckMessageInput,
   captured: CapturedInput,
 ): Effect.Effect<FirewallCheck, CheckInputError> {
   return Effect.gen(function* () {
@@ -501,22 +486,6 @@ export function freezeData(value: unknown): void {
     freezeData(child);
   }
   Object.freeze(value);
-}
-
-function captureInput(event: MessageEvent, context: MessageContext) {
-  return Effect.gen(function* () {
-    const capturedEvent = yield* decodeFrozen(messageEvent, event).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new CheckInputError({ reason: "message" })),
-      ),
-    );
-    const capturedContext = yield* decodeFrozen(MessageContext, context).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new CheckInputError({ reason: "context" })),
-      ),
-    );
-    return Object.freeze({ event: capturedEvent, context: capturedContext });
-  }).pipe(Effect.withSpan("Firewall.captureInput"));
 }
 
 /**
@@ -729,11 +698,6 @@ function decideWithinBudget(
       return yield* new DecisionProviderError({
         reason: "invalid-response",
         response: response.raw,
-        accounting: {
-          provider: response.provider,
-          model: response.model,
-          usage: response.usage,
-        },
       });
     }
     return response;

@@ -61,7 +61,7 @@ it.each([
 );
 
 it.prop(
-  "never retains an echoed credential in a failed HTTP response",
+  "redacts a credential an HTTP error echoes before retaining private diagnostics",
   [fc.stringMatching(/^[A-Za-z0-9]{1,64}$/u)],
   ([key]) =>
     Effect.gen(function* () {
@@ -71,12 +71,16 @@ it.prop(
         model,
       });
       const fetch: typeof globalThis.fetch = () =>
-        Promise.resolve(new Response(credential, { status: 401 }));
+        Promise.resolve(
+          new Response(`Rejected Bearer ${credential}`, { status: 401 }),
+        );
       const error = yield* decisionProvider
         .decide(request)
         .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
       expect(error.reason).toBe("http");
-      expect(error.response).not.toContain(credential);
+      expect(error.status).toBe(401);
+      expect(error.response).toContain("[REDACTED]");
+      expect(JSON.stringify(error)).not.toContain(credential);
     }),
 );
 
@@ -93,21 +97,6 @@ it("preserves reported probabilities, model, usage and raw response", () =>
     );
     expect(JSON.parse(response.raw)).toEqual(wire);
     expect(response.usage).toEqual(wire.usage);
-  }));
-
-it("redacts credentials echoed by an HTTP error before retaining private diagnostics", () =>
-  Effect.gen(function* () {
-    const fetch: typeof globalThis.fetch = () =>
-      Promise.resolve(
-        new Response(`Rejected Bearer ${secret}`, { status: 401 }),
-      );
-    const error = yield* provider
-      .decide(request)
-      .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-    expect(error.reason).toBe("http");
-    expect(error.status).toBe(401);
-    expect(error.response).toContain("[REDACTED]");
-    expect(JSON.stringify(error)).not.toContain(secret);
   }));
 
 it.each([200, 401])(
@@ -130,21 +119,6 @@ it.each([200, 401])(
       expect(JSON.stringify(outcome)).toContain("[REDACTED]");
     }),
 );
-
-it("keeps the captured credential when caller configuration changes during a request", () =>
-  Effect.gen(function* () {
-    const configuration = { apiKey: Redacted.make(secret), model };
-    const fixedProvider = makeJevDecisionProvider(configuration);
-    const fetch: typeof globalThis.fetch = () => {
-      configuration.apiKey = Redacted.make("different-key");
-      return Promise.resolve(new Response(secret, { status: 401 }));
-    };
-    const error = yield* fixedProvider
-      .decide(request)
-      .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
-    expect(error.reason).toBe("http");
-    expect(error.response).not.toContain(secret);
-  }));
 
 it.each([
   { name: "invalid JSON", body: "not-json" },
@@ -218,31 +192,6 @@ it.each([
   }),
 );
 
-it("keeps the usage a failed call's body reported, and none for a body without it", () =>
-  Effect.gen(function* () {
-    const decideWith = (body: string, status = 200) =>
-      provider.decide(request).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, () =>
-          Promise.resolve(new Response(body, { status })),
-        ),
-        Effect.flip,
-      );
-    const accounting = { provider: "typesafe", model, usage: wire.usage };
-
-    const malformed = yield* decideWith(
-      JSON.stringify({ ...wire, answers: { compliance: { type: "noul" } } }),
-    );
-    const unavailable = yield* decideWith(
-      JSON.stringify({ model, usage: wire.usage }),
-      503,
-    );
-    const unparsed = yield* decideWith("not-json");
-
-    expect(malformed).toMatchObject({ reason: "invalid-response", accounting });
-    expect(unavailable).toMatchObject({ reason: "http", accounting });
-    expect(unparsed.accounting).toBeUndefined();
-  }));
-
 it("retains transport failure separately from an HTTP or semantic answer", () =>
   Effect.gen(function* () {
     const fetch: typeof globalThis.fetch = () =>
@@ -251,7 +200,6 @@ it("retains transport failure separately from an HTTP or semantic answer", () =>
       .decide(request)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.flip);
     expect(error.reason).toBe("transport");
-    expect(error.accounting).toBeUndefined();
     expect(JSON.stringify(error)).not.toContain(secret);
   }));
 

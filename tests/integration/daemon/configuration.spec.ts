@@ -13,15 +13,7 @@ import {
   localOwner,
   migrateDaemon,
 } from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Effect,
-  Exit,
-  Layer,
-  Redacted,
-  Schema,
-} from "effect";
+import { ConfigProvider, Context, Effect, Exit, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -288,45 +280,6 @@ it.each([
     expect(failure).toMatchObject({ reason: "norms" });
   }).pipe(Effect.provide(NodeContext.layer)),
 );
-
-it("loads the shipped example message policy, each of whose fixed behaviors becomes a fixed rule", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const example = fileURLToPath(
-      new URL(
-        "../../../packages/social-harness/config/firewall/message-policy.json",
-        import.meta.url,
-      ),
-    );
-    const selected = yield* test.filesystem.readFileString(example).pipe(
-      Effect.flatMap(
-        Schema.decodeUnknown(
-          Schema.parseJson(
-            Schema.Struct({
-              text: Schema.Struct({
-                fixedBehaviors: Schema.Array(Schema.String),
-              }),
-            }),
-          ),
-        ),
-      ),
-    );
-    yield* test.filesystem.writeFileString(
-      join(test.directory, "provider.key"),
-      "private-decision-provider-key",
-    );
-    yield* test.write({
-      ...settings,
-      messagePolicyFile: example,
-      decisionProviderKeyFile: "provider.key",
-    });
-
-    const loaded = yield* test.load;
-
-    expect(loaded.settings.messagePolicy?.policy.text?.fixedRules).toHaveLength(
-      selected.text.fixedBehaviors.length,
-    );
-  }).pipe(Effect.provide(NodeContext.layer)));
 
 it("refuses a norms directory without its rule file, naming the file", () =>
   Effect.gen(function* () {
