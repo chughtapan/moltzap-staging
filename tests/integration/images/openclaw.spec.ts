@@ -43,8 +43,8 @@ async function deliverTurn(
   provider: { requests: string[] },
 ): Promise<undefined> {
   const { runtime, directory, container } = options;
-  const target = await network.daemon(`openclaw-${runtime}`);
-  const caller = await network.endpoint(`caller-${runtime}`);
+  const target = await network.endpoint("openclaw");
+  const caller = await network.endpoint("caller");
   await caller.send({ to: target.address, text });
   await startHost({
     container,
@@ -69,9 +69,13 @@ interface HostOptions {
   readonly mcpCredentialFile: string;
 }
 
-/** The image user copies fixture state so OpenClaw owns the directories it secures. */
+/**
+ * The image user copies fixture state so OpenClaw owns the directories it
+ * secures, and reads the credential file its agent's owner signed in with.
+ */
 async function startHost(options: HostOptions): Promise<undefined> {
   const { container, daemon, directory, mcp, mcpCredentialFile } = options;
+  await chmod(mcpCredentialFile, 0o644);
   await docker("docker", [
     "run",
     "--detach",
