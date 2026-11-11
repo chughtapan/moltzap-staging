@@ -2,7 +2,7 @@
 
 import type { HttpClient } from "@effect/platform";
 import type { Duration, Effect, Layer, Types } from "effect";
-import type { AgentId } from "../../identity/agent-cards.js";
+import type { AgentId } from "../../../identity/agent-cards.js";
 import type {
   AgentSigningError,
   AuthenticationFailedError,
@@ -15,14 +15,14 @@ import type {
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../identity/http-authentication.js";
-import type { AgentSigningAuthority } from "../../identity/keys.js";
+} from "../../../identity/http-authentication.js";
+import type { AgentSigningAuthority } from "../../../identity/keys.js";
 import type {
   LiveSignedMessage,
   SignedMessage,
   VerifiedSignedMessage,
-} from "../../identity/message-security.js";
-import type { verifyOuterMessage } from "../records.js";
+} from "../../../identity/message-security.js";
+import type { verifyOuterMessage } from "../../records.js";
 import type * as RouterPackage from "./client.js";
 import type { RouterSendRequest } from "./client.js";
 import type { RouterWorkerIngress } from "./connection.js";

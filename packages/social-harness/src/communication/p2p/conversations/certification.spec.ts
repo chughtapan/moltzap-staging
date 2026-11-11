@@ -19,46 +19,51 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect } from "vitest";
-import type { RegistryLookupResult } from "../../identity/registry.js";
+import type { RegistryLookupResult } from "../../../identity/registry.js";
 import {
   advanceClock,
   forwardStoredOutbound,
   openOuterBody,
   untilLive,
-} from "../__tests__/conversation-fixtures.js";
-import { pollCursor as fixturePollCursor } from "../__tests__/router-fixtures.js";
+} from "../../__tests__/conversation-fixtures.js";
+import { pollCursor as fixturePollCursor } from "../../__tests__/router-fixtures.js";
 import {
   openTestDatabase,
   type TestDatabase,
-} from "../__tests__/store-fixtures.js";
+} from "../../__tests__/store-fixtures.js";
 import {
   digest,
   identifier,
   issueTestCard,
   makeTestAuthority,
   type RegistryKeyPair,
-} from "../../__tests__/agents.js";
+} from "../../../__tests__/agents.js";
 import {
   decodeCanonical,
   encodeCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
+} from "../../../identity/agent-cards.js";
 import {
   AgentPublicKey,
   type AgentSigningAuthority,
-} from "../../identity/keys.js";
-import { SignedMessage } from "../../identity/message-security.js";
+} from "../../../identity/keys.js";
+import { SignedMessage } from "../../../identity/message-security.js";
 import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,
   WireVersions,
-} from "../../version.js";
-import { SendError } from "../errors.js";
-import { Content, Message, messageFromIntent, mintMsgId } from "../messages.js";
+} from "../../../version.js";
+import { SendError } from "../../errors.js";
+import {
+  Content,
+  Message,
+  messageFromIntent,
+  mintMsgId,
+} from "../../messages.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
@@ -80,7 +85,9 @@ import {
   signOuterPacket,
   type VerifiedMembership,
   verifyMembershipDescriptor,
-} from "../records.js";
+} from "../../records.js";
+import * as testStoreMessages from "../../store.js";
+import { initializeCommunication } from "../../store.js";
 import { RouterInstanceId } from "../router/client.js";
 import {
   type RouterIngressDisposition,
@@ -93,8 +100,6 @@ import {
   RouterWorkerTransportError,
   RouterWorkerUnavailableError,
 } from "../router/connection.js";
-import * as testStoreMessages from "../store.js";
-import { initializeCommunication } from "../store.js";
 import {
   type EndpointEngine,
   type EndpointEngineInput,

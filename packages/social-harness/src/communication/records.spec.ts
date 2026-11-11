@@ -39,6 +39,7 @@ import {
   maximumMembers,
   mintMsgId,
 } from "./messages.js";
+import { RouterInstanceId } from "./p2p/router/client.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -79,7 +80,6 @@ import {
   verifyMembershipDescriptor,
   verifyStableEvidence,
 } from "./records.js";
-import { RouterInstanceId } from "./router/client.js";
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();

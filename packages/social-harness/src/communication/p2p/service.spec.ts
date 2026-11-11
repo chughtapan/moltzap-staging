@@ -15,40 +15,39 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import { identifier } from "../__tests__/agents.js";
-import { encodeCanonical } from "../encoding/canonical-json.js";
-import {
-  agentCardOf,
-  AgentName,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import {
-  EnvelopeId,
-  type LiveSignedMessage,
-  SealedBody,
-  SignedMessage,
-} from "../identity/message-security.js";
-import { Registry, RegistryError } from "../identity/registry.js";
 import {
   conversationIdentityFixture,
   openOuterBody,
-} from "./__tests__/conversation-fixtures.js";
+} from "../__tests__/conversation-fixtures.js";
 import {
   appendCertifiedMessage,
   buildCertifiedFirstMessage,
   type SigningIdentity,
   storeCertifiedFirstMessage,
-} from "./__tests__/records-fixtures.js";
-import { batch, emptyBatch, pollCursor } from "./__tests__/router-fixtures.js";
+} from "../__tests__/records-fixtures.js";
+import { batch, emptyBatch, pollCursor } from "../__tests__/router-fixtures.js";
+import { identifier } from "../../__tests__/agents.js";
+import { encodeCanonical } from "../../encoding/canonical-json.js";
+import {
+  agentCardOf,
+  AgentName,
+  type VerifiedAgentIdentityCard,
+} from "../../identity/agent-cards.js";
+import {
+  EnvelopeId,
+  type LiveSignedMessage,
+  SealedBody,
+  SignedMessage,
+} from "../../identity/message-security.js";
+import { Registry, RegistryError } from "../../identity/registry.js";
 import {
   encodeCollectiveContent,
   Message,
   messageFromIntent,
   messageFromParticipants,
   mintMsgId,
-} from "./messages.js";
-import { DirectPacket, signOuterPacket } from "./records.js";
-import { Router } from "./router/client.js";
+} from "../messages.js";
+import { DirectPacket, signOuterPacket } from "../records.js";
 import {
   Answer,
   Communication,
@@ -57,7 +56,8 @@ import {
   type ReceivedRequest,
   Request,
   RequestedSchema,
-} from "./service.js";
+} from "../service.js";
+import { Router } from "./router/client.js";
 
 class ConsumerFailure extends Data.TaggedError("ConsumerFailure") {}
 
@@ -201,12 +201,14 @@ function openCommunication(
       Layer.succeed(Router, router),
     );
     const context = yield* Layer.build(
-      Communication.layer({
-        agentKey: subject.directory,
-        identityCard: subject.local.card,
-        signingAuthority: subject.local.authority,
-        registrySignerPublicKey: subject.signer,
-      }).pipe(Layer.provide(dependencies)),
+      Communication.p2p
+        .layer({
+          agentKey: subject.directory,
+          identityCard: subject.local.card,
+          signingAuthority: subject.local.authority,
+          registrySignerPublicKey: subject.signer,
+        })
+        .pipe(Layer.provide(dependencies)),
     );
     return { communication: Context.get(context, Communication) };
   });

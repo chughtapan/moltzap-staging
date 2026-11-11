@@ -5,7 +5,6 @@ import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity/agent-cards.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
-import { makeRequests } from "../collectives.js";
 import {
   type CollectiveValue,
   compareAgentIds,
@@ -16,6 +15,7 @@ import {
   Request,
   type ResultDelivery,
 } from "../messages.js";
+import { makeRequests } from "../p2p/collectives.js";
 import { deriveConversationId } from "../records.js";
 import { CommunicationError } from "../service.js";
 import { acceptMessage } from "../store.js";

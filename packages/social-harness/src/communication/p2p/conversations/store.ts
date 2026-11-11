@@ -3,14 +3,14 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Data, Effect, Schema } from "effect";
 
-import { decodeCanonical } from "../../encoding/canonical-json.js";
-import { AgentId, AgentIdentityCard } from "../../identity/agent-cards.js";
+import { decodeCanonical } from "../../../encoding/canonical-json.js";
+import { AgentId, AgentIdentityCard } from "../../../identity/agent-cards.js";
 import {
   conversationSortKey,
   messageFromIntent,
   MessageReference,
-} from "../messages.js";
-import { MembershipDescriptor, RecordCore } from "../records.js";
+} from "../../messages.js";
+import { MembershipDescriptor, RecordCore } from "../../records.js";
 import {
   acknowledgeMessage,
   agentOperation,
@@ -31,7 +31,7 @@ import {
   storeOperation,
   StoreSignal,
   transaction,
-} from "../store.js";
+} from "../../store.js";
 
 /** Pending signed bytes require an earlier release to drain the outbox. */
 export class OutboxTooOldError extends Data.TaggedError("OutboxTooOldError") {}

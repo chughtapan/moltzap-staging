@@ -38,6 +38,7 @@ import {
   mintMsgId,
   type MsgId,
 } from "../messages.js";
+import { RouterInstanceId } from "../p2p/router/client.js";
 import {
   type DecodedOuterBody,
   decodeOuterBody,
@@ -45,7 +46,6 @@ import {
   MembershipDescriptor,
   verifyMembershipDescriptor,
 } from "../records.js";
-import { RouterInstanceId } from "../router/client.js";
 import { pollCursor } from "./router-fixtures.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
 

@@ -12,7 +12,7 @@ const fixture = Effect.gen(function* () {
   const subject = yield* conversationIdentityFixture;
   const open = (identity: typeof subject.local, agentKey: string) =>
     Layer.build(
-      Communication.clientServerLayer({
+      Communication.clientServer.layer({
         agentKey,
         identityCard: identity.card,
         signingAuthority: identity.authority,
@@ -201,16 +201,15 @@ it("rejects misplaced signed rows, changed keys and transport changes", () =>
       yield* f.client.readHistory({ members: f.members }).pipe(Effect.flip),
     ).toMatchObject({ reason: "history-gap" });
     expect(
-      yield* Communication.configureTransport({ kind: "p2p" }).pipe(
+      yield* Communication.p2p.claim.pipe(
         Effect.provideService(SqlClient, f.subject.sql),
         Effect.flip,
       ),
     ).toMatchObject({ reason: "membership-invalid" });
     expect(
-      yield* Communication.configureTransport({
-        kind: "client-server",
-        serverAgentName: f.subject.remote.card.agentName,
-      }).pipe(Effect.provideService(SqlClient, f.subject.sql), Effect.flip),
+      yield* Communication.clientServer
+        .claim(f.subject.remote.card.agentName)
+        .pipe(Effect.provideService(SqlClient, f.subject.sql), Effect.flip),
     ).toMatchObject({ reason: "membership-invalid" });
   }));
 
