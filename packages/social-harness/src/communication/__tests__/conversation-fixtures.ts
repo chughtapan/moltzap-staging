@@ -20,7 +20,7 @@ import {
 import {
   type ClientRepresentationError,
   decodeCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../encoding/index.js";
 import {
   type AgentCard,
   agentCardOf,

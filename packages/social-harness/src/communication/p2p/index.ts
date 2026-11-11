@@ -25,7 +25,7 @@ import {
   type ClientRepresentationError,
   encodeCanonical,
   sameBytes,
-} from "../../encoding/canonical-json.js";
+} from "../../encoding/index.js";
 import {
   type AgentPublicKey as agentAgentPublicKey,
   agentCardOf,

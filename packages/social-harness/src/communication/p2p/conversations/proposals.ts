@@ -10,7 +10,7 @@ import type {
   EngineOutboxError,
   EngineRuntime,
 } from "./conversation.js";
-import { encodeCanonical } from "../../../encoding/canonical-json.js";
+import { encodeCanonical } from "../../../encoding/index.js";
 import {
   agentCardOf,
   AgentIdentityCard,

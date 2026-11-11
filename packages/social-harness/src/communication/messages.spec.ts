@@ -17,7 +17,7 @@ import {
   digest as publicDigest,
   testAgentCard,
 } from "../__tests__/agents.js";
-import { encodeCanonical } from "../encoding/canonical-json.js";
+import { encodeCanonical } from "../encoding/index.js";
 import {
   AgentAddress as PublicAgentAddress,
   Content as PublicContent,

@@ -29,9 +29,9 @@ import {
   decodeCanonicalJson,
   encodeCanonicalJson,
   exactStruct,
+  hasCanonicalBase64UrlLength,
   parseCanonicalJson,
-} from "../encoding/canonical-json.js";
-import { hasCanonicalBase64UrlLength } from "../encoding/identifier.js";
+} from "../encoding/index.js";
 import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION_PATTERN,

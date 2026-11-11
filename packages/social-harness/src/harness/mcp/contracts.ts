@@ -13,11 +13,11 @@ import {
   PaginatedResult,
   RequestError,
 } from "../../communication/service.js";
-import { exactStruct } from "../../encoding/canonical-json.js";
 import {
   compareAscii,
+  exactStruct,
   isStrictlyAscending,
-} from "../../encoding/identifier.js";
+} from "../../encoding/index.js";
 import { checkedGuidanceSchema } from "../../firewall/check.js";
 import {
   firewallDecisionsRequestSchema,

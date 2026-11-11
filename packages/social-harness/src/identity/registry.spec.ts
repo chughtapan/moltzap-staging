@@ -16,7 +16,7 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { encodeCanonicalJson } from "../encoding/canonical-json.js";
+import { encodeCanonicalJson } from "../encoding/index.js";
 import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,

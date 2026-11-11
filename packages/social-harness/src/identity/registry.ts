@@ -15,12 +15,12 @@ import {
   Schema,
 } from "effect";
 import {
+  canonicalIdentifier,
   decodeCanonicalJson,
   encodeCanonicalJson,
   exactParseOptions,
   exactStruct,
-} from "../encoding/canonical-json.js";
-import { canonicalIdentifier } from "../encoding/identifier.js";
+} from "../encoding/index.js";
 import { WireVersions } from "../version.js";
 import {
   AgentId,

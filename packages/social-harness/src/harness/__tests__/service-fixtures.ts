@@ -36,7 +36,7 @@ import {
   RequestError,
 } from "../../communication/service.js";
 import { migrateDaemon } from "../../database/migrations.js";
-import { compareAscii } from "../../encoding/identifier.js";
+import { compareAscii } from "../../encoding/index.js";
 import { Firewall, type FirewallOptions } from "../../firewall/service.js";
 import {
   AgentIdentityCardIssuedAt,

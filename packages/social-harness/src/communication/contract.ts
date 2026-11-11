@@ -9,7 +9,7 @@ import type {
   AgentSigningAuthority,
 } from "../identity/keys.js";
 import type { CommunicationError } from "./errors.js";
-import { exactStruct } from "../encoding/canonical-json.js";
+import { exactStruct } from "../encoding/index.js";
 import {
   type CollectiveId,
   Message,

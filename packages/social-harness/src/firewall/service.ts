@@ -30,7 +30,7 @@ import {
   encodeCanonicalJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding/canonical-json.js";
+} from "../encoding/index.js";
 import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
 import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";

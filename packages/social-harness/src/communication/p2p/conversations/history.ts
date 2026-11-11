@@ -16,7 +16,7 @@ import {
   encodeCanonical,
   representationFailure,
   sameBytes,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import { agentCardOf, type AgentId } from "../../../identity/agent-cards.js";
 import {
   SignedMessage,

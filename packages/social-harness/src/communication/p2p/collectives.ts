@@ -5,7 +5,7 @@ import { Cause, Clock, Deferred, Effect, Option, Schema, Scope } from "effect";
 import {
   encodeCanonical,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../../encoding/canonical-json.js";
+} from "../../encoding/index.js";
 import { AgentCard } from "../../identity/agent-cards.js";
 import { CommunicationError } from "../errors.js";
 import {

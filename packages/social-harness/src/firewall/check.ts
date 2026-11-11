@@ -9,7 +9,7 @@ import {
   ParseResult,
   Schema,
 } from "effect";
-import { exactStruct } from "../encoding/canonical-json.js";
+import { exactStruct } from "../encoding/index.js";
 import {
   type firewallRefusalReasonSchema,
   type FirewallSettings,

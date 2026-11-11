@@ -9,7 +9,7 @@ import {
   decodeCanonical,
   encodeCanonical,
   sameBytes,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,

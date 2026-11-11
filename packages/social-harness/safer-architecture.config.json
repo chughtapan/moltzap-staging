@@ -3,14 +3,6 @@
   "maxFolderCycles": 3,
   "facadeFiles": [
     {
-      "file": "encoding/canonical-json.ts",
-      "reason": "Shared schema composition at serialization boundaries"
-    },
-    {
-      "file": "encoding/identifier.ts",
-      "reason": "Canonical identifiers at input boundaries"
-    },
-    {
       "file": "identity/agent-cards.ts",
       "reason": "Agent cards, immutable identity cards and signing authority"
     },
@@ -148,8 +140,7 @@
         "src/encoding"
       ],
       "entrypoints": [
-        "src/encoding/canonical-json.ts",
-        "src/encoding/identifier.ts"
+        "src/encoding/index.ts"
       ],
       "reason": "Shared encoding at external boundaries"
     },

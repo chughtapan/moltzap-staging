@@ -18,16 +18,14 @@ import {
   generalVerify,
 } from "jose";
 import {
-  decodeCanonicalJson,
-  encodeCanonicalJson,
-  exactStruct,
-} from "../encoding/canonical-json.js";
-import {
   canonicalIdentifier,
   compareAgentIds,
   decodeCanonicalBase64Url,
+  decodeCanonicalJson,
+  encodeCanonicalJson,
+  exactStruct,
   hasCanonicalBase64UrlLength,
-} from "../encoding/identifier.js";
+} from "../encoding/index.js";
 import { WIRE_VERSION, WireVersions } from "../version.js";
 import {
   AgentId,

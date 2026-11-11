@@ -12,7 +12,7 @@ import {
   decodeCanonical,
   encodeCanonical,
   sameBytes,
-} from "../../encoding/canonical-json.js";
+} from "../../encoding/index.js";
 import {
   AgentCard,
   agentCardOf,

@@ -27,7 +27,7 @@ import {
 } from "../__tests__/records-fixtures.js";
 import { batch, emptyBatch, pollCursor } from "../__tests__/router-fixtures.js";
 import { identifier } from "../../__tests__/agents.js";
-import { encodeCanonical } from "../../encoding/canonical-json.js";
+import { encodeCanonical } from "../../encoding/index.js";
 import {
   agentCardOf,
   AgentName,

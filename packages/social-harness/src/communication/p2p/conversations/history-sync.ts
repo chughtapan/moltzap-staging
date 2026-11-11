@@ -10,7 +10,7 @@ import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import { SignedMessage } from "../../../identity/message-security.js";
 import {
   AnchorHash,

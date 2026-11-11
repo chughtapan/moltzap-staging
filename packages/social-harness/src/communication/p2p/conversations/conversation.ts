@@ -20,7 +20,7 @@ import type { EndpointStoreError } from "../../store.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import {
   type AgentPublicKey,
   AgentSigningAuthority,

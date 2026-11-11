@@ -12,11 +12,11 @@ import {
 import { GeneralSign, generalVerify } from "jose";
 import { createHash } from "node:crypto";
 import {
+  canonicalIdentifier,
   decodeCanonicalJson,
   encodeCanonicalJson,
   exactStruct,
-} from "../encoding/canonical-json.js";
-import { canonicalIdentifier } from "../encoding/identifier.js";
+} from "../encoding/index.js";
 import { WireVersions } from "../version.js";
 import {
   AgentPublicKey,

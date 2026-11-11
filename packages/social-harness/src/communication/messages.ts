@@ -17,17 +17,15 @@ import {
 } from "effect";
 import { randomBytes } from "node:crypto";
 import {
-  type ClientRepresentationError,
-  exactStruct,
-  representationFailure,
-} from "../encoding/canonical-json.js";
-import {
   canonicalIdentifier,
+  type ClientRepresentationError,
   compareAgentIds as compareAgentIdBytes,
   compareAscii,
+  exactStruct,
   isCanonicalIdentifier,
   isStrictlyAscending,
-} from "../encoding/identifier.js";
+  representationFailure,
+} from "../encoding/index.js";
 import {
   AGENT_NAME_RULE,
   AgentCard,

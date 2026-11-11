@@ -8,7 +8,7 @@ import { SqlClient } from "@effect/sql";
 import { Clock, Effect, Schema } from "effect";
 import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
-import { sameBytes } from "../encoding/canonical-json.js";
+import { sameBytes } from "../encoding/index.js";
 import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
 
 /** A store failure leaves saved rules and decisions as they were. */
