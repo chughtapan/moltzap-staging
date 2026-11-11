@@ -1,12 +1,6 @@
-/** @file MCP binds the harness services and owns its HTTP listener. */
+/** @file One agent's MCP app: its tools and its inbox events. */
 
-import {
-  type HttpApp,
-  HttpBody,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "@effect/platform";
-import { NodeHttpServer } from "@effect/platform-node";
+import { HttpServerResponse } from "@effect/platform";
 import {
   Cause,
   type Context,
@@ -14,18 +8,12 @@ import {
   Duration,
   Effect,
   JSONSchema,
-  Match,
   Option,
-  type Redacted,
   Schema,
-  type Scope,
   Stream,
 } from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
-import { createServer } from "node:http";
 import type { MessageAddressInput } from "../../communication/messages.js";
 import type { RequestError } from "../../communication/service.js";
-import type { OwnerAccount } from "../ownership.js";
 import { issuesText, SendError } from "../../communication/errors.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/service.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
@@ -40,19 +28,8 @@ import {
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
 import { InboxError } from "../inbox.js";
-import {
-  type SendRequest,
-  TextSendArguments,
-  validationIssues,
-} from "../message-format.js";
+import { validationIssues } from "../message-format.js";
 import { SocialHarness } from "../social-harness.js";
-import {
-  authenticationChallenge,
-  makeRequestAdmission,
-  type McpAuthentication,
-  protectedResourcePath,
-  protectedResourceResponse,
-} from "./authentication.js";
 import {
   clientToolDefinitions,
   eventListInput,
@@ -61,9 +38,12 @@ import {
   eventUnsubscribeInput,
   type HarnessWebhookEvents,
   INBOX_PENDING_EVENT,
+  inboxPendingCatalogEntry,
   sendErrorData,
+  textToolDefinitions,
   toolDefinitions,
 } from "./contracts.js";
+import { limitResponseStream } from "./http.js";
 import { countPendingInbox, inboxPendingEvent } from "./webhook.js";
 
 interface AgentServerSettings {
@@ -79,307 +59,139 @@ interface AgentServerSettings {
   readonly implementation: { readonly name: string; readonly version: string };
 }
 
-/** A failed send as the wire carries it: its message, and data a caller can read back. */
-const sendFailure = (error: SendError | RequestError | FirewallRefusal) =>
-  new ProtocolError(-32603, error.message, sendErrorData(error));
+type Harness = Context.Tag.Service<typeof SocialHarness>;
 
-/** A send that ended without a declared result may or may not have been accepted. */
-const sendOutcomeUnknown = sendFailure(
-  new SendError({ reason: "outcome-unknown" }),
-);
-
-/** The answer for a tool that ended in a way it does not declare. */
-const unexpectedFailure = new ProtocolError(
-  -32603,
-  "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-);
-
-const reasonError = (error: {
-  readonly reason: string;
-  readonly message: string;
-}) => new ProtocolError(-32603, error.message, { reason: error.reason });
-const loopback = (host: string) =>
-  ["127.0.0.1", "[::1]", "localhost"].includes(host);
-
-const decodeEventArguments = <A, I>(
-  schema: Schema.Schema<A, I>,
-  input: unknown,
-) =>
-  Schema.decodeUnknown(schema)(input).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
-    ),
-  );
-const requireEvent = (
-  name: string,
-  expected: string,
-  cursor?: string | null,
-) => {
-  if (name !== expected) {
-    return Effect.fail(
-      new ProtocolError(-32011, "Event not found", { kind: "event" }),
-    );
-  }
-  return cursor == null
-    ? Effect.void
-    : Effect.fail(
-        new ProtocolError(
-          -32014,
-          "Event replay is unavailable; read the inbox",
-          { feature: "cursor" },
-        ),
-      );
-};
-
-/** Registers the retained agent's Events handlers without acquiring delivery workers. */
-const installEvents = Effect.fn("installEvents")(function* (
-  webhook: HarnessWebhookEvents,
-) {
-  const harness = yield* SocialHarness;
-  const server = yield* McpServer;
-  server.events.current = {
-    list: (raw) =>
-      decodeEventArguments(eventListInput, raw).pipe(
-        Effect.flatMap((input) =>
-          input.cursor === undefined
-            ? Effect.succeed({
-                events: [
-                  {
-                    name: INBOX_PENDING_EVENT,
-                    description: "A wakeup to read the pending inbox.",
-                    delivery: ["push", "webhook"],
-                    inputSchema: {
-                      type: "object",
-                      properties: {},
-                      additionalProperties: false,
-                    },
-                    payloadSchema: {
-                      type: "object",
-                      properties: {
-                        pendingCount: { type: "integer", minimum: 0 },
-                      },
-                      required: ["pendingCount"],
-                    },
-                  },
-                ],
-              })
-            : Effect.fail(
-                new ProtocolError(-32602, "Invalid event catalog cursor"),
-              ),
-        ),
-      ),
-    stream: (raw) => streamPending(harness, raw),
-    subscribe: (raw) =>
-      Effect.gen(function* () {
-        const input = yield* decodeEventArguments(eventSubscribeInput, raw);
-        yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
-        if (input.delivery.mode !== "webhook") {
-          return yield* Effect.fail(
-            new ProtocolError(-32602, "Unsupported delivery mode"),
-          );
-        }
-        return yield* webhook.subscribe(input);
-      }),
-    unsubscribe: (raw) =>
-      Effect.gen(function* () {
-        const input = yield* decodeEventArguments(eventUnsubscribeInput, raw);
-        yield* requireEvent(input.name, INBOX_PENDING_EVENT);
-        yield* webhook.unsubscribe(input);
-        return {};
-      }),
-  };
-}, Effect.withSpan("installEvents"));
-
-function streamPending(
-  harness: Context.Tag.Service<typeof SocialHarness>,
-  raw: unknown,
-) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const input = yield* decodeEventArguments(eventStreamInput, raw);
-      yield* requireEvent(input.name, INBOX_PENDING_EVENT, input.cursor);
-      const context = yield* McpServerClient;
-      const notify = context.notify;
-      if (notify === undefined) {
-        return yield* Effect.fail(
-          new ProtocolError(-32603, "Event stream unavailable"),
-        );
-      }
-      yield* notify("notifications/events/active", {
-        cursor: null,
-        truncated: false,
-      });
-      yield* Effect.sleep("20 seconds").pipe(
-        Effect.zipRight(
-          notify("notifications/events/heartbeat", { cursor: null }),
-        ),
-        Effect.forever,
-        Effect.forkScoped,
-      );
-      yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
-        Stream.runForEach(() =>
-          countPendingInbox(harness).pipe(
-            Effect.catchTag("InboxError", () =>
-              Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
-            ),
-            Effect.flatMap((count) =>
-              notify(
-                "notifications/events/event",
-                inboxPendingEvent(count, Date.now()),
-              ),
-            ),
-          ),
-        ),
-      );
-      return {};
-    }),
-  );
-}
-
-/** One retained agent context owns its tools, inbox and notification subscribers. */
+/**
+ * Serves one agent's tools and inbox events until the agent stops, after
+ * which every request, and every stream still open, gets 503.
+ */
 export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   settings: AgentServerSettings,
 ) {
   const harness = yield* SocialHarness;
-  const identity = yield* Identity;
   const firewall = yield* Firewall;
   const server = yield* McpServer.make;
-  yield* installEvents(settings.webhook).pipe(
-    Effect.provideService(McpServer, server),
-  );
-  const policyConfigured = firewall
-    .readPolicy()
-    .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
-  const norms = yield* Effect.serviceOption(HeldNorms);
-
-  yield* Option.match(settings.serverAgent, {
-    onNone: () =>
-      installMessageTools(server, harness, settings).pipe(
-        Effect.zipRight(installPolicyTools(server, firewall, policyConfigured)),
+  server.events.current = inboxEvents(harness, settings.webhook);
+  yield* Effect.forEach(
+    [
+      yield* statusTool(settings.webhook),
+      ...Option.match(settings.serverAgent, {
+        onNone: () => peerTools(harness, firewall, settings),
+        onSome: (serverAgent) => clientTools(harness, serverAgent),
+      }),
+      ...Option.toArray(yield* Effect.serviceOption(HeldNorms)).map((norms) =>
+        normsTool(norms, Option.isSome(settings.serverAgent)),
       ),
-    onSome: (serverAgent) => installClientTools(server, harness, serverAgent),
-  });
-  yield* installIdentityTools(server, identity, settings.webhook);
-  if (Option.isSome(norms)) {
-    yield* installNormTools(
-      server,
-      norms.value,
-      Option.isSome(settings.serverAgent)
-        ? clientToolDefinitions.read_norms
-        : toolDefinitions.read_norms,
-    );
-  }
-
+    ],
+    server.addTool,
+    { concurrency: 1, discard: true },
+  );
   const app = yield* makeHttpApp(settings.implementation).pipe(
     Effect.provideService(McpServer, server),
   );
-  const unavailable = Deferred.await(settings.stopped).pipe(
+  const stopped = Deferred.await(settings.stopped);
+  const unavailable = stopped.pipe(
     Effect.interruptible,
     Effect.as(HttpServerResponse.text("Agent unavailable", { status: 503 })),
   );
   return Deferred.isDone(settings.stopped).pipe(
-    Effect.flatMap((stopped) =>
-      stopped ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
+    Effect.flatMap((done) =>
+      done ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
     ),
     Effect.flatMap((response) =>
-      responseWhileRunning(response, settings.stopped),
+      limitResponseStream(response, Stream.interruptWhen(stopped)),
     ),
   );
 });
 
-/** Streams retain the agent-stop signal after their HTTP response is created. */
-function responseWhileRunning(
-  response: HttpServerResponse.HttpServerResponse,
-  stopped: Deferred.Deferred<undefined>,
-) {
-  return Match.value(response.body).pipe(
-    Match.tag("Stream", (body) =>
-      HttpServerResponse.setBody(
-        response,
-        HttpBody.stream(
-          body.stream.pipe(Stream.interruptWhen(Deferred.await(stopped))),
-          body.contentType,
-        ),
-      ),
-    ),
-    Match.orElse(() => response),
-  );
-}
-
-/** Authentication selects the account before any agent context or tool is acquired. */
-export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
-  authentication: McpAuthentication,
-  selectApp: (
-    owner: OwnerAccount,
-  ) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>,
-  serverAgentCredential: Option.Option<Redacted.Redacted>,
-) {
-  const admit = yield* makeRequestAdmission(
-    authentication,
-    serverAgentCredential,
-  );
-  return guardMcp(selectApp, authentication, admit);
-});
-
-function safeLocalUrl(value: string): boolean {
-  const url = Schema.decodeUnknownOption(Schema.URL)(value);
-  if (Option.isNone(url)) {
-    return false;
-  }
-  const uncredentialed = !url.value.username && !url.value.password;
-  const webProtocol = ["http:", "https:"].includes(url.value.protocol);
-  return (
-    uncredentialed &&
-    !url.value.hash &&
-    webProtocol &&
-    loopback(url.value.hostname)
-  );
-}
-
-function installMessageTools(
-  server: Context.Tag.Service<typeof McpServer>,
-  harness: Context.Tag.Service<typeof SocialHarness>,
+/** The tools of a peer: it addresses any agent and owns its message policy. */
+function peerTools(
+  harness: Harness,
+  firewall: Context.Tag.Service<typeof Firewall>,
   settings: Pick<AgentServerSettings, "hideCollectives">,
 ) {
-  return Effect.gen(function* () {
-    const send = {
-      name: "send_message",
-      execute: (request: SendRequest) => harness.send(request),
-      failure: sendFailure,
-      unexpected: sendOutcomeUnknown,
-    };
-    yield* settings.hideCollectives
-      ? bind(server, {
-          ...send,
-          definition: {
-            ...toolDefinitions.send_message,
-            description:
-              "Send a message. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
-            input: TextSendArguments,
-          },
-        })
-      : bind(server, { ...send, definition: toolDefinitions.send_message });
-    yield* installReceiveTool(server, harness);
-    yield* bind(server, {
+  const policyConfigured = firewall
+    .readPolicy()
+    .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+  return [
+    settings.hideCollectives
+      ? sendTool(textToolDefinitions.send_message, harness.send)
+      : sendTool(toolDefinitions.send_message, harness.send),
+    receiveTool(harness),
+    bind({
       name: "list_conversations",
       definition: toolDefinitions.list_conversations,
       execute: harness.listConversations,
-      failure: reasonError,
-    });
-    yield* bind(server, {
+    }),
+    bind({
       name: "read_conversation",
       definition: toolDefinitions.read_conversation,
       execute: harness.readHistory,
-      failure: reasonError,
-    });
+    }),
+    bind({
+      name: "read_policy",
+      definition: toolDefinitions.read_policy,
+      execute: () => firewall.readPolicy(),
+      visible: policyConfigured,
+    }),
+    bindWith({
+      name: "update_policy",
+      definition: toolDefinitions.update_policy,
+      execute: firewall.updatePolicy,
+      failure: (error) =>
+        new ProtocolError(-32603, error.message, {
+          reason: error.reason,
+          ...error.data,
+        }),
+      visible: policyConfigured,
+    }),
+    bind({
+      name: "read_firewall_decisions",
+      definition: toolDefinitions.read_firewall_decisions,
+      execute: firewall.readDecisions,
+    }),
+  ];
+}
+
+/**
+ * The tools of a client in client/server mode. It sends to and reads its
+ * conversation with the server agent, and names neither.
+ */
+function clientTools(harness: Harness, serverAgent: MessageAddressInput) {
+  return [
+    sendTool(clientToolDefinitions.send_message, ({ text }) =>
+      harness.send({ to: serverAgent, text }),
+    ),
+    receiveTool(harness),
+    bind({
+      name: "read_conversation",
+      definition: clientToolDefinitions.read_conversation,
+      execute: (page) => harness.readHistory({ ...page, address: serverAgent }),
+    }),
+  ];
+}
+
+/** A send that ended without a declared result may or may not have been accepted. */
+function sendTool<A, I, B, J>(
+  definition: Definition<A, I, B, J>,
+  execute: (
+    input: A,
+  ) => Effect.Effect<B, SendError | RequestError | FirewallRefusal>,
+) {
+  const failure = (error: SendError | RequestError | FirewallRefusal) =>
+    new ProtocolError(-32603, error.message, sendErrorData(error));
+  return bindWith({
+    name: "send_message",
+    definition,
+    execute,
+    failure,
+    unexpected: failure(new SendError({ reason: "outcome-unknown" })),
   });
 }
-/** Binds the tool that hands over pending inbox items and marks them delivered. */
-function installReceiveTool(
-  server: Context.Tag.Service<typeof McpServer>,
-  harness: Context.Tag.Service<typeof SocialHarness>,
-) {
-  return bind(server, {
+
+/** Hands over pending inbox items and marks them delivered. */
+function receiveTool(harness: Harness) {
+  return bind({
     name: "receive_messages",
     definition: toolDefinitions.receive_messages,
     execute: Effect.fn(function* ({ wait, ...request }) {
@@ -398,70 +210,35 @@ function installReceiveTool(
       }
       return page;
     }),
-    failure: reasonError,
   });
 }
 
-/**
- * The tools of a client in client/server mode. It sends to and reads its
- * conversation with the server agent, and names neither.
- */
-function installClientTools(
-  server: Context.Tag.Service<typeof McpServer>,
-  harness: Context.Tag.Service<typeof SocialHarness>,
-  serverAgent: MessageAddressInput,
-) {
-  return Effect.gen(function* () {
-    yield* bind(server, {
-      name: "send_message",
-      definition: clientToolDefinitions.send_message,
-      execute: ({ text }) => harness.send({ to: serverAgent, text }),
-      failure: sendFailure,
-      unexpected: sendOutcomeUnknown,
-    });
-    yield* installReceiveTool(server, harness);
-    yield* bind(server, {
-      name: "read_conversation",
-      definition: clientToolDefinitions.read_conversation,
-      execute: (page) => harness.readHistory({ ...page, address: serverAgent }),
-      failure: reasonError,
-    });
-  });
-}
-function installIdentityTools(
-  server: Context.Tag.Service<typeof McpServer>,
-  identity: Context.Tag.Service<typeof Identity>,
-  webhook: HarnessWebhookEvents,
-) {
-  return Effect.gen(function* () {
-    yield* bind(server, {
+function statusTool(webhook: HarnessWebhookEvents) {
+  return Effect.map(Identity, (identity) =>
+    bind({
       name: "status",
       definition: toolDefinitions.status,
       execute: () =>
-        Effect.gen(function* () {
-          return {
-            identityCard: yield* Schema.encode(AgentIdentityCard)(
-              identity.me,
-            ).pipe(Effect.orDie),
-            webhook: yield* webhook.status,
-          };
+        Effect.all({
+          identityCard: Schema.encode(AgentIdentityCard)(identity.me).pipe(
+            Effect.orDie,
+          ),
+          webhook: webhook.status,
         }),
-      failure: reasonError,
-    });
-  });
+    }),
+  );
 }
 
-/** `read_norms` lists the norms this agent holds in its active policy. */
-function installNormTools(
-  server: Context.Tag.Service<typeof McpServer>,
+/** `read_norms` lists the norms held: this agent's, or for a client the server agent's. */
+function normsTool(
   norms: Context.Tag.Service<typeof HeldNorms>,
-  definition:
-    | typeof toolDefinitions.read_norms
-    | typeof clientToolDefinitions.read_norms,
+  forClient: boolean,
 ) {
-  return bind(server, {
+  return bind({
     name: "read_norms",
-    definition,
+    definition: forClient
+      ? clientToolDefinitions.read_norms
+      : toolDefinitions.read_norms,
     execute: () =>
       norms.read().pipe(
         Effect.map((held) => ({
@@ -473,76 +250,61 @@ function installNormTools(
           })),
         })),
       ),
-    failure: reasonError,
   });
 }
 
-function installPolicyTools(
-  server: Context.Tag.Service<typeof McpServer>,
-  firewall: Context.Tag.Service<typeof Firewall>,
-  policyConfigured: Effect.Effect<boolean>,
+/** What a tool definition says about a tool before any operation is attached. */
+interface Definition<A, I, B, J> {
+  readonly description: string;
+  readonly input: Schema.Schema<A, I>;
+  readonly output: Schema.Schema<B, J>;
+  readonly annotations: {
+    readonly readOnlyHint: boolean;
+    readonly openWorldHint: boolean;
+    readonly destructiveHint?: boolean;
+    readonly idempotentHint?: boolean;
+  };
+}
+
+interface Binding<A, I, B, J, E> {
+  readonly name: string;
+  readonly definition: Definition<A, I, B, J>;
+  readonly execute: (input: A) => Effect.Effect<B, E>;
+  /** What to answer when the tool ends in a way it does not declare. */
+  readonly unexpected?: ProtocolError;
+  /** Checked on every listing and call. A tool without it is always offered. */
+  readonly visible?: Effect.Effect<boolean>;
+}
+
+/** Binds a tool whose failures carry a reason and a message, which is how they reach the caller. */
+function bind<A, I, B, J>(
+  binding: Binding<A, I, B, J, { readonly reason: string; message: string }>,
 ) {
-  return Effect.gen(function* () {
-    yield* bind(server, {
-      name: "read_policy",
-      definition: toolDefinitions.read_policy,
-      execute: () => firewall.readPolicy(),
-      failure: reasonError,
-      visible: policyConfigured,
-    });
-    yield* bind(server, {
-      name: "update_policy",
-      definition: toolDefinitions.update_policy,
-      execute: firewall.updatePolicy,
-      failure: (error) =>
-        new ProtocolError(-32603, error.message, {
-          reason: error.reason,
-          ...error.data,
-        }),
-      visible: policyConfigured,
-    });
-    yield* bind(server, {
-      name: "read_firewall_decisions",
-      definition: toolDefinitions.read_firewall_decisions,
-      execute: firewall.readDecisions,
-      failure: reasonError,
-    });
+  return bindWith({
+    ...binding,
+    failure: (error) =>
+      new ProtocolError(-32603, error.message, { reason: error.reason }),
   });
 }
-/** A refusal of arguments that names each wrong field in its message and its data. */
-function invalidArguments(issues: ReturnType<typeof validationIssues>) {
-  return new ProtocolError(
-    -32602,
-    `Invalid tool arguments: ${issuesText(issues)}`,
-    { issues },
-  );
-}
 
-function bind<A, I, B, J, E>(
-  server: Context.Tag.Service<typeof McpServer>,
-  options: {
-    readonly name: string;
-    readonly definition: {
-      readonly description: string;
-      readonly input: Schema.Schema<A, I>;
-      readonly output: Schema.Schema<B, J>;
-      readonly annotations: {
-        readonly readOnlyHint: boolean;
-        readonly openWorldHint: boolean;
-        readonly destructiveHint?: boolean;
-        readonly idempotentHint?: boolean;
-      };
-    };
-    readonly execute: (input: A) => Effect.Effect<B, E>;
+/**
+ * Turns a tool definition and the operation behind it into a registered
+ * tool: arguments are decoded with the definition's input, the result is
+ * encoded with its output, and a failure is worded by `failure`.
+ */
+function bindWith<A, I, B, J, E>(
+  options: Binding<A, I, B, J, E> & {
     readonly failure: (error: E) => ProtocolError;
-    /** What to answer when the tool ends in a way it does not declare. */
-    readonly unexpected?: ProtocolError;
-    readonly visible?: Effect.Effect<boolean>;
   },
 ) {
   const { name, definition, execute, failure, visible } = options;
-  const unexpected = options.unexpected ?? unexpectedFailure;
-  return server.addTool({
+  const unexpected =
+    options.unexpected ??
+    new ProtocolError(
+      -32603,
+      "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+    );
+  return {
     tool: new Tool({
       name,
       description: definition.description,
@@ -555,124 +317,37 @@ function bind<A, I, B, J, E>(
       }),
     }),
     ...(visible === undefined ? {} : { visible }),
-    handle: (input) =>
+    handle: (input: unknown) =>
       Effect.gen(function* () {
         const decoded = yield* Schema.decodeUnknown(definition.input, {
           onExcessProperty: "error",
           errors: "all",
-        })(input).pipe(
-          Effect.catchTag("ParseError", (error) =>
-            Effect.fail(invalidArguments(validationIssues(error))),
-          ),
-        );
+        })(input).pipe(Effect.mapError(invalidArguments));
         const output = yield* execute(decoded).pipe(Effect.mapError(failure));
         const encoded = yield* Schema.encode(definition.output)(output, {
           onExcessProperty: "error",
-        }).pipe(Effect.catchTag("ParseError", () => Effect.fail(unexpected)));
+        }).pipe(Effect.mapError(() => unexpected));
         return new CallToolResult({
           content: [{ type: "text", text: JSON.stringify(encoded) }],
           structuredContent: encoded,
         });
       }).pipe(
-        Effect.catchAllCause((cause) => {
-          const expected = Cause.failureOption(cause);
-          if (Option.isSome(expected)) {
-            return Effect.fail(expected.value);
-          }
-          return Effect.fail(unexpected);
-        }),
-      ),
-  });
-}
-
-function guardMcp(
-  selectApp: (
-    owner: OwnerAccount,
-  ) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>,
-  authentication: McpAuthentication,
-  admit: Effect.Effect.Success<ReturnType<typeof makeRequestAdmission>>,
-) {
-  return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const host = request.headers.host;
-    const origin = request.headers.origin;
-    const oauth = authentication.kind === "oauth" ? authentication : undefined;
-    const allowedHost =
-      host !== undefined &&
-      (oauth === undefined
-        ? safeLocalUrl(`http://${host}`)
-        : host.toLowerCase() === oauth.resource.host.toLowerCase());
-    const allowedOrigin =
-      origin === undefined ||
-      (oauth === undefined
-        ? safeLocalUrl(origin)
-        : oauth.allowedOrigins.includes(origin));
-    if (!allowedHost || !allowedOrigin) {
-      return HttpServerResponse.text("Forbidden", { status: 403 });
-    }
-    const path = new URL(request.url, "http://localhost").pathname;
-    if (
-      oauth !== undefined &&
-      path === protectedResourcePath(oauth) &&
-      request.method === "GET"
-    ) {
-      return HttpServerResponse.fromWeb(protectedResourceResponse(oauth));
-    }
-    if (path !== "/mcp") {
-      return HttpServerResponse.empty({ status: 404 });
-    }
-    if (request.method !== "POST") {
-      return HttpServerResponse.empty({
-        status: 405,
-        headers: { allow: "POST" },
-      });
-    }
-    const authorityRequest = new Request(
-      oauth?.resource ?? "http://127.0.0.1/mcp",
-      { headers: request.headers },
-    );
-    return yield* admit(authorityRequest).pipe(
-      Effect.matchEffect({
-        onFailure: () =>
-          Effect.succeed(
-            HttpServerResponse.fromWeb(authenticationChallenge(authentication)),
+        Effect.catchAllCause((cause) =>
+          Effect.fail(
+            Option.getOrElse(Cause.failureOption(cause), () => unexpected),
           ),
-        onSuccess: ({ owner, expiresAt }) =>
-          selectApp(owner).pipe(
-            Effect.flatMap((app) => app),
-            Effect.flatMap((response) => expireResponse(response, expiresAt)),
-            Effect.catchAll(() =>
-              Effect.succeed(
-                HttpServerResponse.text("Agent unavailable", { status: 503 }),
-              ),
-            ),
-          ),
-      }),
-    );
-  });
-}
-
-/** A request cannot outlive the authority that admitted its streaming body. */
-function expireResponse(
-  response: HttpServerResponse.HttpServerResponse,
-  expiresAt?: number,
-) {
-  if (expiresAt === undefined) {
-    return response;
-  }
-  return Match.value(response.body).pipe(
-    Match.tag("Stream", (body) =>
-      HttpServerResponse.setBody(
-        response,
-        HttpBody.stream(
-          body.stream.pipe(
-            Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
-          ),
-          body.contentType,
         ),
       ),
-    ),
-    Match.orElse(() => response),
+  };
+}
+
+/** A refusal of arguments that names each wrong field in its message and its data. */
+function invalidArguments(error: Parameters<typeof validationIssues>[0]) {
+  const issues = validationIssues(error);
+  return new ProtocolError(
+    -32602,
+    `Invalid tool arguments: ${issuesText(issues)}`,
+    { issues },
   );
 }
 
@@ -722,24 +397,112 @@ function openObjects(value: unknown): unknown {
   ]);
 }
 
-/** Local bearer mode uses the same default address for binding and advertisement. */
-const LOOPBACK_HOST = "127.0.0.1";
+/**
+ * The one event a host can follow: a wake-up saying how many inbox items
+ * wait. A host follows it on an open stream or through a webhook it
+ * subscribes, and reads the items themselves with `receive_messages`.
+ */
+function inboxEvents(harness: Harness, webhook: HarnessWebhookEvents) {
+  const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+    Schema.decodeUnknown(schema)(input).pipe(
+      Effect.catchTag("ParseError", () =>
+        Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
+      ),
+    );
+  return {
+    list: (raw: unknown) =>
+      decode(eventListInput, raw).pipe(
+        Effect.filterOrFail(
+          (input) => input.cursor === undefined,
+          () => new ProtocolError(-32602, "Invalid event catalog cursor"),
+        ),
+        Effect.as({ events: [inboxPendingCatalogEntry] }),
+      ),
+    stream: (raw: unknown) =>
+      decode(eventStreamInput, raw).pipe(
+        Effect.flatMap(onlyInboxPending),
+        Effect.zipRight(streamPending(harness)),
+      ),
+    subscribe: (raw: unknown) =>
+      decode(eventSubscribeInput, raw).pipe(
+        Effect.flatMap(onlyInboxPending),
+        Effect.filterOrFail(
+          (input) => input.delivery.mode === "webhook",
+          () => new ProtocolError(-32602, "Unsupported delivery mode"),
+        ),
+        Effect.flatMap(webhook.subscribe),
+      ),
+    unsubscribe: (raw: unknown) =>
+      decode(eventUnsubscribeInput, raw).pipe(
+        Effect.flatMap(onlyInboxPending),
+        Effect.flatMap(webhook.unsubscribe),
+        Effect.as({}),
+      ),
+  };
+}
 
-/** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
-export const serveMcp = Effect.fn("Mcp.serve")(function* (
-  port: number,
-  app: HttpApp.Default<never, Scope.Scope>,
-  host: string = LOOPBACK_HOST,
-) {
-  const listener = yield* Effect.sync(createServer);
-  const server = yield* NodeHttpServer.make(() => listener, {
-    host,
-    port,
-  });
-  yield* Effect.addFinalizer(() =>
-    Effect.sync(() => {
-      listener.closeAllConnections();
+/** Refuses any event but the inbox wake-up, and any request to replay it. */
+function onlyInboxPending<
+  A extends { readonly name: string; readonly cursor?: string | null },
+>(input: A) {
+  if (input.name !== INBOX_PENDING_EVENT) {
+    return Effect.fail(
+      new ProtocolError(-32011, "Event not found", { kind: "event" }),
+    );
+  }
+  return input.cursor == null
+    ? Effect.succeed(input)
+    : Effect.fail(
+        new ProtocolError(
+          -32014,
+          "Event replay is unavailable; read the inbox",
+          {
+            feature: "cursor",
+          },
+        ),
+      );
+}
+
+/**
+ * Tells the caller how many inbox items wait: once when the stream opens and
+ * again whenever the inbox changes, with a heartbeat every 20 seconds.
+ */
+function streamPending(harness: Harness) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const { notify } = yield* McpServerClient;
+      if (notify === undefined) {
+        return yield* Effect.fail(
+          new ProtocolError(-32603, "Event stream unavailable"),
+        );
+      }
+      yield* notify("notifications/events/active", {
+        cursor: null,
+        truncated: false,
+      });
+      yield* Effect.sleep("20 seconds").pipe(
+        Effect.zipRight(
+          notify("notifications/events/heartbeat", { cursor: null }),
+        ),
+        Effect.forever,
+        Effect.forkScoped,
+      );
+      yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
+        Stream.runForEach(() =>
+          countPendingInbox(harness).pipe(
+            Effect.catchTag("InboxError", () =>
+              Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
+            ),
+            Effect.flatMap((count) =>
+              notify(
+                "notifications/events/event",
+                inboxPendingEvent(count, Date.now()),
+              ),
+            ),
+          ),
+        ),
+      );
+      return {};
     }),
   );
-  yield* server.serve(app);
-});
+}

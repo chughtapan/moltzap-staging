@@ -40,7 +40,11 @@ import {
   InboxPage,
   MessageAddress,
 } from "../inbox.js";
-import { SendArguments, SendResultSchema } from "../message-format.js";
+import {
+  SendArguments,
+  SendResultSchema,
+  TextSendArguments,
+} from "../message-format.js";
 import { HistoryError } from "../social-harness.js";
 
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
@@ -130,6 +134,19 @@ export interface HarnessWebhookEvents {
 
 /** A content-free wakeup to read the pending inbox. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
+
+/** How the event catalogue lists the wake-up. */
+export const inboxPendingCatalogEntry = {
+  name: INBOX_PENDING_EVENT,
+  description: "A wakeup to read the pending inbox.",
+  delivery: ["push", "webhook"],
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  payloadSchema: {
+    type: "object",
+    properties: { pendingCount: { type: "integer", minimum: 0 } },
+    required: ["pendingCount"],
+  },
+};
 
 /**
  * Refusals disclose the check, the deciding chain rule, registered feedback and
@@ -523,6 +540,16 @@ export const clientToolDefinitions = {
     ...toolDefinitions.read_norms,
     description:
       "List the norms the server agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. Send an act as (performative :ontology <norm> :field value ...).",
+  },
+} as const;
+
+/** How `send_message` reads for an agent that sends text only, with no questions or answers. */
+export const textToolDefinitions = {
+  send_message: {
+    ...toolDefinitions.send_message,
+    description:
+      "Send a message. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+    input: TextSendArguments,
   },
 } as const;
 

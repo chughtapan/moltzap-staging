@@ -47,12 +47,6 @@ export {
 export { loadDaemonSettings } from "./harness/config.js";
 /** Retained registration inputs are shared with process fixtures. */
 export { loadAgentRegistration, localOwner } from "./harness/ownership.js";
-/** Policy fixtures use the production MCP catalogue and authentication guard. */
-export {
-  makeAgentMcpApp,
-  makeMcpHttpApp,
-  serveMcp,
-} from "./harness/mcp/server.js";
 /** Real Router connections are retained in deterministic provider traces. */
 export { Router } from "./communication/router/client.js";
 
