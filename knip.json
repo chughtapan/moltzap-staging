@@ -37,9 +37,6 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@social-harness/plugin-mcp"
       ]
     },
     "plugins/openclaw": {
@@ -50,10 +47,6 @@
       "project": [
         "src/**/*.ts",
         "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@social-harness/plugin-mcp",
-        "@modelcontextprotocol/client"
       ]
     },
     "tests/integration": {
@@ -98,14 +91,6 @@
         "@social-harness/social-harness",
         "@effect/platform-node",
         "effect"
-      ]
-    },
-    "plugins/shared": {
-      "entry": [
-        "*.spec.ts"
-      ],
-      "project": [
-        "*.ts"
       ]
     }
   }

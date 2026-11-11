@@ -1,9 +1,13 @@
 /** @file NanoClaw routes incoming work and translates native sends through a stock MCP client. */
+import type * as SocialHarness from "@social-harness/social-harness";
 import { Client, ProtocolError } from "@modelcontextprotocol/client";
 import {
   AgentAddress,
   AgentCard,
+  type connectFromEnvironment,
   DeliveryToken,
+  type InboxEntry,
+  type McpConnection,
   MsgId,
   PermittedItem,
   SendError,
@@ -11,12 +15,6 @@ import {
 } from "@social-harness/social-harness";
 import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type * as McpModule from "#sharness-mcp/mcp-client";
-import type {
-  connectFromEnvironment,
-  InboxEntry,
-  McpConnection,
-} from "#sharness-mcp/mcp-client";
 import type { ChannelRegistration, ChannelSetup } from "./adapter.js";
 import type { registerChannelAdapter } from "./channel-registry.js";
 
@@ -28,8 +26,8 @@ const boundary = vi.hoisted(() => ({
 vi.mock("./channel-registry.js", () => ({
   registerChannelAdapter: boundary.register,
 }));
-vi.mock("#sharness-mcp/mcp-client", async (original) => ({
-  ...(await original<typeof McpModule>()),
+vi.mock("@social-harness/social-harness", async (original) => ({
+  ...(await original<typeof SocialHarness>()),
   connectFromEnvironment: boundary.acquire,
 }));
 

@@ -16,12 +16,12 @@
  */
 
 import {
+  callTool as call,
   MAXIMUM_WAIT_SECONDS,
   type PermittedItem,
 } from "@social-harness/social-harness";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
-import { callTool as call } from "../../../plugins/shared/mcp-client.js";
 import { send } from "../agent-fixture.js";
 import { sharedDaemon, type SignedIn } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";

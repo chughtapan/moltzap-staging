@@ -1,8 +1,13 @@
 /** @file Projects the public Social Harness endpoint capability into NanoClaw. */
 import {
+  callTool,
+  connectFromEnvironment,
   type DeliveryAcknowledgeError,
   type FirewallRefusal,
   groupMembers,
+  type InboxEntry,
+  type McpConnectError,
+  type McpConnection,
   MessageAddressInput,
   packageVersion,
   parseMessageText,
@@ -22,13 +27,6 @@ import {
   Scope,
 } from "effect";
 import { randomUUID } from "node:crypto";
-import {
-  callTool,
-  connectFromEnvironment,
-  type InboxEntry,
-  type McpConnectError,
-  type McpConnection,
-} from "#sharness-mcp/mcp-client";
 import type { ChannelSetup, InboundMessage } from "./adapter.js";
 import { registerChannelAdapter } from "./channel-registry.js";
 

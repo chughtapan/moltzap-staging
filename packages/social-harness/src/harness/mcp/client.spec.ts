@@ -12,16 +12,17 @@ import {
 } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  mcpFixture,
   loopbackMcpEndpoint,
+  mcpFixture,
   mcpTestCredential,
-} from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
-import { toolDefinitions } from "@social-harness/social-harness";
+} from "../__tests__/mcp-fixtures.js";
 import {
   acquireMcpConnection,
   callTool,
   connectFromEnvironment,
-} from "./mcp-client.js";
+  McpConnectError,
+} from "./client.js";
+import { toolDefinitions, type ToolRequest } from "./contracts.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
@@ -54,7 +55,9 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
     ],
   },
 ).items[0];
-if (entry === undefined) throw new Error("Fixture has no inbox entry");
+if (entry === undefined) {
+  throw new Error("Fixture has no inbox entry");
+}
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -62,7 +65,7 @@ afterEach(() => {
 
 const inboxFixture = Effect.gen(function* () {
   const acknowledged = yield* Ref.make(0);
-  const receipt = yield* Deferred.make<void>();
+  const receipt = yield* Deferred.make<undefined>();
   const fixture = yield* mcpFixture({
     harness: {
       listInbox: () =>
@@ -90,8 +93,8 @@ describe("shared inbox reception", () => {
         { endpoint: fixture.endpoint, credential: mcpTestCredential },
         implementation,
       );
-      const entered = yield* Deferred.make<void>();
-      const accepted = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<undefined>();
+      const accepted = yield* Deferred.make<undefined>();
       const receiver = yield* connection
         .consumeInbox((received) => {
           expect(received).toEqual(entry);
@@ -115,11 +118,12 @@ describe("shared inbox reception", () => {
         { endpoint: fixture.endpoint, credential: mcpTestCredential },
         implementation,
       );
+      const refusal = "host-refused";
       expect(
         yield* connection
-          .consumeInbox(() => Effect.fail("host-refused"))
+          .consumeInbox(() => Effect.fail(refusal))
           .pipe(Effect.flip),
-      ).toBe("host-refused");
+      ).toBe(refusal);
       expect(yield* Ref.get(fixture.acknowledged)).toBe(1);
     }).pipe(Effect.scoped, Effect.runPromise));
 
@@ -131,8 +135,8 @@ describe("shared inbox reception", () => {
         { endpoint: fixture.endpoint, credential: mcpTestCredential },
         implementation,
       ).pipe(Effect.provideService(Scope.Scope, scope));
-      const entered = yield* Deferred.make<void>();
-      const interrupted = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<undefined>();
+      const interrupted = yield* Deferred.make<undefined>();
       const receiver = yield* connection
         .consumeInbox(() =>
           Deferred.succeed(entered, undefined).pipe(
@@ -175,7 +179,9 @@ describe("credential transport", () => {
         Effect.flip,
         Effect.tap((error) =>
           Effect.sync(() => {
-            expect(error.reason).toBe("transport-failed");
+            expect(error).toEqual(
+              new McpConnectError({ reason: "transport-failed" }),
+            );
             expect(fetch).not.toHaveBeenCalled();
           }),
         ),
@@ -198,14 +204,15 @@ describe("credential transport", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const call = fetch.mock.calls[0];
-          if (call === undefined)
+          if (call === undefined) {
             return expect.unreachable("MCP did not connect");
+          }
           const request = new Request(...call);
           expect(request.url).toBe(endpoint.href);
           expect(request.headers.get("Authorization")).toBe(
             `Bearer ${Redacted.value(credential)}`,
           );
-          expect(request.redirect).toBe("error");
+          expect(request).toMatchObject({ redirect: "error" });
         }),
       ),
       Effect.asVoid,
@@ -285,9 +292,9 @@ describe("send outcomes", () => {
     return callTool(client, { name: "send_message", arguments: input }).pipe(
       Effect.flip,
       Effect.tap((failure) =>
-        Effect.sync(() =>
-          expect(failure).toMatchObject({ reason: "outcome-unknown" }),
-        ),
+        Effect.sync(() => {
+          expect(failure).toMatchObject({ reason: "outcome-unknown" });
+        }),
       ),
       Effect.asVoid,
       Effect.runPromise,
@@ -296,11 +303,12 @@ describe("send outcomes", () => {
 });
 
 describe("management failures", () => {
-  const failures: readonly {
-    readonly request: import("@social-harness/social-harness").ToolRequest;
+  const transportDetail = "private transport detail";
+  const failures: ReadonlyArray<{
+    readonly request: ToolRequest;
     readonly data: { readonly reason: string };
     readonly tag: string;
-  }[] = [
+  }> = [
     {
       request: { name: "list_conversations", arguments: {} },
       data: { reason: "invalid-cursor" },
@@ -317,14 +325,14 @@ describe("management failures", () => {
     ({ request, data, tag }) => {
       const client = new Client(implementation);
       vi.spyOn(client, "callTool").mockRejectedValue(
-        new ProtocolError(-32603, "private transport detail", data),
+        new ProtocolError(-32603, transportDetail, data),
       );
       return callTool(client, request).pipe(
         Effect.flip,
         Effect.tap((failure) =>
           Effect.sync(() => {
             expect(failure).toMatchObject({ _tag: tag, reason: data.reason });
-            expect(String(failure)).not.toContain("private transport detail");
+            expect(String(failure)).not.toContain(transportDetail);
           }),
         ),
         Effect.asVoid,

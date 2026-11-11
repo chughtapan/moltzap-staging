@@ -4,10 +4,9 @@ import type {
   DecisionProvider,
   DecisionRequest,
 } from "@social-harness/social-harness/service";
-import { toolDefinitions } from "@social-harness/social-harness";
+import { callTool, toolDefinitions } from "@social-harness/social-harness";
 import { Deferred, Effect, Fiber, Schedule, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { callTool } from "../../../plugins/shared/mcp-client.js";
 import { send } from "../agent-fixture.js";
 import {
   type Daemon,

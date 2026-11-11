@@ -244,6 +244,10 @@
     {
       "package": "node",
       "reason": "URL is the platform-standard endpoint locator required by the public acquisition contract"
+    },
+    {
+      "package": "@modelcontextprotocol/client",
+      "reason": "A host connection hands the host the stock MCP client it connected"
     }
   ],
   "allowedTestPublicSubpaths": [

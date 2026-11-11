@@ -1,12 +1,12 @@
 /** @file Promise access to one daemon and its agents for node:test suites. */
 import {
   AgentAddress,
+  callTool,
   GroupAddress,
   type PermittedItem,
   type SendResult,
 } from "@social-harness/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
-import { callTool } from "../../plugins/shared/mcp-client.js";
 import { send } from "./agent-fixture.js";
 import {
   type Daemon,

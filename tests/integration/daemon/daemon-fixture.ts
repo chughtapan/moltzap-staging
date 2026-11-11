@@ -26,9 +26,12 @@
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import {
+  acquireMcpConnection,
   AgentAddress,
   type AgentId,
   type AgentName,
+  callTool,
+  type McpConnection,
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
@@ -48,11 +51,6 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  acquireMcpConnection,
-  callTool,
-  type McpConnection,
-} from "../../../plugins/shared/mcp-client.js";
 import {
   markedPolicy,
   writeMessagePolicy,

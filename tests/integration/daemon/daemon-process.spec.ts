@@ -1,10 +1,13 @@
 /** @file One daemon process delivers between its owners' agents, alone and in a group, and keeps their messages across restarts. */
 
-import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
+import {
+  AgentAddress,
+  callTool,
+  GroupAddress,
+} from "@social-harness/social-harness";
 import { Effect, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { expect, it } from "vitest";
-import { callTool } from "../../../plugins/shared/mcp-client.js";
 import {
   groupAddress,
   joinParticipants,

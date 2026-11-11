@@ -10,6 +10,19 @@ export {
   type ToolRequest,
   type ToolResult,
 } from "./harness/mcp/contracts.js";
+/** A host's MCP connection to the daemon, its typed tool calls and inbox reception. */
+export {
+  acquireMcpConnection,
+  callTool,
+  connectFromEnvironment,
+  McpConnectError,
+  type McpConnection,
+  type McpConnectionSettings,
+  McpReceiveError,
+  McpSettingsError,
+  McpToolError,
+  type ToolFailure,
+} from "./harness/mcp/client.js";
 /** Send requests, accepted-work receipts and agent-facing text for host integrations. */
 export {
   groupMembers,

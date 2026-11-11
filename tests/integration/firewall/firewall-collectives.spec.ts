@@ -13,10 +13,9 @@
  * it is asked.
  */
 
-import { FirewallRefusal } from "@social-harness/social-harness";
+import { callTool, FirewallRefusal } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
-import { callTool } from "../../../plugins/shared/mcp-client.js";
 import {
   groupAddress,
   groupRound,

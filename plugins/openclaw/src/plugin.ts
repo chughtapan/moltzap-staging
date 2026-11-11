@@ -12,7 +12,11 @@ import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry"
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import {
   type AgentCard,
+  callTool,
+  connectFromEnvironment,
   groupMembers,
+  type InboxEntry,
+  type McpConnection,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
   type MessageTextError,
@@ -40,12 +44,6 @@ import {
   defineChannelMessageAdapter,
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
-import {
-  callTool,
-  connectFromEnvironment,
-  type InboxEntry,
-  type McpConnection,
-} from "#sharness-mcp/mcp-client";
 
 /** The sender OpenClaw records for a turn the endpoint itself emitted. */
 const ENDPOINT_SENDER_NAME = "Social Harness";

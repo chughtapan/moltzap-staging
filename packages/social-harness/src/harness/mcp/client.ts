@@ -10,14 +10,6 @@ import {
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
 import {
-  MAXIMUM_WAIT_SECONDS,
-  type ToolCallFailure,
-  toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
-} from "@social-harness/social-harness";
-import {
   Config,
   Data,
   Effect,
@@ -30,6 +22,15 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
+import type { InboxEntry } from "../inbox.js";
+import {
+  MAXIMUM_WAIT_SECONDS,
+  type ToolCallFailure,
+  toolDefinitions,
+  type ToolName,
+  type ToolRequest,
+  type ToolResult,
+} from "./contracts.js";
 
 /** Connection failures omit the private endpoint and credential. */
 export class McpConnectError extends Data.TaggedError("McpConnectError")<{
@@ -71,9 +72,6 @@ export interface McpConnectionSettings {
   /** The host explicitly trusts plaintext HTTP on this connection. */
   readonly allowHttp?: boolean;
 }
-
-/** Inbox values contain a stable lookup token, content and saved local advice. */
-export type InboxEntry = ToolResult<"receive_messages">["items"][number];
 
 /**
  * Allows one inbox consumer at a time. Reading marks items delivered before the
