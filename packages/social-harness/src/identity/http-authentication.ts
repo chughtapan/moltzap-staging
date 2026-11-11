@@ -24,7 +24,6 @@ import {
   parseDictionary,
   serializeDictionary,
 } from "structured-headers";
-import type { RegistryLookupResult } from "./registry.js";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
@@ -51,8 +50,6 @@ import {
   ed25519VerificationKey,
   hasCanonicalEd25519SignatureEncoding,
 } from "./keys.js";
-
-// safer-arch-ignore no-module-cycle: Registry is imported only for its result type; authentication has no runtime dependency on its client.
 
 /** The request representation is not valid for the selected operation. */
 export class MalformedRequestError extends Schema.TaggedError<MalformedRequestError>()(
@@ -924,6 +921,11 @@ type PendingResolutions = ReadonlyMap<
   AgentId,
   Deferred.Deferred<VerifiedAgentIdentityCard, CardResolutionError>
 >;
+
+/** A found card is Registry-verified. A missing identity is a normal result. */
+export type RegistryLookupResult =
+  | Readonly<{ kind: "found"; identityCard: VerifiedAgentIdentityCard }>
+  | Readonly<{ kind: "not_found" }>;
 
 type RegistryLookup = (request: {
   readonly agentId: AgentId;

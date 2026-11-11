@@ -21,12 +21,8 @@ import {
   AgentIdentityCardIssuedAt,
   makeVerifiedCard,
 } from "./__tests__/authentication-fixtures.js";
-import {
-  AgentId,
-  AgentName,
-  AgentSigningAuthority,
-  PrincipalId,
-} from "./agent-cards.js";
+import { AgentId, AgentName, PrincipalId } from "./agent-cards.js";
+import { AgentSigningAuthority } from "./keys.js";
 import {
   lookupResponseSchema,
   registerResponseSchema,

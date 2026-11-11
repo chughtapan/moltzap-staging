@@ -30,9 +30,9 @@ import {
   type AgentPublicKey as agentAgentPublicKey,
   agentCardOf,
   AgentIdentityCard,
+  Registry,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import { Registry } from "../../identity/registry.js";
+} from "../../identity/index.js";
 import {
   CommunicationError,
   isTerminalSendFailure,

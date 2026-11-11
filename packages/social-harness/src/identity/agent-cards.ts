@@ -28,9 +28,6 @@ import {
   snapshotRepresentation,
 } from "./keys.js";
 
-/** Signing capabilities expose the public key without exposing private key material. */
-export { AgentPublicKey, AgentSigningAuthority } from "./keys.js";
-
 const IDENTIFIER_BYTE_LENGTH = 16;
 
 /** Media type of the Registry signature on an identity card. */

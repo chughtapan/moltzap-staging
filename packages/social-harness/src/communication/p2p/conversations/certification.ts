@@ -4,7 +4,7 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { absurd, Effect } from "effect";
-import type { SignedMessage } from "../../../identity/message-security.js";
+import type { SignedMessage } from "../../../identity/index.js";
 import type { SendError } from "../../errors.js";
 import type {
   EngineActionFold,

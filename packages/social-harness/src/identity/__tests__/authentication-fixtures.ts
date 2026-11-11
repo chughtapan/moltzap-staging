@@ -9,7 +9,6 @@ import { Clock, Effect, Encoding, Match, Redacted, Schema } from "effect";
 import { httpbis } from "http-message-signatures";
 import { GeneralSign } from "jose";
 import { generateKeyPairSync, randomBytes, webcrypto } from "node:crypto";
-import type { RegistryLookupResult } from "../registry.js";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
@@ -28,6 +27,7 @@ import {
 import {
   Authentication,
   AuthenticationFailedError,
+  type RegistryLookupResult,
   signAgentRequest,
 } from "../http-authentication.js";
 import {

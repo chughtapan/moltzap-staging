@@ -4,7 +4,7 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Data, Effect, Schema } from "effect";
 
 import { decodeCanonical } from "../../../encoding/index.js";
-import { AgentId, AgentIdentityCard } from "../../../identity/agent-cards.js";
+import { AgentId, AgentIdentityCard } from "../../../identity/index.js";
 import {
   conversationSortKey,
   messageFromIntent,

@@ -48,9 +48,10 @@ import {
 import {
   type AgentCard,
   agentCardOf,
+  Identity,
+  IdentityError,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import { Identity, IdentityError } from "../identity/service.js";
+} from "../identity/index.js";
 import {
   catalogCursor,
   type DeliveryAcknowledgeError,

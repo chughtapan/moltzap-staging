@@ -1,10 +1,10 @@
 /** @file Registry returns verified cards through one closed failure channel. */
 
 import type { Effect, Types } from "effect";
+import type { RegistryLookupResult } from "./http-authentication.js";
 import type {
   Registry,
   RegistryError,
-  RegistryLookupResult,
   RegistryRegisterResult,
 } from "./registry.js";
 

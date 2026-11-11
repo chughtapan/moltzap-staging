@@ -16,7 +16,7 @@ import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { parseDocument } from "yaml";
 import { exactStruct } from "../encoding/index.js";
-import { AgentCard } from "../identity/agent-cards.js";
+import { AgentCard } from "../identity/index.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 

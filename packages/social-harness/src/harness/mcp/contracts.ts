@@ -32,7 +32,7 @@ import {
   policyUpdateResultSchema,
   policyUpdateSchema,
 } from "../../firewall/index.js";
-import { AgentIdentityCard } from "../../identity/agent-cards.js";
+import { AgentIdentityCard } from "../../identity/index.js";
 import {
   DeliveryToken,
   InboxError,

@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Queue, Schema } from "effect";
 import { expect } from "vitest";
 import type { Conversation } from "../contract.js";
 import { conversationIdentityFixture } from "../__tests__/conversation-fixtures.js";
-import { agentCardOf } from "../../identity/agent-cards.js";
+import { agentCardOf } from "../../identity/index.js";
 import { Message } from "../messages.js";
 import { Communication } from "../service.js";
 

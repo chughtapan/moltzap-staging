@@ -32,15 +32,14 @@ import { encodeCanonical } from "../../encoding/index.js";
 import {
   agentCardOf,
   AgentName,
-  type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import {
   EnvelopeId,
   type LiveSignedMessage,
+  Registry,
+  RegistryError,
   SealedBody,
   SignedMessage,
-} from "../../identity/message-security.js";
-import { Registry, RegistryError } from "../../identity/registry.js";
+  type VerifiedAgentIdentityCard,
+} from "../../identity/index.js";
 import { CommunicationError } from "../errors.js";
 import {
   Answer,

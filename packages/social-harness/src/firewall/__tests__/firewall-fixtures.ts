@@ -14,10 +14,11 @@ import {
   AgentId,
   AgentName,
   AgentSigningAuthority,
+  Identity,
   PrincipalId,
-} from "../../identity/agent-cards.js";
-import { RegistrationId, Registry } from "../../identity/registry.js";
-import { Identity } from "../../identity/service.js";
+  RegistrationId,
+  Registry,
+} from "../../identity/index.js";
 import { Firewall, type FirewallOptions } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */

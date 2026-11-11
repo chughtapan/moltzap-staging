@@ -31,8 +31,7 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
-import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
-import { Identity } from "../identity/service.js";
+import { AgentCard, agentCardOf, Identity } from "../identity/index.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
   type Chain,

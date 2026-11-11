@@ -15,18 +15,16 @@ import {
   SubscriptionRef,
 } from "effect";
 import { createHash } from "node:crypto";
-import type {
-  AgentId,
-  VerifiedAgentIdentityCard,
-} from "../../../identity/agent-cards.js";
-import type { AgentSigningAuthority } from "../../../identity/keys.js";
 import { decodeCanonical } from "../../../encoding/index.js";
 import {
+  type AgentId,
+  type AgentSigningAuthority,
   type LiveSignedMessage,
+  Registry,
   SignedMessage,
+  type VerifiedAgentIdentityCard,
   type VerifiedSignedMessage,
-} from "../../../identity/message-security.js";
-import { Registry } from "../../../identity/registry.js";
+} from "../../../identity/index.js";
 import {
   beginOutbound,
   completeOutbound,

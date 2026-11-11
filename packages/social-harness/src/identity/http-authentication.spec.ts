@@ -43,13 +43,14 @@ import {
   type Authentication,
   AuthenticationError,
   contentDigest,
+  type RegistryLookupResult,
   verifyHttpRequestSignature,
 } from "./http-authentication.js";
 import {
   AgentSigningAuthority,
   ed25519PublicKeyThumbprintUri,
 } from "./keys.js";
-import { RegistryError, type RegistryLookupResult } from "./registry.js";
+import { RegistryError } from "./registry.js";
 
 /* eslint-disable agent-code-guard/no-example-only-tests -- regression-only suite: each case exercises a distinct HTTP proof, replay-ordering, cache, or cancellation contract. The concurrency timelines are not an input domain to generate over. */
 

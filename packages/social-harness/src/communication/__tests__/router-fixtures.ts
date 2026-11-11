@@ -2,10 +2,7 @@
 
 import { Effect, Encoding, Schema } from "effect";
 import { identifier } from "../../__tests__/agents.js";
-import {
-  type LiveSignedMessage,
-  SignedMessage,
-} from "../../identity/message-security.js";
+import { type LiveSignedMessage, SignedMessage } from "../../identity/index.js";
 import {
   PollCursor,
   RouterInstanceId,

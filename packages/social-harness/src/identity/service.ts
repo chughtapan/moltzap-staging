@@ -15,11 +15,10 @@ import {
   agentCardOf,
   AgentIdentityCard,
   type AgentName,
-  type AgentPublicKey,
-  AgentSigningAuthority,
   type PrincipalId,
   type VerifiedAgentIdentityCard,
 } from "./agent-cards.js";
+import { type AgentPublicKey, AgentSigningAuthority } from "./keys.js";
 import {
   type RegistrationId,
   Registry,

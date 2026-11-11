@@ -5,24 +5,24 @@ export {
   httpErrors,
   type VerifiedHttpSignature,
   verifyBootstrapRequest,
-} from "./identity/http-authentication.js";
+} from "./identity/index.js";
 /** Signing and verification of Registry-issued identity cards. */
 export {
   AgentIdentityCardDigest,
   agentIdentityCardSigning,
-} from "./identity/agent-cards.js";
+} from "./identity/index.js";
 /** HTTP authentication for registered agents. */
 export {
   Authentication,
   AuthenticationError,
   type VerifiedAgentRequest,
-} from "./identity/http-authentication.js";
+} from "./identity/index.js";
 /** Registry lookup for network services. */
-export { Registry } from "./identity/registry.js";
+export { Registry } from "./identity/index.js";
 /** Router client and wire schemas shared with its server. */
 export { Router, routerContract } from "./communication/index.js";
 /** Registry wire schemas shared by its client, server and storage. */
-export { registryContract } from "./identity/registry.js";
+export { registryContract } from "./identity/index.js";
 /** Wire versions emitted and accepted by this release. */
 export {
   HISTORY_WIRE_VERSIONS,

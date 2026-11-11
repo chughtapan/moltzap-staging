@@ -31,6 +31,7 @@ import {
   verifiedAgentIdentityCardSchema,
 } from "./agent-cards.js";
 import {
+  type RegistryLookupResult,
   signHttpRequest,
   VersionMismatchError,
 } from "./http-authentication.js";
@@ -87,11 +88,6 @@ export type RegistryRegisterResult =
   | Readonly<{ kind: "name_taken" }>
   | Readonly<{ kind: "key_already_registered" }>
   | Readonly<{ kind: "idempotency_conflict" }>;
-
-/** A found card is Registry-verified. A missing identity is a normal result. */
-export type RegistryLookupResult =
-  | Readonly<{ kind: "found"; identityCard: VerifiedAgentIdentityCard }>
-  | Readonly<{ kind: "not_found" }>;
 
 /** The signing authority proves possession of the agent key being registered. */
 type RegistryRegisterCall = Readonly<{

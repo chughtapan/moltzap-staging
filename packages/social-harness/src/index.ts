@@ -62,16 +62,16 @@ export {
   AgentName,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "./identity/agent-cards.js";
+} from "./identity/index.js";
 /** Signing authority exposes no private key bytes. */
-export { AgentPublicKey, AgentSigningAuthority } from "./identity/keys.js";
+export { AgentPublicKey, AgentSigningAuthority } from "./identity/index.js";
 /** Signed network messages and their verification results. */
 export {
   EnvelopeId,
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
-} from "./identity/message-security.js";
+} from "./identity/index.js";
 /** Installed package version and the wire versions this release emits and accepts. */
 export { LIVE_WIRE_VERSIONS, packageVersion, WIRE_VERSION } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */

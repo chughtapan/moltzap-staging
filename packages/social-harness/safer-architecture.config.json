@@ -3,32 +3,8 @@
   "maxFolderCycles": 3,
   "facadeFiles": [
     {
-      "file": "identity/agent-cards.ts",
-      "reason": "Agent cards, immutable identity cards and signing authority"
-    },
-    {
-      "file": "identity/keys.ts",
-      "reason": "Cryptographic key capabilities"
-    },
-    {
       "file": "version.ts",
       "reason": "Package version and protocol compatibility"
-    },
-    {
-      "file": "identity/service.ts",
-      "reason": "Identity and registration service"
-    },
-    {
-      "file": "identity/http-authentication.ts",
-      "reason": "Request authentication service"
-    },
-    {
-      "file": "identity/registry.ts",
-      "reason": "Registry service"
-    },
-    {
-      "file": "identity/message-security.ts",
-      "reason": "Signed message envelopes"
     },
     {
       "file": "harness/startup.ts",
@@ -102,12 +78,7 @@
         "src/identity"
       ],
       "entrypoints": [
-        "src/identity/agent-cards.ts",
-        "src/identity/keys.ts",
-        "src/identity/service.ts",
-        "src/identity/http-authentication.ts",
-        "src/identity/registry.ts",
-        "src/identity/message-security.ts"
+        "src/identity/index.ts"
       ],
       "reason": "Identity, authentication and Registry services"
     },

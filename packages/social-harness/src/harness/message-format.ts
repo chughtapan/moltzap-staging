@@ -39,7 +39,7 @@ import {
   wellFormedString,
 } from "../communication/index.js";
 import { compareAscii, exactStruct } from "../encoding/index.js";
-import { type AgentCard, AgentName } from "../identity/agent-cards.js";
+import { type AgentCard, AgentName } from "../identity/index.js";
 import { MessageAddress } from "./inbox.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */

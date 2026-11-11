@@ -8,7 +8,7 @@
 
 import { Effect, Schema } from "effect";
 import type { Message, Outgoing } from "../communication/index.js";
-import type { AgentCard } from "../identity/agent-cards.js";
+import type { AgentCard } from "../identity/index.js";
 import { exactStruct } from "../encoding/index.js";
 import {
   FirewallPolicyError,

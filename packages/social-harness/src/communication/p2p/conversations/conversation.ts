@@ -9,11 +9,6 @@ import {
   Schedule,
   type Scope,
 } from "effect";
-import type {
-  AgentId,
-  VerifiedAgentIdentityCard,
-} from "../../../identity/agent-cards.js";
-import type { Registry } from "../../../identity/registry.js";
 import type { SendError } from "../../errors.js";
 import type { Message } from "../../messages.js";
 import type { EndpointStoreError } from "../../store.js";
@@ -22,10 +17,13 @@ import {
   encodeCanonical,
 } from "../../../encoding/index.js";
 import {
+  type AgentId,
   type AgentPublicKey,
   AgentSigningAuthority,
-} from "../../../identity/keys.js";
-import { SignedMessage } from "../../../identity/message-security.js";
+  type Registry,
+  SignedMessage,
+  type VerifiedAgentIdentityCard,
+} from "../../../identity/index.js";
 import { exitOutcome, markRetries } from "../../../tracing.js";
 import { wireVersions } from "../../../version.js";
 import {

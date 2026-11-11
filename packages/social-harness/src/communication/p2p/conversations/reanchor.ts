@@ -2,7 +2,6 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../../identity/agent-cards.js";
 import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
@@ -11,9 +10,10 @@ import {
   sameBytes,
 } from "../../../encoding/index.js";
 import {
+  type AgentId,
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../../identity/message-security.js";
+} from "../../../identity/index.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,

@@ -2,26 +2,24 @@
 
 import type { HttpClient } from "@effect/platform";
 import type { Duration, Effect, Layer, Types } from "effect";
-import type { AgentId } from "../../../identity/agent-cards.js";
 import type {
+  AgentId,
+  AgentSigningAuthority,
   AgentSigningError,
   AuthenticationFailedError,
   InternalServerError,
+  LiveSignedMessage,
   MalformedRequestError,
   MethodNotAllowedError,
   OverloadedError,
   PayloadTooLargeError,
   RouteNotFoundError,
+  SignedMessage,
   UnavailableError,
   UnsupportedMediaTypeError,
-  VersionMismatchError,
-} from "../../../identity/http-authentication.js";
-import type { AgentSigningAuthority } from "../../../identity/keys.js";
-import type {
-  LiveSignedMessage,
-  SignedMessage,
   VerifiedSignedMessage,
-} from "../../../identity/message-security.js";
+  VersionMismatchError,
+} from "../../../identity/index.js";
 import type { verifyOuterMessage } from "../../records.js";
 import type * as RouterPackage from "./client.js";
 import type { RouterSendRequest } from "./client.js";

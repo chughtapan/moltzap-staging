@@ -31,7 +31,7 @@ import {
   AgentCard,
   AgentId,
   AgentName,
-} from "../identity/agent-cards.js";
+} from "../identity/index.js";
 import {
   CommunicationError,
   communicationFailure,

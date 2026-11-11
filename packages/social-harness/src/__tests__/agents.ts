@@ -13,10 +13,11 @@ import {
   AgentId,
   AgentIdentityCard,
   AgentName,
+  AgentPublicKey,
+  AgentSigningAuthority,
   PrincipalId,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
+} from "../identity/index.js";
 import { WIRE_VERSION } from "../version.js";
 
 /** A Registry signing key pair, as `generateKeyPairSync("ed25519")` returns. */

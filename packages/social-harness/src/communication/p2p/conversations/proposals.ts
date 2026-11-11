@@ -15,7 +15,7 @@ import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../../identity/agent-cards.js";
+} from "../../../identity/index.js";
 import { markRetries, type RetryOutcome } from "../../../tracing.js";
 import { isTerminalSendFailure, SendError } from "../../errors.js";
 import {

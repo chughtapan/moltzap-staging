@@ -2,12 +2,10 @@
 import { type Effect, Schema } from "effect";
 import type {
   AgentName,
-  VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import type {
   AgentPublicKey,
   AgentSigningAuthority,
-} from "../identity/keys.js";
+  VerifiedAgentIdentityCard,
+} from "../identity/index.js";
 import type { CommunicationError } from "./errors.js";
 import { exactStruct } from "../encoding/index.js";
 import {

@@ -13,7 +13,7 @@ import {
   Scope,
 } from "effect";
 import { expect } from "vitest";
-import type { AgentCard } from "../identity/agent-cards.js";
+import type { AgentCard } from "../identity/index.js";
 import type { InboxEntry } from "../index.js";
 import type { ReadHistoryResult, SendRequest } from "./social-harness.js";
 import {

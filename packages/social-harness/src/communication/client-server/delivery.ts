@@ -18,8 +18,9 @@ import {
   agentCardOf,
   AgentIdentityCard,
   type AgentName,
-} from "../../identity/agent-cards.js";
-import { EnvelopeId, SignedMessage } from "../../identity/message-security.js";
+  EnvelopeId,
+  SignedMessage,
+} from "../../identity/index.js";
 import { CommunicationError } from "../errors.js";
 import { messageHistory } from "../history.js";
 import {

@@ -2,7 +2,7 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
-import type { AgentCard } from "../../identity/agent-cards.js";
+import type { AgentCard } from "../../identity/index.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { encodeCanonical } from "../../encoding/index.js";
 import { CommunicationError } from "../errors.js";

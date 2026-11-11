@@ -5,7 +5,6 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentSigningAuthority } from "../../identity/keys.js";
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
@@ -14,9 +13,10 @@ import type { TestDatabase } from "./store-fixtures.js";
 import { encodeCanonical } from "../../encoding/index.js";
 import {
   agentCardOf,
+  type AgentSigningAuthority,
+  SignedMessage,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import { SignedMessage } from "../../identity/message-security.js";
+} from "../../identity/index.js";
 import { WIRE_VERSION } from "../../version.js";
 import { Message, messageFromIntent, mintMsgId } from "../messages.js";
 import {

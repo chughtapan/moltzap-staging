@@ -19,8 +19,7 @@ import {
   SendError,
 } from "../../communication/index.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
-import { AgentIdentityCard } from "../../identity/agent-cards.js";
-import { Identity } from "../../identity/service.js";
+import { AgentIdentityCard, Identity } from "../../identity/index.js";
 import { HeldNorms } from "../../norms/index.js";
 import {
   CallToolResult,

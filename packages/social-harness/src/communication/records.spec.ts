@@ -20,17 +20,13 @@ import {
   AgentId,
   AgentIdentityCard,
   AgentName,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import {
   AgentPublicKey,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
-} from "../identity/keys.js";
-import {
   EnvelopeId,
   SealedBody,
   SignedMessage,
-} from "../identity/message-security.js";
+  type VerifiedAgentIdentityCard,
+} from "../identity/index.js";
 import { WIRE_VERSION, WireVersions } from "../version.js";
 import {
   Content,

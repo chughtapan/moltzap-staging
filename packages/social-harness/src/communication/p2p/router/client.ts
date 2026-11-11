@@ -17,14 +17,14 @@ import {
   Option,
   Schema,
 } from "effect";
-import type { AgentSigningAuthority } from "../../../identity/keys.js";
 import {
   canonicalIdentifier,
   decodeCanonical,
   hasCanonicalBase64UrlLength,
 } from "../../../encoding/index.js";
-import { AgentId } from "../../../identity/agent-cards.js";
 import {
+  AgentId,
+  type AgentSigningAuthority,
   AgentSigningError,
   AuthenticationFailedError,
   InternalServerError,
@@ -34,11 +34,11 @@ import {
   PayloadTooLargeError,
   RouteNotFoundError,
   signAgentRequest,
+  SignedMessage,
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../../identity/http-authentication.js";
-import { SignedMessage } from "../../../identity/message-security.js";
+} from "../../../identity/index.js";
 import { LIVE_WIRE_VERSIONS } from "../../../version.js";
 
 /** Exact Router send target. */

@@ -19,7 +19,6 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect } from "vitest";
-import type { RegistryLookupResult } from "../../../identity/registry.js";
 import {
   advanceClock,
   forwardStoredOutbound,
@@ -42,13 +41,12 @@ import { decodeCanonical, encodeCanonical } from "../../../encoding/index.js";
 import {
   agentCardOf,
   AgentIdentityCard,
-  type VerifiedAgentIdentityCard,
-} from "../../../identity/agent-cards.js";
-import {
   AgentPublicKey,
   type AgentSigningAuthority,
-} from "../../../identity/keys.js";
-import { SignedMessage } from "../../../identity/message-security.js";
+  type RegistryLookupResult,
+  SignedMessage,
+  type VerifiedAgentIdentityCard,
+} from "../../../identity/index.js";
 import {
   LIVE_WIRE_VERSIONS,
   WIRE_VERSION,

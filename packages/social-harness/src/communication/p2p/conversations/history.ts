@@ -2,7 +2,6 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, type ParseResult, Schema } from "effect";
-import type { AgentPublicKey } from "../../../identity/keys.js";
 import type {
   EndpointEngineInput,
   EngineActionFold,
@@ -17,11 +16,13 @@ import {
   representationFailure,
   sameBytes,
 } from "../../../encoding/index.js";
-import { agentCardOf, type AgentId } from "../../../identity/agent-cards.js";
 import {
+  agentCardOf,
+  type AgentId,
+  type AgentPublicKey,
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../../identity/message-security.js";
+} from "../../../identity/index.js";
 import { compareAgentIds, Message, messageFromIntent } from "../../messages.js";
 import {
   type ActionCertifiedRecord,

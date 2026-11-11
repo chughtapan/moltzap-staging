@@ -11,8 +11,7 @@ import {
   Schedule,
   Scope,
 } from "effect";
-import type { AgentId } from "../../../identity/agent-cards.js";
-import type { SignedMessage } from "../../../identity/message-security.js";
+import type { AgentId, SignedMessage } from "../../../identity/index.js";
 import type {
   EngineActionFold,
   EngineConversation,

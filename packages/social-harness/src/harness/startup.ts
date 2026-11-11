@@ -26,9 +26,7 @@ import {
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
-import { localRegistry } from "../identity/local-registry.js";
-import { Registry } from "../identity/registry.js";
-import { Identity } from "../identity/service.js";
+import { Identity, localRegistry, Registry } from "../identity/index.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion, WIRE_VERSION } from "../version.js";
 import {
@@ -371,17 +369,13 @@ export { prepareDatabase } from "../database/migrations.js";
 /** Trusted embeddings use the same services as the process's MCP adapter. */
 export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** Local identity and registration remain independent of delivery recovery. */
-export { Identity } from "../identity/service.js";
+export { Identity } from "../identity/index.js";
 /** Message transport owns requests, replies and verified history. */
 export { Communication } from "../communication/index.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/index.js";
 /** Network services expose complete calls through their owning layers. */
-export {
-  RegistrationId,
-  Registry,
-  RegistryError,
-} from "../identity/registry.js";
+export { RegistrationId, Registry, RegistryError } from "../identity/index.js";
 
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

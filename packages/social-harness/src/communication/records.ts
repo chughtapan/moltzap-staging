@@ -2,10 +2,6 @@
 
 import { Effect, Encoding, Schema } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import type {
-  AgentPublicKey,
-  AgentSigningAuthority,
-} from "../identity/keys.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
@@ -22,17 +18,17 @@ import {
 import {
   AgentId,
   AgentIdentityCard,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import {
+  type AgentPublicKey,
+  type AgentSigningAuthority,
   EnvelopeId,
   type EnvelopeId as EnvelopeIdValue,
   type LiveSignedMessage,
   SealedBody,
   SignedMessage,
   type SignedMessage as SignedMessageValue,
+  type VerifiedAgentIdentityCard,
   type VerifiedSignedMessage,
-} from "../identity/message-security.js";
+} from "../identity/index.js";
 import { wireVersions } from "../version.js";
 import { compareAgentIds, Content, maximumMembers, MsgId } from "./messages.js";
 import { RouterInstanceId } from "./p2p/router/client.js";

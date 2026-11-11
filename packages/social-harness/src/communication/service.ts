@@ -1,7 +1,7 @@
 /** @file The communication service: accepts messages and questions, and supplies ordered history and incoming work. */
 
 import { Context, Layer } from "effect";
-import type { AgentName } from "../identity/agent-cards.js";
+import type { AgentName } from "../identity/index.js";
 import type {
   CommunicationService,
   CommunicationSettings,

@@ -13,7 +13,7 @@ import {
   AgentCard,
   type AgentName,
   type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
+} from "../identity/index.js";
 import { CommunicationError } from "./errors.js";
 import {
   compareAgentIds,

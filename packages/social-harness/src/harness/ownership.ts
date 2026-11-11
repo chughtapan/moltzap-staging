@@ -10,8 +10,8 @@ import {
   AgentName,
   AgentSigningAuthority,
   PrincipalId,
-} from "../identity/agent-cards.js";
-import { RegistrationId } from "../identity/registry.js";
+  RegistrationId,
+} from "../identity/index.js";
 
 /** Authentication supplies both fields; email and client-provided agent selectors are excluded. */
 export interface OwnerAccount {

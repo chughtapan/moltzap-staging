@@ -14,7 +14,7 @@ import {
   AgentId,
   AgentName,
   PrincipalId,
-} from "../identity/agent-cards.js";
+} from "../identity/index.js";
 import { readText } from "./acts.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, ruleMatcher } from "./matchers.js";

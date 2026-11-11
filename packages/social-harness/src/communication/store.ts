@@ -10,7 +10,7 @@ import {
   encodeCanonical,
   sameBytes,
 } from "../encoding/index.js";
-import { AgentId } from "../identity/agent-cards.js";
+import { AgentId } from "../identity/index.js";
 import { type SendFailure, sendFailureReasons } from "./errors.js";
 import {
   CollectiveId,

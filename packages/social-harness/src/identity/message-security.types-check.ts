@@ -1,11 +1,8 @@
 /** @file Envelope operations preserve verification requirements and exact Effect channels. */
 
 import type { Effect, Option, Types } from "effect";
-import type {
-  AgentId,
-  AgentSigningAuthority,
-  VerifiedAgentIdentityCard,
-} from "./agent-cards.js";
+import type { AgentId, VerifiedAgentIdentityCard } from "./agent-cards.js";
+import type { AgentSigningAuthority } from "./keys.js";
 import type {
   EnvelopeId,
   SealedBody,

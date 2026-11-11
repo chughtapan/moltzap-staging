@@ -25,12 +25,10 @@ import {
   type AgentCard,
   agentCardOf,
   AgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import { AgentPublicKey } from "../../identity/keys.js";
-import {
+  AgentPublicKey,
   SignedMessage,
   type SignedMessageVerificationError,
-} from "../../identity/message-security.js";
+} from "../../identity/index.js";
 import { WIRE_VERSION } from "../../version.js";
 import {
   type Content,

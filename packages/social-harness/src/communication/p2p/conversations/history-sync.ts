@@ -5,13 +5,12 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../../identity/agent-cards.js";
 import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
 } from "../../../encoding/index.js";
-import { SignedMessage } from "../../../identity/message-security.js";
+import { type AgentId, SignedMessage } from "../../../identity/index.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,

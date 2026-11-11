@@ -22,15 +22,11 @@ import { describe, expect, it } from "vitest";
 import {
   AgentId,
   type AgentId as AgentIdValue,
-} from "../../../identity/agent-cards.js";
-import {
-  AgentSigningError,
-  VersionMismatchError,
-} from "../../../identity/http-authentication.js";
-import {
   AgentSigningAuthority,
   type AgentSigningAuthority as AgentSigningAuthorityValue,
-} from "../../../identity/keys.js";
+  AgentSigningError,
+  VersionMismatchError,
+} from "../../../identity/index.js";
 import {
   type PollCursor as PollCursorValue,
   Router,
