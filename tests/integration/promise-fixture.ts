@@ -24,7 +24,7 @@ import { historyMessage } from "./saved-history.js";
  * connection. `next` reads the inbox only while it waits, so a host connected
  * as the same agent receives every delivery the test does not ask for.
  */
-export interface Endpoint {
+export interface AgentAccess {
   readonly agent: SignedIn["agent"];
   readonly address: string;
   readonly mcp: URL;
@@ -35,8 +35,8 @@ export interface Endpoint {
 }
 
 /** One scope owns the daemon and every agent's connection. */
-export interface Network {
-  readonly endpoint: (owner: string) => Promise<Endpoint>;
+export interface DaemonAccess {
+  readonly signIn: (owner: string) => Promise<AgentAccess>;
   readonly close: () => Promise<undefined>;
 }
 
@@ -46,7 +46,9 @@ type StartDaemon = (
 ) => Effect.Effect<unknown, ProcessTestError, Scope.Scope>;
 
 /** Prepares one daemon and runs it with `startDaemon`, closing partial startup on failure. */
-export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
+export async function openDaemon(
+  startDaemon: StartDaemon,
+): Promise<DaemonAccess> {
   const scope = Effect.runSync(Scope.make());
   const close = () =>
     Effect.runPromise(Scope.close(scope, Exit.void).pipe(Effect.as(undefined)));
@@ -56,8 +58,8 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
       sharedDaemon().pipe(Effect.tap(startDaemon)),
     );
     return {
-      endpoint: async (owner) =>
-        endpoint(daemon, await runInScope(scope, daemon.signInAs(owner))),
+      signIn: async (owner) =>
+        agentAccess(daemon, await runInScope(scope, daemon.signInAs(owner))),
       close,
     };
   } catch (cause) {
@@ -66,7 +68,7 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
   }
 }
 
-function endpoint(daemon: Daemon, signedIn: SignedIn): Endpoint {
+function agentAccess(daemon: Daemon, signedIn: SignedIn): AgentAccess {
   const { client } = signedIn.connection;
   return {
     agent: signedIn.agent,

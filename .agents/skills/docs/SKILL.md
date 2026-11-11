@@ -69,8 +69,8 @@ interaction and judge a different implementation without opening code.
 Introduce concepts before identifiers. Cut function names, internal objects,
 storage layouts and execution steps that add no contract.
 
-Match precision to the contract. Signed wire formats need exact bytes and
-validation rules. An evolving architecture may establish responsibilities
+Match precision to the contract. A format another program parses needs exact
+fields and validation rules. An evolving architecture may establish responsibilities
 before mechanisms. Keep the assumptions and failure conditions that limit a
 guarantee, and state unresolved choices. A discrepancy in code requires a
 decision before the specification changes.
@@ -255,7 +255,7 @@ and compatibility costs alongside votes. Agent reader tests supply review
 evidence, not proof of usability with people. A popular name still has to
 describe the contract accurately.
 
-- Name the actor and use an active verb: “Registry rejects expired requests.”
+- Name the actor and use an active verb: “The daemon refuses an expired token.”
   Address readers as “you” when giving instructions.
 - State the behavior directly. Remove catalogues of rejected designs and
   rhetorical contrasts such as “not X, not Y, but Z.” Retain a precise
@@ -359,12 +359,12 @@ and what remains unverified. Use context the owner already supplied.
 - “Standards substrate” listed libraries and rejected formats before
   explaining identity. Remove it. Keep each standard with the encoding rule
   it determines.
-- A Registry source README described `http.ts` as HTTP handling and
-  `storage.ts` as persistence. Delete the inventory. The reason a failed
-  registration still consumes its replay nonce belongs with that guarantee.
-- The Registry README summarized a linked guide's setup, health checks, and
+- A source README described `http.ts` as HTTP handling and `store.ts` as
+  persistence. Delete the inventory. The reason a failed send changes no
+  member's history belongs with that guarantee.
+- A package README summarized a linked guide's setup, health checks, and
   storage caveat. Keep the task link and let the guide carry the procedure.
-- TypeDoc showed signing inputs as unlinked type names. Its native
+- TypeDoc showed a tool's inputs as unlinked type names. Its native
   [`@inline` tag](https://typedoc.org/documents/Tags._inline.html) now renders
   their fields from the source types. Keep caller constraints in JSDoc and
   let the generator produce the field lists.

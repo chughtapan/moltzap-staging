@@ -35,7 +35,7 @@ export const startDaemonContainer = (daemon: Daemon) => {
   const volume = `sharness-daemon-state-${randomBytes(16).toString("hex")}`;
   return Effect.gen(function* () {
     yield* prepareDaemonMount(daemon);
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- startNetwork owns the enclosing scope and releases the volume after the container.
+    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- openDaemon owns the enclosing scope and releases the volume after the container.
     yield* Effect.acquireRelease(
       executeDocker(["volume", "create", volume]),
       () => executeDocker(["volume", "rm", volume]).pipe(Effect.orDie),
@@ -55,7 +55,7 @@ export const startDaemonContainer = (daemon: Daemon) => {
       "-c",
       "cp /source/sharnessd.sqlite3 /state/sharnessd.sqlite3 && chown 1000:1000 /state /state/sharnessd.sqlite3",
     ]);
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- startNetwork owns the enclosing scope and removes the container after its attached process stops.
+    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- openDaemon owns the enclosing scope and removes the container after its attached process stops.
     yield* Effect.acquireRelease(
       executeDocker(containerArguments(daemon, image, container, volume)),
       () =>

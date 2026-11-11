@@ -206,9 +206,8 @@ request wait.
 Requests assess the question and form the agent would see. Results assess each
 peer answer, including peer text in invalid-answer reasons, using one evidence
 capture and each answer's preceding history. Own/missing answers need no check;
-the assessments take effect together. Endpoint-authored operation failures
-bypass policy assessment and remain ordinary saved results. Peer field names
-in their text are quoted as JSON.
+the assessments take effect together. Peer field names in their text are
+quoted as JSON.
 
 Only admitted requests become answerable. A withheld all-gather request still
 receives its result. Requests expiring before assessment retire unchecked;

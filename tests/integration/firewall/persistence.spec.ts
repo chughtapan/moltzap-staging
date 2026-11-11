@@ -21,7 +21,6 @@ import { processTrace } from "../scenario-fixture.js";
 const evidence = {
   history: [],
   earlierHistoryOmitted: false,
-  pendingOutgoing: [],
   gaps: [],
 };
 

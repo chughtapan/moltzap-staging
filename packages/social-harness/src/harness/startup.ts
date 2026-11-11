@@ -95,7 +95,13 @@ function runDaemon() {
           ),
         ),
       );
-      yield* serveMcp(settings.port, app, settings.host);
+      yield* serveMcp(settings.port, app, settings.host).pipe(
+        Effect.catchTag("ServeError", () =>
+          refused(
+            `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
+          ),
+        ),
+      );
       yield* Console.log(
         `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
       );

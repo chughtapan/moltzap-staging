@@ -1325,7 +1325,7 @@ function assessRule(
     const input = yield* capturePrepared(options.configuration, requested);
     const checkId = mintCheckId();
     const assessed = yield* evaluateMessage(options, active, input).pipe(
-      markRetries("firewall-check", input.direction, (exit) =>
+      markRetries(input.direction, (exit) =>
         exitOutcome(exit, "checked"),
       ),
     );

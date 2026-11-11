@@ -1,5 +1,5 @@
 /**
- * @file A conversation's norm state as a fold over its certified history. Each
+ * @file A conversation's norm state as a fold over its ordered history. Each
  * act is judged against the state the acts before it left. An act that breaks
  * its norm changes nothing, and neither does an act another member answered
  * with `feedback`'s `not-understood`, such as one a member's firewall withheld

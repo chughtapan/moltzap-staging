@@ -1,9 +1,8 @@
-/** @file Tracks background work between attempts, including idle waits. */
+/** @file Marks each firewall check in activity traces from its start to its outcome. */
 
 import { Effect, Exit } from "effect";
 
-/** Background work included in activity traces. */
-type RetryKind = "firewall-check";
+const kind = "firewall-check";
 /** How a tracked operation finished. */
 type RetryOutcome = "checked" | "interrupted" | "failed";
 
@@ -20,21 +19,20 @@ export function exitOutcome(
 
 /** Pairs activity markers even when work fails or is cancelled. */
 export function markRetries<A, E, R>(
-  kind: RetryKind,
   id: string,
   outcome: (exit: Exit.Exit<A, E>) => RetryOutcome,
 ): (work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> {
   return (work) =>
     Effect.uninterruptibleMask((restore) =>
-      retryPending(kind, id).pipe(
+      retryPending(id).pipe(
         Effect.zipRight(restore(work)),
-        Effect.onExit((exit) => retrySettled(kind, id, outcome(exit))),
+        Effect.onExit((exit) => retrySettled(id, outcome(exit))),
       ),
     );
 }
 
-/** Opens an activity that `retrySettled` closes under the same kind and ID. */
-function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
+/** Opens an activity that `retrySettled` closes under the same ID. */
+function retryPending(id: string): Effect.Effect<void> {
   return Effect.withSpan(Effect.void, "retry.pending", {
     captureStackTrace: false,
     attributes: { kind, id },
@@ -43,7 +41,6 @@ function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
 
 /** Closes the matching `retryPending` activity. */
 function retrySettled(
-  kind: RetryKind,
   id: string,
   outcome: RetryOutcome,
 ): Effect.Effect<void> {

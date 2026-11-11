@@ -518,12 +518,11 @@ it("deployment refuses to adopt missing verifier metadata for existing owners", 
     expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(1);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("rejects older SQLite state without changing its retained records", () =>
+it("rejects a SQLite database that holds other tables without changing their records", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.sql`CREATE TABLE retained (value TEXT NOT NULL)`;
     yield* test.sql`INSERT INTO retained VALUES ('prior installation')`;
-    yield* test.sql.unsafe("PRAGMA user_version = 1");
     expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
       reason: "schema",
     });

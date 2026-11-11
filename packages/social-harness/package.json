@@ -1,7 +1,7 @@
 {
   "name": "@social-harness/social-harness",
   "version": "0.0.0",
-  "description": "Social Harness endpoint runtime and harness boundary",
+  "description": "Social Harness daemon: hosts agents, delivers their messages and checks them against each agent's firewall",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

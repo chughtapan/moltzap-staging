@@ -7,9 +7,9 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
 import {
-  type Endpoint as NetworkEndpoint,
-  startNetwork,
-} from "../process-network-fixture.ts";
+  type AgentAccess,
+  openDaemon,
+} from "../promise-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";
@@ -38,20 +38,19 @@ const SLOT_SCHEMA = {
 };
 
 /** Native image tests use the same public MCP fixture as other process consumers. */
-type Endpoint = NetworkEndpoint;
-type InboundItem = Awaited<ReturnType<Endpoint["next"]>>[number];
+type InboundItem = Awaited<ReturnType<AgentAccess["next"]>>[number];
 type RequestItem = Extract<InboundItem, { readonly kind: "collectiveRequest" }>;
 type ResultItem = Extract<InboundItem, { readonly kind: "collectiveResult" }>;
 
 /** A caller and the NanoClaw agent it talks to. */
 interface Pair {
-  readonly caller: Endpoint;
-  readonly target: Endpoint;
+  readonly caller: AgentAccess;
+  readonly target: AgentAccess;
 }
 
 /** A caller, the NanoClaw agent, and a third group member. */
 interface Trio extends Pair {
-  readonly peer: Endpoint;
+  readonly peer: AgentAccess;
 }
 
 /** What the probe waits for in NanoClaw's native inbox. */
@@ -192,10 +191,8 @@ async function answersAndStartsGather({
   );
 
   assert.match(operationId, /^col_/u);
-  const callerItems = await received;
-  const result = requireResult(
-    callerItems.find((item) => item.kind === "collectiveResult"),
-  );
+  const [first, second] = await received;
+  const result = requireResult(first);
   assert.equal(typeof result.closedAt, "number");
   assert.deepEqual(withReportedMembers(result), {
     kind: "collectiveResult",
@@ -211,13 +208,10 @@ async function answersAndStartsGather({
       },
     ],
   });
-  const request = requireRequest(
-    callerItems.find((item) => item.kind === "collectiveRequest"),
-  );
-  assertGatherRequest(request, target);
+  assertGatherRequest(requireRequest(second), target);
 }
 
-function assertGatherRequest(request: RequestItem, target: Endpoint) {
+function assertGatherRequest(request: RequestItem, target: AgentAccess) {
   assert.equal(request.kind, "collectiveRequest");
   assert.equal(request.message.operation.op, "gather");
   assert.deepEqual(reported(request.message.author), target.agent);
@@ -374,7 +368,7 @@ function textContent(text: string): readonly object[] {
 }
 
 /** The group address of `members`, their names sorted. */
-function groupAddress(members: readonly Endpoint[]): string {
+function groupAddress(members: readonly AgentAccess[]): string {
   const names = members.map(({ address }) => address.slice("agent:".length));
   return `group:${names.toSorted(compareCodeUnits).join(",")}`;
 }
@@ -425,7 +419,7 @@ function requireResult(item?: InboundItem): ResultItem {
 }
 
 /** The fields of an agent's card that `status` reports, which an endpoint holds. */
-function reported({ agentId, agentName }: Endpoint["agent"]) {
+function reported({ agentId, agentName }: AgentAccess["agent"]) {
   return { agentId, agentName };
 }
 
@@ -445,7 +439,7 @@ function withReportedMembers(result: ResultItem) {
  * daemon chooses.
  */
 function inMemberNameOrder<
-  Outcome extends { readonly member: Endpoint["agent"] },
+  Outcome extends { readonly member: AgentAccess["agent"] },
 >(outcomes: readonly Outcome[]) {
   return outcomes.toSorted((left, right) =>
     compareCodeUnits(left.member.agentName, right.member.agentName),
@@ -459,7 +453,7 @@ function inMemberNameOrder<
  * retry.
  */
 async function runProbe(
-  daemon: Pick<Endpoint, "mcp" | "mcpCredentialFile">,
+  daemon: Pick<AgentAccess, "mcp" | "mcpCredentialFile">,
   destinations: readonly Destination[],
   inbound: ExpectedInbound,
 ): Promise<undefined> {
@@ -541,13 +535,13 @@ function withTrio(
  * owner's agent in to it, and stop the daemon however `body` ends.
  */
 async function withDaemon(
-  body: (signIn: (owner: string) => Promise<Endpoint>) => Promise<undefined>,
+  body: (signIn: (owner: string) => Promise<AgentAccess>) => Promise<undefined>,
 ): Promise<undefined> {
-  const network = await startNetwork(startDaemonContainer);
+  const daemon = await openDaemon(startDaemonContainer);
   try {
-    await body(network.endpoint);
+    await body(daemon.signIn);
   } finally {
-    await network.close();
+    await daemon.close();
   }
 }
 
