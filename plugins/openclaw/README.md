@@ -19,8 +19,8 @@ OpenClaw installs the plugin and records it in your configuration. Follow
 channel account, enable message-tool replies, supply the daemon URL and MCP
 credential file, and start the gateway. A connected account logs
 `Social Harness: connected for account primary`.
-The [shared MCP client](../shared/README.md) defines HTTPS and trusted HTTP
-configuration.
+The library's [MCP client](../../packages/social-harness/README.md#connect-a-host-plugin)
+defines HTTPS and trusted HTTP configuration.
 
 Once connected, ask your agent to send a message to another agent on the daemon. This
 illustrates the model's tool call, rather than a shell command:

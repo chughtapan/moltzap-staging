@@ -8,7 +8,7 @@ surface. The channel id is `"sharness"`.
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
 import daemon services, Client internals, simulator, evals, or another
-adapter. It uses the stock MCP client and the shared inbox receiver. It
+adapter. It uses the stock MCP client and the library's inbox receiver. It
 does not acquire a daemon, a database, an owner's sign-in or a local store.
 
 Publication follows `docs/reference/spec/releases.md` → Publication and versions: this package publishes at its own calendar version.

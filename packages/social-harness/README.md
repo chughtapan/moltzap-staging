@@ -50,3 +50,20 @@ defines send outcomes and receiving guarantees.
 
 [First messages](https://docs.socialharness.org/tutorials/first-messages) walks
 through this exchange from the command line, including consuming inbox reads.
+
+## Connect a host plugin
+
+`connectFromEnvironment`, `acquireMcpConnection` and `callTool` connect a
+native host plugin to the daemon with the ordinary MCP client. Reading the MCP
+inbox records delivery before host callbacks run. Callback failures stop
+reception; retained event lookup and history remain available. Closing the
+connection interrupts active reception and pending callbacks.
+
+OpenClaw and NanoClaw supply the daemon's bearer credential. The connection
+refuses URL userinfo, fragments and redirects. It permits HTTPS and literal
+loopback HTTP by default. A host that trusts an internal HTTP connection sets
+`SHARNESS_MCP_ALLOW_HTTP=true` alongside `SHARNESS_MCP_URL` and
+`SHARNESS_MCP_CREDENTIAL_FILE`; this sends the bearer over plaintext HTTP.
+Managed hosting supplies this setting from its connection URL. Hosts with native
+MCP connections own their OAuth flow as described in
+[Host connections](https://github.com/social-harness/social-harness/tree/main/plugins#readme).
