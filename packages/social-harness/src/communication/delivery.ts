@@ -24,7 +24,6 @@ import {
   deriveConversationId,
   Message,
   messageInterpretation,
-  type MessageReference,
   RequestError,
 } from "./messages.js";
 import { bindCommunicationMode } from "./mode.js";
@@ -76,8 +75,6 @@ export function makeDelivery(settings: Environment["settings"]) {
       send: (value) => capture(environment, send(environment, requests, value)),
       getRequest: (operationId) =>
         capture(environment, requests.getRequest(operationId)),
-      waitForMessage: (reference) =>
-        capture(environment, waitForMessage(environment, reference)),
       consume: (handle) =>
         consumer.withPermits(1)(
           consume(environment, requests, handle).pipe(
@@ -257,25 +254,6 @@ function checkHistory({ sql, settings }: Environment) {
       }
     }),
   ).pipe(Effect.catchTag("SqlError", () => Effect.fail(unavailable())));
-}
-
-function waitForMessage(
-  { settings }: Environment,
-  reference: MessageReference,
-) {
-  return Effect.gen(function* () {
-    if (reference.authorAgentId !== settings.card.agentId) {
-      return yield* new CommunicationError({ reason: "unknown-message" });
-    }
-    const accepted = yield* readAcceptedMessage(settings.agentKey, reference);
-    if (accepted === undefined) {
-      return yield* new CommunicationError({ reason: "unknown-message" });
-    }
-    if (!accepted.completed) {
-      return yield* unavailable();
-    }
-    return accepted.message;
-  });
 }
 
 /**

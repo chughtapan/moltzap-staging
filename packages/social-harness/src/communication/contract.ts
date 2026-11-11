@@ -93,14 +93,6 @@ export interface CommunicationService {
     operationId: CollectiveId,
   ) => Effect.Effect<ReceivedRequest, CommunicationError | RequestError>;
   /**
-   * Waits for a locally authored message to complete, or reports its retained
-   * terminal failure. Unknown references fail with `unknown-message`.
-   * Cancellation stops this wait and leaves accepted work running.
-   */
-  readonly waitForMessage: (
-    reference: MessageReference,
-  ) => Effect.Effect<Message, CommunicationError>;
-  /**
    * Calls the handler for incoming work and retires the item after success.
    * Failed or interrupted handling leaves it pending. Failed retirement can
    * replay a successfully handled item, so handlers must tolerate repeats.

@@ -168,7 +168,7 @@ export const GROUP_ADDRESS_PREFIX = "group:";
 const isAgentName = Schema.is(AgentName);
 
 /**
- * The registry name an `agent:` address names.
+ * The agent name an `agent:` address names.
  * @param value A candidate address.
  * @returns The name, or undefined when the value is not an agent address.
  */
@@ -208,7 +208,7 @@ const addressInput = Schema.String.pipe(
   Schema.brand("MessageAddressInput"),
 );
 
-/** An explicit direct destination using one canonical Registry name. */
+/** An explicit direct destination using one agent name. */
 export const AgentAddress = addressInput.pipe(
   Schema.filter((value) => parseAgentAddress(value) !== undefined),
   Schema.brand("AgentAddress"),
@@ -220,7 +220,7 @@ export const AgentAddress = addressInput.pipe(
  */
 export type AgentAddress = typeof AgentAddress.Type;
 
-/** The direct destination of an agent with a validated immutable Registry name. */
+/** The direct destination of an agent with a validated name. */
 export const agentAddressOf = (agent: {
   readonly agentName: AgentName;
 }): AgentAddress =>
@@ -788,7 +788,7 @@ const CollectiveValue = Schema.Union(
 /** A validated collective value. */
 export type CollectiveValue = typeof CollectiveValue.Type;
 
-/** An accepted or declined answer carried in a certified message. */
+/** An accepted or declined answer carried in a message. */
 export type ResponseValue = Extract<
   CollectiveValue,
   { readonly kind: "response" }
@@ -1281,7 +1281,7 @@ export type ResultDelivery = typeof ResultDelivery.Type;
 
 /**
  * Read the requester embedded in an operation ID. Request admission compares
- * this identity with the certified author before accepting the operation.
+ * this identity with the message author before accepting the operation.
  */
 export function collectiveRequesterOf(operationId: CollectiveId): AgentId {
   return decodeAgentId(
@@ -1447,7 +1447,7 @@ export function messageInterpretation(
 
 /**
  * Find and decode the collective value in one message's content.
- * @param content Certified message content.
+ * @param content Message content.
  * @returns The decoded value, or none when the content carries no collective part.
  */
 export function readCollectiveValue(

@@ -619,7 +619,7 @@ function start(
   );
 }
 
-/** Certification state is read from Communication's retained message in the same local database. */
+/** Whether a message is ordered is read from Communication's retained message in the same database. */
 function observeMessage(
   environment: Environment,
   saved: StoredCollectiveMessage,
@@ -657,7 +657,7 @@ function observeMessage(
   );
 }
 
-/** A certified close and the selected answers complete the same retained result. */
+/** An ordered close and the selected answers complete the same retained result. */
 function finishRemote(environment: Environment, operationId: CollectiveId) {
   const agentKey = environment.agentKey;
 

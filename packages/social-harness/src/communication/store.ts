@@ -118,7 +118,7 @@ export interface StoredCollectiveMessage {
   readonly reference: MessageReference;
 }
 
-/** Results become available only after their required close certifies. */
+/** Results become available only after their required close is ordered. */
 export const readNextCollectiveResult = (agentKey: string) =>
   readOperations(agentKey).pipe(
     Effect.map((rows) => rows[0]),
@@ -161,7 +161,7 @@ export function acceptMessage(
   }).pipe(agentOperation(agentKey), Effect.withSpan("acceptMessage"));
 }
 
-/** The owning reader returns the retained Message and durable terminal outcome. */
+/** The accepted message with this reference and whether it is ordered. */
 export function readAcceptedMessage(
   agentKey: string,
   reference: MessageReference,
@@ -308,7 +308,7 @@ export function readCollectiveMessages(
   }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveMessages"));
 }
 
-/** One bounded worker observes only durable completion or terminal failure. */
+/** Answers and closes of open questions whose message is ordered. */
 export function readReadyCollectiveMessages(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -401,7 +401,7 @@ export function readCollectiveAnswers(
   }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveAnswers"));
 }
 
-/** The first authenticated remote close remains available while an own answer certifies. */
+/** The first remote close remains available while an own answer is being ordered. */
 export function saveRemoteClose(
   agentKey: string,
   operationId: CollectiveId,
@@ -414,7 +414,7 @@ export function saveRemoteClose(
 }
 
 /**
- * Freezes final bytes and exact source identities. Close certification
+ * Freezes final bytes and exact source identities. Ordering the close
  * changes only their visibility.
  */
 export function saveCollectiveResult(

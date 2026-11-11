@@ -823,7 +823,7 @@ function evidenceFor(
       })
       .pipe(
         Effect.catchTag("CommunicationError", (error) =>
-          error.reason === "history-gap" || error.reason === "unknown-message"
+          error.reason === "history-gap"
             ? Effect.succeed(undefined)
             : Effect.fail(new InboxError({ reason: "persistence-failed" })),
         ),
@@ -915,7 +915,6 @@ function sendFailure(error: CommunicationError): SendError {
       return new SendError({ reason: error.reason });
     case "invalid-cursor":
     case "history-gap":
-    case "unknown-message":
       return new SendError({ reason: "persistence-failed" });
     default:
       return absurd(error.reason);

@@ -319,8 +319,8 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   FirewallService
 >() {
   /**
-   * Policy resources are fixed for this scope. Registration supplies immutable
-   * local attribution. `chain` rules apply before the text rules of `source`;
+   * Policy resources are fixed for this scope. Identity supplies this agent's
+   * card. `chain` rules apply before the text rules of `source`;
    * a rule naming an unregistered matcher fails with `build-failed`. With
    * `norms`, the agent holds norm documents in its editable policy, and each
    * activation adds the matchers and fixed rules they compile to.
@@ -828,8 +828,8 @@ function saveDecision(store: FirewallStore, ...decisions: readonly Decision[]) {
 
 /**
  * Checks candidates against the text rules. An outgoing check also sees this
- * agent's sends the Router has not ordered yet, after the ordered history and
- * in the order they were sent, because the Router orders them before this one.
+ * agent's accepted sends that are not ordered yet, after the ordered history and
+ * in the order they were sent, because they are ordered before this one.
  * An incoming check sees only the ordered history before its message.
  */
 function assess(

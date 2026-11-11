@@ -71,12 +71,6 @@ it("retains a client/server exchange and delivers each message only to its recip
         (entry) => entry.message,
       ),
     ).toEqual([request, reply]);
-    expect(
-      yield* f.client.waitForMessage({
-        authorAgentId: request.author.agentId,
-        msgId: request.msgId,
-      }),
-    ).toEqual(request);
     expect((yield* f.client.listConversations()).conversations).toEqual([
       f.members,
     ]);

@@ -353,17 +353,6 @@ function communicationFor(network: Network) {
           ? Effect.fail(new RequestError({ failure: { kind: "request-none" } }))
           : Effect.succeed(found);
       }),
-    waitForMessage: (reference) =>
-      Effect.suspend(() => {
-        const found = network.messages.find(
-          (message) =>
-            message.author.agentId === reference.authorAgentId &&
-            message.msgId === reference.msgId,
-        );
-        return found === undefined
-          ? Effect.fail(new CommunicationError({ reason: "unknown-message" }))
-          : Effect.succeed(found);
-      }),
     consume: (handle) =>
       Queue.take(network.incoming).pipe(
         Effect.flatMap(({ value, accepted }) =>
@@ -426,7 +415,7 @@ function readHistory(network: Network, query: HistoryQuery) {
                 message.msgId === before.msgId,
             );
       if (position < 0) {
-        return yield* new CommunicationError({ reason: "unknown-message" });
+        return yield* new CommunicationError({ reason: "history-gap" });
       }
       const available = all.slice(0, position);
       return historyPage(

@@ -124,7 +124,7 @@ export class MessageContext extends Schema.Class<MessageContext>(
     }),
   ),
   history: Schema.Array(HistoryEntry),
-  /** Older certified records outside the configured window are not an evidence gap. */
+  /** Older messages outside the configured window are not an evidence gap. */
   earlierHistoryOmitted: Schema.optional(Schema.Boolean),
   /** Epoch milliseconds when the caller captured the context. */
   now: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),

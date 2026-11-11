@@ -8,7 +8,6 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
     | "membership-invalid"
     | "content-invalid"
     | "persistence-failed"
-    | "unknown-message"
     | "message-conflict"
     | "invalid-cursor"
     | "history-gap";
