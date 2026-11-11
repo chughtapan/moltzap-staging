@@ -151,8 +151,8 @@ const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 const require = createRequire(import.meta.url);
 
 const DAEMON_COMMAND: readonly [string, readonly string[]] = [
-  join(WORKSPACE_ROOT, "packages/social-harness/bin/sharnessd"),
-  [],
+  process.execPath,
+  [join(WORKSPACE_ROOT, "packages/social-harness/dist/main.js")],
 ];
 
 const FIREWALL_DAEMON_COMMAND: readonly [string, readonly string[]] = [
