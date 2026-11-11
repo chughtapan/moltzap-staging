@@ -9,7 +9,7 @@ export {
   type ToolName,
   type ToolRequest,
   type ToolResult,
-} from "./harness/mcp/contracts.js";
+} from "./harness/index.js";
 /** Send requests, accepted-work receipts and agent-facing text for host integrations. */
 export {
   groupMembers,
@@ -19,7 +19,7 @@ export {
   replyAddress,
   SendRequest,
   type SendResult,
-} from "./harness/message-format.js";
+} from "./harness/index.js";
 /** Results and policy feedback that a host may show its agent. */
 export { FirewallRefusal, PermittedItem, Withheld } from "./firewall/index.js";
 /** Policy failures retain actionable reasons and bounded field information. */
@@ -33,9 +33,9 @@ export {
   InboxEntry,
   InboxError,
   InboxEvent,
-} from "./harness/inbox.js";
+} from "./harness/index.js";
 /** History uses the saved policy view and never rechecks old content. */
-export { HistoryError, type HistoryRecord } from "./harness/social-harness.js";
+export { HistoryError, type HistoryRecord } from "./harness/index.js";
 /** Message, question, answer and collective result values. */
 export {
   Answer,
@@ -75,4 +75,4 @@ export {
 /** Installed package version and the wire versions this release emits and accepts. */
 export { LIVE_WIRE_VERSIONS, packageVersion, WIRE_VERSION } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */
-export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";
+export { INBOX_PENDING_EVENT } from "./harness/index.js";

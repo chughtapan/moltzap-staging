@@ -7,26 +7,6 @@
       "reason": "Package version and protocol compatibility"
     },
     {
-      "file": "harness/startup.ts",
-      "reason": "Process construction and trusted embedding services"
-    },
-    {
-      "file": "harness/social-harness.ts",
-      "reason": "Sending, inbox and history"
-    },
-    {
-      "file": "harness/inbox.ts",
-      "reason": "Saved inbox item grammar"
-    },
-    {
-      "file": "harness/mcp/contracts.ts",
-      "reason": "Canonical MCP tool contracts"
-    },
-    {
-      "file": "harness/message-format.ts",
-      "reason": "Host request grammar and agent text"
-    },
-    {
       "file": "tracing.ts",
       "reason": "Work progress instrumentation"
     },
@@ -119,11 +99,7 @@
         "src/vendor"
       ],
       "entrypoints": [
-        "src/harness/startup.ts",
-        "src/harness/social-harness.ts",
-        "src/harness/inbox.ts",
-        "src/harness/message-format.ts",
-        "src/harness/mcp/contracts.ts"
+        "src/harness/index.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
     },

@@ -25,9 +25,9 @@ export { databaseAccess, databaseConnection } from "./database/sql.js";
 /** Restricted-role tests exercise production transaction scoping. */
 export { withAgentTransaction } from "./database/transactions.js";
 /** Process qualification persists deliveries through the daemon inbox. */
-export { makeInbox } from "./harness/inbox.js";
+export { makeInbox } from "./harness/index.js";
 /** Concurrent admission tests retain production ownership and key generation. */
-export { getOrCreateOwnedAgent } from "./harness/ownership.js";
+export { getOrCreateOwnedAgent } from "./harness/index.js";
 
 /** Database qualification drives the daemon's acceptance and request recovery operations. */
 export {
@@ -44,16 +44,16 @@ export {
 } from "./communication/index.js";
 
 /** Integration fixtures compose the existing domain services without startup overrides. */
-export { loadDaemonSettings } from "./harness/config.js";
+export { loadDaemonSettings } from "./harness/index.js";
 /** Retained registration inputs are shared with process fixtures. */
-export { loadAgentRegistration, localOwner } from "./harness/ownership.js";
+export { loadAgentRegistration, localOwner } from "./harness/index.js";
 /** Real Router connections are retained in deterministic provider traces. */
 export { Router } from "./communication/index.js";
 
 /** Policy process fixtures use the same per-agent webhook capability as startup. */
-export { makeWebhookEvents } from "./harness/mcp/webhook.js";
+export { makeWebhookEvents } from "./harness/index.js";
 /** Peer preparation is exposed only to the explicit test entry. */
 export { readUnpreparedMessages } from "./communication/index.js";
 
 /** Trusted process fixtures supply the production callback HTTP client. */
-export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";
+export { webhookHttpClientLayer } from "./harness/index.js";
