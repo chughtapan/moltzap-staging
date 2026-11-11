@@ -53,3 +53,6 @@ export { makeWebhookEvents } from "./harness/mcp/webhook.js";
 
 /** Trusted process fixtures supply the production callback HTTP client. */
 export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";
+
+/** The daemon's own Registry, for tests that build an identity without a daemon. */
+export { localRegistry } from "./identity/local-registry.js";

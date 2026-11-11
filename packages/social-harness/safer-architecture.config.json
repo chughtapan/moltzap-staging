@@ -85,10 +85,6 @@
       "reason": "Public value exports"
     },
     {
-      "path": "src/internal.ts",
-      "reason": "Network service construction and wire contracts"
-    },
-    {
       "path": "src/test.ts",
       "reason": "Offline evaluation and test-only wire overrides"
     },
@@ -264,7 +260,7 @@
   "publicTypePackages": [
     {
       "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon\u2019s shared SqlClient through its Effect environment"
+      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
     },
     {
       "package": "effect",

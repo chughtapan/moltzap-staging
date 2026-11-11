@@ -92,24 +92,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Every image a release tags builds here before it merges. Tagged with
-      # the published names so images/compose.yaml runs Registry and Router
-      # with SHARNESS_NETWORK_VERSION=ci and pulls nothing.
+      # Every image a release tags builds here before it merges.
       - name: Build release images for amd64
         run: |
-          for service in registry router daemon openclaw-agent; do
+          for service in daemon openclaw-agent; do
             docker buildx build --platform linux/amd64 --load \
               --file "images/${service}/Dockerfile" \
               --tag "ghcr.io/social-harness/${service}:ci" .
           done
-      - name: Smoke-test deployed executables
-        run: |
-          docker run --rm ghcr.io/social-harness/registry:ci --help
-          docker run --rm ghcr.io/social-harness/router:ci --help
-          docker run --rm --entrypoint pglite-server ghcr.io/social-harness/registry:ci --help
-      - uses: ./.github/actions/setup-toolchain
-      - run: pnpm install --frozen-lockfile
-      - name: Run the documented own-network path against these images
-        env:
-          SHARNESS_NETWORK_VERSION: ci
-        run: pnpm nx run @social-harness/integration-tests:test:network
+      - name: Smoke-test the daemon executable
+        run: docker run --rm ghcr.io/social-harness/daemon:ci --help

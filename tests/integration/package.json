@@ -74,17 +74,6 @@
           }
         ]
       },
-      "test:network": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "dependsOn": [
-          "@social-harness/social-harness:build"
-        ],
-        "options": {
-          "cwd": "tests/integration",
-          "command": "tsx documented-network.ts"
-        }
-      },
       "test:live": {
         "cache": false,
         "executor": "nx:run-commands",
@@ -105,11 +94,8 @@
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
-    "@electric-sql/pglite-socket": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "@social-harness/openclaw-channel": "workspace:*",
-    "@social-harness/registry": "workspace:*",
-    "@social-harness/router": "workspace:*",
     "@social-harness/social-harness": "workspace:*",
     "@testcontainers/postgresql": "catalog:",
     "@typescript/native": "catalog:",

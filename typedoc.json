@@ -7,9 +7,7 @@
   "entryPoints": [
     "packages/social-harness",
     "plugins/nanoclaw",
-    "plugins/openclaw",
-    "packages/router",
-    "packages/registry"
+    "plugins/openclaw"
   ],
   "externalSymbolLinkMappings": {
     "effect": {

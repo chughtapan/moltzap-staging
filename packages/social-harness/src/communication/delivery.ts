@@ -92,8 +92,7 @@ export function makeDelivery(settings: Environment["settings"]) {
     });
     const consumer = yield* Effect.makeSemaphore(1);
     return {
-      send: (value) =>
-        capture(environment, send(environment, requests, value)),
+      send: (value) => capture(environment, send(environment, requests, value)),
       getRequest: (operationId) =>
         capture(environment, requests.getRequest(operationId)),
       waitForMessage: (reference) =>

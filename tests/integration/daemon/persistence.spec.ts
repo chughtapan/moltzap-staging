@@ -11,10 +11,6 @@ import {
   RequestedSchema,
 } from "@social-harness/social-harness";
 import {
-  agentIdentityCardSigning,
-  WIRE_VERSION,
-} from "@social-harness/social-harness/internal";
-import {
   Firewall,
   type FirewallOptions,
   Identity,
@@ -260,46 +256,8 @@ const qualifyProtocol = (keys: readonly string[]) =>
 
 const qualifyFirewall = (keys: readonly string[]) =>
   Effect.gen(function* () {
-    const authority = yield* AgentSigningAuthority.fromPkcs8(
-      Redacted.make(
-        generateKeyPairSync("ed25519").privateKey.export({
-          format: "pem",
-          type: "pkcs8",
-        }),
-      ),
-    );
-    const signer = AgentSigningAuthority.publicKey(authority);
-    const registry = Layer.succeed(
-      Registry,
-      Registry.of({
-        register: ({ request, signingAuthority }) =>
-          agentIdentityCardSigning
-            .sign(
-              {
-                kind: "agentCard",
-                sharnessVersion: WIRE_VERSION,
-                agentId: AgentId.make(
-                  `agt_${randomBytes(16).toString("base64url")}`,
-                ),
-                principalId: request.principalId,
-                agentName: request.agentName,
-                publicKey: AgentSigningAuthority.publicKey(signingAuthority),
-                issuedAt: Schema.decodeSync(agentIdentityCardSigning.issuedAt)(
-                  "2026-08-27T12:00:00Z",
-                ),
-              },
-              authority,
-            )
-            .pipe(
-              Effect.map(
-                (identityCard) =>
-                  ({ kind: "registered", identityCard }) as const,
-              ),
-              Effect.orDie,
-            ),
-        lookup: () => Effect.succeed({ kind: "not_found" }),
-      }),
-    );
+    const { registrySignerPublicKey: signer, layer: registry } =
+      yield* localRegistry(unlockKey);
     const options: FirewallOptions = {
       facts: [],
       settings: {

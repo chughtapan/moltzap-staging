@@ -7,11 +7,7 @@ import { conversationIdentityFixture } from "./__tests__/conversation-fixtures.j
 import { agentCardOf } from "../identity/agent-cards.js";
 import { form } from "./__tests__/requests-fixtures.js";
 import { Answer, Message, Request } from "./messages.js";
-import {
-  Communication,
-  type Conversation,
-  type Incoming,
-} from "./service.js";
+import { Communication, type Conversation, type Incoming } from "./service.js";
 
 const fixture = Effect.gen(function* () {
   const subject = yield* conversationIdentityFixture;
@@ -363,7 +359,10 @@ it("carries a question to its recipient and the answer back as a result", () =>
         request,
         closedBy: "settled",
         outcomes: [
-          { member: f.cards.bob, outcome: { kind: "answered", content: answer } },
+          {
+            member: f.cards.bob,
+            outcome: { kind: "answered", content: answer },
+          },
         ],
       },
     });
