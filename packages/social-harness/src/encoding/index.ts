@@ -5,14 +5,10 @@ export {
   canonicalBytes,
   ClientRepresentationError,
   decodeCanonical,
-  decodeCanonicalJson,
   encodeCanonical,
   encodeCanonicalJson,
-  equalCanonical,
-  exactParseOptions,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-  parseCanonicalJson,
   representationFailure,
   sameBytes,
 } from "./canonical-json.js";
@@ -21,8 +17,6 @@ export {
   canonicalIdentifier,
   compareAgentIds,
   compareAscii,
-  decodeCanonicalBase64Url,
-  hasCanonicalBase64UrlLength,
   isCanonicalIdentifier,
   isStrictlyAscending,
 } from "./identifier.js";

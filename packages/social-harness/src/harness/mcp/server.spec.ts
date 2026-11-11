@@ -194,14 +194,14 @@ describe("MCP tool contracts", () => {
       const fixture = yield* mcpFixture({
         harness: {
           send: () =>
-            Effect.fail(new SendError({ reason: "delivery-pending" })),
+            Effect.fail(new SendError({ reason: "message-conflict" })),
         },
       });
       const reply = yield* Effect.tryPromise(() =>
         fixture.fetch(mcpRequest("tools/call", send)),
       );
       expect((yield* json(reply)).error?.data).toEqual({
-        reason: "delivery-pending",
+        reason: "message-conflict",
       });
     }));
 

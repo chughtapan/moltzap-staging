@@ -14,6 +14,7 @@ import {
   Schema,
 } from "effect";
 import { join } from "node:path";
+import type { AgentCard, AgentName } from "../../identity/agent-cards.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
   Communication,
@@ -37,7 +38,6 @@ import {
   Firewall,
   type FirewallOptions,
 } from "../../firewall/index.js";
-import type { AgentCard, AgentName } from "../../identity/agent-cards.js";
 import { Identity, IdentityError } from "../../identity/service.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
@@ -226,10 +226,10 @@ export const makeHarnessFixture = Effect.gen(function* () {
       Effect.sync(() => {
         network.catalog.set(addressOf(self, members), members);
       }),
-    uncertainSend: () =>
+    failSends: () =>
       Effect.sync(() => {
         network.sendFailure = new CommunicationError({
-          reason: "outcome-unknown",
+          reason: "persistence-failed",
         });
       }),
     failNameResolution: () =>
@@ -305,20 +305,23 @@ function identityFor(environment: FixtureEnvironment) {
   return Identity.of({
     me: environment.network.self,
     resolve: (names) =>
-      Effect.forEach(names, (agentName) =>
-        Effect.suspend(() => {
-          if (!environment.namesResolvable) {
-            return Effect.fail(
-              new IdentityError({ reason: "persistence-failed", agentName }),
-            );
-          }
-          const found = environment.cards.get(agentName);
-          return found === undefined
-            ? Effect.fail(
-                new IdentityError({ reason: "unknown-agent", agentName }),
-              )
-            : Effect.succeed(found);
-        }),
+      Effect.forEach(
+        names,
+        (agentName) =>
+          Effect.suspend(() => {
+            if (!environment.namesResolvable) {
+              return Effect.fail(
+                new IdentityError({ reason: "persistence-failed", agentName }),
+              );
+            }
+            const found = environment.cards.get(agentName);
+            return found === undefined
+              ? Effect.fail(
+                  new IdentityError({ reason: "unknown-agent", agentName }),
+                )
+              : Effect.succeed(found);
+          }),
+        { concurrency: 1 },
       ),
   });
 }
@@ -335,12 +338,13 @@ function communicationFor(network: Network) {
     send: (value) =>
       Effect.suspend(() => {
         network.submitted.push(value);
+        if (network.sendFailure !== undefined) {
+          return Effect.fail(network.sendFailure);
+        }
         if (!("kind" in value)) {
           retain(network, value);
         }
-        return network.sendFailure === undefined
-          ? Effect.void
-          : Effect.fail(network.sendFailure);
+        return Effect.void;
       }),
     getRequest: (id) =>
       Effect.suspend(() => {

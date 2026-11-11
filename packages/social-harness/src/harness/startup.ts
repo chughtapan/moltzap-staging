@@ -1,6 +1,6 @@
 /** @file Opens configured storage and owns agent resources independently of MCP connections. */
 import { HttpClient } from "@effect/platform";
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
+import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   Cause,

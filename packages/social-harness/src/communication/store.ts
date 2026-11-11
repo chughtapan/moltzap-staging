@@ -11,7 +11,6 @@ import {
   sameBytes,
 } from "../encoding/index.js";
 import { AgentId } from "../identity/agent-cards.js";
-import { sendFailureReasons } from "./errors.js";
 import {
   CollectiveId,
   type CollectiveValue,
@@ -29,7 +28,7 @@ export class EndpointStoreError extends Data.TaggedError("EndpointStoreError")<{
 }> {}
 
 /** Internal control-flow signal mapped to the closed store error. */
-export class StoreSignal extends Error {
+class StoreSignal extends Error {
   readonly reason: EndpointStoreFailure;
   constructor(reason: EndpointStoreFailure) {
     super(reason);
@@ -38,14 +37,10 @@ export class StoreSignal extends Error {
 }
 
 /** Closed storage failures that never expose database diagnostics. */
-export type EndpointStoreFailure =
-  | "closed"
+type EndpointStoreFailure =
   | "conflict"
   | "corrupt"
-  | "incompatible"
-  | "invalid-continuation"
   | "invalid-input"
-  | "not-found"
   | "persistence";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -175,7 +170,7 @@ export function readAcceptedMessage(
     const sql = yield* SqlClient;
     const [row] = yield* sql<
       Readonly<Record<string, unknown>>
-    >`SELECT author_agent_id,msg_id,canonical_message,failure_reason, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
+    >`SELECT author_agent_id,msg_id,canonical_message, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
     return row === undefined ? undefined : yield* readAcceptedRow(row);
   }).pipe(agentOperation(agentKey), Effect.withSpan("readAcceptedMessage"));
 }
@@ -190,7 +185,7 @@ export function readPendingMessages(agentKey: string, conversationId: string) {
     const sql = yield* SqlClient;
     const rows = yield* sql<
       Readonly<Record<string, unknown>>
-    >`SELECT author_agent_id,msg_id,canonical_message,failure_reason, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND NOT EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) AND failure_reason IS NULL ORDER BY sequence`;
+    >`SELECT author_agent_id,msg_id,canonical_message, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND NOT EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) ORDER BY sequence`;
     return yield* Effect.forEach(
       rows,
       (row) => readAcceptedRow(row).pipe(Effect.map(({ message }) => message)),
@@ -324,7 +319,7 @@ export function readReadyCollectiveMessages(agentKey: string) {
       JOIN collective_operations AS operation ON operation.agent_key=message.agent_key AND operation.operation_id=message.operation_id
       JOIN message_intents AS intent ON intent.agent_key=message.agent_key AND intent.author_agent_id=message.author_agent_id AND intent.msg_id=message.msg_id
       WHERE message.agent_key=${agentKey} AND operation.phase<>'completed' AND message.role IN ('response','close')
-      AND (EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=intent.agent_key AND message_log.author_agent_id=intent.author_agent_id AND message_log.msg_id=intent.msg_id) OR (intent.failure_reason IS NOT NULL AND (message.role='close' OR operation.phase='finalizing')))
+      AND EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=intent.agent_key AND message_log.author_agent_id=intent.author_agent_id AND message_log.msg_id=intent.msg_id)
       AND (message.role='close' OR NOT EXISTS (SELECT 1 FROM collective_answers AS answer WHERE answer.agent_key=message.agent_key AND answer.operation_id=message.operation_id AND answer.member=message.author_agent_id))
       ORDER BY message.sequence`;
     return yield* readMessageRows(agentKey, rows);
@@ -451,18 +446,6 @@ export function completeCollectiveOperation(
   );
 }
 
-/** A terminal close failure replaces only an unpublished result. */
-export function failCollectiveClose(
-  agentKey: string,
-  operationId: CollectiveId,
-  item: ResultDelivery["item"],
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase='completed',canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, item)},canonical_answer_refs=${yield* encodeRuntimeValue([])} WHERE agent_key=${agentKey} AND operation_id=${operationId} AND phase='finalizing' AND delivered=0`;
-  }).pipe(agentOperation(agentKey), Effect.withSpan("failCollectiveClose"));
-}
-
 /** Successful handling retires the same result while keeping its content readable. */
 export function retireCollectiveResult(
   agentKey: string,
@@ -485,99 +468,6 @@ export function retireCollectiveOperation(
   }).pipe(
     agentOperation(agentKey),
     Effect.withSpan("retireCollectiveOperation"),
-  );
-}
-
-/** Shared readers validate stored identity keys before interpreting completion. */
-export function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
-  return Effect.gen(function* () {
-    const canonicalMessage = readBytes(row, "canonical_message");
-    const message = yield* decodeCanonical(Message, canonicalMessage);
-    requireEqual(message.author.agentId, readText(row, "author_agent_id"));
-    requireEqual(message.msgId, readText(row, "msg_id"));
-    const savedFailure = readOptionalText(row, "failure_reason");
-    const failure =
-      savedFailure === undefined
-        ? undefined
-        : yield* Schema.decodeUnknown(Schema.Literal(...sendFailureReasons))(
-            savedFailure,
-          );
-    return {
-      message,
-      canonicalMessage,
-      completed: row.completed === 1,
-      failure,
-    };
-  }).pipe(storeOperation, Effect.withSpan("readAcceptedRow"));
-}
-
-/**
- * Reads one nullable nonempty SQL text.
- *
- * @param row SQL result row.
- * @param key Selected column name.
- * @returns The exact text, or undefined for SQL NULL.
- */
-export function readOptionalText(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): string | undefined {
-  const value = row[key];
-  if (value === null) {
-    return undefined;
-  }
-  return readText(row, key);
-}
-
-/**
- * Rejects empty and NUL-bearing values before they reach SQLite.
- *
- * @param value Opaque private identifier or hash.
- */
-export function requireText(value: string): void {
-  if (value.length === 0 || value.includes("\u0000")) {
-    throw new StoreSignal("invalid-input");
-  }
-}
-
-/**
- * Reads and copies one nullable SQLite BLOB.
- *
- * @param row SQL result row.
- * @param key Selected column name.
- * @returns An isolated byte copy, or undefined for SQL NULL.
- */
-export function readOptionalBytes(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): Uint8Array | undefined {
-  const value = row[key];
-  if (value === null) {
-    return undefined;
-  }
-  return readBytes(row, key);
-}
-
-/** SQL failures and row corruption leave through one closed storage error channel. */
-export function storeOperation<A, E, R>(
-  operation: Effect.Effect<A, E, R>,
-): Effect.Effect<A, EndpointStoreError, R> {
-  return operation.pipe(
-    Effect.catchAllCause((cause) => {
-      if (Cause.isInterruptedOnly(cause)) {
-        return Effect.failCause(Cause.stripFailures(cause));
-      }
-      const failure = Cause.failureOption(cause);
-      const defect = Cause.dieOption(cause);
-      return Effect.fail(
-        mapStoreFailure(
-          Option.getOrElse(failure, () =>
-            Option.getOrElse(defect, () => undefined),
-          ),
-          "persistence",
-        ),
-      );
-    }),
   );
 }
 
@@ -605,18 +495,6 @@ export function completeMessage(
     requireEqual(readInteger(row, "ordinal"), ordinal);
     requireSameBytes(readBytes(row, "canonical_message"), bytes);
   }).pipe(agentOperation(agentKey), Effect.withSpan("completeMessage"));
-}
-
-/**
- * Requires canonical byte equality for idempotent state.
- *
- * @param left Previously retained canonical bytes.
- * @param right Candidate canonical bytes.
- */
-export function requireSameBytes(left: Uint8Array, right: Uint8Array): void {
-  if (!sameBytes(left, right)) {
-    throw new StoreSignal("conflict");
-  }
 }
 
 /** Read a bounded range from the same message log for every delivery mode. */
@@ -677,86 +555,6 @@ export function readMessages(
   }).pipe(agentOperation(agentKey), Effect.withSpan("readMessages"));
 }
 
-/**
- * Requires two exact bindings, including optional bindings, to agree.
- *
- * @param left Previously retained binding.
- * @param right Candidate binding.
- */
-export function requireEqual<Value>(left: Value, right: Value): void {
-  if (left !== right) {
-    throw new StoreSignal("conflict");
-  }
-}
-
-/**
- * Reads one safe SQL integer.
- *
- * @param row SQL result row when one was selected.
- * @param key Selected column name.
- * @returns The exact safe integer.
- */
-export function readInteger(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): number {
-  const stored = row[key];
-  const value =
-    typeof stored === "string" && /^-?\d+$/u.test(stored)
-      ? Number(stored)
-      : stored;
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new StoreSignal("corrupt");
-  }
-  return value;
-}
-
-/**
- * Reads one required nonempty SQL text.
- *
- * @param row SQL result row when one was selected.
- * @param key Selected column name.
- * @returns The exact nonempty text.
- */
-export function readText(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): string {
-  const value = row[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new StoreSignal("corrupt");
-  }
-  return value;
-}
-
-/**
- * Reads and copies one required SQLite BLOB.
- *
- * @param row SQL result row.
- * @param key Selected column name.
- * @returns An isolated nonempty byte copy.
- */
-export function readBytes(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): Uint8Array {
-  const value = row[key];
-  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
-    throw new StoreSignal("corrupt");
-  }
-  return copyBytes(value);
-}
-
-/**
- * Returns an isolated copy of canonical bytes.
- *
- * @param value Canonical bytes crossing the storage boundary.
- * @returns A detached copy suitable for the database or a caller.
- */
-export function copyBytes(value: Uint8Array): Uint8Array {
-  return new Uint8Array(value);
-}
-
 /** A failed or interrupted handler leaves the exact message available for another attempt. */
 export function acknowledgeMessage(
   agentKey: string,
@@ -768,28 +566,19 @@ export function acknowledgeMessage(
   }).pipe(agentOperation(agentKey), Effect.withSpan("acknowledgeMessage"));
 }
 
-/**
- * Locking the agent's own row serializes one agent's transactions on
- * PostgreSQL, matching SQLite's connection serialization. Nested calls retain
- * the lock until the enclosing transaction commits; other agents use their own
- * rows. Store operations perform no network or model work.
- */
-export function agentOperation(agentKey: string) {
-  return <A, E, R>(work: Effect.Effect<A, E, R>) =>
-    withAgentTransaction(
-      agentKey,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient;
-        yield* sql.onDialectOrElse({
-          pg: () =>
-            sql`SELECT agent_key FROM agent_profiles WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
-              Effect.asVoid,
-            ),
-          orElse: () => Effect.void,
-        });
-        return yield* work;
-      }),
-    ).pipe(storeOperation, Effect.withSpan("agentOperation"));
+/** Shared readers validate stored identity keys before interpreting completion. */
+function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
+  return Effect.gen(function* () {
+    const canonicalMessage = readBytes(row, "canonical_message");
+    const message = yield* decodeCanonical(Message, canonicalMessage);
+    requireEqual(message.author.agentId, readText(row, "author_agent_id"));
+    requireEqual(message.msgId, readText(row, "msg_id"));
+    return {
+      message,
+      canonicalMessage,
+      completed: row.completed === 1,
+    };
+  }).pipe(storeOperation, Effect.withSpan("readAcceptedRow"));
 }
 
 function readMessageRows(
@@ -987,6 +776,53 @@ function decodeValue<A, I>(schema: Schema.Schema<A, I>, value: unknown) {
 }
 
 /**
+ * Locking the agent's own row serializes one agent's transactions on
+ * PostgreSQL, matching SQLite's connection serialization. Nested calls retain
+ * the lock until the enclosing transaction commits; other agents use their own
+ * rows. Store operations perform no network or model work.
+ */
+function agentOperation(agentKey: string) {
+  return <A, E, R>(work: Effect.Effect<A, E, R>) =>
+    withAgentTransaction(
+      agentKey,
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        yield* sql.onDialectOrElse({
+          pg: () =>
+            sql`SELECT agent_key FROM agent_profiles WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
+              Effect.asVoid,
+            ),
+          orElse: () => Effect.void,
+        });
+        return yield* work;
+      }),
+    ).pipe(storeOperation, Effect.withSpan("agentOperation"));
+}
+
+/** SQL failures and row corruption leave through one closed storage error channel. */
+function storeOperation<A, E, R>(
+  operation: Effect.Effect<A, E, R>,
+): Effect.Effect<A, EndpointStoreError, R> {
+  return operation.pipe(
+    Effect.catchAllCause((cause) => {
+      if (Cause.isInterruptedOnly(cause)) {
+        return Effect.failCause(Cause.stripFailures(cause));
+      }
+      const failure = Cause.failureOption(cause);
+      const defect = Cause.dieOption(cause);
+      return Effect.fail(
+        mapStoreFailure(
+          Option.getOrElse(failure, () =>
+            Option.getOrElse(defect, () => undefined),
+          ),
+          "persistence",
+        ),
+      );
+    }),
+  );
+}
+
+/**
  * Maps every internal failure to the store's closed error channel.
  *
  * @param failure Internal failure or closed control-flow signal.
@@ -1003,4 +839,101 @@ function mapStoreFailure(
   return new EndpointStoreError({
     reason: failure instanceof StoreSignal ? failure.reason : fallback,
   });
+}
+
+/**
+ * Reads and copies one nullable SQLite BLOB.
+ *
+ * @param row SQL result row.
+ * @param key Selected column name.
+ * @returns An isolated byte copy, or undefined for SQL NULL.
+ */
+function readOptionalBytes(
+  row: Readonly<Record<string, unknown>>,
+  key: string,
+): Uint8Array | undefined {
+  const value = row[key];
+  if (value === null) {
+    return undefined;
+  }
+  return readBytes(row, key);
+}
+
+/**
+ * Reads and copies one required SQLite BLOB.
+ *
+ * @param row SQL result row.
+ * @param key Selected column name.
+ * @returns An isolated nonempty byte copy.
+ */
+function readBytes(
+  row: Readonly<Record<string, unknown>>,
+  key: string,
+): Uint8Array {
+  const value = row[key];
+  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
+    throw new StoreSignal("corrupt");
+  }
+  return new Uint8Array(value);
+}
+
+/**
+ * Reads one required nonempty SQL text.
+ *
+ * @param row SQL result row when one was selected.
+ * @param key Selected column name.
+ * @returns The exact nonempty text.
+ */
+function readText(row: Readonly<Record<string, unknown>>, key: string): string {
+  const value = row[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new StoreSignal("corrupt");
+  }
+  return value;
+}
+
+/**
+ * Reads one safe SQL integer.
+ *
+ * @param row SQL result row when one was selected.
+ * @param key Selected column name.
+ * @returns The exact safe integer.
+ */
+function readInteger(
+  row: Readonly<Record<string, unknown>>,
+  key: string,
+): number {
+  const stored = row[key];
+  const value =
+    typeof stored === "string" && /^-?\d+$/u.test(stored)
+      ? Number(stored)
+      : stored;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new StoreSignal("corrupt");
+  }
+  return value;
+}
+
+/**
+ * Requires canonical byte equality for idempotent state.
+ *
+ * @param left Previously retained canonical bytes.
+ * @param right Candidate canonical bytes.
+ */
+function requireSameBytes(left: Uint8Array, right: Uint8Array): void {
+  if (!sameBytes(left, right)) {
+    throw new StoreSignal("conflict");
+  }
+}
+
+/**
+ * Requires two exact bindings, including optional bindings, to agree.
+ *
+ * @param left Previously retained binding.
+ * @param right Candidate binding.
+ */
+function requireEqual<Value>(left: Value, right: Value): void {
+  if (left !== right) {
+    throw new StoreSignal("conflict");
+  }
 }

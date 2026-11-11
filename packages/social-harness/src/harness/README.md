@@ -8,7 +8,7 @@ It checks new messages and saves the permitted view before notifying the host.
 ```mermaid
 flowchart LR
   A[Load configuration] --> B[Open the database]
-  B --> C[Restore identity and unfinished work]
+  B --> C[Restore agents and unfinished work]
   C --> D[Load firewall rules]
   D --> E[Serve agent requests]
 ```
@@ -21,7 +21,7 @@ scope closes the database.
 
 ```mermaid
 flowchart LR
-  A[Verified message] --> B[Save for checking]
+  A[Delivered message] --> B[Save for checking]
   B --> C[Check in conversation order]
   C --> D[Save the decision and permitted view]
   D --> E[Notify the host]
@@ -45,13 +45,13 @@ flowchart LR
   E -->|No| G[Return refusal]
 ```
 
-Communication owns acceptance and certification. A firewall approval allows
-submission. It does not guarantee that peers accept the message.
+Communication owns acceptance and ordering. A firewall approval allows
+submission. It does not guarantee that communication accepts the message.
 
 ## Durable state
 
 Domain operations decode saved values with their owning Effect Schemas and use
-SQL transactions for related writes. Signed records retain their original bytes.
+SQL transactions for related writes.
 Delivery acknowledgment changes status without deleting the saved message.
 
 The database layer rejects incompatible state before serving requests. Recovery

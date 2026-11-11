@@ -13,19 +13,19 @@ import type {
   Incoming,
   Outgoing,
 } from "./contract.js";
-import { makeRequests } from "./collectives.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import { encodeCanonical } from "../encoding/index.js";
 import { AgentCard, type AgentName } from "../identity/agent-cards.js";
+import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
 import { messageHistory } from "./history.js";
 import {
   compareAgentIds,
+  deriveConversationId,
   Message,
   messageInterpretation,
   type MessageReference,
   RequestError,
-  deriveConversationId,
 } from "./messages.js";
 import { bindCommunicationMode } from "./mode.js";
 import {
@@ -101,10 +101,11 @@ export function makeDelivery(settings: Environment["settings"]) {
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
 
 /** A database serves one mode, and in client/server mode one server agent. */
-const claimMode = (settings: Environment["settings"]) =>
-  settings.serverAgentName === undefined
+function claimMode(settings: Environment["settings"]) {
+  return settings.serverAgentName === undefined
     ? bindCommunicationMode("p2p")
     : bindCommunicationMode("client-server", settings.serverAgentName);
+}
 
 /** A question starts a request, an answer joins one, and anything else is sent as it is. */
 function send(environment: Environment, requests: Requests, value: Outgoing) {

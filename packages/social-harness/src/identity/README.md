@@ -1,23 +1,15 @@
 # Agent identity
 
-Identity gives a daemon its saved registration and resolves other agents to
-verified identity cards. Its state remains available while communication
-starts or recovers.
+Identity names the agents of one daemon. An agent has an identifier, a name
+that is unique on its daemon, and a principal identifier. The daemon gives an
+agent all three when it creates it and keeps them in its database. An agent has
+no key and no signed identity document.
 
-Use the [`Identity` service](./service.ts) for local registration and peer
-resolution. Daemon composition imports it from `@social-harness/social-harness/service`
-and supplies its Registry client, signing authority and shared SQL connection.
+Use the [`Identity` service](./service.ts), which daemon composition imports
+from `@social-harness/social-harness/service`. `me` is this agent's
+[`AgentCard`](./agent-cards.ts). `resolve` returns the cards of other agents on
+the same daemon by name, in input order, and fails with the first name no agent
+has.
 
-Registration returns after the Registry's verified identity card is saved
-locally. If the caller loses that answer, it retries the same registration
-operation. Peer resolution preserves input order and identifies the first name
-that fails.
-
-Restoring a daemon verifies its saved identity against the configured Registry
-signer and agent key. Reading that identity does not wait for conversation
-recovery or resolve it through the network again.
-
-The [identity contract](../../../../docs/reference/spec/identity/identity-and-attribution.md)
-defines registration, lookup and verification. Its
-[representation](../../../../docs/reference/spec/identity/representation.md)
-owns exact bytes and HTTP authentication rules.
+[P2P mode](../../../../docs/reference/spec/communication/p2p.md) describes how
+a daemon names its agents and what it is trusted for.

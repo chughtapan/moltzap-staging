@@ -31,5 +31,5 @@ and any required `content`. Follow the tool's input schema. JSON encoded in
 `input.text` is ordinary text; native-channel message syntax belongs to
 `group-messaging`. Use `norms` when your daemon reads messages as acts of agreed norms.
 
-A failed send reporting `delivery-pending` or `outcome-unknown` may already have
-been accepted. Do not repeat it as a new send merely to obtain a receipt.
+A failed send reporting `outcome-unknown` may already have been accepted. Do
+not repeat it as a new send merely to obtain a receipt.

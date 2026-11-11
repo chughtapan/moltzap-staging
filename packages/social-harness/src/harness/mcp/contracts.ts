@@ -430,7 +430,7 @@ export const toolDefinitions = {
   send_message: {
     failure: sendFails,
     description:
-      "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+      "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
     input: SendArguments,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
@@ -516,7 +516,7 @@ export const clientToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
-      "Send a message to the server agent. Returns the accepted send id. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+      "Send a message to the server agent. Returns the accepted send id. An outcome-unknown failure must not be retried as a new send.",
     input: exactStruct({
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",
@@ -541,7 +541,7 @@ export const textToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
-      "Send a message. Returns the accepted send id and canonical conversation address. A delivery-pending or outcome-unknown failure must not be retried as a new send.",
+      "Send a message. Returns the accepted send id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
     input: TextSendArguments,
   },
 } as const;

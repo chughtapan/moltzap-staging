@@ -3,22 +3,9 @@
 import { Effect, Exit } from "effect";
 
 /** Background work included in activity traces. */
-export type RetryKind =
-  | "proposal"
-  | "catch-up"
-  | "reanchor"
-  | "outbound"
-  | "firewall-check";
+type RetryKind = "firewall-check";
 /** How a tracked operation finished. */
-export type RetryOutcome =
-  | "certified"
-  | "superseded"
-  | "recovered"
-  | "sent"
-  | "checked"
-  | "gave-up"
-  | "interrupted"
-  | "failed";
+type RetryOutcome = "checked" | "interrupted" | "failed";
 
 /** Uses the supplied outcome for success, otherwise marks failure or interruption. */
 export function exitOutcome(
@@ -29,26 +16,6 @@ export function exitOutcome(
     return succeeded;
   }
   return Exit.isInterrupted(exit) ? "interrupted" : "failed";
-}
-
-/** Opens an activity that `retrySettled` closes under the same kind and ID. */
-export function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
-  return Effect.withSpan(Effect.void, "retry.pending", {
-    captureStackTrace: false,
-    attributes: { kind, id },
-  });
-}
-
-/** Closes the matching `retryPending` activity. */
-export function retrySettled(
-  kind: RetryKind,
-  id: string,
-  outcome: RetryOutcome,
-): Effect.Effect<void> {
-  return Effect.withSpan(Effect.void, "retry.settled", {
-    captureStackTrace: false,
-    attributes: { kind, id, outcome },
-  });
 }
 
 /** Pairs activity markers even when work fails or is cancelled. */
@@ -64,4 +31,24 @@ export function markRetries<A, E, R>(
         Effect.onExit((exit) => retrySettled(kind, id, outcome(exit))),
       ),
     );
+}
+
+/** Opens an activity that `retrySettled` closes under the same kind and ID. */
+function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
+  return Effect.withSpan(Effect.void, "retry.pending", {
+    captureStackTrace: false,
+    attributes: { kind, id },
+  });
+}
+
+/** Closes the matching `retryPending` activity. */
+function retrySettled(
+  kind: RetryKind,
+  id: string,
+  outcome: RetryOutcome,
+): Effect.Effect<void> {
+  return Effect.withSpan(Effect.void, "retry.settled", {
+    captureStackTrace: false,
+    attributes: { kind, id, outcome },
+  });
 }

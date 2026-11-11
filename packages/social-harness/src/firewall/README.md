@@ -23,7 +23,7 @@ One call keeps the same policy for every message, including the question and
 answers in a collective result. Advice selects registered instructions and
 references the host may see.
 
-The daemon supplies verified participants and permitted conversation history.
+The daemon supplies the participants and permitted conversation history.
 It saves completed checks. Incoming messages remain pending if checking is
 interrupted. Daemon-generated results have no firewall check.
 

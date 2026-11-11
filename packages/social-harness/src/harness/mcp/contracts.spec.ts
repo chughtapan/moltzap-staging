@@ -17,13 +17,9 @@ describe("message operation contracts", () => {
         toolDefinitions.send_message.failure.read({ kind: "refused", data }),
       );
 
-    it.each(["membership-invalid", "network-unavailable"])(
-      "keeps a member's closed refusal %s",
-      (reason) => {
-        const failure = {
-          kind: "members-unreachable",
-          members: [{ member: testAgentCard("bob"), reason }],
-        };
+    it.each([{ kind: "request-expired" }, { kind: "request-answered" }])(
+      "keeps a question's closed refusal %j",
+      (failure) => {
         const operationId = collectiveOperationId(
           testAgentCard("alice").agentId,
         );
@@ -32,6 +28,7 @@ describe("message operation contracts", () => {
         ).toMatchObject({ _tag: "RequestError", operationId, failure });
       },
     );
+
     it.each([
       { reason: "firewall-refused", checkId: "incomplete" },
       { reason: "collective-failed" },

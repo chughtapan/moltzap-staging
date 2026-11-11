@@ -38,35 +38,42 @@ function identityLayer(
     Identity,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const find = (column: "agent_key" | "agent_name", value: string) =>
-        sql`SELECT agent_id AS "agentId",agent_name AS "agentName",principal_id AS "principalId" FROM agent_profiles WHERE ${sql(column)}=${value}`.pipe(
-          Effect.flatMap((rows) =>
-            Schema.decodeUnknown(Schema.Array(AgentCard))(rows),
-          ),
-          Effect.mapError(
-            () => new IdentityError({ reason: "persistence-failed" }),
-          ),
-        );
-      const [me] = yield* find("agent_key", agentKey);
+      const [me] = yield* cards(sql, "agent_key", agentKey);
       if (me === undefined) {
         return yield* new IdentityError({ reason: "unknown-agent" });
       }
       return Identity.of({
         me,
         resolve: (names) =>
-          Effect.forEach(
-            names,
-            (agentName) =>
-              find("agent_name", agentName).pipe(
-                Effect.flatMap(([card]) =>
-                  card === undefined
-                    ? new IdentityError({ reason: "unknown-agent", agentName })
-                    : Effect.succeed(card),
-                ),
-              ),
-            { concurrency: 1 },
-          ).pipe(Effect.withSpan("Identity.resolve")),
+          Effect.forEach(names, (agentName) => named(sql, agentName), {
+            concurrency: 1,
+          }).pipe(Effect.withSpan("Identity.resolve")),
       });
     }).pipe(Effect.withSpan("Identity.layer")),
+  );
+}
+
+function named(sql: SqlClient.SqlClient, agentName: AgentName) {
+  return cards(sql, "agent_name", agentName).pipe(
+    Effect.flatMap(([card]) =>
+      card === undefined
+        ? Effect.fail(new IdentityError({ reason: "unknown-agent", agentName }))
+        : Effect.succeed(card),
+    ),
+  );
+}
+
+/** The cards of the agents whose `column` holds `value`: one, or none. */
+function cards(
+  sql: SqlClient.SqlClient,
+  column: "agent_key" | "agent_name",
+  value: string,
+) {
+  return sql`SELECT agent_id AS "agentId",agent_name AS "agentName",principal_id AS "principalId" FROM agent_profiles WHERE ${sql(column)}=${value}`.pipe(
+    Effect.flatMap(Schema.decodeUnknown(Schema.Array(AgentCard))),
+    Effect.catchTags({
+      SqlError: () => new IdentityError({ reason: "persistence-failed" }),
+      ParseError: () => new IdentityError({ reason: "persistence-failed" }),
+    }),
   );
 }

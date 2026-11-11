@@ -9,11 +9,13 @@ import { openTestDatabase } from "../communication/__tests__/store-fixtures.js";
 import { AgentName } from "./agent-cards.js";
 import { Identity } from "./service.js";
 
+const names = { alice: "alice", bob: "bob" };
+
 const fixture = Effect.gen(function* () {
   const database = yield* openTestDatabase();
   return {
-    alice: yield* database.run(createTestAgent("alice")),
-    bob: yield* database.run(createTestAgent("bob")),
+    alice: yield* database.run(createTestAgent(names.alice)),
+    bob: yield* database.run(createTestAgent(names.bob)),
     open: (agentKey: string) =>
       Layer.build(Identity.layer(agentKey)).pipe(
         Effect.provideService(SqlClient.SqlClient, database.sql),
@@ -27,8 +29,8 @@ it("gives each agent its own card under the name it was created with", () =>
     const f = yield* fixture;
     const alice = yield* f.open(f.alice.agentKey);
     const bob = yield* f.open(f.bob.agentKey);
-    expect(alice.me.agentName).toBe("alice");
-    expect(bob.me.agentName).toBe("bob");
+    expect(alice.me.agentName).toBe(names.alice);
+    expect(bob.me.agentName).toBe(names.bob);
     expect(alice.me.agentId).not.toBe(bob.me.agentId);
     expect((yield* f.open(f.alice.agentKey)).me).toEqual(alice.me);
   }));

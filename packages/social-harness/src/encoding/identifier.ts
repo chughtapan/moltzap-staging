@@ -7,9 +7,7 @@ const HASH_BYTE_LENGTH = 32;
 /**
  * Returns bytes for canonical base64url, or undefined for another spelling.
  */
-export const decodeCanonicalBase64Url = (
-  value: string,
-): Uint8Array | undefined =>
+const decodeCanonicalBase64Url = (value: string): Uint8Array | undefined =>
   Either.match(Encoding.decodeBase64Url(value), {
     onLeft: () => undefined,
     onRight: (bytes) =>
@@ -80,14 +78,6 @@ export function isStrictlyAscending<Value>(
   }
   return true;
 }
-
-/**
- * Requires canonical base64url of the specified decoded byte length.
- */
-export const hasCanonicalBase64UrlLength = (
-  value: string,
-  byteLength: number,
-): boolean => decodeCanonicalBase64Url(value)?.byteLength === byteLength;
 
 /**
  * Keeps the prefix, decoded byte length and canonical base64url spelling identical

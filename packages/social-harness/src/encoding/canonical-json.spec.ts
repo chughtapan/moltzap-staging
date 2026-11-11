@@ -6,10 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalBytes,
   decodeCanonical,
-  decodeCanonicalJson,
   encodeCanonical,
   encodeCanonicalJson,
-  parseCanonicalJson,
 } from "./canonical-json.js";
 
 const utf8 = (value: string): Uint8Array => new TextEncoder().encode(value);
@@ -21,7 +19,7 @@ const succeeds = <A, E>(effect: Effect.Effect<A, E>): boolean =>
   });
 
 const parses = (value: Uint8Array): boolean =>
-  succeeds(parseCanonicalJson(value));
+  succeeds(decodeCanonical(Schema.Unknown, value));
 
 const encodes = (value: unknown): boolean =>
   succeeds(encodeCanonicalJson(value));
@@ -72,7 +70,9 @@ describe("canonical identity JSON encoding", () => {
     fc.assert(
       fc.property(fc.jsonValue({ maxDepth: 16 }), (value) => {
         const firstEncoding = Effect.runSync(encodeCanonicalJson(value));
-        const parsed = Effect.runSync(parseCanonicalJson(firstEncoding));
+        const parsed = Effect.runSync(
+          decodeCanonical(Schema.Unknown, firstEncoding),
+        );
         const secondEncoding = Effect.runSync(encodeCanonicalJson(parsed));
         expect(secondEncoding).toEqual(firstEncoding);
       }),
@@ -129,22 +129,21 @@ describe("canonical identity JSON bounds and domain decoding", () => {
 
   it("applies closed Schema decoding after canonical validation", () => {
     const closed = Schema.Struct({ a: Schema.Number });
-    expect(succeeds(decodeCanonicalJson(closed, utf8('{"a":1,"b":2}')))).toBe(
+    expect(succeeds(decodeCanonical(closed, utf8('{"a":1,"b":2}')))).toBe(
       false,
     );
   });
 });
 
 describe("schema representation equality", () => {
-  it("distinguishes canonical input from the schema's normalized representation", () => {
+  it("refuses canonical input that is not the schema's own encoding of its value", () => {
     const schema = Schema.Struct({
       value: Schema.optionalWith(Schema.Number, { default: () => 1 }),
     });
-    const bytes = utf8("{}");
-    expect(Effect.runSync(decodeCanonicalJson(schema, bytes))).toEqual({
-      value: 1,
-    });
-    expect(succeeds(decodeCanonical(schema, bytes))).toBe(false);
+    expect(succeeds(decodeCanonical(schema, utf8("{}")))).toBe(false);
+    expect(
+      Effect.runSync(decodeCanonical(schema, utf8('{"value":1}'))),
+    ).toEqual({ value: 1 });
   });
 });
 

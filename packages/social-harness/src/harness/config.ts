@@ -45,21 +45,6 @@ const refused = (reason: DaemonConfigurationError["reason"], message: string) =>
     message,
   });
 
-const origin = Schema.String.pipe(
-  Schema.filter((value) => {
-    if (!URL.canParse(value)) {
-      return false;
-    }
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && value === url.origin;
-  }),
-  Schema.transform(Schema.URLFromSelf, {
-    strict: true,
-    decode: (value) => new URL(value),
-    encode: (value) => value.origin,
-  }),
-);
-
 const httpsUrl = Schema.String.pipe(
   Schema.filter((value) => {
     if (!URL.canParse(value)) {
@@ -95,13 +80,6 @@ const oauthIssuer = Schema.Union(
   ),
 );
 
-const credential = Schema.Redacted(
-  Schema.String.pipe(
-    Schema.minLength(8),
-    Schema.maxLength(512),
-    Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
-  ),
-);
 const publicOAuth = exactStruct({
   kind: Schema.Literal("oauth"),
   resource: httpsUrl.pipe(

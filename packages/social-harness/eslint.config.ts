@@ -1,62 +1,8 @@
 /**
  * @file Package ESLint configuration: the shared workspace preset plus the
- * rules that keep envelope signing in its owning modules.
+ * size limits of this package's largest modules.
  */
 import { packageEslintConfig } from "../../eslint.shared.js";
-
-/** Test files, which sign peer envelopes directly. */
-const testFiles = ["src/**/*.spec.ts", "src/**/__tests__/**"];
-
-/**
- * Keeps `communication/p2p/conversations/service.ts` the one production module that signs
- * an outer envelope, which it stores before the Router worker sends it.
- * `communication/records.ts` defines the signers.
- */
-const soleOuterSigner = {
-  files: ["src/**/*.ts"],
-  ignores: [
-    "src/communication/p2p/conversations/conversation.ts",
-    "src/communication/records.ts",
-    ...testFiles,
-  ],
-  rules: {
-    "no-restricted-imports": [
-      "error",
-      {
-        patterns: [
-          {
-            regex: "(^|/)records\\.js$",
-            importNames: ["signOuterPacket", "signOuterEvidence"],
-            message:
-              "Only communication/p2p/conversations/service.ts signs outer envelopes; queue the body through the engine outbox.",
-          },
-        ],
-      },
-    ],
-  },
-};
-
-/**
- * Keeps `communication/records.ts` the one module that calls
- * Identity's `SignedMessage.sign`, which it does for an outer envelope only
- * after sealing its body. The guard covers who signs, not what the outbox
- * enqueues: its port accepts any `SignedMessage`.
- */
-const sealingSigner = {
-  files: ["src/**/*.ts"],
-  ignores: ["src/communication/records.ts", ...testFiles],
-  rules: {
-    "no-restricted-properties": [
-      "error",
-      {
-        object: "SignedMessage",
-        property: "sign",
-        message:
-          "Only communication/records.ts signs a SignedMessage, after sealing every outer body; queue the body through the engine outbox.",
-      },
-    ],
-  },
-};
 
 /** Message schemas and their ordered assessment share one checking boundary. */
 const messageCheckRules = {
@@ -85,28 +31,11 @@ export default [
     tsconfigRootDir: import.meta.dirname,
   }),
   {
-    files: [
-      "src/identity/http-authentication.ts",
-      "src/identity/http-authentication.spec.ts",
-      "src/identity/message-security.spec.ts",
-      "src/communication/p2p/conversations/certification.ts",
-      "src/identity/message-security.ts",
-      "src/communication/messages.ts",
-      "src/communication/records.ts",
-    ],
+    files: ["src/communication/messages.ts"],
     rules: {
       "max-lines": [
         "error",
         { max: 2400, skipBlankLines: true, skipComments: true },
-      ],
-    },
-  },
-  {
-    files: ["src/communication/p2p/conversations/store.ts"],
-    rules: {
-      "max-lines": [
-        "error",
-        { max: 4200, skipBlankLines: true, skipComments: true },
       ],
     },
   },
@@ -119,8 +48,6 @@ export default [
       ],
     },
   },
-  soleOuterSigner,
-  sealingSigner,
   messageCheckRules,
   {
     files: [
@@ -140,22 +67,6 @@ export default [
       "sonarjs/nested-control-flow": ["error", { maximumNestingLevel: 4 }],
       "sonarjs/no-nested-functions": ["error", { threshold: 6 }],
       "max-params": ["error", 7],
-    },
-  },
-  {
-    files: [
-      "src/communication/p2p/conversations/reanchor.ts",
-      "src/communication/p2p/conversations/recovery.ts",
-      "src/communication/p2p/router/connection.ts",
-      "src/communication/p2p/collectives.ts",
-      "src/communication/records.spec.ts",
-      "src/communication/p2p/conversations/history.ts",
-    ],
-    rules: {
-      "max-lines": [
-        "error",
-        { max: 1500, skipBlankLines: true, skipComments: true },
-      ],
     },
   },
 ];

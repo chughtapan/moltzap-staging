@@ -48,9 +48,6 @@ catalogs:
     '@modelcontextprotocol/client':
       specifier: 2.0.0-beta.5
       version: 2.0.0-beta.5
-    '@noble/curves':
-      specifier: 2.4.0
-      version: 2.4.0
     '@opentelemetry/api':
       specifier: ^1.9.0
       version: 1.9.1
@@ -138,9 +135,6 @@ catalogs:
     puppeteer:
       specifier: 24.43.1
       version: 24.43.1
-    structured-headers:
-      specifier: 2.0.3
-      version: 2.0.3
     tsx:
       specifier: ^4.19.0
       version: 4.21.0
@@ -294,9 +288,6 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
         version: 2.0.0-beta.5
-      '@noble/curves':
-        specifier: 'catalog:'
-        version: 2.4.0
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.9.1
@@ -330,18 +321,12 @@ importers:
       effect:
         specifier: 3.22.1
         version: 3.22.1
-      http-message-signatures:
-        specifier: 'catalog:'
-        version: 1.0.6
       jose:
         specifier: 'catalog:'
         version: 6.2.5
       kysely:
         specifier: 'catalog:'
         version: 0.29.6
-      structured-headers:
-        specifier: 'catalog:'
-        version: 2.0.3
       yaml:
         specifier: 'catalog:'
         version: 2.9.1
@@ -2156,14 +2141,6 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
-
-  '@noble/curves@2.4.0':
-    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/hashes@2.4.0':
-    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
-    engines: {node: '>= 20.19.0'}
 
   '@nodable/entities@2.2.0':
     resolution: {integrity: sha512-9uGyhaQavEUMC8AIddIjau4NsnsXhou+j5sBAGojCM1oxmQpVKTWR/9JxABD6UAv12vpIms55fPZKFQEhG6uBg==}
@@ -11293,12 +11270,6 @@ snapshots:
       '@emnapi/runtime': 1.10.0
       '@tybys/wasm-util': 0.10.2
     optional: true
-
-  '@noble/curves@2.4.0':
-    dependencies:
-      '@noble/hashes': 2.4.0
-
-  '@noble/hashes@2.4.0': {}
 
   '@nodable/entities@2.2.0': {}
 

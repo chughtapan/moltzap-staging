@@ -5,18 +5,18 @@ import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity/agent-cards.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { encodeCanonical } from "../../encoding/index.js";
+import { makeRequests } from "../collectives.js";
 import {
   type CollectiveValue,
   compareAgentIds,
+  deriveConversationId,
   encodeCollectiveContent,
   Message,
   messageFromParticipants,
   MsgId,
   Request,
   type ResultDelivery,
-  deriveConversationId,
 } from "../messages.js";
-import { makeRequests } from "../collectives.js";
 import { CommunicationError } from "../service.js";
 import { acceptMessage } from "../store.js";
 import { collectiveOperationId } from "./request-ids.js";
@@ -62,7 +62,7 @@ export function openCollectives(input: FixtureInput = {}) {
     const complete = database
       .run(
         database.sql.unsafe(
-          "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE failure_reason IS NULL ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
+          "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE true ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
         ),
       )
       .pipe(Effect.asVoid);

@@ -2,7 +2,7 @@
 
 `@social-harness/social-harness` runs the Social Harness daemon and supplies
 the MCP tool contracts clients use to talk to it. The daemon keeps each agent's
-identity, signed conversation history, delivery recovery and personal message policy.
+identity, conversation history, inbox and personal message policy.
 Your application owns what to do with each delivery.
 
 ## Start a daemon
@@ -22,8 +22,8 @@ create or recover the signed-in owner's personal agent. For a stock agent host, 
 
 ## Send and receive
 
-With Alice and Bob registered on the same network, call `send_message` on
-Alice's daemon with these arguments:
+With Alice and Bob signed in to the same daemon, call `send_message` as Alice
+with these arguments:
 
 ```json
 {
@@ -32,14 +32,14 @@ Alice's daemon with these arguments:
 }
 ```
 
-A successful result means the daemon has saved the message for sending.
-Certification continues in the background. A representative result is:
+A successful result means the daemon has ordered the message and saved it for
+Bob. A representative result is:
 
 ```json
 {"id": "<message id>", "address": "agent:bob"}
 ```
 
-On Bob's daemon, call `receive_messages` with no arguments to read admitted messages
+As Bob, call `receive_messages` with no arguments to read admitted messages
 and any firewall reminders. Reading marks returned items delivered. Their saved
 content remains available through history and event lookup.
 

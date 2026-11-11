@@ -271,6 +271,7 @@ it("delivers a group message to every member in one order, between any agents", 
     const histories = yield* Effect.forEach(
       [f.alice, f.bob, f.carol],
       (agent) => agent.readHistory({ members }),
+      { concurrency: 1 },
     );
     for (const history of histories) {
       expect(history.entries.map((entry) => entry.message)).toEqual([

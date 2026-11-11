@@ -121,11 +121,9 @@ const messageSchema = (binary: string, sequence: string) =>
     msg_id TEXT NOT NULL,
     conversation_id TEXT NOT NULL,
     canonical_message ${binary} NOT NULL,
-    failure_reason TEXT,
     UNIQUE (agent_key, author_agent_id, msg_id)
   )`);
-    yield* sql`CREATE INDEX message_intents_unresolved ON message_intents(agent_key,conversation_id)
-    WHERE failure_reason IS NULL`;
+    yield* sql`CREATE INDEX message_intents_conversation ON message_intents(agent_key,conversation_id)`;
     yield* sql.unsafe(`CREATE TABLE message_log (
     agent_key TEXT NOT NULL, sequence ${sequence}, conversation_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0), author_agent_id TEXT NOT NULL,

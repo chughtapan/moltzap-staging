@@ -33,11 +33,7 @@ import {
   AgentId,
   AgentName,
 } from "../identity/agent-cards.js";
-import {
-  CommunicationError,
-  communicationFailure,
-  issuesText,
-} from "./errors.js";
+import { CommunicationError, issuesText } from "./errors.js";
 
 /** Order validated agent identities by their decoded identifier bytes. */
 export const compareAgentIds: (left: AgentId, right: AgentId) => number =
@@ -46,7 +42,7 @@ export const compareAgentIds: (left: AgentId, right: AgentId) => number =
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 
 /** The canonical JSON byte limit of one message's content. */
-export const maximumContentBytes = 32_768;
+const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
 
 /**
@@ -253,7 +249,7 @@ export type MessageAddressInput = typeof MessageAddressInput.Type;
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore the package naming rules after the Schema/type pairs. */
 
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
-export const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
+const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
   Effect.try({
     try: () => `msg_${randomBytes(32).toString("base64url")}`,
     catch: representationFailure,
@@ -372,26 +368,12 @@ const CollectiveResponse = Schema.Union(AcceptResponse, DeclineResponse);
 /** A validated collective response. */
 export type CollectiveResponse = typeof CollectiveResponse.Type;
 
-/** Members a send could not reach. */
-const unreachableMembers = Schema.NonEmptyArray(
-  exactStruct({
-    member: AgentCard,
-    reason: communicationFailure,
-    detail: Schema.optionalWith(Schema.String, { exact: true }),
-  }),
-);
-
 /**
  * Why a collective send was refused, discriminated by `kind`: a gather or
- * all_gather whose schema is outside the form-mode grammar, whose request
- * message some member could not receive, or whose deadline passed while its
- * check ran; or a response the member's endpoint cannot send.
+ * all_gather whose schema is outside the form-mode grammar or whose deadline
+ * passed while its check ran; or a response the member's endpoint cannot send.
  */
 const collectiveFailure = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("members-unreachable"),
-    members: unreachableMembers,
-  }),
   exactStruct({
     kind: Schema.Literal("schema-invalid"),
     detail: Schema.String,
@@ -447,7 +429,7 @@ export type AnswerFieldFailures = Extract<
 /** A failure that carries nothing beyond its kind. */
 type FixedFailureKind = Exclude<
   CollectiveFailure["kind"],
-  "members-unreachable" | "schema-invalid" | "answer-invalid"
+  "schema-invalid" | "answer-invalid"
 >;
 
 /** The text of each failure that carries nothing beyond its kind. */
@@ -1542,17 +1524,6 @@ export function messageMembers(message: Participants): readonly AgentCard[] {
   );
 }
 
-/** Private semantic index keys put directs before group member-name tuples. */
-export function conversationSortKey(
-  members: ReadonlyArray<Message["author"]>,
-  localAgentId: Message["author"]["agentId"],
-) {
-  return conversationNameKey(
-    members.map((member) => member.agentName),
-    members.find((member) => member.agentId === localAgentId)?.agentName,
-  );
-}
-
 /** The retained membership index orders direct peers before group participant tuples. */
 export function conversationNameKey(
   names: ReadonlyArray<Message["author"]["agentName"]>,
@@ -1627,13 +1598,6 @@ function describeCollectiveFailure(failure: CollectiveFailure): string {
     return fixedFailureText[failure.kind];
   }
   switch (failure.kind) {
-    case "members-unreachable":
-      return `send failed: ${failure.members
-        .map(
-          ({ member, reason, detail }) =>
-            `${member.agentName} could not be reached: ${detail ?? reason}`,
-        )
-        .join("; ")}`;
     case "schema-invalid":
       return `send failed: the form is invalid (${failure.detail})`;
     case "answer-invalid":

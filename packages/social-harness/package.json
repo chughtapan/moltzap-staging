@@ -100,7 +100,6 @@
     "@effect/sql-pg": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@noble/curves": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
     "@opentelemetry/resources": "catalog:",
@@ -112,10 +111,8 @@
     "@thi.ng/sexpr": "catalog:",
     "canonicalize": "catalog:",
     "effect": "catalog:",
-    "http-message-signatures": "catalog:",
     "jose": "catalog:",
     "kysely": "catalog:",
-    "structured-headers": "catalog:",
     "yaml": "catalog:"
   },
   "devDependencies": {

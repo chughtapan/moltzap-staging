@@ -179,30 +179,17 @@ it("gives each host invocation a fresh message identity", () =>
     ).toEqual([first.id, second.id]);
   }));
 
-it("reports an uncertain send without repeating accepted work", () =>
+it("reports a failed send once without sending it again", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    yield* subject.uncertainSend();
+    yield* subject.failSends();
     expect(
       yield* runtime.harness
-        .send({
-          to: bobAddress,
-          text: "Accepted before the connection failed",
-        })
+        .send({ to: bobAddress, text: "Not stored" })
         .pipe(Effect.flip),
-    ).toMatchObject({ reason: "outcome-unknown" });
+    ).toMatchObject({ reason: "persistence-failed" });
     expect(subject.submitted).toHaveLength(1);
-    expect(
-      (yield* runtime.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([
-      {
-        kind: "sent",
-        message: {
-          content: [{ text: "Accepted before the connection failed" }],
-        },
-      },
-    ]);
   }));
 
 it("checks each conversation in order while another conversation progresses", () =>

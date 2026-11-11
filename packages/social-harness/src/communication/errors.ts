@@ -1,61 +1,36 @@
-/** @file Failures distinguish refused work from retained communication progress. */
+/** @file The failures communication and sends report. */
 
-import { Data, Schema } from "effect";
+import { Data } from "effect";
 
-/** Closed communication failures are shared with caller-facing request errors. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Request failures reuse the closed communication reason grammar.
-export const communicationFailure = Schema.Literal(
-  "membership-invalid",
-  "content-invalid",
-  "version-mismatch",
-  "certification-unavailable",
-  "persistence-failed",
-  "network-unavailable",
-  "outcome-unknown",
-  "unknown-message",
-  "message-conflict",
-  "invalid-cursor",
-  "history-gap",
-  "outbox-too-old",
-  "agent-not-admitted",
-);
-
-/** Communication failures distinguish refused work from unknown acceptance. */
+/** A refused send or read names one of these reasons. */
 export class CommunicationError extends Data.TaggedError("CommunicationError")<{
-  readonly reason: typeof communicationFailure.Type;
+  readonly reason:
+    | "membership-invalid"
+    | "content-invalid"
+    | "persistence-failed"
+    | "unknown-message"
+    | "message-conflict"
+    | "invalid-cursor"
+    | "history-gap";
 }> {}
 
-/** Closed reason codes carried by sends and per-member collective failures. */
+/** The reasons a send fails with. */
 export const sendFailureReasons = [
   "invalid-address",
   "unknown-agent",
   "membership-invalid",
   "content-invalid",
   "message-conflict",
-  "version-mismatch",
-  "certification-unavailable",
   "persistence-failed",
   "network-unavailable",
-  "delivery-pending",
   "outcome-unknown",
 ] as const;
 
-/** Distinguishes a refusal from work that remains pending or uncertain. */
-export type SendFailure = (typeof sendFailureReasons)[number];
-
-/** Temporary availability or uncertain storage leaves accepted work recoverable. */
-export function isTerminalSendFailure(reason: SendFailure): boolean {
-  return (
-    reason !== "network-unavailable" &&
-    reason !== "delivery-pending" &&
-    reason !== "outcome-unknown" &&
-    reason !== "persistence-failed"
-  );
-}
+type SendFailure = (typeof sendFailureReasons)[number];
 
 /**
- * Pending work retains its original intent. A send with an unknown outcome
- * may already have happened. A new send can duplicate either message.
+ * What the agent is told for each reason. A send with an unknown outcome may
+ * already have happened, so a new send can duplicate it.
  */
 const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "invalid-address": "the address is not a valid agent: or group: address",
@@ -64,14 +39,9 @@ const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "content-invalid": "the message content is invalid",
   "message-conflict":
     "the message identity already belongs to different content or recipients",
-  "version-mismatch": "Social Harness is unavailable (version mismatch)",
-  "certification-unavailable":
-    "Social Harness is unavailable (certification unavailable)",
   "persistence-failed":
     "Social Harness is unavailable (the message could not be stored)",
   "network-unavailable": "Social Harness is unavailable (network unavailable)",
-  "delivery-pending":
-    "the message is pending and Social Harness will still deliver it",
   "outcome-unknown":
     "the send did not complete; the message may or may not have been sent",
 };
@@ -100,10 +70,9 @@ export function issuesText(
 }
 
 /**
- * Check `reason` before retrying. `delivery-pending` retains the original
- * message. A send with `outcome-unknown` may already have happened. A new send
- * can duplicate either message. The host may show `message` to its agent.
- * Validation issues omit rejected values.
+ * Check `reason` before retrying. A send with `outcome-unknown` may already
+ * have happened, so a new send can duplicate it. The host may show `message`
+ * to its agent. Validation issues omit rejected values.
  */
 export class SendError extends Data.TaggedError("SendError")<{
   readonly reason: SendFailure;

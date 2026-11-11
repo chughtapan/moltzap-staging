@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
+import type { AgentCard } from "../identity/agent-cards.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
@@ -47,7 +48,6 @@ import {
   type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/index.js";
-import type { AgentCard } from "../identity/agent-cards.js";
 import { Identity, IdentityError } from "../identity/service.js";
 import {
   catalogCursor,
@@ -910,18 +910,12 @@ function sendFailure(error: CommunicationError): SendError {
   switch (error.reason) {
     case "membership-invalid":
     case "content-invalid":
-    case "version-mismatch":
-    case "certification-unavailable":
     case "persistence-failed":
-    case "network-unavailable":
-    case "outcome-unknown":
     case "message-conflict":
       return new SendError({ reason: error.reason });
     case "invalid-cursor":
     case "history-gap":
     case "unknown-message":
-    case "outbox-too-old":
-    case "agent-not-admitted":
       return new SendError({ reason: "persistence-failed" });
     default:
       return absurd(error.reason);

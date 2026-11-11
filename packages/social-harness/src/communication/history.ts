@@ -14,11 +14,11 @@ import { CommunicationError } from "./errors.js";
 import {
   compareAgentIds,
   conversationNameKey,
+  deriveConversationId,
   Message,
   messageInterpretation,
   messageMembers,
   type MessageReference,
-  deriveConversationId,
 } from "./messages.js";
 import {
   readMessages,

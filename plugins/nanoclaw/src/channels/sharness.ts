@@ -167,17 +167,16 @@ function extractOutboundText(message: OutboundMessage): string | null {
 }
 
 /**
- * Completes uncertain or pending sends even if feedback fails, because a host
- * retry would create a new send. The model can choose to resend deliberately.
+ * Completes uncertain sends even if feedback fails, because a host retry
+ * would create a new send. The model can choose to resend deliberately.
  */
 const POSTED_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
-  "delivery-pending",
   "outcome-unknown",
 ]);
 
 /**
  * Reports these failures to the model instead of asking NanoClaw to retry.
- * Invalid input would fail again. POSTED_REFUSALS covers pending or uncertain sends.
+ * Invalid input would fail again. POSTED_REFUSALS covers uncertain sends.
  */
 const FINAL_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
   "invalid-address",

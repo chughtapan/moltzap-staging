@@ -33,7 +33,6 @@ import {
   completeCollectiveOperation,
   encodeRuntimeValue,
   EndpointStoreError,
-  failCollectiveClose,
   putCollectiveMessage,
   putCollectiveOperation,
   readAcceptedMessage,
@@ -640,9 +639,6 @@ function observeMessage(
       if (accepted === undefined) {
         return yield* new EndpointStoreError({ reason: "corrupt" });
       }
-      if (accepted.failure !== undefined) {
-        return yield* failOperationMessage(agentKey, saved, accepted.failure);
-      }
       if (!accepted.completed) {
         return;
       }
@@ -659,35 +655,6 @@ function observeMessage(
       }
     }),
   );
-}
-
-function failOperationMessage(
-  agentKey: string,
-  saved: StoredCollectiveMessage,
-  reason: string,
-) {
-  return Effect.gen(function* () {
-    if (saved.role === "close") {
-      const operation = yield* readCollectiveOperation(
-        agentKey,
-        saved.operationId,
-      );
-      if (operation === undefined) {
-        return yield* new EndpointStoreError({ reason: "corrupt" });
-      }
-      const item: ResultDelivery["item"] = {
-        kind: "request-failed",
-        request: yield* capturedRequest(operation),
-        error: `The request result could not be shared: ${reason}`,
-      };
-      yield* checkResultSize({ item, sources: { answers: [] } });
-      yield* transaction(
-        failCollectiveClose(agentKey, saved.operationId, item),
-      );
-    } else if (saved.role === "response") {
-      yield* retireUnusableClose(agentKey, saved);
-    }
-  });
 }
 
 /** A certified close and the selected answers complete the same retained result. */
@@ -1051,28 +1018,6 @@ function sourceRequest(
   return isReceivedRequest(message)
     ? Effect.succeed(message)
     : new EndpointStoreError({ reason: "corrupt" });
-}
-
-function retireUnusableClose(agentKey: string, saved: StoredCollectiveMessage) {
-  return transaction(
-    Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(
-        agentKey,
-        saved.operationId,
-      );
-      if (
-        operation?.origin === "remote" &&
-        operation.phase === "finalizing" &&
-        operation.close?.included.some(
-          (reference) =>
-            reference.authorAgentId === saved.reference.authorAgentId &&
-            reference.msgId === saved.reference.msgId,
-        )
-      ) {
-        yield* retireCollectiveOperation(agentKey, saved.operationId);
-      }
-    }),
-  );
 }
 
 /** Business refusals and handler failures keep their type when SQL rolls back. */
