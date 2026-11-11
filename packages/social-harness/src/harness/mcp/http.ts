@@ -1,9 +1,31 @@
-/** @file Request admission by OAuth, the local bearer, or the server agent's credential. */
+/**
+ * @file The daemon's HTTP endpoint: the listener, which requests it accepts,
+ * and who each one is admitted as.
+ */
 
-import { FetchHttpClient, HttpClient } from "@effect/platform";
-import { Data, Effect, Option, Redacted, Schema } from "effect";
+import {
+  FetchHttpClient,
+  type HttpApp,
+  HttpBody,
+  HttpClient,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "@effect/platform";
+import { NodeHttpServer } from "@effect/platform-node";
+import {
+  Data,
+  Effect,
+  Match,
+  Option,
+  Redacted,
+  Schema,
+  type Scope,
+  Stream,
+} from "effect";
 import { createRemoteJWKSet, type JWTPayload, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
+import { createServer } from "node:http";
 import type { DaemonSettings } from "../config.js";
 import {
   localOwner,
@@ -33,13 +55,166 @@ export class AuthenticationRefused extends Data.TaggedError(
   "AuthenticationRefused",
 ) {}
 
+/** An agent's app, served to the requests admitted as its owner. */
+type SelectApp = (
+  owner: OwnerAccount,
+) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>;
+
+/**
+ * The app the listener serves. It answers only POST /mcp from a trusted host
+ * and origin, admits the caller, and hands the request to that owner's agent.
+ * An agent that cannot serve answers 503.
+ */
+export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
+  authentication: McpAuthentication,
+  selectApp: SelectApp,
+  serverAgentCredential: Option.Option<Redacted.Redacted>,
+) {
+  const admit = yield* makeRequestAdmission(
+    authentication,
+    serverAgentCredential,
+  );
+  const trusted = trustedCallers(authentication);
+  return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const { host, origin } = request.headers;
+    if (
+      host === undefined ||
+      !trusted.host(host) ||
+      (origin !== undefined && !trusted.origin(origin))
+    ) {
+      return HttpServerResponse.text("Forbidden", { status: 403 });
+    }
+    const path = new URL(request.url, "http://localhost").pathname;
+    if (
+      authentication.kind === "oauth" &&
+      path === protectedResourcePath(authentication) &&
+      request.method === "GET"
+    ) {
+      return HttpServerResponse.fromWeb(
+        protectedResourceResponse(authentication),
+      );
+    }
+    if (path !== "/mcp") {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    if (request.method !== "POST") {
+      return HttpServerResponse.empty({
+        status: 405,
+        headers: { allow: "POST" },
+      });
+    }
+    return yield* admit(
+      new Request(trusted.resource, { headers: request.headers }),
+    ).pipe(
+      Effect.matchEffect({
+        onFailure: () =>
+          Effect.succeed(
+            HttpServerResponse.fromWeb(authenticationChallenge(authentication)),
+          ),
+        onSuccess: ({ owner, expiresAt }) =>
+          selectApp(owner).pipe(
+            Effect.flatMap((app) => app),
+            Effect.flatMap((response) =>
+              expiresAt === undefined
+                ? response
+                : limitResponseStream(
+                    response,
+                    Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
+                  ),
+            ),
+            Effect.catchAll(() =>
+              Effect.succeed(
+                HttpServerResponse.text("Agent unavailable", { status: 503 }),
+              ),
+            ),
+          ),
+      }),
+    );
+  });
+}, Effect.withSpan("makeMcpHttpApp"));
+
+/** Local bearer mode uses the same default address for binding and advertisement. */
+const LOOPBACK_HOST = "127.0.0.1";
+
+/** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
+export const serveMcp = Effect.fn("Mcp.serve")(function* (
+  port: number,
+  app: HttpApp.Default<never, Scope.Scope>,
+  host: string = LOOPBACK_HOST,
+) {
+  const listener = yield* Effect.sync(createServer);
+  const server = yield* NodeHttpServer.make(() => listener, { host, port });
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      listener.closeAllConnections();
+    }),
+  );
+  yield* server.serve(app);
+});
+
+/** Ends a streamed response body when `limit` says so. Other bodies are returned as they are. */
+export function limitResponseStream(
+  response: HttpServerResponse.HttpServerResponse,
+  limit: <A, E>(body: Stream.Stream<A, E>) => Stream.Stream<A, E>,
+) {
+  return Match.value(response.body).pipe(
+    Match.tag("Stream", (body) =>
+      HttpServerResponse.setBody(
+        response,
+        HttpBody.stream(limit(body.stream), body.contentType),
+      ),
+    ),
+    Match.orElse(() => response),
+  );
+}
+
+/**
+ * The Host and Origin headers a request may carry, and the resource its
+ * bearer is checked against. A local bearer daemon is reached only through
+ * loopback. An OAuth daemon is reached at its resource and from its allowed
+ * origins.
+ */
+function trustedCallers(authentication: McpAuthentication) {
+  if (authentication.kind === "oauth") {
+    return {
+      resource: authentication.resource.href,
+      host: (host: string) =>
+        host.toLowerCase() === authentication.resource.host.toLowerCase(),
+      origin: (origin: string) =>
+        authentication.allowedOrigins.includes(origin),
+    };
+  }
+  return {
+    resource: "http://127.0.0.1/mcp",
+    host: (host: string) => loopbackUrl(`http://${host}`),
+    origin: loopbackUrl,
+  };
+}
+
+/** A plain http(s) URL on this machine, with no credentials or fragment. */
+function loopbackUrl(value: string): boolean {
+  const url = Schema.decodeUnknownOption(Schema.URL)(value);
+  if (Option.isNone(url)) {
+    return false;
+  }
+  const { username, password, hash, protocol, hostname } = url.value;
+  const plain = !username && !password && !hash;
+  return (
+    plain &&
+    ["http:", "https:"].includes(protocol) &&
+    ["127.0.0.1", "[::1]", "localhost"].includes(hostname)
+  );
+}
+
 /** Metadata and bearer challenges derive from the same fixed resource. */
-export const protectedResourcePath = (oauth: OAuthResource): string =>
-  new URL(getOAuthProtectedResourceMetadataUrl(oauth.resource)).pathname;
+function protectedResourcePath(oauth: OAuthResource): string {
+  return new URL(getOAuthProtectedResourceMetadataUrl(oauth.resource)).pathname;
+}
 
 /** Native discovery does not grant access to any daemon operation. */
-export const protectedResourceResponse = (oauth: OAuthResource): Response =>
-  Response.json(
+function protectedResourceResponse(oauth: OAuthResource): Response {
+  return Response.json(
     {
       resource: oauth.resource.href,
       authorization_servers: [oauth.issuer],
@@ -48,6 +223,7 @@ export const protectedResourceResponse = (oauth: OAuthResource): Response =>
     },
     { headers: { "cache-control": "no-store" } },
   );
+}
 
 /** Decides whether a request is admitted, and as which owner. */
 type Admit = (
@@ -65,7 +241,7 @@ const either =
  * request carrying the server agent's credential is admitted as the server
  * agent; any other goes through the configured authentication.
  */
-export function makeRequestAdmission(
+function makeRequestAdmission(
   authentication: McpAuthentication,
   serverAgentCredential: Option.Option<Redacted.Redacted>,
 ): Effect.Effect<Admit, AuthenticationRefused> {
@@ -79,9 +255,7 @@ export function makeRequestAdmission(
 }
 
 /** Rejected requests disclose only the standard discovery challenge. */
-export function authenticationChallenge(
-  authentication: McpAuthentication,
-): Response {
+function authenticationChallenge(authentication: McpAuthentication): Response {
   const challenge =
     authentication.kind === "local"
       ? "Bearer"

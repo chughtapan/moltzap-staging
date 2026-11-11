@@ -39,7 +39,8 @@ import {
   processHelp,
   spanExport,
 } from "./config.js";
-import { makeAgentMcpApp, makeMcpHttpApp, serveMcp } from "./mcp/server.js";
+import { makeMcpHttpApp, serveMcp } from "./mcp/http.js";
+import { makeAgentMcpApp } from "./mcp/server.js";
 import { webhookHttpClientLayer } from "./mcp/webhook-client.js";
 import { makeWebhookEvents } from "./mcp/webhook.js";
 import {

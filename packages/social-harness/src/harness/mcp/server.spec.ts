@@ -40,7 +40,7 @@ import {
   MAXIMUM_WAIT_SECONDS,
   toolDefinitions,
 } from "./contracts.js";
-import { serveMcp } from "./server.js";
+import { serveMcp } from "./http.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
 
