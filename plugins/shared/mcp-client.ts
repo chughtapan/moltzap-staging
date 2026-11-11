@@ -98,7 +98,60 @@ export function acquireMcpConnection(
   implementation: Implementation,
 ): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
   const endpoint = new URL(settings.endpoint.href);
-  return acquireConnection({ ...settings, endpoint }, { ...implementation });
+  const transportOptions: StreamableHTTPClientTransportOptions = {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${Redacted.value(settings.credential)}`,
+      },
+      redirect: "error",
+    },
+  };
+  return Effect.gen(function* () {
+    if (!safeCredentialEndpoint(endpoint, settings.allowHttp)) {
+      return yield* new McpConnectError({ reason: "transport-failed" });
+    }
+    const client = new Client(
+      { ...implementation },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: { pin: "2026-07-28" } },
+      },
+    );
+    const close = Effect.tryPromise(() => client.close()).pipe(Effect.ignore);
+    yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: (signal) =>
+          client.connect(
+            new StreamableHTTPClientTransport(endpoint, transportOptions),
+            { signal },
+          ),
+        catch: (cause) =>
+          new McpConnectError({
+            reason:
+              cause instanceof SdkError &&
+              cause.code === SdkErrorCode.EraNegotiationFailed
+                ? "incompatible-daemon"
+                : "transport-failed",
+          }),
+      }).pipe(Effect.onError(() => close)),
+      () => close,
+    );
+    const receiving = yield* Ref.make(false);
+    const scope = yield* Scope.Scope;
+    return {
+      client,
+      consumeInbox: (accept) =>
+        Effect.acquireUseRelease(
+          receiveInbox(
+            { client, receiving },
+            inboxWakeups(endpoint, transportOptions),
+            accept,
+          ).pipe(Effect.interruptible, Effect.forkIn(scope)),
+          Fiber.join,
+          Fiber.interrupt,
+        ),
+    } satisfies McpConnection;
+  }).pipe(Effect.withSpan("Mcp.acquireConnection"));
 }
 
 /** What a caller is told when a tool's definition does not read a failure. */
@@ -166,65 +219,6 @@ function observed(cause: unknown): ToolCallFailure {
   };
 }
 
-function acquireConnection(
-  settings: McpConnectionSettings,
-  implementation: Implementation,
-): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
-  return Effect.gen(function* () {
-    const endpoint = settings.endpoint;
-    const transportOptions: StreamableHTTPClientTransportOptions = {
-      requestInit: {
-        headers: {
-          Authorization: `Bearer ${Redacted.value(settings.credential)}`,
-        },
-        redirect: "error",
-      },
-    };
-    if (!safeCredentialEndpoint(endpoint, settings.allowHttp)) {
-      return yield* new McpConnectError({ reason: "transport-failed" });
-    }
-    const client = new Client(implementation, {
-      capabilities: {},
-      versionNegotiation: { mode: { pin: "2026-07-28" } },
-    });
-    yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: (signal) =>
-          client.connect(
-            new StreamableHTTPClientTransport(endpoint, transportOptions),
-            { signal },
-          ),
-        catch: (cause) =>
-          new McpConnectError({
-            reason:
-              cause instanceof SdkError &&
-              cause.code === SdkErrorCode.EraNegotiationFailed
-                ? "incompatible-daemon"
-                : "transport-failed",
-          }),
-      }).pipe(
-        Effect.onError(() =>
-          Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-        ),
-      ),
-      () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-    );
-    const receiving = yield* Ref.make(false);
-    const scope = yield* Scope.Scope;
-    return {
-      client,
-      consumeInbox: <E, R>(
-        accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-      ) =>
-        runReception(
-          { client, receiving, scope },
-          inboxWakeups(endpoint, transportOptions).pipe(Stream.as(undefined)),
-          accept,
-        ),
-    } satisfies McpConnection;
-  }).pipe(Effect.withSpan("Mcp.acquireConnection"));
-}
-
 function consumePending<E, R>(
   client: Pick<Client, "callTool">,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
@@ -261,46 +255,28 @@ function connectionRefused(cause: unknown): boolean {
   return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
 }
 
-function runReception<E, R>(
+/** Reads the inbox on every wake-up. A connection has one reader at a time. */
+function receiveInbox<E, R>(
   owner: {
     readonly client: Pick<Client, "callTool">;
     readonly receiving: Ref.Ref<boolean>;
-    readonly scope: Scope.Scope;
   },
-  wakeups: Stream.Stream<undefined, McpReceiveError>,
-  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
-) {
-  return Effect.acquireUseRelease(
-    Effect.forkIn(
-      Effect.interruptible(
-        receiveInbox(owner.client, owner.receiving, wakeups, accept),
-      ),
-      owner.scope,
-    ),
-    Fiber.join,
-    Fiber.interrupt,
-  );
-}
-
-function receiveInbox<E, R>(
-  client: Pick<Client, "callTool">,
-  receiving: Ref.Ref<boolean>,
   wakeups: Stream.Stream<undefined, McpReceiveError>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
       yield* Effect.acquireRelease(
-        Ref.getAndSet(receiving, true).pipe(
+        Ref.getAndSet(owner.receiving, true).pipe(
           Effect.filterOrFail(
             (active) => !active,
             () => new McpReceiveError({ reason: "already-listening" }),
           ),
         ),
-        () => Ref.set(receiving, false),
+        () => Ref.set(owner.receiving, false),
       );
       yield* wakeups.pipe(
-        Stream.runForEach(() => consumePending(client, accept)),
+        Stream.runForEach(() => consumePending(owner.client, accept)),
       );
     }),
   );
