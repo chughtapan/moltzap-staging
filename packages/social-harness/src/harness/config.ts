@@ -166,19 +166,15 @@ export const processHelp = [
 ].join("\n");
 
 /** Policy and norms references resolve against the runtime document, independent of the process directory. */
-export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* (
-  filename?: string,
-) {
-  const selected =
-    filename ??
-    (yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
-      Effect.mapError(() =>
-        refused(
-          "environment",
-          "Set SHARNESS_CONFIG_FILE to the daemon settings document",
-        ),
+export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
+  const selected = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
+    Effect.mapError(() =>
+      refused(
+        "environment",
+        "Set SHARNESS_CONFIG_FILE to the daemon settings document",
       ),
-    ));
+    ),
+  );
   const filesystem = yield* FileSystem.FileSystem;
   const document = yield* filesystem.readFileString(selected).pipe(
     Effect.flatMap(
