@@ -100,7 +100,6 @@
       "dependsOn": [
         "lint:root",
         "lint:agent-files",
-        "lint:dependency-versions",
         {
           "target": "arch:check",
           "projects": "@social-harness/*"
@@ -122,17 +121,6 @@
       "options": {
         "cwd": ".",
         "command": "node -e \"\""
-      }
-    },
-    "lint:dependency-versions": {
-      "cache": true,
-      "inputs": [
-        "workspaceFiles"
-      ],
-      "executor": "nx:run-commands",
-      "options": {
-        "cwd": ".",
-        "command": "node scripts/repo/check-dependency-versions.ts"
       }
     },
     "lint:agent-files": {

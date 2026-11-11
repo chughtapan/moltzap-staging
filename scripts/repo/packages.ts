@@ -11,7 +11,7 @@ class UnlistedWorkspace extends Data.TaggedError("UnlistedWorkspace")<{
   readonly message: string;
 }> {}
 
-/** The tracked workspace packages, with the publication and dependency metadata their manifests own. */
+/** The tracked workspace packages, with the dependency and export metadata their manifests own. */
 export function workspacePackages(workspaceRoot: string) {
   return workspaceDirectories(
     readFileSync(path.join(workspaceRoot, "pnpm-workspace.yaml"), "utf8"),
@@ -23,7 +23,6 @@ export function workspacePackages(workspaceRoot: string) {
     return {
       dir,
       name: stringAt(manifest, "name") ?? "",
-      published: manifest.private !== true,
       dependencies: objectAt(manifest, "dependencies"),
       exports: objectAt(manifest, "exports"),
     };

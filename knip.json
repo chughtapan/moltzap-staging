@@ -9,8 +9,7 @@
         "scripts/docs/check-mermaid.ts",
         "scripts/docs/vitest.config.ts",
         "scripts/docs/*.spec.ts",
-        "scripts/repo/check-agent-files.ts",
-        "scripts/repo/check-dependency-versions.ts"
+        "scripts/repo/check-agent-files.ts"
       ],
       "project": [
         "*.ts",

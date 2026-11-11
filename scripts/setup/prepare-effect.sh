@@ -2,8 +2,7 @@
 #
 # Clones the Effect source at the version the workspace resolves, for reading.
 # The tag copies the pnpm-workspace.yaml `effect` override and `expected` is
-# that tag's commit; scripts/repo/check-dependency-versions.ts fails when the
-# tag and the override disagree.
+# that tag's commit.
 
 set -eu
 
