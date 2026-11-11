@@ -1,4 +1,4 @@
-/** @file Claude Code stdio stand-in shared by image live tests. */
+/** @file Claude Code stdio stand-in for the OpenClaw image test. */
 /** Answers turns and records the text received by the CLI. */
 export const fakeClaude = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -10,7 +10,6 @@ if (argv.includes("--version")) {
 }
 const flag = (name) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 const sessionId = flag("--resume") ?? flag("--session-id") ?? require("node:crypto").randomUUID();
-if (argv.includes("--print")) fs.appendFileSync(process.env.FAKE_CLAUDE_LOG + ".launches", JSON.stringify({ effort: flag("--effort"), maxThinkingTokens: process.env.MAX_THINKING_TOKENS, disableAdaptiveThinking: process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING }) + "\n");
 const projects = path.join(process.env.HOME, ".claude", "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
 fs.mkdirSync(projects, { recursive: true });
 const record = (message) => fs.appendFileSync(path.join(projects, sessionId + ".jsonl"), JSON.stringify({ sessionId, message }) + "\n");

@@ -20,17 +20,14 @@ const CONTAINER_READINESS_TIMEOUT = Duration.seconds(60);
 
 /**
  * Runs the prepared daemon in a `DAEMON_INTEGRATION_IMAGE` container named
- * `sharness-daemon-` and its port, or as a local process when that variable
- * is unset. The container uses the host's network, because the daemon answers
- * only requests addressed to its loopback endpoint and checks its owners'
- * tokens against an issuer on the host's loopback. Its database is a copy of
- * the prepared one in a volume the image's user owns.
+ * `sharness-daemon-` and its port; the suites that call it skip unless that
+ * variable names a built image. The container uses the host's network,
+ * because the daemon answers only requests addressed to its loopback endpoint
+ * and checks its owners' tokens against an issuer on the host's loopback. Its
+ * database is a copy of the prepared one in a volume the image's user owns.
  */
 export const startDaemonContainer = (daemon: Daemon) => {
-  const image = process.env.DAEMON_INTEGRATION_IMAGE;
-  if (image === undefined) {
-    return daemon.start();
-  }
+  const image = process.env.DAEMON_INTEGRATION_IMAGE ?? "";
   const container = `sharness-daemon-${daemon.endpoint.port}`;
   const volume = `sharness-daemon-state-${randomBytes(16).toString("hex")}`;
   return Effect.gen(function* () {
