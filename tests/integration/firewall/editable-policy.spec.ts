@@ -1,25 +1,18 @@
-/** @file Owner policy changes through a running public daemon and its MCP boundary. */
+/** @file An agent's edits to the rules of its own firewall, through a running daemon and its MCP tools. */
 
 import type {
   DecisionProvider,
   DecisionRequest,
 } from "@social-harness/social-harness/service";
-import { FileSystem } from "@effect/platform";
-import { NodeContext } from "@effect/platform-node";
-import {
-  Client,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
-import { Deferred, Effect, Fiber, Redacted, Schedule, Schema } from "effect";
-import { join } from "node:path";
+import { toolDefinitions } from "@social-harness/social-harness";
+import { Deferred, Effect, Fiber, Schedule, Schema } from "effect";
 import { describe, expect, it } from "vitest";
+import { callTool } from "../../../plugins/shared/mcp-client.js";
+import { send } from "../agent-fixture.js";
 import {
-  acquireDaemonManagementClient,
-  acquireDaemonProcess,
-  acquireProcessInfrastructure,
-  configureDaemonFixture,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
+  type Daemon,
+  sharedDaemon,
+  type SignedIn,
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
@@ -29,50 +22,33 @@ import {
   writeMessagePolicy,
 } from "./policy-fixture.js";
 
-const pair = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const alice = yield* makeDaemonProcessFixture(infrastructure, "alice");
-  const bob = yield* makeDaemonProcessFixture(infrastructure, "bob");
-  yield* acquireDaemonProcess(bob);
-  const management = yield* acquireDaemonManagementClient(bob);
-  yield* management.identityCard();
-  return { alice, bob };
-});
-
 const provider: DecisionProvider = {
   decide: (request) => Effect.succeed(answer(request)),
 };
 
-const textSettings = {
-  minimumProbability: 0.5,
-  maximumRequestBytes: 1000000,
-  timeoutMilliseconds: 5000,
-};
+const read = (agent: SignedIn) =>
+  callTool(agent.connection.client, { name: "read_policy", arguments: {} });
 
-const readSchema = Schema.Struct({
-  rules: Schema.Array(Schema.Struct({ id: Schema.String })),
-  fixedRules: Schema.Array(Schema.Unknown),
-  activeRevision: Schema.String,
-});
-
-const read = (client: Client) =>
-  call(client, "read_policy").pipe(
-    Effect.flatMap(Schema.decodeUnknown(readSchema)),
-  );
-
-const updateSchema = Schema.Struct({
-  activeRevision: Schema.String,
-});
-
-const update = (client: Client, args: Readonly<Record<string, unknown>>) =>
-  call(client, "update_policy", args).pipe(
-    Effect.flatMap(Schema.decodeUnknown(updateSchema)),
+/** Sends an edit as written, including one the tool's input type does not admit. */
+const update = (agent: SignedIn, edit: Readonly<Record<string, unknown>>) =>
+  Effect.tryPromise(() =>
+    agent.connection.client.callTool({
+      name: "update_policy",
+      arguments: { ...edit },
+    }),
+  ).pipe(
+    Effect.filterOrFail((result) => result.isError !== true),
+    Effect.flatMap((result) =>
+      Schema.decodeUnknown(toolDefinitions.update_policy.output)(
+        result.structuredContent,
+      ),
+    ),
   );
 
 const secretText = "private candidate";
 
-const send = (client: Client) =>
-  call(client, "send_message", { to: "agent:bob", text: secretText });
+const sendSecret = (from: SignedIn, to: SignedIn) =>
+  send(from, { to: to.address, text: secretText });
 
 const blockedRule = {
   id: "private",
@@ -87,155 +63,136 @@ const fixedRule = {
   guidance: "Ask the owner.",
 } as const;
 
-const acquirePolicyCheckScenario = Effect.gen(function* () {
-  const { alice } = yield* pair;
+const swapDuringCheck = Effect.gen(function* () {
+  const daemon = yield* sharedDaemon();
   const entered = yield* Deferred.make<undefined>();
   const release = yield* Deferred.make<undefined>();
-  yield* start(alice, markedPolicy(textSettings, [fixedRule]), {
+  yield* start(daemon, markedPolicy({ fixedRules: [fixedRule] }), {
     decide: (request) =>
       Deferred.succeed(entered, undefined).pipe(
         Effect.zipRight(Deferred.await(release)),
         Effect.as(answer(request)),
       ),
   });
-  const client = yield* connect(alice);
-  return { entered, release, client };
-});
-
-const swapDuringCheck = Effect.gen(function* () {
-  const scenario = yield* acquirePolicyCheckScenario;
-  const { client, entered } = scenario;
-  const before = yield* read(client);
+  const { alice, bob } = yield* signIn(daemon);
+  const before = yield* read(alice);
   expect(
-    yield* update(client, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
+    yield* update(alice, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
   ).toBe(true);
-  const inFlight = yield* send(client).pipe(Effect.forkScoped);
+  const inFlight = yield* sendSecret(alice, bob).pipe(Effect.forkScoped);
   yield* Deferred.await(entered);
-  const changed = yield* update(client, { add: [blockedRule] });
+  const changed = yield* update(alice, { add: [blockedRule] });
   expect(changed.activeRevision).not.toBe(before.activeRevision);
-  yield* Deferred.succeed(scenario.release, undefined);
+  yield* Deferred.succeed(release, undefined);
   yield* Fiber.join(inFlight);
-  expect(yield* send(client).pipe(Effect.isFailure)).toBe(true);
+  expect(yield* sendSecret(alice, bob).pipe(Effect.isFailure)).toBe(true);
 });
 
 const persistAndValidate = Effect.gen(function* () {
-  const { alice } = yield* pair;
-  const fixedPolicy = markedPolicy(textSettings, [fixedRule]);
-  const runtime = yield* start(alice, fixedPolicy);
-  const client = yield* connect(alice);
-  const changed = yield* update(client, { add: [blockedRule] });
+  const daemon = yield* sharedDaemon();
+  const fixedPolicy = markedPolicy({ fixedRules: [fixedRule] });
+  const runtime = yield* start(daemon, fixedPolicy);
+  const { alice, bob } = yield* signIn(daemon);
+  const changed = yield* update(alice, { add: [blockedRule] });
   expect(
-    yield* update(client, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
+    yield* update(alice, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
   ).toBe(true);
   expect(
-    yield* update(client, { add: [{ ...blockedRule, id: fixedRule.id }] }).pipe(
+    yield* update(alice, { add: [{ ...blockedRule, id: fixedRule.id }] }).pipe(
       Effect.isFailure,
     ),
   ).toBe(true);
   expect(
-    yield* update(client, {
+    yield* update(alice, {
       add: [{ id: "invalid", applies: "sideways", text: "Follow the owner." }],
     }).pipe(Effect.isFailure),
   ).toBe(true);
-  expect(yield* read(client)).toMatchObject({
+  expect(yield* read(alice)).toMatchObject({
     activeRevision: changed.activeRevision,
     fixedRules: arrayContaining([fixedRule]),
     rules: [{ id: blockedRule.id }],
   });
-  expect(yield* send(client).pipe(Effect.isFailure)).toBe(true);
+  expect(yield* sendSecret(alice, bob).pipe(Effect.isFailure)).toBe(true);
   yield* Fiber.interrupt(runtime);
-  const restarted = yield* start(alice, fixedPolicy);
-  const fresh = yield* connect(alice);
+  yield* start(daemon, fixedPolicy);
+  const fresh = (yield* signIn(daemon)).alice;
   expect(yield* read(fresh)).toMatchObject({
     activeRevision: changed.activeRevision,
     rules: [{ id: blockedRule.id }],
   });
-  expect(yield* send(fresh).pipe(Effect.isFailure)).toBe(true);
+  expect(yield* sendSecret(fresh, bob).pipe(Effect.isFailure)).toBe(true);
   yield* update(fresh, { remove: [blockedRule.id] });
-  yield* send(fresh);
-  yield* Fiber.interrupt(restarted);
+  yield* sendSecret(fresh, bob);
 });
 
 const concurrentEdits = Effect.gen(function* () {
-  const { alice } = yield* pair;
-  const runtime = yield* start(alice, markedPolicy(textSettings, []));
-  const client = yield* connect(alice);
+  const daemon = yield* sharedDaemon();
+  const runtime = yield* start(daemon, markedPolicy({}));
+  const { alice, bob } = yield* signIn(daemon);
   const additions = [
     fixedRule,
     { ...fixedRule, id: "second" },
     { ...fixedRule, id: "third" },
   ];
-  yield* Effect.forEach(additions, (rule) => update(client, { add: [rule] }), {
+  yield* Effect.forEach(additions, (rule) => update(alice, { add: [rule] }), {
     concurrency: 4,
   });
-  const before = yield* read(client);
+  const before = yield* read(alice);
   expect(before.rules.map((rule) => rule.id)).toEqual(
     arrayContaining(additions.map((rule) => rule.id)),
   );
-  yield* send(client);
+  yield* sendSecret(alice, bob);
   yield* Fiber.interrupt(runtime);
-  yield* start(alice, markedPolicy(textSettings, []));
-  const fresh = yield* connect(alice);
-  expect(yield* read(fresh)).toEqual(before);
+  yield* start(daemon, markedPolicy({}));
+  expect(yield* read((yield* signIn(daemon)).alice)).toEqual(before);
 });
 
-const authenticatedPolicyEdits = Effect.gen(function* () {
-  const { alice } = yield* pair;
-  const fs = yield* FileSystem.FileSystem;
-  const token = "agent-policy-test-token-".repeat(3);
-  const credentialPath = join(alice.stateDirectory, "agent-credential");
-  yield* fs.writeFileString(credentialPath, token);
-  yield* configureDaemonFixture(alice, {
-    authentication: { kind: "local", credential: token },
-  });
-  yield* start(alice, markedPolicy(textSettings, []));
-  const client = yield* connect(alice, token);
-  const catalog = yield* Effect.tryPromise(() => client.listTools());
+const ownPolicyEdits = Effect.gen(function* () {
+  const daemon = yield* sharedDaemon();
+  yield* start(daemon, markedPolicy({}));
+  const { alice, bob } = yield* signIn(daemon);
+  const catalog = yield* Effect.tryPromise(() =>
+    alice.connection.client.listTools(),
+  );
   expect(catalog.tools).toEqual(
     arrayContaining([
       objectContaining({ name: "read_policy" }),
       objectContaining({ name: "update_policy" }),
     ]),
   );
-  yield* update(client, { add: [blockedRule] });
+  yield* update(alice, { add: [blockedRule] });
   const adopted = {
     id: "shared-review",
     applies: "incoming",
     text: "Reject peer scheduling requests without prior confirmation.",
     feedback: { text: "Confirm first." },
   };
-  yield* update(client, { add: [adopted] });
-  expect((yield* read(client)).rules).toEqual([
-    { id: blockedRule.id },
-    { id: adopted.id },
-  ]);
-  yield* update(client, { remove: [blockedRule.id, adopted.id] });
-  expect((yield* read(client)).rules).toEqual([]);
+  yield* update(alice, { add: [adopted] });
+  expect((yield* read(alice)).rules).toEqual([blockedRule, adopted]);
+  expect((yield* read(bob)).rules).toEqual([]);
+  yield* update(alice, { remove: [blockedRule.id, adopted.id] });
+  expect((yield* read(alice)).rules).toEqual([]);
 });
 
-describe("editable firewall through the daemon public API", () => {
+describe("an agent's editable rules", () => {
   it(
     "applies edits to later sends while an in-flight check keeps its policy",
-    processTrace(
-      Effect.scoped(swapDuringCheck).pipe(Effect.provide(NodeContext.layer)),
-    ),
+    processTrace(swapDuringCheck),
     60000,
   );
   it(
     "rejects invalid and fixed edits and restores active policy after restart",
-    processTrace(persistAndValidate.pipe(Effect.provide(NodeContext.layer))),
+    processTrace(persistAndValidate),
     60000,
   );
   it(
     "serializes concurrent additions without losing rules across restart",
-    processTrace(concurrentEdits.pipe(Effect.provide(NodeContext.layer))),
+    processTrace(concurrentEdits),
     60000,
   );
   it(
-    "lets the authenticated agent read and change editable policy",
-    processTrace(
-      authenticatedPolicyEdits.pipe(Effect.provide(NodeContext.layer)),
-    ),
+    "lets an agent read and change its own rules and no other agent's",
+    processTrace(ownPolicyEdits),
     60000,
   );
 });
@@ -267,34 +224,30 @@ function answer(request: DecisionRequest) {
   };
 }
 
-/** Writes `document` as the fixture's message policy and runs its daemon in this process, judged by `decisions`. */
+/**
+ * Writes `document` as the daemon's message policy and runs the daemon in
+ * this process, judged by `decisions`, until its fiber is interrupted.
+ */
 function start(
-  fixture: DaemonProcessFixture,
+  daemon: Daemon,
   document: unknown,
   decisions: DecisionProvider = provider,
 ) {
-  return Effect.gen(function* () {
-    const files = yield* writeMessagePolicy(fixture.stateDirectory, document);
-    yield* configureDaemonFixture(fixture, files);
-    return yield* launchDaemon(fixture.environment, decisions);
-  });
+  return writeMessagePolicy(daemon.directory, document).pipe(
+    Effect.flatMap(daemon.configure),
+    Effect.zipRight(launchDaemon(daemon.environment, decisions)),
+  );
 }
 
-function connect(fixture: DaemonProcessFixture, bearer?: string) {
-  return Effect.gen(function* () {
-    const credential = bearer ?? Redacted.value(fixture.mcpCredential);
-    const client = new Client(
-      { name: "policy-test", version: "1" },
-      { capabilities: {}, versionNegotiation: { mode: { pin: "2026-07-28" } } },
-    );
-    yield* Effect.acquireRelease(
-      Effect.tryPromise(() =>
-        client.connect(
-          new StreamableHTTPClientTransport(fixture.endpoint, {
-            requestInit: { headers: { authorization: `Bearer ${credential}` } },
-          }),
-        ),
-      ).pipe(
+/**
+ * Signs in the agent whose rules a trace edits and the agent it sends to. The
+ * first sign-in repeats until the daemon started in this process serves.
+ */
+function signIn(daemon: Daemon) {
+  return Effect.all({
+    alice: daemon
+      .signInAs("alice")
+      .pipe(
         Effect.retry(
           Schedule.intersect(
             Schedule.spaced("25 millis"),
@@ -302,18 +255,6 @@ function connect(fixture: DaemonProcessFixture, bearer?: string) {
           ),
         ),
       ),
-      () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-    );
-    return client;
+    bob: daemon.signInAs("bob"),
   });
-}
-
-function call(
-  client: Client,
-  name: string,
-  args: Readonly<Record<string, unknown>> = {},
-) {
-  return Effect.tryPromise(() =>
-    client.callTool({ name, arguments: args }),
-  ).pipe(Effect.map((result) => result.structuredContent));
 }

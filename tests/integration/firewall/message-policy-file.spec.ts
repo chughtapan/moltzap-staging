@@ -1,4 +1,4 @@
-/** @file A runtime policy file loads through the stock daemon, and an invalid one refuses startup until its reference is removed. */
+/** @file The stock daemon loads a message policy file, and refuses to start with an invalid one until its reference is removed. */
 
 import { FileSystem } from "@effect/platform";
 import {
@@ -10,19 +10,13 @@ import { Effect, Redacted, Schema } from "effect";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  acquireDaemonManagementClient,
-  acquireDaemonProcess,
-  acquireProcessInfrastructure,
-  awaitDaemonStartupFailure,
-  configureDaemonFixture,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
+  type Daemon,
+  sharedDaemon,
   stopProcess,
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
-
-const FORMAT = "org.social-harness/message-policy/v2";
+import { markedPolicy, writeMessagePolicy } from "./policy-fixture.js";
 
 /**
  * A 2025-11-25 client: the SDK pins only 2026-07-28 and later, so this one
@@ -33,49 +27,26 @@ const OLDER_CLIENT: ClientOptions = {
   supportedProtocolVersions: ["2025-11-25"],
 };
 
-const acquirePolicyFileScenario = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const stock = yield* makeDaemonProcessFixture(infrastructure, "alice");
-  const fs = yield* FileSystem.FileSystem;
-  const directory = join(infrastructure.temporaryDirectory, "alice-policy");
-  yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
-  const policyFile = join(directory, "message-policy.json");
-  const keyFile = join(directory, "decision-provider-key");
-  yield* fs.writeFileString(keyFile, "test-key", { mode: 0o600 });
-  yield* fs.writeFileString(
-    policyFile,
-    JSON.stringify({
-      format: FORMAT,
-      decisionProvider: { kind: "jev", model: "jev-1.13.0" },
-      text: {
-        fixedRules: [
-          {
-            id: "owner-privacy",
-            applies: "outgoing",
-            text: "Keep the owner's private information confidential.",
-          },
-        ],
-      },
-    }),
-    { mode: 0o600 },
-  );
-  const alice = yield* configureDaemonFixture(stock, {
-    messagePolicyFile: policyFile,
-    decisionProviderKeyFile: keyFile,
-  });
-  yield* acquireDaemonProcess(alice);
-  const management = yield* acquireDaemonManagementClient(alice);
-  yield* management.identityCard();
-  return alice;
-});
+const ownerPrivacy = {
+  id: "owner-privacy",
+  applies: "outgoing",
+  text: "Keep the owner's private information confidential.",
+} as const;
 
 const fixedRulesSchema = Schema.Struct({
   fixedRules: Schema.Array(Schema.Struct({ id: Schema.String })),
 });
 
 const olderMcpClient = Effect.gen(function* () {
-  const alice = yield* acquirePolicyFileScenario;
-  const client = yield* connect(alice, OLDER_CLIENT);
+  const daemon = yield* sharedDaemon();
+  yield* daemon.configure(
+    yield* writeMessagePolicy(
+      daemon.directory,
+      markedPolicy({ fixedRules: [ownerPrivacy] }),
+    ),
+  );
+  yield* daemon.start();
+  const client = yield* connect(daemon, OLDER_CLIENT);
   const catalog = yield* Effect.tryPromise(() => client.listTools());
   expect(catalog.tools).toEqual(
     arrayContaining([objectContaining({ name: "read_policy" })]),
@@ -85,64 +56,63 @@ const olderMcpClient = Effect.gen(function* () {
     Effect.flatMap(Schema.decodeUnknown(fixedRulesSchema)),
   );
   expect(policy.fixedRules).toEqual(
-    arrayContaining([objectContaining({ id: "owner-privacy" })]),
+    arrayContaining([objectContaining({ id: ownerPrivacy.id })]),
   );
-});
+}).pipe(Effect.scoped);
+
+/** What the daemon prints when it cannot use its message policy file. */
+const INVALID_POLICY =
+  "The configured message policy or provider credential is invalid";
 
 const invalidDocument = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const stock = yield* makeDaemonProcessFixture(infrastructure, "carol");
-  const original = yield* acquireDaemonProcess(stock);
-  const before = yield* acquireDaemonManagementClient(stock);
-  const status = yield* before.status();
+  const daemon = yield* sharedDaemon();
+  const original = yield* daemon.start();
+  const { agent } = yield* daemon.signInAs("carol");
   yield* stopProcess(original);
   const fs = yield* FileSystem.FileSystem;
-  const policyFile = join(infrastructure.temporaryDirectory, "carol.json");
+  const messagePolicyFile = join(daemon.directory, "invalid-policy.json");
   yield* fs.writeFileString(
-    policyFile,
-    JSON.stringify({ format: FORMAT, mode: "off" }),
-    {
-      mode: 0o600,
-    },
+    messagePolicyFile,
+    JSON.stringify({ ...markedPolicy({}), mode: "off" }),
   );
-  const failure = yield* configureDaemonFixture(stock, {
-    messagePolicyFile: policyFile,
-  }).pipe(Effect.flip);
-  expect(failure).toMatchObject({ reason: "policy" });
-  expect((yield* awaitDaemonStartupFailure(stock)).exitCode).not.toBe(0);
-  yield* configureDaemonFixture(stock, { messagePolicyFile: undefined });
-  yield* acquireDaemonProcess(stock);
-  const management = yield* acquireDaemonManagementClient(stock);
-  expect(yield* management.status()).toEqual(status);
+  yield* daemon.configure({ messagePolicyFile });
+  const failure = yield* daemon.startupFailure();
+  expect(failure.exitCode).not.toBe(0);
+  expect(failure.logs).toContain(INVALID_POLICY);
+  yield* daemon.configure({ messagePolicyFile: undefined });
+  yield* daemon.start();
+  expect((yield* daemon.signInAs("carol")).agent).toEqual(agent);
 });
 
 describe("stock sharnessd with a message-policy file", () => {
   it(
     "lists tools and reads policy with an MCP 2025-11-25 client",
-    processTrace(olderMcpClient.pipe(Effect.scoped)),
+    processTrace(olderMcpClient),
     60_000,
   );
 
   it(
     "rejects an invalid runtime policy file and recovers after its reference is removed",
-    processTrace(invalidDocument.pipe(Effect.scoped)),
+    processTrace(invalidDocument),
     60_000,
   );
 });
 
-function connect(fixture: DaemonProcessFixture, negotiation: ClientOptions) {
+/** Connects as the owner `alice` with a client that negotiates as `negotiation` says. */
+function connect(daemon: Daemon, negotiation: ClientOptions) {
   return Effect.acquireRelease(
     Effect.gen(function* () {
+      const bearer = yield* daemon.bearer("alice");
       const client = new Client(
         { name: "message-policy-file", version: "1" },
         { capabilities: {}, ...negotiation },
       );
       yield* Effect.tryPromise(() =>
         client.connect(
-          new StreamableHTTPClientTransport(fixture.endpoint, {
+          new StreamableHTTPClientTransport(daemon.endpoint, {
             requestInit: {
               headers: {
-                Authorization: `Bearer ${Redacted.value(fixture.mcpCredential)}`,
+                Authorization: `Bearer ${Redacted.value(bearer)}`,
               },
               redirect: "error",
             },

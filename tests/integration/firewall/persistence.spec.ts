@@ -1,37 +1,19 @@
-/** @file Completed Firewall decisions survive repeated saves and PostgreSQL reopening. */
+/** @file Completed firewall decisions survive repeated saves and PostgreSQL reopening. */
 import { FileSystem } from "@effect/platform";
-import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { AgentCard, Message } from "@social-harness/social-harness";
+import { Firewall, Identity } from "@social-harness/social-harness/service";
 import {
-  Firewall,
-  Identity,
-  Registry,
-} from "@social-harness/social-harness/service";
-import {
-  databaseAccess,
   databaseConnection,
   getOrCreateOwnedAgent,
-  loadAgentRegistration,
   loadDaemonSettings,
   localOwner,
 } from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Duration,
-  Effect,
-  Layer,
-  Option,
-  Schema,
-} from "effect";
+import { ConfigProvider, Context, Effect, Layer, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  acquireProcessInfrastructure,
-  makeDaemonProcessFixture,
-} from "../daemon/daemon-fixture.js";
+import { sharedDaemon } from "../daemon/daemon-fixture.js";
 import { acquirePostgres } from "../daemon/postgres-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 
@@ -43,62 +25,33 @@ const evidence = {
   gaps: [],
 };
 
-/** Scoped resources reopen with the same fixed policy and saved signing identity. */
+/** One agent's firewall on the daemon's database, with the daemon's message policy. */
+const firewallOf = (
+  agentKey: string,
+  policy: Parameters<typeof Firewall.layer>[1],
+) =>
+  Firewall.layer(agentKey, policy).pipe(
+    Layer.provideMerge(Identity.layer(agentKey)),
+  );
+
+/** The firewall is built twice on one database, as a daemon builds it before and after a restart. */
 const scenario = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
   const database = yield* acquirePostgres;
+  const daemon = yield* sharedDaemon({ database });
   const filesystem = yield* FileSystem.FileSystem;
-  const policyFile = join(infrastructure.temporaryDirectory, "policy.json");
+  const messagePolicyFile = join(daemon.directory, "policy.json");
   yield* filesystem.writeFileString(
-    policyFile,
+    messagePolicyFile,
     JSON.stringify({ format: "org.social-harness/message-policy/v2" }),
   );
-  const fixture = yield* makeDaemonProcessFixture(
-    infrastructure,
-    "firewall-storage",
-    undefined,
-    { database, settings: { messagePolicyFile: policyFile } },
-  );
-  const configuration = ConfigProvider.fromMap(
-    new Map(Object.entries(fixture.environment)),
-  );
-  const access = yield* databaseAccess.pipe(
-    Effect.withConfigProvider(configuration),
+  yield* daemon.configure({ messagePolicyFile });
+  const { settings } = yield* loadDaemonSettings().pipe(
+    Effect.withConfigProvider(
+      ConfigProvider.fromMap(new Map(Object.entries(daemon.environment))),
+    ),
   );
   const saved = yield* Effect.gen(function* () {
-    const { settings, agentName } = yield* loadDaemonSettings().pipe(
-      Effect.withConfigProvider(configuration),
-    );
-    const { mode } = settings;
-    if (mode.kind !== "p2p") {
-      return yield* Effect.dieMessage("Expected a P2P fixture");
-    }
-    const agentKey = yield* getOrCreateOwnedAgent(
-      localOwner,
-      access.unlockKey,
-      agentName,
-    );
-    const registration = yield* loadAgentRegistration(
-      agentKey,
-      access.unlockKey,
-    );
-    const identity = Identity.layer({
-      agentKey,
-      registrySignerPublicKey: mode.registrySignerPublicKey,
-      ...registration,
-    }).pipe(
-      Layer.provide(
-        Registry.layer({
-          origin: mode.registryOrigin,
-          registrySignerPublicKey: mode.registrySignerPublicKey,
-          requestTimeout: Duration.seconds(5),
-          admissionCredential: Option.fromNullable(mode.admissionCredential),
-        }).pipe(Layer.provide(NodeHttpClient.layer)),
-      ),
-    );
-    const configured = Firewall.layer(agentKey, settings.messagePolicy).pipe(
-      Layer.provideMerge(identity),
-    );
+    const agentKey = yield* getOrCreateOwnedAgent(localOwner);
     const result = yield* Effect.gen(function* () {
       const card = (yield* Identity).me;
       const firewall = yield* Firewall;
@@ -129,28 +82,12 @@ const scenario = Effect.gen(function* () {
       expect(rollback).toBeDefined();
       expect(yield* firewall.readDecisions({})).toEqual(retained);
       return retained;
-    }).pipe(Effect.provide(configured));
-    return { agentKey, registration, settings, mode, result };
+    }).pipe(Effect.provide(firewallOf(agentKey, settings.messagePolicy)));
+    return { agentKey, result };
   }).pipe(Effect.provide(databaseConnection(database.runtimeLocator)));
   yield* Effect.gen(function* () {
-    const identity = Identity.layer({
-      agentKey: saved.agentKey,
-      registrySignerPublicKey: saved.mode.registrySignerPublicKey,
-      ...saved.registration,
-    }).pipe(
-      Layer.provide(
-        Registry.layer({
-          origin: saved.mode.registryOrigin,
-          registrySignerPublicKey: saved.mode.registrySignerPublicKey,
-          requestTimeout: Duration.seconds(5),
-          admissionCredential: Option.none(),
-        }).pipe(Layer.provide(NodeHttpClient.layer)),
-      ),
-    );
     const services = yield* Layer.build(
-      Firewall.layer(saved.agentKey, saved.settings.messagePolicy).pipe(
-        Layer.provide(identity),
-      ),
+      firewallOf(saved.agentKey, settings.messagePolicy),
     );
     const firewall = Context.get(services, Firewall);
     expect(yield* firewall.readDecisions({})).toEqual(saved.result);
@@ -159,6 +96,6 @@ const scenario = Effect.gen(function* () {
 
 it(
   "retains one completed decision for concurrent identical saves and preserves it across rollback and reopening",
-  processTrace(Effect.scoped(scenario)),
+  processTrace(scenario),
   180_000,
 );
