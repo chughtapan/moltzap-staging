@@ -8,6 +8,7 @@ import { Duration, Effect, FastCheck as fc } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import type { Chain } from "./chain.js";
+import type { DecisionProvider } from "./check.js";
 import {
   always,
   evidence,
@@ -409,6 +410,33 @@ describe("Firewall.updatePolicy", () => {
 });
 
 describe("Firewall.layer", () => {
+  it("calls a provider's decide method on the provider itself", () =>
+    Effect.gen(function* () {
+      const stateful: DecisionProvider & { readonly inner: DecisionProvider } =
+        {
+          inner: judgments,
+          decide(request) {
+            return this.inner.decide(request);
+          },
+        };
+      yield* withFirewall(
+        ":memory:",
+        (firewall, self) =>
+          Effect.gen(function* () {
+            const decision = yield* firewall.checkOutgoing(
+              yield* outgoing(self),
+              evidence,
+            );
+
+            expect(decision).toMatchObject({
+              kind: "refused",
+              refusal: { refusal: "rule-violation" },
+            });
+          }),
+        (agentKey) => Firewall.layer(agentKey, policy([privacy], [], stateful)),
+      );
+    }));
+
   it.prop(
     "should retain an edited rule after restart with different startup seeds",
     [fc.string()],
