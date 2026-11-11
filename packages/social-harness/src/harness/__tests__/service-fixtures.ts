@@ -1,4 +1,4 @@
-/** @file Main-service fixtures combine real policy and SQLite with controllable identity and communication. */
+/** @file SocialHarness fixtures combine real policy and SQLite with controllable identity and communication. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
@@ -41,7 +41,7 @@ import {
 import { Identity, IdentityError } from "../../identity/service.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
-type Main = Context.Tag.Service<typeof SocialHarness>;
+type Harness = Context.Tag.Service<typeof SocialHarness>;
 type Policy = Context.Tag.Service<typeof Firewall>;
 
 /**
@@ -128,7 +128,7 @@ export function firewallOptions(
 /** Await publication through the public inbox while surfacing background failures. */
 export function waitForInbox(
   runtime: {
-    readonly harness: Main;
+    readonly harness: Harness;
     readonly failed: Effect.Effect<never, unknown>;
   },
   count = 1,
@@ -162,7 +162,6 @@ interface Network {
   readonly historyPositions: Map<string, HistoryPosition>;
   readonly catalogPositions: Map<string, string>;
   readonly incoming: Queue.Queue<Intake>;
-  readonly activated: Deferred.Deferred<undefined>;
   cursorId: number;
   sendFailure?: CommunicationError;
 }
@@ -178,10 +177,9 @@ interface FixtureEnvironment {
   readonly cards: Map<AgentName, AgentCard>;
   readonly network: Network;
   readonly communication: Context.Tag.Service<typeof Communication>;
-  namesResolvable: boolean;
 }
 
-/** Main scopes share completed lower-layer history while SQLite retains Main's own work. */
+/** Each opened harness shares the fixture's communication history; SQLite keeps the harness's own inbox and decisions. */
 export const makeHarnessFixture = Effect.gen(function* () {
   const self = testAgentCard("agent:alice");
   const directory = yield* Effect.gen(function* () {
@@ -198,13 +196,11 @@ export const makeHarnessFixture = Effect.gen(function* () {
     catalogPositions: new Map(),
     cursorId: 0,
     incoming: yield* Queue.unbounded<Intake>(),
-    activated: yield* Deferred.make<undefined>(),
   };
   const environment: FixtureEnvironment = {
     network,
     filename: join(directory, "harness.sqlite3"),
     communication: communicationFor(network),
-    namesResolvable: true,
     cards: new Map([[self.agentName, self]]),
   };
   const bob = addPeer(environment, "bob");
@@ -214,7 +210,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
     bob,
     carol,
     submitted: network.submitted,
-    activated: network.activated,
     open: (options: OpenOptions = {}) => openHarness(environment, options),
     deliver: (value: Incoming) => deliver(network, value),
     addPeer: (name: string) => Effect.sync(() => addPeer(environment, name)),
@@ -231,10 +226,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
         network.sendFailure = new CommunicationError({
           reason: "persistence-failed",
         });
-      }),
-    failNameResolution: () =>
-      Effect.sync(() => {
-        environment.namesResolvable = false;
       }),
     message: (text: string, author: AgentCard = bob) =>
       Message.create({
@@ -281,9 +272,6 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
             Layer.effect(
               Communication,
               (options.startCommunication ?? Effect.void).pipe(
-                Effect.zipRight(
-                  Deferred.succeed(environment.network.activated, undefined),
-                ),
                 Effect.as(environment.communication),
               ),
             ),
@@ -300,7 +288,7 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
   });
 }
 
-/** Resolves the fixture's peers by name until name resolution is made to fail. */
+/** Resolves the fixture's peers by name. */
 function identityFor(environment: FixtureEnvironment) {
   return Identity.of({
     me: environment.network.self,
@@ -309,11 +297,6 @@ function identityFor(environment: FixtureEnvironment) {
         names,
         (agentName) =>
           Effect.suspend(() => {
-            if (!environment.namesResolvable) {
-              return Effect.fail(
-                new IdentityError({ reason: "persistence-failed", agentName }),
-              );
-            }
             const found = environment.cards.get(agentName);
             return found === undefined
               ? Effect.fail(

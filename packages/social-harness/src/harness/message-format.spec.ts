@@ -123,26 +123,22 @@ const slotSchema = {
 };
 
 // @agent-code-guard/regression-only: gather inputs pin the collective send grammar.
-describe("public gather input", () => {
-  it("decodes a gather with a deadline in seconds and a schema", () => {
+describe.each(["gather", "all_gather"] as const)("public %s input", (op) => {
+  it("decodes a question with a deadline in seconds and a schema", () => {
     const input = {
       to: "group:bob-agent,carol-agent",
       text: "Which day?",
-      collective: { op: "gather", deadline: 300, requestedSchema: slotSchema },
+      collective: { op, deadline: 300, requestedSchema: slotSchema },
     };
 
     expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
   });
 
-  it("accepts a gather deadline of up to 30 days", () => {
+  it("accepts a deadline of up to 30 days", () => {
     const input = {
       to: "agent:bob-agent",
       text: "Which day?",
-      collective: {
-        op: "gather",
-        deadline: 2_592_000,
-        requestedSchema: slotSchema,
-      },
+      collective: { op, deadline: 2_592_000, requestedSchema: slotSchema },
     };
 
     expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
@@ -152,53 +148,22 @@ describe("public gather input", () => {
     { case: "zero", deadline: 0 },
     { case: "fractional", deadline: 1.5 },
     { case: "beyond 30 days", deadline: 2_592_001 },
-  ])("rejects a $case gather deadline", ({ deadline }) => {
+  ])("rejects a $case deadline", ({ deadline }) => {
     expect(
       decodingFails(SendRequest, {
         to: "agent:bob-agent",
         text: "Which day?",
-        collective: { op: "gather", deadline, requestedSchema: slotSchema },
+        collective: { op, deadline, requestedSchema: slotSchema },
       }),
     ).toBe(true);
   });
 
-  it("rejects a gather without a requested schema", () => {
+  it("rejects a question without a requested schema", () => {
     expect(
       decodingFails(SendRequest, {
         to: "agent:bob-agent",
         text: "Which day?",
-        collective: { op: "gather", deadline: 60 },
-      }),
-    ).toBe(true);
-  });
-});
-
-// @agent-code-guard/regression-only: all_gather inputs pin the group collective send grammar.
-describe("public all_gather input", () => {
-  it("decodes an all_gather with a deadline in seconds and a schema", () => {
-    const input = {
-      to: "group:bob-agent,carol-agent",
-      text: "Which day?",
-      collective: {
-        op: "all_gather",
-        deadline: 300,
-        requestedSchema: slotSchema,
-      },
-    };
-
-    expect(Schema.decodeUnknownSync(SendRequest)(input)).toEqual(input);
-  });
-
-  it("rejects an all_gather deadline beyond 30 days", () => {
-    expect(
-      decodingFails(SendRequest, {
-        to: "group:bob-agent,carol-agent",
-        text: "Which day?",
-        collective: {
-          op: "all_gather",
-          deadline: 2_592_001,
-          requestedSchema: slotSchema,
-        },
+        collective: { op, deadline: 60 },
       }),
     ).toBe(true);
   });

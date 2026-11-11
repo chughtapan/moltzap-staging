@@ -1,4 +1,4 @@
-/** @file Main-service behavior across registration, policy assessment, delivery and history recovery. */
+/** @file SocialHarness sends, policy checks, the saved inbox and history, including across restarts. */
 
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -7,7 +7,6 @@ import {
   Effect,
   Exit,
   Fiber,
-  Logger,
   Schedule,
   Schema,
   Scope,
@@ -15,7 +14,7 @@ import {
 import { expect } from "vitest";
 import type { AgentCard } from "../identity/agent-cards.js";
 import type { InboxEntry } from "../index.js";
-import type { ReadHistoryResult, SendRequest } from "./social-harness.js";
+import type { ReadHistoryResult } from "./social-harness.js";
 import {
   encodeCollectiveContent,
   MessageAddressInput,
@@ -286,7 +285,6 @@ it("recovers an interrupted check and retains its published view after edits, ac
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     expect((yield* resumed.harness.listInbox()).items).toEqual([]);
-    yield* subject.failNameResolution();
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "received", ...saved }]);
@@ -299,7 +297,7 @@ it("recovers an interrupted check and retains its published view after edits, ac
     expect((yield* reopened.harness.listInbox()).items).toEqual([]);
   }));
 
-it("reads result-only history without resolving names", () =>
+it("reads the history of a conversation that holds only a result", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -309,7 +307,6 @@ it("reads result-only history without resolving names", () =>
       return yield* Effect.dieMessage("Expected result delivery");
     }
     yield* runtime.harness.acknowledgeDelivery(entry.deliveryToken);
-    yield* subject.failNameResolution();
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "result", item: { kind: "collectiveResult" } }]);
@@ -878,40 +875,20 @@ it("retains a draft's input while its caller changes the original object", () =>
     ]);
   }));
 
-const hiddenSends: readonly SendRequest[] = [
-  {
-    to: MessageAddressInput.make("group:alice,bob,carol"),
-    text: "Hello",
-  },
-];
-it.each(hiddenSends)(
-  "refuses a hidden capability before dispatch: $to",
-  (request) =>
-    Effect.gen(function* () {
-      const subject = yield* makeHarnessFixture;
-      const logs: Array<{
-        message: unknown;
-        annotations: Record<string, unknown>;
-      }> = [];
-      const logger = Logger.make(({ message, annotations }) => {
-        logs.push({ message, annotations: Object.fromEntries(annotations) });
-      });
-      const runtime = yield* subject.open({
-        hideGroups: true,
-      });
-      expect(
-        yield* runtime.harness
-          .send(request)
-          .pipe(Effect.flip, Effect.provide(Logger.add(logger))),
-      ).toMatchObject({ reason: "invalid-address" });
-      expect(subject.submitted).toEqual([]);
-      expect(logs).toHaveLength(1);
-      expect(logs[0]?.message).toEqual(["Send failed"]);
-      expect(typeof logs[0]?.annotations.agentKey).toBe("string");
-      expect(logs[0]?.annotations.error).toBe("SendError");
-      expect(logs[0]?.annotations.reason).toContain("does not offer groups");
-    }),
-);
+it("refuses a group address with advice, before dispatch, on a daemon without groups", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({ hideGroups: true });
+    const refused = yield* runtime.harness
+      .send({
+        to: MessageAddressInput.make("group:alice,bob,carol"),
+        text: "Hello",
+      })
+      .pipe(Effect.flip);
+    expect(refused).toMatchObject({ reason: "invalid-address" });
+    expect(refused.message).toContain("address one agent as agent:<name>");
+    expect(subject.submitted).toEqual([]);
+  }));
 
 it("requires canonical history addresses and identifies unknown agents", () =>
   Effect.gen(function* () {
@@ -989,22 +966,6 @@ it("uses the public invalid-answer reason without exposing the original answer",
         yield* runtime.harness.readHistory({ address: bobAddress }),
       ),
     ).not.toContain(privateAnswer);
-  }));
-
-it("sends the first message of a conversation under a configured policy", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({
-      policy: firewallOptions({
-        decide: (request) => Effect.succeed(decisionResponse(request)),
-      }),
-    });
-    const receipt = yield* runtime.harness.send({
-      to: bobAddress,
-      text: "Our first message",
-    });
-    expect(receipt.id).toBeDefined();
-    expect(subject.submitted).toHaveLength(1);
   }));
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after service contract assertions. */

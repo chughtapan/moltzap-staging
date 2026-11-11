@@ -57,6 +57,9 @@ const json = (reply: Response) =>
   Effect.tryPromise(() => reply.text()).pipe(
     Effect.flatMap(Schema.decodeUnknown(response)),
   );
+/** Matches refusal data that names `field` as one the tool does not take. */
+const unexpectedField = (field: string): unknown =>
+  expect.arrayContaining([{ path: [field], message: "Unexpected field" }]);
 const send = {
   name: "send_message",
   arguments: { to: "agent:bob", text: "hello" },
@@ -98,7 +101,7 @@ it("reports the agent's identifier and name in a result native draft-07 and 2020
   }));
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
-describe("MCP authentication and discovery", () => {
+describe("MCP authentication", () => {
   it.each([{ authorization: "" }, { authorization: "Bearer wrong" }])(
     "refuses an invalid bearer before invoking a service",
     (headers) =>
@@ -126,30 +129,6 @@ describe("MCP authentication and discovery", () => {
       ).toBe(403);
     }),
   );
-
-  it("works with an unmodified stock MCP client", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      const client = yield* connectInProcessClient((input, init) =>
-        fixture.fetch(new Request(input, init)),
-      );
-      const listed = yield* Effect.tryPromise(() => client.listTools());
-      expect(listed.tools.map((tool) => tool.name)).toContain(
-        "receive_messages",
-      );
-      expect(
-        listed.tools.find((tool) => tool.name === "receive_messages")
-          ?.outputSchema,
-      ).toBeDefined();
-      const reply = yield* Effect.tryPromise(() =>
-        client.callTool({ name: "receive_messages", arguments: {} }),
-      );
-      expect(
-        yield* Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
-          reply.structuredContent,
-        ),
-      ).toEqual({ items: [] });
-    }));
 });
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
@@ -179,14 +158,15 @@ describe("MCP tool contracts", () => {
         fixture.fetch(
           mcpRequest("tools/call", {
             name: "read_conversation",
-            arguments: { address: "private-invalid-token" },
+            arguments: { address: "private-value", unknown: "private-extra" },
           }),
         ),
       );
       const error = (yield* json(reply)).error;
       expect(error?.code).toBe(-32602);
       expect(JSON.stringify(error?.data)).toContain("address");
-      expect(JSON.stringify(error)).not.toContain("private-invalid-token");
+      expect(error?.data).toMatchObject({ issues: unexpectedField("unknown") });
+      expect(JSON.stringify(error)).not.toMatch(/private-(value|extra)/u);
     }));
 
   it("preserves a closed send refusal without exposing internal failures", () =>

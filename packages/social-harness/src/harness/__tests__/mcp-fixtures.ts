@@ -4,7 +4,6 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   Client,
-  type ClientOptions,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
@@ -42,7 +41,7 @@ const mcpTestHeaders = {
   host: "127.0.0.1",
 };
 
-/** Overrides are semantic service operations, without an adapter operation bag. */
+/** An MCP app over a database, whose `harness` operations a test replaces one by one. */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly hideCollectives?: boolean;
@@ -118,10 +117,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     stopped,
     owners,
     fetch: HttpApp.toWebHandler(app),
-    harness,
-    identity,
     card,
-    database,
   };
 });
 
@@ -141,17 +137,14 @@ export const loopbackMcpEndpoint = Effect.fn(function* (
 });
 
 /** A stock client connects through HTTP encoding and closes with the test scope. */
-export const connectInProcessClient = (
-  fetch: typeof globalThis.fetch,
-  options: ClientOptions = {
-    capabilities: {},
-    versionNegotiation: { mode: { pin: "2026-07-28" } },
-  },
-) =>
+export const connectInProcessClient = (fetch: typeof globalThis.fetch) =>
   Effect.gen(function* () {
     const client = new Client(
       { name: "mcp-contract-test", version: "1" },
-      options,
+      {
+        capabilities: {},
+        versionNegotiation: { mode: { pin: "2026-07-28" } },
+      },
     );
     // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The caller supplies Scope and owns the client connection.
     yield* Effect.acquireRelease(
