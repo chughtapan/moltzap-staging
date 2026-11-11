@@ -13,7 +13,6 @@ import {
   type Participant,
   send,
 } from "../agent-fixture.js";
-import { incompatibleDatabaseRemedy } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining } from "../test-matchers.js";
@@ -226,6 +225,10 @@ it(
 );
 
 const localAgentName = "solo";
+
+/** A database the daemon cannot open with its key tells the operator what to prepare. */
+const incompatibleDatabaseRemedy =
+  "prepare a compatible database with its existing unlock key";
 
 it(
   "keeps a local daemon's agent across a restart and refuses another database key",

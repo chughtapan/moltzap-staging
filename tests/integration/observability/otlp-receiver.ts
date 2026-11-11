@@ -1,23 +1,31 @@
 /** @file Test-only OTLP/HTTP receiver that decodes the protobuf trace exports daemons send it. */
 
-import type { Buffer } from "node:buffer";
-import { Cause, Duration, Effect, Ref, Schema, type Scope } from "effect";
+import { NodeHttpServer } from "@effect/platform-node";
+import {
+  Cause,
+  Duration,
+  Effect,
+  FiberSet,
+  Ref,
+  Schema,
+  type Scope,
+} from "effect";
+import { Buffer } from "node:buffer";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer.make requires Node listener factories and callback types.
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import protobuf from "protobufjs";
 import { LOOPBACK_HOST, ProcessTestError } from "../daemon/daemon-fixture.js";
-import {
-  acquireLoopbackServer,
-  type IncomingMessage,
-  readBody,
-  type ServerResponse,
-} from "../loopback-server.js";
 
 /** A scalar attribute value as OTLP carries it. */
 type AttributeValue = string | number | boolean;
 
-/** One exported span: its name, start, attributes and its resource's attributes. */
+/** One exported span: its name, attributes and its resource's attributes. */
 export interface ExportedSpan {
   readonly name: string;
-  readonly startTimeUnixNano: bigint;
   readonly attributes: Readonly<Record<string, AttributeValue>>;
   readonly resource: Readonly<Record<string, AttributeValue>>;
 }
@@ -74,7 +82,6 @@ const exportTraceServiceRequest = protobuf.Root.fromJSON({
     Span: {
       fields: {
         name: { type: "string", id: 5 },
-        startTimeUnixNano: { type: "fixed64", id: 7 },
         attributes: { rule: "repeated", type: "KeyValue", id: 9 },
       },
     },
@@ -109,7 +116,6 @@ const keyValueSchema = Schema.Struct({
 
 const spanSchema = Schema.Struct({
   name: Schema.String,
-  startTimeUnixNano: Schema.BigInt,
   attributes: Schema.Array(keyValueSchema),
 });
 
@@ -124,6 +130,22 @@ const resourceSpansSchema = Schema.Struct({
 const decodedRequestSchema = Schema.Struct({
   resourceSpans: Schema.Array(resourceSpansSchema),
 });
+
+const readBody = (incoming: IncomingMessage) =>
+  Effect.async<Buffer, ProcessTestError>((resume) => {
+    const chunks: Buffer[] = [];
+    incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+    incoming.once("end", () => {
+      resume(Effect.succeed(Buffer.concat(chunks)));
+    });
+    incoming.once("error", (cause) => {
+      resume(
+        Effect.fail(
+          new ProcessTestError({ message: "OTLP request failed", cause }),
+        ),
+      );
+    });
+  });
 
 /**
  * Accepts only protobuf trace exports, as the evals controller does, and
@@ -172,7 +194,11 @@ const handle = (
     ),
   );
 
-/** Starts a loopback OTLP receiver that the scope closes. */
+/**
+ * Starts an OTLP receiver on a free loopback port. The scope interrupts the
+ * running handlers and closes the server. Active connections close before the
+ * listener finalizer waits, so unfinished requests cannot hold teardown open.
+ */
 export const acquireOtlpReceiver: Effect.Effect<
   OtlpReceiver,
   ProcessTestError,
@@ -181,14 +207,38 @@ export const acquireOtlpReceiver: Effect.Effect<
   const spans = yield* Ref.make<readonly ExportedSpan[]>([]);
   const rejected = yield* Ref.make<readonly string[]>([]);
   const connections = yield* Ref.make(0);
-  const { server, port } = yield* acquireLoopbackServer((incoming, response) =>
-    handle(spans, rejected, incoming, response),
-  );
+  const run = yield* FiberSet.makeRuntime();
+  const server = createServer((incoming, response) => {
+    run(handle(spans, rejected, incoming, response));
+  });
   server.on("connection", () => {
     Effect.runSync(Ref.update(connections, (count) => count + 1));
   });
+  const { address } = yield* NodeHttpServer.make(() => server, {
+    host: LOOPBACK_HOST,
+    port: 0,
+  }).pipe(
+    Effect.catchTag("ServeError", (cause) =>
+      Effect.fail(
+        new ProcessTestError({
+          message: "OTLP receiver could not listen",
+          cause,
+        }),
+      ),
+    ),
+  );
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      server.closeAllConnections();
+    }),
+  );
+  if (address._tag !== "TcpAddress") {
+    return yield* new ProcessTestError({
+      message: "OTLP receiver exposed no TCP port",
+    });
+  }
   return {
-    endpoint: new URL(`http://${LOOPBACK_HOST}:${port}`),
+    endpoint: new URL(`http://${LOOPBACK_HOST}:${address.port}`),
     connections: Ref.get(connections),
     spans: Ref.get(spans),
     rejected: Ref.get(rejected),
@@ -238,7 +288,6 @@ function decodeSpans(body: Buffer): readonly ExportedSpan[] {
     scopeSpans.flatMap(({ spans }) =>
       spans.map((span) => ({
         name: span.name,
-        startTimeUnixNano: span.startTimeUnixNano,
         attributes: attributeRecord(span.attributes),
         resource: attributeRecord(resource?.attributes ?? []),
       })),

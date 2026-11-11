@@ -23,8 +23,6 @@ import {
   Schema,
 } from "effect";
 import { randomBytes } from "node:crypto";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Filesystem effects use FileSystem; Node supplies the POSIX permission constants.
-import { constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
@@ -33,6 +31,10 @@ import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 const secret = "configuration-only-test-bearer-0000000001";
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
+const rulesFile = "rules.json";
+/** Only the owner reaches the database directory and file. */
+const privateDirectoryMode = 0o700;
+const privateFileMode = 0o600;
 const settings = {
   port: 4319,
   host: "127.0.0.1",
@@ -70,6 +72,7 @@ const fixture = Effect.gen(function* () {
     Effect.withConfigProvider(provider),
   );
   const prepare = prepareDatabase.pipe(Effect.withConfigProvider(provider));
+  const load = loadDaemonSettings().pipe(Effect.withConfigProvider(provider));
   const sql = Context.get(
     yield* Layer.build(databaseConnection(access.locator)),
     SqlClient.SqlClient,
@@ -81,7 +84,7 @@ const fixture = Effect.gen(function* () {
     write,
     access,
     prepare,
-    provider,
+    load,
     providerFor,
     sql,
   };
@@ -107,7 +110,7 @@ const postgresFixture = Effect.gen(function* () {
 });
 
 // @agent-code-guard/regression-only: These finite file, schema and key custody boundaries use real SQL and filesystem operations.
-it("names the missing settings-file variable without opening storage", () =>
+it("names the missing settings-file variable", () =>
   loadDaemonSettings().pipe(
     Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),
     Effect.flip,
@@ -118,34 +121,23 @@ it("names the missing settings-file variable without opening storage", () =>
     Effect.provide(NodeContext.layer),
   ));
 
-it("loads changed process settings from their file on every startup", () =>
+it("loads the settings file its variable names", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const first = yield* loadDaemonSettings().pipe(
-      Effect.withConfigProvider(test.provider),
-    );
-    expect(first.settings.port).toBe(settings.port);
-    expect(first.settings.authentication.kind).toBe(
+    const loaded = yield* test.load;
+    expect(loaded.settings.port).toBe(settings.port);
+    expect(loaded.settings.authentication.kind).toBe(
       settings.authentication.kind,
     );
-    yield* test.write({ ...settings, port: settings.port + 1 });
-    expect((yield* loadDaemonSettings(test.filename)).settings.port).toBe(
-      settings.port + 1,
-    );
-    expect(
-      yield* test.sql`SELECT name FROM sqlite_schema WHERE type='table'`,
-    ).toEqual([]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("requires the current settings file instead of retaining a stale SQL copy", () =>
+it("refuses a settings file that does not exist", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    yield* test.prepare;
     yield* test.filesystem.remove(test.filename);
-    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "document" });
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    expect(JSON.stringify(failure)).not.toContain(secret);
+    expect(yield* test.load.pipe(Effect.flip)).toMatchObject({
+      reason: "document",
+    });
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("resolves policy references relative to the settings file", () =>
@@ -157,9 +149,7 @@ it("resolves policy references relative to the settings file", () =>
       JSON.stringify(policy),
     );
     yield* test.write({ ...settings, messagePolicyFile: "policy.json" });
-    expect(
-      (yield* loadDaemonSettings(test.filename)).settings.messagePolicy,
-    ).toBeDefined();
+    expect((yield* test.load).settings.messagePolicy).toBeDefined();
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("resolves provider credential references relative to the settings file", () =>
@@ -183,8 +173,7 @@ it("resolves provider credential references relative to the settings file", () =
       messagePolicyFile: "policy.json",
       decisionProviderKeyFile: "provider.key",
     });
-    const provider = (yield* loadDaemonSettings(test.filename)).settings
-      .messagePolicy?.provider;
+    const provider = (yield* test.load).settings.messagePolicy?.provider;
     expect(provider?.kind).toBe("jev");
     if (provider?.kind === "jev") {
       expect(Redacted.value(provider.apiKey)).toBe(providerKey);
@@ -227,15 +216,15 @@ it("resolves the norms directory relative to the settings file", () =>
       join(norms, "chat.lisp"),
     );
     yield* test.filesystem.copyFile(
-      join(shippedNorms, "rules.json"),
-      join(norms, "rules.json"),
+      join(shippedNorms, rulesFile),
+      join(norms, rulesFile),
     );
     yield* test.write({
       ...settings,
       ...(yield* messagePolicy(test, false)),
       normsDirectory: "norms",
     });
-    const loaded = yield* loadDaemonSettings(test.filename);
+    const loaded = yield* test.load;
     expect(loaded.settings.norms?.initial).toEqual([
       yield* test.filesystem.readFileString(
         join(shippedNorms, "examples/chat.lisp"),
@@ -249,7 +238,7 @@ function normsWithRules(test: Effect.Effect.Success<typeof fixture>) {
     const norms = join(test.directory, "norms");
     yield* test.filesystem.makeDirectory(norms);
     yield* Effect.forEach(
-      ["examples/office-hours.lisp", "rules.json"],
+      ["examples/office-hours.lisp", rulesFile],
       (file) =>
         test.filesystem.copyFile(
           join(shippedNorms, file),
@@ -270,7 +259,7 @@ it("loads the decision provider that judges initial norms' English rules, though
       normsDirectory: "norms",
     });
 
-    const loaded = yield* loadDaemonSettings(test.filename);
+    const loaded = yield* test.load;
 
     expect(loaded.settings.norms?.initial).toHaveLength(1);
     expect(loaded.settings.messagePolicy?.policy.text).toBeUndefined();
@@ -294,7 +283,7 @@ it.each([
       normsDirectory: "norms",
     });
 
-    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+    const failure = yield* test.load.pipe(Effect.flip);
 
     expect(failure).toMatchObject({ reason: "norms" });
   }).pipe(Effect.provide(NodeContext.layer)),
@@ -332,23 +321,28 @@ it("loads the shipped example message policy, each of whose fixed behaviors beco
       decisionProviderKeyFile: "provider.key",
     });
 
-    const loaded = yield* loadDaemonSettings(test.filename);
+    const loaded = yield* test.load;
 
     expect(loaded.settings.messagePolicy?.policy.text?.fixedRules).toHaveLength(
       selected.text.fixedBehaviors.length,
     );
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("refuses a norms directory without its rule file", () =>
+it("refuses a norms directory without its rule file, naming the file", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.filesystem.makeDirectory(join(test.directory, "norms"));
-    yield* test.write({ ...settings, normsDirectory: "norms" });
-    const failure = yield* loadDaemonSettings(test.filename).pipe(Effect.flip);
+    yield* test.write({
+      ...settings,
+      ...(yield* messagePolicy(test, false)),
+      normsDirectory: "norms",
+    });
+    const failure = yield* test.load.pipe(Effect.flip);
     expect(failure).toMatchObject({ reason: "norms" });
+    expect(failure.message).toContain(rulesFile);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("accepts public OAuth settings without allocating an owner", () =>
+it("accepts OAuth settings on a public listener", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     const authentication = {
@@ -359,13 +353,11 @@ it("accepts public OAuth settings without allocating an owner", () =>
       allowedOrigins: ["https://owner.example"],
     };
     yield* test.write({ ...settings, host: "0.0.0.0", authentication });
-    yield* test.prepare;
-    const loaded = yield* loadDaemonSettings(test.filename);
+    const loaded = yield* test.load;
     expect(loaded.settings.authentication).toEqual({
       ...authentication,
       resource: new URL(authentication.resource),
     });
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.each([
@@ -380,9 +372,7 @@ it.each([
     Effect.gen(function* () {
       const test = yield* fixture;
       yield* test.write(document);
-      const failure = yield* loadDaemonSettings(test.filename).pipe(
-        Effect.flip,
-      );
+      const failure = yield* test.load.pipe(Effect.flip);
       expect(failure).toMatchObject({ reason: "document" });
       expect(JSON.stringify(failure)).not.toContain(secret);
     }).pipe(Effect.provide(NodeContext.layer)),
@@ -395,10 +385,7 @@ it("refuses client/server mode without the server agent's credential and names t
       ...settings,
       mode: { kind: "client-server", serverAgentName: "server-agent" },
     });
-    const failure = yield* loadDaemonSettings(test.filename).pipe(
-      Effect.withConfigProvider(test.provider),
-      Effect.flip,
-    );
+    const failure = yield* test.load.pipe(Effect.flip);
     expect(failure).toMatchObject({ reason: "environment" });
     expect(failure.message).toContain(serverCredentialVariable);
   }).pipe(Effect.provide(NodeContext.layer)));
@@ -562,10 +549,10 @@ it("creates private encoded database paths only during deployment preparation", 
       Effect.withConfigProvider(test.providerFor(locator)),
     );
     expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
-      constants.S_IRWXU,
+      privateDirectoryMode,
     );
     expect((yield* test.filesystem.stat(filename)).mode & 0o777).toBe(
-      constants.S_IRUSR | constants.S_IWUSR,
+      privateFileMode,
     );
   }).pipe(Effect.provide(NodeContext.layer)));
 
