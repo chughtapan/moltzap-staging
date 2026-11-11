@@ -363,7 +363,7 @@ function makeHarness<R>(
                         ...(error.reason === "unknown-agent" &&
                         error.agentName !== undefined
                           ? {
-                              detail: `No registered agent named agent:${error.agentName}.`,
+                              detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
                             }
                           : {}),
                       }),

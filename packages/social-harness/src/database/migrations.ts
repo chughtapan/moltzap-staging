@@ -9,8 +9,6 @@ import {
   prepareDatabaseDirectory,
 } from "./sql.js";
 
-// safer-arch-ignore no-trivial-sink-file: Versioned schema definitions remain separate from their deployment caller.
-
 /** Identifies the table layout. A database with another number is not opened. */
 const daemonDatabaseFormat = 5;
 

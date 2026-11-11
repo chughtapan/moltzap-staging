@@ -933,8 +933,6 @@ type CollectiveFieldFailure = AnswerFieldFailures[number];
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the schema owner. */
 
-// safer-arch-ignore no-module-cycle: Request form parsing imports only the result type from its owner; runtime imports have no cycle.
-
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with the values they decode. */
 
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
