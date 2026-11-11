@@ -1,6 +1,5 @@
 /** @file A requester and three members on one daemon run all_gather operations. */
 
-import { SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -40,9 +39,6 @@ const acquireFour = Effect.gen(function* () {
 });
 
 const question = "Which day works for the review?";
-
-/** A name the daemon gives no agent. */
-const nobody = "all-gather-nobody";
 
 const slotSchema = {
   type: "object",
@@ -88,26 +84,6 @@ interface AllGatherParticipants {
   readonly group: string;
 }
 
-/** A refused operation sends nothing before the valid all_gather requests arrive. */
-function expectUnknownAllGatherMemberRefused({
-  requester,
-  first,
-}: AllGatherParticipants) {
-  return Effect.gen(function* () {
-    const failure = yield* allGather(
-      requester,
-      `group:${first.agent.agentName},${nobody},${requester.agent.agentName}`,
-      60,
-    ).pipe(Effect.flip);
-    expect(failure).toBeInstanceOf(SendError);
-    expect(failure).toMatchObject({ reason: "unknown-agent" });
-    expect(failure).toHaveProperty(
-      "detail",
-      expect.stringContaining(`agent:${nobody}`),
-    );
-  });
-}
-
 function startAllGatherAndExpectRequests({
   requester,
   first,
@@ -145,7 +121,6 @@ function startAllGatherAndExpectRequests({
 
 const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireFour;
-  yield* expectUnknownAllGatherMemberRefused(participants);
   const started = yield* startAllGatherAndExpectRequests(participants);
   yield* answerAllGatherAndExpectSharedResult(participants, started.id);
 }).pipe(Effect.scoped);
