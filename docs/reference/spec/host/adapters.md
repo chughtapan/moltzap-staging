@@ -38,8 +38,10 @@ fields and sending nothing. MCP takes [structured input](./messaging.md#mcp-proj
 ## OpenClaw session and output contract
 
 Direct and group conversations share the configured agent's main session.
-Private evaluation mode isolates them. Shared host context can exceed the
-conversation history supplied to firewall checks.
+Private evaluation mode isolates them: each private session holds both sides of
+one conversation, the peer's messages and the agent's sends to that peer.
+Shared host context can exceed the conversation history supplied to firewall
+checks.
 
 OpenClaw sends through deliberate `message` calls. `send` requires `target`.
 `reply` chooses
