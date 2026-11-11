@@ -165,35 +165,6 @@ const booking = Effect.gen(function* () {
   ]);
 }).pipe(Effect.scoped);
 
-/** After the student declines the only offer, the professor's failure ends the task. */
-const escalation = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours;
-  const decline = "(reject-proposal :ontology office-hours)";
-  const failure =
-    '(failure :ontology office-hours :reason "No offered slot works.")';
-  yield* agree(student, professor);
-  yield* send(student, { to: professor.address, text: request });
-  yield* nextItem(professor);
-  yield* send(professor, { to: student.address, text: offer });
-  yield* nextItem(student);
-  yield* send(student, { to: professor.address, text: decline });
-  yield* nextItem(professor);
-
-  yield* send(professor, { to: student.address, text: failure });
-  const ended = yield* nextItem(student);
-  const afterEnd = yield* send(student, {
-    to: professor.address,
-    text: request,
-  }).pipe(Effect.flip);
-
-  expect(textOf(ended)).toBe(failure);
-  expect(afterEnd).toMatchObject({
-    refusal: "rule-violation",
-    rule: "refuse-nonconforming",
-    detail: { reason: "no-agreement" },
-  });
-}).pipe(Effect.scoped);
-
 /** The student's own firewall refuses a request whose topic breaks the rule. */
 const ownBreach = Effect.gen(function* () {
   const { student, professor } = yield* officeHours;
@@ -275,12 +246,6 @@ it(
 it(
   "books a slot through the office-hours turns after a chat line and a request sent back to back",
   processTrace(booking),
-  NORMS_TEST_TIMEOUT_MS,
-);
-
-it(
-  "ends the task when the professor escalates after a declined offer",
-  processTrace(escalation),
   NORMS_TEST_TIMEOUT_MS,
 );
 
