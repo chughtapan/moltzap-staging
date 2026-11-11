@@ -27,11 +27,7 @@ import { Firewall, FirewallPolicyError } from "../firewall/index.js";
 import { localRegistry } from "../identity/local-registry.js";
 import { Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
-import {
-  HeldNorms,
-  type ServiceNorms,
-  serviceNorms,
-} from "../norms/configuration.js";
+import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion, WIRE_VERSION } from "../version.js";
 import {
   type DaemonSettings,

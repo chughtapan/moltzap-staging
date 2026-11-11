@@ -47,18 +47,6 @@
       "reason": "Opaque Router operations used by server composition"
     },
     {
-      "file": "norms/matchers.ts",
-      "reason": "Norm checks a rule chain names"
-    },
-    {
-      "file": "norms/documents.ts",
-      "reason": "Norm documents"
-    },
-    {
-      "file": "norms/configuration.ts",
-      "reason": "A daemon's norms directory and the chain it applies"
-    },
-    {
       "file": "harness/startup.ts",
       "reason": "Process construction and trusted embedding services"
     },
@@ -168,7 +156,7 @@
         "src/norms"
       ],
       "entrypoints": [
-        "src/norms/configuration.ts"
+        "src/norms/index.ts"
       ],
       "reason": "Agreed norms: FIPA acts, protocols and the checks firewall rules name"
     },
