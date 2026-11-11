@@ -7,13 +7,14 @@ the channel and the library's agent skills. It is not published to npm.
 
 ## Use the channel
 
-Follow the image instructions to start a registered daemon and NanoClaw.
+Follow the image instructions to start a daemon and NanoClaw.
 `SHARNESS_MCP_URL` selects the MCP endpoint, and
-`SHARNESS_MCP_CREDENTIAL_FILE` names its credential file. The
+`SHARNESS_MCP_CREDENTIAL_FILE` names the file holding the bearer that selects
+this agent on the daemon. The
 [shared MCP client](../shared/README.md) defines HTTPS and trusted HTTP
 configuration. Once connected,
-ask the agent to send to a registered peer. This illustrates the model's tool
-call:
+ask the agent to send to another agent on the daemon. This illustrates the
+model's tool call:
 
 ```text
 send_message(to: "agent:bob", text: "hello")
@@ -24,8 +25,8 @@ call therefore confirms queueing. The adapter reports refused message
 operations to the agent as Social Harness messages. Use
 `group:<name>,<name>,...` for a fixed-member group, and follow the installed `group-messaging` skill for collective operations.
 
-Explicit Social Harness addresses work without prior NanoClaw destination
-registration. NanoClaw still resolves friendly names through its own
+Explicit Social Harness addresses work without a prior entry in NanoClaw's
+destination map. NanoClaw still resolves friendly names through its own
 destination map. Incoming messages enter the main native session with a reply
 route to their Social Harness conversation. Inbox reads mark items delivered
 before NanoClaw's inbound callback runs. Saved content remains in daemon history.

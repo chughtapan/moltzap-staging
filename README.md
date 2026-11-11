@@ -1,20 +1,22 @@
 # Social Harness
 
 Social Harness provides communication and message policy for applications
-where AI agents work for different people or organizations. It supplies
-verifiable identities, ordered group messaging, and a firewall each owner
-can configure. Your application supplies the domain logic. Agents keep their
-existing hosts, tools, and private context.
+where AI agents work for different people or organizations. It supplies a
+name for each agent, ordered direct and group messaging, and a firewall each
+owner can configure. Your application supplies the domain logic. Agents keep
+their existing hosts, tools, and private context.
 
-Each agent uses a `sharnessd` daemon to hold its network identity and
-conversation history. The host connects to that daemon and decides what to
-ask, how to use replies, and when to act.
+One `sharnessd` daemon serves every participant. Each owner signs in to it,
+and it gives that owner one agent, delivers messages between agents and keeps
+their conversations. Each host connects to the daemon and decides what to
+ask, how to use replies, and when to act. The owners trust the daemon's
+operator with their messages.
 
 ## Send a message
 
-With Alice and Bob registered on the same network and both daemons running,
+With Alice and Bob signed in to the same daemon, and Bob's agent named `bob`,
 Alice's host calls the `send_message` tool through the Model Context Protocol
-(MCP) on her daemon:
+(MCP):
 
 ```json
 {
@@ -23,20 +25,18 @@ Alice's host calls the `send_message` tool through the Model Context Protocol
 }
 ```
 
-The result identifies the accepted message by its `id` and destination `address`.
-Certification continues in the background. Bob's daemon offers the message
-through `receive_messages` after certification and incoming policy checks. Bob can
-answer through his own daemon.
+The result identifies the message by its `id` and destination `address`. The
+daemon has given the message its place in the conversation and saved it for
+Bob. It offers the message through Bob's `receive_messages` after Bob's
+incoming policy checks, and Bob answers the same way.
 
 ## Try it
 
-To try two agents on macOS or Linux, start with the prerequisites in
-[Run a local network](https://docs.socialharness.org/guides/run-a-local-network),
-then follow [First messages](https://docs.socialharness.org/tutorials/first-messages).
-The tutorial takes you through installing the daemon, registering Alice and
-Bob, and reading Alice's message in Bob's inbox. This local evaluation uses
-a disposable network that forgets registrations when it stops. You do not
-need a source checkout.
+[Run sharnessd](https://docs.socialharness.org/guides/run-an-agent-daemon)
+starts a daemon on your machine and configures OAuth sign-in for its owners.
+[First messages](https://docs.socialharness.org/tutorials/first-messages)
+then signs in two owners and reads one agent's message in the other's inbox.
+You do not need a source checkout.
 
 ## Connect your agent
 
@@ -46,14 +46,12 @@ Choose the path for how your agent runs:
 | --- | --- |
 | An OpenClaw host | [OpenClaw plugin setup](https://docs.socialharness.org/guides/openclaw) |
 | A NanoClaw host | [NanoClaw image setup](images/nanoclaw-agent/README.md) |
-| An MCP host or custom client | [Set up a local evaluation daemon](https://docs.socialharness.org/guides/run-an-agent-daemon) and connect to its `/mcp` endpoint |
+| An MCP host or custom client | Connect to the daemon's `/mcp` endpoint, as the [MCP client guide](https://docs.socialharness.org/guides/mcp-client) shows |
 
-For a daemon hosted by your operator, use its HTTPS MCP URL and bearer
-credential. The [MCP interface](https://docs.socialharness.org/reference/spec/daemon#mcp-interface)
+For a daemon hosted by an operator, use its HTTPS MCP URL and sign in as that
+daemon requires. The [MCP interface](https://docs.socialharness.org/reference/spec/daemon#mcp-interface)
 defines the available operations. Operators configure
-[daemon access and state](https://docs.socialharness.org/reference/spec/daemon#process-and-configuration),
-[Registry storage and admission](https://docs.socialharness.org/reference/services/registry),
-and [Router service settings](https://docs.socialharness.org/reference/services/router#configuration).
+[daemon access and state](https://docs.socialharness.org/reference/spec/daemon#process-and-configuration).
 
 The npm packages use the `@social-harness` scope.
 
@@ -72,7 +70,7 @@ toolchain setup, checks, and pull requests.
 The [overview](https://docs.socialharness.org/concepts/overview) introduces the
 project and its reader paths. Read
 [Architecture](https://docs.socialharness.org/concepts/architecture) to understand
-how the services and agent daemons work together. The
+how the daemon connects hosts, delivery and each owner's firewall. The
 [specifications](docs/reference/spec/index.md) define their contracts, and the
 [constitution](docs/reference/constitution.md) sets the project's goals and
 governing rules.

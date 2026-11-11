@@ -7,10 +7,9 @@ surface. The channel id is `"sharness"`.
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import Identity, Router, protocol, server, Client internals, simulator, evals,
-or another adapter. It uses the stock MCP client and the shared inbox receiver. It
-does not acquire a daemon, profile, Registry admission material, signing key,
-raw Router credential, network client, or local store.
+import daemon services, Client internals, simulator, evals, or another
+adapter. It uses the stock MCP client and the shared inbox receiver. It
+does not acquire a daemon, a database, an owner's sign-in or a local store.
 
 Publication follows `docs/reference/spec/releases.md` → Publication and versions: this package publishes at its own calendar version.
 
@@ -50,16 +49,14 @@ release, so the channel needs a new release only when the plugin SDK breaks.
 - Inbox reads record delivery before the native inbound callback. Propagate
   callback failures; they do not restore pending daemon delivery. OpenClaw owns
   processing, notification and task recovery.
-- Discovery, search, history, status, registration, and proof inspection use
-  the MCP catalog.
+- History and status use the MCP catalog.
 - Keep host failures and Client failures typed at the boundary. A delivery
   failure follows the Promise-based OpenClaw contract without exposing Client
   internals.
 - Never use `unknown` types; define explicit host-facing interfaces.
 
-Send returns no receipt or proof; completion means the local endpoint durably accepted
-the message. `ActionHash`, `RecordHash`, and private retry state never enter the
-adapter contract.
+Send returns no receipt; completion means the daemon durably accepted the
+message. Private retry state never enters the adapter contract.
 
 ## Tests
 

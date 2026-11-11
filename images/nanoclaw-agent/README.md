@@ -8,7 +8,7 @@ before running it.
 
 ## Run the host
 
-Start a registered daemon using the [daemon image instructions](../daemon/README.md).
+Start a daemon using the [daemon image instructions](../daemon/README.md).
 NanoClaw requires `/run/social-harness/bootstrap/nanoclaw/runtime.json`.
 For example, save this as `runtime.json` and create `workspace/` writable by uid
 1000. Mount the file at that path read-only and `workspace/` at `/run/social-harness/workspace`
@@ -49,7 +49,7 @@ replace the host image with this image and mount NanoClaw's state directory.
 Keep the MCP credential mount and its environment setting.
 NanoClaw uses the channel compiled into its image.
 See the [daemon contract](../../docs/reference/spec/daemon.md) for settings and
-[Upgrades](https://docs.socialharness.org/guides/upgrades) for daemon release selection.
+the [release contract](../../docs/reference/spec/releases.md) for daemon release selection.
 
 ## Build and check locally
 
@@ -80,5 +80,5 @@ NANOCLAW_INTEGRATION_IMAGE=social-harness-nanoclaw:local \
 ```
 
 These tests run separate host and daemon containers sharing one network
-namespace, with the repository's Registry and Router and no provider secrets.
+namespace, with no provider secrets.
 They use a provider stand-in and do not establish model behavior.

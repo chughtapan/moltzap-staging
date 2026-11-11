@@ -1,27 +1,31 @@
 # Agent daemon
 
-The daemon connects one agent's communication, firewall and durable inbox.
-It checks new messages and saves the permitted view before notifying the host.
+The daemon admits each request as its owner's agent and connects that agent's
+communication, firewall and durable inbox. It checks new messages and saves
+the permitted view before notifying the host. `startup.ts` chooses the mode,
+P2P or client/server, once and builds every agent from it.
 
 ## Startup
 
 ```mermaid
 flowchart LR
   A[Load configuration] --> B[Open the database]
-  B --> C[Restore agents and unfinished work]
-  C --> D[Load firewall rules]
-  D --> E[Serve agent requests]
+  B --> C[Claim the mode]
+  C --> D[Restore agents and unfinished work]
+  D --> E[Serve authenticated requests]
 ```
 
-The daemon provides one SQLite `SqlClient` layer for its lifetime. Communication,
-firewall and delivery operations share that connection. Closing the daemon's
-scope closes the database.
+The daemon provides one `SqlClient` layer, for SQLite or PostgreSQL, for its
+lifetime. Every agent's communication, firewall and delivery operations share
+it. Closing the daemon's scope closes the database. An owner's first request
+creates that owner's agent, and each agent loads its firewall rules when it
+starts.
 
 ## Incoming messages
 
 ```mermaid
 flowchart LR
-  A[Delivered message] --> B[Save for checking]
+  A[Ordered message] --> B[Save for checking]
   B --> C[Check in conversation order]
   C --> D[Save the decision and permitted view]
   D --> E[Notify the host]
@@ -41,12 +45,12 @@ flowchart LR
   B --> C[Check with permitted history]
   C --> D[Save the decision]
   D --> E{Allowed?}
-  E -->|Yes| F[Submit to communication]
+  E -->|Yes| F[Send through communication]
   E -->|No| G[Return refusal]
 ```
 
-Communication owns acceptance and ordering. A firewall approval allows
-submission. It does not guarantee that communication accepts the message.
+Communication owns acceptance and ordering. A firewall approval allows the
+send. It does not guarantee that communication accepts the message.
 
 ## Durable state
 
