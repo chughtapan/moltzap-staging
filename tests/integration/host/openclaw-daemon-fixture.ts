@@ -70,7 +70,7 @@ interface OpenClawBuildContextInput {
 
 /* eslint-disable @typescript-eslint/naming-convention -- OpenClaw defines the inbound host context keys. */
 /** Models the host context keys consumed by the adapter acceptance scenarios. */
-export interface OpenClawInboundContext {
+interface OpenClawInboundContext {
   readonly AccountId: string;
   readonly Body: string;
   readonly BodyForAgent: string;
