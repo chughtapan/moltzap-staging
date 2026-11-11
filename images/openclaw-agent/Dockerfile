@@ -6,10 +6,8 @@ ENV HUSKY=0 NX_DAEMON=false NX_NO_CLOUD=true
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .node-version nx.json tsconfig.base.json ./
 COPY scripts/build/clean-dist.ts scripts/build/clean-dist.ts
 COPY scripts/build/copy-social-harness-skills.ts scripts/build/copy-social-harness-skills.ts
-COPY scripts/build/copy-plugin-mcp.ts scripts/build/copy-plugin-mcp.ts
 COPY packages/social-harness/ packages/social-harness/
 COPY plugins/openclaw/ plugins/openclaw/
-COPY plugins/shared/ plugins/shared/
 COPY images/openclaw-agent/package.json images/openclaw-agent/package.json
 COPY images/openclaw-agent/patch-openclaw.ts images/openclaw-agent/patch-openclaw.ts
 COPY images/openclaw-agent/entrypoint.sh images/openclaw-agent/entrypoint.sh

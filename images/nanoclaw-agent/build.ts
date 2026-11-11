@@ -64,11 +64,6 @@ export async function stageInputs(directory: string) {
     join(imageRoot, "../../plugins/nanoclaw/src/channels/sharness.ts"),
     join(channel, "sharness.ts"),
   );
-  await mkdir(join(channel, "mcp"), { recursive: true });
-  await copyFile(
-    join(imageRoot, "../../plugins/shared/mcp-client.ts"),
-    join(channel, "mcp/mcp-client.ts"),
-  );
   await writeFile(
     join(directory, "inputs.json"),
     `${JSON.stringify({

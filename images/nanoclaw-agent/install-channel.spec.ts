@@ -1,4 +1,4 @@
-/** @file The install-channel.ts script copies the channel and its MCP client into a NanoClaw tree. */
+/** @file The install-channel.ts script copies the channel into a NanoClaw tree. */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile } from "node:child_process";
 import { once } from "node:events";
@@ -25,10 +25,6 @@ test("the workspace channel is installed into the host", async (t) => {
   assert.equal(
     await readFile(join(app, "src/channels/sharness.ts"), "utf8"),
     "export const channel = 1;\n",
-  );
-  assert.equal(
-    await readFile(join(app, "src/sharness-mcp/mcp-client.ts"), "utf8"),
-    "export const client = 1;\n",
   );
 });
 
@@ -95,15 +91,6 @@ async function writeTree(allocated: Promise<string>): Promise<string> {
     "onlyBuiltDependencies:\n  - esbuild\n",
   );
   await writeFile(join(root, "sharness.ts"), "export const channel = 1;\n");
-  await mkdir(join(root, "mcp"));
-  await writeFile(
-    join(root, "mcp/mcp-client.ts"),
-    "export const client = 1;\n",
-  );
-  await writeFile(
-    join(app, "tsconfig.json"),
-    JSON.stringify({ compilerOptions: { rootDir: "./src", outDir: "./dist" } }),
-  );
   return root;
 }
 
