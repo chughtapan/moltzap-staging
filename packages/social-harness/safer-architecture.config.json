@@ -1,15 +1,7 @@
 {
   "minFolderReadmeChildren": 9007199254740991,
-  "maxFolderCycles": 3,
+  "maxFolderCycles": 2,
   "facadeFiles": [
-    {
-      "file": "version.ts",
-      "reason": "Package version and protocol compatibility"
-    },
-    {
-      "file": "tracing.ts",
-      "reason": "Work progress instrumentation"
-    },
     {
       "file": "communication/records.ts",
       "reason": "One private protocol record model owns its schemas, encoding and verification."
@@ -213,14 +205,11 @@
       "reason": "Management schemas and wire overrides require the explicit sharness-test resolution condition"
     }
   ],
-  "maxFolderImportDistance": 6,
   "maxFolderChildren": 24,
-  "maxFolderChildrenIncludingTests": 48,
   "maxPublicExports": 100,
   "maxPublicReexports": 25,
   "minPublicFacadeModules": 26,
   "maxExportedSiblingRatio": 1,
-  "minPackageMeshFolders": 30,
   "minExplicitApiConcreteFiles": 20,
   "minImplicitBoundaryIncomingFiles": 20,
   "minSharedKernelExports": 40
