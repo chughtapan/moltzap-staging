@@ -3,11 +3,11 @@ import {
   AgentAddress,
   GroupAddress,
   type PermittedItem,
-  SendRequest,
   type SendResult,
 } from "@social-harness/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
 import { callTool } from "../../plugins/shared/mcp-client.js";
+import { send } from "./agent-fixture.js";
 import {
   type Daemon,
   ProcessTestError,
@@ -75,13 +75,7 @@ function agentAccess(daemon: Daemon, signedIn: SignedIn): AgentAccess {
     address: signedIn.address,
     mcp: daemon.endpoint,
     mcpCredentialFile: signedIn.credentialFile,
-    send: (input) =>
-      Effect.runPromise(
-        callTool(client, {
-          name: "send_message",
-          arguments: Schema.decodeUnknownSync(SendRequest)(input),
-        }),
-      ),
+    send: (input) => Effect.runPromise(send(signedIn, input)),
     next: (count) => Effect.runPromise(nextItems(signedIn, count)),
     history: (address) =>
       Effect.runPromise(

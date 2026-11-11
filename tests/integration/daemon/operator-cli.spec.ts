@@ -13,6 +13,8 @@ import { sharedDaemon } from "./daemon-fixture.js";
 
 const CLI = fileURLToPath(new URL("../../../images/mcp.ts", import.meta.url));
 const TEST_DIRECTORY = fileURLToPath(new URL("../.cache/", import.meta.url));
+const REFUSED_EXIT_CODE = 1;
+const CLEARTEXT_REFUSAL = "MCP URL must use HTTPS or literal HTTP loopback";
 
 it(
   "reports the agent of the owner whose credential it reads",
@@ -45,7 +47,6 @@ it(
 );
 
 // @agent-code-guard/regression-only: The standalone CLI must reject cleartext DNS destinations before reading its private bearer file.
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- The exit code and the refusal text are the CLI's public contract. */
 it(
   "refuses credential delivery to an HTTP endpoint named by DNS",
   processTrace(
@@ -59,14 +60,11 @@ it(
         },
         ["call", "status"],
       );
-      expect(refused.exitCode).toBe(1);
-      expect(refused.stderr).toContain(
-        "MCP URL must use HTTPS or literal HTTP loopback",
-      );
+      expect(refused.exitCode).toBe(REFUSED_EXIT_CODE);
+      expect(refused.stderr).toContain(CLEARTEXT_REFUSAL);
     }),
   ),
 );
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary assertions after the operator contract scenario. */
 
 /** Runs a copy of the script, which resolves the integration package's installed public dependencies. */
 function operator(
