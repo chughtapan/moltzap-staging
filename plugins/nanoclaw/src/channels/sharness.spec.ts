@@ -19,7 +19,6 @@ import type {
 } from "#sharness-mcp/mcp-client";
 import type { ChannelRegistration, ChannelSetup } from "./adapter.js";
 import type { registerChannelAdapter } from "./channel-registry.js";
-import { credentialFile } from "../__tests__/credential.js";
 
 /* eslint-disable agent-code-guard/async-keyword -- NanoClaw's lifecycle and host callbacks are Promise-native. */
 const boundary = vi.hoisted(() => ({
@@ -109,8 +108,6 @@ beforeEach(async () => {
   boundary.register.mockClear();
   boundary.acquire.mockReset();
   vi.stubEnv("SHARNESS_MCP_URL", "http://127.0.0.1:8321/mcp");
-  vi.stubEnv("SHARNESS_MCP_CREDENTIAL_FILE", credentialFile);
-  vi.stubEnv("SHARNESS_MCP_ALLOW_HTTP", undefined);
   await import("./sharness.js");
   const entry = boundary.register.mock.calls[0];
   if (entry === undefined) {
