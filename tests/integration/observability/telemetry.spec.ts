@@ -90,7 +90,7 @@ const acquireMarkerParticipants = Effect.gen(function* () {
     yield* makeDaemonProcessFixture(infrastructure, "otel-member-a"),
     yield* makeDaemonProcessFixture(infrastructure, "otel-member-b", false, {
       settings: {
-        transport: { kind: "p2p", routerOrigin: proxy.origin.origin },
+        mode: { routerOrigin: proxy.origin.origin },
       },
     }),
   ];

@@ -135,16 +135,19 @@ const commonFields = {
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication: Schema.Union(localBearer, publicOAuth),
-  registryOrigin: origin,
-  registrySignerPublicKey: AgentPublicKey,
-  transport: Schema.Union(
-    exactStruct({ kind: Schema.Literal("p2p"), routerOrigin: origin }),
+  mode: Schema.Union(
+    exactStruct({
+      kind: Schema.Literal("p2p"),
+      routerOrigin: origin,
+      registryOrigin: origin,
+      registrySignerPublicKey: AgentPublicKey,
+      admissionCredential: Schema.optional(credential),
+    }),
     exactStruct({
       kind: Schema.Literal("client-server"),
       serverAgentName: AgentName,
     }),
   ),
-  admissionCredential: Schema.optional(credential),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   hideCollectives: Schema.optionalWith(Schema.Boolean, {
     default: () => false,
@@ -297,7 +300,7 @@ function serverAgentCredential(captured: DaemonSettings) {
     const configured = yield* Config.option(
       Config.redacted("SHARNESS_SERVER_AGENT_CREDENTIAL"),
     ).pipe(Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()));
-    if (captured.transport.kind !== "client-server") {
+    if (captured.mode.kind !== "client-server") {
       return Option.none<Redacted.Redacted>();
     }
     if (Option.isNone(configured)) {

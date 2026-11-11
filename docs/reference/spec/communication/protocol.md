@@ -23,7 +23,7 @@ recipients under the same author and message id is a conflict. A consumer
 acknowledges only after its handler succeeds; interruption or failure can replay
 an item. The host's durable inbox deduplicates that replay.
 
-The daemon selects one mode in its [transport configuration](../daemon.md#transport).
+The daemon selects one mode in its [`mode` setting](../daemon.md#mode).
 Identity, firewall and host interfaces remain the same.
 
 [Client/server mode](../client-server.md) orders and stores messages inside

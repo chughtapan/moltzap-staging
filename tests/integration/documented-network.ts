@@ -353,12 +353,15 @@ function writeAgentFiles(
         port,
         host: HOST,
         authentication: { kind: "local", credential: bearer },
-        registryOrigin: network.registryOrigin,
-        registrySignerPublicKey: yield* Schema.decodeUnknown(
-          Schema.parseJson(Schema.Unknown),
-        )(network.registrySigner),
-        transport: { kind: "p2p", routerOrigin: network.routerOrigin },
-        admissionCredential: network.admissionCredential,
+        mode: {
+          kind: "p2p",
+          routerOrigin: network.routerOrigin,
+          registryOrigin: network.registryOrigin,
+          registrySignerPublicKey: yield* Schema.decodeUnknown(
+            Schema.parseJson(Schema.Unknown),
+          )(network.registrySigner),
+          admissionCredential: network.admissionCredential,
+        },
         agentName: name,
       }),
       { mode: 0o600 },
