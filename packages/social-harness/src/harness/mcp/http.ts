@@ -63,7 +63,7 @@ type SelectApp = (
 /**
  * The app the listener serves. It answers only POST /mcp from a trusted host
  * and origin, admits the caller, and hands the request to that owner's agent.
- * An agent that cannot serve answers 503.
+ * An agent that cannot serve answers 503, and the log names what failed.
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   authentication: McpAuthentication,
@@ -123,9 +123,12 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
                     Stream.interruptAfter(Math.max(0, expiresAt - Date.now())),
                   ),
             ),
-            Effect.catchAll(() =>
-              Effect.succeed(
-                HttpServerResponse.text("Agent unavailable", { status: 503 }),
+            Effect.catchAll((error) =>
+              Effect.logWarning("Agent unavailable").pipe(
+                Effect.annotateLogs(failureKind(error)),
+                Effect.as(
+                  HttpServerResponse.text("Agent unavailable", { status: 503 }),
+                ),
               ),
             ),
           ),
@@ -167,6 +170,22 @@ export function limitResponseStream(
     ),
     Match.orElse(() => response),
   );
+}
+
+/** The tag and reason of a failure, which name its kind and carry none of its content. */
+function failureKind(error: unknown): Record<string, string> {
+  if (typeof error !== "object" || error === null) {
+    return { failure: "unknown" };
+  }
+  return {
+    failure:
+      "_tag" in error && typeof error._tag === "string"
+        ? error._tag
+        : "unknown",
+    ...("reason" in error && typeof error.reason === "string"
+      ? { reason: error.reason }
+      : {}),
+  };
 }
 
 /**
