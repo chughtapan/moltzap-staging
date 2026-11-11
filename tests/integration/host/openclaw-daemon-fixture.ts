@@ -40,58 +40,29 @@ interface OpenClawConfig {
   };
 }
 
+/** What the stand-in host reads of the facts the plugin gives it for a turn. */
 interface OpenClawBuildContextInput {
-  readonly channel: string;
-  readonly accountId: string;
-  readonly provider: string;
-  readonly surface: string;
   readonly messageId: string;
   readonly from: string;
-  readonly sender: { readonly id: string; readonly name: string };
-  readonly conversation: {
-    readonly kind: "direct" | "group";
-    readonly id: string;
-    readonly label: string;
-  };
-  readonly route: {
-    readonly routeSessionKey: string;
-    readonly mainSessionKey: string;
-  };
-  readonly reply: { readonly to: string; readonly originatingTo: string };
+  readonly sender: { readonly name: string };
+  readonly conversation: { readonly kind: "direct" | "group" };
+  readonly route: { readonly routeSessionKey: string };
   readonly message: {
     readonly body: string;
-    readonly rawBody: string;
     readonly bodyForAgent: string;
-    readonly commandBody: string;
   };
-  // eslint-disable-next-line @typescript-eslint/naming-convention -- OpenClaw defines the GroupMembers host context key.
-  readonly extra?: { readonly GroupMembers?: string };
 }
 
 /* eslint-disable @typescript-eslint/naming-convention -- OpenClaw defines the inbound host context keys. */
-/** Models the host context keys consumed by the adapter acceptance scenarios. */
+/** The host context keys the adapter acceptance scenarios assert. */
 interface OpenClawInboundContext {
-  readonly AccountId: string;
   readonly Body: string;
   readonly BodyForAgent: string;
-  readonly BodyForCommands: string;
-  readonly ChatId: string;
   readonly ChatType: "direct" | "group";
-  readonly CommandAuthorized: boolean;
-  readonly CommandBody: string;
   readonly From: string;
-  readonly GroupMembers?: string;
-  readonly GroupSubject?: string;
-  readonly InboundEventKind: "message";
   readonly MessageSid: string;
-  readonly OriginatingTo: string;
-  readonly Provider: string;
-  readonly RawBody: string;
-  readonly SenderId: string;
   readonly SenderName: string;
   readonly SessionKey: string;
-  readonly Surface: string;
-  readonly To: string;
 }
 /* eslint-enable @typescript-eslint/naming-convention -- Restore repository naming outside the OpenClaw host context shapes. */
 
@@ -530,31 +501,13 @@ function buildOpenClawContext(
   input: OpenClawBuildContextInput,
 ): OpenClawInboundContext {
   return {
-    AccountId: input.accountId,
     Body: input.message.body,
     BodyForAgent: input.message.bodyForAgent,
-    BodyForCommands: input.message.commandBody,
-    ChatId: input.conversation.id,
     ChatType: input.conversation.kind,
-    CommandAuthorized: false,
-    CommandBody: input.message.commandBody,
     From: input.from,
-    InboundEventKind: "message",
     MessageSid: input.messageId,
-    OriginatingTo: input.reply.originatingTo,
-    Provider: input.provider,
-    RawBody: input.message.rawBody,
-    SenderId: input.sender.id,
     SenderName: input.sender.name,
     SessionKey: input.route.routeSessionKey,
-    Surface: input.surface,
-    To: input.reply.to,
-    ...(input.extra?.GroupMembers === undefined
-      ? {}
-      : {
-          GroupMembers: input.extra.GroupMembers,
-          GroupSubject: input.conversation.label,
-        }),
   };
 }
 
