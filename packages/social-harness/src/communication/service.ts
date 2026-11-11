@@ -5,8 +5,7 @@ import type {
   CommunicationService,
   CommunicationSettings,
 } from "./contract.js";
-import { makeDelivery } from "./delivery.js";
-import { claimMode } from "./mode.js";
+import { claimMode, makeDelivery } from "./delivery.js";
 
 /** The values the service accepts, hands over and returns in both modes. */
 export {

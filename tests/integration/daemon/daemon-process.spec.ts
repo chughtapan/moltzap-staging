@@ -19,7 +19,7 @@ import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining } from "../test-matchers.js";
 import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
 
-/** Each trace starts one daemon, and two of them start it more than once. */
+/** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
 
 const textContent = (text: string) => [{ type: "text", text }];
@@ -57,6 +57,10 @@ const receivedOrder = (participant: Participant, count: number) =>
       ),
     { concurrency: 1 },
   );
+
+/** The settings a refused start tells the operator to change. */
+const modeSetting = "mode";
+const serverNameSetting = "serverAgentName";
 
 const greeting = "hello from the first owner";
 const reply = "reply from the second owner";
@@ -254,6 +258,30 @@ it(
       });
       expect(failure.exitCode).not.toBe(0);
       expect(failure.logs).toContain(incompatibleDatabaseRemedy);
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+it(
+  "refuses another server agent name or the other mode on a started database, naming the setting",
+  processTrace(
+    Effect.gen(function* () {
+      const named = (name: string) => ({
+        [modeSetting]: { kind: "client-server", [serverNameSetting]: name },
+      });
+      const daemon = yield* sharedDaemon({ settings: named("front-desk") });
+      yield* stopProcess(yield* daemon.start());
+
+      yield* daemon.configure(named("back-office"));
+      const renamed = yield* daemon.startupFailure();
+      expect(renamed.exitCode).not.toBe(0);
+      expect(renamed.logs).toContain(`Set ${serverNameSetting}`);
+
+      yield* daemon.configure({ [modeSetting]: { kind: "p2p" } });
+      const moved = yield* daemon.startupFailure();
+      expect(moved.exitCode).not.toBe(0);
+      expect(moved.logs).toContain(`Set ${modeSetting}`);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

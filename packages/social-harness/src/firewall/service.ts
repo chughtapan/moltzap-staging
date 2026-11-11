@@ -1325,9 +1325,7 @@ function assessRule(
     const input = yield* capturePrepared(options.configuration, requested);
     const checkId = mintCheckId();
     const assessed = yield* evaluateMessage(options, active, input).pipe(
-      markRetries(input.direction, (exit) =>
-        exitOutcome(exit, "checked"),
-      ),
+      markRetries(input.direction, (exit) => exitOutcome(exit, "checked")),
     );
     const projection = yield* guidanceProjection(assessed, checkId);
     const { result } = projection;

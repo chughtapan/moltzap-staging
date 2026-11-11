@@ -6,10 +6,7 @@ import { chmod } from "node:fs/promises";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
-import {
-  type AgentAccess,
-  openDaemon,
-} from "../promise-fixture.ts";
+import { type AgentAccess, openDaemon } from "../promise-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";

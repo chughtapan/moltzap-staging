@@ -1,11 +1,7 @@
 /** @file Qualifies shared-agent persistence on restricted-role PostgreSQL. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import {
-  AgentCard,
-  InboxEvent,
-  Message,
-} from "@social-harness/social-harness";
+import { AgentCard, InboxEvent, Message } from "@social-harness/social-harness";
 import {
   Firewall,
   type FirewallOptions,

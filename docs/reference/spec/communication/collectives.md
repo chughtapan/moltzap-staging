@@ -31,29 +31,26 @@ returns `deadline-passed` without a message.
 Send one request per peer in its direct conversation. The requester is excluded
 from the respondents. Gathering from several peers does not create a group
 conversation. Return the operation id after the question and its request messages
-are durably accepted. Delivery continues independently.
+are saved. Each peer's host reads its request when it next receives.
 
-Communication accepts a send when it retains the message for completion.
-Acceptance of the operation and its request messages is atomic. A refusal leaves
-no accepted operation. After acceptance, validate each first answer against the
+One transaction saves the operation and orders its request messages. A refusal
+leaves no operation. Validate each first answer against the
 stored schema and complete when every member has an outcome or the deadline passes.
 
 ## All-gather
 
 Require the requester and at least two peers. Smaller sets fail with
 `membership-invalid`. Send one group request,
-returning its operation id after durable acceptance. Delivery continues
-independently of the caller.
+returning its operation id after the request is saved.
 
 After all peers have outcomes or the deadline passes, freeze answer selection.
-Accept a close in the group conversation identifying the counted answers.
+Send a close in the group conversation identifying the counted answers.
 Communication preserves the request-before-close order. Members retain answers but show none to their
 agents before the close. Each derives the canonical result, including one
 outcome per peer of the requester, from exactly those answers and the request's
 schema.
 
-The requester emits its result after the close is ordered. An accepted close keeps
-the frozen result pending under the same message identity.
+One transaction completes the requester's result and orders its close.
 
 ## Answers
 
@@ -64,13 +61,12 @@ or `request-expired` from retained state.
 
 Each request accepts one answer. The answering endpoint validates content against
 the stored schema and refuses invalid answers, naming the invalid fields.
-The request must still be open when the operation accepts the answer for
-sending. Closure or
+The request must still be open when the answer is sent. Closure or
 expiry returns `request-expired`. An earlier answer returns `request-answered`.
 A refusal leaves the request open.
 
-Repeating an accepted answer resumes the same message. Once an answer is accepted
-for sending, the request never reopens. A restart resumes the same answer. Acknowledging request delivery
+Repeating a sent answer changes nothing. Once an answer is sent, the request
+never reopens. Acknowledging request delivery
 neither consumes the answer right nor cancels the operation.
 
 ## Receiving messages
@@ -83,8 +79,7 @@ retained operation id for another request is invalid. Consume malformed or dupli
 Hide expired requests. Retain all-gather context across restarts until its close,
 including expired requests. Only the requester's first close in conversation order counts.
 Listed answers precede it in conversation order. Record a member's own answer
-when communication completes it; a close arriving while that message is
-in flight waits. Closes from the wrong sender, for unknown requests or listing unavailable answers
+when it is sent. Closes from the wrong sender, for unknown requests or listing unavailable answers
 are consumed without a result. Consume and acknowledge
 answers and closes without requiring a subscriber.
 

@@ -3,6 +3,7 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity/agent-cards.js";
+import type { CommunicationError } from "../service.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { makeRequests } from "../collectives.js";
 import {
@@ -14,7 +15,6 @@ import {
   Request,
   type ResultDelivery,
 } from "../messages.js";
-import type { CommunicationError } from "../service.js";
 import { collectiveOperationId } from "./request-ids.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
 

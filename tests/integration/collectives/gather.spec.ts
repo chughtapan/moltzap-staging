@@ -224,7 +224,7 @@ const crossingSendsBehavior = Effect.gen(function* () {
   for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
     yield* Effect.all(
       [ask(alice, bob), ask(bob, alice), tell(alice, bob), tell(bob, alice)],
-      { concurrency: "unbounded" },
+      { concurrency: 4 },
     );
   }
   for (const participant of [alice, bob]) {

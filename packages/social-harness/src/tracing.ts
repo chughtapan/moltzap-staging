@@ -40,10 +40,7 @@ function retryPending(id: string): Effect.Effect<void> {
 }
 
 /** Closes the matching `retryPending` activity. */
-function retrySettled(
-  id: string,
-  outcome: RetryOutcome,
-): Effect.Effect<void> {
+function retrySettled(id: string, outcome: RetryOutcome): Effect.Effect<void> {
   return Effect.withSpan(Effect.void, "retry.settled", {
     captureStackTrace: false,
     attributes: { kind, id, outcome },

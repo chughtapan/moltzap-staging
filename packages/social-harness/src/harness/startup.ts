@@ -18,6 +18,7 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
+import type { AgentCard, AgentName } from "../identity/agent-cards.js";
 import { MessageAddressInput } from "../communication/messages.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
@@ -53,6 +54,10 @@ export const daemonHelp = processHelp;
 export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
   Layer.provide(spanExport),
 );
+
+/** A startup refusal that names the setting to change. */
+const refused = (message: string) =>
+  new DaemonConfigurationError({ reason: "document", message });
 
 function runDaemon() {
   return Effect.gen(function* () {
@@ -110,23 +115,6 @@ function runDaemon() {
   }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
 }
 
-/** A startup refusal that names the setting to change. */
-const refused = (message: string) =>
-  new DaemonConfigurationError({ reason: "document", message });
-
-/** Marks the database as serving `mode`, or refuses a database that serves the other. */
-function claimDatabase(mode: DaemonSettings["mode"]["kind"]) {
-  return Communication.claim(mode).pipe(
-    Effect.catchIf(
-      (error) => error.reason === "membership-invalid",
-      () =>
-        refused(
-          `This database belongs to a daemon in the other mode, not ${mode}. Set mode to the one the database was first started with, or prepare a new database.`,
-        ),
-    ),
-  );
-}
-
 /**
  * Every agent is a peer: it runs the daemon's own firewall and may message
  * any other agent on the daemon, alone or in a group.
@@ -169,15 +157,10 @@ function clientServerMode(
     const serverNorms = yield* Ref.make(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
+    const permits = serverAndOne(serverAgentName);
     const communication = (
       options: Parameters<typeof Communication.layer>[0],
-    ) =>
-      Communication.layer({
-        ...options,
-        permits: (members) =>
-          members.length === 2 &&
-          members.some((member) => member.agentName === serverAgentName),
-      });
+    ) => Communication.layer({ ...options, permits });
     const server = {
       communication,
       checks: <Own>({ own }: { readonly own: Own }) => own,
@@ -213,6 +196,26 @@ function clientServerMode(
         agentName === serverAgentName ? server : client,
     };
   }).pipe(Effect.withSpan("clientServerMode"));
+}
+
+/** Marks the database as serving `mode`, or refuses a database that serves the other. */
+function claimDatabase(mode: DaemonSettings["mode"]["kind"]) {
+  return Communication.claim(mode).pipe(
+    Effect.catchIf(
+      (error) => error.reason === "membership-invalid",
+      () =>
+        refused(
+          `This database was first started in the other mode. Set mode to that one, or prepare a new database for ${mode} mode.`,
+        ),
+    ),
+  );
+}
+
+/** Whether `members` are the server agent and one other agent. */
+function serverAndOne(serverAgentName: AgentName) {
+  return (members: readonly AgentCard[]) =>
+    members.length === 2 &&
+    members.some((member) => member.agentName === serverAgentName);
 }
 
 /** Norms a client reads: the ones the server agent holds, once it has started. */

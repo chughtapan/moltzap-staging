@@ -20,7 +20,7 @@ import { messageHistory } from "./history.js";
 import {
   compareAgentIds,
   deriveConversationId,
-  Message,
+  type Message,
   messageInterpretation,
   RequestError,
 } from "./messages.js";
@@ -79,6 +79,26 @@ export function makeDelivery(settings: CommunicationSettings) {
       readHistory: (query) => capture(environment, history.readHistory(query)),
     } satisfies CommunicationService;
   }).pipe(Effect.withSpan("Communication.delivery"));
+}
+
+/**
+ * Marks the database as serving `mode`. Fails with `membership-invalid` when
+ * it already serves another.
+ */
+export function claimMode(mode: string) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    yield* sql`INSERT INTO communication_mode(singleton,kind) VALUES(1,${mode}) ON CONFLICT(singleton) DO NOTHING`;
+    const [row] = yield* sql<{
+      kind: string;
+    }>`SELECT kind FROM communication_mode WHERE singleton=1`;
+    if (row?.kind !== mode) {
+      return yield* invalid();
+    }
+  }).pipe(
+    Effect.catchTag("SqlError", unavailable),
+    Effect.withSpan("claimMode"),
+  );
 }
 
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
@@ -160,7 +180,10 @@ function sendMessage(environment: Environment, message: Message) {
  * The conversation a message belongs to: its author and recipients, who must
  * be distinct, include this agent and be permitted to share a conversation.
  */
-function messageConversation(settings: CommunicationSettings, message: Message) {
+function messageConversation(
+  settings: CommunicationSettings,
+  message: Message,
+) {
   return Effect.gen(function* () {
     const members = [message.author, ...message.recipients];
     const [first, second, ...rest] = members

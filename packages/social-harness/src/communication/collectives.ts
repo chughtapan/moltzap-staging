@@ -296,14 +296,6 @@ function answer(environment: Environment, message: Message) {
   }).pipe(Effect.withSpan("Requests.acceptAnswer"));
 }
 
-function receivedRequest(
-  message: Message,
-): Effect.Effect<ReceivedRequest, EndpointStoreError> {
-  return isReceivedRequest(message)
-    ? Effect.succeed(message)
-    : new EndpointStoreError({ reason: "corrupt" });
-}
-
 /**
  * What the host should see of a message this agent received. A question
  * yields the request, an ordinary message yields itself, and an answer, a
@@ -827,6 +819,14 @@ function sourceRequest(
   return operation.origin === "local"
     ? Effect.succeed(undefined)
     : receivedRequest(operation.request.message);
+}
+
+function receivedRequest(
+  message: Message,
+): Effect.Effect<ReceivedRequest, EndpointStoreError> {
+  return isReceivedRequest(message)
+    ? Effect.succeed(message)
+    : new EndpointStoreError({ reason: "corrupt" });
 }
 
 /** Business refusals and handler failures keep their type when SQL rolls back. */
