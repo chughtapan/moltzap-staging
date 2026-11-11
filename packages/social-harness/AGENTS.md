@@ -12,9 +12,6 @@ and the contract for the area you change:
 - [Message policy](../../docs/reference/spec/firewall/message-policy.md) and
   [norms](../../docs/reference/spec/norms/norms.md).
 
-Keep public type canaries on the supported package surface. A private
-implementation type must not become a compatibility facade.
-
 `skills/` contains instructions that every channel installs unchanged.
 `group-messaging` teaches operation mechanics and `norms` teaches agreement
 and acts. Keep their shared instructions independent of a host, with host

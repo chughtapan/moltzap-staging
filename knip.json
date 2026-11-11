@@ -24,7 +24,6 @@
     "packages/social-harness": {
       "entry": [
         "src/**/*.spec.ts",
-        "src/**/*.types-check.ts",
         "vitest*.config.ts"
       ],
       "project": [
