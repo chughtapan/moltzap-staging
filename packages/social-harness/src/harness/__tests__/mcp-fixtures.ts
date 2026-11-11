@@ -18,11 +18,11 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { MessageAddressInput } from "../../communication/messages.js";
-import { issueTestCard, makeTestAuthority } from "../../__tests__/agents.js";
+import { testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { Firewall, FirewallPolicyError } from "../../firewall/index.js";
 import { Identity } from "../../identity/service.js";
@@ -53,13 +53,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   } = {},
 ) {
   const database = yield* openTestDatabase();
-  const authority = yield* makeTestAuthority();
-  const card = yield* issueTestCard({
-    byte: 1,
-    name: "alice",
-    authority,
-    registryKeys: generateKeyPairSync("ed25519"),
-  });
+  const card = testAgentCard("alice");
   const identity = Identity.of({
     me: card,
     resolve: () => Effect.dieMessage("Unexpected identity resolution"),

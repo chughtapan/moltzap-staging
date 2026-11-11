@@ -8,7 +8,6 @@ import { Duration, Effect, FastCheck as fc } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import type { Chain } from "./chain.js";
-import { makeIdentityFixture } from "../identity/__tests__/authentication-fixtures.js";
 import {
   always,
   evidence,
@@ -149,7 +148,6 @@ function editablePolicy(): FirewallOptions {
 
 it("isolates saved decisions and editable policy between agents sharing a database", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
     const filesystem = yield* FileSystem.FileSystem;
     const directory = yield* filesystem.makeTempDirectoryScoped({
       prefix: "sharness-policy-",
@@ -159,7 +157,6 @@ it("isolates saved decisions and editable policy between agents sharing a databa
     const second = { filename, agentKey: "second" };
     const saved = yield* withFirewall(
       first,
-      fixture,
       (firewall, self) =>
         Effect.gen(function* () {
           const decision = yield* firewall.checkOutgoing(
@@ -175,7 +172,6 @@ it("isolates saved decisions and editable policy between agents sharing a databa
     );
     yield* withFirewall(
       second,
-      fixture,
       (firewall) =>
         Effect.gen(function* () {
           expect((yield* firewall.readPolicy()).rules).toEqual([privacy]);
@@ -188,7 +184,6 @@ it("isolates saved decisions and editable policy between agents sharing a databa
     );
     yield* withFirewall(
       first,
-      fixture,
       (firewall) =>
         Effect.gen(function* () {
           expect((yield* firewall.readPolicy()).rules).toEqual([]);
@@ -202,7 +197,6 @@ describe("Firewall.readDecisions", () => {
   // @agent-code-guard/regression-only: Public policy operations exercise real SQLite edits, retained evidence and transaction rollback.
   it("reads a refused message's saved policy and advice after restart without configuration", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const filesystem = yield* FileSystem.FileSystem;
       const directory = yield* filesystem.makeTempDirectoryScoped({
         prefix: "sharness-decisions-",
@@ -210,7 +204,6 @@ describe("Firewall.readDecisions", () => {
       const filename = join(directory, "harness.sqlite3");
       const saved = yield* withFirewall(
         filename,
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -240,7 +233,6 @@ describe("Firewall.readDecisions", () => {
       ]);
       const reopened = yield* withFirewall(
         filename,
-        fixture,
         (firewall) =>
           Effect.gen(function* () {
             expect(
@@ -258,10 +250,8 @@ describe("Firewall.readDecisions", () => {
 
   it("keeps the original summary and save time across concurrent and repeated saves", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -284,10 +274,8 @@ describe("Firewall.readDecisions", () => {
 describe("Firewall.checkOutgoing", () => {
   it("rolls back a completed decision with the enclosing handoff transaction", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const sql = yield* SqlClient.SqlClient;
@@ -319,10 +307,8 @@ describe("Firewall.checkOutgoing", () => {
 
   it("retains activation metadata and historical advice after a rule is removed", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const installed = yield* firewall.updatePolicy({ add: [privacy] });
@@ -357,7 +343,6 @@ describe("Firewall.checkOutgoing", () => {
 describe("Firewall.updatePolicy", () => {
   it("preserves the policy when the host refuses an update", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const configuration: FirewallOptions = {
         ...editablePolicy(),
         approvePolicyUpdate: () =>
@@ -365,7 +350,6 @@ describe("Firewall.updatePolicy", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall) =>
           Effect.gen(function* () {
             const before = yield* firewall.readPolicy();
@@ -384,10 +368,8 @@ describe("Firewall.updatePolicy", () => {
     "refuses an invalid edit and preserves active policy: $refusal",
     ({ edit, refusal }) =>
       Effect.gen(function* () {
-        const fixture = yield* makeIdentityFixture;
         yield* withFirewall(
           ":memory:",
-          fixture,
           (firewall) =>
             Effect.gen(function* () {
               const before = yield* firewall.readPolicy();
@@ -406,10 +388,8 @@ describe("Firewall.updatePolicy", () => {
 
   it("installs shared behavior as an editable rule", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall) =>
           Effect.gen(function* () {
             yield* firewall.updatePolicy({
@@ -434,7 +414,6 @@ describe("Firewall.layer", () => {
     [fc.string()],
     ([text]) =>
       Effect.gen(function* () {
-        const fixture = yield* makeIdentityFixture;
         const filesystem = yield* FileSystem.FileSystem;
         const directory = yield* filesystem.makeTempDirectoryScoped({
           prefix: "sharness-policy-",
@@ -446,14 +425,12 @@ describe("Firewall.layer", () => {
         };
         const activated = yield* withFirewall(
           filename,
-          fixture,
           (firewall) =>
             firewall.updatePolicy({ remove: [initial.id], add: [replacement] }),
           (agentKey) => Firewall.layer(agentKey, policy([initial])),
         );
         yield* withFirewall(
           filename,
-          fixture,
           (firewall) =>
             Effect.gen(function* () {
               const current = yield* firewall.readPolicy();
@@ -474,7 +451,6 @@ describe("Firewall.layer", () => {
 
   it("rejects a policy that cannot fit a model request without replacing saved rules", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const filesystem = yield* FileSystem.FileSystem;
       const directory = yield* filesystem.makeTempDirectoryScoped({
         prefix: "sharness-policy-budget-",
@@ -482,7 +458,6 @@ describe("Firewall.layer", () => {
       const filename = join(directory, "harness.sqlite3");
       const before = yield* withFirewall(
         filename,
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const installed = yield* firewall.readPolicy();
@@ -503,7 +478,6 @@ describe("Firewall.layer", () => {
       );
       yield* withFirewall(
         filename,
-        fixture,
         (firewall) =>
           Effect.gen(function* () {
             expect(yield* firewall.readPolicy()).toEqual(before);
@@ -517,7 +491,6 @@ describe("Firewall.layer", () => {
 describe("Firewall rule chain actions", () => {
   it("lets the first rule for the message's direction decide before the text rules", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           {
@@ -543,7 +516,6 @@ describe("Firewall rule chain actions", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -570,7 +542,6 @@ describe("Firewall rule chain actions", () => {
 
   it("refuses a draft with the deciding rule and its matcher's detail", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           {
@@ -592,7 +563,6 @@ describe("Firewall rule chain actions", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -620,11 +590,9 @@ describe("Firewall rule chain actions", () => {
 describe("Firewall text rules scoped by a matcher", () => {
   it("refuses a draft that breaks a scoped text rule its matcher matches", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = { rules: [], matchers: { always } };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -651,7 +619,6 @@ describe("Firewall text rules scoped by a matcher", () => {
 
   it("does not ask about a scoped rule for a message its matcher does not match", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const plain = {
         ...privacy,
         id: "plain-language",
@@ -659,7 +626,6 @@ describe("Firewall text rules scoped by a matcher", () => {
       } satisfies TextRule;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -684,7 +650,6 @@ describe("Firewall text rules scoped by a matcher", () => {
 
   it("replies with its matcher's reply when a scoped reply rule withholds a message", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const answer =
         "(not-understood :ontology feedback :reason rule-violation)";
       const chain: Chain = {
@@ -697,7 +662,6 @@ describe("Firewall text rules scoped by a matcher", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkIncoming(
@@ -718,10 +682,8 @@ describe("Firewall text rules scoped by a matcher", () => {
 
   it("refuses to install a text rule whose matcher is not registered", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const failure = yield* withFirewall(
         ":memory:",
-        fixture,
         () => Effect.void,
         (agentKey) =>
           Firewall.layer(
@@ -741,7 +703,6 @@ describe("Firewall text rules scoped by a matcher", () => {
 describe("Firewall rule chain replies and holds", () => {
   it("withholds an incoming message with the reply of a reply rule", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           {
@@ -760,7 +721,6 @@ describe("Firewall rule chain replies and holds", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkIncoming(
@@ -785,7 +745,6 @@ describe("Firewall rule chain replies and holds", () => {
     "holds a draft for its owner, who approves it: $approved",
     ({ approved, refusal, rule }) =>
       Effect.gen(function* () {
-        const fixture = yield* makeIdentityFixture;
         const chain: Chain = {
           rules: [
             {
@@ -806,7 +765,6 @@ describe("Firewall rule chain replies and holds", () => {
         };
         yield* withFirewall(
           ":memory:",
-          fixture,
           (firewall, self) =>
             Effect.gen(function* () {
               const decision = yield* firewall.checkOutgoing(
@@ -828,7 +786,6 @@ describe("Firewall rule chain replies and holds", () => {
 describe("Firewall rule chain beside text rules", () => {
   it("leaves a message no chain rule matches to the text rules", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           { id: "unused", applies: "both", match: "never", action: "deny" },
@@ -837,7 +794,6 @@ describe("Firewall rule chain beside text rules", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -859,7 +815,6 @@ describe("Firewall rule chain beside text rules", () => {
 
   it("refuses for an unavailable check when a matcher fails", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           { id: "broken", applies: "both", match: "broken", action: "deny" },
@@ -868,7 +823,6 @@ describe("Firewall rule chain beside text rules", () => {
       };
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
@@ -887,7 +841,6 @@ describe("Firewall rule chain beside text rules", () => {
 
   it("refuses to install a rule whose matcher is not registered", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const chain: Chain = {
         rules: [
           { id: "unknown", applies: "both", match: "missing", action: "deny" },
@@ -896,7 +849,6 @@ describe("Firewall rule chain beside text rules", () => {
       };
       const failure = yield* withFirewall(
         ":memory:",
-        fixture,
         () => Effect.void,
         (agentKey) => Firewall.layer(agentKey, undefined, chain),
       ).pipe(Effect.flip);
@@ -909,10 +861,8 @@ describe("Firewall rule chain beside text rules", () => {
 
   it("replies with the feedback of a violated text rule whose action is reply", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkIncoming(

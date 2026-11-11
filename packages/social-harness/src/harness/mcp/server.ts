@@ -16,7 +16,6 @@ import type { MessageAddressInput } from "../../communication/messages.js";
 import type { RequestError } from "../../communication/service.js";
 import { issuesText, SendError } from "../../communication/errors.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
-import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
 import { HeldNorms } from "../../norms/index.js";
 import {
@@ -216,12 +215,11 @@ function statusTool(webhook: HarnessWebhookEvents) {
       name: "status",
       definition: toolDefinitions.status,
       execute: () =>
-        Effect.all({
-          identityCard: Schema.encode(AgentIdentityCard)(identity.me).pipe(
-            Effect.orDie,
-          ),
-          webhook: webhook.status,
-        }),
+        Effect.map(webhook.status, (status) => ({
+          agentId: identity.me.agentId,
+          agentName: identity.me.agentName,
+          webhook: status,
+        })),
     }),
   );
 }

@@ -1,17 +1,9 @@
-/** @file Binds authenticated owners to stable registration inputs before network registration. */
+/** @file Binds each authenticated owner to one agent and records that agent's identifier, name and principal. */
 import { SqlClient } from "@effect/sql";
-import { Data, Effect, Redacted, Schema } from "effect";
-import { exportPKCS8, generateKeyPair } from "jose";
+import { Data, Effect, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import { openCredential, sealCredential } from "../database/secrets.js";
 import { executeQuery, makeQueries } from "../database/sql.js";
-import { withAgentTransaction } from "../database/transactions.js";
-import {
-  AgentName,
-  AgentSigningAuthority,
-  PrincipalId,
-} from "../identity/agent-cards.js";
-import { RegistrationId } from "../identity/registry.js";
+import { AgentId, AgentName, PrincipalId } from "../identity/agent-cards.js";
 
 /** Authentication supplies both fields; email and client-provided agent selectors are excluded. */
 export interface OwnerAccount {
@@ -33,10 +25,9 @@ export const serverAgentOwner = {
 
 const profileRow = Schema.Struct({
   agent_key: Schema.UUID,
+  agent_id: AgentId,
   agent_name: AgentName,
   principal_id: PrincipalId,
-  registration_operation_id: RegistrationId,
-  private_key: Schema.String,
 });
 
 const bindingRow = Schema.Struct({
@@ -49,41 +40,24 @@ type OwnershipTables = Record<"owner_bindings", typeof bindingRow.Type> &
   Record<"agent_profiles", typeof profileRow.Type>;
 
 /**
- * Persistence failures retain existing records and do not disclose keys or account claims.
+ * The owner's agent has another name than the one asked for, or its record is
+ * missing. Carries no account claims.
  * Exported so dependent declarations can name the inferred Effect failure.
  * @public
  */
 export class OwnershipError extends Data.TaggedError("OwnershipError") {}
 
-const freshKey = Effect.gen(function* () {
-  const keys = yield* Effect.tryPromise(() =>
-    generateKeyPair("EdDSA", { extractable: true }),
-  );
-  return Redacted.make(
-    yield* Effect.tryPromise(() => exportPKCS8(keys.privateKey)),
-  );
-});
+const minted = (prefix: string) =>
+  `${prefix}${randomBytes(16).toString("base64url")}`;
 
-function readProfile(agentKey: string) {
-  return Effect.gen(function* () {
-    const queries = yield* makeQueries<OwnershipTables>();
-    const rows = yield* executeQuery(
-      queries
-        .selectFrom("agent_profiles")
-        .selectAll()
-        .where("agent_key", "=", agentKey),
-    );
-    return yield* Schema.decodeUnknown(profileRow)(rows[0]);
-  });
-}
-
-/** Concurrent first connections return one agent key with durable registration inputs. */
+/**
+ * The key of the owner's agent, creating the agent on first use with a new
+ * identifier and principal. Concurrent first calls for one owner return the
+ * same key. With `agentName`, the agent is created under that name and an
+ * existing agent must already have it.
+ */
 export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
-  function* (
-    owner: OwnerAccount,
-    unlockKey: Redacted.Redacted<Uint8Array>,
-    agentName?: AgentName,
-  ) {
+  function* (owner: OwnerAccount, agentName?: AgentName) {
     const sql = yield* SqlClient.SqlClient;
     const queries = yield* makeQueries<OwnershipTables>();
     const lookup = () =>
@@ -95,27 +69,31 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
           .where("subject", "=", owner.subject),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(bindingRow))));
     const ownedKey = (agentKey: string) =>
-      withAgentTransaction(
-        agentKey,
-        readProfile(agentKey).pipe(
-          Effect.filterOrFail(
-            (profile) =>
-              agentName === undefined || profile.agent_name === agentName,
-            () => new OwnershipError(),
-          ),
-          Effect.as(agentKey),
+      executeQuery(
+        queries
+          .selectFrom("agent_profiles")
+          .select("agent_name")
+          .where("agent_key", "=", agentKey),
+      ).pipe(
+        Effect.filterOrFail(
+          ([profile]) =>
+            profile !== undefined &&
+            (agentName === undefined || profile.agent_name === agentName),
+          () => new OwnershipError(),
         ),
+        Effect.as(agentKey),
       );
     const existing = (yield* lookup())[0];
     if (existing !== undefined) {
       return yield* ownedKey(existing.agent_key);
     }
     const candidateKey = randomUUID();
-    const name = agentName ?? `agent-${randomBytes(12).toString("hex")}`;
-    const principal = `prn_${randomBytes(16).toString("base64url")}`;
-    const operation = `opn_${randomBytes(16).toString("base64url")}`;
-    const privateKey = yield* freshKey;
-    const sealed = yield* sealCredential(privateKey, candidateKey, unlockKey);
+    const profile = yield* Schema.decodeUnknown(profileRow)({
+      agent_key: candidateKey,
+      agent_id: minted("agt_"),
+      agent_name: agentName ?? `agent-${randomBytes(12).toString("hex")}`,
+      principal_id: minted("prn_"),
+    });
     return yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* executeQuery(
@@ -135,19 +113,8 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
           return yield* new OwnershipError();
         }
         if (binding.agent_key === candidateKey) {
-          yield* withAgentTransaction(
-            candidateKey,
-            executeQuery(
-              queries.insertInto("agent_profiles").values({
-                agent_key: candidateKey,
-                agent_name: yield* Schema.decodeUnknown(AgentName)(name),
-                principal_id:
-                  yield* Schema.decodeUnknown(PrincipalId)(principal),
-                registration_operation_id:
-                  yield* Schema.decodeUnknown(RegistrationId)(operation),
-                private_key: sealed,
-              }),
-            ),
+          yield* executeQuery(
+            queries.insertInto("agent_profiles").values(profile),
           );
         }
         return yield* ownedKey(binding.agent_key);
@@ -157,7 +124,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
   Effect.withSpan("getOrCreateOwnedAgent"),
 );
 
-/** The private catalog restores known agents without exposing their owners to host tools. */
+/** The key of every agent the daemon has created. */
 export const listOwnedAgentKeys = Effect.gen(function* () {
   const queries = yield* makeQueries<OwnershipTables>();
   const rows = yield* executeQuery(
@@ -169,22 +136,3 @@ export const listOwnedAgentKeys = Effect.gen(function* () {
     { concurrency: 1 },
   );
 }).pipe(Effect.withSpan("listOwnedAgentKeys"));
-
-/** Hydration uses the saved registration operation and signing key on every restart. */
-export const loadAgentRegistration = Effect.fn("loadAgentRegistration")(
-  function* (agentKey: string, unlockKey: Redacted.Redacted<Uint8Array>) {
-    const profile = yield* withAgentTransaction(
-      agentKey,
-      readProfile(agentKey),
-    );
-    const key = yield* openCredential(profile.private_key, agentKey, unlockKey);
-    return {
-      signingAuthority: yield* AgentSigningAuthority.fromPkcs8(key),
-      registration: {
-        agentName: profile.agent_name,
-        principalId: profile.principal_id,
-        operationId: profile.registration_operation_id,
-      },
-    };
-  },
-);

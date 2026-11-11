@@ -54,25 +54,14 @@ export {
 } from "./communication/messages.js";
 /** A send error classifies correction, retained work and uncertain acceptance. */
 export { SendError } from "./communication/errors.js";
-/** Agent attribution and Registry-signed identity cards. */
+/** The identifiers and name an agent is known by. */
 export {
   AgentCard,
   AgentId,
-  AgentIdentityCard,
   AgentName,
   PrincipalId,
-  type VerifiedAgentIdentityCard,
 } from "./identity/agent-cards.js";
-/** Signing authority exposes no private key bytes. */
-export { AgentPublicKey, AgentSigningAuthority } from "./identity/keys.js";
-/** Signed network messages and their verification results. */
-export {
-  EnvelopeId,
-  type LiveSignedMessage,
-  SignedMessage,
-  type VerifiedSignedMessage,
-} from "./identity/message-security.js";
-/** Installed package version and the wire versions this release emits and accepts. */
-export { LIVE_WIRE_VERSIONS, packageVersion, WIRE_VERSION } from "./version.js";
+/** Installed package version. */
+export { packageVersion } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */
 export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";

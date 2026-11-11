@@ -144,21 +144,6 @@ function localFailure(subject: Fixture, recipient?: AgentCard) {
 }
 
 // @agent-code-guard/regression-only: These timelines cover cancellation, restart, ordering and atomic publication through real SQLite.
-it("reuses the saved identity without calling the Registry again", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const scope = yield* Scope.make();
-    const runtime = yield* subject.open().pipe(Scope.extend(scope));
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* subject.open({
-      beforeRegistration: Effect.dieMessage(
-        "Saved registration must not call Registry again",
-      ),
-    });
-    expect(reopened.identity.me).toEqual(runtime.identity.me);
-    expect((yield* reopened.harness.listInbox()).items).toEqual([]);
-  }));
-
 it("serves the inbox while communication starts", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -307,7 +292,7 @@ it("recovers an interrupted check and retains its published view after edits, ac
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     expect((yield* resumed.harness.listInbox()).items).toEqual([]);
-    yield* subject.disconnectRegistry();
+    yield* subject.failNameResolution();
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "received", ...saved }]);
@@ -330,7 +315,7 @@ it("reads result-only history without contacting Registry", () =>
       return yield* Effect.dieMessage("Expected result delivery");
     }
     yield* runtime.harness.acknowledgeDelivery(entry.deliveryToken);
-    yield* subject.disconnectRegistry();
+    yield* subject.failNameResolution();
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "result", item: { kind: "operationFailed" } }]);
@@ -901,7 +886,7 @@ it("retains a draft's input while its caller changes the original object", () =>
 
 const hiddenSends: readonly SendRequest[] = [
   {
-    to: MessageAddressInput.make("group:bob,carol,http-signer"),
+    to: MessageAddressInput.make("group:alice,bob,carol"),
     text: "Hello",
   },
 ];
@@ -946,7 +931,7 @@ it("requires canonical history addresses and identifies unknown agents", () =>
     expect(
       yield* harness
         .readHistory({
-          address: MessageAddressInput.make("group:carol,bob,http-signer"),
+          address: MessageAddressInput.make("group:carol,bob,alice"),
         })
         .pipe(Effect.flip),
     ).toMatchObject({ reason: "invalid-address" });

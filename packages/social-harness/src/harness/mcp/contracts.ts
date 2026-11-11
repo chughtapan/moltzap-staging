@@ -31,7 +31,7 @@ import {
   policyUpdateResultSchema,
   policyUpdateSchema,
 } from "../../firewall/index.js";
-import { AgentIdentityCard } from "../../identity/agent-cards.js";
+import { AgentId, AgentName } from "../../identity/agent-cards.js";
 import {
   DeliveryToken,
   InboxError,
@@ -156,8 +156,6 @@ const firewallRefusalSchema = exactStruct({
 
 const savedItemSchema = Schema.typeSchema(PermittedItem);
 
-const encodedAgentCard = Schema.encodedBoundSchema(AgentIdentityCard);
-
 const historyRecord = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
@@ -179,9 +177,10 @@ const historyRecord = Schema.Union(
   }),
 );
 
-/** The identity is readable while communication is still starting. */
+/** This agent's identifier and name, readable while communication is still starting. */
 const managementStatusResultSchema = Schema.Struct({
-  identityCard: encodedAgentCard,
+  agentId: AgentId,
+  agentName: AgentName,
   webhook: webhookStatusSchema,
 });
 
@@ -454,7 +453,7 @@ export const toolDefinitions = {
   status: {
     failure: failsUntyped,
     description:
-      "Read this agent's Registry-issued identity card and the state of the inbox wake-up callback, if one is subscribed.",
+      "Read this agent's identifier and name, and the state of the inbox wake-up callback if one is subscribed. Other agents address this agent as agent:<agentName>.",
     input: empty,
     output: managementStatusResultSchema,
     annotations: read,

@@ -1,13 +1,6 @@
-/** @file Semantic communication handoffs shared by delivery implementations. */
+/** @file What the communication service accepts, hands to the host and returns as history. */
 import { type Effect, Schema } from "effect";
-import type {
-  AgentName,
-  VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import type {
-  AgentPublicKey,
-  AgentSigningAuthority,
-} from "../identity/keys.js";
+import type { AgentCard, AgentName } from "../identity/agent-cards.js";
 import type { CommunicationError } from "./errors.js";
 import { exactStruct } from "../encoding/index.js";
 import {
@@ -85,12 +78,12 @@ export const Incoming = Schema.Union(
 /** Incoming work awaits local policy before the host receives it. */
 export type Incoming = typeof Incoming.Type;
 
-/** The delivery mode owns acceptance, ordering and verification behind this handoff. */
+/** One agent's sends, incoming work and history. */
 export interface CommunicationService {
   /**
-   * Returns after durable acceptance. P2P certification continues in the
-   * layer's scope; client/server ordering completes before returning. Retry the same `Message` or `Request`,
-   * retaining its `msgId` or `operationId`.
+   * Returns once a message is ordered and saved for every member, or a
+   * question is saved. Retry the same `Message` or `Request`, retaining its
+   * `msgId` or `operationId`.
    */
   readonly send: (
     value: Outgoing,
@@ -123,7 +116,7 @@ export interface CommunicationService {
   readonly listConversations: (
     query?: ConversationQuery,
   ) => Effect.Effect<ConversationPage, CommunicationError>;
-  /** Reads verified application messages. Continuation cursors require this service instance. */
+  /** Reads a conversation's messages in order. Continuation cursors require this service instance. */
   readonly readHistory: (
     query: HistoryQuery,
   ) => Effect.Effect<HistoryPage, CommunicationError>;
@@ -131,11 +124,11 @@ export interface CommunicationService {
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
 
-/** Signing and Registry authority belong to the one configured local agent. */
+/** The agent a communication service acts for. */
 export interface CommunicationSettings {
+  /** The key the agent's rows are stored under. */
   readonly agentKey: string;
-  readonly identityCard: VerifiedAgentIdentityCard;
+  readonly card: AgentCard;
+  /** The most messages one newest-first history read may ask for. */
   readonly maximumHistoryRecords?: number;
-  readonly signingAuthority: AgentSigningAuthority;
-  readonly registrySignerPublicKey: AgentPublicKey;
 }

@@ -11,7 +11,7 @@ import {
   sameBytes,
 } from "../encoding/index.js";
 import { AgentId } from "../identity/agent-cards.js";
-import { type SendFailure, sendFailureReasons } from "./errors.js";
+import { sendFailureReasons } from "./errors.js";
 import {
   CollectiveId,
   type CollectiveValue,
@@ -47,9 +47,6 @@ export type EndpointStoreFailure =
   | "invalid-input"
   | "not-found"
   | "persistence";
-
-/** Whether an idempotent mutation inserted state or observed the same state. */
-export type StoreMutation = "inserted" | "existing";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -141,38 +138,6 @@ export interface StoredMessage {
   readonly message: Message;
 }
 
-/** Each construction checks the captured agent before touching retained protocol work. */
-export function initializeCommunication(
-  agentKey: string,
-  identity: { readonly agentId: string },
-) {
-  return transaction(
-    agentKey,
-    Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      yield* sql`INSERT INTO communication_metadata(agent_key,agent_id)
-      VALUES(${agentKey},${identity.agentId}) ON CONFLICT(agent_key) DO NOTHING`;
-      const [row] = yield* sql<{
-        readonly agentId: string;
-      }>`SELECT agent_id AS "agentId"
-      FROM communication_metadata WHERE agent_key=${agentKey}`;
-      if (row?.agentId !== identity.agentId) {
-        return yield* new EndpointStoreError({ reason: "conflict" });
-      }
-    }),
-  ).pipe(Effect.withSpan("initializeCommunication"));
-}
-
-/**
- * Whether a store error refuses the input itself, because it conflicts with
- * durable state or is invalid, rather than reporting a failed store.
- * @param error A closed endpoint-store error.
- * @returns Whether the store refused the input.
- */
-export function isSemanticStoreRejection(error: EndpointStoreError): boolean {
-  return error.reason === "conflict" || error.reason === "invalid-input";
-}
-
 /** Acceptance stays in the caller's SQL transaction and performs no network work. */
 export function acceptMessage(
   agentKey: string,
@@ -185,11 +150,6 @@ export function acceptMessage(
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const identity = yield* readStoredIdentity(agentKey);
-    if (identity === undefined) {
-      return yield* new EndpointStoreError({ reason: "not-found" });
-    }
-    requireEqual(identity.agentId, input.authorAgentId);
     yield* sql`INSERT INTO message_intents(agent_key,author_agent_id,msg_id,conversation_id,canonical_message)
        VALUES(${agentKey},${input.authorAgentId},${input.msgId},${input.conversationId},${input.canonicalMessage}) ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING`;
     const [row] = yield* sql<
@@ -218,20 +178,6 @@ export function readAcceptedMessage(
     >`SELECT author_agent_id,msg_id,canonical_message,failure_reason, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
     return row === undefined ? undefined : yield* readAcceptedRow(row);
   }).pipe(agentOperation(agentKey), Effect.withSpan("readAcceptedMessage"));
-}
-
-/** Terminal preparation failures remain observable after the process restarts. */
-export function failMessage(
-  agentKey: string,
-  reference: MessageReference,
-  reason: SendFailure,
-) {
-  return Effect.gen(function* () {
-    requireText(reason);
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE message_intents SET failure_reason=COALESCE(failure_reason,${reason})
-       WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId} AND NOT EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id)`;
-  }).pipe(agentOperation(agentKey), Effect.withSpan("failMessage"));
 }
 
 /**
@@ -565,32 +511,6 @@ export function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
   }).pipe(storeOperation, Effect.withSpan("readAcceptedRow"));
 }
 
-/** The communication owner binds one immutable agent identity to its protocol state. */
-export function readStoredIdentity(agentKey: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const [row] = yield* sql<{
-      readonly agentId: string;
-    }>`SELECT agent_id AS "agentId" FROM communication_metadata WHERE agent_key=${agentKey}`;
-    return row === undefined
-      ? undefined
-      : {
-          agentId: yield* Schema.decodeUnknown(AgentId)(row.agentId).pipe(
-            Effect.catchTag(
-              "ParseError",
-              () => new EndpointStoreError({ reason: "corrupt" }),
-            ),
-          ),
-        };
-  }).pipe(
-    Effect.withSpan("readStoredIdentity"),
-    Effect.catchTag(
-      "SqlError",
-      () => new EndpointStoreError({ reason: "persistence" }),
-    ),
-  );
-}
-
 /**
  * Reads one nullable nonempty SQL text.
  *
@@ -707,7 +627,8 @@ export function readMessages(
     readonly after?: number;
     readonly through?: number;
     readonly newest?: boolean;
-    readonly pending?: boolean;
+    /** Selects messages this agent has not consumed and did not write. */
+    readonly pendingFor?: AgentId;
     readonly limit: number;
   },
 ) {
@@ -721,9 +642,10 @@ export function readMessages(
       input.after === undefined ? sql`` : sql`AND ordinal>${input.after}`;
     const through =
       input.through === undefined ? sql`` : sql`AND ordinal<=${input.through}`;
-    const pending = input.pending
-      ? sql`AND consumed=0 AND author_agent_id<>(SELECT agent_id FROM communication_metadata WHERE agent_key=${agentKey})`
-      : sql``;
+    const pending =
+      input.pendingFor === undefined
+        ? sql``
+        : sql`AND consumed=0 AND author_agent_id<>${input.pendingFor}`;
     const ascending =
       input.conversationId === undefined
         ? sql`ORDER BY sequence`
@@ -847,10 +769,10 @@ export function acknowledgeMessage(
 }
 
 /**
- * The protocol identity row serializes one agent's transactions on PostgreSQL,
- * matching SQLite's connection serialization. Nested calls retain the lock
- * until the enclosing transaction commits; other agents use their own rows.
- * Store operations perform no network or model work.
+ * Locking the agent's own row serializes one agent's transactions on
+ * PostgreSQL, matching SQLite's connection serialization. Nested calls retain
+ * the lock until the enclosing transaction commits; other agents use their own
+ * rows. Store operations perform no network or model work.
  */
 export function agentOperation(agentKey: string) {
   return <A, E, R>(work: Effect.Effect<A, E, R>) =>
@@ -860,7 +782,7 @@ export function agentOperation(agentKey: string) {
         const sql = yield* SqlClient;
         yield* sql.onDialectOrElse({
           pg: () =>
-            sql`SELECT agent_key FROM communication_metadata WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
+            sql`SELECT agent_key FROM agent_profiles WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
               Effect.asVoid,
             ),
           orElse: () => Effect.void,

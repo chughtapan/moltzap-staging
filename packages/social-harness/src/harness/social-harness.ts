@@ -47,11 +47,7 @@ import {
   type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/index.js";
-import {
-  type AgentCard,
-  agentCardOf,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
+import type { AgentCard } from "../identity/agent-cards.js";
 import { Identity, IdentityError } from "../identity/service.js";
 import {
   catalogCursor,
@@ -185,7 +181,7 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
   SocialHarnessService
 >() {
-  /** Shares one database and starts communication after registration is retained. */
+  /** Shares one database with communication, which starts in the background. */
   static layer<R>(settings: HarnessSettings<R>, workers: FiberSet.FiberSet) {
     return Layer.scoped(SocialHarness, makeHarness(settings, workers));
   }
@@ -194,9 +190,9 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
 /** Supplies communication and inbox processing limits for one agent. */
 export interface HarnessSettings<R> {
   readonly agentKey: string;
-  /** Builds communication after registration or saved identity loading. */
+  /** Builds communication for this agent's card. */
   readonly communication: (
-    identityCard: VerifiedAgentIdentityCard,
+    card: AgentCard,
   ) => Layer.Layer<Communication, CommunicationError, R>;
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
@@ -300,10 +296,9 @@ function makeHarness<R>(
               return yield* new SendError({ reason: "content-invalid" });
             }
             const communication = yield* active;
-            const author = agentCardOf(card);
             const destination = yield* canonicalMessageAddress(
               request.to,
-              author.agentName,
+              card.agentName,
             );
             let value: Outgoing;
             if ("collectiveResponse" in request) {
@@ -324,14 +319,14 @@ function makeHarness<R>(
                   ),
                 );
               const expected = [original.author, ...original.recipients]
-                .filter((member) => member.agentId !== author.agentId)
+                .filter((member) => member.agentId !== card.agentId)
                 .map((member) => member.agentName)
                 .sort(compareAscii);
               const selectedNames =
                 destination.kind === "direct"
                   ? [destination.remoteName]
                   : destination.memberNames.filter(
-                      (name) => name !== author.agentName,
+                      (name) => name !== card.agentName,
                     );
               if (
                 expected.join(",") !==
@@ -340,7 +335,7 @@ function makeHarness<R>(
                 return yield* new SendError({ reason: "invalid-address" });
               }
               value = yield* Answer.create({
-                author,
+                author: card,
                 request: original,
                 response: request.collectiveResponse,
               }).pipe(
@@ -354,7 +349,7 @@ function makeHarness<R>(
                   destination.kind === "direct"
                     ? [destination.remoteName]
                     : destination.memberNames.filter(
-                        (name) => name !== author.agentName,
+                        (name) => name !== card.agentName,
                       ),
                 )
                 .pipe(
@@ -364,7 +359,7 @@ function makeHarness<R>(
                         reason:
                           error.reason === "unknown-agent"
                             ? "unknown-agent"
-                            : "network-unavailable",
+                            : "persistence-failed",
                         ...(error.reason === "unknown-agent" &&
                         error.agentName !== undefined
                           ? {
@@ -383,7 +378,7 @@ function makeHarness<R>(
                 request.collective?.op === "gather" ||
                 request.collective?.op === "all_gather"
                   ? yield* Request.create({
-                      author,
+                      author: card,
                       recipients: [first, ...rest],
                       question: request.text,
                       ...request.collective,
@@ -393,7 +388,7 @@ function makeHarness<R>(
                       ),
                     )
                   : yield* Message.create({
-                      author,
+                      author: card,
                       recipients: [first, ...rest],
                       content: [{ type: "text", text: request.text }],
                     }).pipe(Effect.mapError(sendFailure));
@@ -639,7 +634,7 @@ function checkIncoming(
   firewall: Context.Tag.Service<typeof Firewall>,
   communication: CommunicationService,
   entry: PendingItem,
-  card: VerifiedAgentIdentityCard,
+  card: AgentCard,
   limit: number,
   withheldReply: Option.Option<string>,
 ) {
@@ -703,12 +698,7 @@ function checkIncoming(
       };
     }
     const decision = yield* firewall.checkIncoming(value, evidence);
-    const reply = yield* replyTo(
-      value,
-      decision,
-      agentCardOf(card),
-      withheldReply,
-    );
+    const reply = yield* replyTo(value, decision, card, withheldReply);
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;

@@ -9,7 +9,7 @@ import type {
 import { makeDelivery } from "./delivery.js";
 import { bindCommunicationMode } from "./mode.js";
 
-/** Semantic handoffs are shared by every delivery mode. */
+/** The values the service accepts, hands over and returns in both modes. */
 export {
   type Conversation,
   type ConversationQuery,
@@ -19,7 +19,7 @@ export {
   Outgoing,
 } from "./contract.js";
 
-/** Owns durable message delivery, request completion and verified history. */
+/** Delivers messages, completes questions and reads ordered history for one agent. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService

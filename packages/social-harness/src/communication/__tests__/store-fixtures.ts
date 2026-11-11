@@ -6,7 +6,6 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
 import { migrateDaemon } from "../../database/migrations.js";
-import * as storeOperations from "../store.js";
 /** The scope closes SQLite before its temporary state directory is removed. */
 export const openTestDatabase = (directory?: string) =>
   Effect.gen(function* () {
@@ -28,7 +27,6 @@ export const openTestDatabase = (directory?: string) =>
       directory: selected,
       agentKey: selected,
       sql,
-      store: testStore(selected),
       run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.provideService(SqlClient, sql)),
     };
@@ -40,11 +38,3 @@ export const openTestDatabase = (directory?: string) =>
 export type TestDatabase = Effect.Effect.Success<
   ReturnType<typeof openTestDatabase>
 >;
-function testStore(agentKey: string) {
-  return {
-    initializeCommunication: storeOperations.initializeCommunication.bind(
-      undefined,
-      agentKey,
-    ),
-  };
-}

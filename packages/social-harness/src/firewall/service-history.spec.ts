@@ -6,7 +6,6 @@ import { describe, expect } from "vitest";
 import type { DecisionProvider } from "./check.js";
 import type { TextRule } from "./rules.js";
 import { Message } from "../communication/messages.js";
-import { makeIdentityFixture } from "../identity/__tests__/authentication-fixtures.js";
 import {
   evidence,
   incoming,
@@ -44,11 +43,9 @@ function recording(states: string[]): FirewallOptions {
 describe("Firewall history with this agent's unordered sends", () => {
   it("judges a draft after this agent's earlier sends the Router has not ordered", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const states: string[] = [];
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const draft = yield* outgoing(self);
@@ -72,11 +69,9 @@ describe("Firewall history with this agent's unordered sends", () => {
 
   it("admits an incoming message while this agent has sends the Router has not ordered", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const states: string[] = [];
       yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall, self) =>
           Effect.gen(function* () {
             const received = yield* incoming(self);

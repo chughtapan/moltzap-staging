@@ -57,7 +57,6 @@ export function openCollectives(input: FixtureInput = {}) {
     const agent = input.agent ?? alice;
     const sent = yield* Queue.unbounded<Message>();
     const results = yield* Queue.unbounded<ResultDelivery>();
-    yield* database.run(database.store.initializeCommunication(agent));
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
     const complete = database

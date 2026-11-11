@@ -1,4 +1,4 @@
-/** @file Reads the same retained message history for every delivery protocol. */
+/** @file Reads an agent's conversations and their ordered messages. */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Option, Schema } from "effect";
 import { randomBytes } from "node:crypto";
@@ -9,11 +9,7 @@ import type {
 } from "./contract.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import { encodeCanonical } from "../encoding/index.js";
-import {
-  AgentCard,
-  type AgentName,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
+import { AgentCard, type AgentName } from "../identity/agent-cards.js";
 import { CommunicationError } from "./errors.js";
 import {
   compareAgentIds,
@@ -32,12 +28,10 @@ import {
 
 interface HistoryInput {
   readonly agentKey: string;
-  readonly local: VerifiedAgentIdentityCard;
+  readonly local: AgentCard;
   readonly maximumHistoryRecords: number;
+  /** Runs before every read and fails when stored history is incomplete. */
   readonly check: Effect.Effect<void, CommunicationError, SqlClient>;
-  readonly verify: (
-    rows: readonly StoredMessage[],
-  ) => Effect.Effect<void, CommunicationError, SqlClient>;
 }
 interface Environment extends HistoryInput {
   readonly session: string;
@@ -60,7 +54,7 @@ const cursorSchema = Schema.Struct({
 const fail = (reason: CommunicationError["reason"]) =>
   new CommunicationError({ reason });
 
-/** Verification belongs to the selected protocol; paging and visibility use the shared log. */
+/** Conversation lookup, listing and paged history for one agent. */
 export function messageHistory(input: HistoryInput) {
   const environment = {
     ...input,
@@ -413,9 +407,7 @@ function read(
   environment: Environment,
   query: Parameters<typeof readMessages>[1],
 ) {
-  return readMessages(environment.agentKey, query).pipe(
-    Effect.tap(environment.verify),
-  );
+  return readMessages(environment.agentKey, query);
 }
 
 function conversationKey(environment: Environment, members: Conversation) {

@@ -23,11 +23,9 @@ import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
-import type { AgentPublicKey } from "../identity/keys.js";
-import { localRegistry } from "../identity/local-registry.js";
 import { Identity } from "../identity/service.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
-import { packageVersion, WIRE_VERSION } from "../version.js";
+import { packageVersion } from "../version.js";
 import {
   type DaemonSettings,
   loadDaemonSettings,
@@ -41,7 +39,6 @@ import { makeWebhookEvents } from "./mcp/webhook.js";
 import {
   getOrCreateOwnedAgent,
   listOwnedAgentKeys,
-  loadAgentRegistration,
   localOwner,
   type OwnerAccount,
   serverAgentOwner,
@@ -64,7 +61,7 @@ function runDaemon() {
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
       if (settings.authentication.kind === "local") {
-        yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agentName);
+        yield* getOrCreateOwnedAgent(localOwner, agentName);
       }
       const norms =
         settings.norms === undefined
@@ -73,18 +70,13 @@ function runDaemon() {
       const mode =
         settings.mode.kind === "p2p"
           ? yield* p2pMode(settings)
-          : yield* clientServerMode(settings.mode, {
-              unlockKey: access.unlockKey,
-              hasNorms: norms !== undefined,
-            });
-      const registry = yield* localRegistry(access.unlockKey);
+          : yield* clientServerMode(settings.mode, norms !== undefined);
       const selectApp = yield* makeAgentSelector({
         settings,
         unlockKey: access.unlockKey,
-        registrySignerPublicKey: registry.registrySignerPublicKey,
         mode,
         norms,
-      }).pipe(Effect.provide(yield* Layer.build(registry.layer)));
+      });
       const app = yield* makeMcpHttpApp(
         settings.authentication,
         selectApp,
@@ -92,7 +84,7 @@ function runDaemon() {
       );
       yield* serveMcp(settings.port, app, settings.host);
       yield* Console.log(
-        `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+        `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
       );
       return yield* Effect.never;
     }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
@@ -126,19 +118,12 @@ function p2pMode(settings: DaemonSettings) {
  */
 function clientServerMode(
   mode: Extract<DaemonSettings["mode"], { readonly kind: "client-server" }>,
-  input: {
-    readonly unlockKey: Redacted.Redacted<Uint8Array>;
-    readonly hasNorms: boolean;
-  },
+  hasNorms: boolean,
 ) {
   return Effect.gen(function* () {
     const { serverAgentName } = mode;
     yield* Communication.clientServer.claim(serverAgentName);
-    yield* getOrCreateOwnedAgent(
-      serverAgentOwner,
-      input.unlockKey,
-      serverAgentName,
-    );
+    yield* getOrCreateOwnedAgent(serverAgentOwner, serverAgentName);
     const serverNorms = yield* Ref.make(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
@@ -150,7 +135,7 @@ function clientServerMode(
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: {
         hideGroups: true,
-        withheldReply: input.hasNorms
+        withheldReply: hasNorms
           ? "Your message was not accepted: it breaks a rule this agent applies to incoming messages. Call read_norms to see which messages it accepts."
           : "Your message was not accepted: it breaks a rule this agent applies to incoming messages.",
       },
@@ -161,7 +146,7 @@ function clientServerMode(
     const client = {
       communication,
       checks: ({ agentKey }: { readonly agentKey: string }) =>
-        input.hasNorms
+        hasNorms
           ? readsNormsOf(serverNorms).pipe(
               Layer.provideMerge(Firewall.layer(agentKey)),
             )
@@ -213,16 +198,14 @@ type Mode =
 /** What every agent of the daemon is built from. */
 interface DaemonResources {
   readonly settings: DaemonSettings;
+  /** Opens the webhook secrets sealed in the database. */
   readonly unlockKey: Redacted.Redacted<Uint8Array>;
-  /** The key the daemon signs its agents' identity cards with. */
-  readonly registrySignerPublicKey: AgentPublicKey;
   readonly mode: Mode;
   readonly norms?: ServiceNorms;
 }
 
 /** Requests borrow a prepared app; their cancellation never owns its acquisition. */
 function makeAgentSelector(daemon: DaemonResources) {
-  const { unlockKey } = daemon;
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
@@ -249,7 +232,7 @@ function makeAgentSelector(daemon: DaemonResources) {
       { concurrency: 4, discard: true },
     ).pipe(Effect.forkScoped);
     return (owner: OwnerAccount) =>
-      getOrCreateOwnedAgent(owner, unlockKey).pipe(
+      getOrCreateOwnedAgent(owner).pipe(
         Effect.flatMap(acquire),
         Effect.provideService(SqlClient.SqlClient, sql),
         Effect.interruptible,
@@ -277,28 +260,20 @@ function ownChecks(daemon: DaemonResources, agentKey: string) {
 function makeAgentApp(daemon: DaemonResources, agentKey: string) {
   const { settings, unlockKey, mode } = daemon;
   return Effect.gen(function* () {
-    const registration = yield* loadAgentRegistration(agentKey, unlockKey);
-    const agent = mode.agent(registration.registration.agentName);
+    const identity = yield* Layer.build(Identity.layer(agentKey));
+    const agent = mode.agent(Context.get(identity, Identity).me.agentName);
     const workers = yield* FiberSet.make();
     const stopped = yield* Deferred.make<undefined>();
-    const identity = Identity.layer({
-      agentKey,
-      signingAuthority: registration.signingAuthority,
-      registrySignerPublicKey: daemon.registrySignerPublicKey,
-      registration: registration.registration,
-    });
     const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
           ...agent.harness,
           agentKey,
-          communication: (identityCard) =>
+          communication: (card) =>
             agent.communication({
               agentKey,
-              identityCard,
-              signingAuthority: registration.signingAuthority,
-              registrySignerPublicKey: daemon.registrySignerPublicKey,
+              card,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
             }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
@@ -309,7 +284,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
         Layer.provideMerge(
           agent
             .checks({ agentKey, own: ownChecks(daemon, agentKey) })
-            .pipe(Layer.provideMerge(identity)),
+            .pipe(Layer.provideMerge(Layer.succeedContext(identity))),
         ),
       ),
     );
@@ -350,18 +325,11 @@ export { prepareDatabase } from "../database/migrations.js";
 
 /** Trusted embeddings use the same services as the process's MCP adapter. */
 export { type SendRequest, SocialHarness } from "./social-harness.js";
-/** Local identity and registration remain independent of delivery recovery. */
+/** This agent's card and the other agents of its daemon by name. */
 export { Identity } from "../identity/service.js";
-/** Message transport owns requests, replies and verified history. */
+/** Message delivery, questions and ordered history. */
 export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/index.js";
-/** Network services expose complete calls through their owning layers. */
-export {
-  RegistrationId,
-  Registry,
-  RegistryError,
-} from "../identity/registry.js";
-
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

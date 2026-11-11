@@ -3,44 +3,41 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import { Chunk, Context, Effect, Layer, Queue, Schema } from "effect";
 import { expect } from "vitest";
-import { conversationIdentityFixture } from "./__tests__/conversation-fixtures.js";
-import { agentCardOf } from "../identity/agent-cards.js";
+import { testAgentCard } from "../__tests__/agents.js";
+import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { form } from "./__tests__/requests-fixtures.js";
 import { Answer, Message, Request } from "./messages.js";
 import { Communication, type Conversation, type Incoming } from "./service.js";
 
+type Agent = Effect.Effect.Success<typeof conversationFixture>["alice"];
+
+/** Alice is the server agent; Bob and Carol are clients. */
 const fixture = Effect.gen(function* () {
-  const subject = yield* conversationIdentityFixture;
-  const open = (identity: typeof subject.local, agentKey: string) =>
+  const subject = yield* conversationFixture;
+  const open = (agent: Agent) =>
     Layer.build(
       Communication.clientServer.layer({
-        agentKey,
-        identityCard: identity.card,
-        signingAuthority: identity.authority,
-        registrySignerPublicKey: subject.signer,
-        serverAgentName: subject.local.card.agentName,
+        ...agent,
+        serverAgentName: subject.alice.card.agentName,
       }),
     ).pipe(
       Effect.provideService(SqlClient, subject.sql),
       Effect.map((context) => Context.get(context, Communication)),
     );
-  const server = yield* open(subject.local, subject.agentKey);
-  const client = yield* open(subject.remote, "client");
-  const other = yield* open(subject.third, "other");
-  const members: Conversation = [
-    agentCardOf(subject.local.card),
-    agentCardOf(subject.remote.card),
-  ];
+  const server = yield* open(subject.alice);
+  const client = yield* open(subject.bob);
+  const other = yield* open(subject.carol);
+  const members: Conversation = [subject.alice.card, subject.bob.card];
   const message = (text: string) =>
     Message.create({
-      author: agentCardOf(subject.remote.card),
-      recipients: [agentCardOf(subject.local.card)],
+      author: subject.bob.card,
+      recipients: [subject.alice.card],
       content: [{ type: "text", text }],
     });
   return { subject, server, client, other, members, message, open };
 });
 
-// @agent-code-guard/regression-only: Real signed SQL exchanges cover atomic fanout, restart and corrupted retained state.
+// @agent-code-guard/regression-only: Real SQL exchanges cover atomic fanout, restart and incomplete retained state.
 it("retains a client/server exchange and delivers each message only to its recipient", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
@@ -83,7 +80,7 @@ it("retains a client/server exchange and delivers each message only to its recip
     expect((yield* f.client.listConversations()).conversations).toEqual([
       f.members,
     ]);
-    const reopened = yield* f.open(f.subject.remote, "client");
+    const reopened = yield* f.open(f.subject.bob);
     expect(
       (yield* reopened.readHistory({ members: f.members })).entries,
     ).toHaveLength(2);
@@ -103,7 +100,7 @@ it("rejects client-to-client messages, changed retries and another client's hist
     });
     const peer = yield* Message.create({
       author: request.author,
-      recipients: [agentCardOf(f.subject.third.card)],
+      recipients: [f.subject.carol.card],
       content: request.content,
     });
     expect(yield* f.client.send(peer).pipe(Effect.flip)).toMatchObject({
@@ -152,7 +149,7 @@ it("rolls back both participant views and serializes concurrent sends", () =>
     expect(server.entries).toHaveLength(2);
   }));
 
-it("replays after a consumer fails and verifies retained signatures before delivery", () =>
+it("hands a message to the next consumer after one fails", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     const message = yield* f.message("durable before delivery");
@@ -163,44 +160,18 @@ it("replays after a consumer fails and verifies retained signatures before deliv
         .consume(() => Effect.fail(consumerFailure))
         .pipe(Effect.flip),
     ).toBe(consumerFailure);
-    const reopened = yield* f.open(f.subject.local, f.subject.agentKey);
+    const reopened = yield* f.open(f.subject.alice);
     expect(
       yield* reopened
         .consume((incoming) => Effect.fail(incoming))
         .pipe(Effect.flip),
     ).toEqual({ kind: "message", message });
-    yield* f.subject
-      .sql`UPDATE message_signatures SET signed_message=${new Uint8Array([0])} WHERE agent_key=${f.subject.agentKey}`;
-    expect(
-      yield* reopened
-        .consume(() => Effect.dieMessage("Unverified message reached the host"))
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
   }));
 
-it("rejects misplaced signed rows, changed keys and transport changes", () =>
+it("keeps a database in the mode and with the server agent it has messages for", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const message = yield* f.message("signed client/server message");
-    yield* f.client.send(message);
-    yield* f.subject
-      .sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message)
-    SELECT 'other',conversation_id,ordinal,author_agent_id,msg_id,canonical_message FROM message_log WHERE agent_key='client'`;
-    yield* f.subject
-      .sql`INSERT INTO message_signatures(agent_key,author_agent_id,msg_id,signed_message)
-    SELECT 'other',author_agent_id,msg_id,signed_message FROM message_signatures WHERE agent_key='client'`;
-    expect(
-      yield* f.other
-        .consume(() =>
-          Effect.dieMessage("Another agent's message reached the host"),
-        )
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
-    yield* f.subject
-      .sql`UPDATE message_log SET msg_id='substituted' WHERE agent_key='client'`;
-    expect(
-      yield* f.client.readHistory({ members: f.members }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
+    yield* f.client.send(yield* f.message("client/server message"));
     expect(
       yield* Communication.p2p.claim.pipe(
         Effect.provideService(SqlClient, f.subject.sql),
@@ -209,12 +180,12 @@ it("rejects misplaced signed rows, changed keys and transport changes", () =>
     ).toMatchObject({ reason: "membership-invalid" });
     expect(
       yield* Communication.clientServer
-        .claim(f.subject.remote.card.agentName)
+        .claim(f.subject.bob.card.agentName)
         .pipe(Effect.provideService(SqlClient, f.subject.sql), Effect.flip),
     ).toMatchObject({ reason: "membership-invalid" });
   }));
 
-it("refuses missing recipient tails and conversations retained by delivery evidence", () =>
+it("refuses a conversation with a missing position or a row that names another message", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     const first = yield* f.message("first");
@@ -222,15 +193,10 @@ it("refuses missing recipient tails and conversations retained by delivery evide
     yield* f.client.send(first);
     yield* f.client.send(last);
     yield* f.subject
-      .sql`DELETE FROM message_log WHERE agent_key=${f.subject.agentKey} AND msg_id=${last.msgId}`;
+      .sql`DELETE FROM message_log WHERE agent_key=${f.subject.alice.agentKey} AND msg_id=${last.msgId}`;
     expect(
       yield* f.server.readHistory({ members: f.members }).pipe(Effect.flip),
     ).toMatchObject({ reason: "history-gap" });
-    yield* f.subject
-      .sql`DELETE FROM message_log WHERE agent_key=${f.subject.agentKey}`;
-    expect(yield* f.server.listConversations().pipe(Effect.flip)).toMatchObject(
-      { reason: "history-gap" },
-    );
     expect(
       yield* f.server
         .consume(() => Effect.dieMessage("Incomplete history reached the host"))
@@ -241,29 +207,27 @@ it("refuses missing recipient tails and conversations retained by delivery evide
         (entry) => entry.message,
       ),
     ).toEqual([first, last]);
+    yield* f.subject
+      .sql`UPDATE message_log SET msg_id='substituted' WHERE agent_key=${f.subject.bob.agentKey} AND msg_id=${first.msgId}`;
+    expect(
+      yield* f.client.readHistory({ members: f.members }).pipe(Effect.flip),
+    ).toMatchObject({ reason: "history-gap" });
   }));
 
 const peers = Effect.gen(function* () {
-  const subject = yield* conversationIdentityFixture;
-  const open = (identity: typeof subject.local, agentKey: string) =>
-    Layer.build(
-      Communication.p2p.layer({
-        agentKey,
-        identityCard: identity.card,
-        signingAuthority: identity.authority,
-        registrySignerPublicKey: subject.signer,
-      }),
-    ).pipe(
+  const subject = yield* conversationFixture;
+  const open = (agent: Agent) =>
+    Layer.build(Communication.p2p.layer(agent)).pipe(
       Effect.provideService(SqlClient, subject.sql),
       Effect.map((context) => Context.get(context, Communication)),
     );
-  const alice = yield* open(subject.local, subject.agentKey);
-  const bob = yield* open(subject.remote, "bob");
-  const carol = yield* open(subject.third, "carol");
+  const alice = yield* open(subject.alice);
+  const bob = yield* open(subject.bob);
+  const carol = yield* open(subject.carol);
   const cards = {
-    alice: agentCardOf(subject.local.card),
-    bob: agentCardOf(subject.remote.card),
-    carol: agentCardOf(subject.third.card),
+    alice: subject.alice.card,
+    bob: subject.bob.card,
+    carol: subject.carol.card,
   };
   const received = (agent: typeof alice) =>
     Effect.gen(function* () {
@@ -366,4 +330,24 @@ it("carries a question to its recipient and the answer back as a result", () =>
         ],
       },
     });
+  }));
+
+it("refuses a message to an agent the daemon does not have", () =>
+  Effect.gen(function* () {
+    const f = yield* peers;
+    const message = yield* Message.create({
+      author: f.cards.alice,
+      recipients: [f.cards.bob, testAgentCard("dave")],
+      content: [{ type: "text", text: "to a stranger" }],
+    });
+    expect(yield* f.alice.send(message).pipe(Effect.flip)).toMatchObject({
+      reason: "membership-invalid",
+    });
+    expect(
+      (yield* f.bob.readHistory({
+        members: [f.cards.alice, f.cards.bob, testAgentCard("dave")],
+        order: "newest",
+        limit: 10,
+      })).entries,
+    ).toEqual([]);
   }));

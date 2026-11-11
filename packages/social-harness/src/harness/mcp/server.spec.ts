@@ -62,7 +62,7 @@ const send = {
   arguments: { to: "agent:bob", text: "hello" },
 };
 
-it("publishes signed identity schemas accepted by native draft-07 and 2020 clients", () =>
+it("reports the agent's identifier and name in a result native draft-07 and 2020 clients accept", () =>
   Effect.gen(function* () {
     const fixture = yield* mcpFixture();
     const client = yield* connectInProcessClient((input, init) =>
@@ -91,7 +91,10 @@ it("publishes signed identity schemas accepted by native draft-07 and 2020 clien
       yield* Schema.decodeUnknown(toolDefinitions.status.output)(
         reply.structuredContent,
       ),
-    ).toBeDefined();
+    ).toMatchObject({
+      agentId: fixture.card.agentId,
+      agentName: fixture.card.agentName,
+    });
   }));
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.

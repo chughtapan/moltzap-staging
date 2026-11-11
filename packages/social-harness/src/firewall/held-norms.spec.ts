@@ -10,7 +10,6 @@ import type { AgentCard } from "../identity/agent-cards.js";
 import type { Chain, Matcher } from "./chain.js";
 import type { NormDocuments } from "./editable-policy.js";
 import { Message } from "../communication/messages.js";
-import { makeIdentityFixture } from "../identity/__tests__/authentication-fixtures.js";
 import {
   evidence,
   peer,
@@ -120,7 +119,6 @@ function draft(self: AgentCard, text: string) {
 
 it("seeds a new agent with the initial norms, and keeps an edit across a restart", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
     const filesystem = yield* FileSystem.FileSystem;
     const directory = yield* filesystem.makeTempDirectoryScoped({
       prefix: "sharness-norms-",
@@ -129,7 +127,6 @@ it("seeds a new agent with the initial norms, and keeps an edit across a restart
 
     const seeded = yield* withFirewall(
       filename,
-      fixture,
       (firewall) =>
         Effect.gen(function* () {
           const before = (yield* firewall.readPolicy()).norms;
@@ -143,7 +140,6 @@ it("seeds a new agent with the initial norms, and keeps an edit across a restart
     );
     const restored = yield* withFirewall(
       filename,
-      fixture,
       (firewall) => firewall.readPolicy(),
       holding,
     );
@@ -154,10 +150,8 @@ it("seeds a new agent with the initial norms, and keeps an edit across a restart
 
 it("installs an added norm's matchers and English rules, and removes them with it", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
     yield* withFirewall(
       ":memory:",
-      fixture,
       (firewall, self) =>
         Effect.gen(function* () {
           const ask = yield* draft(self, "swap");
@@ -188,12 +182,10 @@ it("installs an added norm's matchers and English rules, and removes them with i
 
 it("replaces a norm that an update removes and adds", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
     const replacement = document("chat", "Keep chat brief.");
 
     const documents = yield* withFirewall(
       ":memory:",
-      fixture,
       (firewall) =>
         firewall
           .updatePolicy({
@@ -217,13 +209,11 @@ it.prop(
   ],
   ([text]) =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
       const name = norms.name(text);
       const accepted = Option.isSome(name) && name.value !== "chat";
 
       const documents = yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall) =>
           firewall
             .updatePolicy({ add: [{ norm: text }] })
@@ -294,11 +284,8 @@ it.each(refusedEdits)(
   "refuses $what and keeps the active norms",
   ({ edit, refusal }) =>
     Effect.gen(function* () {
-      const fixture = yield* makeIdentityFixture;
-
       const result = yield* withFirewall(
         ":memory:",
-        fixture,
         (firewall) =>
           Effect.gen(function* () {
             const before = yield* firewall.readPolicy();
@@ -315,11 +302,8 @@ it.each(refusedEdits)(
 
 it("keeps the active norms when the host refuses an update", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
-
     const result = yield* withFirewall(
       ":memory:",
-      fixture,
       (firewall) =>
         Effect.gen(function* () {
           const error = yield* firewall
@@ -336,11 +320,8 @@ it("keeps the active norms when the host refuses an update", () =>
 
 it("refuses a norm on a firewall without norm documents", () =>
   Effect.gen(function* () {
-    const fixture = yield* makeIdentityFixture;
-
     const error = yield* withFirewall(
       ":memory:",
-      fixture,
       (firewall) =>
         firewall.updatePolicy({ add: [{ norm: swap }] }).pipe(Effect.flip),
       (agentKey) => Firewall.layer(agentKey, policy()),

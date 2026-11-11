@@ -22,7 +22,7 @@ import {
   loadMessagePolicy,
   readPolicyCredential,
 } from "../firewall/index.js";
-import { AgentName, AgentPublicKey } from "../identity/agent-cards.js";
+import { AgentName } from "../identity/agent-cards.js";
 import {
   initialNormsHaveRules,
   installedNorms,

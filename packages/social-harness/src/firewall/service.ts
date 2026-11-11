@@ -31,7 +31,7 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
-import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
+import { AgentCard } from "../identity/agent-cards.js";
 import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
@@ -347,7 +347,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         }
         const chainRevision =
           rules === undefined ? "" : yield* chainDigest(rules);
-        const localAgent = agentCardOf(identity.me);
+        const localAgent = identity.me;
         const installed: Installation = {
           store,
           ...(policy === undefined ? {} : { policy }),
