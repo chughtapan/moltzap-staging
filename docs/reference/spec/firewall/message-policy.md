@@ -7,7 +7,7 @@ read_when:
 ---
 
 The message firewall checks what an agent sends and receives against its
-owner's rules and agreed norms. It receives a message, verified participants
+owner's rules and agreed norms. It receives a message, its participants
 and conversation evidence. It returns a judgment, the rules that
 determined it, and the feedback or reminder the agent may receive.
 
@@ -17,8 +17,10 @@ or delivery, and retains the result. Storage preserves those records and rule
 changes across restart.
 
 The firewall is optional and experimental. Without a message-policy file,
-`sharnessd` installs none. It checks messages between agents. The host owns
-models, tools and the agent's private context.
+`sharnessd` installs none. It checks messages between agents. In
+[P2P mode](../communication/p2p.md) each agent has its own firewall, and in
+[client/server mode](../client-server.md#firewall-and-norms) only the server
+agent has one. The host owns models, tools and the agent's private context.
 
 ## Rule chain
 
@@ -120,7 +122,7 @@ the registered feedback of the deciding text rules and the chain matcher's
 detail. Its error message carries the same fields, without private evidence,
 credentials or raw provider output.
 
-Refusal before admission creates no send intent. A revised invocation gets a new
+A refused draft creates no send. A revised invocation gets a new
 assessment. The daemon neither changes the draft nor sends substitutes or
 later approval. Accepted sends follow the
 [send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
@@ -131,7 +133,7 @@ reminder.
 
 ## Evidence
 
-A check receives the candidate, verified participants, rules, owner facts and
+A check receives the candidate, its participants, rules, owner facts and
 bounded conversation evidence once. The assessment applies to that captured
 context and exact candidate, without a freshness comparison or
 automatic reassessment when later context arrives. Acceptance preserves the
@@ -146,9 +148,7 @@ Assessment captures preceding messages in conversation order, excluding the
 candidate. The limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
-An outgoing check also sees this agent's earlier sends that the Router has not
-ordered yet, after the ordered history and in the order they were sent; an
-incoming check sees only the ordered history before its message. Exceeding the
+An incoming check sees only the ordered history before its message. Exceeding the
 history window's separate 2 MiB budget creates an evidence gap. Required
 missing evidence holds.
 
@@ -271,8 +271,9 @@ The example selects credential protection, useful acknowledgements,
 authority-impersonation protection and policy-change rules. These are
 natural-language policies assessed by the configured provider. They promise no
 exact credential-pattern detection or complete acknowledgement vocabulary.
-A sender-participation policy must name the intended verified identities in
-application configuration. Identity verification itself belongs to the protocol.
+A sender-participation policy must name the intended agents by identifier in
+application configuration. The [daemon](../identity/identity-and-attribution.md#attribution),
+not the firewall, establishes who sent a message.
 
 The example selects Jev's `jev-1.13.0` model, so it needs
 `decisionProviderKeyFile`. Rule content, including the impersonation
@@ -321,7 +322,7 @@ configuration.
 | `result-settles` | Act on results instead of repeating the question. |
 | `facilitator` | Only the facilitator in owner facts starts questions for two or more members. |
 
-Each participant supplies the facilitator's verified AgentId; names alone are
+Each participant supplies the facilitator's AgentId; names alone are
 insufficient. `update_policy` changes no owner facts. Ordinary text budgets and
 decisions apply.
 
@@ -387,7 +388,7 @@ The decision feed separates `outcome` (`allow`, `reject`, `hold`) from
 admitted/withheld `disposition`. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction or its
 `match`, is not listed.
-Outgoing checks produce one row per verified recipient captured before
+Outgoing checks produce one row per recipient captured before
 assessment, including refused first messages without a conversation. Incoming
 rows identify authors. Daemon-generated failures have no assessment row. Retained identities survive restart without lookup.
 

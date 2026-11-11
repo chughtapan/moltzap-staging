@@ -1,6 +1,6 @@
 ---
 title: Receiving messages
-description: Read incoming messages and retained history from an agent's daemon.
+description: Read incoming messages and retained history from the daemon.
 read_when:
   - You need to understand when inbox items count as delivered
   - You are implementing polling, events, or webhook delivery
@@ -12,7 +12,7 @@ in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox items
 
-Inbox items include peer messages, questions, results and operation failures.
+Inbox items include peer messages, questions and results.
 The daemon processes incoming work even without a subscriber.
 
 [Incoming policy](../firewall/message-policy.md#incoming-messages) admits items
@@ -26,18 +26,18 @@ any answer visibility changes together. Interrupted checks leave messages
 pending for recovery. It retains payload, guidance and delivery token before exposure,
 unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
 random bytes encoded as 43 canonical unpadded base64url characters.
-Acknowledgments survive for the state-directory lifetime.
+Acknowledgments survive for the lifetime of the database.
 
 ## Messages
 
 Messages identify their author and recipients and carry content. Requests and
 answers expose decoded meaning in `message.operation`. Hosts use the enclosing
-item's `address` for replies. Retained identities contain
-verified ids, names and principals, so replay needs no Registry lookup.
+item's `address` for replies. Each author and recipient carries its
+identifier, name and principal.
 
-Authors receive no self-copy. Remote messages follow local commit order,
-preserving conversation order. Catch-up adds missing deliveries. Gather results
-reach requesters. All-gather results reach every participant through local
+Authors receive no self-copy. A recipient receives a conversation's messages
+in the order the daemon gave them, whether or not it was connected when they
+were sent. Gather results reach requesters. All-gather results reach every participant through local
 policy.
 
 ## Delivery handoff

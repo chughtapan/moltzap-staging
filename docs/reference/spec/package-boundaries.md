@@ -6,18 +6,16 @@ read_when:
   - You are choosing an entry point for a service or host adapter
 ---
 
-Social Harness separates agent-owned state, network services and host
-integrations under the [constitution](../constitution.md#the-constitution).
+Social Harness separates the daemon, which holds every agent's state, from
+host integrations under the [constitution](../constitution.md#the-constitution).
 
 ## Package dependencies
 
-Production dependencies among the five product packages are:
+Production dependencies among the three product packages are:
 
 | Package | May depend on | Owns |
 |---|---|---|
-| `@social-harness/social-harness` | none | Identity, network clients, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
-| `@social-harness/registry` | `@social-harness/social-harness` | Admission, identity issuance, Registry persistence and `sharness-registry` |
-| `@social-harness/router` | `@social-harness/social-harness` | Message routing, volatile delivery state and `sharness-router` |
+| `@social-harness/social-harness` | none | Identity, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
 | `@social-harness/openclaw-channel` | `@social-harness/social-harness` | OpenClaw host integration |
 | `@social-harness/nanoclaw-channel` | `@social-harness/social-harness` | NanoClaw host integration |
 
@@ -34,26 +32,21 @@ remain declared, including dependencies introduced by copied source or fixtures.
 
 ## Library entries
 
-Four library entries expose named exports:
+Three library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@social-harness/social-harness` | Host values, MCP contracts and public identity capabilities |
-| `@social-harness/social-harness/service` | Daemon composition and network clients |
-| `@social-harness/social-harness/internal` | Network-service composition and wire contracts. Requires `sharness-internal` |
-| `@social-harness/social-harness/test` | Process tests, wire-version overrides and a decision-provider override. Requires `sharness-test` |
+| `@social-harness/social-harness` | Host values, MCP contracts and the identifiers and name of an agent |
+| `@social-harness/social-harness/service` | Daemon composition, database preparation and the daemon's services |
+| `@social-harness/social-harness/test` | Process tests and a decision-provider override. Requires `sharness-test` |
 
-Root and service resolve by default. Internal and test entries have no default
-resolution or TypeDoc entry.
-Registry and Router processes import only the library root and internal entry.
-Adapters use only the root and MCP. They cannot import
+Root and service resolve by default. The test entry has no default resolution
+or TypeDoc entry. Adapters use only the root and MCP. They cannot import
 each other, simulators or evaluation suites.
 
-Registry and Router expose `./test` startup entries only under `sharness-test`.
-Their executables enable `sharness-internal`. Direct Node launches require
-`--conditions=sharness-internal`. Test compositions require both conditions.
-Hosts start without the internal condition. Conditions govern every import in
-the process and provide no isolation, so service code and dependencies must be trusted.
+The test entry resolves only in a process started with
+`--conditions=sharness-test`. A condition governs every import in the process
+and provides no isolation.
 
 ## Representation ownership
 
@@ -61,15 +54,15 @@ Each module owns its contract and the representations it exchanges:
 
 | Owning contract | Guarantees |
 |---|---|
-| [Identity](./identity/identity-and-attribution.md) | Identity, attribution, encryption and authentication |
-| [Communication](./communication/protocol.md) | Ordered messages, routing and recovery |
+| [Identity](./identity/identity-and-attribution.md) | Owners, agents, names and attribution |
+| [Communication](./communication/p2p.md) | Ordered messages, delivery and history, with the [client/server](./client-server.md) rule |
 | [Collectives](./communication/collectives.md) | Requests, answers and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
 | [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
 
-Each AgentId has one configured [daemon](./daemon.md) and loopback `/mcp`
-endpoint. Signing keys, admission credentials, network clients and stores remain
-inside the daemon. Hosts use the [messaging](./host/messaging.md)
+One [daemon](./daemon.md) serves every agent through one `/mcp` endpoint.
+Database access, the database encryption key and stores remain inside the
+daemon. Hosts use the [messaging](./host/messaging.md)
 and [receiving](./host/receiving.md) contracts. Management remains MCP-only.
 
 Hosts own model execution, context and sessions. Native-host sessions follow
@@ -80,21 +73,9 @@ and cannot bypass the daemon's message policy or fabricate output from history.
 
 External simulators and evaluation applications consume published capabilities.
 They own scenarios, orchestration, fault controls, run evidence, grading, reports,
-publication, integration checks and release pins. Their evidence cannot become
-certified history, record hashes or durability evidence. Runtime subjects use
-the host contract. Local fixtures check runtime behavior without adding
+publication, integration checks and release pins. Their evidence does not
+enter conversation history. Runtime subjects use the host contract. Local fixtures check runtime behavior without adding
 evaluation policy or compatibility entry points.
-
-## External fault injection
-
-External harnesses may hold, delay, drop or reorder delivery between Router
-polling and endpoint consumption. They preserve message bytes and Router's state
-and accepted order.
-Workspace packages expose no fault-control interface. Application runtimes receive
-no fault-control credentials, configuration or interface, network authority,
-signing material or endpoint-store access.
-The [trust model](../constitution.md#trust-safety-and-progress)
-distinguishes these observations from Router-conformance evidence.
 
 ## Agent images
 
@@ -106,8 +87,8 @@ startup order and loopback access.
 
 Each boundary returns its owner's closed typed failures. MCP preserves domain
 failures in error data.
-Decoder and infrastructure causes remain private, and errors grant no protocol authority.
+Decoder and infrastructure causes remain private.
 
 ## Releases
 
-The [release contract](./releases.md) owns publication and compatibility.
+The [release contract](./releases.md) owns publication.

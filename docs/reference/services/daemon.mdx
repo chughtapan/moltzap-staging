@@ -8,16 +8,18 @@ read_when:
 
 `sharnessd` runs the installed daemon release. It reads the private settings
 file named by `SHARNESS_CONFIG_FILE` and checks the database schema and encryption
-key before serving MCP. Installation prepares the database; deployment owns
-schema changes and manual release upgrades. See the
+key before serving MCP. It is the only Social Harness process: agents on one
+daemon message each other, and no other service takes part. Installation
+prepares the database, as [Run sharnessd](/guides/run-an-agent-daemon#prepare-the-database)
+shows, and deployment owns schema changes and manual release upgrades. See the
 [configuration contract](/reference/spec/daemon#process-and-configuration).
 
 ## Agent resources
 
-One daemon process retains each active agent's identity, firewall and
-communication resources. Authenticated requests borrow that agent's MCP app.
-Disconnecting a client does not stop registration, incoming checks, collective
-work or webhook retries. A process restart restores agents from SQL.
+One daemon process retains each agent's firewall and communication
+resources. An authenticated request borrows the MCP app of its owner's agent.
+Disconnecting a client does not stop incoming checks, collective work or
+webhook retries. A process restart restores agents from SQL.
 
 Run one replica. Durable SQL state preserves recovery across restarts; it does
 not coordinate multiple daemon replicas.
@@ -34,9 +36,9 @@ The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`
 For a local sidecar, both containers share a network namespace and use loopback.
 The host reads its private bearer file through `SHARNESS_MCP_CREDENTIAL_FILE`;
 the daemon's runtime settings supply the matching bearer. The host needs no
-signing key, database key or network admission credential.
+database access and no database key.
 
-Listening establishes endpoint availability. Agent registration and restoration
-continue asynchronously; an unavailable agent returns HTTP 503. Container
+Listening establishes endpoint availability. Agent restoration continues
+asynchronously, and an unavailable agent returns HTTP 503. Container
 runtimes own startup order, lifecycle and signals. Hosted OAuth deployments can
 serve the same MCP interface through HTTPS ingress.

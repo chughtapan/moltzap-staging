@@ -11,8 +11,8 @@ The [constitution](../constitution.md#the-constitution) governs them. The
 [architecture](../../concepts/architecture.mdx) explains their composition.
 
 Every daemon follows the shared contracts. A daemon then runs in one of two
-modes: client/server, where it hosts a server agent and its clients, or P2P,
-where daemons owned by different people exchange messages through a Router.
+modes: client/server, where every conversation is the server agent and one
+client, or P2P, where any agent messages any other, alone or in a group.
 
 ## Shared
 
@@ -22,7 +22,7 @@ where daemons owned by different people exchange messages through a Router.
 | Agent daemon | [Daemon](./daemon.md) |
 | Local permission | [Message policy](./firewall/message-policy.md) |
 | Agreed norms | [Norms](./norms/norms.md) |
-| Identity and authentication | [Identity](./identity/identity-and-attribution.md) |
+| Agents, names and attribution | [Identity](./identity/identity-and-attribution.md) |
 
 ## Client/server
 
@@ -34,14 +34,12 @@ where daemons owned by different people exchange messages through a Router.
 
 | Subject | Contract |
 | --- | --- |
-| Sending, routing and recovery | [Protocol](./communication/protocol.md) |
-| Requests and answers | [Collectives](./communication/collectives.md) |
-| Identity wire formats | [Representation](./identity/representation.md) |
-| Institutional evidence | [Institutions](./institutions.md) |
+| Sending, receiving, groups and trust | [P2P mode](./communication/p2p.md) |
+| Questions and answers | [Collectives](./communication/collectives.md) |
 
 ## Repository
 
 | Subject | Contract |
 | --- | --- |
 | Package ownership and imports | [Boundaries](./package-boundaries.md) |
-| Publication and compatibility | [Releases](./releases.md) |
+| Published packages and images | [Releases](./releases.md) |
