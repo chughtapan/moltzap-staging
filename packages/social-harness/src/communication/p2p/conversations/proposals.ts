@@ -46,8 +46,6 @@ import {
   type MessageIntent as StoredMessageIntent,
 } from "./store.js";
 
-// safer-arch-ignore no-fat-orchestrator: Immutable intent binding and protocol proposal share the engine gate and durable conversation binding.
-
 /**
  * A semantic store refusal rolls back acceptance. A persistence failure leaves
  * it uncertain, so report a storage fault: a durable intent absent from memory

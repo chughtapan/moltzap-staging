@@ -23,7 +23,7 @@ import {
   type Request,
   RequestOperation,
   type ResultSources,
-} from "../communication/service.js";
+} from "../communication/index.js";
 import {
   canonicalBytes,
   decodeCanonical,

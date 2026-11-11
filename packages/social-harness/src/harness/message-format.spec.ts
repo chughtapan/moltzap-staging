@@ -10,7 +10,7 @@ import {
   MAXIMUM_DEADLINE_SECONDS,
   maximumMembers,
   MessageAddressInput,
-} from "../communication/messages.js";
+} from "../communication/index.js";
 import {
   type CheckedGuidance,
   FirewallRefusal,

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
 import type { MatchInput } from "../firewall/index.js";
-import { Message } from "../communication/service.js";
+import { Message } from "../communication/index.js";
 import {
   AgentCard,
   AgentId,

@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { describe, expect } from "vitest";
 import type { DecisionProvider } from "./check.js";
 import type { TextRule } from "./rules.js";
-import { Message } from "../communication/messages.js";
+import { Message } from "../communication/index.js";
 import { makeIdentityFixture } from "../identity/__tests__/authentication-fixtures.js";
 import {
   evidence,

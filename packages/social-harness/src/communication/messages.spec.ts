@@ -26,7 +26,9 @@ import {
   MsgId as PublicMsgId,
 } from "../index.js";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
+import { Incoming } from "./contract.js";
 import {
+  Answer,
   type AnswerContent,
   type AnswerFormat,
   COLLECTIVE_DATA_KEY,
@@ -40,13 +42,13 @@ import {
   Message,
   messageFromIntent,
   messageFromParticipants,
-  RequestedSchema as messagesRequestedSchema,
   mintCollectiveId,
   MsgId,
   readCollectiveValue,
+  Request,
+  RequestedSchema,
   validateAnswer,
 } from "./messages.js";
-import { Answer, Incoming, Request, RequestedSchema } from "./service.js";
 
 const alice = testAgentCard("alice");
 
@@ -233,7 +235,7 @@ describe("address answer formats", () => {
   });
 });
 
-const requestedSchema = Schema.decodeUnknownSync(messagesRequestedSchema)({
+const requestedSchema = Schema.decodeUnknownSync(RequestedSchema)({
   type: "object",
   properties: {
     slot: { type: "string", enum: ["mon", "tue"] },
@@ -287,7 +289,7 @@ describe("answer validation", () => {
   vitestIt(
     "names a missing required field that shares an Object.prototype name",
     () => {
-      const toStringSchema = Schema.decodeUnknownSync(messagesRequestedSchema)({
+      const toStringSchema = Schema.decodeUnknownSync(RequestedSchema)({
         type: "object",
         properties: { toString: { type: "string" } },
         required: ["toString"],
@@ -310,7 +312,7 @@ describe("answer validation", () => {
 });
 
 const fieldSchema = (field: object) =>
-  Schema.decodeUnknownSync(messagesRequestedSchema)({
+  Schema.decodeUnknownSync(RequestedSchema)({
     type: "object",
     properties: { field },
   });
@@ -488,12 +490,12 @@ const decodes = (value: unknown): boolean =>
 
 const decodesSchema = (value: unknown): boolean =>
   Exit.isSuccess(
-    Effect.runSyncExit(Schema.decodeUnknown(messagesRequestedSchema)(value)),
+    Effect.runSyncExit(Schema.decodeUnknown(RequestedSchema)(value)),
   );
 
 /** Each issue message of a schema that fails to decode; empty if it decodes. */
 const schemaIssues = (value: unknown) =>
-  Either.match(Schema.decodeUnknownEither(messagesRequestedSchema)(value), {
+  Either.match(Schema.decodeUnknownEither(RequestedSchema)(value), {
     onLeft: (error) =>
       ParseResult.ArrayFormatter.formatErrorSync(error).map(
         ({ message }) => message,
@@ -692,7 +694,7 @@ describe("admitted form fields", () => {
   vitestIt(
     "keeps only the keywords of the shape that admits a property",
     () => {
-      const decoded = Schema.decodeUnknownSync(messagesRequestedSchema)({
+      const decoded = Schema.decodeUnknownSync(RequestedSchema)({
         type: "object",
         properties: {
           slot: { type: "string", enum: ["a"], minLength: 2, pattern: "x" },

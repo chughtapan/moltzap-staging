@@ -10,16 +10,6 @@ import { makeClientServer } from "./client-server/delivery.js";
 import { bindCommunicationMode } from "./mode.js";
 import { makeP2p } from "./p2p/index.js";
 
-/** Semantic handoffs are shared by every delivery mode. */
-export {
-  type Conversation,
-  type ConversationQuery,
-  type HistoryPage,
-  type HistoryQuery,
-  Incoming,
-  Outgoing,
-} from "./contract.js";
-
 /** Owns durable message delivery, request completion and verified history. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
@@ -52,26 +42,3 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
     ) => Layer.scoped(Communication, makeClientServer(settings)),
   };
 }
-
-/** Caller failures distinguish refusal from retained or uncertain progress. */
-export { CommunicationError } from "./errors.js";
-/** Messages and requests retain the same semantic values at every service handoff. */
-export {
-  AcceptResponse,
-  Answer,
-  AnswerOutcome,
-  CollectiveId,
-  DeadlineSeconds,
-  DeclineResponse,
-  decodeCollectiveFailure,
-  Message,
-  MessageReference,
-  PaginatedRequest,
-  PaginatedResult,
-  ReceivedRequest,
-  Request,
-  RequestedSchema,
-  RequestError,
-  RequestOperation,
-  ResultSources,
-} from "./messages.js";

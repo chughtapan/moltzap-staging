@@ -78,7 +78,6 @@ import {
 } from "./store.js";
 
 // safer-arch-ignore no-module-cycle: Conversation state imports are type-only; runtime dependencies point into the algorithms.
-// safer-arch-ignore no-fat-orchestrator: One private operation owns the complete certification lifecycle inside Communication.
 
 const persistenceFailure = () => new RouterWorkerPersistenceError();
 

@@ -82,8 +82,6 @@ import {
   stageRecordAndOutbound,
 } from "./store.js";
 
-// safer-arch-ignore no-fat-orchestrator: Conversation protocol composition remains encapsulated inside Communication.
-
 /** Engine acquisition could not establish one coherent durable endpoint. */
 export class EngineInitializationError extends Data.TaggedError(
   "EngineInitializationError",

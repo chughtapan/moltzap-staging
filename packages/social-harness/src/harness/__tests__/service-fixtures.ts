@@ -29,7 +29,7 @@ import {
   type Outgoing,
   ReceivedRequest,
   RequestError,
-} from "../../communication/service.js";
+} from "../../communication/index.js";
 import { migrateDaemon } from "../../database/migrations.js";
 import { compareAscii } from "../../encoding/index.js";
 import {

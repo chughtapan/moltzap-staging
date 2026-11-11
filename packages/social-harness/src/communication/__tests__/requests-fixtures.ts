@@ -5,6 +5,7 @@ import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity/agent-cards.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { encodeCanonical } from "../../encoding/index.js";
+import { CommunicationError } from "../errors.js";
 import {
   type CollectiveValue,
   compareAgentIds,
@@ -17,7 +18,6 @@ import {
 } from "../messages.js";
 import { makeRequests } from "../p2p/collectives.js";
 import { deriveConversationId } from "../records.js";
-import { CommunicationError } from "../service.js";
 import { acceptMessage } from "../store.js";
 import { collectiveOperationId } from "./request-ids.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";

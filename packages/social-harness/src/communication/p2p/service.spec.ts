@@ -15,6 +15,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
+import type { Conversation } from "../contract.js";
 import {
   conversationIdentityFixture,
   openOuterBody,
@@ -40,23 +41,20 @@ import {
   SignedMessage,
 } from "../../identity/message-security.js";
 import { Registry, RegistryError } from "../../identity/registry.js";
+import { CommunicationError } from "../errors.js";
 import {
+  Answer,
   encodeCollectiveContent,
   Message,
   messageFromIntent,
   messageFromParticipants,
   mintMsgId,
-} from "../messages.js";
-import { DirectPacket, signOuterPacket } from "../records.js";
-import {
-  Answer,
-  Communication,
-  CommunicationError,
-  type Conversation,
   type ReceivedRequest,
   Request,
   RequestedSchema,
-} from "../service.js";
+} from "../messages.js";
+import { DirectPacket, signOuterPacket } from "../records.js";
+import { Communication } from "../service.js";
 import { Router } from "./router/client.js";
 
 class ConsumerFailure extends Data.TaggedError("ConsumerFailure") {}

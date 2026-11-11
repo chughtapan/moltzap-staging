@@ -31,22 +31,6 @@
       "reason": "Signed message envelopes"
     },
     {
-      "file": "communication/service.ts",
-      "reason": "Message service and public semantic values"
-    },
-    {
-      "file": "communication/messages.ts",
-      "reason": "Immutable messages and participant references"
-    },
-    {
-      "file": "communication/errors.ts",
-      "reason": "Closed communication failures"
-    },
-    {
-      "file": "communication/p2p/router/client.ts",
-      "reason": "Opaque Router operations used by server composition"
-    },
-    {
       "file": "harness/startup.ts",
       "reason": "Process construction and trusted embedding services"
     },
@@ -133,10 +117,7 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/service.ts",
-        "src/communication/messages.ts",
-        "src/communication/errors.ts",
-        "src/communication/p2p/router/client.ts"
+        "src/communication/index.ts"
       ],
       "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
     },

@@ -18,9 +18,11 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
-import { MessageAddressInput } from "../communication/messages.js";
-import { Router } from "../communication/p2p/router/client.js";
-import { Communication } from "../communication/service.js";
+import {
+  Communication,
+  MessageAddressInput,
+  Router,
+} from "../communication/index.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
@@ -371,7 +373,7 @@ export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** Local identity and registration remain independent of delivery recovery. */
 export { Identity } from "../identity/service.js";
 /** Message transport owns requests, replies and verified history. */
-export { Communication } from "../communication/service.js";
+export { Communication } from "../communication/index.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/index.js";
 /** Network services expose complete calls through their owning layers. */

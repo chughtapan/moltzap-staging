@@ -21,7 +21,7 @@ import {
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { MessageAddressInput } from "../../communication/messages.js";
+import type { MessageAddressInput } from "../../communication/index.js";
 import { issueTestCard, makeTestAuthority } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { Firewall, FirewallPolicyError } from "../../firewall/index.js";

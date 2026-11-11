@@ -22,7 +22,7 @@ import type { Matcher, MatchInput, MatchResult } from "../firewall/index.js";
 import {
   type AnswerFieldFailures,
   answerFieldsText,
-} from "../communication/messages.js";
+} from "../communication/index.js";
 import {
   type Act,
   formatAct,

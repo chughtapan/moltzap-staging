@@ -31,8 +31,7 @@ import {
   mcpTestCredential,
 } from "../__tests__/mcp-fixtures.js";
 import { digest } from "../../__tests__/agents.js";
-import { SendError } from "../../communication/errors.js";
-import { MessageAddressInput } from "../../communication/messages.js";
+import { MessageAddressInput, SendError } from "../../communication/index.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
 import { HistoryError } from "../social-harness.js";
 import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";

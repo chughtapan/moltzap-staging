@@ -18,27 +18,25 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
-import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
-  GroupAddress,
-  type MessageAddressInput,
-  messageFromParticipants,
-  MsgId,
-} from "../communication/messages.js";
-import {
   Answer,
   Communication,
   CommunicationError,
   type Conversation,
+  GroupAddress,
   type Incoming,
   Message,
+  type MessageAddressInput,
+  messageFromParticipants,
+  MsgId,
   type Outgoing,
   type PaginatedRequest,
   type PaginatedResult,
   Request,
   RequestError,
-} from "../communication/service.js";
+  SendError,
+} from "../communication/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import {
   Firewall,

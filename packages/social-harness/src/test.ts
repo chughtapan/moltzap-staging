@@ -41,19 +41,19 @@ export {
   readCollectiveOperationIds,
   retireCollectiveOperation,
   transaction,
-} from "./communication/store.js";
+} from "./communication/index.js";
 
 /** Integration fixtures compose the existing domain services without startup overrides. */
 export { loadDaemonSettings } from "./harness/config.js";
 /** Retained registration inputs are shared with process fixtures. */
 export { loadAgentRegistration, localOwner } from "./harness/ownership.js";
 /** Real Router connections are retained in deterministic provider traces. */
-export { Router } from "./communication/p2p/router/client.js";
+export { Router } from "./communication/index.js";
 
 /** Policy process fixtures use the same per-agent webhook capability as startup. */
 export { makeWebhookEvents } from "./harness/mcp/webhook.js";
 /** Peer preparation is exposed only to the explicit test entry. */
-export { readUnpreparedMessages } from "./communication/p2p/conversations/store.js";
+export { readUnpreparedMessages } from "./communication/index.js";
 
 /** Trusted process fixtures supply the production callback HTTP client. */
 export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";

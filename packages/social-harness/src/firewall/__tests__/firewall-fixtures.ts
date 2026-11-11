@@ -6,7 +6,7 @@ import type { IdentityFixture } from "../../identity/__tests__/authentication-fi
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
 import type { TextRule } from "../rules.js";
-import { Message } from "../../communication/messages.js";
+import { Message } from "../../communication/index.js";
 import { migrateDaemon } from "../../database/migrations.js";
 import {
   AgentCard,

@@ -9,7 +9,7 @@ import { expect } from "vitest";
 import type { AgentCard } from "../identity/agent-cards.js";
 import type { Chain, Matcher } from "./chain.js";
 import type { NormDocuments } from "./editable-policy.js";
-import { Message } from "../communication/messages.js";
+import { Message } from "../communication/index.js";
 import { makeIdentityFixture } from "../identity/__tests__/authentication-fixtures.js";
 import {
   evidence,

@@ -20,7 +20,7 @@ export {
 /** Registry lookup for network services. */
 export { Registry } from "./identity/registry.js";
 /** Router client and wire schemas shared with its server. */
-export { Router, routerContract } from "./communication/p2p/router/client.js";
+export { Router, routerContract } from "./communication/index.js";
 /** Registry wire schemas shared by its client, server and storage. */
 export { registryContract } from "./identity/registry.js";
 /** Wire versions emitted and accepted by this release. */
