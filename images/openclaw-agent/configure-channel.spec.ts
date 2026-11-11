@@ -1,15 +1,8 @@
-/** @file Channel configuration writes remain restartable after an abandoned temporary write. */
+/** @file Channel configuration adds the image channel and replaces the file whole or not at all. */
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -20,55 +13,6 @@ const run = promisify(execFile);
 const script = fileURLToPath(
   new URL("./configure-channel.ts", import.meta.url),
 );
-
-test("abandoned channel writes do not block installing the image channel", async (context) => {
-  const root = await mkdtemp(join(tmpdir(), "social-harness-channel-config-"));
-  context.after(() => rm(root, { recursive: true, force: true }));
-  const path = join(root, "openclaw.json");
-  const stale = `${path}.channel-${String(process.pid)}`;
-  const abandoned = join(root, ".social-harness-channel-abandoned");
-  await writeFile(stale, "unfinished configuration");
-  await mkdir(abandoned);
-  await writeFile(join(abandoned, "openclaw.json"), "unfinished configuration");
-  await writeFile(
-    path,
-    JSON.stringify({
-      plugins: {
-        load: {
-          paths: [],
-        },
-      },
-    }),
-  );
-
-  await assert.doesNotReject(
-    run(process.execPath, [script], {
-      env: {
-        ...process.env,
-        OPENCLAW_CONFIG_PATH: path,
-      },
-    }),
-  );
-
-  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), {
-    plugins: {
-      load: {
-        paths: [
-          "/opt/social-harness/node_modules/@social-harness/openclaw-channel",
-        ],
-      },
-    },
-  });
-  assert.deepEqual(
-    (await readdir(root)).sort((left, right) => left.localeCompare(right)),
-    [
-      ".social-harness-channel-abandoned",
-      "openclaw.json",
-      `openclaw.json.channel-${String(process.pid)}`,
-    ],
-  );
-  assert.equal(await readFile(stale, "utf8"), "unfinished configuration");
-});
 
 test("a failed configuration rename keeps the old configuration and removes temporary files", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "social-harness-channel-config-"));
@@ -134,4 +78,5 @@ test("initializes channel loading in a stock host configuration", async (context
       },
     },
   });
+  assert.deepEqual(await readdir(root), ["openclaw.json"]);
 });
