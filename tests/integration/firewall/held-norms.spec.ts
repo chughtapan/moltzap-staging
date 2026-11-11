@@ -202,7 +202,7 @@ const serverOwnsNorms = Effect.gen(function* () {
     {
       settings: {
         port,
-        transport: { kind: "client-server", serverAgentName: "norms-server" },
+        mode: { kind: "client-server", serverAgentName: "norms-server" },
         authentication: {
           kind: "oauth",
           resource: resource.href,

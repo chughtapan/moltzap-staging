@@ -419,7 +419,7 @@ const openSharedDaemon = (
           port,
           ...(central
             ? {
-                transport: {
+                mode: {
                   kind: "client-server",
                   serverAgentName: SERVER_AGENT_NAME,
                 },
@@ -631,6 +631,79 @@ const scenario = (
       expectedStatus: b,
     });
   });
+
+/** The shared Registry stays paused throughout, so every name and card comes from the daemon. */
+const ownRegistryScenario = Effect.gen(function* () {
+  const infrastructure = yield* acquireProcessInfrastructure;
+  yield* Effect.acquireRelease(infrastructure.holdRegistry, (release) =>
+    Effect.sync(release),
+  );
+  yield* Effect.acquireRelease(infrastructure.holdRouter, (release) =>
+    Effect.sync(release),
+  );
+  const issuer = yield* issuerFixture;
+  const port = yield* reservePort;
+  const resource = new URL(`https://127.0.0.1:${port}/mcp`);
+  const fixture = yield* makeDaemonProcessFixture(
+    infrastructure,
+    "own-registry",
+    undefined,
+    {
+      settings: {
+        port,
+        mode: {
+          kind: "client-server",
+          serverAgentName: SERVER_AGENT_NAME,
+        },
+        authentication: {
+          kind: "oauth",
+          resource: resource.href,
+          issuer: issuer.issuer,
+          scope: requiredScope,
+        },
+        agentName: undefined,
+      },
+    },
+  );
+  const daemon = yield* acquireDaemonProcess(fixture);
+  const bobToken = yield* issuer.token("bob", resource.href);
+  const server = yield* connect(
+    fixture.endpoint,
+    fixture.serverAgentCredential,
+  );
+  const bob = yield* connect(fixture.endpoint, bobToken);
+  const serverStatus = yield* call(server, { name: "status", arguments: {} });
+  const bobStatus = yield* call(bob, { name: "status", arguments: {} });
+  const serverCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+    serverStatus.identityCard,
+  );
+  const bobCard = yield* Schema.decodeUnknown(AgentIdentityCard)(
+    bobStatus.identityCard,
+  );
+  expect(serverCard.agentName).toBe(SERVER_AGENT_NAME);
+  expect(serverCard.agentId).not.toBe(bobCard.agentId);
+  const sent = yield* call(server, {
+    name: "send_message",
+    arguments: {
+      to: AgentAddress.make(`agent:${bobCard.agentName}`),
+      text: "named by the daemon",
+    },
+  });
+  yield* awaitInbox(bob);
+  yield* expectConversation(bob, clientConversation, "received", [sent.id]);
+  yield* stopProcess(daemon);
+  yield* acquireDaemonProcess(fixture);
+  const restored = yield* connect(fixture.endpoint, bobToken);
+  expect(yield* call(restored, { name: "status", arguments: {} })).toEqual(
+    bobStatus,
+  );
+});
+
+it(
+  "names its own agents in client/server mode while the Registry is unreachable",
+  processTrace(Effect.scoped(ownRegistryScenario)),
+  180_000,
+);
 
 it(
   "authenticates before provisioning and recovers two isolated agents through one endpoint",

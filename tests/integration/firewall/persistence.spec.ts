@@ -69,6 +69,10 @@ const scenario = Effect.gen(function* () {
     const { settings, agentName } = yield* loadDaemonSettings().pipe(
       Effect.withConfigProvider(configuration),
     );
+    const { mode } = settings;
+    if (mode.kind !== "p2p") {
+      return yield* Effect.dieMessage("Expected a P2P fixture");
+    }
     const agentKey = yield* getOrCreateOwnedAgent(
       localOwner,
       access.unlockKey,
@@ -80,17 +84,15 @@ const scenario = Effect.gen(function* () {
     );
     const identity = Identity.layer({
       agentKey,
-      registrySignerPublicKey: settings.registrySignerPublicKey,
+      registrySignerPublicKey: mode.registrySignerPublicKey,
       ...registration,
     }).pipe(
       Layer.provide(
         Registry.layer({
-          origin: settings.registryOrigin,
-          registrySignerPublicKey: settings.registrySignerPublicKey,
+          origin: mode.registryOrigin,
+          registrySignerPublicKey: mode.registrySignerPublicKey,
           requestTimeout: Duration.seconds(5),
-          admissionCredential: Option.fromNullable(
-            settings.admissionCredential,
-          ),
+          admissionCredential: Option.fromNullable(mode.admissionCredential),
         }).pipe(Layer.provide(NodeHttpClient.layer)),
       ),
     );
@@ -128,18 +130,18 @@ const scenario = Effect.gen(function* () {
       expect(yield* firewall.readDecisions({})).toEqual(retained);
       return retained;
     }).pipe(Effect.provide(configured));
-    return { agentKey, registration, settings, result };
+    return { agentKey, registration, settings, mode, result };
   }).pipe(Effect.provide(databaseConnection(database.runtimeLocator)));
   yield* Effect.gen(function* () {
     const identity = Identity.layer({
       agentKey: saved.agentKey,
-      registrySignerPublicKey: saved.settings.registrySignerPublicKey,
+      registrySignerPublicKey: saved.mode.registrySignerPublicKey,
       ...saved.registration,
     }).pipe(
       Layer.provide(
         Registry.layer({
-          origin: saved.settings.registryOrigin,
-          registrySignerPublicKey: saved.settings.registrySignerPublicKey,
+          origin: saved.mode.registryOrigin,
+          registrySignerPublicKey: saved.mode.registrySignerPublicKey,
           requestTimeout: Duration.seconds(5),
           admissionCredential: Option.none(),
         }).pipe(Layer.provide(NodeHttpClient.layer)),

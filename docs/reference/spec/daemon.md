@@ -39,10 +39,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required local bearer or OAuth configuration, below |
-| `registryOrigin` | Required serialized HTTP(S) origin, without path or trailing slash |
-| `transport` | Required P2P or client/server configuration, below |
-| `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
-| `admissionCredential` | Network admission credential used when registering an agent |
+| `mode` | Required: P2P or client/server, below |
 | `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
@@ -55,24 +52,32 @@ available and private. Restart to activate changes. Each agent retains its own
 editable rules in SQL. A saved agent keeps its name; changing `agentName`
 afterwards refuses startup.
 
-### Transport
+### Mode
 
-Choose one delivery mode for the whole daemon database:
+`mode` chooses how the daemon's agents are named and how their messages
+travel. It is fixed at first startup; a database cannot be moved from one mode
+to the other.
 
-```json
-{"transport":{"kind":"p2p","routerOrigin":"https://router.example"}}
-```
-
-P2P uses a Router process and the [peer protocol](./communication/protocol.md).
-For one daemon that hosts a server agent and its clients, use
-[client/server mode](./client-server.md):
+In [client/server mode](./client-server.md) one daemon hosts a server agent
+and its clients, names them itself and needs no other service:
 
 ```json
-{"transport":{"kind":"client-server","serverAgentName":"support-agent"}}
+{"mode":{"kind":"client-server","serverAgentName":"support-agent"}}
 ```
 
-The transport kind is fixed at first startup. There is no live mode switch or
-bridge.
+In P2P mode daemons owned by different people register with a shared Registry
+and exchange messages through a Router, following the
+[peer protocol](./communication/protocol.md):
+
+```json
+{"mode":{"kind":"p2p","routerOrigin":"https://router.example","registryOrigin":"https://registry.example","registrySignerPublicKey":{"crv":"Ed25519","kty":"OKP","x":"<base64url>"}}}
+```
+
+| P2P property | Requirement |
+| --- | --- |
+| `routerOrigin`, `registryOrigin` | Required serialized HTTP(S) origins, without path or trailing slash |
+| `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
+| `admissionCredential` | Network admission credential used when registering an agent |
 
 The storage format changes with this release's planned reset. Prepare a fresh
 database for either mode; existing-format databases are rejected rather than

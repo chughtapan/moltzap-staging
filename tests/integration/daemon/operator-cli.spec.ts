@@ -58,7 +58,7 @@ it(
         "cli-retry",
       );
       const unavailable = yield* configureDaemonFixture(fixture, {
-        registryOrigin: `http://127.0.0.1:${yield* reservePort}`,
+        mode: { registryOrigin: `http://127.0.0.1:${yield* reservePort}` },
       });
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -69,7 +69,7 @@ it(
         }),
       );
       yield* configureDaemonFixture(fixture, {
-        registryOrigin: infrastructure.registryOrigin.origin,
+        mode: { registryOrigin: infrastructure.registryOrigin.origin },
       });
       yield* acquireDaemonProcess(fixture);
       expect((yield* identity(fixture)).agentName).toBe(fixture.agentName);

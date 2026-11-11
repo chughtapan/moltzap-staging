@@ -8,10 +8,11 @@ read_when:
 
 In client/server mode one daemon hosts every participant behind one MCP
 endpoint. One agent is the server agent. Every other agent is a client, and a
-client exchanges messages only with the server agent. The mode needs no Router.
+client exchanges messages only with the server agent. The mode needs no Router
+and no Registry service.
 
 ```json
-{"transport":{"kind":"client-server","serverAgentName":"support-agent"}}
+{"mode":{"kind":"client-server","serverAgentName":"support-agent"}}
 ```
 
 ## Server agent and clients
@@ -27,6 +28,9 @@ agent's host signs in with the secret in `SHARNESS_SERVER_AGENT_CREDENTIAL`,
 sent as a bearer. The secret comes from the environment and is never written
 to the settings document; the daemon does not start in this mode without it.
 Clients enroll through the configured authentication, such as OAuth.
+
+The daemon gives each agent a unique name and signs its identity card itself,
+with a key it generates on first start and keeps encrypted in its database.
 
 The server agent's name can be changed only before the first committed
 message. After that, a different name refuses startup.

@@ -40,10 +40,13 @@ const settings = {
   port: 4319,
   host: "127.0.0.1",
   authentication: { kind: "local", credential: secret },
-  registryOrigin: "https://registry.example",
-  registrySignerPublicKey: signer,
-  transport: { kind: "p2p", routerOrigin: "https://router.example" },
-  admissionCredential: "test-admission-credential",
+  mode: {
+    kind: "p2p",
+    routerOrigin: "https://router.example",
+    registryOrigin: "https://registry.example",
+    registrySignerPublicKey: signer,
+    admissionCredential: "test-admission-credential",
+  },
 };
 const shippedNorms = fileURLToPath(
   new URL("../../../packages/social-harness/config/norms/", import.meta.url),
@@ -378,7 +381,19 @@ it.each([
   { ...settings, host: "0.0.0.0" },
   { ...settings, porrt: settings.port },
   { ...settings, port: 0 },
-  { ...settings, registryOrigin: "https://registry.example/path" },
+  {
+    ...settings,
+    mode: { ...settings.mode, registryOrigin: "https://registry.example/path" },
+  },
+  { ...settings, mode: { ...settings.mode, registryOrigin: undefined } },
+  {
+    ...settings,
+    mode: {
+      ...settings.mode,
+      kind: "client-server",
+      serverAgentName: "server-agent",
+    },
+  },
 ])(
   "rejects invalid settings without disclosing their credentials: %j",
   (document) =>
@@ -391,7 +406,7 @@ it.each([
       expect(failure).toMatchObject({ reason: "document" });
       expect(JSON.stringify(failure)).not.toContain(secret);
       expect(JSON.stringify(failure)).not.toContain(
-        settings.admissionCredential,
+        settings.mode.admissionCredential,
       );
     }).pipe(Effect.provide(NodeContext.layer)),
 );
@@ -484,10 +499,10 @@ it("rolls back additive schema changes and migration rows when the retained key 
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.prepare;
-    yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
-    yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+    yield* test.sql`DROP TABLE local_registry_agents`;
+    yield* test.sql`DROP TABLE local_registry_signer`;
     yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-    const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+    const metadata = yield* test.sql`SELECT * FROM database_encryption`;
     const migrations = yield* test.sql`SELECT * FROM effect_sql_migrations`;
     const failure = yield* prepareDatabase.pipe(
       Effect.withConfigProvider(
@@ -499,7 +514,9 @@ it("rolls back additive schema changes and migration rows when the retained key 
       Effect.flip,
     );
     expect(failure).toMatchObject({ reason: "key" });
-    expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+    expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
+      metadata,
+    );
     expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual(
       migrations,
     );
@@ -677,10 +694,10 @@ it(
     Effect.gen(function* () {
       const test = yield* postgresFixture;
       yield* test.prepare;
-      yield* test.sql`ALTER TABLE database_encryption RENAME TO daemon_settings`;
-      yield* test.sql`ALTER TABLE daemon_settings RENAME COLUMN verifier TO settings`;
+      yield* test.sql`DROP TABLE local_registry_agents`;
+      yield* test.sql`DROP TABLE local_registry_signer`;
       yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-      const metadata = yield* test.sql`SELECT * FROM daemon_settings`;
+      const metadata = yield* test.sql`SELECT * FROM database_encryption`;
       const migrations =
         yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
       const provider = ConfigProvider.fromMap(
@@ -695,7 +712,9 @@ it(
           Effect.flip,
         ),
       ).toMatchObject({ reason: "key" });
-      expect(yield* test.sql`SELECT * FROM daemon_settings`).toEqual(metadata);
+      expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
+        metadata,
+      );
       expect(
         yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
       ).toEqual(migrations);

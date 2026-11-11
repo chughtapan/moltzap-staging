@@ -696,20 +696,23 @@ export const makeDaemonProcessFixture = (
           kind: "local",
           credential: Redacted.value(credentials.mcpCredential),
         },
-        registryOrigin: infrastructure.registryOrigin.origin,
-        registrySignerPublicKey: Schema.decodeUnknownSync(
-          Schema.parseJson(AgentPublicKey),
-        )(infrastructure.registrySignerPublicKeyJson),
-        transport: {
-          kind: "p2p",
-          routerOrigin: infrastructure.routerOrigin.origin,
-        },
-        admissionCredential: ADMISSION_CREDENTIAL,
         agentName,
         ...(firewall && setupChanges.messagePolicyFile === undefined
           ? yield* markedPolicyFiles(directory)
           : {}),
         ...setupChanges,
+        mode: changedMode(
+          {
+            kind: "p2p",
+            routerOrigin: infrastructure.routerOrigin.origin,
+            registryOrigin: infrastructure.registryOrigin.origin,
+            registrySignerPublicKey: Schema.decodeUnknownSync(
+              Schema.parseJson(AgentPublicKey),
+            )(infrastructure.registrySignerPublicKeyJson),
+            admissionCredential: ADMISSION_CREDENTIAL,
+          },
+          setupChanges.mode,
+        ),
       }),
     );
     yield* loadDaemonSettings(setupFile).pipe(
@@ -771,7 +774,11 @@ export function configureDaemonFixture(
       );
     yield* filesystem.writeFileString(
       filename,
-      JSON.stringify({ ...current, ...changes }),
+      JSON.stringify({
+        ...current,
+        ...changes,
+        mode: changedMode(current.mode, changes.mode),
+      }),
     );
     yield* loadDaemonSettings(filename).pipe(
       Effect.withConfigProvider(
@@ -783,6 +790,19 @@ export function configureDaemonFixture(
     Effect.provide(NodeFileSystem.layer),
     Effect.withSpan("configureDaemonFixture"),
   );
+}
+
+/**
+ * The `mode` setting after a change: a client/server mode replaces the
+ * current one, and anything else changes fields of the current P2P mode.
+ */
+function changedMode(current: unknown, change: unknown): unknown {
+  if (typeof change !== "object" || change === null) {
+    return current;
+  }
+  return "kind" in change && change.kind === "client-server"
+    ? change
+    : { ...(typeof current === "object" ? current : {}), ...change };
 }
 
 /** Writes the marked message policy a firewall fixture's daemon reads, and the settings naming it. */

@@ -468,6 +468,23 @@ const encryptionSchema = Effect.gen(function* () {
   yield* sql`ALTER TABLE database_encryption RENAME COLUMN settings TO verifier`;
 });
 
+const localRegistrySchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const binary = sql.onDialectOrElse({
+    pg: () => "BYTEA",
+    orElse: () => "BLOB",
+  });
+  yield* sql`CREATE TABLE local_registry_signer (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1), private_key TEXT NOT NULL
+  )`;
+  yield* sql.unsafe(`CREATE TABLE local_registry_agents (
+    agent_id TEXT PRIMARY KEY,
+    agent_name TEXT NOT NULL UNIQUE,
+    key_thumbprint TEXT NOT NULL UNIQUE,
+    canonical_card ${binary} NOT NULL
+  )`);
+});
+
 const migrationsTable = "effect_sql_migrations";
 const migrationLoader = Migrator.fromRecord({
   "0001_ownership": ownershipSchema,
@@ -475,6 +492,7 @@ const migrationLoader = Migrator.fromRecord({
   "0003_firewall": firewallSchema,
   "0004_communication": communicationSchema,
   "0005_database_encryption": encryptionSchema,
+  "0006_local_registry": localRegistrySchema,
 });
 const runMigrations = Migrator.make({})({
   loader: migrationLoader,

@@ -1,0 +1,1 @@
+The daemon's `transport` setting is replaced by `mode`. A client/server daemon names its agents and signs their identity cards itself and needs no Registry service. The Registry settings (`registryOrigin`, `registrySignerPublicKey`, `admissionCredential`) move inside the P2P mode, beside `routerOrigin`.
