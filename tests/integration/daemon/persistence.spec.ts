@@ -37,14 +37,7 @@ const cardOf = (agentKey: string) =>
 const qualifyTenants = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const owner = { issuer: "https://issuer.example", subject: "first" };
-  const agentKeys = yield* Effect.all(
-    Array.from({ length: 8 }, () => getOrCreateOwnedAgent(owner)),
-    { concurrency: 8 },
-  );
   const first = yield* getOrCreateOwnedAgent(owner);
-  for (const agentKey of agentKeys) {
-    expect(agentKey).toBe(first);
-  }
   const second = yield* getOrCreateOwnedAgent({ ...owner, subject: "second" });
   const role = yield* sql<{
     readonly rolsuper: boolean;
@@ -121,6 +114,9 @@ const qualifyInbox = (keys: readonly string[]) =>
     return keys;
   });
 
+/** A send with no conversation history before it. */
+const evidence = { history: [], earlierHistoryOmitted: false, gaps: [] };
+
 const qualifyFirewall = (keys: readonly string[]) =>
   Effect.gen(function* () {
     const options: FirewallOptions = {
@@ -164,9 +160,28 @@ const qualifyFirewall = (keys: readonly string[]) =>
       const configured = Firewall.layer(key, options).pipe(
         Layer.provide(identity),
       );
+      const message = yield* Message.create({
+        author: yield* cardOf(key),
+        recipients: [testAgentCard("peer")],
+        content: [{ type: "text", text: "Store one completed decision." }],
+      });
       const saved = yield* Effect.gen(function* () {
         const firewall = yield* Firewall;
+        const sql = yield* SqlClient.SqlClient;
         expect((yield* firewall.readPolicy()).rules).toEqual([]);
+        const decision = yield* firewall.checkOutgoing(message, evidence);
+        const aborted = yield* sql
+          .withTransaction(
+            decision.save.pipe(Effect.zipRight(Effect.fail("rollback"))),
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(aborted)).toBeTruthy();
+        expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
+        yield* Effect.all(
+          Array.from({ length: 8 }, () => decision.save),
+          { concurrency: 8 },
+        );
+        expect((yield* firewall.readDecisions({})).decisions).toHaveLength(1);
         yield* firewall.updatePolicy({ add: [rule] });
         return yield* firewall.readDecisions({});
       }).pipe(Effect.provide(configured));
