@@ -13,7 +13,7 @@ import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as McpModule from "#sharness-mcp/mcp-client";
 import type {
-  acquireMcpConnection,
+  connectFromEnvironment,
   InboxEntry,
   McpConnection,
 } from "#sharness-mcp/mcp-client";
@@ -24,14 +24,14 @@ import { credentialFile } from "../__tests__/credential.js";
 /* eslint-disable agent-code-guard/async-keyword -- NanoClaw's lifecycle and host callbacks are Promise-native. */
 const boundary = vi.hoisted(() => ({
   register: vi.fn<typeof registerChannelAdapter>(),
-  acquire: vi.fn<typeof acquireMcpConnection>(),
+  acquire: vi.fn<typeof connectFromEnvironment>(),
 }));
 vi.mock("./channel-registry.js", () => ({
   registerChannelAdapter: boundary.register,
 }));
 vi.mock("#sharness-mcp/mcp-client", async (original) => ({
   ...(await original<typeof McpModule>()),
-  acquireMcpConnection: boundary.acquire,
+  connectFromEnvironment: boundary.acquire,
 }));
 
 const messageText = "hello";
@@ -126,23 +126,6 @@ afterEach(async () => {
 });
 
 describe("NanoClaw lifecycle", () => {
-  it.each([
-    { value: undefined, expected: false },
-    { value: "false", expected: false },
-    { value: "true", expected: true },
-  ])(
-    "passes the host HTTP permission $value to MCP",
-    async ({ value, expected }) => {
-      vi.stubEnv("SHARNESS_MCP_ALLOW_HTTP", value);
-      connection();
-      const current = await channel();
-      await current.setup(host());
-      expect(boundary.acquire).toHaveBeenCalledWith(
-        expect.objectContaining({ allowHttp: expected }),
-        expect.anything(),
-      );
-    },
-  );
   it("stays disabled without a configured daemon", async () => {
     vi.stubEnv("SHARNESS_MCP_URL", undefined);
     expect(await registration.factory()).toBeNull();

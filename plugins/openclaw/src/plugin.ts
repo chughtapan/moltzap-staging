@@ -22,17 +22,7 @@ import {
   type SendRequest,
   type SendResult,
 } from "@social-harness/social-harness";
-import {
-  Config,
-  ConfigError,
-  Data,
-  Effect,
-  Option,
-  Redacted,
-  Schema,
-} from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
-import { readFile } from "node:fs/promises";
+import { Data, Effect, Option, Schema } from "effect";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
 import {
   type ChannelPlugin,
@@ -49,8 +39,8 @@ import {
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
 import {
-  acquireMcpConnection,
   callTool,
+  connectFromEnvironment,
   type InboxEntry,
   type McpConnection,
 } from "#sharness-mcp/mcp-client";
@@ -312,7 +302,7 @@ function createMessageActions(
     describeMessageTool: () => ({ actions: [...MESSAGE_ACTIONS] }),
     supportsAction: ({ action }) => isMessageAction(action),
     handleAction: (ctx) =>
-      runHostPromise(handleMessageAction(connectedAccount, ctx)),
+      Effect.runPromise(handleMessageAction(connectedAccount, ctx)),
   };
 }
 
@@ -354,7 +344,7 @@ function createMessageSection(connectedAccount: ConnectedAccountState) {
   return defineChannelMessageAdapter({
     id: CHANNEL_ID,
     send: {
-      text: (ctx) => runHostPromise(sendOpenClawText(connectedAccount, ctx)),
+      text: (ctx) => Effect.runPromise(sendOpenClawText(connectedAccount, ctx)),
     },
   });
 }
@@ -405,7 +395,7 @@ function startAccountConnection(
   if (ctx.abortSignal.aborted) {
     return Promise.resolve();
   }
-  return runHostPromise(
+  return Effect.runPromise(
     requireOpenClawAccountRuntime(ctx).pipe(
       Effect.flatMap((runtime) =>
         acquireAccountEndpoint().pipe(
@@ -466,26 +456,14 @@ function isOpenClawAccountRuntime(
 }
 
 function acquireAccountEndpoint() {
-  return Effect.gen(function* () {
-    const endpoint = yield* Config.url("SHARNESS_MCP_URL");
-    const allowHttp = yield* Config.boolean("SHARNESS_MCP_ALLOW_HTTP").pipe(
-      Config.withDefault(false),
-    );
-    const credentialFile = yield* Config.redacted(
-      "SHARNESS_MCP_CREDENTIAL_FILE",
-    );
-    const credential = yield* Effect.tryPromise({
-      try: () => readFile(Redacted.value(credentialFile), "utf8"),
-      catch: () =>
-        new OpenClawConfigurationError({
-          detail: "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
-        }),
-    });
-    return yield* acquireMcpConnection(
-      { endpoint, credential: Redacted.make(credential), allowHttp },
-      { name: "sharness-openclaw", version: packageVersion },
-    );
-  });
+  return connectFromEnvironment({
+    name: "sharness-openclaw",
+    version: packageVersion,
+  }).pipe(
+    Effect.catchTag("McpSettingsError", ({ message }) =>
+      Effect.fail(new OpenClawConfigurationError({ detail: message })),
+    ),
+  );
 }
 
 function runAccountConnection(
@@ -997,23 +975,6 @@ function connectedEndpoint(
     return undefined;
   }
   return active.endpoint;
-}
-
-function runHostPromise<A, E extends Error | ConfigError.ConfigError>(
-  effect: Effect.Effect<A, E>,
-) {
-  return Effect.runPromise(Effect.mapError(effect, hostPromiseError));
-}
-
-function hostPromiseError(error: Error | ConfigError.ConfigError): Error {
-  if (ConfigError.isConfigError(error)) {
-    return new OpenClawConfigurationError({
-      detail: ConfigError.isInvalidData(error)
-        ? `${error.path.join(".")}: ${error.message}`
-        : error.message,
-    });
-  }
-  return error;
 }
 
 const plugin: OpenClawPluginDefinition &

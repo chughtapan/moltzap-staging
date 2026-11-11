@@ -18,6 +18,7 @@ import {
   type ToolResult,
 } from "@social-harness/social-harness";
 import {
+  Config,
   Data,
   Effect,
   Fiber,
@@ -27,6 +28,8 @@ import {
   Schema,
   Scope,
 } from "effect";
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
+import { readFile } from "node:fs/promises";
 
 /** Connection failures omit the private endpoint and credential. */
 export class McpConnectError extends Data.TaggedError("McpConnectError")<{
@@ -36,6 +39,11 @@ export class McpConnectError extends Data.TaggedError("McpConnectError")<{
 /** Reception ended: the daemon could not be read, or the connection already has a reader. */
 export class McpReceiveError extends Data.TaggedError("McpReceiveError")<{
   readonly reason: "transport-failed" | "already-listening";
+}> {}
+
+/** The host's environment does not say how to reach the daemon. `message` names the variable to set. */
+export class McpSettingsError extends Data.TaggedError("McpSettingsError")<{
+  readonly message: string;
 }> {}
 
 /** Non-send tool failures never include unvalidated server or transport details. */
@@ -159,6 +167,45 @@ export function acquireMcpConnection(
 
 /** Longer than the longest wait a tool accepts, so a waiting read is not cut short. */
 const CALL_TIMEOUT_MILLISECONDS = (MAXIMUM_WAIT_SECONDS + 30) * 1000;
+
+const settingsError = (message: string) => () =>
+  Effect.fail(new McpSettingsError({ message }));
+
+/**
+ * Connects the way the host process is configured: `SHARNESS_MCP_URL` names
+ * the daemon, `SHARNESS_MCP_CREDENTIAL_FILE` the file holding its bearer, and
+ * `SHARNESS_MCP_ALLOW_HTTP=true` permits plaintext HTTP to it.
+ */
+export function connectFromEnvironment(implementation: Implementation) {
+  return Effect.gen(function* () {
+    const endpoint = yield* Config.url("SHARNESS_MCP_URL").pipe(
+      Effect.catchTag(
+        "ConfigError",
+        settingsError("SHARNESS_MCP_URL must be the daemon's MCP URL"),
+      ),
+    );
+    const allowHttp = yield* Config.boolean("SHARNESS_MCP_ALLOW_HTTP").pipe(
+      Config.withDefault(false),
+      Effect.catchTag(
+        "ConfigError",
+        settingsError("SHARNESS_MCP_ALLOW_HTTP must be true or false"),
+      ),
+    );
+    const unreadable = settingsError(
+      "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
+    );
+    const credentialFile = yield* Config.redacted(
+      "SHARNESS_MCP_CREDENTIAL_FILE",
+    ).pipe(Effect.catchTag("ConfigError", unreadable));
+    const credential = yield* Effect.tryPromise(() =>
+      readFile(Redacted.value(credentialFile), "utf8"),
+    ).pipe(Effect.catchTag("UnknownException", unreadable));
+    return yield* acquireMcpConnection(
+      { endpoint, credential: Redacted.make(credential), allowHttp },
+      implementation,
+    );
+  }).pipe(Effect.withSpan("Mcp.connectFromEnvironment"));
+}
 
 /** What a caller is told when a tool's definition does not read a failure. */
 const reasons = {

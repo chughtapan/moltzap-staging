@@ -18,16 +18,13 @@ import {
   Effect,
   Exit,
   Option,
-  Redacted,
   Schema,
   Scope,
 } from "effect";
 import { randomUUID } from "node:crypto";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
-import { readFile } from "node:fs/promises";
 import {
-  acquireMcpConnection,
   callTool,
+  connectFromEnvironment,
   type InboxEntry,
   type McpConnectError,
   type McpConnection,
@@ -70,15 +67,6 @@ const CHANNEL_DEFAULTS = Object.freeze({
  * identical.
  */
 const INBOUND_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-
-const channelEnv = Config.all({
-  mcpEndpoint: Config.option(Config.string("SHARNESS_MCP_URL")).pipe(
-    Config.map(Option.getOrNull),
-  ),
-  allowHttp: Config.boolean("SHARNESS_MCP_ALLOW_HTTP").pipe(
-    Config.withDefault(false),
-  ),
-});
 
 interface Activation {
   readonly endpoint: McpConnection;
@@ -250,15 +238,8 @@ class HarnessChannelAdapter {
   readonly supportsThreads = false;
 
   private readonly lifecycleGate = Effect.runSync(Effect.makeSemaphore(1));
-  private readonly mcpEndpoint: string;
-  private readonly allowHttp: boolean;
   private activation: Activation | null = null;
   private setupConfig: ChannelSetup | null = null;
-
-  constructor(mcpEndpoint: string, allowHttp: boolean) {
-    this.mcpEndpoint = mcpEndpoint;
-    this.allowHttp = allowHttp;
-  }
 
   setup(config: ChannelSetup): Promise<void> {
     return Effect.runPromise(
@@ -362,40 +343,12 @@ class HarnessChannelAdapter {
   private acquireEndpoint(
     scope: Scope.CloseableScope,
   ): Effect.Effect<McpConnection, McpConnectError | ChannelError> {
-    const allowHttp = this.allowHttp;
-    return Effect.try({
-      try: () => new URL(this.mcpEndpoint),
-      catch: () =>
-        new ChannelError({
-          reason: "Social Harness channel MCP endpoint is invalid",
-        }),
+    return connectFromEnvironment({
+      name: "sharness-nanoclaw",
+      version: packageVersion,
     }).pipe(
-      Effect.flatMap((endpoint) =>
-        Effect.gen(function* () {
-          const credentialFile = yield* Config.redacted(
-            "SHARNESS_MCP_CREDENTIAL_FILE",
-          ).pipe(
-            Effect.catchTag("ConfigError", () =>
-              Effect.fail(
-                new ChannelError({
-                  reason: "SHARNESS_MCP_CREDENTIAL_FILE is required",
-                }),
-              ),
-            ),
-          );
-          const credential = yield* Effect.tryPromise({
-            try: () => readFile(Redacted.value(credentialFile), "utf8"),
-            catch: () =>
-              new ChannelError({
-                reason:
-                  "SHARNESS_MCP_CREDENTIAL_FILE must name a readable file",
-              }),
-          });
-          return yield* acquireMcpConnection(
-            { endpoint, credential: Redacted.make(credential), allowHttp },
-            { name: "sharness-nanoclaw", version: packageVersion },
-          );
-        }),
+      Effect.catchTag("McpSettingsError", ({ message }) =>
+        Effect.fail(new ChannelError({ reason: message })),
       ),
       Scope.extend(scope),
     );
@@ -560,13 +513,14 @@ class HarnessChannelAdapter {
   }
 }
 
+/** The channel exists only in a host that is told where its daemon is. */
 function makeHarnessChannelAdapter(): HarnessChannelAdapter | null {
-  const { mcpEndpoint, allowHttp } = Effect.runSync(
-    channelEnv.pipe(Effect.withConfigProvider(ConfigProvider.fromEnv())),
+  const configured = Effect.runSync(
+    Config.option(Config.string("SHARNESS_MCP_URL")).pipe(
+      Effect.withConfigProvider(ConfigProvider.fromEnv()),
+    ),
   );
-  return mcpEndpoint === null
-    ? null
-    : new HarnessChannelAdapter(mcpEndpoint, allowHttp);
+  return Option.isNone(configured) ? null : new HarnessChannelAdapter();
 }
 
 registerChannelAdapter(CHANNEL_ID, {
