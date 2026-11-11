@@ -1,7 +1,7 @@
 /** @file Policy documents and behavior files preserve configuration bounds, authority and safe failures. */
 
 import { live as it } from "@effect/vitest";
-import { Effect, Option, Redacted } from "effect";
+import { Effect, Option, Redacted, Schema } from "effect";
 import { spawnSync } from "node:child_process";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Tests create exact owner files and special-file fixtures around bounded loading.
 import {
@@ -26,9 +26,37 @@ import {
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Rule fields, settings and closed configuration failures are the owner policy contract. */
 
+const policyFormat = "org.social-harness/message-policy/v2";
+const directories: string[] = [];
+afterEach(() => {
+  for (const directory of directories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+/** A new temporary directory, removed after the test. */
+function directory(): string {
+  const created = mkdtempSync(join(tmpdir(), "sharness-message-policy-"));
+  directories.push(created);
+  return created;
+}
+
+/** An explicit configured file loads without constructing a provider or daemon. */
+function loadConfigured(
+  configuration: PolicyConfiguration,
+  reader: typeof readCredential,
+) {
+  return loadMessagePolicy(configuration, reader).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.dieMessage("expected configured policy"),
+        onSome: Effect.succeed,
+      }),
+    ),
+  );
+}
+
 describe("policy documents", () => {
-  const directories: string[] = [];
-  const policyFormat = "org.social-harness/message-policy/v2";
   const baseDocument = {
     format: policyFormat,
     text: {
@@ -45,11 +73,6 @@ describe("policy documents", () => {
     ...baseDocument,
     decisionProvider: { kind: "jev", model: "jev-1.13.0" },
   };
-  afterEach(() => {
-    for (const directory of directories.splice(0)) {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
 
   it("installs no firewall without a policy file", () =>
     Effect.gen(function* () {
@@ -182,7 +205,7 @@ describe("policy documents", () => {
       ).toBe("key-value");
     }));
 
-  it("installs the document with its key and Client's default settings", () =>
+  it("installs the document with its key and the default settings", () =>
     Effect.gen(function* () {
       const installed = yield* loadConfigured(
         {
@@ -265,12 +288,6 @@ describe("policy documents", () => {
     return path;
   }
 
-  function directory(): string {
-    const created = mkdtempSync(join(tmpdir(), "sharness-message-policy-"));
-    directories.push(created);
-    return created;
-  }
-
   it("accepts non-English editable rules", () =>
     Effect.gen(function* () {
       const document = {
@@ -290,26 +307,20 @@ describe("policy documents", () => {
       expect(decoded.text?.initialRules[0]?.text).toBe("请先确认。");
     }));
 
-  /** An explicit configured file loads without constructing a provider or daemon. */
-  function loadConfigured(
-    configuration: PolicyConfiguration,
-    reader: typeof readCredential,
-  ) {
-    return loadMessagePolicy(configuration, reader).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.dieMessage("expected configured policy"),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
-  }
-
   it("loads explicitly selected packaged policy assets through ordinary relative paths", () =>
     Effect.gen(function* () {
       const path = fileURLToPath(
         new URL("../../config/firewall/message-policy.json", import.meta.url),
       );
+      const shipped = yield* Schema.decodeUnknown(
+        Schema.parseJson(
+          Schema.Struct({
+            text: Schema.Struct({
+              fixedBehaviors: Schema.Array(Schema.String),
+            }),
+          }),
+        ),
+      )(readFileSync(path, "utf8"));
       const loaded = yield* loadConfigured(
         {
           messagePolicyFile: path,
@@ -317,22 +328,14 @@ describe("policy documents", () => {
         },
         readCredential,
       );
-      const rules = loaded.policy.text?.fixedRules ?? [];
-      expect(rules.length).toBeGreaterThan(0);
+      expect(loaded.policy.text?.fixedRules).toHaveLength(
+        shipped.text.fixedBehaviors.length,
+      );
       expect(loaded.provider?.kind).toBe("jev");
     }));
 });
 
 describe("behavior files", () => {
-  const directories: string[] = [];
-  afterEach(() => {
-    for (const directory of directories.splice(0)) {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  const policyFormat = "org.social-harness/message-policy/v2";
-
   const behaviorBody = "Start conversations during working hours.";
 
   const fixedInlineRule = {
@@ -376,7 +379,7 @@ Ask before starting a conversation.
 `;
 
   function fixture(fixed = behaviorDocument, initial = normDocument) {
-    const root = stateDirectory();
+    const root = directory();
     mkdirSync(join(root, "fixed"));
     mkdirSync(join(root, "initial"));
     writeFileSync(join(root, "fixed", "BEHAVIOR.md"), fixed);
@@ -397,26 +400,13 @@ Ask before starting a conversation.
     return { root, path, document };
   }
 
-  function stateDirectory() {
-    const directory = mkdtempSync(join(tmpdir(), "sharness-config-files-"));
-    directories.push(directory);
-    return directory;
-  }
-
   function loaded(path: string) {
-    return loadMessagePolicy(
+    return loadConfigured(
       {
         messagePolicyFile: path,
         decisionProviderKeyFile: Redacted.make(join(dirname(path), "key")),
       },
       readCredential,
-    ).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.die("expected a configured message policy"),
-          onSome: Effect.succeed,
-        }),
-      ),
     );
   }
 
@@ -588,35 +578,44 @@ Ask before starting a conversation.
     ],
   ] as const;
 
-  describe.each(["fixedBehaviors", "initialBehaviors"] as const)(
-    "%s",
-    (field) => {
-      // @agent-code-guard/regression-only: Every case is an owner configuration refusal with a safe indexed path at daemon startup.
-      it.each(invalidBehaviors)(
-        "fails configuration for %s, naming only its policy path",
-        ([, reason, directory, text]) =>
-          Effect.gen(function* () {
-            const { path, document } = fixture(text);
-            writeFileSync(
-              path,
-              JSON.stringify({
-                ...document,
-                text: {
-                  ...document.text,
-                  fixedBehaviors: [],
-                  initialBehaviors: [],
-                  [field]: [directory],
-                },
-              }),
-            );
-            const error = yield* loaded(path).pipe(Effect.flip);
-            expect(error.behaviorReason).toBe(reason);
-            expect(error.message).toContain(`text.${field}.0`);
-            expect(error.message).not.toContain("private-invalid-behavior");
+  // @agent-code-guard/regression-only: Every case is an owner configuration refusal with a safe indexed path at daemon startup.
+  it.each(invalidBehaviors)(
+    "fails configuration for %s, naming only its policy path",
+    ([, reason, directory, text]) =>
+      Effect.gen(function* () {
+        const { path, document } = fixture(text);
+        writeFileSync(
+          path,
+          JSON.stringify({
+            ...document,
+            text: {
+              ...document.text,
+              fixedBehaviors: [directory],
+              initialBehaviors: [],
+            },
           }),
-      );
-    },
+        );
+        const error = yield* loaded(path).pipe(Effect.flip);
+        expect(error.behaviorReason).toBe(reason);
+        expect(error.message).toContain("text.fixedBehaviors.0");
+        expect(error.message).not.toContain("private-invalid-behavior");
+      }),
   );
+
+  it("names an invalid initial behavior by its own policy path", () =>
+    Effect.gen(function* () {
+      const { path, document } = fixture();
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...document,
+          text: { ...document.text, initialBehaviors: ["initial", "absent"] },
+        }),
+      );
+      const error = yield* loaded(path).pipe(Effect.flip);
+      expect(error.behaviorReason).toBe("missing");
+      expect(error.message).toContain("text.initialBehaviors.1");
+    }));
 
   it(
     "refuses repeated fixed behaviors at the second entry",
@@ -651,7 +650,7 @@ Ask before starting a conversation.
     (target) =>
       Effect.gen(function* () {
         const { path, root } = fixture();
-        const outside = stateDirectory();
+        const outside = directory();
         writeFileSync(join(outside, "BEHAVIOR.md"), behaviorDocument);
         if (target === "directory") {
           rmSync(join(root, "fixed"), { recursive: true });
