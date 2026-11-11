@@ -14,7 +14,7 @@
  * - `configure(changes)`: changes the settings the next start reads.
  * - `bearer(owner)` and `serverAgentBearer`: what the host of a named owner,
  *   or of the server agent in client/server mode, presents.
- * - `signIn(bearer)` and `agent(owner)`: an MCP connection, and the agent
+ * - `signIn(bearer)` and `signInAs(owner)`: an MCP connection, and the agent
  *   `status` reports for it.
  *
  * The options are settings that replace the fixture's, such as the mode, the
@@ -71,12 +71,6 @@ export interface RunningProcess {
   readonly logs: () => string;
 }
 
-/** Exit code and output of a daemon that stopped before listening. */
-export interface DaemonStartupFailure {
-  readonly exitCode: number | null;
-  readonly logs: string;
-}
-
 /** What `sharedDaemon` prepares differently from its defaults. */
 export interface DaemonOptions {
   /**
@@ -96,10 +90,10 @@ export interface DaemonOptions {
   };
 }
 
-/** One signed-in owner's agent and its MCP connection. */
-export interface Agent {
-  readonly agentId: AgentId;
-  readonly agentName: AgentName;
+/** A signed-in owner: its agent and an MCP connection as that agent. */
+export interface SignedIn {
+  /** The agent as `status` reports it and as messages name it. */
+  readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
   /** How other agents address this one. */
   readonly address: AgentAddress;
   readonly connection: McpConnection;
@@ -117,7 +111,11 @@ export interface Daemon {
   ) => Effect.Effect<RunningProcess, ProcessTestError, Scope.Scope>;
   readonly startupFailure: (
     environment?: Readonly<Record<string, string>>,
-  ) => Effect.Effect<DaemonStartupFailure, ProcessTestError, Scope.Scope>;
+  ) => Effect.Effect<
+    { readonly exitCode: number | null; readonly logs: string },
+    ProcessTestError,
+    Scope.Scope
+  >;
   readonly configure: (
     changes: Readonly<Record<string, unknown>>,
   ) => Effect.Effect<void, ProcessTestError>;
@@ -127,10 +125,10 @@ export interface Daemon {
   readonly serverAgentBearer: Redacted.Redacted;
   readonly signIn: (
     bearer: Redacted.Redacted,
-  ) => Effect.Effect<Agent, ProcessTestError, Scope.Scope>;
-  readonly agent: (
+  ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
+  readonly signInAs: (
     owner: string,
-  ) => Effect.Effect<Agent, ProcessTestError, Scope.Scope>;
+  ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>;
 }
 
 /** Disposable children listen only on loopback. */
@@ -382,8 +380,7 @@ const signIn = (endpoint: URL, directory: string, bearer: Redacted.Redacted) =>
       mode: 0o600,
     });
     return {
-      agentId: status.agentId,
-      agentName: status.agentName,
+      agent: { agentId: status.agentId, agentName: status.agentName },
       address: AgentAddress.make(`agent:${status.agentName}`),
       connection,
       credentialFile,
@@ -498,7 +495,7 @@ export const sharedDaemon = (
       bearer,
       serverAgentBearer,
       signIn: (presented) => signIn(endpoint, directory, presented),
-      agent: (owner) =>
+      signInAs: (owner) =>
         Effect.flatMap(bearer(owner), (presented) =>
           signIn(endpoint, directory, presented),
         ),

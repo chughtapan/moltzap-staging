@@ -23,9 +23,9 @@ import { callTool } from "../../../plugins/shared/mcp-client.js";
 import { send } from "../agent-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import {
-  type Agent,
   type Daemon,
   sharedDaemon,
+  type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
 import { acquirePostgres } from "./postgres-fixture.js";
@@ -36,15 +36,12 @@ const SERVER_AGENT_NAME = "alice-server";
 const UNAUTHORIZED = 401;
 const AGENT_UNAVAILABLE = 503;
 
-/** What `status` says about an agent. */
-const identity = ({ agentId, agentName }: Agent) => ({ agentId, agentName });
-
 /**
  * Calls a tool the way a client in client/server mode does. Its send_message
  * and read_conversation name no recipient and no conversation.
  */
 function callAsClient<A, I>(
-  agent: Agent,
+  agent: SignedIn,
   name: string,
   input: Readonly<Record<string, unknown>>,
   output: Schema.Schema<A, I>,
@@ -61,7 +58,7 @@ function callAsClient<A, I>(
 
 /** Reads one of an agent's conversations. */
 type ReadConversation = (
-  agent: Agent,
+  agent: SignedIn,
 ) => Effect.Effect<
   typeof toolDefinitions.read_conversation.output.Type,
   unknown
@@ -69,7 +66,7 @@ type ReadConversation = (
 
 /** The agent's conversation with `peer`, named by the peer's address. */
 const conversationWith =
-  (peer: Agent): ReadConversation =>
+  (peer: SignedIn): ReadConversation =>
   (agent) =>
     callTool(agent.connection.client, {
       name: "read_conversation",
@@ -85,8 +82,12 @@ const clientConversation: ReadConversation = (agent) =>
     toolDefinitions.read_conversation.output,
   );
 
-/** The identifiers of the messages a conversation holds, in order, once it holds `count`. */
-function awaitMessages(agent: Agent, read: ReadConversation, count: number) {
+/**
+ * The identifiers of the messages a conversation holds, in order, once it
+ * holds `count`. A received message is saved after its firewall check, so the
+ * read repeats; its bound allows a remote PostgreSQL's round trips.
+ */
+function awaitMessages(agent: SignedIn, read: ReadConversation, count: number) {
   const ids = read(agent).pipe(
     Effect.map((page) =>
       page.records.flatMap((record) =>
@@ -102,13 +103,13 @@ function awaitMessages(agent: Agent, read: ReadConversation, count: number) {
 }
 
 /** The agent's pending items, waiting for one to arrive. A read removes what it returns. */
-const awaitInbox = (agent: Agent) =>
+const awaitInbox = (agent: SignedIn) =>
   callTool(agent.connection.client, {
     name: "receive_messages",
     arguments: { wait: MAXIMUM_WAIT_SECONDS },
   }).pipe(Effect.map((page) => page.items));
 
-function expectEmptyInbox(agent: Agent) {
+function expectEmptyInbox(agent: SignedIn) {
   return Effect.gen(function* () {
     const page = yield* callTool(agent.connection.client, {
       name: "receive_messages",
@@ -155,8 +156,8 @@ function requestStatus(daemon: Daemon, bearer?: Redacted.Redacted) {
  */
 function expectClientServerExchange(
   daemon: Daemon,
-  server: Agent,
-  client: Agent,
+  server: SignedIn,
+  client: SignedIn,
   earlier: readonly string[],
 ) {
   return Effect.gen(function* () {
@@ -186,7 +187,7 @@ function expectClientServerExchange(
       serverOrder,
     );
     expect(new Set(serverOrder)).toEqual(new Set([...earlier, ...concurrent]));
-    const other = yield* daemon.agent("carol");
+    const other = yield* daemon.signInAs("carol");
     expect(
       yield* send(other, {
         to: client.address,
@@ -197,8 +198,9 @@ function expectClientServerExchange(
 }
 
 /**
- * The request bound allows a remote PostgreSQL tunnel's round trips; it is not
- * a delivery latency assertion.
+ * One daemon and two owners, from before the first sign-in to a restart after
+ * one owner's agent record is lost. In client/server mode the first owner is
+ * the server agent, which exists from startup.
  */
 const scenario = (
   clientServer: boolean,
@@ -238,13 +240,11 @@ const scenario = (
         const bobReads = clientServer
           ? clientConversation
           : conversationWith(alice);
-        expect(alice.agentId).not.toBe(bob.agentId);
+        expect(alice.agent.agentId).not.toBe(bob.agent.agentId);
         if (clientServer) {
-          expect(alice.agentName).toBe(SERVER_AGENT_NAME);
+          expect(alice.agent.agentName).toBe(SERVER_AGENT_NAME);
         }
-        expect(identity(yield* daemon.signIn(aliceBearer))).toEqual(
-          identity(alice),
-        );
+        expect((yield* daemon.signIn(aliceBearer)).agent).toEqual(alice.agent);
         expect(yield* owners).toHaveLength(2);
 
         const first = yield* send(alice, {
@@ -264,7 +264,7 @@ const scenario = (
           to: bob.address,
           text: "unread across the restart",
         });
-        return { alice: identity(alice), bob: identity(bob), first, unread };
+        return { alice: alice.agent, bob: bob.agent, first, unread };
       }),
     );
     yield* stopProcess(original);
@@ -272,8 +272,8 @@ const scenario = (
 
     const bob = yield* daemon.signIn(bobBearer);
     const alice = yield* daemon.signIn(aliceBearer);
-    expect(identity(bob)).toEqual(sent.bob);
-    expect(identity(alice)).toEqual(sent.alice);
+    expect(bob.agent).toEqual(sent.bob);
+    expect(alice.agent).toEqual(sent.alice);
     expect(yield* awaitInbox(bob)).toMatchObject([
       { item: { message: { msgId: sent.unread.id } } },
     ]);
@@ -291,10 +291,10 @@ const scenario = (
       yield* expectClientServerExchange(daemon, alice, bob, earlier);
     }
 
-    yield* sql`DELETE FROM agent_profiles WHERE agent_name = ${bob.agentName}`;
+    yield* sql`DELETE FROM agent_profiles WHERE agent_name = ${bob.agent.agentName}`;
     yield* stopProcess(restarted);
     const serving = yield* daemon.start();
-    expect(identity(yield* daemon.signIn(aliceBearer))).toEqual(sent.alice);
+    expect((yield* daemon.signIn(aliceBearer)).agent).toEqual(sent.alice);
     expect(yield* requestStatus(daemon, bobBearer)).toBe(AGENT_UNAVAILABLE);
     expect(serving.child.exitCode).toBeNull();
   });

@@ -8,15 +8,15 @@ import {
 import { Duration, Effect, Queue, Schema, Stream } from "effect";
 import { callTool } from "../../plugins/shared/mcp-client.js";
 import {
-  type Agent,
   type Daemon,
   type DaemonOptions,
   sharedDaemon,
+  type SignedIn,
 } from "./daemon/daemon-fixture.js";
 import { inboxStream } from "./mcp-inbox.js";
 
-/** An agent and the items it has received, in order. */
-export interface Participant extends Agent {
+/** A signed-in owner and the items its agent has received, in order. */
+export interface Participant extends SignedIn {
   readonly inbox: Queue.Queue<InboxEntry>;
 }
 
@@ -32,13 +32,13 @@ export const joinParticipants = (daemon: Daemon, owners: readonly string[]) =>
     owners,
     (owner) =>
       Effect.gen(function* () {
-        const agent = yield* daemon.agent(owner);
+        const signedIn = yield* daemon.signInAs(owner);
         const inbox = yield* Queue.unbounded<InboxEntry>();
-        yield* inboxStream(agent.connection).pipe(
+        yield* inboxStream(signedIn.connection).pipe(
           Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
           Effect.forkScoped,
         );
-        return { ...agent, inbox };
+        return { ...signedIn, inbox };
       }),
     { concurrency: 1 },
   ).pipe(Effect.withSpan("joinParticipants"));
@@ -65,17 +65,17 @@ export const nextItem = (participant: Participant) =>
     Effect.map((delivery): PermittedItem => delivery.item),
   );
 
-/** Sends `input`, decoded as a host's send input, from `agent`. */
-export const send = (agent: Pick<Agent, "connection">, input: unknown) =>
-  callTool(agent.connection.client, {
+/** Sends `input`, decoded as a host's send input, from `sender`. */
+export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
+  callTool(sender.connection.client, {
     name: "send_message",
     arguments: Schema.decodeUnknownSync(SendRequest)(input),
   });
 
-/** The fixed-member group address of `agents`. */
+/** The fixed-member group address of `members`. */
 export const groupAddress = (
-  agents: ReadonlyArray<Pick<Agent, "agentName">>,
-): string => `group:${agents.map(({ agentName }) => agentName).join(",")}`;
+  members: ReadonlyArray<Pick<SignedIn, "agent">>,
+): string => `group:${members.map(({ agent }) => agent.agentName).join(",")}`;
 
 /**
  * A message from `requester` to its group with `members`, received by each

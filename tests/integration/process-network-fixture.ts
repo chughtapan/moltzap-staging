@@ -9,10 +9,10 @@ import {
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
 import { callTool } from "../../plugins/shared/mcp-client.js";
 import {
-  type Agent,
   type Daemon,
   ProcessTestError,
   sharedDaemon,
+  type SignedIn,
 } from "./daemon/daemon-fixture.ts";
 import { inboxStream } from "./mcp-inbox.js";
 import { historyMessage } from "./saved-history.js";
@@ -25,7 +25,7 @@ import { historyMessage } from "./saved-history.js";
  * as the same agent receives every delivery the test does not ask for.
  */
 export interface Endpoint {
-  readonly agent: Pick<Agent, "agentId" | "agentName">;
+  readonly agent: SignedIn["agent"];
   readonly address: string;
   readonly mcp: URL;
   readonly mcpCredentialFile: string;
@@ -57,7 +57,7 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
     );
     return {
       endpoint: async (owner) =>
-        endpoint(daemon, await runInScope(scope, daemon.agent(owner))),
+        endpoint(daemon, await runInScope(scope, daemon.signInAs(owner))),
       close,
     };
   } catch (cause) {
@@ -66,13 +66,13 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
   }
 }
 
-function endpoint(daemon: Daemon, agent: Agent): Endpoint {
-  const { client } = agent.connection;
+function endpoint(daemon: Daemon, signedIn: SignedIn): Endpoint {
+  const { client } = signedIn.connection;
   return {
-    agent: { agentId: agent.agentId, agentName: agent.agentName },
-    address: agent.address,
+    agent: signedIn.agent,
+    address: signedIn.address,
     mcp: daemon.endpoint,
-    mcpCredentialFile: agent.credentialFile,
+    mcpCredentialFile: signedIn.credentialFile,
     send: (input) =>
       Effect.runPromise(
         callTool(client, {
@@ -80,7 +80,7 @@ function endpoint(daemon: Daemon, agent: Agent): Endpoint {
           arguments: Schema.decodeUnknownSync(SendRequest)(input),
         }),
       ),
-    next: (count) => Effect.runPromise(nextItems(agent, count)),
+    next: (count) => Effect.runPromise(nextItems(signedIn, count)),
     history: (address) =>
       Effect.runPromise(
         callTool(client, {
@@ -100,8 +100,8 @@ function endpoint(daemon: Daemon, agent: Agent): Endpoint {
 }
 
 /** The next `count` deliveries, read by a subscription opened for this call. */
-function nextItems(agent: Agent, count: number) {
-  return inboxStream(agent.connection).pipe(
+function nextItems(signedIn: SignedIn, count: number) {
+  return inboxStream(signedIn.connection).pipe(
     Stream.grouped(count),
     Stream.runHead,
     Effect.map(

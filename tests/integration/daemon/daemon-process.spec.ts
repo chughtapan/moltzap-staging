@@ -17,19 +17,16 @@ import { incompatibleDatabaseRemedy } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining } from "../test-matchers.js";
-import { type Agent, sharedDaemon, stopProcess } from "./daemon-fixture.js";
+import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
 
 /** Each trace starts one daemon, and two of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
 
-/** What a message says about one of its members. */
-const member = ({ agentId, agentName }: Agent) => ({ agentId, agentName });
-
 const textContent = (text: string) => [{ type: "text", text }];
 
 /** The agent's saved conversation at `address`, which is not paged in these traces. */
-const readConversation = (agent: Agent, address: string) =>
-  callTool(agent.connection.client, {
+const readConversation = (reader: SignedIn, address: string) =>
+  callTool(reader.connection.client, {
     name: "read_conversation",
     arguments: {
       address: Schema.decodeUnknownSync(
@@ -39,8 +36,8 @@ const readConversation = (agent: Agent, address: string) =>
   }).pipe(Effect.map((page) => page.records));
 
 /** The identifiers of the messages in the agent's saved conversation, in order. */
-const savedOrder = (agent: Agent, address: string) =>
-  readConversation(agent, address).pipe(
+const savedOrder = (reader: SignedIn, address: string) =>
+  readConversation(reader, address).pipe(
     Effect.map((records) =>
       records.flatMap((record) =>
         record.kind === "result" ? [] : [record.message.msgId],
@@ -81,8 +78,8 @@ it(
         kind: "multicast",
         message: {
           msgId: sent.id,
-          author: member(alice),
-          recipients: [member(bob)],
+          author: alice.agent,
+          recipients: [bob.agent],
           content: textContent(greeting),
         },
       });
@@ -90,8 +87,8 @@ it(
       expect(yield* nextItem(alice)).toMatchObject({
         kind: "multicast",
         message: {
-          author: member(bob),
-          recipients: [member(alice)],
+          author: bob.agent,
+          recipients: [alice.agent],
           content: textContent(reply),
         },
       });
@@ -131,7 +128,8 @@ it(
         "bob",
         "carol",
       ]);
-      const authors = Array.from({ length: 3 }).flatMap(() => members);
+      const rounds = 3;
+      const authors = Array.from({ length: rounds }).flatMap(() => members);
 
       const sent = yield* Effect.forEach(
         authors,
@@ -139,13 +137,13 @@ it(
           send(author, {
             to: groupAddress(members),
             text: `concurrent ${index}`,
-          }),
+          }).pipe(Effect.map(({ id, address }) => ({ id, address, author }))),
         { concurrency: authors.length },
       );
       const received = yield* Effect.forEach(
         members,
         (participant) =>
-          receivedOrder(participant, authors.length - authors.length / 3),
+          receivedOrder(participant, rounds * (members.length - 1)),
         { concurrency: members.length },
       );
       const saved = yield* Effect.forEach(
@@ -161,8 +159,7 @@ it(
         members.map((participant) =>
           order.filter(
             (id) =>
-              authors[sent.findIndex((message) => message.id === id)] !==
-              participant,
+              sent.find((message) => message.id === id)?.author !== participant,
           ),
         ),
       );
@@ -183,9 +180,9 @@ it(
       const running = yield* daemon.start();
       const unread = yield* Effect.scoped(
         Effect.gen(function* () {
-          const alice = yield* daemon.agent("alice");
-          const bob = yield* daemon.agent("bob");
-          const carol = yield* daemon.agent("carol");
+          const alice = yield* daemon.signInAs("alice");
+          const bob = yield* daemon.signInAs("bob");
+          const carol = yield* daemon.signInAs("carol");
           const to = groupAddress([alice, bob, carol]);
           const first = yield* send(alice, { to, text: firstUnread });
           const second = yield* send(alice, { to, text: secondUnread });
@@ -238,7 +235,9 @@ it(
         },
       });
       const signIn = Effect.scoped(
-        daemon.signIn(Redacted.make(credential)).pipe(Effect.map(member)),
+        daemon
+          .signIn(Redacted.make(credential))
+          .pipe(Effect.map(({ agent }) => agent)),
       );
       const original = yield* daemon.start();
       const before = yield* signIn;
@@ -266,7 +265,7 @@ it(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
       yield* daemon.start();
-      const alice = yield* daemon.agent("alice");
+      const alice = yield* daemon.signInAs("alice");
       const value = "value-of-the-unknown-argument";
 
       const refusal = yield* Effect.tryPromise({

@@ -20,8 +20,8 @@ it(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
       yield* daemon.start();
-      const alice = yield* daemon.agent("alice");
-      const bob = yield* daemon.agent("bob");
+      const alice = yield* daemon.signInAs("alice");
+      const bob = yield* daemon.signInAs("bob");
       const status = (credentialFile: string) =>
         operator({ endpoint: daemon.endpoint, credentialFile }, [
           "call",
@@ -34,9 +34,11 @@ it(
           ),
         );
       expect((yield* status(alice.credentialFile)).agentName).toBe(
-        alice.agentName,
+        alice.agent.agentName,
       );
-      expect((yield* status(bob.credentialFile)).agentName).toBe(bob.agentName);
+      expect((yield* status(bob.credentialFile)).agentName).toBe(
+        bob.agent.agentName,
+      );
     }),
   ),
   120_000,
