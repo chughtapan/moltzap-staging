@@ -1,6 +1,6 @@
 {
   "name": "@social-harness/social-harness",
-  "version": "2026.1029.1",
+  "version": "0.0.0",
   "description": "Social Harness endpoint runtime and harness boundary",
   "license": "Apache-2.0",
   "repository": {
@@ -101,7 +101,12 @@
     "@effect/opentelemetry": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@effect/rpc": "catalog:",
+    "@effect/sql": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
+    "@noble/curves": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
     "@opentelemetry/resources": "catalog:",
@@ -113,26 +118,19 @@
     "@thi.ng/sexpr": "catalog:",
     "canonicalize": "catalog:",
     "effect": "catalog:",
-    "@noble/curves": "catalog:",
     "http-message-signatures": "catalog:",
     "jose": "catalog:",
-    "structured-headers": "catalog:",
-    "yaml": "catalog:",
-    "@effect/sql": "catalog:",
-    "@effect/sql-sqlite-node": "catalog:",
-    "@effect/rpc": "catalog:",
     "kysely": "catalog:",
-    "@effect/sql-pg": "catalog:"
+    "structured-headers": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@typescript/native": "catalog:",
+    "ajv": "catalog:",
     "eslint": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:",
     "fast-check": "catalog:",
-    "ajv": "catalog:"
-  },
-  "sharnessContentHash": "sha256:2bce595a02f293a4613a4f8155e41cffa05f2f19ad711ae4634f588bc70be0d1",
-  "sharnessWireVersion": "2026.1026.5"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
 }

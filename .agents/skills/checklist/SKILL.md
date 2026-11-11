@@ -235,7 +235,7 @@ directly; these items do not restate them.
 - [ ] Before the first public release, code PRs add no upgrade guides or
   migration steps to the public docs, and change a public sentence only when
   the code makes it false. Upgrade, migration and rollout notes go in
-  docs-internal or the PR body; a changelog entry is one plain sentence.
+  docs-internal or the PR body.
 
 ## Changing a design
 

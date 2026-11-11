@@ -10,8 +10,7 @@
         "scripts/docs/vitest.config.ts",
         "scripts/docs/*.spec.ts",
         "scripts/repo/check-agent-files.ts",
-        "scripts/repo/check-dependency-versions.ts",
-        "scripts/release/read-wire-version.ts"
+        "scripts/repo/check-dependency-versions.ts"
       ],
       "project": [
         "*.ts",

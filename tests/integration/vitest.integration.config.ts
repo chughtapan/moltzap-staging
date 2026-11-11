@@ -6,11 +6,7 @@ export default defineConfig({
   ssr: { resolve: { conditions: ["sharness-test", "sharness-internal"] } },
   test: {
     include: ["**/*.spec.ts"],
-    exclude: [
-      ...configDefaults.exclude,
-      "communication/published-peers.spec.ts",
-      "images/**",
-    ],
+    exclude: [...configDefaults.exclude, "images/**"],
     maxWorkers: 2,
     passWithNoTests: false,
   },

@@ -1,6 +1,6 @@
 {
   "name": "@social-harness/registry",
-  "version": "2026.1022.0",
+  "version": "0.0.0",
   "description": "Private Registry HTTP process and PostgreSQL persistence",
   "license": "Apache-2.0",
   "repository": {
@@ -98,14 +98,14 @@
     }
   },
   "dependencies": {
-    "@electric-sql/pglite-socket": "catalog:",
     "@effect/experimental": "catalog:",
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "effect": "catalog:",
-    "@social-harness/social-harness": "workspace:*"
+    "@electric-sql/pglite-socket": "catalog:",
+    "@social-harness/social-harness": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

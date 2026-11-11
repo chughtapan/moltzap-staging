@@ -1,1 +1,0 @@
-Add configurable client/server delivery inside the shared MCP daemon without a Router process, preserving P2P delivery and using one message history and consumption model. Client/server mode permits only enrolled clients and the designated server to exchange direct messages. Configure `transport` explicitly and prepare a fresh database as part of the planned storage reset.

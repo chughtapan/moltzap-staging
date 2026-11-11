@@ -1,6 +1,6 @@
 {
   "name": "@social-harness/nanoclaw-channel",
-  "version": "2026.811.0",
+  "version": "0.0.0",
   "private": true,
   "description": "NanoClaw channel adapter for Social Harness messaging",
   "license": "Apache-2.0",
@@ -73,17 +73,17 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "catalog:",
     "@social-harness/social-harness": "workspace:*",
     "@types/node": "catalog:",
-    "effect": "catalog:",
-    "@modelcontextprotocol/client": "catalog:"
+    "effect": "catalog:"
   },
   "devDependencies": {
+    "@social-harness/plugin-mcp": "workspace:*",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@social-harness/plugin-mcp": "workspace:*"
+    "vitest": "catalog:"
   },
   "imports": {
     "#sharness-mcp/*": {

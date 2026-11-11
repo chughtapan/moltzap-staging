@@ -13,7 +13,7 @@ Resolves #
 - [ ] `pnpm check`
 - [ ] `pnpm docs:api` and `pnpm docs:check`, for a documentation change
 
-## Contracts and changelog
+## Contracts
 
 - [ ] A change to a public contract updates its page under `docs/reference/spec/`.
-- [ ] A user-visible change adds a fragment under `changelog.d/` (see `towncrier.toml`).
+- [ ] The title says what changed for a user; release notes are built from it.

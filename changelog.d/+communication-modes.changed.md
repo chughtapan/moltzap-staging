@@ -1,1 +1,0 @@
-The communication code that only P2P mode uses (certification, recovery, the Router client and collectives) moved under `communication/p2p/`. `Communication.p2p` and `Communication.clientServer` each provide the mode's `claim` and `layer`, replacing `Communication.layer`, `clientServerLayer` and `configureTransport`.

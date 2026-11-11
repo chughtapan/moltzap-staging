@@ -85,13 +85,7 @@ PR description so reviewers can assess them.
 
 ## Container images
 
-After changing an image recipe or its inputs, calculate its input key:
-
-```bash
-pnpm image:keys
-```
-
-The command prints the keys used for immutable image tags. See the
+CI builds every image a release publishes. See the
 [image contract](/reference/spec/releases#service-images) for published names,
 architectures, and signature requirements.
 
@@ -123,14 +117,6 @@ Edit hand-written pages at their source. Shared site values live in
 To change API reference, edit the owning TypeScript declaration or JSDoc, run
 `pnpm docs:api`, and open `dist/api/index.html`. Read the rendered result.
 TypeDoc's standalone HTML is separate from the Mintlify site.
-
-## Add a changelog fragment
-
-For a user-visible change, add one fragment under `changelog.d/`. Name it
-`<number>.<type>.md` for the issue or PR, or `+<slug>.<type>.md` when there is
-none. The type is `added`, `changed`, `removed`, or `fixed`. Write one plain
-sentence describing the change. `towncrier.toml` defines the fragment rules;
-CI rejects direct edits to the generated `CHANGELOG.md`.
 
 ## Open the pull request
 

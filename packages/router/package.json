@@ -1,6 +1,6 @@
 {
   "name": "@social-harness/router",
-  "version": "2026.1022.0",
+  "version": "0.0.0",
   "description": "In-memory Router service for Social Harness",
   "license": "Apache-2.0",
   "repository": {
@@ -104,10 +104,10 @@
   "dependencies": {
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@social-harness/social-harness": "workspace:*",
     "canonicalize": "catalog:",
     "effect": "catalog:",
-    "jose": "catalog:",
-    "@social-harness/social-harness": "workspace:*"
+    "jose": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -1,1 +1,0 @@
-The package exports one `renderInboxItem` in place of `renderContent`, `renderCollectiveRequest`, `renderCollectiveResult` and `renderLocalGuidance`. It returns who a received item is from and its text, with any firewall guidance applied.

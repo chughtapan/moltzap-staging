@@ -35,7 +35,7 @@ export function workspacePackages(workspaceRoot: string) {
  * repository-relative `files`: each `package.json` directory that a `packages`
  * glob includes and no `!` glob excludes.
  */
-export function workspaceDirectories(
+function workspaceDirectories(
   workspaceYaml: string,
   files: Iterable<string>,
 ): string[] {

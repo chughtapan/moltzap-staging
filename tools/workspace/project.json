@@ -159,45 +159,11 @@
         "command": "pnpm exec vitest run --config scripts/docs/vitest.config.ts"
       }
     },
-    "test:image-input-key": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "inputs": [
-        "{workspaceRoot}/scripts/release/**/*.ts",
-        "{workspaceRoot}/packages/**/*",
-        "{workspaceRoot}/plugins/**/*",
-        "{workspaceRoot}/images/**/*",
-        "{workspaceRoot}/scripts/build/**/*",
-        "{workspaceRoot}/scripts/setup/**/*",
-        "{workspaceRoot}/.node-version",
-        "{workspaceRoot}/.npmrc",
-        "{workspaceRoot}/.dockerignore",
-        "{workspaceRoot}/nx.json",
-        "sharedGlobals",
-        {
-          "runtime": "node --version"
-        },
-        "{workspaceRoot}/eslint.shared.ts",
-        "{workspaceRoot}/.pnpmfile.cjs",
-        "{workspaceRoot}/tools/**/*",
-        "{workspaceRoot}/tsconfig*.json"
-      ],
-      "options": {
-        "command": "node scripts/release/image-input-key.spec.ts"
-      }
-    },
     "test:release": {
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "parallel": false,
-        "commands": [
-          "bash scripts/release/compute-next-version.test.sh",
-          "bash scripts/release/release-needed.test.sh",
-          "bash scripts/release/npm-version-exists.test.sh",
-          "bash scripts/release/ghcr-digest.test.sh",
-          "node scripts/release/select-packages.spec.ts"
-        ]
+        "command": "bash scripts/release/compute-next-version.test.sh"
       }
     },
     "docs:api": {

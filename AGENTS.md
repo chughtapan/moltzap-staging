@@ -44,9 +44,9 @@ Generic OpenClaw and NanoClaw images and their stand-in live tests live under
 
 `main` is the only track; npm publication membership and versioning follow
 [Publication and versions](docs/reference/spec/releases.md#publication-and-versions).
-Releases follow the same section: a merge releases after CI passes, and resets
-release by hand. A user-visible change adds a fragment under `changelog.d/`
-(see `towncrier.toml`).
+Releases follow the same section: a merge releases after CI passes. Release
+notes are built from pull request titles, so a title says what changed for a
+user.
 
 **The constitution is `docs/reference/constitution.md` → The constitution.** It is canonical
 there and paraphrased nowhere, this file included: two copies at the top of the
