@@ -1,9 +1,6 @@
 /** @file Process tests consume inbox entries through the public MCP interface. */
+import { callTool, type McpConnection } from "@social-harness/social-harness";
 import { Effect, Stream } from "effect";
-import {
-  callTool,
-  type McpConnection,
-} from "../../plugins/shared/mcp-client.js";
 
 /** Each successful inbox read records delivery before entries reach the test. */
 export function inboxStream(connection: McpConnection) {

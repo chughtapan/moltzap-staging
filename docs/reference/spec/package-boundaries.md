@@ -36,7 +36,7 @@ Three library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@social-harness/social-harness` | Host values, MCP contracts and the identifiers and name of an agent |
+| `@social-harness/social-harness` | Host values, MCP contracts, a host's MCP connection and the identifiers and name of an agent |
 | `@social-harness/social-harness/service` | Daemon composition, database preparation and the daemon's services |
 | `@social-harness/social-harness/test` | Process tests and a decision-provider override. Requires `sharness-test` |
 

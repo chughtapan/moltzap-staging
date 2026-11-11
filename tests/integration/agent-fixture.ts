@@ -1,12 +1,12 @@
 /** @file Agents of one daemon whose deliveries a trace takes in order. */
 
 import {
+  callTool,
   type InboxEntry,
   type PermittedItem,
   SendRequest,
 } from "@social-harness/social-harness";
 import { Duration, Effect, Queue, Schema, Stream } from "effect";
-import { callTool } from "../../plugins/shared/mcp-client.js";
 import {
   type Daemon,
   type DaemonOptions,

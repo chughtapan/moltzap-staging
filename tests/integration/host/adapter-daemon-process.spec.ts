@@ -1,8 +1,8 @@
 /** @file The OpenClaw channel plugin connected to a real daemon as one of its agents. */
 
+import { callTool } from "@social-harness/social-harness";
 import { Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
-import { callTool } from "../../../plugins/shared/mcp-client.js";
 import {
   groupAddress,
   nextItem,

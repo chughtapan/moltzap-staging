@@ -7,10 +7,9 @@
  * the sender's firewall and `[in]` for the receiver's.
  */
 
-import type { PermittedItem } from "@social-harness/social-harness";
+import { callTool, type PermittedItem } from "@social-harness/social-harness";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
-import { callTool } from "../../../plugins/shared/mcp-client.js";
 import {
   joinParticipants,
   nextItem,

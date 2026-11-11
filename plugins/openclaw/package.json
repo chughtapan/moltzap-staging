@@ -42,14 +42,13 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "plugins/openclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts && node ../../scripts/build/copy-plugin-mcp.ts"
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts"
         },
         "inputs": [
           "production",
           "^production",
           "{workspaceRoot}/scripts/build/clean-dist.ts",
-          "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts",
-          "{workspaceRoot}/scripts/build/copy-plugin-mcp.ts"
+          "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts"
         ]
       },
       "lint": {
@@ -86,13 +85,11 @@
     }
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "catalog:",
     "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@social-harness/plugin-mcp": "workspace:*",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
@@ -112,11 +109,5 @@
     "extensions": [
       "./dist/plugin.js"
     ]
-  },
-  "imports": {
-    "#sharness-mcp/*": {
-      "types": "./dist/mcp/*.d.ts",
-      "default": "./dist/mcp/*.js"
-    }
   }
 }

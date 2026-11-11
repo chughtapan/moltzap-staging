@@ -3,7 +3,6 @@
 import { Effect, Either, Option, type ParseResult, Schema } from "effect";
 import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import { SendError, sendFailureReasons } from "../../communication/errors.js";
-import { wellFormedString } from "../../communication/messages.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
@@ -12,7 +11,8 @@ import {
   PaginatedRequest,
   PaginatedResult,
   RequestError,
-} from "../../communication/service.js";
+  wellFormedString,
+} from "../../communication/messages.js";
 import {
   compareAscii,
   exactStruct,

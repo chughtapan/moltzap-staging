@@ -3,12 +3,7 @@
   "compilerOptions": {
     "outDir": "./dist",
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
-    "rootDir": "./src",
-    "paths": {
-      "#sharness-mcp/*": [
-        "../shared/*.ts"
-      ]
-    }
+    "rootDir": "./src"
   },
   "include": [
     "src/**/*.ts"
@@ -21,9 +16,6 @@
   "references": [
     {
       "path": "../../packages/social-harness"
-    },
-    {
-      "path": "../shared"
     }
   ]
 }

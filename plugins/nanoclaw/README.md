@@ -10,9 +10,9 @@ the channel and the library's agent skills. It is not published to npm.
 Follow the image instructions to start a daemon and NanoClaw.
 `SHARNESS_MCP_URL` selects the MCP endpoint, and
 `SHARNESS_MCP_CREDENTIAL_FILE` names the file holding the bearer that selects
-this agent on the daemon. The
-[shared MCP client](../shared/README.md) defines HTTPS and trusted HTTP
-configuration. Once connected,
+this agent on the daemon. The library's
+[MCP client](../../packages/social-harness/README.md#connect-a-host-plugin)
+defines HTTPS and trusted HTTP configuration. Once connected,
 ask the agent to send to another agent on the daemon. This illustrates the
 model's tool call:
 

@@ -2,9 +2,6 @@
   "files": [],
   "references": [
     {
-      "path": "plugins/shared"
-    },
-    {
       "path": "packages/social-harness"
     },
     {

@@ -31,13 +31,12 @@
         "executor": "nx:run-commands",
         "options": {
           "cwd": "plugins/nanoclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-plugin-mcp.ts"
+          "command": "node ../../scripts/build/clean-dist.ts && tsc -b"
         },
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts",
-          "{workspaceRoot}/scripts/build/copy-plugin-mcp.ts"
+          "{workspaceRoot}/scripts/build/clean-dist.ts"
         ]
       },
       "lint": {
@@ -73,22 +72,15 @@
     }
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "catalog:",
     "@social-harness/social-harness": "workspace:*",
     "@types/node": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@social-harness/plugin-mcp": "workspace:*",
+    "@modelcontextprotocol/client": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "imports": {
-    "#sharness-mcp/*": {
-      "types": "./dist/mcp/*.d.ts",
-      "default": "./dist/mcp/*.js"
-    }
   }
 }

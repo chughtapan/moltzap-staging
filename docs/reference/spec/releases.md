@@ -18,7 +18,7 @@ are outside the product release set.
 Every release publishes both packages and both images at one version,
 `YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
 `v<version>` tag already holds for that day. The OpenClaw channel depends on
-the exact daemon package version released with it. The package version, the
+the exact Social Harness package version released with it. The package version, the
 MCP protocol revision and the database format advance independently.
 
 The [release workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/release.yml)
