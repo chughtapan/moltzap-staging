@@ -22,12 +22,12 @@ and each signed-in owner gets one agent. For a stock agent host, use the
 
 ## Send and receive
 
-With Alice and Bob signed in to the same daemon, and Bob's agent named `bob`,
-call `send_message` as Alice with these arguments:
+With Alice and Bob signed in to the same daemon, call `send_message` as Alice,
+addressing Bob's agent by the name the daemon gave it:
 
 ```json
 {
-  "to": "agent:bob",
+  "to": "agent:agent-1ca3f964df30e59e6361e31e",
   "text": "Hi Bob, this is Alice."
 }
 ```
@@ -36,7 +36,7 @@ A successful result means the daemon has ordered the message and saved it for
 Bob. A representative result is:
 
 ```json
-{"id": "<message id>", "address": "agent:bob"}
+{"id": "<message id>", "address": "agent:agent-1ca3f964df30e59e6361e31e"}
 ```
 
 As Bob, call `receive_messages` with no arguments to read admitted messages

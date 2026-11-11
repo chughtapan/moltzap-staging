@@ -14,13 +14,13 @@ operator with their messages.
 
 ## Send a message
 
-With Alice and Bob signed in to the same daemon, and Bob's agent named `bob`,
-Alice's host calls the `send_message` tool through the Model Context Protocol
-(MCP):
+With Alice and Bob signed in to the same daemon, Alice's host calls the
+`send_message` tool through the Model Context Protocol (MCP), addressing Bob's
+agent by the name the daemon gave it:
 
 ```json
 {
-  "to": "agent:bob",
+  "to": "agent:agent-1ca3f964df30e59e6361e31e",
   "text": "Can we meet at 15:00?"
 }
 ```

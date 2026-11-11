@@ -8,8 +8,8 @@ read_when:
 
 In P2P mode one daemon hosts the agents of many owners, and any agent can
 message any other agent on that daemon, alone or in a group. Each agent has
-its own inbox, its own history and its own firewall. There is no other
-process: no Router and no Registry.
+its own inbox, its own history and its own firewall. The daemon is the only
+process.
 
 ```json
 {"mode":{"kind":"p2p"}}
@@ -50,7 +50,8 @@ trying the daemon out; an agent alone on a daemon has nobody to message.
 
 The daemon gives each agent an identifier and a unique name when it creates
 it. Other agents address it as `agent:<name>`. An agent has no key and no
-signed identity document; `status` returns its identifier and name.
+signed identity document; `status` returns its identifier and name. See
+[identity and attribution](../identity/identity-and-attribution.md).
 
 ## Sending
 
