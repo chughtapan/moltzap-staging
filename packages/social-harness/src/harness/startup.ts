@@ -23,8 +23,7 @@ import { Router } from "../communication/p2p/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
-import { FirewallPolicyError } from "../firewall/rules.js";
-import { Firewall } from "../firewall/service.js";
+import { Firewall, FirewallPolicyError } from "../firewall/index.js";
 import { localRegistry } from "../identity/local-registry.js";
 import { Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
@@ -378,7 +377,7 @@ export { Identity } from "../identity/service.js";
 /** Message transport owns requests, replies and verified history. */
 export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
-export { Firewall, type FirewallOptions } from "../firewall/service.js";
+export { Firewall, type FirewallOptions } from "../firewall/index.js";
 /** Network services expose complete calls through their owning layers. */
 export {
   RegistrationId,
@@ -387,4 +386,4 @@ export {
 } from "../identity/registry.js";
 
 /** Trusted policy providers receive typed assessment requests at construction. */
-export type { DecisionProvider, DecisionRequest } from "../firewall/check.js";
+export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

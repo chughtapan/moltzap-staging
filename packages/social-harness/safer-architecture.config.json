@@ -47,22 +47,6 @@
       "reason": "Opaque Router operations used by server composition"
     },
     {
-      "file": "firewall/service.ts",
-      "reason": "Message assessment and permitted content"
-    },
-    {
-      "file": "firewall/check.ts",
-      "reason": "Standalone assessment types for test entry"
-    },
-    {
-      "file": "firewall/rules.ts",
-      "reason": "Policy configuration and failures"
-    },
-    {
-      "file": "firewall/chain.ts",
-      "reason": "Rule chain: rules, matchers and their evaluation"
-    },
-    {
       "file": "norms/matchers.ts",
       "reason": "Norm checks a rule chain names"
     },
@@ -105,10 +89,6 @@
     {
       "file": "communication/store.ts",
       "reason": "One private communication store owns SQL operations and row types."
-    },
-    {
-      "file": "firewall/editable-policy.ts",
-      "reason": "Editable policy edits and the norm documents the norms layer compiles"
     }
   ],
   "compositionRoots": [
@@ -178,11 +158,7 @@
         "src/firewall"
       ],
       "entrypoints": [
-        "src/firewall/service.ts",
-        "src/firewall/check.ts",
-        "src/firewall/rules.ts",
-        "src/firewall/chain.ts",
-        "src/firewall/editable-policy.ts"
+        "src/firewall/index.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },

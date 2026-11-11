@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import type { MatchInput } from "../firewall/chain.js";
+import type { MatchInput } from "../firewall/index.js";
 import { Message } from "../communication/service.js";
 import {
   AgentCard,

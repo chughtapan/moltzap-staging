@@ -3,7 +3,6 @@
 import { live as effectIt, it } from "@effect/vitest";
 import { Effect, Either, Encoding, FastCheck as fc, Schema } from "effect";
 import { describe, expect } from "vitest";
-import type { CheckedGuidance } from "../firewall/check.js";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
 import {
@@ -12,7 +11,11 @@ import {
   maximumMembers,
   MessageAddressInput,
 } from "../communication/messages.js";
-import { FirewallRefusal, PermittedItem } from "../firewall/service.js";
+import {
+  type CheckedGuidance,
+  FirewallRefusal,
+  PermittedItem,
+} from "../firewall/index.js";
 import {
   type MessageTextError,
   parseMessageText,

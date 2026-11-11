@@ -13,7 +13,6 @@ import {
   Scope,
 } from "effect";
 import { expect } from "vitest";
-import type { DecisionRequest } from "../firewall/check.js";
 import type { AgentCard } from "../identity/agent-cards.js";
 import type { InboxEntry } from "../index.js";
 import type { ReadHistoryResult, SendRequest } from "./social-harness.js";
@@ -28,7 +27,10 @@ import {
   Request,
 } from "../communication/service.js";
 import { compareAscii } from "../encoding/index.js";
-import { FirewallPolicyError } from "../firewall/rules.js";
+import {
+  type DecisionRequest,
+  FirewallPolicyError,
+} from "../firewall/index.js";
 import {
   decisionResponse,
   decisionState,

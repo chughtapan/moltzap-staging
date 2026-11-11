@@ -20,11 +20,15 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { NormDocuments } from "../firewall/editable-policy.js";
 import { compareAscii, exactStruct } from "../encoding/index.js";
-import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
-import { type FirewallPolicyError, TextRule } from "../firewall/rules.js";
-import { Firewall } from "../firewall/service.js";
+import {
+  type Chain,
+  chainRuleFileSchema,
+  Firewall,
+  type FirewallPolicyError,
+  type NormDocuments,
+  TextRule,
+} from "../firewall/index.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, normRuleId, ruleMatcher } from "./matchers.js";
 

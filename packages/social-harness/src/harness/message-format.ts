@@ -12,8 +12,11 @@ import {
   SchemaAST,
 } from "effect";
 import { absurd } from "effect/Function";
-import type { CheckedGuidance } from "../firewall/check.js";
-import type { LocalGuidance, PermittedItem } from "../firewall/service.js";
+import type {
+  CheckedGuidance,
+  LocalGuidance,
+  PermittedItem,
+} from "../firewall/index.js";
 import { SendError, type ValidationIssue } from "../communication/errors.js";
 import {
   AGENT_ADDRESS_PREFIX,
