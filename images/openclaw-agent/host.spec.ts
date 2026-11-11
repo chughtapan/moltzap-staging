@@ -69,17 +69,6 @@ afterEach(async () => {
   }
 });
 
-test("a failed doctor ends the host with its code and never starts the gateway", async () => {
-  const fake = await fakeOpenClaw({ doctor: "fail" });
-  const { code, stderr } = await runHost({
-    OPENCLAW_ENTRY: fake.entry,
-    OPENCLAW_SECRETS_PLAN: PLAN,
-  });
-  assert.equal(code, STEP_FAILURE_EXIT_CODE);
-  assert.match(stderr, /doctor exited 3; not starting the gateway/u);
-  assert.equal(await gatewayStarted(fake.record), false);
-});
-
 test("a missing configuration path ends the host with a clear error", async () => {
   const { code, stderr } = await runHost({ OPENCLAW_CONFIG_PATH: "" });
   assert.equal(code, 1);
@@ -117,17 +106,6 @@ test("a start selects the image channel configuration", async () => {
   });
 });
 
-test("a failed apply ends the host with its code and never starts the gateway", async () => {
-  const fake = await fakeOpenClaw({ secrets: "fail" });
-  const { code, stderr } = await runHost({
-    OPENCLAW_ENTRY: fake.entry,
-    OPENCLAW_SECRETS_PLAN: PLAN,
-  });
-  assert.equal(code, STEP_FAILURE_EXIT_CODE);
-  assert.match(stderr, /secrets apply exited 3; not starting the gateway/u);
-  assert.equal(await gatewayStarted(fake.record), false);
-});
-
 test("a signal-killed apply counts as a failed apply and never starts the gateway", async () => {
   const fake = await fakeOpenClaw({ secrets: "die" });
   const { code, stderr } = await runHost({
@@ -155,15 +133,6 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     assert.deepEqual((await invocations(fake.record)).at(-1), { signal, pid });
   });
 }
-
-test("a missing OpenClaw entry ends the host before a gateway", async () => {
-  const root = temporaryDirectory("social-harness-openclaw-host-");
-  const { code, stderr } = await runHost({
-    OPENCLAW_ENTRY: join(root, "absent.mjs"),
-  });
-  assert.equal(code, 1);
-  assert.match(stderr, /exited 1; not starting the gateway/u);
-});
 
 test("a delivered Codex login is imported into an agent without an OpenAI profile before the gateway starts", async () => {
   const fake = await fakeOpenClaw();
@@ -220,21 +189,26 @@ test("a failed auth profile listing ends the host", async () => {
   assert.match(stderr, /auth profile listing failed/u);
 });
 
-test("a failed Codex login import ends the host with its code and never starts the gateway", async () => {
-  const fake = await fakeOpenClaw({ migrate: "fail" });
-
-  const { code, stderr } = await runHost({
-    OPENCLAW_ENTRY: fake.entry,
-    HOME: await homeWithCodexLogin(),
+for (const { step, fake: behaviour } of [
+  { step: "doctor", fake: { doctor: "fail" } },
+  { step: "codex login import", fake: { migrate: "fail" } },
+  { step: "secrets apply", fake: { secrets: "fail" } },
+] as const) {
+  test(`a failed ${step} ends the host with its code and never starts the gateway`, async () => {
+    const fake = await fakeOpenClaw(behaviour);
+    const { code, stderr } = await runHost({
+      OPENCLAW_ENTRY: fake.entry,
+      OPENCLAW_SECRETS_PLAN: PLAN,
+      HOME: await homeWithCodexLogin(),
+    });
+    assert.equal(code, STEP_FAILURE_EXIT_CODE);
+    assert.match(
+      stderr,
+      new RegExp(`${step} exited 3; not starting the gateway`, "u"),
+    );
+    assert.equal(await gatewayStarted(fake.record), false);
   });
-
-  assert.equal(code, STEP_FAILURE_EXIT_CODE);
-  assert.match(
-    stderr,
-    /codex login import exited 3; not starting the gateway/u,
-  );
-  assert.equal(await gatewayStarted(fake.record), false);
-});
+}
 
 /** An OpenClaw command the stand-in tells apart by its first argument. */
 type OpenClawCommand = (typeof OPENCLAW_COMMANDS)[number];

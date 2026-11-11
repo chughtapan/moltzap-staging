@@ -14,8 +14,7 @@
     "src"
   ],
   "exclude": [
-    "src/**/*.spec.ts",
-    "src/__tests__"
+    "src/**/*.spec.ts"
   ],
   "references": [
     {

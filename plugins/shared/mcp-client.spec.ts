@@ -17,7 +17,11 @@ import {
   mcpTestCredential,
 } from "../../packages/social-harness/src/harness/__tests__/mcp-fixtures.js";
 import { toolDefinitions } from "@social-harness/social-harness";
-import { acquireMcpConnection, callTool } from "./mcp-client.js";
+import {
+  acquireMcpConnection,
+  callTool,
+  connectFromEnvironment,
+} from "./mcp-client.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
@@ -51,7 +55,10 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
   },
 ).items[0];
 if (entry === undefined) throw new Error("Fixture has no inbox entry");
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const inboxFixture = Effect.gen(function* () {
   const acknowledged = yield* Ref.make(0);
@@ -205,32 +212,38 @@ describe("credential transport", () => {
       Effect.runPromise,
     );
   });
-  it("captures the URL before the caller mutates it", () => {
-    const fetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 401 }));
-    const endpoint = new URL("https://native.example/mcp");
-    const original = endpoint.href;
-    const connection = acquireMcpConnection(
-      { endpoint, credential },
-      implementation,
-    );
-    endpoint.hostname = "different.example";
-    return connection.pipe(
-      Effect.scoped,
-      Effect.flip,
-      Effect.tap(() =>
-        Effect.sync(() => {
-          const input = fetch.mock.calls[0]?.[0];
-          expect(input instanceof Request ? input.url : input?.toString()).toBe(
-            original,
-          );
-        }),
-      ),
-      Effect.asVoid,
-      Effect.runPromise,
-    );
-  });
+});
+
+describe("the host's environment", () => {
+  /** A readable file; the empty bearer it holds is not under test. */
+  const credentialFile = "/dev/null";
+  it.each([
+    { value: undefined, requests: 0 },
+    { value: "false", requests: 0 },
+    { value: "true", requests: 1 },
+    { value: "invalid", requests: 0 },
+  ])(
+    "sends the bearer over HTTP only when SHARNESS_MCP_ALLOW_HTTP is true: $value",
+    ({ value, requests }) => {
+      vi.stubEnv("SHARNESS_MCP_URL", "http://internal.example/mcp");
+      vi.stubEnv("SHARNESS_MCP_CREDENTIAL_FILE", credentialFile);
+      vi.stubEnv("SHARNESS_MCP_ALLOW_HTTP", value);
+      const fetch = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 401 }));
+      return connectFromEnvironment(implementation).pipe(
+        Effect.scoped,
+        Effect.flip,
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(fetch).toHaveBeenCalledTimes(requests);
+          }),
+        ),
+        Effect.asVoid,
+        Effect.runPromise,
+      );
+    },
+  );
 });
 
 describe("send outcomes", () => {

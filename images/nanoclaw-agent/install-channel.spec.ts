@@ -1,4 +1,4 @@
-/** @file The install-channel.ts script installs the channel and pins the core packages at the one version it is given. */
+/** @file The install-channel.ts script copies the channel and its MCP client into a NanoClaw tree. */
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile } from "node:child_process";
 import { once } from "node:events";

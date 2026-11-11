@@ -19,7 +19,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import {
   createProcessSessionDriver,
-  materializeProcessMounts,
+  type MountSpec,
   type SessionDriver,
   type SessionSpec,
 } from "./session-processes.ts";
@@ -59,8 +59,6 @@ test("runs one shared session and reports its terminal state", async (t) => {
     specInvalid: invalid,
     onHostShutdown: () => undefined,
     resolveContainerPath: (path) => join(root, "container", path),
-    workingDirectory: "/workspace/agent",
-    baseEnvironment: { BASE_VALUE: "base" },
   });
   const ended = nextTerminalEvent(driver);
 
@@ -75,7 +73,6 @@ test("runs one shared session and reports its terminal state", async (t) => {
     {
       cwd: await realpath(workingDirectory),
       env: {
-        BASE_VALUE: "base",
         SPEC_VALUE: "spec",
         CONTRIBUTED_VALUE: "contributed",
       },
@@ -114,7 +111,6 @@ test("an agent inherits the host's Claude Code sign-in variables, telemetry sett
     specInvalid: invalid,
     onHostShutdown: () => undefined,
     resolveContainerPath: (path) => join(root, "container", path),
-    workingDirectory: "/workspace/agent",
   });
   const ended = nextTerminalEvent(driver);
 
@@ -140,7 +136,6 @@ test("the host's shutdown stops the running agent, reports it stopped, and prepa
       shutdownCallbacks.push(stop);
     },
     resolveContainerPath: (path) => join(root, "container", path),
-    workingDirectory: "/workspace/agent",
   });
   const handle = await driver.prepare(
     sessionSpec("setInterval(() => {}, 1000);"),
@@ -167,7 +162,6 @@ test("the host's shutdown ends every process in the agent's process group, even 
       shutdownCallbacks.push(stop);
     },
     resolveContainerPath: (path) => join(root, "container", path),
-    workingDirectory: "/workspace/agent",
   });
   const handle = await driver.prepare(
     sessionSpec(agentWithDescendant("setInterval(() => {}, 1000);")),
@@ -194,7 +188,6 @@ test("an agent that exits on its own ends every process in its process group", a
     specInvalid: invalid,
     onHostShutdown: () => undefined,
     resolveContainerPath: (path) => join(root, "container", path),
-    workingDirectory: "/workspace/agent",
   });
   const ended = nextTerminalEvent(driver);
 
@@ -218,13 +211,19 @@ test("preserves a non-empty mount target", async (t) => {
   await Promise.all([mkdir(source), mkdir(target, { recursive: true })]);
   await writeFile(join(target, "owned.txt"), "keep");
 
+  const driver = createProcessSessionDriver({
+    policy: {},
+    validateSpec: () => undefined,
+    specInvalid: invalid,
+    onHostShutdown: () => undefined,
+    resolveContainerPath: (path) => join(root, "container", path),
+  });
+
   await assert.rejects(
-    materializeProcessMounts(
-      [{ hostPath: source, containerPath: "/workspace" }],
-      {
-        resolveContainerPath: (path) => join(root, "container", path),
-        specInvalid: invalid,
-      },
+    driver.prepare(
+      sessionSpec(AGENT_SCRIPT, "session", [
+        { hostPath: source, containerPath: "/workspace" },
+      ]),
     ),
     /non-empty mount target/u,
   );
@@ -242,6 +241,7 @@ function invalid(detail: string): Error {
 function sessionSpec(
   agentScript = AGENT_SCRIPT,
   sessionId = "session",
+  mounts: readonly MountSpec[] = [],
 ): SessionSpec {
   return {
     key: { installSlug: "install", agentGroupId: "agent", sessionId },
@@ -252,7 +252,7 @@ function sessionSpec(
         contributedEnv: { CONTRIBUTED_VALUE: "contributed" },
         command: [process.execPath],
         args: ["--eval", agentScript],
-        mounts: [],
+        mounts,
       },
     ],
     stopGraceSeconds: 1,

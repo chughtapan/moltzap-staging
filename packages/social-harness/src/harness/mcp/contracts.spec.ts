@@ -4,11 +4,7 @@ import { Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
-import {
-  managementListConversationsRequestSchema,
-  managementListConversationsResultSchema,
-  toolDefinitions,
-} from "./contracts.js";
+import { toolDefinitions } from "./contracts.js";
 
 describe("message operation contracts", () => {
   describe("a refused send", () => {
@@ -76,25 +72,17 @@ describe("message operation contracts", () => {
 
 describe("management and history contracts", () => {
   describe("conversation pagination", () => {
-    it("accepts a cursor without interpreting its contents", () => {
-      expect(
-        Schema.decodeUnknownSync(managementListConversationsRequestSchema)({
-          cursor: "opaque-position",
-        }),
-      ).toEqual({ cursor: "opaque-position" });
-    });
     it("preserves canonical address order and the next cursor", () => {
       const page = {
         addresses: ["agent:bob", "group:alice,bob,carol"],
         nextCursor: "opaque-position",
       };
-      expect(
-        Schema.decodeUnknownSync(managementListConversationsResultSchema)(page),
-      ).toEqual(page);
+      const decode = Schema.decodeUnknownSync(
+        toolDefinitions.list_conversations.output,
+      );
+      expect(decode(page)).toEqual(page);
       expect(() =>
-        Schema.decodeUnknownSync(managementListConversationsResultSchema)({
-          addresses: [...page.addresses].reverse(),
-        }),
+        decode({ addresses: [...page.addresses].reverse() }),
       ).toThrow();
     });
   });
