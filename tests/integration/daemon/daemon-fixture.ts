@@ -1,28 +1,36 @@
-/** @file Shared real-process fixtures for the cross-package suites. */
+/**
+ * @file One `sharnessd` process that hosts every agent of a test.
+ *
+ * `sharedDaemon(options)` prepares a daemon's settings, database and OAuth
+ * issuer and returns it without starting it:
+ *
+ * - `endpoint`, `directory`, `environment`: where the daemon listens, the
+ *   directory holding its settings file, SQLite database and credential
+ *   files, and the environment its process reads.
+ * - `start(environment?)`: runs the process until its scope closes or
+ *   `stopProcess` stops it. Starting again serves the same database.
+ * - `startupFailure(environment?)`: runs a process that must exit before it
+ *   listens, and returns its exit code and output.
+ * - `configure(changes)`: changes the settings the next start reads.
+ * - `bearer(owner)` and `serverAgentBearer`: what the host of a named owner,
+ *   or of the server agent in client/server mode, presents.
+ * - `signIn(bearer)` and `agent(owner)`: an MCP connection, and the agent
+ *   `status` reports for it.
+ *
+ * The options are settings that replace the fixture's, such as the mode, the
+ * firewall variant of the daemon, and a PostgreSQL database in place of the
+ * SQLite file. `managedProcess`, `awaitReady` and `daemonListening` start and
+ * await a daemon that runs some other way, such as in a container.
+ */
 
-import type { startRegistry } from "@social-harness/registry/test";
-import type { startRouter } from "@social-harness/router/test";
-import { FileSystem, HttpClient } from "@effect/platform";
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
+import { FileSystem } from "@effect/platform";
+import { NodeFileSystem } from "@effect/platform-node";
 import {
-  Client,
-  ProtocolError,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
-import {
-  AgentIdentityCard,
-  AgentName,
-  AgentPublicKey,
-  AgentSigningAuthority,
-  type MessageAddressInput,
-  toolDefinitions,
-  type ToolResult,
+  AgentAddress,
+  type AgentId,
+  type AgentName,
 } from "@social-harness/social-harness";
-import {
-  loadDaemonSettings,
-  prepareDatabase,
-  WireVersions,
-} from "@social-harness/social-harness/test";
+import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
   ConfigProvider,
   Console,
@@ -30,159 +38,110 @@ import {
   Duration,
   Effect,
   Exit,
-  Option,
   Redacted,
   Ref,
-  Schema,
-  Scope,
+  type Scope,
 } from "effect";
 import { type ChildProcess, spawn } from "node:child_process";
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  acquireMcpConnection,
+  callTool,
+  type McpConnection,
+} from "../../../plugins/shared/mcp-client.js";
+import {
   markedPolicy,
   writeMessagePolicy,
 } from "../firewall/policy-fixture.js";
+import { issuerFixture, requiredScope } from "./oauth-fixture.js";
 
-type ManagementStatusResult = ToolResult<"status">;
-
-type ManagementListConversationsResult = ToolResult<"list_conversations">;
-
-type ManagementReadConversationResult = ToolResult<"read_conversation">;
-
-/** Every child composition receives an explicit emitted version and acceptance sets. */
-interface ProcessWireVersions {
-  readonly emitted: string;
-  readonly live: readonly string[];
-  readonly history: readonly string[];
-}
-
-/** One closed process-fixture failure with captured child output when available. */
+/** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-/** Captured output remains available after the child stops. */
+/** A child process and everything it has printed. */
 export interface RunningProcess {
   readonly child: ChildProcess;
   readonly logs: () => string;
-  readonly stderr: () => string;
 }
 
-/** Shared Registry and Router coordinates for two endpoint daemons. */
-export interface ProcessInfrastructure {
-  readonly registryOrigin: URL;
-  readonly routerOrigin: URL;
-  readonly registrySignerPublicKeyJson: string;
-  readonly temporaryDirectory: string;
-  /**
-   * Stops the Router and starts a fresh one on the same origin. The Router
-   * keeps its state in memory, so the new process has a new
-   * `RouterInstanceId` and no envelopes, as a redeployed Router does.
-   */
-  readonly restartRouter: Effect.Effect<void, ProcessTestError>;
-  /** Pauses the current Router until the returned release function is called. */
-  readonly holdRouter: Effect.Effect<() => void>;
-  /** Pauses registration while a first authenticated connection acquires its agent. */
-  readonly holdRegistry: Effect.Effect<() => void>;
-  /** Recreates the empty in-memory Registry database and restarts both network services. */
-  readonly resetNetwork: Effect.Effect<void, ProcessTestError>;
-}
-
-/**
- * Exact reusable process inputs for one daemon identity and state directory.
- * A fixture with `firewall` runs `firewall-daemon.ts`: the daemon's own
- * composition with the marked decision provider and, unless its settings name
- * another, the marked message policy. One without runs `sharnessd`.
- */
-export interface DaemonProcessFixture {
-  readonly agentName: AgentName;
-  readonly endpoint: URL;
-  readonly environment: Readonly<Record<string, string>>;
-  /** The bearer the server agent signs in with when the daemon runs in client/server mode. */
-  readonly serverAgentCredential: string;
-  readonly configureLocator?: Redacted.Redacted;
-  readonly stateDirectory: string;
-  readonly admissionCredentialFile: string;
-  readonly mcpCredentialFile: string;
-  readonly mcpCredential: Redacted.Redacted;
-  readonly firewall?: true;
-  readonly wireVersions?: ProcessWireVersions;
-}
-
-/** Private management calls used to bootstrap and inspect a real daemon. */
-export interface DaemonManagementClient {
-  /** The identity card the daemon registered with when it started. */
-  readonly identityCard: () => Effect.Effect<
-    AgentIdentityCard,
-    ProcessTestError
-  >;
-  readonly status: () => Effect.Effect<
-    ManagementStatusResult,
-    ProcessTestError
-  >;
-  readonly listConversations: () => Effect.Effect<
-    ManagementListConversationsResult,
-    ProcessTestError
-  >;
-  readonly readConversation: (
-    address: MessageAddressInput,
-  ) => Effect.Effect<ManagementReadConversationResult, ProcessTestError>;
-  readonly callExpectingProtocolError: (
-    name: string,
-    toolArguments: Readonly<Record<string, unknown>>,
-  ) => Effect.Effect<DaemonProtocolError, ProcessTestError>;
-}
-
-/** Stable JSON-RPC error fields observed by the real MCP client. */
-interface DaemonProtocolError {
-  readonly code: number;
-  readonly data?: unknown;
-}
-
-/** The Registry and Router executables one infrastructure runs. */
-export interface NetworkBinaries {
-  readonly registry: string;
-  readonly router: string;
-}
-
-/** Exit code and captured output of a daemon that stopped before listening. */
+/** Exit code and output of a daemon that stopped before listening. */
 export interface DaemonStartupFailure {
   readonly exitCode: number | null;
   readonly logs: string;
 }
 
-/** Resolve the fixture's tsx loader independently of a child process's working directory. */
-const require = createRequire(import.meta.url);
+/** What `sharedDaemon` prepares differently from its defaults. */
+export interface DaemonOptions {
+  /**
+   * Settings that replace the fixture's: `mode` for client/server mode,
+   * `authentication` for a local bearer, a message policy, norms.
+   */
+  readonly settings?: Readonly<Record<string, unknown>>;
+  /**
+   * Runs `firewall/firewall-daemon.ts`, whose text rules the marked provider
+   * judges, with the marked message policy unless the settings name another.
+   */
+  readonly firewall?: true;
+  /** A PostgreSQL schema from `acquirePostgres`, in place of a SQLite file. */
+  readonly database?: {
+    readonly configureLocator: Redacted.Redacted;
+    readonly runtimeLocator: Redacted.Redacted;
+  };
+}
+
+/** One signed-in owner's agent and its MCP connection. */
+export interface Agent {
+  readonly agentId: AgentId;
+  readonly agentName: AgentName;
+  /** How other agents address this one. */
+  readonly address: AgentAddress;
+  readonly connection: McpConnection;
+  /** A file holding the bearer the agent signed in with, for a host to read. */
+  readonly credentialFile: string;
+}
+
+/** A prepared daemon. The file comment lists what each member is for. */
+export interface Daemon {
+  readonly endpoint: URL;
+  readonly directory: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly start: (
+    environment?: Readonly<Record<string, string>>,
+  ) => Effect.Effect<RunningProcess, ProcessTestError, Scope.Scope>;
+  readonly startupFailure: (
+    environment?: Readonly<Record<string, string>>,
+  ) => Effect.Effect<DaemonStartupFailure, ProcessTestError, Scope.Scope>;
+  readonly configure: (
+    changes: Readonly<Record<string, unknown>>,
+  ) => Effect.Effect<void, ProcessTestError>;
+  readonly bearer: (
+    owner: string,
+  ) => Effect.Effect<Redacted.Redacted, ProcessTestError>;
+  readonly serverAgentBearer: Redacted.Redacted;
+  readonly signIn: (
+    bearer: Redacted.Redacted,
+  ) => Effect.Effect<Agent, ProcessTestError, Scope.Scope>;
+  readonly agent: (
+    owner: string,
+  ) => Effect.Effect<Agent, ProcessTestError, Scope.Scope>;
+}
 
 /** Disposable children listen only on loopback. */
 export const LOOPBACK_HOST = "127.0.0.1";
 
-/** Concurrent registration keeps this many daemon identities active. */
-export const CONCURRENT_DAEMONS = 16;
-/** Bounded boots limit process startup pressure while ports wait to bind. */
-export const DAEMON_BOOT_CONCURRENCY = 4;
-/** Router admission allows concurrent management and protocol requests per daemon. */
-const REQUESTS_PER_DAEMON = 4;
-/** Each daemon can hold its active poll and a replacement poll. */
-const HELD_POLLS_PER_DAEMON = 2;
-const ADMISSION_CREDENTIAL = "client-process-admission";
-const READY_STATUS = 204;
-
 const SHUTDOWN_TIMEOUT = Duration.seconds(5);
 
-/** A live child must become ready within thirty seconds, with logs on failure. */
+/** A child must become ready within thirty seconds, with its output on failure. */
 const READINESS_TIMEOUT = Duration.seconds(30);
 
-const POLL_ATTEMPT_TIMEOUT = Duration.seconds(1);
-
 const POLL_INTERVAL = Duration.millis(25);
-
-const MODERN_PROTOCOL_VERSION = "2026-07-28";
 
 const WORKSPACE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -192,127 +151,72 @@ const WORKSPACE_ROOT = resolve(
 /** Children use the current Node installation and system executables. */
 const CHILD_PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
 
-const PGLITE_BINARY = join(
-  WORKSPACE_ROOT,
-  "tests/integration/node_modules/.bin/pglite-server",
-);
+/** Resolves the tsx loader independently of a child's working directory. */
+const require = createRequire(import.meta.url);
 
-const REGISTRY_BINARY = join(
-  WORKSPACE_ROOT,
-  "packages/registry/bin/sharness-registry",
-);
+const DAEMON_COMMAND: readonly [string, readonly string[]] = [
+  join(WORKSPACE_ROOT, "packages/social-harness/bin/sharnessd"),
+  [],
+];
 
-/** The Router executable runs the built package. */
-export const ROUTER_BINARY = join(
-  WORKSPACE_ROOT,
-  "packages/router/bin/sharness-router",
-);
+const FIREWALL_DAEMON_COMMAND: readonly [string, readonly string[]] = [
+  process.execPath,
+  [
+    "--conditions=sharness-test",
+    "--import",
+    require.resolve("tsx"),
+    join(WORKSPACE_ROOT, "tests/integration/firewall/firewall-daemon.ts"),
+  ],
+];
 
-const DAEMON_BINARY = join(
-  WORKSPACE_ROOT,
-  "packages/social-harness/bin/sharnessd",
-);
+const failed =
+  (message: string) =>
+  (cause: unknown): ProcessTestError =>
+    new ProcessTestError({ message, cause });
 
-const FIREWALL_DAEMON = join(
-  WORKSPACE_ROOT,
-  "tests/integration/firewall/firewall-daemon.ts",
-);
-
-/** Fixture failures preserve causal errors for diagnostics. */
-export const processTestError = (
-  message: string,
-  cause?: unknown,
-): ProcessTestError => new ProcessTestError({ message, cause });
-
-/** Release an ephemeral listener before starting a child on its port. */
-export const reservePort = Effect.async<number, ProcessTestError>((resume) => {
+/** A free loopback port, released before a child binds it. */
+const reservePort = Effect.async<number, ProcessTestError>((resume) => {
   const server = createServer();
-  const onError = (error: Error): void => {
-    resume(Effect.fail(processTestError("could not reserve a port", error)));
-  };
-  server.once("error", onError);
+  server.once("error", (cause) => {
+    resume(Effect.fail(failed("could not reserve a port")(cause)));
+  });
   server.listen(0, LOOPBACK_HOST, () => {
-    server.removeListener("error", onError);
     const address = server.address();
-    if (address === null || typeof address === "string") {
-      server.close();
+    server.close(() => {
       resume(
-        Effect.fail(processTestError("reserved listener exposed no port")),
-      );
-      return;
-    }
-    server.close((error) => {
-      resume(
-        error === undefined
-          ? Effect.succeed(address.port)
-          : Effect.fail(
-              processTestError("could not release reserved port", error),
-            ),
+        address === null || typeof address === "string"
+          ? Effect.fail(failed("reserved listener exposed no port")(address))
+          : Effect.succeed(address.port),
       );
     });
-  });
-  return Effect.sync(() => {
-    if (server.listening) {
-      server.close();
-    }
   });
 });
 
-/** Capture both output streams while excluding the parent environment. */
-const startProcess = (
-  executable: string,
-  processArguments: readonly string[],
-  environment: Readonly<Record<string, string>> = {},
-  cwd = WORKSPACE_ROOT,
-): RunningProcess => {
-  const child = spawn(executable, processArguments, {
-    cwd,
-    env: { PATH: CHILD_PATH, ...environment },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  let stderr = "";
-  child.stdout?.setEncoding("utf8");
-  child.stderr?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk: string) => {
-    output += chunk;
-  });
-  child.stderr?.on("data", (chunk: string) => {
-    stderr += chunk;
-    output += chunk;
-  });
-  return { child, logs: () => output, stderr: () => stderr };
-};
-
 /** Whether `child` has exited on its own or by a signal. */
-export const hasExited = (child: ChildProcess): boolean =>
+const hasExited = (child: ChildProcess): boolean =>
   child.exitCode !== null || child.signalCode !== null;
 
-/** Waits for the child and its output streams to close; cancellation removes the listener. */
-export const waitForExit = (running: RunningProcess): Effect.Effect<void> => {
-  if (
-    hasExited(running.child) &&
-    running.child.stdout?.closed &&
-    running.child.stderr?.closed
-  ) {
-    return Effect.void;
-  }
-  return Effect.async<undefined>((resume) => {
-    const onExit = (): void => {
-      resume(Effect.succeed(undefined));
-    };
-    running.child.once("close", onExit);
-    return Effect.sync(() => {
-      running.child.removeListener("close", onExit);
-    });
-  });
-};
+/** Waits for the child and its output streams to close. */
+const waitForExit = (running: RunningProcess): Effect.Effect<void> =>
+  hasExited(running.child) &&
+  running.child.stdout?.closed === true &&
+  running.child.stderr?.closed === true
+    ? Effect.void
+    : Effect.async<undefined>((resume) => {
+        const onClose = (): void => {
+          resume(Effect.succeed(undefined));
+        };
+        running.child.once("close", onClose);
+        return Effect.sync(() => {
+          running.child.removeListener("close", onClose);
+        });
+      });
 
 /**
- * Stops one exact acquired child, escalating only after its shutdown grace.
- * A scope runs this release uninterruptibly, and a race does not finish until
- * its loser stops, so both sides are interruptible: otherwise every teardown
- * waits out the full grace for a child that has already exited.
+ * Stops a child, killing it after its shutdown grace. A scope runs this
+ * release uninterruptibly, and a race does not finish until its loser stops,
+ * so both sides are interruptible: otherwise every teardown waits out the
+ * full grace for a child that has already exited.
  */
 export const stopProcess = (running: RunningProcess): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -334,74 +238,52 @@ export const stopProcess = (running: RunningProcess): Effect.Effect<void> =>
   }).pipe(Effect.withSpan("stopProcess"));
 
 /**
- * Starts a child that the trace's enclosing scope stops. A scope closed by
- * interruption, as a timed-out test's is, first prints the child's output, so
- * one run shows where a hang stood.
+ * Starts a child that the enclosing scope stops. The child sees only
+ * `environment` and a `PATH`. A scope closed by a failure or an interruption,
+ * as a timed-out test's is, first prints the child's output.
  */
 export const managedProcess = (
   executable: string,
   processArguments: readonly string[],
   environment: Readonly<Record<string, string>> = {},
-  cwd = WORKSPACE_ROOT,
 ) =>
-  Effect.acquireRelease(
-    Effect.sync(() =>
-      startProcess(executable, processArguments, environment, cwd),
-    ),
-    (running, exit) =>
+  Effect.gen(function* () {
+    const child = spawn(executable, processArguments, {
+      cwd: WORKSPACE_ROOT,
+      env: { PATH: CHILD_PATH, ...environment },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const collect = (chunk: string): void => {
+      output += chunk;
+    };
+    child.stdout.setEncoding("utf8").on("data", collect);
+    child.stderr.setEncoding("utf8").on("data", collect);
+    const running: RunningProcess = { child, logs: () => output };
+    yield* Effect.addFinalizer((exit) =>
       Exit.isFailure(exit)
         ? Console.error(
-            `${basename(executable)} (pid ${running.child.pid}) output when the trace failed:\n${running.logs()}`,
+            `${basename(executable)} (pid ${child.pid}) output when the trace failed:\n${output}`,
           ).pipe(Effect.zipRight(stopProcess(running)))
         : stopProcess(running),
-  );
+    );
+    return running;
+  }).pipe(Effect.uninterruptible, Effect.withSpan("managedProcess"));
 
 /**
- * Whether the child printed its own listening line. A child prints it only
- * after binding, so another process holding a released reservation cannot
- * satisfy readiness the way it could answer a connect or health probe.
+ * Whether the daemon printed its listening line for `endpoint`. It prints the
+ * line only after binding, so another process holding a released port cannot
+ * satisfy readiness the way it could answer a connection.
  */
-const announced = (running: RunningProcess, line: string) =>
-  Effect.sync(() => running.logs().includes(line));
-
-/** PGlite announces its listener only after its WASM database accepts connections. */
-const pgliteListening = (running: RunningProcess, port: number) =>
-  announced(running, `PGLiteSocketServer listening on {"port":${port},`);
-
-/** The daemon announces its MCP endpoint once its loopback listener is bound. */
 export const daemonListening = (running: RunningProcess, endpoint: URL) =>
-  announced(running, `sharnessd listening on ${endpoint.href} (`);
-
-/** Whether `origin` answers its health check as ready. */
-const isHealthy = (origin: URL) =>
-  HttpClient.get(new URL("/healthz", origin)).pipe(
-    Effect.map((response) => response.status === READY_STATUS),
-    Effect.timeout(POLL_ATTEMPT_TIMEOUT),
-    Effect.orElseSucceed(() => false),
-    Effect.scoped,
-    Effect.provide(NodeHttpClient.layer),
-  );
-
-/** A Registry or Router is ready once it announced its own listener on `origin` and answers its health check as ready. */
-export const serviceReady = (
-  running: RunningProcess,
-  service: "sharness-registry" | "sharness-router",
-  origin: URL,
-) =>
-  announced(running, `${service} listening on ${origin.origin} (`).pipe(
-    Effect.flatMap((listening) =>
-      listening ? isHealthy(origin) : Effect.succeed(false),
-    ),
+  Effect.sync(() =>
+    running.logs().includes(`sharnessd listening on ${endpoint.href} (`),
   );
 
 /**
- * Polls `probe` until it reads true, and fails with the child's output once
- * the child exits first or the readiness deadline expires.
- * @param running Child that must become ready.
- * @param probe One readiness check of the child.
- * @param phase What the child had yet to do, for the failure message.
- * @param timeout How long the child has to become ready.
- * @returns Completion once `probe` reads true.
+ * Polls `probe` until it reads true, and fails with the child's output when
+ * the child exits first or `timeout` passes. `phase` names what the child had
+ * yet to do.
  */
 export const awaitReady = (
   running: RunningProcess,
@@ -416,783 +298,213 @@ export const awaitReady = (
       }
       yield* Effect.sleep(POLL_INTERVAL);
     }
-    return yield* Effect.fail(
-      processTestError(`process exited before ${phase}\n${running.logs()}`),
-    );
+    return yield* new ProcessTestError({
+      message: `process exited before ${phase}\n${running.logs()}`,
+    });
   }).pipe(
     Effect.timeoutFail({
       duration: timeout,
       onTimeout: () =>
-        processTestError(
-          `process timed out before ${phase}\n${running.logs()}`,
-        ),
+        new ProcessTestError({
+          message: `process timed out before ${phase}\n${running.logs()}`,
+        }),
     }),
     Effect.withSpan("awaitReady"),
   );
 
-/** Each fixture receives a fresh Ed25519 signing identity. */
-export const makePrivateKeyPem = (): string => {
-  const { privateKey } = generateKeyPairSync("ed25519");
-  return privateKey.export({ format: "pem", type: "pkcs8" });
-};
-
-/** Import private key material only inside disposable process fixtures. */
-export const makeSigningAuthority = (privateKeyPem?: string) =>
-  AgentSigningAuthority.fromPkcs8(
-    Redacted.make(privateKeyPem ?? makePrivateKeyPem()),
-  );
-
-const acquireTemporaryDirectory = FileSystem.FileSystem.pipe(
-  Effect.flatMap((fs) =>
-    Effect.acquireRelease(
-      fs.makeTempDirectory({ prefix: "sharness-client-process-" }),
-      (directory) =>
-        fs
-          .remove(directory, { recursive: true, force: true })
-          .pipe(Effect.ignore),
-    ),
-  ),
-  Effect.provide(NodeFileSystem.layer),
-  Effect.mapError((cause) =>
-    processTestError("could not create temporary directory", cause),
-  ),
-);
-
-const writePrivateFile = (path: string, content: string) =>
-  FileSystem.FileSystem.pipe(
-    Effect.flatMap((fs) => fs.writeFileString(path, content, { mode: 0o600 })),
-    Effect.provide(NodeFileSystem.layer),
-    Effect.mapError((cause) =>
-      processTestError(`could not write ${path}`, cause),
-    ),
-  );
-
-const makeDirectory = (path: string) =>
-  FileSystem.FileSystem.pipe(
-    Effect.flatMap((fs) => fs.makeDirectory(path, { recursive: true })),
-    Effect.provide(NodeFileSystem.layer),
-    Effect.mapError((cause) =>
-      processTestError(`could not create ${path}`, cause),
-    ),
-  );
-
-const encodePublicKey = (
-  publicKey: AgentPublicKey,
-): Effect.Effect<string, ProcessTestError> =>
-  Schema.encode(AgentPublicKey)(publicKey).pipe(
-    Effect.map((encoded) => JSON.stringify(encoded)),
-    Effect.mapError((cause) =>
-      processTestError("could not encode Registry signer", cause),
-    ),
-  );
-
-/** A PGlite Registry uses one SQL connection because its backend is one session. */
-export const startPgliteRegistry = (input: {
-  readonly postgresqlPort: number;
-  readonly registryPort: number;
-  readonly registryKeyPath: string;
-  readonly admissionCredential: string;
-  readonly command?: readonly [string, readonly string[]];
-}) =>
+/** Runs a daemon that must exit before it listens on `endpoint`. */
+const startupFailure = (
+  spawned: Effect.Effect<RunningProcess, never, Scope.Scope>,
+  endpoint: URL,
+) =>
   Effect.gen(function* () {
-    const postgresql = yield* startPglite(input.postgresqlPort);
-    const command: readonly [string, readonly string[]] = input.command ?? [
-      REGISTRY_BINARY,
-      [],
-    ];
-    const registry = yield* managedProcess(
-      command[0],
-      command[1],
-      {
-        SHARNESS_REGISTRY_HOST: LOOPBACK_HOST,
-        SHARNESS_REGISTRY_PORT: String(input.registryPort),
-        SHARNESS_REGISTRY_SQL_POOL_SIZE: "1",
-        SHARNESS_REGISTRY_POSTGRESQL_URL: `postgresql://postgres:postgres@${LOOPBACK_HOST}:${input.postgresqlPort}/postgres`,
-        SHARNESS_REGISTRY_ADMISSION_CREDENTIAL: input.admissionCredential,
-        SHARNESS_REGISTRY_SIGNING_PRIVATE_KEY_PATH: input.registryKeyPath,
-      },
-      join(WORKSPACE_ROOT, "packages/registry"),
-    );
-    yield* awaitReady(
-      registry,
-      serviceReady(
-        registry,
-        "sharness-registry",
-        new URL(`http://${LOOPBACK_HOST}:${input.registryPort}`),
-      ),
-      "health response",
-    ).pipe(
-      Effect.mapError((error) =>
-        processTestError(
-          `${error.message}\nPGlite output:\n${postgresql.logs()}`,
-          error,
-        ),
-      ),
-    );
-    return registry;
-  }).pipe(Effect.withSpan("startPgliteRegistry"));
-
-const prepareInfrastructure = Effect.gen(function* () {
-  const configuredVersions = yield* Effect.serviceOption(WireVersions);
-  const versions = yield* Option.match(configuredVersions, {
-    onNone: () => Effect.succeed(Option.none<ProcessWireVersions>()),
-    onSome: (sets) =>
-      sets.emitted === undefined
-        ? Effect.fail(
-            processTestError(
-              "injected WireVersions is missing its emitted version",
-            ),
-          )
-        : Effect.succeed(Option.some({ ...sets, emitted: sets.emitted })),
-  });
-  const temporaryDirectory = yield* acquireTemporaryDirectory;
-  const registryKeyPath = join(temporaryDirectory, "registry-key.pem");
-  const registryPrivateKey = makePrivateKeyPem();
-  yield* writePrivateFile(registryKeyPath, registryPrivateKey);
-  const registryAuthority = yield* makeSigningAuthority(
-    registryPrivateKey,
-  ).pipe(
-    Effect.mapError((cause) =>
-      processTestError("could not load Registry signer", cause),
-    ),
-  );
-  const registrySignerPublicKeyJson = yield* encodePublicKey(
-    AgentSigningAuthority.publicKey(registryAuthority),
-  );
-  const [postgresqlPort, registryPort, routerPort] = yield* Effect.all(
-    [reservePort, reservePort, reservePort] as const,
-    { concurrency: 3 },
-  );
-  const registryOrigin = new URL(`http://${LOOPBACK_HOST}:${registryPort}`);
-  const routerOrigin = new URL(`http://${LOOPBACK_HOST}:${routerPort}`);
-
-  return {
-    versions,
-    temporaryDirectory,
-    registryKeyPath,
-    registrySignerPublicKeyJson,
-    postgresqlPort,
-    registryPort,
-    routerPort,
-    registryOrigin,
-    routerOrigin,
-  };
-});
-
-/**
- * Starts disposable PGlite, Registry, and Router processes from `binaries`,
- * such as a published release's executables. The Registry waits for PGlite
- * to listen; the Router reads the Registry only to serve a request, so it
- * starts alongside them. An injected `WireVersions` runs the workspace
- * Registry and Router under those sets instead.
- */
-export const acquireProcessInfrastructureFrom = (
-  binaries: NetworkBinaries,
-): Effect.Effect<ProcessInfrastructure, ProcessTestError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const prepared = yield* prepareInfrastructure;
-    const {
-      registryOrigin,
-      routerOrigin,
-      registrySignerPublicKeyJson,
-      temporaryDirectory,
-    } = prepared;
-    const scope = yield* Effect.scope;
-    const startRegistry = startNetworkRegistry(prepared, binaries).pipe(
-      Scope.extend(scope),
-    );
-    const startRouter = startNetworkRouter(prepared, binaries).pipe(
-      Scope.extend(scope),
-    );
-    const [firstRegistry, firstRouter] = yield* Effect.all(
-      [startRegistry, startRouter],
-      {
-        concurrency: 2,
-      },
-    );
-    const registry = yield* Ref.make(firstRegistry);
-    const router = yield* Ref.make(firstRouter);
-    const restartRouter = Ref.get(router).pipe(
-      Effect.flatMap(stopProcess),
-      Effect.zipRight(startRouter),
-      Effect.flatMap((restarted) => Ref.set(router, restarted)),
-    );
-
-    const resetNetwork = Effect.gen(function* () {
-      yield* stopProcess(yield* Ref.get(router));
-      yield* Scope.close((yield* Ref.get(registry)).scope, Exit.void);
-      yield* Ref.set(registry, yield* startRegistry);
-      yield* Ref.set(router, yield* startRouter);
-    });
-
-    return {
-      registryOrigin,
-      routerOrigin,
-      registrySignerPublicKeyJson,
-      temporaryDirectory,
-      restartRouter,
-      holdRouter: Ref.get(router).pipe(Effect.flatMap(pauseProcess)),
-      holdRegistry: Ref.get(registry).pipe(
-        Effect.flatMap((entry) => pauseProcess(entry.process)),
-      ),
-      resetNetwork,
-    };
-  }).pipe(Effect.withSpan("acquireProcessInfrastructureFrom"));
-
-/** Starts disposable PGlite, Registry, and Router processes from the workspace. */
-export const acquireProcessInfrastructure = acquireProcessInfrastructureFrom({
-  registry: REGISTRY_BINARY,
-  router: ROUTER_BINARY,
-});
-
-/** Creates one independent daemon key, credential file, and durable state path. */
-export const makeDaemonProcessFixture = (
-  infrastructure: ProcessInfrastructure,
-  name: string,
-  firewall = false,
-  options: {
-    readonly settings?: Readonly<Record<string, unknown>>;
-    readonly database?: {
-      readonly configureLocator: Redacted.Redacted;
-      readonly runtimeLocator: Redacted.Redacted;
-    };
-  } = {},
-): Effect.Effect<DaemonProcessFixture, ProcessTestError> =>
-  Effect.gen(function* () {
-    const setupChanges = options.settings ?? {};
-    const agentName = yield* Schema.decodeUnknown(AgentName)(name).pipe(
-      Effect.mapError((cause) =>
-        processTestError("invalid test agent name", cause),
-      ),
-    );
-    const port =
-      typeof setupChanges.port === "number"
-        ? setupChanges.port
-        : yield* reservePort;
-    const directory = join(infrastructure.temporaryDirectory, name);
-    const stateDirectory = join(directory, "state");
-    const credentialPath = join(directory, "admission.txt");
-    yield* makeDirectory(stateDirectory);
-    const credentials = yield* makeMcpCredential(directory);
-    const setupFile = join(directory, "setup.json");
-    const serverAgentCredential = randomBytes(32).toString("base64url");
-    const environment = {
-      SHARNESS_CONFIG_FILE: setupFile,
-      SHARNESS_SERVER_AGENT_CREDENTIAL: serverAgentCredential,
-      SHARNESS_DATABASE_URL:
-        options.database === undefined
-          ? pathToFileURL(
-              join(stateDirectory, "sharnessd.sqlite3"),
-            ).href.replace(/^file:/u, "sqlite:")
-          : Redacted.value(options.database.runtimeLocator),
-      SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
-    };
-    yield* writePrivateFile(
-      setupFile,
-      JSON.stringify({
-        port,
-        host: LOOPBACK_HOST,
-        authentication: {
-          kind: "local",
-          credential: Redacted.value(credentials.mcpCredential),
-        },
-        agentName,
-        ...(firewall && setupChanges.messagePolicyFile === undefined
-          ? yield* markedPolicyFiles(directory)
-          : {}),
-        ...setupChanges,
-        mode: changedMode(
-          {
-            kind: "p2p",
-            routerOrigin: infrastructure.routerOrigin.origin,
-            registryOrigin: infrastructure.registryOrigin.origin,
-            registrySignerPublicKey: Schema.decodeUnknownSync(
-              Schema.parseJson(AgentPublicKey),
-            )(infrastructure.registrySignerPublicKeyJson),
-            admissionCredential: ADMISSION_CREDENTIAL,
-          },
-          setupChanges.mode,
-        ),
-      }),
-    );
-    yield* loadDaemonSettings(setupFile).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(environment))),
-      ),
-      Effect.provide(NodeFileSystem.layer),
-      Effect.mapError((cause) =>
-        processTestError("daemon settings are invalid", cause),
-      ),
-    );
-    yield* prepareFixtureDatabase({
-      ...environment,
-      ...(options.database === undefined
-        ? {}
-        : {
-            SHARNESS_DATABASE_URL: Redacted.value(
-              options.database.configureLocator,
-            ),
-          }),
-    });
-    yield* writePrivateFile(credentialPath, ADMISSION_CREDENTIAL);
-    return {
-      agentName,
-      ...(options.database === undefined
-        ? {}
-        : { configureLocator: options.database.configureLocator }),
-      endpoint: new URL(`http://${LOOPBACK_HOST}:${port}/mcp`),
-      stateDirectory,
-      admissionCredentialFile: credentialPath,
-      ...credentials,
-      environment,
-      serverAgentCredential,
-      ...(firewall ? { firewall } : {}),
-    };
-  }).pipe(Effect.withSpan("makeDaemonProcessFixture"));
-
-/** Validates explicit file changes for the next process startup without changing SQL configuration. */
-export function configureDaemonFixture(
-  fixture: DaemonProcessFixture,
-  changes: Readonly<Record<string, unknown>>,
-) {
-  return Effect.gen(function* () {
-    const filesystem = yield* FileSystem.FileSystem;
-    const filename = join(
-      dirname(fixture.admissionCredentialFile),
-      "setup.json",
-    );
-    const current = yield* filesystem
-      .readFileString(filename)
-      .pipe(
-        Effect.flatMap(
-          Schema.decodeUnknown(
-            Schema.parseJson(
-              Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-            ),
-          ),
-        ),
-      );
-    yield* filesystem.writeFileString(
-      filename,
-      JSON.stringify({
-        ...current,
-        ...changes,
-        mode: changedMode(current.mode, changes.mode),
-      }),
-    );
-    yield* loadDaemonSettings(filename).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(fixture.environment))),
-      ),
-    );
-    return fixture;
-  }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.withSpan("configureDaemonFixture"),
-  );
-}
-
-/**
- * The `mode` setting after a change: a client/server mode replaces the
- * current one, and anything else changes fields of the current P2P mode.
- */
-function changedMode(current: unknown, change: unknown): unknown {
-  if (typeof change !== "object" || change === null) {
-    return current;
-  }
-  return "kind" in change && change.kind === "client-server"
-    ? change
-    : { ...(typeof current === "object" ? current : {}), ...change };
-}
-
-/** Writes the marked message policy a firewall fixture's daemon reads, and the settings naming it. */
-function markedPolicyFiles(directory: string) {
-  return writeMessagePolicy(directory, markedPolicy()).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.mapError((cause) =>
-      processTestError("firewall policy could not be written", cause),
-    ),
-  );
-}
-
-function makeMcpCredential(directory: string) {
-  return Effect.gen(function* () {
-    const mcpCredentialFile = join(directory, "mcp-credential");
-    const mcpCredential = Redacted.make(randomBytes(32).toString("base64url"));
-    yield* writePrivateFile(mcpCredentialFile, Redacted.value(mcpCredential));
-    return { mcpCredentialFile, mcpCredential };
-  });
-}
-
-/** The command that runs one fixture's daemon. */
-const daemonCommand = (
-  fixture: DaemonProcessFixture,
-): readonly [string, readonly string[]] =>
-  fixture.firewall === undefined
-    ? [DAEMON_BINARY, []]
-    : [
-        process.execPath,
-        [
-          "--conditions=sharness-test",
-          "--import",
-          require.resolve("tsx"),
-          FIREWALL_DAEMON,
-        ],
-      ];
-
-/** Starts one sharnessd and returns only after its guarded loopback port listens. */
-export const acquireDaemonProcess = (
-  fixture: DaemonProcessFixture,
-  executable?: string,
-): Effect.Effect<RunningProcess, ProcessTestError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const baseCommand =
-      executable === undefined
-        ? daemonCommand(fixture)
-        : ([executable, []] as const);
-    const [binary, args] =
-      fixture.wireVersions !== undefined
-        ? launchCommand("Daemon", fixture.wireVersions)
-        : baseCommand;
-    const running = yield* managedProcess(
-      binary,
-      args,
-      fixture.environment,
-      join(WORKSPACE_ROOT, "packages/social-harness"),
-    );
-    yield* awaitReady(
-      running,
-      daemonListening(running, fixture.endpoint),
-      "listening",
-    );
-    return running;
-  }).pipe(Effect.withSpan("acquireDaemonProcess"));
-
-/** Reserve each port and boot its daemon in one bounded step; release children in parallel. */
-export const acquireDaemonProcesses = (infrastructure: ProcessInfrastructure) =>
-  Effect.forEach(
-    [...Array(CONCURRENT_DAEMONS).keys()],
-    (index) =>
-      makeDaemonProcessFixture(
-        infrastructure,
-        `concurrent-agent-${index}`,
-      ).pipe(Effect.tap(acquireDaemonProcess)),
-    { concurrency: DAEMON_BOOT_CONCURRENCY },
-  ).pipe(Effect.parallelFinalizers);
-
-/**
- * Starts one sharnessd that must stop before it listens. A daemon that listens
- * instead fails the fixture.
- */
-export const awaitDaemonStartupFailure = (
-  fixture: DaemonProcessFixture,
-  command?: {
-    readonly executable: string;
-    readonly args: readonly string[];
-    readonly cwd?: string;
-  },
-): Effect.Effect<DaemonStartupFailure, ProcessTestError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const [executable, processArguments] =
-      command === undefined
-        ? daemonCommand(fixture)
-        : ([command.executable, command.args] as const);
-    const running = yield* managedProcess(
-      executable,
-      processArguments,
-      fixture.environment,
-      command?.cwd,
-    );
+    const running = yield* spawned;
     const listened = yield* awaitReady(
       running,
-      daemonListening(running, fixture.endpoint),
+      daemonListening(running, endpoint),
       "listening",
     ).pipe(
       Effect.as(true),
-      Effect.catchAll((error) =>
-        hasExited(running.child) ? Effect.succeed(false) : Effect.fail(error),
+      Effect.catchIf(
+        () => hasExited(running.child),
+        () => Effect.succeed(false),
       ),
     );
     if (listened) {
-      return yield* Effect.fail(
-        processTestError(`daemon listened unexpectedly\n${running.logs()}`),
-      );
+      return yield* new ProcessTestError({
+        message: `daemon listened unexpectedly\n${running.logs()}`,
+      });
     }
+    yield* waitForExit(running);
     return { exitCode: running.child.exitCode, logs: running.logs() };
-  }).pipe(Effect.withSpan("awaitDaemonStartupFailure"));
+  }).pipe(Effect.withSpan("startupFailure"));
 
-/** Creates exact one-shot bootstrap fields for a fixture's configured identity. */
-const callAndDecode = <A, I>(input: {
-  readonly client: Client;
-  readonly name: string;
-  readonly arguments: Readonly<Record<string, unknown>>;
-  readonly schema: Schema.Schema<A, I>;
-}): Effect.Effect<A, ProcessTestError> =>
-  Effect.tryPromise({
-    try: (signal) =>
-      input.client.callTool(
-        { name: input.name, arguments: input.arguments },
-        { signal },
-      ),
-    catch: (cause) => processTestError(`${input.name} call failed`, cause),
-  }).pipe(
-    Effect.filterOrFail(
-      (result) => result.isError !== true,
-      () => processTestError(`${input.name} returned an MCP error`),
-    ),
-    Effect.flatMap((result) =>
-      Schema.decodeUnknown(input.schema)(result.structuredContent).pipe(
-        Effect.mapError((cause) =>
-          processTestError(`${input.name} returned invalid content`, cause),
-        ),
-      ),
-    ),
-  );
-
-const closeManagementClient = (client: Client): Effect.Effect<void> =>
-  Effect.tryPromise({
-    try: () => client.close(),
-    catch: (cause) =>
-      processTestError("could not close management client", cause),
-  }).pipe(Effect.ignore);
-
-const callExpectingProtocolError = (
-  client: Client,
-  name: string,
-  toolArguments: Readonly<Record<string, unknown>>,
-): Effect.Effect<DaemonProtocolError, ProcessTestError> =>
-  Effect.tryPromise({
-    try: (signal) =>
-      client.callTool({ name, arguments: toolArguments }, { signal }),
-    catch: (cause) => processTestError(`${name} call failed`, cause),
-  }).pipe(
-    Effect.matchEffect({
-      onFailure: (error) =>
-        ProtocolError.isInstance(error.cause)
-          ? Effect.succeed({ code: error.cause.code, data: error.cause.data })
-          : Effect.fail(error),
-      onSuccess: () =>
-        Effect.fail(processTestError(`${name} unexpectedly succeeded`)),
-    }),
-  );
-
-/** Acquires a authenticated daemon MCP session against one real daemon. */
-export const acquireDaemonManagementClient = (
-  fixture: Pick<DaemonProcessFixture, "endpoint" | "mcpCredential">,
-): Effect.Effect<DaemonManagementClient, ProcessTestError, Scope.Scope> =>
+/**
+ * Writes `initial` as the settings document at `file` and returns the
+ * operation that changes it.
+ */
+const settingsDocument = (
+  file: string,
+  initial: Readonly<Record<string, unknown>>,
+) =>
   Effect.gen(function* () {
-    const client = new Client(
-      { name: "sharness-process-acceptance", version: "1.0.0" },
-      {
-        capabilities: {},
-        versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } },
-      },
-    );
-    yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: (signal) =>
-          client.connect(
-            new StreamableHTTPClientTransport(fixture.endpoint, {
-              requestInit: {
-                headers: {
-                  Authorization: `Bearer ${Redacted.value(fixture.mcpCredential)}`,
-                },
-                redirect: "error",
-              },
-            }),
-            {
-              signal,
-            },
-          ),
-        catch: (cause) =>
-          processTestError("could not connect management client", cause),
-      }),
-      () => closeManagementClient(client),
-    );
-    return managementOperations(client);
-  }).pipe(Effect.withSpan("acquireDaemonManagementClient"));
-
-function startNetworkRegistry(
-  input: Effect.Effect.Success<typeof prepareInfrastructure>,
-  binaries: NetworkBinaries,
-) {
-  return Effect.gen(function* () {
-    const { versions, postgresqlPort, registryPort, registryKeyPath } = input;
-
-    const command: readonly [string, readonly string[]] = Option.isNone(
-      versions,
-    )
-      ? [binaries.registry, []]
-      : launchCommand("Registry", versions.value);
-    const registryScope = yield* Effect.acquireRelease(
-      Scope.make(),
-      (acquired) => Scope.close(acquired, Exit.void),
-    );
-    const process = yield* startPgliteRegistry({
-      postgresqlPort,
-      registryPort,
-      registryKeyPath,
-      admissionCredential: ADMISSION_CREDENTIAL,
-      command,
-    }).pipe(Scope.extend(registryScope));
-    return { scope: registryScope, process };
+    const filesystem = yield* FileSystem.FileSystem;
+    const write = (document: Readonly<Record<string, unknown>>) =>
+      filesystem
+        .writeFileString(file, JSON.stringify(document))
+        .pipe(Effect.mapError(failed("could not write the daemon settings")));
+    const document = yield* Ref.make(initial);
+    yield* write(initial);
+    return (changes: Readonly<Record<string, unknown>>) =>
+      Ref.updateAndGet(document, (current) => ({
+        ...current,
+        ...changes,
+      })).pipe(Effect.flatMap(write));
   });
-}
 
-function startNetworkRouter(
-  input: Effect.Effect.Success<typeof prepareInfrastructure>,
-  binaries: NetworkBinaries,
-) {
-  return Effect.gen(function* () {
-    const {
-      versions,
-      routerPort,
-      registryOrigin,
-      registrySignerPublicKeyJson,
-      routerOrigin,
-    } = input;
-    const routerCommand: readonly [string, readonly string[]] = Option.isNone(
-      versions,
-    )
-      ? [binaries.router, []]
-      : launchCommand("RouterServer", versions.value);
-    return yield* managedProcess(
-      routerCommand[0],
-      routerCommand[1],
-      {
-        SHARNESS_ROUTER_HOST: LOOPBACK_HOST,
-        SHARNESS_ROUTER_PORT: String(routerPort),
-        SHARNESS_ROUTER_REGISTRY_ORIGIN: registryOrigin.origin,
-        SHARNESS_ROUTER_REGISTRY_SIGNER_PUBLIC_KEY: registrySignerPublicKeyJson,
-        SHARNESS_ROUTER_REQUEST_CONCURRENCY_LIMIT: String(
-          CONCURRENT_DAEMONS * REQUESTS_PER_DAEMON,
-        ),
-        SHARNESS_ROUTER_HELD_POLL_CAPACITY: String(
-          CONCURRENT_DAEMONS * HELD_POLLS_PER_DAEMON,
-        ),
-      },
-      join(WORKSPACE_ROOT, "packages/router"),
-    ).pipe(
-      Effect.tap((router) =>
-        awaitReady(
-          router,
-          serviceReady(router, "sharness-router", routerOrigin),
-          "health response",
-        ),
-      ),
+/**
+ * Connects to the daemon at `endpoint` as the holder of `bearer`, reads its
+ * agent from `status` and saves the bearer in `directory`.
+ */
+const signIn = (endpoint: URL, directory: string, bearer: Redacted.Redacted) =>
+  Effect.gen(function* () {
+    const filesystem = yield* FileSystem.FileSystem;
+    const connection = yield* acquireMcpConnection(
+      { endpoint, credential: bearer },
+      { name: "integration-test", version: "test" },
     );
-  });
-}
-
-function managementOperations(client: Client): DaemonManagementClient {
-  const management: DaemonManagementClient = {
-    identityCard: () =>
-      management.status().pipe(
-        Effect.flatMap((status) =>
-          Schema.decodeUnknown(AgentIdentityCard)(status.identityCard),
-        ),
-        Effect.catchTag(
-          "ParseError",
-          (cause) =>
-            new ProcessTestError({
-              message: "the daemon's identity card did not decode",
-              cause,
-            }),
-        ),
-      ),
-    status: () =>
-      callAndDecode({
-        client,
-        name: "status",
-        arguments: {},
-        schema: toolDefinitions.status.output,
-      }),
-    listConversations: () =>
-      callAndDecode({
-        client,
-        name: "list_conversations",
-        arguments: {},
-        schema: toolDefinitions.list_conversations.output,
-      }),
-    readConversation: (address) =>
-      callAndDecode({
-        client,
-        name: "read_conversation",
-        arguments: { address },
-        schema: toolDefinitions.read_conversation.output,
-      }),
-    callExpectingProtocolError: (name, toolArguments) =>
-      callExpectingProtocolError(client, name, toolArguments),
-  };
-
-  return management;
-}
-
-/** Child compositions select wire versions before their service imports resolve. */
-function launchCommand(
-  service: "Registry" | "RouterServer" | "Daemon",
-  versions: ProcessWireVersions,
-): readonly [string, readonly string[]] {
-  let script: string;
-  if (service === "Registry") {
-    script = `import { startRegistry } from "@social-harness/registry/test"; startRegistry(${JSON.stringify(versions satisfies Parameters<typeof startRegistry>[0])});`;
-  } else if (service === "RouterServer") {
-    script = `import { startRouter } from "@social-harness/router/test"; startRouter(${JSON.stringify(versions satisfies Parameters<typeof startRouter>[0])});`;
-  } else {
-    script = serviceScript(versions);
-  }
-  return [
-    process.execPath,
-    [
-      "--conditions=sharness-test",
-      ...(service === "Daemon" ? [] : ["--conditions=sharness-internal"]),
-      "--input-type=module",
-      "-e",
-      script,
-    ],
-  ];
-}
-
-/** Daemon compositions select their test wire policy before process startup. */
-function serviceScript(versions: ProcessWireVersions): string {
-  return `import { NodeRuntime } from "@effect/platform-node";
-import { WireVersions } from "@social-harness/social-harness/test";
-import { daemonLayer } from "@social-harness/social-harness/service";
-import { ConfigProvider, Effect, Layer } from "effect";
-Layer.launch(daemonLayer).pipe(Effect.provideService(WireVersions, ${JSON.stringify(versions)}), Effect.withConfigProvider(ConfigProvider.fromEnv()), NodeRuntime.runMain);`;
-}
-
-function startPglite(port: number) {
-  return managedProcess(PGLITE_BINARY, [
-    "--db=memory://",
-    `--port=${port}`,
-    `--host=${LOOPBACK_HOST}`,
-    "--max-connections=20",
-  ]).pipe(
-    Effect.tap((running) =>
-      awaitReady(running, pgliteListening(running, port), "listening"),
-    ),
-  );
-}
-
-function pauseProcess(running: RunningProcess) {
-  return Effect.sync(() => {
-    running.child.kill("SIGSTOP");
-    return () => {
-      running.child.kill("SIGCONT");
+    const status = yield* callTool(connection.client, {
+      name: "status",
+      arguments: {},
+    });
+    const credentialFile = join(directory, `${status.agentName}.credential`);
+    yield* filesystem.writeFileString(credentialFile, Redacted.value(bearer), {
+      mode: 0o600,
+    });
+    return {
+      agentId: status.agentId,
+      agentName: status.agentName,
+      address: AgentAddress.make(`agent:${status.agentName}`),
+      connection,
+      credentialFile,
     };
-  });
-}
-
-/** Preparation uses deployment credentials while the child receives only its runtime locator. */
-function prepareFixtureDatabase(environment: Readonly<Record<string, string>>) {
-  return prepareDatabase.pipe(
+  }).pipe(
+    Effect.mapError(failed("could not sign in to the daemon")),
     Effect.provide(NodeFileSystem.layer),
+    Effect.withSpan("signIn"),
+  );
+
+/** Creates the daemon's tables and encryption check as deployment does. */
+const prepare = (environment: Readonly<Record<string, string>>) =>
+  prepareDatabase.pipe(
     Effect.withConfigProvider(
       ConfigProvider.fromMap(new Map(Object.entries(environment))),
     ),
-    Effect.mapError((cause) =>
-      processTestError("daemon configuration failed", cause),
-    ),
+    Effect.mapError(failed("could not prepare the daemon database")),
   );
-}
+
+/**
+ * Prepares one daemon in P2P mode whose owners sign in with tokens from its
+ * own test issuer. The scope removes its directory and stops its issuer and
+ * every process and connection it started.
+ */
+export const sharedDaemon = (
+  options: DaemonOptions = {},
+): Effect.Effect<Daemon, ProcessTestError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const filesystem = yield* FileSystem.FileSystem;
+    const directory = yield* filesystem
+      .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
+      .pipe(Effect.mapError(failed("could not create the daemon directory")));
+    const issuer = yield* issuerFixture.pipe(
+      Effect.mapError(failed("could not start the test issuer")),
+    );
+    const port = yield* reservePort;
+    const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
+    const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
+    const serverAgentBearer = Redacted.make(
+      randomBytes(32).toString("base64url"),
+    );
+    const sqlite = pathToFileURL(
+      join(directory, "sharnessd.sqlite3"),
+    ).href.replace(/^file:/u, "sqlite:");
+    const environment = {
+      SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
+      SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
+      SHARNESS_DATABASE_URL: Redacted.value(
+        options.database?.runtimeLocator ?? Redacted.make(sqlite),
+      ),
+      SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
+    };
+    const configure = yield* settingsDocument(
+      environment.SHARNESS_CONFIG_FILE,
+      {
+        port,
+        host: LOOPBACK_HOST,
+        authentication: {
+          kind: "oauth",
+          resource,
+          issuer: issuer.issuer,
+          scope: requiredScope,
+        },
+        mode: { kind: "p2p" },
+        ...(options.firewall === true &&
+        options.settings?.messagePolicyFile === undefined
+          ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(
+              Effect.mapError(failed("could not write the message policy")),
+            )
+          : {}),
+        ...options.settings,
+      },
+    );
+    yield* prepare({
+      ...environment,
+      SHARNESS_DATABASE_URL: Redacted.value(
+        options.database?.configureLocator ?? Redacted.make(sqlite),
+      ),
+    });
+    const spawned = (changes: Readonly<Record<string, string>>) =>
+      managedProcess(
+        ...(options.firewall === true
+          ? FIREWALL_DAEMON_COMMAND
+          : DAEMON_COMMAND),
+        { ...environment, ...changes },
+      );
+    const bearer = (owner: string) =>
+      issuer
+        .token(owner, resource)
+        .pipe(
+          Effect.map(Redacted.make),
+          Effect.mapError(failed(`could not issue a token for ${owner}`)),
+        );
+    const daemon: Daemon = {
+      endpoint,
+      directory,
+      environment,
+      start: (changes = {}) =>
+        spawned(changes).pipe(
+          Effect.tap((running) =>
+            awaitReady(
+              running,
+              daemonListening(running, endpoint),
+              "listening",
+            ),
+          ),
+          Effect.withSpan("start"),
+        ),
+      startupFailure: (changes = {}) =>
+        startupFailure(spawned(changes), endpoint),
+      configure,
+      bearer,
+      serverAgentBearer,
+      signIn: (presented) => signIn(endpoint, directory, presented),
+      agent: (owner) =>
+        Effect.flatMap(bearer(owner), (presented) =>
+          signIn(endpoint, directory, presented),
+        ),
+    };
+    return daemon;
+  }).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.withSpan("sharedDaemon"),
+  );

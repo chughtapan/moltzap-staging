@@ -17,6 +17,7 @@ import {
   ConfigProvider,
   Context,
   Effect,
+  Exit,
   Layer,
   Redacted,
   Schema,
@@ -29,24 +30,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 
-const signer = {
-  crv: "Ed25519",
-  kty: "OKP",
-  x: "y1j1FUgbqjCPeQVEnllv-2euwn_s9DeDkfEh3gk_OJ0",
-};
 const secret = "configuration-only-test-bearer-0000000001";
 const settingsVariable = "SHARNESS_CONFIG_FILE";
+const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
 const settings = {
   port: 4319,
   host: "127.0.0.1",
   authentication: { kind: "local", credential: secret },
-  mode: {
-    kind: "p2p",
-    routerOrigin: "https://router.example",
-    registryOrigin: "https://registry.example",
-    registrySignerPublicKey: signer,
-    admissionCredential: "test-admission-credential",
-  },
+  mode: { kind: "p2p" },
 };
 const shippedNorms = fileURLToPath(
   new URL("../../../packages/social-harness/config/norms/", import.meta.url),
@@ -381,19 +372,8 @@ it.each([
   { ...settings, host: "0.0.0.0" },
   { ...settings, porrt: settings.port },
   { ...settings, port: 0 },
-  {
-    ...settings,
-    mode: { ...settings.mode, registryOrigin: "https://registry.example/path" },
-  },
-  { ...settings, mode: { ...settings.mode, registryOrigin: undefined } },
-  {
-    ...settings,
-    mode: {
-      ...settings.mode,
-      kind: "client-server",
-      serverAgentName: "server-agent",
-    },
-  },
+  { ...settings, mode: { kind: "p2p", serverAgentName: "server-agent" } },
+  { ...settings, mode: { kind: "client-server" } },
 ])(
   "rejects invalid settings without disclosing their credentials: %j",
   (document) =>
@@ -405,11 +385,23 @@ it.each([
       );
       expect(failure).toMatchObject({ reason: "document" });
       expect(JSON.stringify(failure)).not.toContain(secret);
-      expect(JSON.stringify(failure)).not.toContain(
-        settings.mode.admissionCredential,
-      );
     }).pipe(Effect.provide(NodeContext.layer)),
 );
+
+it("refuses client/server mode without the server agent's credential and names the variable to set", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* test.write({
+      ...settings,
+      mode: { kind: "client-server", serverAgentName: "server-agent" },
+    });
+    const failure = yield* loadDaemonSettings(test.filename).pipe(
+      Effect.withConfigProvider(test.provider),
+      Effect.flip,
+    );
+    expect(failure).toMatchObject({ reason: "environment" });
+    expect(failure.message).toContain(serverCredentialVariable);
+  }).pipe(Effect.provide(NodeContext.layer)));
 
 it("checks an unprepared database without creating schema or key metadata", () =>
   Effect.gen(function* () {
@@ -474,10 +466,9 @@ it("runtime refuses the wrong key before changing retained owner state", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.prepare;
-    const agent = yield* getOrCreateOwnedAgent(
-      localOwner,
-      test.access.unlockKey,
-    ).pipe(Effect.provideService(SqlClient.SqlClient, test.sql));
+    const agent = yield* getOrCreateOwnedAgent(localOwner).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
     const before = yield* test.sql`SELECT * FROM database_encryption`;
     expect(
       yield* checkDatabase(Redacted.make(randomBytes(32))).pipe(
@@ -495,42 +486,11 @@ it("runtime refuses the wrong key before changing retained owner state", () =>
     ).toEqual([agent]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("rolls back additive schema changes and migration rows when the retained key fails", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.prepare;
-    yield* test.sql`DROP TABLE local_registry_agents`;
-    yield* test.sql`DROP TABLE local_registry_signer`;
-    yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-    const metadata = yield* test.sql`SELECT * FROM database_encryption`;
-    const migrations = yield* test.sql`SELECT * FROM effect_sql_migrations`;
-    const failure = yield* prepareDatabase.pipe(
-      Effect.withConfigProvider(
-        test.providerFor(
-          Redacted.value(test.access.locator),
-          randomBytes(32).toString("base64url"),
-        ),
-      ),
-      Effect.flip,
-    );
-    expect(failure).toMatchObject({ reason: "key" });
-    expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
-      metadata,
-    );
-    expect(yield* test.sql`SELECT * FROM effect_sql_migrations`).toEqual(
-      migrations,
-    );
-    yield* test.prepare;
-    yield* checkDatabase(test.access.unlockKey).pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-  }).pipe(Effect.provide(NodeContext.layer)));
-
 it("deployment refuses missing verifier metadata when an orphaned profile remains", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.prepare;
-    yield* getOrCreateOwnedAgent(localOwner, test.access.unlockKey).pipe(
+    yield* getOrCreateOwnedAgent(localOwner).pipe(
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
     yield* test.sql.unsafe("PRAGMA foreign_keys = OFF");
@@ -547,7 +507,7 @@ it("deployment refuses to adopt missing verifier metadata for existing owners", 
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.prepare;
-    yield* getOrCreateOwnedAgent(localOwner, test.access.unlockKey).pipe(
+    yield* getOrCreateOwnedAgent(localOwner).pipe(
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
     yield* test.sql`DELETE FROM database_encryption`;
@@ -575,13 +535,16 @@ it("rejects older SQLite state without changing its retained records", () =>
     ).toEqual([{ name: "retained" }]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("rolls back domain schema and migration rows when schema preparation fails", () =>
+it("leaves no table and no migration row behind when the migration fails", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.sql`CREATE TABLE firewall_checks (value TEXT NOT NULL)`;
     yield* test.sql`INSERT INTO firewall_checks VALUES ('retained obstruction')`;
-    yield* test.sql.unsafe("PRAGMA user_version = 3");
-    expect(yield* test.prepare.pipe(Effect.flip)).toBeDefined();
+    const migrated = yield* migrateDaemon.pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(migrated)).toBe(true);
     expect(yield* test.sql`SELECT * FROM firewall_checks`).toEqual([
       { value: "retained obstruction" },
     ]);
@@ -684,42 +647,6 @@ it(
       expect(
         yield* test.sql`SELECT tablename FROM pg_tables WHERE schemaname=current_schema() ORDER BY tablename`,
       ).toEqual([{ tablename: "firewall_checks" }]);
-    }).pipe(Effect.provide(NodeContext.layer)),
-  60_000,
-);
-
-it(
-  "rolls back pending PostgreSQL schema and ledger changes when the retained key fails",
-  () =>
-    Effect.gen(function* () {
-      const test = yield* postgresFixture;
-      yield* test.prepare;
-      yield* test.sql`DROP TABLE local_registry_agents`;
-      yield* test.sql`DROP TABLE local_registry_signer`;
-      yield* test.sql`DELETE FROM effect_sql_migrations WHERE migration_id=(SELECT MAX(migration_id) FROM effect_sql_migrations)`;
-      const metadata = yield* test.sql`SELECT * FROM database_encryption`;
-      const migrations =
-        yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      const provider = ConfigProvider.fromMap(
-        new Map([
-          ["SHARNESS_DATABASE_URL", Redacted.value(test.locator)],
-          ["SHARNESS_DATABASE_KEY", randomBytes(32).toString("base64url")],
-        ]),
-      );
-      expect(
-        yield* prepareDatabase.pipe(
-          Effect.withConfigProvider(provider),
-          Effect.flip,
-        ),
-      ).toMatchObject({ reason: "key" });
-      expect(yield* test.sql`SELECT * FROM database_encryption`).toEqual(
-        metadata,
-      );
-      expect(
-        yield* test.sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
-      ).toEqual(migrations);
-      yield* test.prepare;
-      yield* test.check;
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,
 );

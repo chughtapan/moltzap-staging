@@ -1,92 +1,63 @@
-/** @file Promise-native access to scoped process fixtures for node:test consumers. */
+/** @file Promise access to one daemon and its agents for node:test suites. */
 import {
-  type AgentCard,
-  AgentIdentityCard,
-  MessageAddressInput,
+  AgentAddress,
+  GroupAddress,
   type PermittedItem,
   SendRequest,
   type SendResult,
 } from "@social-harness/social-harness";
 import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
+import { callTool } from "../../plugins/shared/mcp-client.js";
 import {
-  acquireMcpConnection,
-  callTool,
-  type McpConnection,
-} from "../../plugins/shared/mcp-client.js";
-import {
-  acquireDaemonManagementClient,
-  acquireProcessInfrastructure,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
-  processTestError,
-  type ProcessTestError,
+  type Agent,
+  type Daemon,
+  ProcessTestError,
+  sharedDaemon,
 } from "./daemon/daemon-fixture.ts";
 import { inboxStream } from "./mcp-inbox.js";
 import { historyMessage } from "./saved-history.js";
 
 /* eslint-disable agent-code-guard/async-keyword, agent-code-guard/promise-type -- node:test consumes promises at the fixture boundary. */
 
-/** A registered daemon's coordinates, shared with a host container. */
-interface Daemon {
+/**
+ * One owner's agent: what a host needs to connect as it, and the test's own
+ * connection. `next` reads the inbox only while it waits, so a host connected
+ * as the same agent receives every delivery the test does not ask for.
+ */
+export interface Endpoint {
+  readonly agent: Pick<Agent, "agentId" | "agentName">;
   readonly address: string;
   readonly mcp: URL;
   readonly mcpCredentialFile: string;
-}
-
-/**
- * A test's own harness endpoint on a daemon, with management history. It
- * subscribes to inbound deliveries only while `next` waits, so a host that
- * shares the daemon receives every delivery the test does not ask for.
- */
-export interface Endpoint extends Daemon {
-  readonly agent: AgentCard;
   readonly send: (input: unknown) => Promise<SendResult>;
   readonly next: (count: number) => Promise<readonly PermittedItem[]>;
   readonly history: (address: string) => Promise<readonly unknown[]>;
 }
 
-/** One scope owns the infrastructure, daemons and participant subscriptions. */
+/** One scope owns the daemon and every agent's connection. */
 export interface Network {
-  readonly daemon: (name: string) => Promise<Daemon>;
-  readonly endpoint: (name: string) => Promise<Endpoint>;
-  readonly holdRouter: () => Promise<() => void>;
+  readonly endpoint: (owner: string) => Promise<Endpoint>;
   readonly close: () => Promise<undefined>;
 }
 
-/** Starts one fixture's daemon, which a consumer may run in its own container; the configured SQL database carries its registration seed. */
+/** Runs a prepared daemon, which a consumer may do in its own container. */
 type StartDaemon = (
-  fixture: DaemonProcessFixture,
+  daemon: Daemon,
 ) => Effect.Effect<unknown, ProcessTestError, Scope.Scope>;
 
-/** Acquires the shared process network, closing partial startup on failure. */
+/** Prepares one daemon and runs it with `startDaemon`, closing partial startup on failure. */
 export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
   const scope = Effect.runSync(Scope.make());
   const close = () =>
     Effect.runPromise(Scope.close(scope, Exit.void).pipe(Effect.as(undefined)));
   try {
-    const infrastructure = await runInScope(
+    const daemon = await runInScope(
       scope,
-      acquireProcessInfrastructure,
+      sharedDaemon().pipe(Effect.tap(startDaemon)),
     );
-    const daemon = (name: string) =>
-      runInScope(
-        scope,
-        makeDaemonProcessFixture(infrastructure, name).pipe(
-          Effect.tap(startDaemon),
-        ),
-      );
     return {
-      daemon: async (name) => {
-        const fixture = await daemon(name);
-        return {
-          address: `agent:${fixture.agentName}`,
-          mcp: fixture.endpoint,
-          mcpCredentialFile: fixture.mcpCredentialFile,
-        };
-      },
-      endpoint: async (name) =>
-        await networkEndpoint(scope, await daemon(name)),
-      holdRouter: () => runInScope(scope, infrastructure.holdRouter),
+      endpoint: async (owner) =>
+        endpoint(daemon, await runInScope(scope, daemon.agent(owner))),
       close,
     };
   } catch (cause) {
@@ -95,64 +66,42 @@ export async function startNetwork(startDaemon: StartDaemon): Promise<Network> {
   }
 }
 
-async function networkEndpoint(
-  scope: Scope.CloseableScope,
-  fixture: DaemonProcessFixture,
-): Promise<Endpoint> {
-  const harness = await runInScope(
-    scope,
-    acquireMcpConnection(
-      { endpoint: fixture.endpoint, credential: fixture.mcpCredential },
-      { name: "process-test", version: "test" },
-    ),
-  );
-  const agent = await runInScope(scope, readAgent(fixture));
+function endpoint(daemon: Daemon, agent: Agent): Endpoint {
+  const { client } = agent.connection;
   return {
-    agent,
-    address: `agent:${fixture.agentName}`,
-    mcp: fixture.endpoint,
-    mcpCredentialFile: fixture.mcpCredentialFile,
+    agent: { agentId: agent.agentId, agentName: agent.agentName },
+    address: agent.address,
+    mcp: daemon.endpoint,
+    mcpCredentialFile: agent.credentialFile,
     send: (input) =>
       Effect.runPromise(
-        Schema.decodeUnknown(SendRequest)(input).pipe(
-          Effect.flatMap((decoded) =>
-            callTool(harness.client, {
-              name: "send_message",
-              arguments: decoded,
-            }),
+        callTool(client, {
+          name: "send_message",
+          arguments: Schema.decodeUnknownSync(SendRequest)(input),
+        }),
+      ),
+    next: (count) => Effect.runPromise(nextItems(agent, count)),
+    history: (address) =>
+      Effect.runPromise(
+        callTool(client, {
+          name: "read_conversation",
+          arguments: {
+            address: Schema.decodeUnknownSync(
+              Schema.Union(AgentAddress, GroupAddress),
+            )(address),
+          },
+        }).pipe(
+          Effect.map((page) =>
+            page.records.map((record) => historyMessage(record).content),
           ),
         ),
       ),
-    next: (count) => Effect.runPromise(nextItems(harness, count)),
-    history: (address) => runInScope(scope, readContents(fixture, address)),
   };
 }
 
-function readAgent(fixture: DaemonProcessFixture) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const management = yield* acquireDaemonManagementClient(fixture);
-      const status = yield* management.status();
-      return yield* Schema.decodeUnknown(AgentIdentityCard)(
-        status.identityCard,
-      ).pipe(
-        Effect.map(({ agentId, agentName, principalId }) => ({
-          agentId,
-          agentName,
-          principalId,
-        })),
-      );
-    }),
-  );
-}
-
-/**
- * Awaits the next `count` deliveries on a subscription opened for this call,
- * acknowledging them before it closes, since a closed subscription's receipts
- * are stale.
- */
-function nextItems(harness: McpConnection, count: number) {
-  return inboxStream(harness).pipe(
+/** The next `count` deliveries, read by a subscription opened for this call. */
+function nextItems(agent: Agent, count: number) {
+  return inboxStream(agent.connection).pipe(
     Stream.grouped(count),
     Stream.runHead,
     Effect.map(
@@ -164,23 +113,10 @@ function nextItems(harness: McpConnection, count: number) {
     Effect.timeoutFail({
       duration: "60 seconds",
       onTimeout: () =>
-        processTestError(`timed out awaiting ${String(count)} deliveries`),
+        new ProcessTestError({
+          message: `timed out awaiting ${String(count)} deliveries`,
+        }),
     }),
-  );
-}
-
-function readContents(fixture: DaemonProcessFixture, address: string) {
-  return Effect.scoped(
-    acquireDaemonManagementClient(fixture).pipe(
-      Effect.flatMap((management) =>
-        management.readConversation(
-          Schema.decodeUnknownSync(MessageAddressInput)(address),
-        ),
-      ),
-      Effect.map((result) =>
-        result.records.map((record) => historyMessage(record).content),
-      ),
-    ),
   );
 }
 

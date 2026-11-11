@@ -17,12 +17,6 @@
             "runtime": "node --version"
           },
           {
-            "env": "SHARNESS_EXPERIMENT_HIDE_COLLECTIVES"
-          },
-          {
-            "env": "SHARNESS_EXPERIMENT_HIDE_GROUPS"
-          },
-          {
             "env": "SHARNESS_MCP_URL"
           },
           {
@@ -92,7 +86,6 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
-    "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "@social-harness/openclaw-channel": "workspace:*",
@@ -101,14 +94,9 @@
     "@typescript/native": "catalog:",
     "effect": "catalog:",
     "eslint": "catalog:",
-    "http-message-signatures": "catalog:",
     "jose": "catalog:",
     "protobufjs": "catalog:",
     "tsx": "catalog:",
     "vitest": "catalog:"
-  },
-  "exports": {
-    "./process-network": "./process-network-fixture.ts",
-    "./daemon-process-harness": "./daemon/daemon-fixture.ts"
   }
 }
