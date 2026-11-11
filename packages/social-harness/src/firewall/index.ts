@@ -17,7 +17,6 @@ export {
   DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
-  type Message,
 } from "./check.js";
 /** Norm documents an agent's editable policy holds. */
 export type { NormDocuments } from "./editable-policy.js";

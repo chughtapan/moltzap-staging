@@ -7,15 +7,10 @@ export {
   type DecisionProvider,
   DecisionProviderError,
   type DecisionRequest,
-  type Message,
 } from "./firewall/index.js";
 
 /** Trusted database qualification uses the same schema, ownership and inbox operations as the daemon. */
-export {
-  checkDatabase,
-  migrateDaemon,
-  prepareDatabase,
-} from "./database/migrations.js";
+export { checkDatabase, migrateDaemon } from "./database/migrations.js";
 /** Database selection uses the production driver composition. */
 export { databaseAccess, databaseConnection } from "./database/sql.js";
 /** Restricted-role tests exercise production transaction scoping. */

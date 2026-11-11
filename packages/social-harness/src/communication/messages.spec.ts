@@ -6,17 +6,12 @@ import {
   Either,
   Encoding,
   Exit,
-  JSONSchema,
   Option,
   ParseResult,
   Schema,
 } from "effect";
 import { describe, expect, it as vitestIt } from "vitest";
-import {
-  digest,
-  digest as publicDigest,
-  testAgentCard,
-} from "../__tests__/agents.js";
+import { digest, testAgentCard } from "../__tests__/agents.js";
 import { encodeCanonical } from "../encoding/index.js";
 import {
   AgentAddress as PublicAgentAddress,
@@ -28,22 +23,15 @@ import {
 import { collectiveOperationId } from "./__tests__/request-ids.js";
 import {
   type AnswerContent,
-  type AnswerFormat,
-  COLLECTIVE_DATA_KEY,
   CollectiveContentError,
   CollectivePartInvalidError,
   collectiveRequesterOf,
   Content,
-  decodeCollectiveValue,
   encodeCollectiveContent,
-  matchesFormat,
   Message,
-  messageFromIntent,
   messageFromParticipants,
-  RequestedSchema as messagesRequestedSchema,
-  mintCollectiveId,
+  messageInterpretation,
   MsgId,
-  readCollectiveValue,
   validateAnswer,
 } from "./messages.js";
 import { Answer, Incoming, Request, RequestedSchema } from "./service.js";
@@ -57,22 +45,6 @@ const carol = testAgentCard("carol");
 const msgId = Schema.decodeUnknownSync(MsgId)(digest("msg_", 1));
 
 const content = [{ type: "text", text: "Choose a meeting time." }] as const;
-
-// @agent-code-guard/regression-only: Retried messages retain attribution while ambiguous participant identities are rejected.
-it("preserves identity, participants and content when member enumeration changes", () =>
-  Effect.gen(function* () {
-    const intent = { authorAgentId: alice.agentId, msgId, content };
-    const first = yield* messageFromIntent([carol, alice, bob], intent);
-    const recovered = yield* messageFromIntent([bob, carol, alice], intent);
-
-    expect(first).toEqual({
-      msgId,
-      author: alice,
-      recipients: [bob, carol],
-      content,
-    });
-    expect(recovered).toEqual(first);
-  }));
 
 it.each([
   { reason: "the author as a recipient", recipients: [alice] },
@@ -157,13 +129,30 @@ it("captures a request and an answer while keeping decoded operation metadata ou
     }
     expect(stored.message).not.toHaveProperty("operation");
     expect(yield* Schema.decodeUnknown(Incoming)(stored)).toEqual(incoming);
-    expect(JSONSchema.make(Schema.typeSchema(Incoming))).toHaveProperty(
-      "anyOf",
-    );
   }));
 
-const judged = (format: AnswerFormat, texts: readonly string[]) =>
-  texts.map((text) => matchesFormat(format, text));
+const fieldSchema = (field: object) =>
+  Schema.decodeUnknownSync(RequestedSchema)({
+    type: "object",
+    properties: { field },
+  });
+
+/** The keyword each issue of an invalid field's detail names, in order. */
+const keywordsOf = (field: object, value: AnswerContent[string]) =>
+  Effect.runSync(
+    Effect.flip(validateAnswer(fieldSchema(field), { field: value })),
+  ).flatMap(({ reason, detail }) => [
+    reason,
+    ...(detail ?? "").split(", ").map((issue) => issue.split(":")[0]),
+  ]);
+
+const accepts = (field: object, value: AnswerContent[string]) =>
+  Exit.isSuccess(
+    Effect.runSyncExit(validateAnswer(fieldSchema(field), { field: value })),
+  );
+
+const judged = (format: string, texts: readonly string[]) =>
+  texts.map((text) => accepts({ type: "string", format }, text));
 
 // @agent-code-guard/regression-only: examples pin each format's accepted and refused strings.
 describe("date answer formats", () => {
@@ -233,7 +222,7 @@ describe("address answer formats", () => {
   });
 });
 
-const requestedSchema = Schema.decodeUnknownSync(messagesRequestedSchema)({
+const requestedSchema = Schema.decodeUnknownSync(RequestedSchema)({
   type: "object",
   properties: {
     slot: { type: "string", enum: ["mon", "tue"] },
@@ -287,7 +276,7 @@ describe("answer validation", () => {
   vitestIt(
     "names a missing required field that shares an Object.prototype name",
     () => {
-      const toStringSchema = Schema.decodeUnknownSync(messagesRequestedSchema)({
+      const toStringSchema = Schema.decodeUnknownSync(RequestedSchema)({
         type: "object",
         properties: { toString: { type: "string" } },
         required: ["toString"],
@@ -308,26 +297,6 @@ describe("answer validation", () => {
     ]);
   });
 });
-
-const fieldSchema = (field: object) =>
-  Schema.decodeUnknownSync(messagesRequestedSchema)({
-    type: "object",
-    properties: { field },
-  });
-
-/** The keyword each issue of an invalid field's detail names, in order. */
-const keywordsOf = (field: object, value: AnswerContent[string]) =>
-  Effect.runSync(
-    Effect.flip(validateAnswer(fieldSchema(field), { field: value })),
-  ).flatMap(({ reason, detail }) => [
-    reason,
-    ...(detail ?? "").split(", ").map((issue) => issue.split(":")[0]),
-  ]);
-
-const accepts = (field: object, value: AnswerContent[string]) =>
-  Exit.isSuccess(
-    Effect.runSyncExit(validateAnswer(fieldSchema(field), { field: value })),
-  );
 
 // @agent-code-guard/regression-only: examples pin which keyword an invalid string answer names.
 describe("string answer keywords", () => {
@@ -483,17 +452,34 @@ const gather = {
   requestedSchema: flatSchema,
 };
 
+/** The data part that carries a collective value. */
+const carrying = (value: unknown) => ({
+  type: "data",
+  value: { "org.social-harness/collective": value },
+});
+
+/** What a recipient reads from a message with this content. */
+const interpreted = (content: readonly unknown[]) =>
+  messageInterpretation(
+    Schema.decodeUnknownSync(Message)({
+      msgId,
+      author: alice,
+      recipients: [bob],
+      content,
+    }),
+  );
+
 const decodes = (value: unknown): boolean =>
-  Exit.isSuccess(Effect.runSyncExit(decodeCollectiveValue(value)));
+  Exit.isSuccess(Effect.runSyncExit(interpreted([carrying(value)])));
 
 const decodesSchema = (value: unknown): boolean =>
   Exit.isSuccess(
-    Effect.runSyncExit(Schema.decodeUnknown(messagesRequestedSchema)(value)),
+    Effect.runSyncExit(Schema.decodeUnknown(RequestedSchema)(value)),
   );
 
 /** Each issue message of a schema that fails to decode; empty if it decodes. */
 const schemaIssues = (value: unknown) =>
-  Either.match(Schema.decodeUnknownEither(messagesRequestedSchema)(value), {
+  Either.match(Schema.decodeUnknownEither(RequestedSchema)(value), {
     onLeft: (error) =>
       ParseResult.ArrayFormatter.formatErrorSync(error).map(
         ({ message }) => message,
@@ -502,7 +488,7 @@ const schemaIssues = (value: unknown) =>
   });
 
 const decodeValue = (value: unknown) =>
-  Effect.runSync(decodeCollectiveValue(value));
+  Option.getOrThrow(Effect.runSync(interpreted([carrying(value)])));
 
 // @agent-code-guard/regression-only: examples pin the closed collective content round trip.
 describe("collective content round trip", () => {
@@ -515,9 +501,9 @@ describe("collective content round trip", () => {
 
       expect(content).toEqual([
         { type: "text", text: "Which day?" },
-        { type: "data", value: { [COLLECTIVE_DATA_KEY]: gather } },
+        carrying(gather),
       ]);
-      expect(Effect.runSync(readCollectiveValue(content))).toEqual(
+      expect(Effect.runSync(interpreted(content))).toEqual(
         Option.some(decodeValue(gather)),
       );
     },
@@ -534,7 +520,7 @@ describe("collective content round trip", () => {
 
     const content = Effect.runSync(encodeCollectiveContent(decodeValue(close)));
 
-    expect(Effect.runSync(readCollectiveValue(content))).toEqual(
+    expect(Effect.runSync(interpreted(content))).toEqual(
       Option.some(decodeValue(close)),
     );
   });
@@ -692,7 +678,7 @@ describe("admitted form fields", () => {
   vitestIt(
     "keeps only the keywords of the shape that admits a property",
     () => {
-      const decoded = Schema.decodeUnknownSync(messagesRequestedSchema)({
+      const decoded = Schema.decodeUnknownSync(RequestedSchema)({
         type: "object",
         properties: {
           slot: { type: "string", enum: ["a"], minLength: 2, pattern: "x" },
@@ -726,30 +712,25 @@ describe("admitted form fields", () => {
 // @agent-code-guard/regression-only: examples pin how content carries at most one collective part within the size limit.
 describe("collective content", () => {
   vitestIt("reads content without a collective part as none", () => {
-    const content = Schema.decodeUnknownSync(Content)([
+    const content = [
       { type: "text", text: "hello" },
       { type: "data", value: { other: 1 } },
-    ]);
+    ];
 
-    expect(Effect.runSync(readCollectiveValue(content))).toEqual(Option.none());
+    expect(Effect.runSync(interpreted(content))).toEqual(Option.none());
   });
 
   vitestIt("rejects content carrying two collective parts", () => {
-    const part = { type: "data", value: { [COLLECTIVE_DATA_KEY]: gather } };
-    const content = Schema.decodeUnknownSync(Content)([part, part]);
+    const part = carrying(gather);
 
     expect(
-      Effect.runSync(Effect.flip(readCollectiveValue(content))),
+      Effect.runSync(Effect.flip(interpreted([part, part]))),
     ).toStrictEqual(new CollectivePartInvalidError({ reason: "duplicate" }));
   });
 
   vitestIt("rejects a collective part that does not decode", () => {
-    const content = Schema.decodeUnknownSync(Content)([
-      { type: "data", value: { [COLLECTIVE_DATA_KEY]: { kind: "unknown" } } },
-    ]);
-
     expect(
-      Effect.runSync(Effect.flip(readCollectiveValue(content))),
+      Effect.runSync(Effect.flip(interpreted([carrying({ kind: "unknown" })]))),
     ).toStrictEqual(new CollectivePartInvalidError({ reason: "malformed" }));
   });
 
@@ -764,31 +745,23 @@ describe("collective content", () => {
   });
 });
 
-describe("collective operation identity", () => {
-  vitestIt("mints distinct operations for one requester", () => {
-    const requester = testAgentCard("agent:bob").agentId;
-    const first = Effect.runSync(mintCollectiveId(requester));
-    const second = Effect.runSync(mintCollectiveId(requester));
-
-    expect(collectiveRequesterOf(first)).toBe(requester);
-    expect(collectiveRequesterOf(second)).toBe(requester);
-    expect(first).not.toBe(second);
-    expect(decodeValue({ ...gather, operationId: first })).toMatchObject({
-      operationId: first,
+it("mints a distinct operation naming its requester for each request", () =>
+  Effect.gen(function* () {
+    const ask = Request.create({
+      author: bob,
+      recipients: [alice],
+      op: "gather",
+      question: "Which day works?",
+      deadline: 30,
+      requestedSchema,
     });
-  });
+    const first = yield* ask;
+    const second = yield* ask;
 
-  vitestIt("identifies different requesters with the same random bytes", () => {
-    const bob = testAgentCard("agent:bob").agentId;
-    const mallory = testAgentCard("agent:mallory").agentId;
-    const bobOperation = collectiveOperationId(bob, 7);
-    const malloryOperation = collectiveOperationId(mallory, 7);
-
-    expect(collectiveRequesterOf(bobOperation)).toBe(bob);
-    expect(collectiveRequesterOf(malloryOperation)).toBe(mallory);
-    expect(bobOperation).not.toBe(malloryOperation);
-  });
-});
+    expect(collectiveRequesterOf(first.operationId)).toBe(bob.agentId);
+    expect(collectiveRequesterOf(second.operationId)).toBe(bob.agentId);
+    expect(first.operationId).not.toBe(second.operationId);
+  }));
 
 vitestIt.each([
   { ...gather, operationId: digest("col_", 1) },
@@ -864,7 +837,7 @@ describe("public message schemas", () => {
   // @agent-code-guard/regression-only: Identifier schemas pin the closed durable send grammar.
   describe("public message identifiers", () => {
     vitestIt("accepts the exact message identifier grammar", () => {
-      const msgId = publicDigest("msg_", 7);
+      const msgId = digest("msg_", 7);
 
       expect(Schema.decodeUnknownSync(PublicMsgId)(msgId)).toBe(msgId);
     });

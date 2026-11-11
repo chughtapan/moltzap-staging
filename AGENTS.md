@@ -168,12 +168,6 @@ of it here.
 Package-local `safer-architecture.config.json` files are hand-maintained.
 `pnpm arch:check` runs safer-architecture-lsp against them.
 
-## Tests
-
-- `*.types-check.ts` canaries pin current type-level invariants; the
-  header states the invariant and why it matters. Pin what exists —
-  never a negative canary for something deleted.
-
 ## Verify
 
 `pnpm lint` needs a prior `pnpm build` — typed linting resolves against built

@@ -46,7 +46,7 @@ export class CanonicalJsonError extends Data.TaggedError(
   "CanonicalJsonError",
 ) {}
 
-/** A message representation, hash or verification check failed. */
+/** A value could not be put in, or read from, its canonical representation. */
 export class ClientRepresentationError extends Data.TaggedError(
   "ClientRepresentationError",
 ) {}
