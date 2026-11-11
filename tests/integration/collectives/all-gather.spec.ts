@@ -1,10 +1,11 @@
-/** @file A requester and three members run all_gather operations through four real daemons. */
+/** @file A requester and three members on one daemon run all_gather operations. */
 
 import { SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
   acquireParticipants,
+  groupAddress,
   groupRound,
   measuredDeadlineSeconds,
   nextItem,
@@ -12,26 +13,36 @@ import {
   send,
 } from "../agent-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
-import { anyNumber, anyString, arrayContaining } from "../test-matchers.js";
+import {
+  anyNumber,
+  anyString,
+  arrayContaining,
+  objectContaining,
+} from "../test-matchers.js";
+import { inNameOrder } from "./name-order.js";
 
-/** The requester and the three members every all_gather trace starts. */
+/**
+ * The requester and the three members every all_gather trace signs in, and
+ * the address of their group: every member in name order.
+ */
 const acquireFour = Effect.gen(function* () {
-  const [requester, first, second, third] = yield* acquireParticipants([
-    "all-gather-requester",
-    "all-gather-member-a",
-    "all-gather-member-b",
-    "all-gather-member-c",
-  ]);
+  const [requester, first, second, third] = inNameOrder(
+    yield* acquireParticipants(["alice", "bob", "carol", "dave"]),
+  );
   if (requester === undefined || first === undefined) {
     return yield* Effect.dieMessage("expected four participants");
   }
   if (second === undefined || third === undefined) {
     return yield* Effect.dieMessage("expected four participants");
   }
-  return { requester, first, second, third };
+  const group = groupAddress([requester, first, second, third]);
+  return { requester, first, second, third, group };
 });
 
 const question = "Which day works for the review?";
+
+/** A name the daemon gives no agent. */
+const nobody = "all-gather-nobody";
 
 const slotSchema = {
   type: "object",
@@ -46,12 +57,8 @@ const allGather = (requester: Participant, to: string, deadline: number) =>
     collective: { op: "all_gather", deadline, requestedSchema: slotSchema },
   });
 
-/** Canonical conversation address shared by every participant. */
-const group =
-  "group:all-gather-member-a,all-gather-member-b,all-gather-member-c,all-gather-requester";
-
 /**
- * Each trace starts four daemons and their services. The silent-member
+ * Each trace starts one daemon and signs four owners in. The silent-member
  * trace also waits for a deadline measured from real message delivery.
  */
 const ALL_GATHER_TEST_TIMEOUT_MS = 300_000;
@@ -62,7 +69,12 @@ const ALL_GATHER_TEST_TIMEOUT_MS = 300_000;
  */
 const ANSWERED_DEADLINE_SECONDS = ALL_GATHER_TEST_TIMEOUT_MS / 1000;
 
-const answer = (member: Participant, operationId: string, slot: string) =>
+const answer = (
+  member: Participant,
+  group: string,
+  operationId: string,
+  slot: string,
+) =>
   send(member, {
     to: group,
     collectiveResponse: { action: "accept", operationId, content: { slot } },
@@ -73,21 +85,25 @@ interface AllGatherParticipants {
   readonly first: Participant;
   readonly second: Participant;
   readonly third: Participant;
+  readonly group: string;
 }
 
 /** A refused operation sends nothing before the valid all_gather requests arrive. */
-function expectUnknownAllGatherMemberRefused(requester: Participant) {
+function expectUnknownAllGatherMemberRefused({
+  requester,
+  first,
+}: AllGatherParticipants) {
   return Effect.gen(function* () {
     const failure = yield* allGather(
       requester,
-      "group:all-gather-member-a,all-gather-nobody,all-gather-requester",
+      `group:${first.agent.agentName},${nobody},${requester.agent.agentName}`,
       60,
     ).pipe(Effect.flip);
     expect(failure).toBeInstanceOf(SendError);
     expect(failure).toMatchObject({ reason: "unknown-agent" });
     expect(failure).toHaveProperty(
       "detail",
-      expect.stringContaining("agent:all-gather-nobody"),
+      expect.stringContaining(`agent:${nobody}`),
     );
   });
 }
@@ -97,6 +113,7 @@ function startAllGatherAndExpectRequests({
   first,
   second,
   third,
+  group,
 }: AllGatherParticipants) {
   return Effect.gen(function* () {
     const started = yield* allGather(
@@ -128,7 +145,7 @@ function startAllGatherAndExpectRequests({
 
 const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireFour;
-  yield* expectUnknownAllGatherMemberRefused(participants.requester);
+  yield* expectUnknownAllGatherMemberRefused(participants);
   const started = yield* startAllGatherAndExpectRequests(participants);
   yield* answerAllGatherAndExpectSharedResult(participants, started.id);
 }).pipe(Effect.scoped);
@@ -136,11 +153,10 @@ const allAnsweredBehavior = Effect.gen(function* () {
 /**
  * Two members answer and the third stays silent, so the all_gather closes at
  * its measured deadline. The members take the request together and the two
- * answer together; both answers extend the one group head, so they certify
- * one after the other within the deadline's rounds.
+ * answer together.
  */
 const silentMemberBehavior = Effect.gen(function* () {
-  const { requester, first, second, third } = yield* acquireFour;
+  const { requester, first, second, third, group } = yield* acquireFour;
   const deadline = yield* measuredDeadlineSeconds(
     groupRound(requester, [first, second, third]),
   );
@@ -150,10 +166,11 @@ const silentMemberBehavior = Effect.gen(function* () {
     concurrency: 3,
   });
   yield* Effect.all(
-    [answer(first, started.id, "mon"), answer(second, started.id, "mon")],
-    {
-      concurrency: 2,
-    },
+    [
+      answer(first, group, started.id, "mon"),
+      answer(second, group, started.id, "mon"),
+    ],
+    { concurrency: 2 },
   );
 
   const requesterResult = yield* nextItem(requester);
@@ -185,12 +202,12 @@ it(
 );
 
 function answerAllGatherAndExpectSharedResult(
-  { requester, first, second, third }: AllGatherParticipants,
+  { requester, first, second, third, group }: AllGatherParticipants,
   operationId: string,
 ) {
   return Effect.gen(function* () {
-    yield* answer(first, operationId, "tue");
-    yield* answer(second, operationId, "mon");
+    yield* answer(first, group, operationId, "tue");
+    yield* answer(second, group, operationId, "mon");
     yield* send(third, {
       to: group,
       collectiveResponse: { action: "decline", operationId },
@@ -207,14 +224,17 @@ function answerAllGatherAndExpectSharedResult(
       question,
       outcomes: [
         {
-          member: first.agent,
+          member: objectContaining(first.agent),
           outcome: { kind: "answered", content: { slot: "tue" } },
         },
         {
-          member: second.agent,
+          member: objectContaining(second.agent),
           outcome: { kind: "answered", content: { slot: "mon" } },
         },
-        { member: third.agent, outcome: { kind: "declined" } },
+        {
+          member: objectContaining(third.agent),
+          outcome: { kind: "declined" },
+        },
       ],
     });
     expect(yield* nextItem(first)).toEqual(requesterResult);
