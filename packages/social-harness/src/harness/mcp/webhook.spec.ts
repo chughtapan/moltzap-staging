@@ -7,8 +7,11 @@ import {
   Array,
   type Duration,
   Effect,
+  PubSub,
   Redacted,
+  Ref,
   type Scope,
+  Stream,
   TestClock,
   TestContext,
   TestServices,
@@ -152,6 +155,52 @@ describe("a subscribed callback", () => {
           expect(wakeUps(callback)).toHaveLength(1);
         }),
       ),
+  );
+
+  it.effect(
+    "receives one wake-up for an item whose arrival is signalled again while the inbox is being read",
+    () =>
+      Effect.gen(function* () {
+        const files = yield* FileSystem.FileSystem;
+        const store = yield* openCallbackInbox(
+          yield* files.makeTempDirectoryScoped(),
+        );
+        const repeated = yield* PubSub.unbounded<undefined>();
+        const signalled = yield* Ref.make(false);
+        const callback = yield* scriptedWebhook({
+          ...store,
+          harness: {
+            ...store.harness,
+            listInbox: (request) =>
+              store.harness
+                .listInbox(request)
+                .pipe(
+                  Effect.tap((page) =>
+                    page.items.length === 0
+                      ? Effect.void
+                      : Ref.getAndSet(signalled, true).pipe(
+                          Effect.flatMap((already) =>
+                            already
+                              ? Effect.void
+                              : PubSub.publish(repeated, undefined),
+                          ),
+                        ),
+                  ),
+                ),
+            inboxChanged: Stream.merge(
+              store.harness.inboxChanged,
+              Stream.fromPubSub(repeated),
+            ),
+          },
+        });
+        const events = yield* callback.acquire;
+        yield* events.subscribe(input);
+        yield* enqueue(store, 1);
+        yield* awaitWakeUps(callback, 1);
+        yield* advance();
+        yield* advance();
+        expect(wakeUps(callback)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)),
   );
 
   it.live("is told how many items are pending, for any number of them", () =>

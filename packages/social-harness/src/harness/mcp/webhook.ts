@@ -110,6 +110,8 @@ interface WebhookRuntime {
   state: State;
   /** The inbox may hold items the callback has not been told about. */
   unannounced: boolean;
+  /** The pending items the last wake-up counted. */
+  announced: ReadonlySet<string>;
   wake: Wake | null;
   /** Receives a value whenever there may be a wake-up to post. */
   readonly changed: Queue.Queue<undefined>;
@@ -143,6 +145,7 @@ const restartWakes = (runtime: WebhookRuntime) =>
   Effect.suspend(() => {
     runtime.generation += 1;
     runtime.wake = null;
+    runtime.announced = new Set();
     return announce(runtime);
   });
 const retire = (runtime: WebhookRuntime) =>
@@ -261,20 +264,20 @@ const subscribe = (runtime: WebhookRuntime, input: EventSubscribeInput) =>
     return yield* activateRegistration(runtime, input, generation);
   });
 
-/** The number of items waiting in the inbox. */
-const countPendingInbox = (harness: SocialHarness["Type"]) =>
+/** The delivery tokens of the items waiting in the inbox. */
+const pendingInbox = (harness: SocialHarness["Type"]) =>
   Effect.gen(function* () {
-    let total = 0;
+    const tokens: string[] = [];
     let cursor: string | undefined;
     do {
       const page = yield* harness.listInbox(
         cursor === undefined ? {} : { cursor },
       );
-      total += page.items.length;
+      tokens.push(...page.items.map((item) => item.deliveryToken));
       cursor = page.nextCursor;
     } while (cursor !== undefined);
-    return total;
-  }).pipe(Effect.withSpan("countPendingInbox"));
+    return tokens;
+  }).pipe(Effect.withSpan("pendingInbox"));
 
 /** The event that tells a host how many inbox items are waiting. */
 const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
@@ -286,21 +289,27 @@ const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
     cursor: null,
   }) as const;
 
-/** The wake-up to post now, if the inbox has items the callback has not been told about. */
+/**
+ * The wake-up to post now, if the inbox has an item the last wake-up did not
+ * count. A change can be signalled while the inbox is being read, for an item
+ * that read already returned; such a signal adds nothing to announce.
+ */
 const nextWake = (runtime: WebhookRuntime) =>
   Effect.gen(function* () {
     if (runtime.wake !== null || !runtime.unannounced) {
       return runtime.wake;
     }
     runtime.unannounced = false;
-    const pendingCount = yield* countPendingInbox(runtime.harness).pipe(
+    const pending = yield* pendingInbox(runtime.harness).pipe(
       Effect.mapError(persistenceFailure),
     );
-    if (pendingCount === 0) {
+    const announced = runtime.announced;
+    runtime.announced = new Set(pending);
+    if (pending.every((token) => announced.has(token))) {
       return null;
     }
     const timestamp = now(runtime);
-    const event = inboxPendingEvent(pendingCount, timestamp);
+    const event = inboxPendingEvent(pending.length, timestamp);
     runtime.wake = {
       id: event.eventId,
       body: JSON.stringify(event),
@@ -526,6 +535,7 @@ export const makeWebhookEvents = (
       deliveryGate: yield* Effect.makeSemaphore(1),
       generation: 0,
       unannounced: true,
+      announced: new Set(),
       wake: null,
       changed: yield* Queue.sliding<undefined>(1),
     };
