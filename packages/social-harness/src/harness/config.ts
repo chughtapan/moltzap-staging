@@ -21,7 +21,7 @@ import {
   installedMessagePolicy,
   loadMessagePolicy,
   readPolicyCredential,
-} from "../firewall/rules.js";
+} from "../firewall/index.js";
 import { AgentName, AgentPublicKey } from "../identity/agent-cards.js";
 import {
   initialNormsHaveRules,

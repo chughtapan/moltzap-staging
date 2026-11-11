@@ -18,7 +18,6 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
-import type { FirewallEvidence } from "../firewall/chain.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
@@ -43,10 +42,11 @@ import {
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import {
   Firewall,
+  type FirewallEvidence,
   type FirewallRefusal,
   type IncomingDecision,
   type ResultEvidence,
-} from "../firewall/service.js";
+} from "../firewall/index.js";
 import {
   type AgentCard,
   agentCardOf,

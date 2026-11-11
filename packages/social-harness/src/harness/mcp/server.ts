@@ -15,7 +15,7 @@ import {
 import type { MessageAddressInput } from "../../communication/messages.js";
 import type { RequestError } from "../../communication/service.js";
 import { issuesText, SendError } from "../../communication/errors.js";
-import { Firewall, type FirewallRefusal } from "../../firewall/service.js";
+import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
 import { HeldNorms } from "../../norms/configuration.js";

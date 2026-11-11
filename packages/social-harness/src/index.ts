@@ -21,15 +21,11 @@ export {
   type SendResult,
 } from "./harness/message-format.js";
 /** Results and policy feedback that a host may show its agent. */
-export {
-  FirewallRefusal,
-  PermittedItem,
-  Withheld,
-} from "./firewall/service.js";
+export { FirewallRefusal, PermittedItem, Withheld } from "./firewall/index.js";
 /** Policy failures retain actionable reasons and bounded field information. */
-export { FirewallPolicyError } from "./firewall/rules.js";
+export { FirewallPolicyError } from "./firewall/index.js";
 /** Guidance contains only the source text local policy permits the agent to read. */
-export type { CheckedGuidance } from "./firewall/check.js";
+export type { CheckedGuidance } from "./firewall/index.js";
 /** Inbox items retain their content and token after acknowledgment. */
 export {
   DeliveryAcknowledgeError,

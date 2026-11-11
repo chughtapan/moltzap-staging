@@ -18,21 +18,19 @@ import {
   exactStruct,
   isStrictlyAscending,
 } from "../../encoding/index.js";
-import { checkedGuidanceSchema } from "../../firewall/check.js";
 import {
+  checkedGuidanceSchema,
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
   FirewallPolicyError,
+  FirewallRefusal,
   firewallRefusalReasonSchema,
+  LocalGuidance,
+  PermittedItem,
   policyReadSchema,
   policyUpdateResultSchema,
   policyUpdateSchema,
-} from "../../firewall/rules.js";
-import {
-  FirewallRefusal,
-  LocalGuidance,
-  PermittedItem,
-} from "../../firewall/service.js";
+} from "../../firewall/index.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import {
   DeliveryToken,

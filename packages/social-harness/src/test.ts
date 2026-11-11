@@ -5,14 +5,14 @@ export { HISTORY_WIRE_VERSIONS, WireVersions } from "./version.js";
 /** HTTP signing for process fixtures. */
 export { signAgentRequest } from "./identity/http-authentication.js";
 /** Replaces a configured decision provider around the daemon's own composition. */
-export { DecisionProviderOverride } from "./firewall/service.js";
+export { DecisionProviderOverride } from "./firewall/index.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
   type DecisionProvider,
   DecisionProviderError,
   type DecisionRequest,
   type Message,
-} from "./firewall/check.js";
+} from "./firewall/index.js";
 
 /** Trusted database qualification uses the same schema, ownership and inbox operations as the daemon. */
 export {

@@ -18,7 +18,7 @@
  */
 
 import { Effect, Option } from "effect";
-import type { Matcher, MatchInput, MatchResult } from "../firewall/chain.js";
+import type { Matcher, MatchInput, MatchResult } from "../firewall/index.js";
 import {
   type AnswerFieldFailures,
   answerFieldsText,

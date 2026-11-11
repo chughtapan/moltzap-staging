@@ -28,7 +28,7 @@ import {
   type IncomingDecision,
   LocalGuidance,
   PermittedItem,
-} from "../firewall/service.js";
+} from "../firewall/index.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schemas and decoded values share their public names. */
 

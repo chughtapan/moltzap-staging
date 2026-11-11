@@ -20,7 +20,7 @@ import {
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
-import { type LocalGuidance, PermittedItem } from "../../firewall/service.js";
+import { type LocalGuidance, PermittedItem } from "../../firewall/index.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../inbox.js";
 import { INBOX_PENDING_EVENT } from "../mcp/contracts.js";
 import { makeWebhookEvents } from "../mcp/webhook.js";

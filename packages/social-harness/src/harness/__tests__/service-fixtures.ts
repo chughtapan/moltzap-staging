@@ -16,11 +16,6 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
-import type {
-  DecisionProvider,
-  DecisionRequest,
-  DecisionResponse,
-} from "../../firewall/check.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
   Communication,
@@ -37,7 +32,13 @@ import {
 } from "../../communication/service.js";
 import { migrateDaemon } from "../../database/migrations.js";
 import { compareAscii } from "../../encoding/index.js";
-import { Firewall, type FirewallOptions } from "../../firewall/service.js";
+import {
+  type DecisionProvider,
+  type DecisionRequest,
+  type DecisionResponse,
+  Firewall,
+  type FirewallOptions,
+} from "../../firewall/index.js";
 import {
   AgentIdentityCardIssuedAt,
   type IdentityFixture,
