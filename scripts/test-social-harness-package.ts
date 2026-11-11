@@ -44,7 +44,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
     const pins = yield* readConsumerPins(workspaceRoot);
     const consumerRoot = yield* installPackedConsumer({
       temporaryRoot,
-      name: "sharness-client-packed-consumer",
+      name: "sharness-daemon-packed-consumer",
       archives,
       dependencies: { effect: pins.effect },
     });
@@ -86,7 +86,7 @@ function publicImports(): string {
             !(
               typeof target === "object" &&
               target !== null &&
-              ("sharness-test" in target || "sharness-internal" in target)
+              "sharness-test" in target
             ),
         )
         .map(([subpath]) =>

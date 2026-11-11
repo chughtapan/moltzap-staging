@@ -127,7 +127,7 @@ RESULT=$("$SCRIPT_DIR/compute-next-version.sh" $RELEASED)
 assert_eq "union takes the highest counter across packages" "${TODAY}.3" "$RESULT"
 
 echo "--- Test 9: Never-published packages (mock 404) alongside published ones ---"
-export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":[\"${TODAY}.0\"],\"@social-harness/openclaw-channel\":\"${TODAY}.0\"}"
+export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":[\"${TODAY}.0\"]}"
 # shellcheck disable=SC2086
 RESULT=$("$SCRIPT_DIR/compute-next-version.sh" $RELEASED)
 assert_eq "404 packages do not block a published sibling's counter" "${TODAY}.1" "$RESULT"
