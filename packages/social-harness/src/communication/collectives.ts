@@ -85,10 +85,7 @@ export const makeRequests = Effect.fn("Communication.requests")(function* (
       capture(getRequest(environment, operationId)),
     receive: (message: Message) => capture(receive(environment, message)),
     deliverNextResult: <E, R>(
-      handle: (
-        result: ResultDelivery,
-        operation: StoredCollectiveOperation,
-      ) => Effect.Effect<void, E, R>,
+      handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
     ) => deliverNextResult(agentKey, handle),
     failed: Deferred.await(environment.failed),
   };
@@ -106,7 +103,11 @@ interface Environment {
 
 type Closure = typeof collectiveClosure.Type;
 
-/** Saves the question and sends it to every audience in one transaction. */
+/**
+ * Saves the question and sends it to every audience in one transaction. A
+ * gather's audiences are its recipients in name order, so two questions lock
+ * the conversations they share in the same order.
+ */
 function ask(environment: Environment, request: Request) {
   const agentKey = environment.agentKey;
 
@@ -521,10 +522,7 @@ function requestEligible(
 
 function deliverNextResult<E, R>(
   agentKey: string,
-  handle: (
-    result: ResultDelivery,
-    operation: StoredCollectiveOperation,
-  ) => Effect.Effect<void, E, R>,
+  handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
 ) {
   return Effect.gen(function* () {
     const operation = yield* readNextCollectiveResult(agentKey);
@@ -553,7 +551,7 @@ function deliverNextResult<E, R>(
     };
     yield* checkResultSize(result);
     yield* transaction(
-      handle(result, operation).pipe(
+      handle(result).pipe(
         Effect.zipRight(
           retireCollectiveResult(agentKey, operation.operationId),
         ),

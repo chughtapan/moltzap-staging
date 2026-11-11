@@ -140,7 +140,7 @@ function recipientKey({ sql }: Environment, recipient: AgentCard) {
  * Orders one message and saves it for every member, or changes nothing. A
  * message this agent has already sent takes no new position. The sender locks
  * its own agent and then the conversation, as every other write of an agent
- * does, so two senders never wait on each other.
+ * does, so senders cannot deadlock.
  */
 function sendMessage(environment: Environment, message: Message) {
   const { sql, settings } = environment;
