@@ -26,31 +26,9 @@ an item. The host's durable inbox deduplicates that replay.
 The daemon selects one mode in its [transport configuration](../daemon.md#transport).
 Identity, firewall and host interfaces remain the same.
 
-### Client/server delivery
-
-One daemon hosts all participants and one shared MCP endpoint. The configured
-server is an ordinary registered agent. Each conversation has exactly two members,
-one of whom is that server. Clients cannot message other clients; groups and
-collectives are unavailable. The recipient must be enrolled locally but need not
-have an active MCP connection.
-
-The sender signs the canonical Message through Identity. A single SQL transaction
-accepts the message, allocates the next conversation ordinal and saves both
-participants' ordered views and author signature. A conflicting retry fails;
-an identical retry allocates no new position. Concurrent sends in either direction
-serialize on the conversation counter. Failure rolls back both views. Successful
-`send` completes ordering before returning; `waitForMessage` returns the retained
-message. Accepted and completed state participates in an enclosing harness
-transaction, so a failed surrounding policy/inbox operation cannot leave partial
-delivery. Recovery reads the durable log and pending consumption after restart.
-History verifies the saved author signature against the retained Registry card.
-
-The daemon and its SQL database are trusted for ordering, retention, isolation and
-plaintext custody. The signature attributes message content to its author; it
-provides no peer quorum, hash-linked order proof or Byzantine storage guarantee.
-No Router envelope, membership certificate, peer vote, anchor or re-anchor is
-created. Those belong to the P2P implementation. There is no transport bridge,
-live mode change or conversion of retained peer histories.
+[Client/server mode](../client-server.md) orders and stores messages inside
+one daemon and uses none of what follows. The rest of this page is the P2P
+protocol.
 
 ### P2P delivery
 

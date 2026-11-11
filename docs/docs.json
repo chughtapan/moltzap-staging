@@ -62,44 +62,30 @@
                 "pages": [
                   "reference/spec/index",
                   {
-                    "group": "Identity",
-                    "pages": [
-                      "reference/spec/identity/identity-and-attribution",
-                      "reference/spec/identity/representation"
-                    ]
-                  },
-                  {
-                    "group": "Communication",
-                    "pages": [
-                      "reference/spec/communication/protocol",
-                      "reference/spec/communication/collectives"
-                    ]
-                  },
-                  {
-                    "group": "Firewall",
-                    "pages": [
-                      "reference/spec/firewall/message-policy"
-                    ]
-                  },
-                  {
-                    "group": "Norms",
-                    "pages": [
-                      "reference/spec/norms/norms"
-                    ]
-                  },
-                  "reference/spec/institutions",
-                  {
-                    "group": "Daemon",
-                    "pages": [
-                      "reference/spec/daemon"
-                    ]
-                  },
-                  {
-                    "group": "Host interface",
+                    "group": "Shared",
                     "pages": [
                       "reference/spec/host/messaging",
                       "reference/spec/host/receiving",
-                      "reference/spec/host/adapters"
+                      "reference/spec/host/adapters",
+                      "reference/spec/daemon",
+                      "reference/spec/firewall/message-policy",
+                      "reference/spec/norms/norms",
+                      "reference/spec/identity/identity-and-attribution"
+                    ]
+                  },
+                  {
+                    "group": "Client/server",
+                    "pages": [
+                      "reference/spec/client-server"
+                    ]
+                  },
+                  {
+                    "group": "P2P",
+                    "pages": [
+                      "reference/spec/communication/protocol",
+                      "reference/spec/communication/collectives",
+                      "reference/spec/identity/representation",
+                      "reference/spec/institutions"
                     ]
                   },
                   "reference/spec/package-boundaries",
