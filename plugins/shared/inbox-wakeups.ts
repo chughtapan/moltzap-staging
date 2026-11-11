@@ -12,169 +12,116 @@ import {
   INBOX_PENDING_EVENT,
   packageVersion,
 } from "@social-harness/social-harness";
-import { Data, Deferred, Effect, Queue, Schema, Stream, Take } from "effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  Option,
+  Queue,
+  Schema,
+  Stream,
+  Take,
+} from "effect";
 import { randomUUID } from "node:crypto";
 
 /** Reception failures contain no transport body, credentials or peer content. */
 export class McpReceiveError extends Data.TaggedError("McpReceiveError")<{
-  readonly reason:
-    | "transport-failed"
-    | "decode-failed"
-    | "already-listening"
-    | "incompatible-daemon";
+  readonly reason: "transport-failed" | "decode-failed" | "already-listening";
 }> {}
 
+const transportFailed = new McpReceiveError({ reason: "transport-failed" });
+const decodeFailed = new McpReceiveError({ reason: "decode-failed" });
+
 const protocolVersion = "2026-07-28";
-const metadataSchema = Schema.Struct({
-  [SUBSCRIPTION_ID_META_KEY]: Schema.Union(Schema.String, Schema.Number),
-});
-const positionSchema = Schema.Struct({
-  cursor: Schema.optionalWith(Schema.Null, { exact: true }),
-  _meta: metadataSchema,
-});
-const eventSchema = Schema.Struct({
-  eventId: Schema.NonEmptyString,
-  name: Schema.Literal(INBOX_PENDING_EVENT),
-  timestamp: Schema.String,
-  data: Schema.Struct({ pendingCount: Schema.NonNegativeInt }),
-  cursor: Schema.optionalWith(Schema.Null, { exact: true }),
-  _meta: metadataSchema,
-});
-const activeSchema = Schema.Struct({
-  ...positionSchema.fields,
-  truncated: Schema.Boolean,
-});
-const errorSchema = Schema.Struct({
-  _meta: metadataSchema,
-  error: Schema.Struct({ code: Schema.Number, message: Schema.String }),
+const NOTIFICATION_PREFIX = "notifications/events/";
+
+/** Every stream notification names the subscription it belongs to. */
+const notification = Schema.Struct({
+  _meta: Schema.Struct({
+    [SUBSCRIPTION_ID_META_KEY]: Schema.Union(Schema.String, Schema.Number),
+  }),
 });
 
-type FrameKind = "active" | "event" | "heartbeat" | "error" | "terminated";
-/** Each method owns its decoder and the kind produced by a successful decode. */
-const frame =
-  <Value extends typeof positionSchema.Type, Encoded>(
-    kind: FrameKind,
-    schema: Schema.Schema<Value, Encoded>,
-  ) =>
-  (params: unknown) =>
-    Schema.decodeUnknown(schema)(params).pipe(
-      Effect.map((value) => ({
-        kind,
-        subscriptionId: value._meta[SUBSCRIPTION_ID_META_KEY],
-      })),
-    );
-const frames: Readonly<Record<string, ReturnType<typeof frame> | undefined>> = {
-  "notifications/events/active": frame("active", activeSchema),
-  "notifications/events/event": frame("event", eventSchema),
-  "notifications/events/heartbeat": frame("heartbeat", positionSchema),
-  "notifications/events/error": frame("error", errorSchema),
-  "notifications/events/terminated": frame("terminated", errorSchema),
-};
-const decodeFrame = (method: string, params: unknown, id: string) => {
-  const decode = frames[method];
-  if (decode === undefined) {
-    return Effect.fail(new McpReceiveError({ reason: "decode-failed" }));
-  }
-  return decode(params).pipe(
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new McpReceiveError({ reason: "decode-failed" })),
-    ),
-    Effect.flatMap((value) =>
-      value.subscriptionId === id
-        ? Effect.succeed(value.kind)
-        : Effect.fail(new McpReceiveError({ reason: "decode-failed" })),
-    ),
-  );
-};
-type Phase = "opening" | "active" | "failed" | "stopped";
+/**
+ * One open stream. It is `opening` until the daemon confirms it, then
+ * `active`, and `done` once it fails or is closed, after which every message
+ * is ignored.
+ */
 interface Reception {
-  readonly queue: Queue.Queue<Take.Take<boolean, McpReceiveError>>;
+  /** Holds at most one pending wake-up, or the failure that ended the stream. */
+  readonly queue: Queue.Queue<Take.Take<undefined, McpReceiveError>>;
   readonly active: Deferred.Deferred<undefined, McpReceiveError>;
   readonly transport: StreamableHTTPClientTransport;
   readonly abort: AbortController;
   readonly id: string;
-  phase: Phase;
-  queued: boolean;
+  phase: "opening" | "active" | "done";
   lastSeen: number;
 }
+
 const fail = (state: Reception, error: McpReceiveError) =>
   Effect.gen(function* () {
-    if (state.phase === "stopped" || state.phase === "failed") {
+    if (state.phase === "done") {
       return;
     }
-    state.phase = "failed";
+    state.phase = "done";
     yield* Deferred.fail(state.active, error);
     yield* Queue.offer(state.queue, Take.fail(error));
     state.abort.abort();
   });
-const wake = (state: Reception) =>
-  Effect.suspend(() => {
-    if (state.queued || state.phase === "stopped" || state.phase === "failed") {
-      return Effect.void;
-    }
-    state.queued = true;
-    return Queue.offer(state.queue, Take.of(true)).pipe(Effect.asVoid);
-  });
-const receiveFrame = (state: Reception, kind: FrameKind) =>
+
+/** Acts on one stream notification: the confirmation, a wake-up, a heartbeat or the end. */
+const receive = (state: Reception, method: string, params: unknown) =>
   Effect.gen(function* () {
-    if (state.phase === "stopped" || state.phase === "failed") {
-      return;
+    const decoded = yield* Schema.decodeUnknown(notification)(params).pipe(
+      Effect.option,
+    );
+    if (
+      Option.isNone(decoded) ||
+      decoded.value._meta[SUBSCRIPTION_ID_META_KEY] !== state.id
+    ) {
+      return yield* fail(state, decodeFailed);
     }
     state.lastSeen = Date.now();
+    const kind = method.slice(NOTIFICATION_PREFIX.length);
     if (kind === "active") {
       state.phase = "active";
       yield* Deferred.succeed(state.active, undefined);
-      yield* wake(state);
-    } else if (state.phase === "opening") {
-      yield* fail(state, new McpReceiveError({ reason: "decode-failed" }));
-    } else if (kind === "event") {
-      yield* wake(state);
-    } else if (kind === "terminated") {
-      yield* fail(state, new McpReceiveError({ reason: "transport-failed" }));
+      return yield* Queue.offer(state.queue, Take.of(undefined));
     }
+    if (state.phase === "opening") {
+      return yield* fail(state, decodeFailed);
+    }
+    if (kind === "event") {
+      return yield* Queue.offer(state.queue, Take.of(undefined));
+    }
+    if (kind === "terminated") {
+      return yield* fail(state, transportFailed);
+    }
+    return kind === "heartbeat" || kind === "error"
+      ? undefined
+      : yield* fail(state, decodeFailed);
   });
-const protocolFailure = (data: unknown): McpReceiveError => {
-  if (typeof data !== "object" || data === null) {
-    return new McpReceiveError({ reason: "transport-failed" });
-  }
-  return new McpReceiveError({
-    reason:
-      "reason" in data && data.reason === "already-listening"
-        ? "already-listening"
-        : "transport-failed",
-  });
-};
+
 const onMessage =
   (state: Reception): NonNullable<StreamableHTTPClientTransport["onmessage"]> =>
   (message) => {
-    if (state.phase === "stopped" || state.phase === "failed") {
+    if (state.phase === "done") {
       return;
     }
     if ("error" in message) {
-      const error =
-        message.id === state.id
-          ? protocolFailure(message.error.data)
-          : new McpReceiveError({ reason: "decode-failed" });
-      Effect.runFork(fail(state, error));
-    } else if ("method" in message) {
-      if (!message.method.startsWith("notifications/events/")) {
-        return;
-      }
       Effect.runFork(
-        decodeFrame(message.method, message.params, state.id).pipe(
-          Effect.flatMap((kind) => receiveFrame(state, kind)),
-          Effect.catchAll((error) => fail(state, error)),
-        ),
+        fail(state, message.id === state.id ? transportFailed : decodeFailed),
       );
-    } else {
-      Effect.runFork(
-        fail(state, new McpReceiveError({ reason: "transport-failed" })),
-      );
+    } else if (!("method" in message)) {
+      Effect.runFork(fail(state, transportFailed));
+    } else if (message.method.startsWith(NOTIFICATION_PREFIX)) {
+      Effect.runFork(receive(state, message.method, message.params));
     }
   };
+
 const close = (state: Reception) =>
   Effect.sync(() => {
-    state.phase = "stopped";
+    state.phase = "done";
     state.abort.abort();
   }).pipe(
     Effect.zipRight(
@@ -193,14 +140,12 @@ const open = (state: Reception) =>
   Effect.gen(function* () {
     state.transport.onmessage = onMessage(state);
     state.transport.onerror = () => {
-      Effect.runFork(
-        fail(state, new McpReceiveError({ reason: "transport-failed" })),
-      );
+      Effect.runFork(fail(state, transportFailed));
     };
     state.transport.setProtocolVersion(protocolVersion);
     yield* Effect.tryPromise({
       try: () => state.transport.start(),
-      catch: () => new McpReceiveError({ reason: "transport-failed" }),
+      catch: () => transportFailed,
     });
     yield* Effect.tryPromise({
       try: () =>
@@ -223,30 +168,26 @@ const open = (state: Reception) =>
           {
             requestSignal: state.abort.signal,
             onRequestStreamEnd: () => {
-              Effect.runFork(
-                fail(
-                  state,
-                  new McpReceiveError({ reason: "transport-failed" }),
-                ),
-              );
+              Effect.runFork(fail(state, transportFailed));
             },
           },
         ),
-      catch: () => new McpReceiveError({ reason: "transport-failed" }),
+      catch: () => transportFailed,
     });
     yield* Deferred.await(state.active);
   }).pipe(
     Effect.timeoutFail({
       duration: "60 seconds",
-      onTimeout: () => new McpReceiveError({ reason: "transport-failed" }),
+      onTimeout: () => transportFailed,
     }),
   );
+/** A daemon that sends nothing for a minute, not even a heartbeat, is gone. */
 const watchSilence = (state: Reception) =>
   Effect.sleep("30 seconds").pipe(
     Effect.zipRight(
       Effect.suspend(() =>
         Date.now() - state.lastSeen > 60_000
-          ? fail(state, new McpReceiveError({ reason: "transport-failed" }))
+          ? fail(state, transportFailed)
           : Effect.void,
       ),
     ),
@@ -255,39 +196,29 @@ const watchSilence = (state: Reception) =>
   );
 
 /**
- * Subscribe before reading the inbox so arrivals during catch-up remain visible.
- * Notifications carry no message content. The owning scope cancels the
- * stream, which has no request timeout.
+ * Emits once when the stream opens and again whenever the daemon says the
+ * inbox has items, and fails when the stream ends. Wake-ups carry no message
+ * content, and several that arrive before one is taken count as one. The
+ * owning scope closes the stream, which has no request timeout.
  */
 export const inboxWakeups = (
   endpoint: URL,
   options: StreamableHTTPClientTransportOptions,
-): Stream.Stream<boolean, McpReceiveError> =>
+): Stream.Stream<undefined, McpReceiveError> =>
   Stream.unwrapScoped(
     Effect.gen(function* () {
-      const queue =
-        yield* Queue.unbounded<Take.Take<boolean, McpReceiveError>>();
-      const active = yield* Deferred.make<undefined, McpReceiveError>();
       const state: Reception = {
-        queue,
-        active,
+        queue: yield* Queue.sliding<Take.Take<undefined, McpReceiveError>>(1),
+        active: yield* Deferred.make<undefined, McpReceiveError>(),
         transport: new StreamableHTTPClientTransport(endpoint, options),
         abort: new AbortController(),
         id: randomUUID(),
         phase: "opening",
-        queued: false,
         lastSeen: Date.now(),
       };
       yield* Effect.addFinalizer(() => close(state));
       yield* open(state);
       yield* watchSilence(state);
-      return Stream.fromQueue(queue).pipe(
-        Stream.flattenTake,
-        Stream.tap(() =>
-          Effect.sync(() => {
-            state.queued = false;
-          }),
-        ),
-      );
+      return Stream.fromQueue(state.queue).pipe(Stream.flattenTake);
     }).pipe(Effect.withSpan("inboxWakeups")),
   );
