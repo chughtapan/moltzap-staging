@@ -77,14 +77,6 @@ const emptyArguments = Schema.Record({
   key: Schema.String,
   value: Schema.Never,
 });
-/** Omitting the cursor requests the draft's explicit null position. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventStreamInput = Schema.Struct({
-  name: Schema.String,
-  arguments: emptyArguments,
-  cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
-  maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
-});
 /** Catalog cursors are independent of event replay positions. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
 export const eventListInput = Schema.Struct({
@@ -93,7 +85,11 @@ export const eventListInput = Schema.Struct({
 /** Validates subscription shape before authorization and callback URL checks. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
 export const eventSubscribeInput = Schema.Struct({
-  ...eventStreamInput.fields,
+  name: Schema.String,
+  arguments: emptyArguments,
+  /** Omitting the cursor requests the draft's explicit null position. */
+  cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
+  maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
   delivery: Schema.Struct({
     mode: Schema.String,
     url: Schema.String,
@@ -139,7 +135,7 @@ export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 export const inboxPendingCatalogEntry = {
   name: INBOX_PENDING_EVENT,
   description: "A wakeup to read the pending inbox.",
-  delivery: ["push", "webhook"],
+  delivery: ["webhook"],
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   payloadSchema: {
     type: "object",

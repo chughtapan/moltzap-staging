@@ -64,9 +64,6 @@ export class McpServer extends Context.Tag("@effect/ai/McpServer")<
         readonly list: (
           payload: unknown,
         ) => Effect.Effect<unknown, McpError, McpServerClient>;
-        readonly stream: (
-          payload: unknown,
-        ) => Effect.Effect<unknown, McpError, McpServerClient>;
         readonly subscribe: (
           payload: unknown,
         ) => Effect.Effect<unknown, McpError, McpServerClient>;
@@ -227,9 +224,6 @@ const layerHandlers = (serverInfo: {
           ),
         "events/list": (payload) =>
           server.events.current?.list(payload) ??
-          Effect.fail(new ProtocolError(-32601, "Events unavailable")),
-        "events/stream": (payload) =>
-          server.events.current?.stream(payload) ??
           Effect.fail(new ProtocolError(-32601, "Events unavailable")),
         "events/subscribe": (payload) =>
           server.events.current?.subscribe(payload) ??
@@ -396,9 +390,7 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
     Effect.flatMap(() =>
       Effect.forEach(
         Array.from(states.values()).filter(
-          (state) =>
-            state.method === "events/stream" ||
-            state.filter?.toolsListChanged === true,
+          (state) => state.filter?.toolsListChanged === true,
         ),
         (state) =>
           Queue.offer(state.notifications, {
@@ -536,10 +528,7 @@ export const makeHttpApp = Effect.fnUntraced(function* (options: {
       headers: Headers.fromInput(request.headers),
       context: Context.empty(),
     } as any);
-    if (
-      envelope.method !== "events/stream" &&
-      envelope.method !== "subscriptions/listen"
-    ) {
+    if (envelope.method !== "subscriptions/listen") {
       const result = yield* Queue.take(state.notifications);
       return yield* HttpServerResponse.json(result, {
         headers: { "mcp-protocol-version": state.protocolVersion },

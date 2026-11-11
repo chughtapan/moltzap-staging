@@ -6,9 +6,9 @@ import {
   type ClientOptions,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Deferred, Effect, Schema } from "effect";
+import { Deferred, Effect } from "effect";
 import { expect } from "vitest";
-import { CallToolResult, McpServerClient, Tool } from "./McpSchema.js";
+import { CallToolResult, Tool } from "./McpSchema.js";
 import { makeHttpApp, McpServer } from "./McpServer.js";
 
 it.each([
@@ -106,93 +106,3 @@ it.each([
       }
     }),
 );
-
-it("keeps an Events stream scoped while ordinary requests complete", () =>
-  Effect.gen(function* () {
-    const stopped = yield* Deferred.make<undefined>();
-    const activeNotification = "notifications/events/active";
-    const subscriptionId = "events";
-    const server = yield* McpServer.make;
-    server.events.current = {
-      list: () => Effect.succeed({ events: [] }),
-      subscribe: () => Effect.succeed({}),
-      unsubscribe: () => Effect.succeed({}),
-      stream: () =>
-        Effect.gen(function* () {
-          const client = yield* McpServerClient;
-          if (client.notify === undefined) {
-            return yield* Effect.dieMessage("Expected stream notifications");
-          }
-          yield* client.notify(activeNotification, {
-            cursor: null,
-            truncated: false,
-          });
-          return yield* Effect.never;
-        }).pipe(Effect.ensuring(Deferred.succeed(stopped, undefined))),
-    };
-    const app = yield* makeHttpApp({
-      name: "events-lifetime-test",
-      version: "1",
-    }).pipe(Effect.provideService(McpServer, server));
-    const handleRequest = HttpApp.toWebHandler(app);
-    const abort = new AbortController();
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- scopedLive owns the streaming HTTP request.
-    const response = yield* Effect.acquireRelease(
-      Effect.tryPromise(() =>
-        handleRequest(
-          new Request("http://127.0.0.1/mcp", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            signal: abort.signal,
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: subscriptionId,
-              method: "events/stream",
-              params: {},
-            }),
-          }),
-        ),
-      ),
-      () =>
-        Effect.sync(() => {
-          abort.abort();
-        }),
-    );
-    const reader = response.body?.getReader();
-    if (reader === undefined) {
-      return yield* Effect.dieMessage("Expected stream body");
-    }
-    const first = yield* Effect.tryPromise(() => reader.read());
-    const bytes = yield* Schema.decodeUnknown(Schema.Uint8ArrayFromSelf)(
-      first.value,
-    );
-    const frame = new TextDecoder().decode(bytes);
-    const notification = yield* Schema.decodeUnknown(
-      Schema.parseJson(Schema.Unknown),
-    )(frame.split("data: ")[1]);
-    expect(notification).toMatchObject({
-      method: activeNotification,
-      params: {
-        _meta: { "io.modelcontextprotocol/subscriptionId": subscriptionId },
-      },
-    });
-
-    const ping = yield* Effect.tryPromise(() =>
-      handleRequest(
-        new Request("http://127.0.0.1/mcp", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: "ping", method: "ping" }),
-        }),
-      ),
-    );
-    expect(yield* Effect.tryPromise(() => ping.json())).toMatchObject({
-      id: "ping",
-      result: {},
-    });
-    yield* Effect.sync(() => {
-      abort.abort();
-    });
-    yield* Effect.tryPromise(() => reader.cancel());
-    yield* Deferred.await(stopped).pipe(Effect.timeout("2 seconds"));
-  }));

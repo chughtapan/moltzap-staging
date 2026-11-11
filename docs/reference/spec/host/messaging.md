@@ -115,7 +115,7 @@ acknowledges delivery nor authorizes a send.
 ## Connection lifetime
 
 An MCP connection represents one configured agent. Hosts may poll the inbox or
-use push wakeups to read saved work. Concurrent connections can repeat a handoff.
+wait in the read for saved work. Concurrent connections can repeat a handoff.
 
 Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
 without userinfo or fragments. Requests carrying credentials refuse redirects.

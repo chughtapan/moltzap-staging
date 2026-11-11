@@ -35,11 +35,7 @@ import { SendError } from "../../communication/errors.js";
 import { MessageAddressInput } from "../../communication/messages.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
 import { HistoryError } from "../social-harness.js";
-import {
-  INBOX_PENDING_EVENT,
-  MAXIMUM_WAIT_SECONDS,
-  toolDefinitions,
-} from "./contracts.js";
+import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";
 import { serveMcp } from "./http.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
@@ -299,20 +295,19 @@ it("ends an in-flight request and refuses later calls when its agent stops", () 
     expect(later.status).toBe(503);
   }));
 
-it("closes a retained Events response body when its agent stops", () =>
+it("closes a retained stream when its agent stops", () =>
   Effect.gen(function* () {
     const fixture = yield* mcpFixture();
     const reply = yield* Effect.tryPromise(() =>
       fixture.fetch(
-        mcpRequest("events/stream", {
-          name: INBOX_PENDING_EVENT,
-          arguments: {},
+        mcpRequest("subscriptions/listen", {
+          notifications: { toolsListChanged: true },
         }),
       ),
     );
     expect(reply.status).toBe(200);
     if (reply.body === null) {
-      return yield* Effect.dieMessage("Expected an Events response body");
+      return yield* Effect.dieMessage("Expected a stream body");
     }
     const reader = reply.body.getReader();
     const next = Effect.tryPromise(() => reader.read());

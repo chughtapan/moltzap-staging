@@ -262,7 +262,7 @@ const subscribe = (runtime: WebhookRuntime, input: EventSubscribeInput) =>
   });
 
 /** The number of items waiting in the inbox. */
-export const countPendingInbox = (harness: SocialHarness["Type"]) =>
+const countPendingInbox = (harness: SocialHarness["Type"]) =>
   Effect.gen(function* () {
     let total = 0;
     let cursor: string | undefined;
@@ -277,7 +277,7 @@ export const countPendingInbox = (harness: SocialHarness["Type"]) =>
   }).pipe(Effect.withSpan("countPendingInbox"));
 
 /** The event that tells a host how many inbox items are waiting. */
-export const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
+const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
   ({
     eventId: `wake_${randomUUID()}`,
     name: INBOX_PENDING_EVENT,

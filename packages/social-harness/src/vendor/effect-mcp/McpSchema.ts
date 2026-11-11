@@ -760,12 +760,6 @@ export class EventsList extends Rpc.make("events/list", {
   success: Schema.Unknown,
   error: McpError,
 }) {}
-/** A stream publishes request-bound notifications until cancellation. */
-export class EventsStream extends Rpc.make("events/stream", {
-  payload: Schema.Unknown,
-  success: Schema.Unknown,
-  error: McpError,
-}) {}
 /** Registers a callback for event delivery. */
 export class EventsSubscribe extends Rpc.make("events/subscribe", {
   payload: Schema.Unknown,
@@ -797,7 +791,6 @@ export class ClientRequestRpcs extends RpcGroup.make(
   CallTool,
   ListTools,
   EventsList,
-  EventsStream,
   EventsSubscribe,
   EventsUnsubscribe,
 ).middleware(McpServerClientMiddleware) {}
