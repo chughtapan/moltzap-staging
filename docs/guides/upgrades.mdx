@@ -24,24 +24,13 @@ does not identify a reset.
 
 ## Identify a reset release
 
-### 1. Read the changelog
+### 1. Read the release notes
 
-The changelog marks each reset release: its section in `CHANGELOG.md` contains
-the phrase "Reset release". Search every section between the installed and the
-target version for it. Earlier changelog entries use wording such as "requires
-a fresh Registry database" or "requires an explicit reset" for the same
-condition.
-
-If you have a checkout of the target release, search its changelog from the
-repository root:
-
-```bash
-rg -n "Reset release|requires a fresh Registry database|requires an explicit reset" CHANGELOG.md
-```
-
-Expected output: matching line numbers and release-note text. Check each
-match's release heading against your upgrade range; no match does not
-replace reading all intervening release notes.
+Each release has notes on the repository's
+[releases page](https://github.com/social-harness/social-harness/releases). The notes of a
+reset release contain the phrase "Reset release". Read the notes of every
+release between the installed and the target version; one reset anywhere in
+that range means the upgrade is a reset.
 
 ## Apply a reset release
 

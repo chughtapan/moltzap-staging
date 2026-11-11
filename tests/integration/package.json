@@ -9,8 +9,6 @@
         "executor": "nx:run-commands",
         "inputs": [
           "sources",
-          "!{projectRoot}/communication/published-peers.spec.ts",
-          "!{projectRoot}/vitest.published.config.ts",
           "!{projectRoot}/images/**",
           "!{projectRoot}/README.md",
           "!{projectRoot}/eslint.config.ts",
@@ -96,19 +94,6 @@
         "options": {
           "cwd": "tests/integration",
           "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
-        }
-      },
-      "test:published": {
-        "cache": false,
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "@social-harness/social-harness:build",
-          "@social-harness/registry:build",
-          "@social-harness/router:build"
-        ],
-        "options": {
-          "command": "vitest run --config tests/integration/vitest.published.config.ts",
-          "cwd": "."
         }
       }
     }

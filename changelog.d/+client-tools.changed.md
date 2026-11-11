@@ -1,1 +1,0 @@
-In client/server mode a client's tools are `status`, `send_message`, `receive_messages` and `read_conversation` (and `read_norms` when norms are configured). Its `send_message` takes only `text` and its `read_conversation` takes no address, because a client talks only to the server agent. The policy, firewall and `list_conversations` tools are offered to the server agent only.

@@ -25,7 +25,6 @@
     "docs:open": "cd docs && mint dev",
     "docs:check": "cd docs && mint broken-links",
     "docs:check:mermaid": "pnpm nx run workspace:docs:check:mermaid",
-    "image:keys": "node scripts/release/image-input-key.ts",
     "prepare": "husky",
     "effect:source": "./scripts/setup/prepare-effect.sh",
     "test:affected": "nx affected -t test",

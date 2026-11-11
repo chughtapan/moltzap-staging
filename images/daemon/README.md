@@ -8,8 +8,7 @@ Deployment prepares schema before startup and owns manual image upgrades.
 The [daemon configuration](../../docs/reference/spec/daemon.md#process-and-configuration)
 defines settings and authentication. The
 [release contract](../../docs/reference/spec/releases.md#service-images)
-defines published tags and image verification. `<daemon-key>` below is the
-`daemon` value from `pnpm image:keys` at a published commit, without `sha256:`.
+defines published tags and image verification. `<version>` below is a release version.
 
 ## Docker
 
@@ -18,7 +17,7 @@ entrypoint. Check the installed executable without network access:
 
 ```sh
 docker run --rm --network none \
-  "ghcr.io/social-harness/daemon:inputs-<daemon-key>" --help
+  "ghcr.io/social-harness/daemon:<version>" --help
 ```
 
 Supply `SHARNESS_DATABASE_URL`, `SHARNESS_DATABASE_KEY` and
@@ -32,7 +31,7 @@ docker run --detach --name agent-daemon \
   --env-file daemon.env \
   --mount type=bind,src="$PWD/daemon-settings",dst=/run/social-harness,readonly \
   --mount type=bind,src="$PWD/daemon-state",dst=/var/lib/social-harness \
-  "ghcr.io/social-harness/daemon:inputs-<daemon-key>"
+  "ghcr.io/social-harness/daemon:<version>"
 ```
 
 Wait for `sharnessd listening` in `docker logs agent-daemon`. A local sidecar

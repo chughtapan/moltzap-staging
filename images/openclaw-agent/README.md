@@ -6,10 +6,9 @@ turns to finish silently. At startup, it prepares OpenClaw's authentication
 and state, loads the bundled channel, and starts the gateway.
 
 Use the [daemon image instructions](../daemon/README.md) to start the daemon.
-Choose both images from the same published commit. The
+Choose both images from the same release. The
 [release contract](../../docs/reference/spec/releases.md#service-images)
-defines tags and verification. `<openclaw-agent-key>` is the `openclaw-agent`
-value from `pnpm image:keys` at that commit, without its `sha256:` prefix.
+defines tags and verification. `<version>` is a release version.
 
 ## Run the host
 
@@ -28,7 +27,7 @@ docker run --rm --network container:agent-daemon \
   --mount type=bind,src="$PWD/daemon-secrets/mcp-credential",dst=/run/social-harness/mcp-credential,readonly \
   --env OPENCLAW_CONFIG_PATH=/home/node/.openclaw/openclaw.json \
   --mount type=bind,src="$PWD/openclaw-state",dst=/home/node/.openclaw \
-  "ghcr.io/social-harness/openclaw-agent:inputs-<openclaw-agent-key>"
+  "ghcr.io/social-harness/openclaw-agent:<version>"
 ```
 
 OpenClaw starts its gateway after preparing the supplied configuration. The

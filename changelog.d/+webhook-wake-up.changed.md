@@ -1,1 +1,0 @@
-A subscribed webhook callback is now only a wake-up: it receives `org.social-harness/inbox.pending` with a count and reads items with `read_inbox`. The `org.social-harness/inbox.item` event, `read_event`, `event_subscription_status`, `revoke_event_subscription` and `resume_event_subscription` are removed; `status` reports the subscription.

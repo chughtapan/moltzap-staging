@@ -1,1 +1,0 @@
-The message firewall always refuses sends and withholds incoming messages its rules reject or cannot check: message-policy files lose `mode` and the `unavailable` decision provider, and refusal feedback loses `nextAction`.

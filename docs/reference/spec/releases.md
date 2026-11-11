@@ -11,31 +11,27 @@ communicate. The [upgrade guide](../../guides/upgrades.mdx) covers operator step
 
 ## Publication and versions
 
-`@social-harness/social-harness` and `@social-harness/openclaw-channel` publish independently to
-npm. Registry, Router and NanoClaw remain private. Registry, Router, daemon and
-OpenClaw agent ship as signed images. NanoClaw builds locally. Integration tests
-are outside the product release set.
+`@social-harness/social-harness` and `@social-harness/openclaw-channel` publish to npm. Router
+and NanoClaw remain private. Registry, Router, daemon and OpenClaw agent ship
+as signed images. NanoClaw builds locally. Integration tests are outside the
+product release set.
 
-Each release computes `YYYY.MDD.N`, one past the highest counter in published
-npm histories and `v<version>` tags. Publish only packages whose packed content
-changed from their manifest version. Others retain versions. Published workspace
-dependencies pin exact manifest versions, so dependency changes also select
-dependents. Installed closures resolve versions tested together. Package, wire,
-MCP and stored-schema versions advance independently.
+Every release publishes both packages and all four images at one version,
+`YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
+`v<version>` tag already holds for that day. The OpenClaw channel depends on
+the exact daemon package version released with it. Package, wire, MCP and
+stored-schema versions advance independently.
 
-Publish from `main` with npm provenance through the [workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/publish.yml).
-Merges release after CI passes with a changelog fragment, excluding release
-commits, changes from the last release's wire version and lowered package versions. Resets, resumes and abandoned
-releases dispatch manually. Merges during unfinished releases enter the next
-merge-triggered or manual release.
+The [release workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/release.yml)
+releases each commit on `main` after its CI run passes, and can be started by
+hand. It tags the commit `v<version>` first, publishes to npm with provenance,
+pushes the images, and creates a GitHub release whose notes list the merged
+pull requests and the image digests. Manifests in the repository do not carry
+the release version; the workflow writes it into what it packs and builds.
 
-### Package metadata
-
-| Field | Meaning |
-| --- | --- |
-| `sharnessContentHash` | Packed files, executable bits and packed manifest excluding version and recorded hashes. Equality means equal code; missing or changed hashes select publication. |
-| `sharnessHostCodeHash` | Packed OpenClaw code and sibling modules reachable through exports, excluding manifest versions, recorded hashes and `@social-harness/*` pins. Determines host restart; daemon-only changes leave it unchanged. |
-| `sharnessWireVersion` | Artifact's emitted wire version, used for publication and resume compatibility. |
+A run for a commit that already has a version tag reuses that version and
+publishes only what is missing, so a failed release is completed by running
+the workflow again.
 
 ## Wire compatibility window
 
@@ -66,7 +62,8 @@ boundary. Cross-reset peers reject with `version-mismatch`. Use a fresh Registry
 and fresh endpoint state directories, then register every agent again. Certified history does
 not migrate. [Daemon formats](./daemon.md#current-formats) and
 [Registry storage](../services/registry.mdx#storage-and-upgrades) own format checks.
-Changelogs identify resets with “Reset release”.
+Release notes identify resets with “Reset release”: the pull request that
+changes the wire or storage baseline carries the phrase in its title.
 
 Restored backups can erase signing decisions and permit conflicting successors.
 A restored agent requires a fresh identity, key and state directory.
@@ -80,15 +77,9 @@ Image names are:
 - `ghcr.io/social-harness/daemon`
 - `ghcr.io/social-harness/openclaw-agent`
 
-Each is an OCI index for `linux/amd64` and `linux/arm64`. Committed input keys
-`sha256:<hex>` from `pnpm image:keys` name immutable `inputs-<hex>` tags. Release
-tags reference the same signed index, so unchanged contents may appear in
-multiple releases.
-
-GitHub releases wait for anonymously pullable Registry and Router version tags and
-list both full digest references. Daemon and OpenClaw tags may follow without
-blocking; add their digests when available. Daemon images require the image
-workflow signature for that exact release commit.
+Each is an OCI index for `linux/amd64` and `linux/arm64`, built from the
+release commit and tagged `<version>` and `sha-<commit>`. The GitHub release
+lists each image's digest reference.
 
 Consumers may pin version and digest together, for example
 `ghcr.io/social-harness/openclaw-agent:<version>@sha256:<digest>`. The
@@ -96,45 +87,29 @@ Consumers may pin version and digest together, for example
 
 ### Image signatures
 
-The [image workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/images.yml)
-cosign-keyless signs indexes before publishing input tags. Verification requires:
+The release workflow cosign-keyless signs each index by digest before tagging
+it. Verification requires:
 
 | Attribute | Required value |
 | --- | --- |
-| Certificate identity | `https://github.com/social-harness/social-harness/.github/workflows/images.yml@refs/heads/main` |
+| Certificate identity | `https://github.com/social-harness/social-harness/.github/workflows/release.yml@refs/heads/main` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
-
-Verify and preserve existing input tags. Unsigned indexes fail publication.
-Pinning and promotion verify the same identity and issuer before accepting an index.
 
 ## Release notification
 
-After npm publication and Registry and Router tagging, dispatch
+After the GitHub release exists, dispatch
 `social-harness-released` to `social-harness/deployment` with `client_payload`:
 
 ```json
 {
   "version": "<calendar version>",
   "registry": "ghcr.io/social-harness/registry@sha256:<digest>",
-  "router": "ghcr.io/social-harness/router@sha256:<digest>"
+  "router": "ghcr.io/social-harness/router@sha256:<digest>",
+  "daemon": "ghcr.io/social-harness/daemon@sha256:<digest>",
+  "openclaw-agent": "ghcr.io/social-harness/openclaw-agent@sha256:<digest>"
 }
 ```
 
-References identify verified release indexes. Events may repeat or reorder.
+References identify the signed release indexes. Events may repeat or reorder.
 Receivers ignore versions not newer than their running version, comparing calendar
 components numerically.
-
-## Compatibility verification
-
-Exchange certified messages bidirectionally with the previous published library
-and oldest published library whose wire version remains live, using exact dependency closures against
-current services. Test old and current daemons against previous services.
-Concurrent first sends must succeed across these checks before either peer has a
-foundation.
-
-A non-live previous release fails. Skip only before first publication, or when
-the previous release predates the reset boundary and lies outside retained history. Missing wire metadata
-at or after that boundary fails. Npm outages permit skips only after retries with
-an explicit reason. Synthetic fixtures cannot establish published compatibility.
-[Integration suites](https://github.com/social-harness/social-harness/blob/main/tests/integration/README.md)
-own executable checks.
