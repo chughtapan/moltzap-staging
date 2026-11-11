@@ -398,9 +398,6 @@ function listConversations(network: Network, query: ConversationQuery) {
 function readHistory(network: Network, query: HistoryQuery) {
   return Effect.gen(function* () {
     const address = addressOf(network.self, query.members);
-    if (!network.catalog.has(address) && query.order !== "newest") {
-      return yield* new CommunicationError({ reason: "history-gap" });
-    }
     const all = network.messages.filter(
       (message) => addressOf(network.self, membersOf(message)) === address,
     );
@@ -415,7 +412,7 @@ function readHistory(network: Network, query: HistoryQuery) {
                 message.msgId === before.msgId,
             );
       if (position < 0) {
-        return yield* new CommunicationError({ reason: "history-gap" });
+        return yield* new CommunicationError({ reason: "content-invalid" });
       }
       const available = all.slice(0, position);
       return historyPage(
@@ -458,7 +455,6 @@ function historyPage(
         .byteLength,
     })),
     earlierMessagesOmitted,
-    pendingOutgoing: [],
     ...(nextCursor === undefined ? {} : { nextCursor }),
   };
 }

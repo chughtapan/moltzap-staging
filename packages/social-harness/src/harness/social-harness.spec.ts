@@ -123,10 +123,12 @@ function question(
   });
 }
 
-function localFailure(subject: Fixture, recipient?: AgentCard) {
+/** The result of a question this agent asked and nobody answered. */
+function unanswered(subject: Fixture, recipient?: AgentCard) {
+  const member = recipient ?? subject.bob;
   return Request.create({
     author: subject.self,
-    recipients: [recipient ?? subject.bob],
+    recipients: [member],
     op: "gather",
     question: "Which day works?",
     requestedSchema: { type: "object", properties: {} },
@@ -135,9 +137,14 @@ function localFailure(subject: Fixture, recipient?: AgentCard) {
     Effect.map(
       (request) =>
         ({
-          kind: "request-failed",
-          request,
-          error: "The request could not complete.",
+          kind: "result",
+          result: {
+            request,
+            closedAt: request.deadlineAt,
+            closedBy: "deadline",
+            outcomes: [{ member, outcome: { kind: "no-answer" } }],
+          },
+          sources: { answers: [] },
         }) as const,
     ),
   );
@@ -292,11 +299,11 @@ it("recovers an interrupted check and retains its published view after edits, ac
     expect((yield* reopened.harness.listInbox()).items).toEqual([]);
   }));
 
-it("reads result-only history without contacting Registry", () =>
+it("reads result-only history without resolving names", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     const [entry] = (yield* waitForInbox(runtime)).items;
     if (entry === undefined) {
       return yield* Effect.dieMessage("Expected result delivery");
@@ -305,7 +312,7 @@ it("reads result-only history without contacting Registry", () =>
     yield* subject.failNameResolution();
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "result", item: { kind: "operationFailed" } }]);
+    ).toMatchObject([{ kind: "result", item: { kind: "collectiveResult" } }]);
   }));
 
 it("keeps an inbox page boundary while arrivals and acknowledgments change pending work", () =>
@@ -313,7 +320,7 @@ it("keeps an inbox page boundary while arrivals and acknowledgments change pendi
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     for (let index = 0; index < 57; index++) {
-      yield* subject.deliver(yield* localFailure(subject));
+      yield* subject.deliver(yield* unanswered(subject));
     }
     yield* readInbox(runtime).pipe(
       Effect.repeat({
@@ -336,7 +343,7 @@ it("keeps an inbox page boundary while arrivals and acknowledgments change pendi
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
     yield* runtime.harness.acknowledgeDelivery(acknowledged.deliveryToken);
-    const later = yield* localFailure(subject);
+    const later = yield* unanswered(subject);
     yield* subject.deliver(later);
     yield* readInbox(runtime).pipe(
       Effect.repeat({
@@ -573,7 +580,7 @@ it("continues history through a fixed message and local-result boundary", () =>
         yield* ordinaryMessage(subject, `Message ${index}`),
       );
     }
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     yield* waitForInbox(runtime);
     const first = yield* runtime.harness.readHistory({
       address: bobAddress,
@@ -583,7 +590,7 @@ it("continues history through a fixed message and local-result boundary", () =>
       return yield* Effect.dieMessage("Expected history cursor");
     }
     yield* subject.retain(yield* ordinaryMessage(subject, "Later message"));
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     yield* waitForInbox(runtime, 2);
     const remaining = yield* runtime.harness.readHistory({
       address: bobAddress,
@@ -631,7 +638,7 @@ it("merges live conversation and result catalogs into bounded ordered pages", ()
       );
       expected.push(`agent:${peer.agentName}`);
       if (index % 3 === 0) {
-        yield* subject.deliver(yield* localFailure(subject, peer));
+        yield* subject.deliver(yield* unanswered(subject, peer));
       } else {
         yield* subject.addConversation([subject.self, peer]);
       }
@@ -896,13 +903,13 @@ it.each(hiddenSends)(
         yield* runtime.harness
           .send(request)
           .pipe(Effect.flip, Effect.provide(Logger.add(logger))),
-      ).toMatchObject({ reason: "content-invalid" });
+      ).toMatchObject({ reason: "invalid-address" });
       expect(subject.submitted).toEqual([]);
       expect(logs).toHaveLength(1);
       expect(logs[0]?.message).toEqual(["Send failed"]);
       expect(typeof logs[0]?.annotations.agentKey).toBe("string");
       expect(logs[0]?.annotations.error).toBe("SendError");
-      expect(logs[0]?.annotations.reason).toContain("content is invalid");
+      expect(logs[0]?.annotations.reason).toContain("does not offer groups");
     }),
 );
 
@@ -984,7 +991,7 @@ it("uses the public invalid-answer reason without exposing the original answer",
     ).not.toContain(privateAnswer);
   }));
 
-it("sends the first message under a configured policy without inventing a history gap", () =>
+it("sends the first message of a conversation under a configured policy", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({

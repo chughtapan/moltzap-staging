@@ -25,12 +25,6 @@ export interface FirewallEvidence {
     readonly visibleToAgent: boolean;
   }>;
   readonly earlierHistoryOmitted: boolean;
-  /**
-   * This agent's accepted messages that are not ordered yet, oldest first.
-   * They are not in `history`; they are ordered before any later message of
-   * this agent, and another agent's message may be ordered between them.
-   */
-  readonly pendingOutgoing: readonly Message[];
   /** What else the history lacks, such as messages beyond the evidence byte limit. */
   readonly gaps: readonly string[];
 }

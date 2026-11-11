@@ -27,6 +27,7 @@ import { Identity } from "../identity/service.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import {
+  DaemonConfigurationError,
   type DaemonSettings,
   loadDaemonSettings,
   processHelp,
@@ -61,7 +62,13 @@ function runDaemon() {
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
       if (settings.authentication.kind === "local") {
-        yield* getOrCreateOwnedAgent(localOwner, agentName);
+        yield* getOrCreateOwnedAgent(localOwner, agentName).pipe(
+          Effect.catchTag("OwnershipError", () =>
+            refused(
+              "This database's agent has another name than agentName in the settings, or another agent has that name. Set agentName to the name the database was first started with, or prepare a new database.",
+            ),
+          ),
+        );
       }
       const norms =
         settings.norms === undefined
@@ -81,6 +88,12 @@ function runDaemon() {
         settings.authentication,
         selectApp,
         serverAgentCredential,
+      ).pipe(
+        Effect.catchTag("AuthenticationRefused", () =>
+          refused(
+            "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
+          ),
+        ),
       );
       yield* serveMcp(settings.port, app, settings.host);
       yield* Console.log(
@@ -91,14 +104,31 @@ function runDaemon() {
   }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
 }
 
+/** A startup refusal that names the setting to change. */
+const refused = (message: string) =>
+  new DaemonConfigurationError({ reason: "document", message });
+
+/** Marks the database as serving `mode`, or refuses a database that serves the other. */
+function claimDatabase(mode: DaemonSettings["mode"]["kind"]) {
+  return Communication.claim(mode).pipe(
+    Effect.catchIf(
+      (error) => error.reason === "membership-invalid",
+      () =>
+        refused(
+          `This database belongs to a daemon in the other mode, not ${mode}. Set mode to the one the database was first started with, or prepare a new database.`,
+        ),
+    ),
+  );
+}
+
 /**
  * Every agent is a peer: it runs the daemon's own firewall and may message
  * any other agent on the daemon, alone or in a group.
  */
 function p2pMode(settings: DaemonSettings) {
-  return Effect.as(Communication.p2p.claim, {
+  return Effect.as(claimDatabase("p2p"), {
     agent: () => ({
-      communication: Communication.p2p.layer,
+      communication: Communication.layer,
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: { hideGroups: settings.hideGroups },
       app: {
@@ -122,14 +152,26 @@ function clientServerMode(
 ) {
   return Effect.gen(function* () {
     const { serverAgentName } = mode;
-    yield* Communication.clientServer.claim(serverAgentName);
-    yield* getOrCreateOwnedAgent(serverAgentOwner, serverAgentName);
+    yield* claimDatabase("client-server");
+    yield* getOrCreateOwnedAgent(serverAgentOwner, serverAgentName).pipe(
+      Effect.catchTag("OwnershipError", () =>
+        refused(
+          `This database's server agent is not named ${serverAgentName}, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.`,
+        ),
+      ),
+    );
     const serverNorms = yield* Ref.make(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
     const communication = (
-      options: Parameters<typeof Communication.p2p.layer>[0],
-    ) => Communication.clientServer.layer({ ...options, serverAgentName });
+      options: Parameters<typeof Communication.layer>[0],
+    ) =>
+      Communication.layer({
+        ...options,
+        permits: (members) =>
+          members.length === 2 &&
+          members.some((member) => member.agentName === serverAgentName),
+      });
     const server = {
       communication,
       checks: <Own>({ own }: { readonly own: Own }) => own,

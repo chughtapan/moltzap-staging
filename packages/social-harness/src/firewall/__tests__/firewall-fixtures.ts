@@ -23,11 +23,10 @@ export const privacy = {
   text: "Do not reveal the owner's private records.",
   feedback: { text: "Keep private records private." },
 } satisfies TextRule;
-/** Complete evidence with no history, pending sends or gaps. */
+/** Complete evidence with no history or gaps. */
 export const evidence: FirewallEvidence = {
   history: [],
   earlierHistoryOmitted: false,
-  pendingOutgoing: [],
   gaps: [],
 };
 /** The raw provider text, which no decision may expose. */

@@ -217,8 +217,6 @@ export function renderInboxItem(
       };
     case "collectiveResult":
       return guided(renderCollectiveResult(item), "endpoint");
-    case "operationFailed":
-      return guided(item.error, "endpoint");
     default:
       return absurd(item);
   }

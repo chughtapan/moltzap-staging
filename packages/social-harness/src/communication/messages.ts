@@ -982,7 +982,7 @@ const MessageHeader = MessageParticipants.pipe(
   Schema.extend(exactStruct({ msgId: MsgId })),
 );
 
-/** Decoded request and reply meaning stays outside signed content bytes. */
+/** The request or reply a message's content carries, decoded. */
 const MessageOperation = Schema.Union(
   exactStruct({
     kind: Schema.Literal("request"),
@@ -1262,14 +1262,7 @@ export type ResultSources = typeof ResultSources.Type;
 /** The item and its sources use one durable result identity through retries and restart. */
 export const ResultDelivery = exactStruct({
   operationId: CollectiveId,
-  item: Schema.Union(
-    exactStruct({ kind: Schema.Literal("result"), result: RequestResult }),
-    exactStruct({
-      kind: Schema.Literal("request-failed"),
-      request: requestSchema,
-      error: Schema.String,
-    }),
-  ),
+  item: exactStruct({ kind: Schema.Literal("result"), result: RequestResult }),
   sources: ResultSources,
 });
 /** Public item bytes and private source bytes are bounded separately. */

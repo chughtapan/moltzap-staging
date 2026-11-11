@@ -1,4 +1,4 @@
-/** @file Messages, groups and questions between agents on one daemon, in both modes. */
+/** @file Messages, groups and questions between agents on one daemon, with and without a rule on who may share a conversation. */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import { Chunk, Context, Effect, Layer, Queue, Schema } from "effect";
@@ -11,14 +11,18 @@ import { Communication, type Conversation, type Incoming } from "./service.js";
 
 type Agent = Effect.Effect.Success<typeof conversationFixture>["alice"];
 
-/** Alice is the server agent; Bob and Carol are clients. */
+/** Every conversation is Alice and one other agent, as for a server agent and its clients. */
 const fixture = Effect.gen(function* () {
   const subject = yield* conversationFixture;
   const open = (agent: Agent) =>
     Layer.build(
-      Communication.clientServer.layer({
+      Communication.layer({
         ...agent,
-        serverAgentName: subject.alice.card.agentName,
+        permits: (members) =>
+          members.length === 2 &&
+          members.some(
+            (member) => member.agentName === subject.alice.card.agentName,
+          ),
       }),
     ).pipe(
       Effect.provideService(SqlClient, subject.sql),
@@ -37,7 +41,7 @@ const fixture = Effect.gen(function* () {
   return { subject, server, client, other, members, message, open };
 });
 
-// @agent-code-guard/regression-only: Real SQL exchanges cover atomic fanout, restart and incomplete retained state.
+// @agent-code-guard/regression-only: Real SQL exchanges cover atomic fanout and restart.
 it("retains a client/server exchange and delivers each message only to its recipient", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
@@ -126,7 +130,7 @@ it("rolls back both participant views and serializes concurrent sends", () =>
         members: f.members,
         order: "newest",
         limit: 10,
-      })).pendingOutgoing,
+      })).entries,
     ).toEqual([]);
     const first = yield* f.message("client");
     const second = yield* Message.create({
@@ -162,56 +166,22 @@ it("hands a message to the next consumer after one fails", () =>
     ).toEqual({ kind: "message", message });
   }));
 
-it("keeps a database in the mode and with the server agent it has messages for", () =>
+it("keeps a database in the mode that claimed it first", () =>
   Effect.gen(function* () {
-    const f = yield* fixture;
-    yield* f.client.send(yield* f.message("client/server message"));
-    expect(
-      yield* Communication.p2p.claim.pipe(
-        Effect.provideService(SqlClient, f.subject.sql),
-        Effect.flip,
-      ),
-    ).toMatchObject({ reason: "membership-invalid" });
-    expect(
-      yield* Communication.clientServer
-        .claim(f.subject.bob.card.agentName)
-        .pipe(Effect.provideService(SqlClient, f.subject.sql), Effect.flip),
-    ).toMatchObject({ reason: "membership-invalid" });
-  }));
-
-it("refuses a conversation with a missing position or a row that names another message", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture;
-    const first = yield* f.message("first");
-    const last = yield* f.message("last");
-    yield* f.client.send(first);
-    yield* f.client.send(last);
-    yield* f.subject
-      .sql`DELETE FROM message_log WHERE agent_key=${f.subject.alice.agentKey} AND msg_id=${last.msgId}`;
-    expect(
-      yield* f.server.readHistory({ members: f.members }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
-    expect(
-      yield* f.server
-        .consume(() => Effect.dieMessage("Incomplete history reached the host"))
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
-    expect(
-      (yield* f.client.readHistory({ members: f.members })).entries.map(
-        (entry) => entry.message,
-      ),
-    ).toEqual([first, last]);
-    yield* f.subject
-      .sql`UPDATE message_log SET msg_id='substituted' WHERE agent_key=${f.subject.bob.agentKey} AND msg_id=${first.msgId}`;
-    expect(
-      yield* f.client.readHistory({ members: f.members }).pipe(Effect.flip),
-    ).toMatchObject({ reason: "history-gap" });
+    const { sql } = yield* conversationFixture;
+    const claim = (mode: string) =>
+      Communication.claim(mode).pipe(Effect.provideService(SqlClient, sql));
+    yield* claim("client-server");
+    yield* claim("client-server");
+    expect(yield* claim("p2p").pipe(Effect.flip)).toMatchObject({
+      reason: "membership-invalid",
+    });
   }));
 
 const peers = Effect.gen(function* () {
   const subject = yield* conversationFixture;
   const open = (agent: Agent) =>
-    Layer.build(Communication.p2p.layer(agent)).pipe(
+    Layer.build(Communication.layer(agent)).pipe(
       Effect.provideService(SqlClient, subject.sql),
       Effect.map((context) => Context.get(context, Communication)),
     );
@@ -285,10 +255,9 @@ it("delivers a group message to every member in one order, between any agents", 
     });
   }));
 
-it("carries a question to its recipient and the answer back as a result", () =>
+it("carries a question to its recipient and the answer back as a result, before the answerer's next message", () =>
   Effect.gen(function* () {
     const f = yield* peers;
-    const aliceInbox = yield* f.received(f.alice);
     const bobInbox = yield* f.received(f.bob);
     const answer = { slot: "tue" };
     const request = yield* Request.create({
@@ -311,8 +280,14 @@ it("carries a question to its recipient and the answer back as a result", () =>
         response: { action: "accept", content: answer },
       }),
     );
-    const settled = yield* Queue.take(aliceInbox);
-    expect(settled).toMatchObject({
+    const later = yield* Message.create({
+      author: f.cards.bob,
+      recipients: [f.cards.alice],
+      content: [{ type: "text", text: "sent after the answer" }],
+    });
+    yield* f.bob.send(later);
+    const aliceInbox = yield* f.received(f.alice);
+    expect(yield* Queue.take(aliceInbox)).toMatchObject({
       kind: "result",
       result: {
         request,
@@ -324,6 +299,10 @@ it("carries a question to its recipient and the answer back as a result", () =>
           },
         ],
       },
+    });
+    expect(yield* Queue.take(aliceInbox)).toEqual({
+      kind: "message",
+      message: later,
     });
   }));
 

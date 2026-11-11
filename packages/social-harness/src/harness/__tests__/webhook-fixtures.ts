@@ -18,7 +18,6 @@ import {
   Stream,
 } from "effect";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
-import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { type LocalGuidance, PermittedItem } from "../../firewall/index.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../inbox.js";
@@ -101,27 +100,25 @@ const callbackResponse = (
 const token = (byte: number) =>
   Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", byte));
 
-/**
- * A failed-operation inbox item carrying `text`.
- * @param text The failure the item reports.
- * @returns An inbox item that reports `text` as its failure.
- */
-const item = (text = "failed request") =>
-  Schema.decodeUnknownSync(PermittedItem)({
-    kind: "operationFailed",
-    operationId: collectiveOperationId(testAgentCard("agent:alice").agentId, 1),
-    error: text,
-  });
+/** A message from Alice to Bob, as the inbox holds it. */
+const item = Schema.decodeUnknownSync(PermittedItem)({
+  kind: "multicast",
+  message: {
+    author: testAgentCard("agent:alice"),
+    recipients: [testAgentCard("agent:bob")],
+    msgId: digest("msg_", 1),
+    content: [{ type: "text", text: "hello" }],
+  },
+});
 
 /**
  * Put the scripted inbox item `byte` into `store`.
  * @param store The store the webhook reads.
  * @param byte Distinguishes the item's token.
- * @param text The failure the item reports.
  * @returns The store's mutation.
  */
-export const enqueue = (store: InboxFixture, byte: number, text?: string) =>
-  store.save(token(byte), item(text ?? "failed request"));
+export const enqueue = (store: InboxFixture, byte: number) =>
+  store.save(token(byte), item);
 
 /**
  * Webhook events over `store` whose callback is scripted: it records each

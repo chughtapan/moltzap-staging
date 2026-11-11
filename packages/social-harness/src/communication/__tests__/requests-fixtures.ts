@@ -1,31 +1,27 @@
-/** @file Collective service scenarios use real SQL and a Message-only communication boundary. */
+/** @file Question handling over real SQL, with sends recorded in place of delivery. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity/agent-cards.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
-import { encodeCanonical } from "../../encoding/index.js";
 import { makeRequests } from "../collectives.js";
 import {
   type CollectiveValue,
-  compareAgentIds,
-  deriveConversationId,
   encodeCollectiveContent,
-  Message,
+  type Message,
   messageFromParticipants,
   MsgId,
   Request,
   type ResultDelivery,
 } from "../messages.js";
-import { CommunicationError } from "../service.js";
-import { acceptMessage } from "../store.js";
+import type { CommunicationError } from "../service.js";
 import { collectiveOperationId } from "./request-ids.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
 
 interface FixtureInput {
   readonly database?: TestDatabase;
   readonly agent?: AgentCard;
-  readonly pendingCompletion?: boolean;
+  /** Runs in place of delivery for each message the service sends. */
   readonly send?: (message: Message) => Effect.Effect<void, CommunicationError>;
 }
 
@@ -45,12 +41,7 @@ export const form = {
   required: ["slot"],
 } as const;
 
-/** A pending own answer survives service scope closure without a second submission. */
-export function pendingBob() {
-  return openCollectives({ agent: bob, pendingCompletion: true });
-}
-
-/** Separate service scopes share one database to exercise restart and pending handoffs. */
+/** A question service for one agent. Reopening on the same database stands for a restart. */
 export function openCollectives(input: FixtureInput = {}) {
   return Effect.gen(function* () {
     const database = input.database ?? (yield* openTestDatabase());
@@ -59,20 +50,13 @@ export function openCollectives(input: FixtureInput = {}) {
     const results = yield* Queue.unbounded<ResultDelivery>();
     const scope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    const complete = database
-      .run(
-        database.sql.unsafe(
-          "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE true ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
-        ),
-      )
-      .pipe(Effect.asVoid);
-    if (!input.pendingCompletion) {
-      yield* complete;
-    }
-    const transport = createTransport(input, sent, database);
     const requests = yield* makeRequests(database.agentKey, {
       self: agent,
-      ...transport,
+      send: (message) =>
+        (input.send?.(message) ?? Effect.void).pipe(
+          Effect.zipRight(Queue.offer(sent, message)),
+          Effect.asVoid,
+        ),
     }).pipe(
       Effect.provideService(SqlClient, database.sql),
       Scope.extend(scope),
@@ -98,7 +82,6 @@ export function openCollectives(input: FixtureInput = {}) {
     };
     return {
       database,
-      complete,
       service,
       sent,
       results,
@@ -204,54 +187,4 @@ export function question(
     requestedSchema: form,
     deadlineAt,
   });
-}
-
-/** The transport double records accepted payloads and projects certification; protocol suites exercise the real certificates. */
-function createTransport(
-  input: FixtureInput,
-  sent: Queue.Queue<Message>,
-  database: TestDatabase,
-) {
-  return {
-    acceptMessage: (message: Message) =>
-      Effect.gen(function* () {
-        yield* input.send?.(message) ?? Effect.void;
-        const members: [
-          AgentCard["agentId"],
-          AgentCard["agentId"],
-          ...Array<AgentCard["agentId"]>,
-        ] = [
-          message.author.agentId,
-          message.recipients[0].agentId,
-          ...message.recipients.slice(1).map((member) => member.agentId),
-        ];
-        const conversationId = yield* deriveConversationId(
-          members.sort(compareAgentIds),
-        );
-        yield* acceptMessage(database.agentKey, {
-          authorAgentId: message.author.agentId,
-          msgId: message.msgId,
-          conversationId,
-          canonicalMessage: yield* encodeCanonical(Message, message),
-        });
-        if (!input.pendingCompletion) {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) SELECT agent_key,conversation_id,sequence,author_agent_id,msg_id,canonical_message FROM message_intents WHERE author_agent_id=? AND msg_id=? ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING",
-            [message.author.agentId, message.msgId],
-          );
-        }
-        yield* Queue.offer(sent, message);
-      }).pipe(
-        Effect.catchTags({
-          EndpointStoreError: () =>
-            new CommunicationError({ reason: "persistence-failed" }),
-          ClientRepresentationError: () =>
-            new CommunicationError({ reason: "persistence-failed" }),
-          SqlError: () =>
-            new CommunicationError({ reason: "persistence-failed" }),
-        }),
-        database.run,
-      ),
-  };
 }

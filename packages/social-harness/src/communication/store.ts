@@ -1,4 +1,4 @@
-/** @file Retains accepted messages, ordered history, delivery acknowledgments and request results. */
+/** @file Stores each agent's ordered messages, which of them it has consumed, and its questions, answers and results. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
@@ -81,20 +81,17 @@ const decodeRuntimeValue = <A, I>(
 
 type OperationValue = Extract<CollectiveValue, { readonly kind: "operation" }>;
 
-type CloseValue = Extract<CollectiveValue, { readonly kind: "close" }>;
-
 interface OperationState {
   readonly operationId: CollectiveId;
   readonly deadlineAt: number;
-  readonly phase: "collecting" | "finalizing" | "completed";
-  readonly close?: CloseValue;
+  readonly phase: "collecting" | "completed";
   readonly result?: {
     readonly item: ResultDelivery["item"];
     readonly answers: readonly MessageReference[];
   };
 }
 
-/** Disk readers distinguish local captured questions from recognized peer requests. */
+/** A question this agent asked (`local`) or one it received (`remote`). */
 export type StoredCollectiveOperation = OperationState &
   (
     | { readonly origin: "local"; readonly request: Request }
@@ -107,91 +104,19 @@ export type StoredCollectiveOperation = OperationState &
       }
   );
 
-/**
- * Communication retains the accepted Message. A collective retains its role
- * and identity.
- */
-export interface StoredCollectiveMessage {
-  readonly operationId: CollectiveId;
-  readonly role: "request" | "response" | "close";
-  readonly destination: string;
-  readonly reference: MessageReference;
-}
-
-/** Results become available only after their required close is ordered. */
+/** The oldest completed result this agent has not consumed. */
 export const readNextCollectiveResult = (agentKey: string) =>
   readOperations(agentKey).pipe(
     Effect.map((rows) => rows[0]),
     Effect.withSpan("readNextCollectiveResult"),
   );
 
-/** A published message has one immutable position and a separate delivery acknowledgment. */
+/** A message at its position in a conversation, as one agent's history holds it. */
 export interface StoredMessage {
   readonly conversationId: string;
   readonly ordinal: number;
   readonly sequence: number;
   readonly message: Message;
-}
-
-/** Acceptance stays in the caller's SQL transaction and performs no network work. */
-export function acceptMessage(
-  agentKey: string,
-  input: {
-    readonly authorAgentId: string;
-    readonly msgId: string;
-    readonly conversationId: string;
-    readonly canonicalMessage: Uint8Array;
-  },
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`INSERT INTO message_intents(agent_key,author_agent_id,msg_id,conversation_id,canonical_message)
-       VALUES(${agentKey},${input.authorAgentId},${input.msgId},${input.conversationId},${input.canonicalMessage}) ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING`;
-    const [row] = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT conversation_id,canonical_message FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${input.authorAgentId} AND msg_id=${input.msgId}`;
-    if (row === undefined) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    requireEqual(readText(row, "conversation_id"), input.conversationId);
-    requireSameBytes(
-      readBytes(row, "canonical_message"),
-      input.canonicalMessage,
-    );
-  }).pipe(agentOperation(agentKey), Effect.withSpan("acceptMessage"));
-}
-
-/** The accepted message with this reference and whether it is ordered. */
-export function readAcceptedMessage(
-  agentKey: string,
-  reference: MessageReference,
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const [row] = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT author_agent_id,msg_id,canonical_message, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
-    return row === undefined ? undefined : yield* readAcceptedRow(row);
-  }).pipe(agentOperation(agentKey), Effect.withSpan("readAcceptedMessage"));
-}
-
-/**
- * Accepted messages of this conversation that have neither completed nor
- * failed, in the order they were accepted, including those whose membership is
- * not prepared yet.
- */
-export function readPendingMessages(agentKey: string, conversationId: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT author_agent_id,msg_id,canonical_message, CASE WHEN EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) THEN 1 ELSE 0 END AS completed FROM message_intents WHERE agent_key=${agentKey} AND conversation_id=${conversationId} AND NOT EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=message_intents.agent_key AND message_log.author_agent_id=message_intents.author_agent_id AND message_log.msg_id=message_intents.msg_id) ORDER BY sequence`;
-    return yield* Effect.forEach(
-      rows,
-      (row) => readAcceptedRow(row).pipe(Effect.map(({ message }) => message)),
-      { concurrency: 1 },
-    );
-  }).pipe(agentOperation(agentKey), Effect.withSpan("readPendingMessages"));
 }
 
 /** A repeated operation must preserve its original request and authority. */
@@ -243,17 +168,13 @@ export function putCollectiveOperation(
   ).pipe(agentOperation(agentKey), Effect.withSpan("putCollectiveOperation"));
 }
 
-/** Workers load each operation's content inside its completion transaction. */
-export function readCollectiveOperationIds(
-  agentKey: string,
-  origin: StoredCollectiveOperation["origin"],
-  phase: StoredCollectiveOperation["phase"],
-) {
+/** The questions this agent asked that are still collecting answers, oldest first. */
+export function readCollectingQuestionIds(agentKey: string) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
     const rows = yield* sql<
       Readonly<Record<string, unknown>>
-    >`SELECT operation_id FROM collective_operations WHERE agent_key=${agentKey} AND origin=${origin} AND phase=${phase} ORDER BY sequence`;
+    >`SELECT operation_id FROM collective_operations WHERE agent_key=${agentKey} AND origin='local' AND phase='collecting' ORDER BY sequence`;
     return yield* Effect.forEach(
       rows,
       (row) => decodeValue(CollectiveId, readText(row, "operation_id")),
@@ -261,75 +182,15 @@ export function readCollectiveOperationIds(
     );
   }).pipe(
     agentOperation(agentKey),
-    Effect.withSpan("readCollectiveOperationIds"),
+    Effect.withSpan("readCollectingQuestionIds"),
   );
 }
 
-/** Role uniqueness and Communication acceptance commit in the same caller transaction. */
-export function putCollectiveMessage(
-  agentKey: string,
-  input: StoredCollectiveMessage,
-) {
-  return transaction(
-    agentKey,
-    Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      const prior = (yield* sql<
-        Readonly<Record<string, unknown>>
-      >`SELECT author_agent_id,msg_id FROM collective_messages WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND role=${input.role} AND destination=${input.destination}`)[0];
-      if (prior !== undefined) {
-        if (
-          readText(prior, "author_agent_id") !==
-            input.reference.authorAgentId ||
-          readText(prior, "msg_id") !== input.reference.msgId
-        ) {
-          return yield* new EndpointStoreError({ reason: "conflict" });
-        }
-        return false;
-      }
-      yield* sql`INSERT INTO collective_messages(agent_key,operation_id,role,destination,author_agent_id,msg_id) VALUES(${agentKey},${input.operationId},${input.role},${input.destination},${input.reference.authorAgentId},${input.reference.msgId})`;
-      return true;
-    }),
-  ).pipe(agentOperation(agentKey), Effect.withSpan("putCollectiveMessage"));
-}
-
-/** An operation's accepted messages retain their role and fixed identity. */
-export function readCollectiveMessages(
-  agentKey: string,
-  operationId: CollectiveId,
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT operation_id,role,destination,author_agent_id,msg_id
-      FROM collective_messages WHERE agent_key=${agentKey} AND operation_id=${operationId} ORDER BY sequence`;
-    return yield* readMessageRows(agentKey, rows);
-  }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveMessages"));
-}
-
-/** Answers and closes of open questions whose message is ordered. */
-export function readReadyCollectiveMessages(agentKey: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT message.operation_id,message.role,message.destination,message.author_agent_id,message.msg_id
-      FROM collective_messages AS message
-      JOIN collective_operations AS operation ON operation.agent_key=message.agent_key AND operation.operation_id=message.operation_id
-      JOIN message_intents AS intent ON intent.agent_key=message.agent_key AND intent.author_agent_id=message.author_agent_id AND intent.msg_id=message.msg_id
-      WHERE message.agent_key=${agentKey} AND operation.phase<>'completed' AND message.role IN ('response','close')
-      AND EXISTS(SELECT 1 FROM message_log WHERE message_log.agent_key=intent.agent_key AND message_log.author_agent_id=intent.author_agent_id AND message_log.msg_id=intent.msg_id)
-      AND (message.role='close' OR NOT EXISTS (SELECT 1 FROM collective_answers AS answer WHERE answer.agent_key=message.agent_key AND answer.operation_id=message.operation_id AND answer.member=message.author_agent_id))
-      ORDER BY message.sequence`;
-    return yield* readMessageRows(agentKey, rows);
-  }).pipe(
-    agentOperation(agentKey),
-    Effect.withSpan("readReadyCollectiveMessages"),
-  );
-}
-
-/** Only the collector's first accepted answer before its deadline is selectable. */
+/**
+ * Saves a member's first answer and reports whether it was saved. A question
+ * this agent asked takes answers only while collecting and before its
+ * deadline.
+ */
 export function recordCollectiveAnswer(
   agentKey: string,
   operationId: CollectiveId,
@@ -341,12 +202,10 @@ export function recordCollectiveAnswer(
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const operation = yield* readCollectiveOperation(agentKey, operationId);
-      if (operation === undefined || operation.phase === "completed") {
-        return false;
-      }
       if (
-        operation.origin === "local" &&
-        (operation.phase !== "collecting" || now >= operation.deadlineAt)
+        operation === undefined ||
+        operation.phase === "completed" ||
+        (operation.origin === "local" && now >= operation.deadlineAt)
       ) {
         return false;
       }
@@ -401,49 +260,19 @@ export function readCollectiveAnswers(
   }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveAnswers"));
 }
 
-/** The first remote close remains available while an own answer is being ordered. */
-export function saveRemoteClose(
-  agentKey: string,
-  operationId: CollectiveId,
-  message: Message,
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase='finalizing',canonical_close=${yield* encodeCanonical(Message, message)} WHERE agent_key=${agentKey} AND operation_id=${operationId} AND origin='remote' AND phase='collecting'`;
-  }).pipe(agentOperation(agentKey), Effect.withSpan("saveRemoteClose"));
-}
-
-/**
- * Freezes final bytes and exact source identities. Ordering the close
- * changes only their visibility.
- */
+/** Completes an open question with its result and the answers the result selected. */
 export function saveCollectiveResult(
   agentKey: string,
   input: {
     readonly operationId: CollectiveId;
     readonly item: ResultDelivery["item"];
     readonly answers: readonly MessageReference[];
-    readonly complete: boolean;
   },
 ) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase=${input.complete ? "completed" : "finalizing"},canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, input.item)},canonical_answer_refs=${yield* encodeRuntimeValue(input.answers)} WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND phase<>'completed' AND canonical_result IS NULL`;
+    yield* sql`UPDATE collective_operations SET phase='completed',canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, input.item)},canonical_answer_refs=${yield* encodeRuntimeValue(input.answers)} WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND phase='collecting'`;
   }).pipe(agentOperation(agentKey), Effect.withSpan("saveCollectiveResult"));
-}
-
-/** A selected result becomes deliverable without rebuilding its content or sources. */
-export function completeCollectiveOperation(
-  agentKey: string,
-  operationId: CollectiveId,
-) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase='completed' WHERE agent_key=${agentKey} AND operation_id=${operationId} AND canonical_result IS NOT NULL`;
-  }).pipe(
-    agentOperation(agentKey),
-    Effect.withSpan("completeCollectiveOperation"),
-  );
 }
 
 /** Successful handling retires the same result while keeping its content readable. */
@@ -457,7 +286,7 @@ export function retireCollectiveResult(
   }).pipe(agentOperation(agentKey), Effect.withSpan("retireCollectiveResult"));
 }
 
-/** An invalid close consumes protocol state without inventing a result. */
+/** Ends a question without a result, so that it takes no more answers. */
 export function retireCollectiveOperation(
   agentKey: string,
   operationId: CollectiveId,
@@ -471,33 +300,56 @@ export function retireCollectiveOperation(
   );
 }
 
-/** Publish only after the selected delivery protocol has established completion. */
-export function completeMessage(
+/**
+ * Whether this agent's history holds the message. A saved message with the
+ * same author and identifier but another conversation or content is a
+ * conflict.
+ */
+export function hasMessage(
+  agentKey: string,
+  conversationId: string,
+  message: Message,
+) {
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const [row] = yield* sql<
+      Readonly<Record<string, unknown>>
+    >`SELECT conversation_id,canonical_message FROM message_log
+      WHERE agent_key=${agentKey} AND author_agent_id=${message.author.agentId} AND msg_id=${message.msgId}`;
+    if (row === undefined) {
+      return false;
+    }
+    requireEqual(readText(row, "conversation_id"), conversationId);
+    requireSameBytes(
+      readBytes(row, "canonical_message"),
+      yield* encodeCanonical(Message, message),
+    );
+    return true;
+  }).pipe(agentOperation(agentKey), Effect.withSpan("hasMessage"));
+}
+
+/**
+ * Adds a message to one agent's history at its position. It takes no lock on
+ * the agent, so a sender can save for every member while holding only its own
+ * agent's lock and the conversation's.
+ */
+export function saveMessage(
   agentKey: string,
   conversationId: string,
   ordinal: number,
   message: Message,
 ) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const bytes = yield* encodeCanonical(Message, message);
-    yield* sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message)
-      VALUES(${agentKey},${conversationId},${ordinal},${message.author.agentId},${message.msgId},${bytes})
-      ON CONFLICT(agent_key,author_agent_id,msg_id) DO NOTHING`;
-    const [row] = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT conversation_id,ordinal,canonical_message FROM message_log
-      WHERE agent_key=${agentKey} AND author_agent_id=${message.author.agentId} AND msg_id=${message.msgId}`;
-    if (row === undefined) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
-    }
-    requireEqual(readText(row, "conversation_id"), conversationId);
-    requireEqual(readInteger(row, "ordinal"), ordinal);
-    requireSameBytes(readBytes(row, "canonical_message"), bytes);
-  }).pipe(agentOperation(agentKey), Effect.withSpan("completeMessage"));
+  return withAgentTransaction(
+    agentKey,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      yield* sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message)
+        VALUES(${agentKey},${conversationId},${ordinal},${message.author.agentId},${message.msgId},${yield* encodeCanonical(Message, message)})`;
+    }),
+  ).pipe(storeOperation, Effect.withSpan("saveMessage"));
 }
 
-/** Read a bounded range from the same message log for every delivery mode. */
+/** A bounded range of one agent's messages, in conversation order or in the order they were saved. */
 export function readMessages(
   agentKey: string,
   input: {
@@ -566,55 +418,6 @@ export function acknowledgeMessage(
   }).pipe(agentOperation(agentKey), Effect.withSpan("acknowledgeMessage"));
 }
 
-/** Shared readers validate stored identity keys before interpreting completion. */
-function readAcceptedRow(row: Readonly<Record<string, unknown>>) {
-  return Effect.gen(function* () {
-    const canonicalMessage = readBytes(row, "canonical_message");
-    const message = yield* decodeCanonical(Message, canonicalMessage);
-    requireEqual(message.author.agentId, readText(row, "author_agent_id"));
-    requireEqual(message.msgId, readText(row, "msg_id"));
-    return {
-      message,
-      canonicalMessage,
-      completed: row.completed === 1,
-    };
-  }).pipe(storeOperation, Effect.withSpan("readAcceptedRow"));
-}
-
-function readMessageRows(
-  agentKey: string,
-  rows: ReadonlyArray<Readonly<Record<string, unknown>>>,
-) {
-  return Effect.gen(function* () {
-    return yield* Effect.forEach(
-      rows,
-      (row) =>
-        Effect.gen(function* () {
-          const role = readText(row, "role");
-          if (role !== "request" && role !== "response" && role !== "close") {
-            return yield* new EndpointStoreError({ reason: "corrupt" });
-          }
-          return {
-            operationId: yield* decodeValue(
-              CollectiveId,
-              readText(row, "operation_id"),
-            ),
-            role,
-            destination: yield* decodeValue(
-              Schema.String,
-              readText(row, "destination"),
-            ),
-            reference: yield* decodeValue(MessageReference, {
-              authorAgentId: readText(row, "author_agent_id"),
-              msgId: readText(row, "msg_id"),
-            }),
-          } satisfies StoredCollectiveMessage;
-        }),
-      { concurrency: 1 },
-    );
-  }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveMessages"));
-}
-
 function readOperations(agentKey: string, operationId?: CollectiveId) {
   return Effect.gen(function* () {
     const sql = yield* SqlClient;
@@ -648,29 +451,14 @@ function readOperation(
       readText(row, "origin"),
     );
     const phase = yield* decodeValue(
-      Schema.Literal("collecting", "finalizing", "completed"),
+      Schema.Literal("collecting", "completed"),
       readText(row, "phase"),
     );
-    const closeBytes = readOptionalBytes(row, "canonical_close");
-    const close =
-      closeBytes === undefined
-        ? undefined
-        : yield* readPart(closeBytes, "close");
     const result = yield* readResult(row, operationId);
-    if (close !== undefined) {
-      if (
-        origin !== "remote" ||
-        close.value.operationId !== operationId ||
-        close.message.author.agentId !== creatorAgentId
-      ) {
-        return yield* new EndpointStoreError({ reason: "corrupt" });
-      }
-    }
     const state: OperationState = {
       operationId,
       phase,
       deadlineAt: readInteger(row, "deadline_at"),
-      ...(close === undefined ? {} : { close: close.value }),
       ...(result === undefined ? {} : { result }),
     };
     if (origin === "local") {
@@ -687,10 +475,7 @@ function readOperation(
       }
       return { ...state, origin, request };
     }
-    const request = yield* readPart(
-      readBytes(row, "canonical_request"),
-      "operation",
-    );
+    const request = yield* readRequest(readBytes(row, "canonical_request"));
     if (
       request.value.operationId !== operationId ||
       request.message.author.agentId !== creatorAgentId ||
@@ -716,11 +501,7 @@ function readResult(
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     const item = yield* decodeRuntimeValue(ResultDelivery.fields.item, bytes);
-    if (
-      (item.kind === "result"
-        ? item.result.request.operationId
-        : item.request.operationId) !== operationId
-    ) {
+    if (item.result.request.operationId !== operationId) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     return {
@@ -735,22 +516,7 @@ function readResult(
   });
 }
 
-function readPart(
-  bytes: Uint8Array,
-  kind: "operation",
-): Effect.Effect<
-  { readonly message: Message; readonly value: OperationValue },
-  EndpointStoreError
->;
-
-function readPart(
-  bytes: Uint8Array,
-  kind: "close",
-): Effect.Effect<
-  { readonly message: Message; readonly value: CloseValue },
-  EndpointStoreError
->;
-function readPart(bytes: Uint8Array, kind: "operation" | "close") {
+function readRequest(bytes: Uint8Array) {
   return Effect.gen(function* () {
     const message = yield* decodeRuntimeValue(Message, bytes);
     const value = yield* messageInterpretation(message).pipe(
@@ -759,7 +525,7 @@ function readPart(bytes: Uint8Array, kind: "operation" | "close") {
         () => new EndpointStoreError({ reason: "corrupt" }),
       ),
     );
-    if (Option.isNone(value) || value.value.kind !== kind) {
+    if (Option.isNone(value) || value.value.kind !== "operation") {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     return { message, value: value.value };
@@ -779,7 +545,7 @@ function decodeValue<A, I>(schema: Schema.Schema<A, I>, value: unknown) {
  * Locking the agent's own row serializes one agent's transactions on
  * PostgreSQL, matching SQLite's connection serialization. Nested calls retain
  * the lock until the enclosing transaction commits; other agents use their own
- * rows. Store operations perform no network or model work.
+ * rows.
  */
 function agentOperation(agentKey: string) {
   return <A, E, R>(work: Effect.Effect<A, E, R>) =>

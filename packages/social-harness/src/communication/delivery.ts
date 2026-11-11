@@ -13,9 +13,7 @@ import type {
   Incoming,
   Outgoing,
 } from "./contract.js";
-import { withAgentTransaction } from "../database/transactions.js";
-import { encodeCanonical } from "../encoding/index.js";
-import { AgentCard, type AgentName } from "../identity/agent-cards.js";
+import { AgentCard } from "../identity/agent-cards.js";
 import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
 import { messageHistory } from "./history.js";
@@ -26,21 +24,16 @@ import {
   messageInterpretation,
   RequestError,
 } from "./messages.js";
-import { bindCommunicationMode } from "./mode.js";
 import {
-  acceptMessage,
   acknowledgeMessage,
-  completeMessage,
-  readAcceptedMessage,
+  hasMessage,
   readMessages,
+  saveMessage,
 } from "./store.js";
 
 interface Environment {
   readonly sql: SqlClient;
-  /** With a server agent named, a conversation is that agent and one other. */
-  readonly settings: CommunicationSettings & {
-    readonly serverAgentName?: AgentName;
-  };
+  readonly settings: CommunicationSettings;
 }
 const unavailable = () =>
   new CommunicationError({ reason: "persistence-failed" });
@@ -51,19 +44,17 @@ const agentRow = Schema.Struct({
 });
 
 /** One agent's sends, incoming work and history on this daemon. */
-export function makeDelivery(settings: Environment["settings"]) {
+export function makeDelivery(settings: CommunicationSettings) {
   return Effect.gen(function* () {
     const environment = { sql: yield* SqlClient, settings };
-    yield* claimMode(settings);
     const history = messageHistory({
       agentKey: settings.agentKey,
       local: settings.card,
       maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
-      check: checkHistory(environment),
     });
     const requests = yield* makeRequests(settings.agentKey, {
       self: settings.card,
-      acceptMessage: (message) =>
+      send: (message) =>
         capture(environment, sendMessage(environment, message)).pipe(
           Effect.mapError((error) =>
             error instanceof CommunicationError ? error : unavailable(),
@@ -87,22 +78,10 @@ export function makeDelivery(settings: Environment["settings"]) {
         capture(environment, history.listConversations(query)),
       readHistory: (query) => capture(environment, history.readHistory(query)),
     } satisfies CommunicationService;
-  }).pipe(
-    Effect.mapError((error) =>
-      error instanceof CommunicationError ? error : unavailable(),
-    ),
-    Effect.withSpan("Communication.delivery"),
-  );
+  }).pipe(Effect.withSpan("Communication.delivery"));
 }
 
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
-
-/** A database serves one mode, and in client/server mode one server agent. */
-function claimMode(settings: Environment["settings"]) {
-  return settings.serverAgentName === undefined
-    ? bindCommunicationMode("p2p")
-    : bindCommunicationMode("client-server", settings.serverAgentName);
-}
 
 /** A question starts a request, an answer joins one, and anything else is sent as it is. */
 function send(environment: Environment, requests: Requests, value: Outgoing) {
@@ -138,9 +117,10 @@ function recipientKey({ sql }: Environment, recipient: AgentCard) {
 }
 
 /**
- * Orders one message and saves it for every member, or changes nothing.
- * Members' rows are locked in one fixed order, so sends in opposite directions
- * cannot hold each other's rows.
+ * Orders one message and saves it for every member, or changes nothing. A
+ * message this agent has already sent takes no new position. The sender locks
+ * its own agent and then the conversation, as every other write of an agent
+ * does, so two senders never wait on each other.
  */
 function sendMessage(environment: Environment, message: Message) {
   const { sql, settings } = environment;
@@ -155,64 +135,32 @@ function sendMessage(environment: Environment, message: Message) {
         (recipient) => recipientKey(environment, recipient),
         { concurrency: 1 },
       );
-      yield* claimMode(settings);
-      const agentKeys = [settings.agentKey, ...recipientKeys].sort((a, b) =>
-        a.localeCompare(b),
-      );
-      for (const agentKey of agentKeys) {
-        yield* sql.onDialectOrElse({
-          pg: () =>
-            sql`SELECT agent_key FROM agent_profiles WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
-              Effect.asVoid,
-            ),
-          orElse: () => Effect.void,
-        });
-      }
-      const bytes = yield* encodeCanonical(Message, message);
-      yield* acceptMessage(settings.agentKey, {
-        authorAgentId: message.author.agentId,
-        msgId: message.msgId,
-        conversationId,
-        canonicalMessage: bytes,
-      });
-      const accepted = yield* readAcceptedMessage(settings.agentKey, {
-        authorAgentId: message.author.agentId,
-        msgId: message.msgId,
-      });
-      if (accepted?.completed) {
+      if (yield* hasMessage(settings.agentKey, conversationId, message)) {
         return;
       }
-      yield* sql`INSERT INTO message_sequences(conversation_id,next_ordinal) VALUES(${conversationId},0) ON CONFLICT(conversation_id) DO NOTHING`;
-      const [position] = yield* sql<{
-        nextOrdinal: number;
-      }>`UPDATE message_sequences SET next_ordinal=next_ordinal+1 WHERE conversation_id=${conversationId} RETURNING next_ordinal AS "nextOrdinal"`;
-      if (position === undefined) {
+      const [next] = yield* sql<{
+        ordinal: number;
+      }>`INSERT INTO message_sequences(conversation_id,next_ordinal) VALUES(${conversationId},1)
+        ON CONFLICT(conversation_id) DO UPDATE SET next_ordinal=message_sequences.next_ordinal+1
+        RETURNING next_ordinal-1 AS ordinal`;
+      if (next === undefined) {
         return yield* unavailable();
       }
-      for (const agentKey of agentKeys) {
-        yield* withAgentTransaction(
-          agentKey,
-          completeMessage(
-            agentKey,
-            conversationId,
-            position.nextOrdinal - 1,
-            message,
-          ),
-        );
-      }
+      yield* Effect.forEach(
+        [settings.agentKey, ...recipientKeys],
+        (agentKey) =>
+          saveMessage(agentKey, conversationId, next.ordinal, message),
+        { concurrency: 1, discard: true },
+      );
     }),
   );
 }
 
 /**
  * The conversation a message belongs to: its author and recipients, who must
- * be distinct and include this agent. With a server agent named, they must be
- * that agent and one other.
+ * be distinct, include this agent and be permitted to share a conversation.
  */
-function messageConversation(
-  settings: Environment["settings"],
-  message: Message,
-) {
+function messageConversation(settings: CommunicationSettings, message: Message) {
   return Effect.gen(function* () {
     const members = [message.author, ...message.recipients];
     const [first, second, ...rest] = members
@@ -226,54 +174,37 @@ function messageConversation(
     const local = members.some((member) =>
       Schema.equivalence(AgentCard)(member, settings.card),
     );
-    const { serverAgentName } = settings;
-    const allowed =
-      serverAgentName === undefined ||
-      (members.length === 2 &&
-        members.some((member) => member.agentName === serverAgentName));
-    if (!distinct || !local || !allowed) {
+    if (!distinct || !local || settings.permits?.(members) === false) {
       return yield* invalid();
     }
     return yield* deriveConversationId(memberIds);
   });
 }
 
-/** Fails unless every conversation this agent holds has each position up to the conversation's latest. */
-function checkHistory({ sql, settings }: Environment) {
-  return withAgentTransaction(
-    settings.agentKey,
-    Effect.gen(function* () {
-      const [missing] = yield* sql`SELECT 1 FROM message_log AS message
-      LEFT JOIN message_sequences AS head USING(conversation_id)
-      WHERE message.agent_key=${settings.agentKey}
-      GROUP BY message.conversation_id,head.next_ordinal
-      HAVING head.next_ordinal IS NULL OR COUNT(*)<>head.next_ordinal OR MIN(message.ordinal)<>0 OR MAX(message.ordinal)+1<>head.next_ordinal
-      LIMIT 1`;
-      if (missing !== undefined) {
-        return yield* new CommunicationError({ reason: "history-gap" });
-      }
-    }),
-  ).pipe(Effect.catchTag("SqlError", () => Effect.fail(unavailable())));
-}
-
 /**
- * Hands each pending message, question and result to `handle` in order, then
- * waits for more. A message is marked consumed only after `handle` succeeds.
+ * Hands each pending message and question to `handle` in the order they were
+ * saved, and each result as soon as it is complete, so a result precedes any
+ * message saved after the answer that completed it. An item is marked consumed
+ * only after `handle` succeeds.
  */
 function consume<E, R>(
   environment: Environment,
   requests: Requests,
   handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
 ) {
+  const { agentKey, card } = environment.settings;
+  const results = capture(
+    environment,
+    requests.deliverNextResult((delivery) =>
+      handle({ ...delivery.item, sources: delivery.sources }),
+    ),
+  ).pipe(Effect.repeat({ while: (delivered) => delivered }));
   return Effect.gen(function* () {
     while (true) {
-      yield* capture(environment, checkHistory(environment));
+      yield* results;
       const rows = yield* capture(
         environment,
-        readMessages(environment.settings.agentKey, {
-          pendingFor: environment.settings.card.agentId,
-          limit: 50,
-        }),
+        readMessages(agentKey, { pendingFor: card.agentId, limit: 50 }),
       );
       for (const entry of rows) {
         const classified = yield* capture(
@@ -285,23 +216,12 @@ function consume<E, R>(
         }
         yield* capture(
           environment,
-          acknowledgeMessage(environment.settings.agentKey, {
+          acknowledgeMessage(agentKey, {
             authorAgentId: entry.message.author.agentId,
             msgId: entry.message.msgId,
           }),
         );
-      }
-      while (
-        yield* capture(
-          environment,
-          requests.deliverNextResult((delivery) =>
-            delivery.item.kind === "result"
-              ? handle({ ...delivery.item, sources: delivery.sources })
-              : handle(delivery.item),
-          ),
-        )
-      ) {
-        continue;
+        yield* results;
       }
       yield* Effect.sleep("100 millis");
     }

@@ -32,7 +32,6 @@ export type HistoryQuery =
   | (PaginatedRequest & {
       readonly members: Conversation;
       readonly order?: "oldest";
-      readonly afterMessage?: MessageReference;
     })
   | {
       readonly members: Conversation;
@@ -47,11 +46,6 @@ export interface HistoryPage extends PaginatedResult {
     readonly messageBytes: number;
   }>;
   readonly earlierMessagesOmitted: boolean;
-  /**
-   * This agent's accepted messages that delivery has not ordered yet, in the
-   * order they were accepted. They are not in `entries`.
-   */
-  readonly pendingOutgoing: readonly Message[];
 }
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Named Effect schemas and their decoded values share one public contract. */
 /** Encodes the fixed semantic work that Communication accepts. */
@@ -68,11 +62,6 @@ export const Incoming = Schema.Union(
     kind: Schema.Literal("result"),
     result: RequestResult,
     sources: ResultSources,
-  }),
-  exactStruct({
-    kind: Schema.Literal("request-failed"),
-    request: Request,
-    error: Schema.String,
   }),
 );
 /** Incoming work awaits local policy before the host receives it. */
@@ -123,4 +112,6 @@ export interface CommunicationSettings {
   readonly card: AgentCard;
   /** The most messages one newest-first history read may ask for. */
   readonly maximumHistoryRecords?: number;
+  /** Whether these agents may share a conversation. Without it any may. */
+  readonly permits?: (members: readonly AgentCard[]) => boolean;
 }

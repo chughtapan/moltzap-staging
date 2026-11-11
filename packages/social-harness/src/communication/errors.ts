@@ -9,8 +9,7 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
     | "content-invalid"
     | "persistence-failed"
     | "message-conflict"
-    | "invalid-cursor"
-    | "history-gap";
+    | "invalid-cursor";
 }> {}
 
 /** The reasons a send fails with. */

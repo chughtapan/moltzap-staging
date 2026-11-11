@@ -1,13 +1,12 @@
 /** @file The communication service: accepts messages and questions, and supplies ordered history and incoming work. */
 
 import { Context, Layer } from "effect";
-import type { AgentName } from "../identity/agent-cards.js";
 import type {
   CommunicationService,
   CommunicationSettings,
 } from "./contract.js";
 import { makeDelivery } from "./delivery.js";
-import { bindCommunicationMode } from "./mode.js";
+import { claimMode } from "./mode.js";
 
 /** The values the service accepts, hands over and returns in both modes. */
 export {
@@ -25,29 +24,14 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
   CommunicationService
 >() {
   /**
-   * P2P: any agent on the daemon messages any other, alone or in a group.
-   * `claim` marks the database as P2P before any agent starts and fails if it
-   * already belongs to client/server mode.
+   * Marks the database as serving one mode before any agent starts, and fails
+   * with `membership-invalid` when it already serves another.
    */
-  static readonly p2p = {
-    claim: bindCommunicationMode("p2p"),
-    layer: (settings: CommunicationSettings) =>
-      Layer.scoped(Communication, makeDelivery(settings)),
-  };
+  static readonly claim = claimMode;
 
-  /**
-   * Client/server: every conversation is the server agent and one client.
-   * `claim` marks the database as belonging to this mode and this server
-   * agent, and fails if it belongs to P2P mode or, once messages exist, to
-   * another server agent.
-   */
-  static readonly clientServer = {
-    claim: (serverAgentName: AgentName) =>
-      bindCommunicationMode("client-server", serverAgentName),
-    layer: (
-      settings: CommunicationSettings & { readonly serverAgentName: AgentName },
-    ) => Layer.scoped(Communication, makeDelivery(settings)),
-  };
+  /** The service of the agent `settings` names. */
+  static readonly layer = (settings: CommunicationSettings) =>
+    Layer.scoped(Communication, makeDelivery(settings));
 }
 
 /** Caller failures distinguish refusal from retained or uncertain progress. */

@@ -40,8 +40,9 @@ type OwnershipTables = Record<"owner_bindings", typeof bindingRow.Type> &
   Record<"agent_profiles", typeof profileRow.Type>;
 
 /**
- * The owner's agent has another name than the one asked for, or its record is
- * missing. Carries no account claims.
+ * The owner's agent has another name than the one asked for, the name belongs
+ * to another owner's agent, or the agent's record is missing. Carries no
+ * account claims.
  * Exported so dependent declarations can name the inferred Effect failure.
  * @public
  */
@@ -114,7 +115,12 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
         }
         if (binding.agent_key === candidateKey) {
           yield* executeQuery(
-            queries.insertInto("agent_profiles").values(profile),
+            queries
+              .insertInto("agent_profiles")
+              .values(profile)
+              .onConflict((conflict) =>
+                conflict.column("agent_name").doNothing(),
+              ),
           );
         }
         return yield* ownedKey(binding.agent_key);

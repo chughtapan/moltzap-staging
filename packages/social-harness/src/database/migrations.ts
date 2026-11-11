@@ -10,7 +10,7 @@ import {
 } from "./sql.js";
 
 /** Identifies the table layout. A database with another number is not opened. */
-const daemonDatabaseFormat = 5;
+const daemonDatabaseFormat = 6;
 
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const agentTables = [
@@ -20,10 +20,8 @@ const agentTables = [
   "firewall_checks",
   "firewall_policy",
   "firewall_activations",
-  "message_intents",
   "message_log",
   "collective_operations",
-  "collective_messages",
   "collective_answers",
 ];
 
@@ -106,22 +104,12 @@ const hostSchema = (binary: string, sequence: string) =>
     yield* sql`CREATE INDEX firewall_decisions_time ON firewall_checks(agent_key,decided_at,sequence)`;
   });
 
-/** Accepted and ordered messages, and the questions and answers built on them. */
+/** Each conversation's next position, each agent's messages, and the questions and answers built on them. */
 const messageSchema = (binary: string, sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE communication_mode(singleton INTEGER PRIMARY KEY CHECK(singleton=1), kind TEXT NOT NULL, server_name TEXT NOT NULL)`;
+    yield* sql`CREATE TABLE communication_mode(singleton INTEGER PRIMARY KEY CHECK(singleton=1), kind TEXT NOT NULL)`;
     yield* sql`CREATE TABLE message_sequences(conversation_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL)`;
-    yield* sql.unsafe(`CREATE TABLE message_intents (
-    agent_key TEXT NOT NULL,
-    sequence ${sequence},
-    author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL,
-    conversation_id TEXT NOT NULL,
-    canonical_message ${binary} NOT NULL,
-    UNIQUE (agent_key, author_agent_id, msg_id)
-  )`);
-    yield* sql`CREATE INDEX message_intents_conversation ON message_intents(agent_key,conversation_id)`;
     yield* sql.unsafe(`CREATE TABLE message_log (
     agent_key TEXT NOT NULL, sequence ${sequence}, conversation_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0), author_agent_id TEXT NOT NULL,
@@ -138,24 +126,11 @@ const messageSchema = (binary: string, sequence: string) =>
     origin TEXT NOT NULL CHECK(origin IN ('local','remote')),
     canonical_request ${binary} NOT NULL,
     deadline_at BIGINT NOT NULL,
-    phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','finalizing','completed')),
-    canonical_close ${binary},
+    phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','completed')),
     canonical_result ${binary},
     canonical_answer_refs ${binary},
     delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1)),
     UNIQUE (agent_key, operation_id)
-  )`);
-    yield* sql.unsafe(`CREATE TABLE collective_messages (
-    agent_key TEXT NOT NULL,
-    sequence ${sequence},
-    operation_id TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('request','response','close')),
-    destination TEXT NOT NULL,
-    author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL,
-    FOREIGN KEY (agent_key,operation_id) REFERENCES collective_operations(agent_key,operation_id),
-    UNIQUE (agent_key, operation_id,role,destination),
-    UNIQUE(agent_key,author_agent_id,msg_id)
   )`);
     yield* sql.unsafe(`CREATE TABLE collective_answers (
     agent_key TEXT NOT NULL,
@@ -166,8 +141,6 @@ const messageSchema = (binary: string, sequence: string) =>
     FOREIGN KEY (agent_key,operation_id) REFERENCES collective_operations(agent_key,operation_id),
     UNIQUE (agent_key, operation_id,member)
   )`);
-    yield* sql`CREATE UNIQUE INDEX collective_one_response ON collective_messages(agent_key,operation_id) WHERE role='response'`;
-    yield* sql`CREATE UNIQUE INDEX collective_one_close ON collective_messages(agent_key,operation_id) WHERE role='close'`;
     yield* sql`CREATE INDEX collective_pending_results ON collective_operations(agent_key,delivered) WHERE phase='completed' AND delivered=0`;
   });
 
@@ -199,7 +172,6 @@ const daemonSchema = Effect.gen(function* () {
           }),
         { concurrency: 1, discard: true },
       ),
-    sqlite: () => sql.unsafe(`PRAGMA user_version = ${daemonDatabaseFormat}`),
     orElse: () => Effect.void,
   });
 });
@@ -242,41 +214,14 @@ export const migrateDaemon = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("migrateDaemon"));
 
-/** Runtime only reads schema compatibility and the retained encryption verifier. */
+/** Fails unless the database has this format and `unlockKey` opens it. Changes nothing. */
 export const checkDatabase = Effect.fn("checkDatabase")(
   function* (unlockKey: Redacted.Redacted<Uint8Array>) {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql.onDialectOrElse({
-      sqlite: () =>
-        Effect.gen(function* () {
-          const [version] = yield* sql.unsafe<
-            Readonly<Record<"user_version", number>>
-          >("PRAGMA user_version");
-          if (version?.user_version !== daemonDatabaseFormat) {
-            return yield* new DatabasePreparationError({ reason: "schema" });
-          }
-        }),
-      orElse: () => Effect.void,
-    });
     const [format] = yield* sql<{
       version: number;
     }>`SELECT version FROM database_format WHERE singleton=1`;
     if (format?.version !== daemonDatabaseFormat) {
-      return yield* new DatabasePreparationError({ reason: "schema" });
-    }
-    const expected = yield* migrationLoader;
-    const rows = yield* sql<{
-      readonly migrationId: number;
-      readonly name: string;
-    }>`SELECT migration_id AS "migrationId",name FROM ${sql(migrationsTable)} ORDER BY migration_id`;
-    if (
-      rows.length !== expected.length ||
-      rows.some(
-        (row, index) =>
-          row.migrationId !== expected[index]?.[0] ||
-          row.name !== expected[index]?.[1],
-      )
-    ) {
       return yield* new DatabasePreparationError({ reason: "schema" });
     }
     yield* verifyDatabaseKey(unlockKey);
@@ -340,45 +285,23 @@ export const prepareDatabase = Effect.gen(function* () {
   Effect.withSpan("prepareDatabase"),
 );
 
-/** Only an empty database or the supported reset format can receive migrations. */
+/**
+ * Only an empty database or one already in this format can be prepared. An
+ * empty database may hold the migration ledger table with no rows.
+ */
 function compatibleDatabase() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    if (sql.onDialectOrElse({ pg: () => true, orElse: () => false })) {
-      return yield* compatiblePostgres(sql);
-    }
-    const [version] = yield* sql.unsafe<
-      Readonly<Record<"user_version", number>>
-    >("PRAGMA user_version");
-    if (version?.user_version === daemonDatabaseFormat) {
-      return;
-    }
-    const tables = yield* sql<{
-      readonly name: string;
-    }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`;
-    if (
-      version?.user_version !== 0 ||
-      tables.some((table) => table.name !== migrationsTable)
-    ) {
-      return yield* new DatabasePreparationError({ reason: "schema" });
-    }
-    if (tables.length !== 0) {
-      const [ledger] = yield* sql<{
-        readonly count: number;
-      }>`SELECT COUNT(*) AS count FROM ${sql(migrationsTable)}`;
-      if (Number(ledger?.count) !== 0) {
-        return yield* new DatabasePreparationError({ reason: "schema" });
-      }
-    }
-  });
-}
-
-/** A reset never treats an old PostgreSQL migration ledger as the current layout. */
-function compatiblePostgres(sql: SqlClient.SqlClient) {
-  return Effect.gen(function* () {
-    const tables = yield* sql<{
-      name: string;
-    }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
+    const tables = yield* sql.onDialectOrElse({
+      pg: () =>
+        sql<{
+          name: string;
+        }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`,
+      orElse: () =>
+        sql<{
+          name: string;
+        }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+    });
     if (tables.some((table) => table.name === "database_format")) {
       const [format] = yield* sql<{
         version: number;

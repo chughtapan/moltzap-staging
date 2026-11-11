@@ -20,18 +20,12 @@ import {
   messageMembers,
   type MessageReference,
 } from "./messages.js";
-import {
-  readMessages,
-  readPendingMessages,
-  type StoredMessage,
-} from "./store.js";
+import { readMessages, type StoredMessage } from "./store.js";
 
 interface HistoryInput {
   readonly agentKey: string;
   readonly local: AgentCard;
   readonly maximumHistoryRecords: number;
-  /** Runs before every read and fails when stored history is incomplete. */
-  readonly check: Effect.Effect<void, CommunicationError, SqlClient>;
 }
 interface Environment extends HistoryInput {
   readonly session: string;
@@ -40,7 +34,6 @@ interface Window {
   readonly conversationId: string;
   readonly after: number;
   readonly through: number;
-  readonly reference: string;
   readonly newest: boolean;
   readonly limit: number;
 }
@@ -49,7 +42,6 @@ const cursorSchema = Schema.Struct({
   conversation: Schema.String,
   after: Schema.Int,
   through: Schema.Int,
-  reference: Schema.String,
 });
 const fail = (reason: CommunicationError["reason"]) =>
   new CommunicationError({ reason });
@@ -62,15 +54,15 @@ export function messageHistory(input: HistoryInput) {
   };
   return {
     getConversation: (names: readonly AgentName[]) =>
-      capture(environment, getConversation(environment, names)).pipe(
+      capture(getConversation(environment, names)).pipe(
         Effect.withSpan("getConversation"),
       ),
     listConversations: (query: ConversationQuery = {}) =>
-      capture(environment, listConversations(environment, query)).pipe(
+      capture(listConversations(environment, query)).pipe(
         Effect.withSpan("listConversations"),
       ),
     readHistory: (query: HistoryQuery) =>
-      capture(environment, readHistory(environment, query)).pipe(
+      capture(readHistory(environment, query)).pipe(
         Effect.withSpan("readHistory"),
       ),
   };
@@ -144,7 +136,6 @@ function readHistory(environment: Environment, query: HistoryQuery) {
             conversation: window.conversationId,
             after: last.ordinal,
             through: window.through,
-            reference: window.reference,
           })
         : undefined;
     if (window.newest) {
@@ -161,16 +152,9 @@ function readHistory(environment: Environment, query: HistoryQuery) {
         ),
       { concurrency: 1 },
     );
-    const pendingOutgoing = yield* readPendingMessages(
-      environment.agentKey,
-      window.conversationId,
-    );
     return {
       entries,
-      pendingOutgoing,
-      earlierMessagesOmitted: window.newest
-        ? selected.length > window.limit
-        : window.reference !== "",
+      earlierMessagesOmitted: window.newest && selected.length > window.limit,
       ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   });
@@ -247,24 +231,14 @@ function historyWindow(environment: Environment, query: HistoryQuery) {
                 conversationId,
                 query.beforeMessage,
               )) - 1,
-        reference: "",
         newest: true,
         limit: query.limit,
       };
     }
-    const after =
-      query.afterMessage === undefined
-        ? -1
-        : yield* position(environment, conversationId, query.afterMessage);
-    const reference =
-      query.afterMessage === undefined
-        ? ""
-        : `${query.afterMessage.authorAgentId}:${query.afterMessage.msgId}`;
     const window = {
       conversationId,
-      after,
+      after: -1,
       through,
-      reference,
       newest: false,
       limit: 50,
     };
@@ -294,6 +268,7 @@ function historyConversation(environment: Environment, members: Conversation) {
   });
 }
 
+/** The position of a message this agent's history holds in the conversation. */
 function position(
   environment: Environment,
   conversationId: string,
@@ -307,16 +282,7 @@ function position(
         ordinal: number;
       }>`SELECT ordinal FROM message_log WHERE agent_key=${environment.agentKey} AND conversation_id=${conversationId} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`,
     );
-    if (row === undefined) {
-      return yield* fail("history-gap");
-    }
-    yield* read(environment, {
-      conversationId,
-      after: row.ordinal - 1,
-      through: row.ordinal,
-      limit: 1,
-    });
-    return row.ordinal;
+    return row === undefined ? yield* fail("content-invalid") : row.ordinal;
   });
 }
 
@@ -331,8 +297,7 @@ function continueWindow(
     ).pipe(Effect.mapError(() => fail("invalid-cursor")));
     const sameRequest =
       cursor.session === environment.session &&
-      cursor.conversation === window.conversationId &&
-      cursor.reference === window.reference;
+      cursor.conversation === window.conversationId;
     const validBounds =
       cursor.after >= window.after &&
       cursor.after <= cursor.through &&
@@ -344,50 +309,38 @@ function continueWindow(
   });
 }
 
-/** Every ordinal is retained even when its collective control message is hidden from application history. */
+/** The window's messages in its order, without the closes of questions, up to one past its limit. */
 function scanWindow(environment: Environment, window: Window) {
   return Effect.gen(function* () {
     const selected: StoredMessage[] = [];
-    const step = window.newest ? -1 : 1;
-    let next = window.newest ? window.through : window.after + 1;
-    while (next > window.after && next <= window.through) {
-      const rows = yield* readWindowChunk(environment, window, next, step);
+    let { after, through } = window;
+    while (after < through) {
+      const rows = yield* read(environment, {
+        conversationId: window.conversationId,
+        after,
+        through,
+        newest: window.newest,
+        limit: 50,
+      });
+      const last = rows.at(-1);
+      if (last === undefined) {
+        break;
+      }
       for (const row of rows) {
         if (yield* applicationMessage(row.message)) {
           selected.push(row);
         }
-        next += step;
         if (selected.length > window.limit) {
           return selected;
         }
       }
+      if (window.newest) {
+        through = last.ordinal - 1;
+      } else {
+        after = last.ordinal;
+      }
     }
     return selected;
-  });
-}
-
-/** A chunk must cover every expected ordinal even if application history hides control messages. */
-function readWindowChunk(
-  environment: Environment,
-  window: Window,
-  next: number,
-  step: number,
-) {
-  return Effect.gen(function* () {
-    const rows = yield* read(environment, {
-      conversationId: window.conversationId,
-      after: window.newest ? window.after : next - 1,
-      through: window.newest ? next : window.through,
-      newest: window.newest,
-      limit: 50,
-    });
-    if (
-      rows.length === 0 ||
-      rows.some((row, index) => row.ordinal !== next + step * index)
-    ) {
-      return yield* fail("history-gap");
-    }
-    return rows;
   });
 }
 
@@ -427,29 +380,14 @@ function compareText(a: string, b: string) {
 function membersOf(message: Message) {
   const [first, second, ...rest] = messageMembers(message);
   return first === undefined || second === undefined
-    ? Effect.fail(fail("history-gap"))
+    ? Effect.fail(fail("persistence-failed"))
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
-function capture<A, E, R>(
-  environment: Environment,
-  work: Effect.Effect<A, E, R>,
-) {
-  return environment.check.pipe(
-    Effect.zipRight(work),
-    Effect.mapError((error) => {
-      if (error instanceof CommunicationError) {
-        return error;
-      }
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "_tag" in error &&
-        error._tag === "SqlError"
-      ) {
-        return fail("persistence-failed");
-      }
-      return fail("history-gap");
-    }),
+function capture<A, E, R>(work: Effect.Effect<A, E, R>) {
+  return work.pipe(
+    Effect.mapError((error) =>
+      error instanceof CommunicationError ? error : fail("persistence-failed"),
+    ),
   );
 }

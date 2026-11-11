@@ -102,8 +102,6 @@ const historyFailureText = {
   "unknown-agent": "an agent the address names is not a known agent",
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
-  "history-gap":
-    "part of this conversation is not available yet; try again shortly",
   "persistence-failed": "the conversation could not be read; try again",
 } as const;
 
@@ -115,7 +113,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
       "invalid-address",
       "unknown-agent",
       "invalid-cursor",
-      "history-gap",
       "persistence-failed",
     ),
   },
@@ -293,7 +290,11 @@ function makeHarness<R>(
           const request = structuredClone(input);
           return Effect.gen(function* () {
             if (settings.hideGroups && request.to.startsWith("group:")) {
-              return yield* new SendError({ reason: "content-invalid" });
+              return yield* new SendError({
+                reason: "invalid-address",
+                detail:
+                  "this daemon does not offer groups; address one agent as agent:<name>",
+              });
             }
             const communication = yield* active;
             const destination = yield* canonicalMessageAddress(
@@ -536,7 +537,7 @@ function makeHarness<R>(
               : undefined;
           if (position.phase === "messages" && members === undefined) {
             if (position.communication !== undefined) {
-              return yield* new HistoryError({ reason: "history-gap" });
+              return yield* new HistoryError({ reason: "invalid-cursor" });
             }
             if (position.through === 0) {
               yield* identity.resolve(names);
@@ -822,20 +823,11 @@ function evidenceFor(
             }),
       })
       .pipe(
-        Effect.catchTag("CommunicationError", (error) =>
-          error.reason === "history-gap"
-            ? Effect.succeed(undefined)
-            : Effect.fail(new InboxError({ reason: "persistence-failed" })),
+        Effect.catchTag(
+          "CommunicationError",
+          () => new InboxError({ reason: "persistence-failed" }),
         ),
       );
-    if (page === undefined) {
-      return {
-        history: [],
-        earlierHistoryOmitted: false,
-        pendingOutgoing: [],
-        gaps: ["The preceding conversation history is unavailable."],
-      };
-    }
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
     for (const entry of [...page.entries].reverse()) {
@@ -853,7 +845,6 @@ function evidenceFor(
       history,
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
-      pendingOutgoing: page.pendingOutgoing,
       gaps:
         recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
@@ -884,8 +875,6 @@ function incomingParticipants(incoming: Incoming): readonly AgentCard[] {
         incoming.result.request.author,
         ...incoming.result.request.recipients,
       ];
-    case "request-failed":
-      return [incoming.request.author, ...incoming.request.recipients];
     default:
       return absurd(incoming);
   }
@@ -914,7 +903,6 @@ function sendFailure(error: CommunicationError): SendError {
     case "message-conflict":
       return new SendError({ reason: error.reason });
     case "invalid-cursor":
-    case "history-gap":
       return new SendError({ reason: "persistence-failed" });
     default:
       return absurd(error.reason);
@@ -942,10 +930,12 @@ function historyFailure(error: unknown): HistoryError {
     });
   }
   if (error instanceof CommunicationError) {
-    if (error.reason === "invalid-cursor" || error.reason === "history-gap") {
-      return new HistoryError({ reason: error.reason });
-    }
-    return new HistoryError({ reason: "persistence-failed" });
+    return new HistoryError({
+      reason:
+        error.reason === "invalid-cursor"
+          ? "invalid-cursor"
+          : "persistence-failed",
+    });
   }
   return new HistoryError({ reason: "invalid-address" });
 }
