@@ -703,7 +703,7 @@ const FormFieldSchema = Schema.transformOrFail(Schema.Unknown, FormFieldValue, {
 type MessageContent = typeof Content.Type;
 
 /** The `data` part key under which the collective layer carries its value. */
-export const COLLECTIVE_DATA_KEY = "org.social-harness/collective";
+const COLLECTIVE_DATA_KEY = "org.social-harness/collective";
 
 /**
  * The MCP form-mode `requestedSchema`: a flat object of primitive properties.
@@ -807,7 +807,7 @@ const CollectiveCarrier = Schema.Struct({
  * @param value The value found under `COLLECTIVE_DATA_KEY`.
  * @returns The validated value.
  */
-export const decodeCollectiveValue = Schema.decodeUnknown(CollectiveValue);
+const decodeCollectiveValue = Schema.decodeUnknown(CollectiveValue);
 
 /**
  * The string formats a form-mode string field may require of an answer.
@@ -822,7 +822,7 @@ export const decodeCollectiveValue = Schema.decodeUnknown(CollectiveValue);
  */
 
 /** The formats a form-mode string field may name. */
-export type AnswerFormat = "email" | "uri" | "date" | "date-time";
+type AnswerFormat = "email" | "uri" | "date" | "date-time";
 
 const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -1282,18 +1282,6 @@ export function collectiveRequesterOf(operationId: CollectiveId): AgentId {
   );
 }
 
-/** Distinct requesters retain distinct operation IDs even when their random bytes match. */
-export function mintCollectiveId(requester: AgentId) {
-  return Effect.sync(() =>
-    decodeCollectiveId(
-      `col_${Buffer.concat([
-        Buffer.from(requester.slice(4), "base64url"),
-        randomBytes(32),
-      ]).toString("base64url")}`,
-    ),
-  );
-}
-
 /**
  * Build message content from a collective value and optional message text. The
  * public `Content` schema applies the one canonical size limit.
@@ -1316,29 +1304,6 @@ export function encodeCollectiveContent(
       Effect.fail(new CollectiveContentError()),
     ),
   );
-}
-
-/**
- * Whether a string satisfies a format.
- * @param format The format a string field names.
- * @param text The answer's string.
- * @returns True when the string is in the format.
- */
-export function matchesFormat(format: AnswerFormat, text: string): boolean {
-  switch (format) {
-    case "email":
-      return EMAIL.test(text);
-    case "uri":
-      return URI.test(text);
-    case "date":
-      return isDate(text);
-    case "date-time":
-      return isDateTime(text);
-    default: {
-      const exhaustive: never = format;
-      return exhaustive;
-    }
-  }
 }
 
 /**
@@ -1415,7 +1380,7 @@ export function validateAnswer(
     : Effect.fail([first, ...rest]);
 }
 
-/** Private protocol consumers reuse the interpretation made by the owning reader. */
+/** The collective value a message carries, read once for each decoded message. */
 export function messageInterpretation(
   message: Message,
 ): Effect.Effect<Option.Option<CollectiveValue>, CollectivePartInvalidError> {
@@ -1433,31 +1398,6 @@ export function messageInterpretation(
       onSuccess: (value) =>
         Effect.sync(() => interpretations.set(message, Either.right(value))),
     }),
-  );
-}
-
-/**
- * Find and decode the collective value in one message's content.
- * @param content Message content.
- * @returns The decoded value, or none when the content carries no collective part.
- */
-export function readCollectiveValue(
-  content: MessageContent,
-): Effect.Effect<Option.Option<CollectiveValue>, CollectivePartInvalidError> {
-  const [only, ...rest] = content.flatMap((part) =>
-    Option.toArray(collectivePartValue(part)),
-  );
-  if (only === undefined) {
-    return Effect.succeed(Option.none());
-  }
-  if (rest.length > 0) {
-    return Effect.fail(new CollectivePartInvalidError({ reason: "duplicate" }));
-  }
-  return decodeCollectiveValue(only).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new CollectivePartInvalidError({ reason: "malformed" })),
-    ),
   );
 }
 
@@ -1489,25 +1429,6 @@ export function messageFromParticipants(
   );
 }
 
-/** Constructs one message from fixed participants and the author's retained content. */
-export function messageFromIntent(
-  members: readonly AgentCard[],
-  intent: {
-    readonly authorAgentId: AgentId;
-    readonly msgId: MsgId;
-    readonly content: Content;
-  },
-) {
-  return Schema.decodeUnknown(Message)({
-    msgId: intent.msgId,
-    author: members.find((member) => member.agentId === intent.authorAgentId),
-    recipients: members
-      .filter((member) => member.agentId !== intent.authorAgentId)
-      .sort((left, right) => compareAscii(left.agentName, right.agentName)),
-    content: intent.content,
-  });
-}
-
 /** Includes the author and every recipient in agent-name order. */
 export function messageMembers(message: Participants): readonly AgentCard[] {
   return [message.author, ...message.recipients].sort((left, right) =>
@@ -1531,6 +1452,43 @@ export function isReceivedRequest(
   message: Message,
 ): message is ReceivedRequest {
   return message.operation?.kind === "request";
+}
+
+/** Distinct requesters retain distinct operation IDs even when their random bytes match. */
+function mintCollectiveId(requester: AgentId) {
+  return Effect.sync(() =>
+    decodeCollectiveId(
+      `col_${Buffer.concat([
+        Buffer.from(requester.slice(4), "base64url"),
+        randomBytes(32),
+      ]).toString("base64url")}`,
+    ),
+  );
+}
+
+/**
+ * Find and decode the collective value in one message's content.
+ * @param content Message content.
+ * @returns The decoded value, or none when the content carries no collective part.
+ */
+function readCollectiveValue(
+  content: MessageContent,
+): Effect.Effect<Option.Option<CollectiveValue>, CollectivePartInvalidError> {
+  const [only, ...rest] = content.flatMap((part) =>
+    Option.toArray(collectivePartValue(part)),
+  );
+  if (only === undefined) {
+    return Effect.succeed(Option.none());
+  }
+  if (rest.length > 0) {
+    return Effect.fail(new CollectivePartInvalidError({ reason: "duplicate" }));
+  }
+  return decodeCollectiveValue(only).pipe(
+    Effect.map(Option.some),
+    Effect.catchTag("ParseError", () =>
+      Effect.fail(new CollectivePartInvalidError({ reason: "malformed" })),
+    ),
+  );
 }
 
 function hasWellFormedUnicode(value: string): boolean {
@@ -1699,74 +1657,6 @@ function collectivePartValue(
     : Option.none();
 }
 
-/** An RFC 3339 date and time, split at `T` or whitespace. */
-function isDateTime(text: string): boolean {
-  const parts = text.split(DATE_TIME_SEPARATOR);
-  if (parts.length !== 2) {
-    return false;
-  }
-  const [date = "", time = ""] = parts;
-  return isDate(date) && isTime(time);
-}
-
-function isDate(text: string): boolean {
-  const match = DATE.exec(text);
-  return (
-    match !== null &&
-    isCalendarDay(Number(match[1]), Number(match[2]), Number(match[3]))
-  );
-}
-
-function isCalendarDay(year: number, month: number, day: number): boolean {
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
-}
-
-function daysIn(year: number, month: number): number {
-  return month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month] ?? 0);
-}
-
-function isLeapYear(year: number): boolean {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
-/** An RFC 3339 full-time, offset included. */
-function isTime(text: string): boolean {
-  const match = TIME.exec(text);
-  if (match === null) {
-    return false;
-  }
-  const time: ClockTime = {
-    hour: Number(match[1]),
-    minute: Number(match[2]),
-    second: Number(match[3]),
-    offsetSign: match[5] === "-" ? -1 : 1,
-    offsetHour: Number(match[6] ?? 0),
-    offsetMinute: Number(match[7] ?? 0),
-  };
-  return (
-    time.offsetHour <= 23 &&
-    time.offsetMinute <= 59 &&
-    (isOrdinaryTime(time) || isLeapSecond(time))
-  );
-}
-
-function isOrdinaryTime({ hour, minute, second }: ClockTime): boolean {
-  return hour <= 23 && minute <= 59 && second < 60;
-}
-
-/**
- * A second numbered 60 is a leap second only when the reading, shifted to
- * UTC, is 23:59; -1 is that instant reached by borrowing across midnight.
- */
-function isLeapSecond(time: ClockTime): boolean {
-  const utcMinute = time.minute - time.offsetMinute * time.offsetSign;
-  const utcHour =
-    time.hour - time.offsetHour * time.offsetSign - (utcMinute < 0 ? 1 : 0);
-  const lastHour = utcHour === 23 || utcHour === -1;
-  const lastMinute = utcMinute === 59 || utcMinute === -1;
-  return lastHour && lastMinute && time.second < 61;
-}
-
 function fieldFailure(
   requestedSchema: RequestedSchema,
   content: AnswerContent,
@@ -1920,6 +1810,97 @@ function formatIssues(field: FormField, value: AnswerValue): readonly string[] {
   return matchesFormat(field.format, value)
     ? []
     : [`format: must match format "${field.format}"`];
+}
+
+/**
+ * Whether a string satisfies a format.
+ * @param format The format a string field names.
+ * @param text The answer's string.
+ * @returns True when the string is in the format.
+ */
+function matchesFormat(format: AnswerFormat, text: string): boolean {
+  switch (format) {
+    case "email":
+      return EMAIL.test(text);
+    case "uri":
+      return URI.test(text);
+    case "date":
+      return isDate(text);
+    case "date-time":
+      return isDateTime(text);
+    default: {
+      const exhaustive: never = format;
+      return exhaustive;
+    }
+  }
+}
+
+/** An RFC 3339 date and time, split at `T` or whitespace. */
+function isDateTime(text: string): boolean {
+  const parts = text.split(DATE_TIME_SEPARATOR);
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [date = "", time = ""] = parts;
+  return isDate(date) && isTime(time);
+}
+
+function isDate(text: string): boolean {
+  const match = DATE.exec(text);
+  return (
+    match !== null &&
+    isCalendarDay(Number(match[1]), Number(match[2]), Number(match[3]))
+  );
+}
+
+function isCalendarDay(year: number, month: number, day: number): boolean {
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
+}
+
+function daysIn(year: number, month: number): number {
+  return month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month] ?? 0);
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+/** An RFC 3339 full-time, offset included. */
+function isTime(text: string): boolean {
+  const match = TIME.exec(text);
+  if (match === null) {
+    return false;
+  }
+  const time: ClockTime = {
+    hour: Number(match[1]),
+    minute: Number(match[2]),
+    second: Number(match[3]),
+    offsetSign: match[5] === "-" ? -1 : 1,
+    offsetHour: Number(match[6] ?? 0),
+    offsetMinute: Number(match[7] ?? 0),
+  };
+  return (
+    time.offsetHour <= 23 &&
+    time.offsetMinute <= 59 &&
+    (isOrdinaryTime(time) || isLeapSecond(time))
+  );
+}
+
+function isOrdinaryTime({ hour, minute, second }: ClockTime): boolean {
+  return hour <= 23 && minute <= 59 && second < 60;
+}
+
+/**
+ * A second numbered 60 is a leap second only when the reading, shifted to
+ * UTC, is 23:59; -1 is that instant reached by borrowing across midnight.
+ */
+function isLeapSecond(time: ClockTime): boolean {
+  const utcMinute = time.minute - time.offsetMinute * time.offsetSign;
+  const utcHour =
+    time.hour - time.offsetHour * time.offsetSign - (utcMinute < 0 ? 1 : 0);
+  const lastHour = utcHour === 23 || utcHour === -1;
+  const lastMinute = utcMinute === 59 || utcMinute === -1;
+  return lastHour && lastMinute && time.second < 61;
 }
 
 function enumIssues(field: FormField, value: AnswerValue): readonly string[] {

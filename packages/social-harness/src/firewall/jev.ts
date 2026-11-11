@@ -6,7 +6,7 @@ import {
   HttpClientRequest,
   type HttpClientResponse,
 } from "@effect/platform";
-import { Effect, Option, Redacted, Schema, Stream } from "effect";
+import { Effect, Redacted, Schema, Stream } from "effect";
 import {
   type DecisionProvider,
   DecisionProviderError,
@@ -38,16 +38,6 @@ const wireResponse = Schema.Struct({
     value: Schema.NonNegativeInt,
   }),
 });
-
-/** The model and usage of a body that parses that far, whatever else it carries. */
-const reportedUsage = Schema.decodeUnknownOption(
-  Schema.parseJson(
-    Schema.Struct({
-      model: wireResponse.fields.model,
-      usage: wireResponse.fields.usage,
-    }),
-  ),
-);
 
 const prepareJevRequest = Effect.fn("MessagePolicy.Jev.prepareRequest")(
   function* (
@@ -114,7 +104,6 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
         reason: "http",
         status: response.status,
         response: raw,
-        ...accountingOf(raw),
       });
     }
     const value = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
@@ -125,7 +114,6 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
           new DecisionProviderError({
             reason: "invalid-response",
             response: raw,
-            ...accountingOf(raw),
           }),
         ),
       ),
@@ -203,16 +191,6 @@ export function makeJevDecisionProvider(options: {
         }),
       ),
   };
-}
-
-/** Retains reported model and usage even when the call's answers fail. */
-function accountingOf(raw: string) {
-  return Option.match(reportedUsage(raw), {
-    onNone: () => ({}),
-    onSome: ({ model, usage }) => ({
-      accounting: { provider: providerName, model, usage },
-    }),
-  });
 }
 
 /** Decode JSON escapes before scrubbing so encoded credential echoes stay private. */

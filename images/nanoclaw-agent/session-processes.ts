@@ -204,12 +204,6 @@ export type ValidateSpec = (
 /** NanoClaw's constructor for the `spec-invalid` failure the driver throws. */
 export type SpecInvalid = (detail: string) => Error;
 
-/** Where the driver projects container paths and how it reports refusals. */
-export interface MountOptions {
-  readonly resolveContainerPath?: (path: string) => string;
-  readonly specInvalid?: SpecInvalid;
-}
-
 /**
  * NanoClaw's `onHostShutdown`: the host's graceful shutdown awaits each
  * registered callback before it tears down its channels and exits.
@@ -217,18 +211,15 @@ export interface MountOptions {
 export type OnHostShutdown = (stop: () => Promise<undefined>) => void;
 
 /**
- * Maps session paths into the outer container. The `baseEnvironment` option replaces
- * inherited variables. Its default permits only Claude Code credentials,
- * telemetry, provider proxy and basic process settings.
+ * Maps session paths into the outer container. The agent inherits only Claude
+ * Code credentials, telemetry, provider proxy and basic process settings.
  */
 export interface ProcessDriverOptions {
   readonly policy: unknown;
   readonly validateSpec: ValidateSpec;
   readonly specInvalid: SpecInvalid;
   readonly onHostShutdown: OnHostShutdown;
-  readonly resolveContainerPath?: (path: string) => string;
-  readonly workingDirectory?: string;
-  readonly baseEnvironment?: Readonly<Record<string, string>>;
+  readonly resolveContainerPath: (path: string) => string;
 }
 
 /** The NanoClaw seams `installProcessSessionDriver` uses. */
@@ -273,33 +264,6 @@ interface DriverState {
 }
 
 /**
- * Project a validated container mount list into the already-isolated outer
- * application container. The shallowest target is linked first so nested
- * mounts are resolved inside the selected session workspace.
- */
-export async function materializeProcessMounts(
-  mounts: readonly MountSpec[],
-  options: MountOptions = {},
-): Promise<undefined> {
-  const resolveContainerPath =
-    options.resolveContainerPath ?? ((path: string) => path);
-  const specInvalid =
-    options.specInvalid ?? ((detail: string) => new Error(detail));
-  const ordered = [...mounts].sort(
-    (left, right) => left.containerPath.length - right.containerPath.length,
-  );
-  for (const mount of ordered) {
-    const target = resolveContainerPath(mount.containerPath);
-    if (!isAbsolute(target)) {
-      throw specInvalid(
-        `process-driver resolved a relative mount target: ${target}`,
-      );
-    }
-    await replaceWithSymlink(target, mount.hostPath, specInvalid);
-  }
-}
-
-/**
  * The first prepared key binds this container to one session identity. Other
  * keys and preparations after host shutdown fail. Host shutdown stops the session.
  */
@@ -311,10 +275,9 @@ export function createProcessSessionDriver(
       policy: options.policy,
       validateSpec: options.validateSpec,
       specInvalid: options.specInvalid,
-      resolveContainerPath:
-        options.resolveContainerPath ?? ((path: string) => path),
-      workingDirectory: options.workingDirectory ?? DEFAULT_WORKING_DIRECTORY,
-      baseEnvironment: options.baseEnvironment ?? defaultBaseEnvironment(),
+      resolveContainerPath: options.resolveContainerPath,
+      workingDirectory: DEFAULT_WORKING_DIRECTORY,
+      baseEnvironment: defaultBaseEnvironment(),
     },
     watchers: new Map(),
   };
@@ -645,12 +608,8 @@ async function materializeRecord(
   record: SessionRecord,
   mounts: readonly MountSpec[],
 ): Promise<undefined> {
-  const { resolveContainerPath, specInvalid } = state.settings;
   try {
-    await materializeProcessMounts(mounts, {
-      resolveContainerPath,
-      specInvalid,
-    });
+    await materializeProcessMounts(mounts, state.settings);
   } catch (error) {
     record.status = {
       phase: "failed",
@@ -664,6 +623,29 @@ async function materializeRecord(
   }
   record.status = { phase: "ready" };
   emit(state, "phase");
+}
+
+/**
+ * Project a validated container mount list into the already-isolated outer
+ * application container. The shallowest target is linked first so nested
+ * mounts are resolved inside the selected session workspace.
+ */
+async function materializeProcessMounts(
+  mounts: readonly MountSpec[],
+  { resolveContainerPath, specInvalid }: DriverSettings,
+): Promise<undefined> {
+  const ordered = [...mounts].sort(
+    (left, right) => left.containerPath.length - right.containerPath.length,
+  );
+  for (const mount of ordered) {
+    const target = resolveContainerPath(mount.containerPath);
+    if (!isAbsolute(target)) {
+      throw specInvalid(
+        `process-driver resolved a relative mount target: ${target}`,
+      );
+    }
+    await replaceWithSymlink(target, mount.hostPath, specInvalid);
+  }
 }
 
 function emit(state: DriverState, kind: SessionEvent["kind"]): void {

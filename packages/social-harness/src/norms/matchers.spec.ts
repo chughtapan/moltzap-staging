@@ -246,46 +246,6 @@ describe("norms.unparsed", () => {
     }));
 });
 
-describe("norm agreement", () => {
-  const matchers = holding("examples/group-meeting.lisp");
-
-  it("lets a norm start once every member accepts it", () =>
-    Effect.gen(function* () {
-      const history = yield* agreement(["accept-proposal", "accept-proposal"]);
-
-      const result = yield* check(
-        "norms.nonconforming",
-        matchers,
-        outgoing(yield* from(alice, group, cfp), history),
-      );
-
-      expect(result).toEqual({ matched: false });
-    }));
-
-  it.each([
-    { when: "one member has not answered", answers: ["accept-proposal"] },
-    {
-      when: "one member rejected it",
-      answers: ["accept-proposal", "reject-proposal"],
-    },
-  ])("refuses to start a norm when $when", ({ answers }) =>
-    Effect.gen(function* () {
-      const history = yield* agreement(answers);
-
-      const result = yield* check(
-        "norms.nonconforming",
-        matchers,
-        outgoing(yield* from(alice, group, cfp), history),
-      );
-
-      expect(result).toMatchObject({
-        matched: true,
-        detail: { reason: "no-agreement", norm: "group-meeting" },
-      });
-    }),
-  );
-});
-
 describe("agreement races, consent and order", () => {
   const matchers = holding("examples/group-meeting.lisp");
 
@@ -375,8 +335,13 @@ describe("agreement races, consent and order", () => {
             const result = Effect.runSync(
               check("norms.nonconforming", matchers, outgoing(start, history)),
             );
-            expect(result.matched).toBe(
-              !(fromBob === "accept" && fromCarol === "accept"),
+            expect(result).toMatchObject(
+              fromBob === "accept" && fromCarol === "accept"
+                ? { matched: false }
+                : {
+                    matched: true,
+                    detail: { reason: "no-agreement", norm: "group-meeting" },
+                  },
             );
           },
         ),
@@ -403,20 +368,18 @@ describe("agreement answers", () => {
       });
     }));
 
-  it("names the answers to the open proposal when a member proposes over it", () =>
+  it("names the answers to the open proposal when another member proposes over it, and none to its proposer", () =>
     Effect.gen(function* () {
+      const matchers = holding("examples/office-hours.lisp");
       const pair = [alice, bob];
       const proposal =
         '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")';
       const open = yield* from(alice, pair, proposal);
       const over = yield* from(bob, pair, proposal);
+      const again = yield* from(alice, pair, proposal);
 
       expect(
-        yield* check(
-          "norms.nonconforming",
-          holding("examples/office-hours.lisp"),
-          outgoing(over, [open]),
-        ),
+        yield* check("norms.nonconforming", matchers, outgoing(over, [open])),
       ).toEqual({
         matched: true,
         detail: {
@@ -425,6 +388,12 @@ describe("agreement answers", () => {
           error:
             "acts you may send now: (accept-proposal :ontology norm-agreement), (reject-proposal :ontology norm-agreement)",
         },
+      });
+      expect(
+        yield* check("norms.nonconforming", matchers, outgoing(again, [open])),
+      ).toEqual({
+        matched: true,
+        detail: { reason: "in-flight", norm: "norm-agreement" },
       });
     }));
 });
@@ -594,23 +563,21 @@ describe("a peer's act out of turn", () => {
     }));
 });
 
+const student = (text: string) => from(bob, [alice, bob], text);
+const professor = (text: string) => from(alice, [alice, bob], text);
+const offer =
+  '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
+
+/** The student proposes office-hours, the professor accepts, and the student asks to meet. */
+const asked = Effect.all([
+  student('(propose :ontology norm-agreement :norm office-hours :task "Meet")'),
+  professor("(accept-proposal :ontology norm-agreement)"),
+  student('(request :ontology office-hours :topic "Project scope")'),
+]);
+
 describe("office hours: offers and escalation", () => {
   const matchers = holding("examples/office-hours.lisp");
-  const pair = [alice, bob];
-  const student = (text: string) => from(bob, pair, text);
-  const professor = (text: string) => from(alice, pair, text);
-  const offer =
-    '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
   const none = "(reject-proposal :ontology office-hours)";
-
-  /** The student proposes office-hours, the professor accepts, and the student asks to meet. */
-  const asked = Effect.all([
-    student(
-      '(propose :ontology norm-agreement :norm office-hours :task "Meet")',
-    ),
-    professor("(accept-proposal :ontology norm-agreement)"),
-    student('(request :ontology office-hours :topic "Project scope")'),
-  ]);
 
   it("allows an offer only while fewer than two rounds were declined", () =>
     Effect.gen(function* () {
@@ -665,7 +632,7 @@ describe("office hours: offers and escalation", () => {
       ).toEqual({ matched: false });
     }));
 
-  it("lets the professor escalate only once the student declines an offer", () =>
+  it("lets the professor escalate only once the student declines an offer, which ends the task", () =>
     Effect.gen(function* () {
       const requested = yield* asked;
       const declined = [
@@ -697,9 +664,23 @@ describe("office hours: offers and escalation", () => {
           outgoing(escalate, declined),
         ),
       ).toEqual({ matched: false });
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(
+            yield* student('(request :ontology office-hours :topic "Again")'),
+            [...declined, escalate],
+          ),
+        ),
+      ).toMatchObject({ matched: true, detail: { reason: "no-agreement" } });
     }));
+});
 
-  it("lets each side send only its own acts", () =>
+describe("office hours: turns and holds", () => {
+  const matchers = holding("examples/office-hours.lisp");
+
+  it("lets each side send only its own acts, and names the student's answers while an offer waits", () =>
     Effect.gen(function* () {
       const history = yield* asked;
       const studentOffer = yield* student(offer);
@@ -714,6 +695,54 @@ describe("office hours: offers and escalation", () => {
         matched: true,
         detail: { reason: "out-of-turn", norm: "office-hours" },
       });
+      expect(
+        yield* check(
+          "norms.nonconforming",
+          matchers,
+          outgoing(studentOffer, [...history, yield* professor(offer)]),
+        ),
+      ).toMatchObject({
+        detail: {
+          error:
+            "acts you may send now: (accept-proposal :ontology office-hours), (reject-proposal :ontology office-hours)",
+        },
+      });
+    }));
+
+  it("lets the professor confirm, offer again or refuse only once the student checks back on the slots it named", () =>
+    Effect.gen(function* () {
+      const named = [
+        ...(yield* asked),
+        yield* professor(offer),
+        yield* student(
+          "(accept-proposal :ontology office-hours :available (1 2))",
+        ),
+      ];
+      const checkedBack = [
+        ...named,
+        yield* professor("(agree :ontology office-hours :recheck-after 5)"),
+        yield* student("(query-if :ontology office-hours)"),
+      ];
+      const confirm = yield* professor(
+        '(confirm :ontology office-hours :slot "Tue 14:00")',
+      );
+      const judged = (act: Message, history: readonly Message[]) =>
+        check("norms.nonconforming", matchers, outgoing(act, history));
+
+      expect(yield* judged(confirm, named)).toMatchObject({
+        matched: true,
+        detail: { reason: "out-of-turn" },
+      });
+      expect(yield* judged(confirm, checkedBack)).toEqual({ matched: false });
+      expect(yield* judged(yield* professor(offer), checkedBack)).toEqual({
+        matched: false,
+      });
+      expect(
+        yield* judged(
+          yield* professor("(refuse :ontology office-hours)"),
+          checkedBack,
+        ),
+      ).toEqual({ matched: false });
     }));
 });
 

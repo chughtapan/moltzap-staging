@@ -6,7 +6,7 @@
 import type { PermittedItem } from "@social-harness/social-harness";
 import openClawPlugin from "@social-harness/openclaw-channel";
 import { Deferred, Duration, Effect, Queue, type Scope } from "effect";
-import { expect, vi } from "vitest";
+import { vi } from "vitest";
 import { joinParticipants, type Participant } from "../agent-fixture.js";
 import {
   type Daemon,
@@ -27,33 +27,6 @@ export interface Scenario {
   readonly peer: Participant;
 }
 
-interface RecordedSessionSnapshot {
-  readonly messageIds: readonly string[];
-}
-
-/** Records host-local message identity without exposing session keys to peers. */
-export class RecordedSessionStore {
-  private readonly messagesBySession = new Map<string, string[]>();
-
-  acceptMessage(sessionKey: string, messageId: string): void {
-    const messageIds = this.messagesBySession.get(sessionKey) ?? [];
-    if (!messageIds.includes(messageId)) {
-      messageIds.push(messageId);
-    }
-    this.messagesBySession.set(sessionKey, messageIds);
-  }
-
-  keys(): readonly string[] {
-    return [...this.messagesBySession.keys()];
-  }
-
-  snapshot(sessionKey: string): RecordedSessionSnapshot {
-    return {
-      messageIds: [...(this.messagesBySession.get(sessionKey) ?? [])],
-    };
-  }
-}
-
 interface OpenClawConfig {
   readonly channels: {
     readonly sharness: {
@@ -65,95 +38,33 @@ interface OpenClawConfig {
       ];
     };
   };
-  readonly session: { readonly store: string };
 }
 
+/** What the stand-in host reads of the facts the plugin gives it for a turn. */
 interface OpenClawBuildContextInput {
-  readonly channel: string;
-  readonly accountId: string;
-  readonly provider: string;
-  readonly surface: string;
   readonly messageId: string;
   readonly from: string;
-  readonly sender: { readonly id: string; readonly name: string };
-  readonly conversation: {
-    readonly kind: "direct" | "group";
-    readonly id: string;
-    readonly label: string;
-  };
-  readonly route: {
-    readonly routeSessionKey: string;
-    readonly mainSessionKey: string;
-  };
-  readonly reply: { readonly to: string; readonly originatingTo: string };
+  readonly sender: { readonly name: string };
+  readonly conversation: { readonly kind: "direct" | "group" };
+  readonly route: { readonly routeSessionKey: string };
   readonly message: {
     readonly body: string;
-    readonly rawBody: string;
     readonly bodyForAgent: string;
-    readonly commandBody: string;
   };
-  // eslint-disable-next-line @typescript-eslint/naming-convention -- OpenClaw defines the GroupMembers host context key.
-  readonly extra?: { readonly GroupMembers?: string };
 }
 
 /* eslint-disable @typescript-eslint/naming-convention -- OpenClaw defines the inbound host context keys. */
-/** Models the host context keys consumed by the adapter acceptance scenarios. */
-export interface OpenClawInboundContext {
-  readonly AccountId: string;
+/** The host context keys the adapter acceptance scenarios assert. */
+interface OpenClawInboundContext {
   readonly Body: string;
   readonly BodyForAgent: string;
-  readonly BodyForCommands: string;
-  readonly ChatId: string;
   readonly ChatType: "direct" | "group";
-  readonly CommandAuthorized: boolean;
-  readonly CommandBody: string;
   readonly From: string;
-  readonly GroupMembers?: string;
-  readonly GroupSubject?: string;
-  readonly InboundEventKind: "message";
   readonly MessageSid: string;
-  readonly OriginatingTo: string;
-  readonly Provider: string;
-  readonly RawBody: string;
-  readonly SenderId: string;
   readonly SenderName: string;
   readonly SessionKey: string;
-  readonly Surface: string;
-  readonly To: string;
 }
 /* eslint-enable @typescript-eslint/naming-convention -- Restore repository naming outside the OpenClaw host context shapes. */
-
-interface OpenClawRecordInput {
-  readonly ctx: OpenClawInboundContext;
-  readonly sessionKey: string;
-  readonly storePath: string;
-}
-
-interface OpenClawDeliveryResult {
-  readonly visibleReplySent: boolean;
-}
-
-interface OpenClawReplyDispatcherInput {
-  readonly ctx: OpenClawInboundContext;
-  readonly dispatcherOptions: {
-    readonly deliver: (
-      payload: { readonly text: string },
-      context: { readonly kind: "final" },
-      // eslint-disable-next-line agent-code-guard/promise-type -- OpenClaw host callbacks require promises at this boundary.
-    ) => Promise<OpenClawDeliveryResult>;
-  };
-  readonly replyOptions?: object;
-}
-
-interface OpenClawReplyResult {
-  readonly queuedFinal: false;
-  readonly counts: {
-    readonly tool: number;
-    readonly block: number;
-    readonly final: number;
-  };
-  readonly sourceReplyDeliveryMode: "message_tool_only";
-}
 
 interface OpenClawInboundTurnInput {
   readonly cfg: OpenClawConfig;
@@ -164,7 +75,13 @@ interface OpenClawInboundTurnInput {
     readonly sessionKey: string;
   };
   readonly ctxPayload: OpenClawInboundContext;
-  readonly delivery: OpenClawReplyDispatcherInput["dispatcherOptions"];
+  readonly delivery: {
+    readonly deliver: (
+      payload: { readonly text: string },
+      context: { readonly kind: "final" },
+      // eslint-disable-next-line agent-code-guard/promise-type -- OpenClaw host callbacks require promises at this boundary.
+    ) => Promise<{ readonly visibleReplySent: boolean }>;
+  };
   readonly record?: {
     readonly updateLastRoute?: {
       readonly sessionKey: string;
@@ -173,7 +90,6 @@ interface OpenClawInboundTurnInput {
       readonly accountId: string;
     };
   };
-  readonly replyOptions?: OpenClawReplyDispatcherInput["replyOptions"];
 }
 
 /** The plugin's host turn, as far as this test reads it. */
@@ -195,6 +111,15 @@ interface OpenClawInboundRunnerInput {
     };
     readonly resolveTurn: () => OpenClawInboundTurnInput;
   };
+}
+
+/**
+ * One turn as the stand-in host ran it: the plugin's plan for the turn, the
+ * event the plugin ingested for it and the raw turn the plugin handed over.
+ */
+export interface OpenClawRunTurn extends OpenClawInboundTurnInput {
+  readonly event: ReturnType<OpenClawInboundRunnerInput["adapter"]["ingest"]>;
+  readonly raw: OpenClawHostTurn;
 }
 
 interface OpenClawRouteInput {
@@ -297,18 +222,6 @@ interface StableOpenClawEntry {
   register(api: StableOpenClawPluginApi): void;
 }
 
-interface OpenClawReplyFixture {
-  readonly callerAddress: string;
-  readonly callerId: string;
-  readonly responseSent: Deferred.Deferred<undefined>;
-  readonly sessions: RecordedSessionStore;
-  /** The plugin's `message` tool path, the only way a reply becomes a message. */
-  // eslint-disable-next-line agent-code-guard/promise-type -- OpenClaw host callbacks require promises at this boundary.
-  readonly sendReply: () => Promise<OpenClawMessageActionResult>;
-}
-
-type OpenClawRuntimeFixture = OpenClawReplyFixture;
-
 /** Bounds waits for daemon delivery and host gateway shutdown. */
 export const DELIVERY_TIMEOUT = Duration.seconds(60);
 
@@ -317,12 +230,6 @@ export const OPENCLAW_ACCOUNT_ID = "adapter-target";
 
 /** Pins host session routing while daemon addresses stay on the wire. */
 export const OPENCLAW_MAIN_SESSION_KEY = "agent:primary:main";
-
-/** Connects the host reply action to its durable daemon history assertions. */
-export const OPENCLAW_REPLY = "reply from the real OpenClaw adapter";
-
-/** The greeting shared by the caller and the host-side reply assertion. */
-export const OPENCLAW_INITIAL_TEXT = "hello through the real OpenClaw adapter";
 
 const acquireScenario = (
   options: DaemonOptions,
@@ -360,41 +267,6 @@ export const acquireGuardedServer = acquireScenario(
   },
   (daemon) => daemon.signIn(daemon.serverAgentBearer),
 );
-
-/**
- * Creates the smallest account runtime needed by the process-boundary test.
- * The fixture records the public host values across a real daemon connection.
- */
-export function makeObservedOpenClawAccountRuntime(
-  fixture: OpenClawRuntimeFixture,
-): ObservedOpenClawAccountRuntime {
-  return {
-    channel: {
-      runtimeContexts: {},
-      inbound: {
-        buildContext: buildOpenClawContext,
-        run: (input) => Effect.runPromise(runObservedTurn(input, fixture)),
-      },
-      routing: {
-        resolveAgentRoute: (input) => {
-          expect(input.peer).toEqual({
-            kind: "direct",
-            id: fixture.callerId,
-          });
-          return {
-            agentId: "primary",
-            channel: "sharness",
-            accountId: input.accountId ?? OPENCLAW_ACCOUNT_ID,
-            sessionKey: OPENCLAW_MAIN_SESSION_KEY,
-            mainSessionKey: OPENCLAW_MAIN_SESSION_KEY,
-            lastRoutePolicy: "session",
-            matchedBy: "default",
-          };
-        },
-      },
-    },
-  };
-}
 
 /** Loads the real plugin and validates its host-facing registration hooks. */
 export function registerOpenClawChannel(): Effect.Effect<
@@ -455,7 +327,7 @@ export function startOpenClawGateway(
   } = {},
 ) {
   return Effect.gen(function* () {
-    const cfg = openClawConfig(scenario.daemon.directory, options.mode);
+    const cfg = openClawConfig(options.mode);
     const connected = yield* Deferred.make<undefined>();
     yield* useDaemonEndpoint(scenario);
 
@@ -511,25 +383,8 @@ export function startOpenClawGateway(
   }).pipe(Effect.withSpan("startOpenClawGateway"));
 }
 
-/** Fails with the named host event when its bounded wait expires. */
-export function awaitSignal(
-  signal: Deferred.Deferred<undefined>,
-  description: string,
-) {
-  return Deferred.await(signal).pipe(
-    Effect.timeoutFail({
-      duration: DELIVERY_TIMEOUT,
-      onTimeout: () =>
-        new ProcessTestError({ message: `timed out awaiting ${description}` }),
-    }),
-  );
-}
-
-/** An OpenClaw configuration with one Social Harness account and its session store in `stateDirectory`. */
-export function openClawConfig(
-  stateDirectory: string,
-  mode?: "shared" | "private",
-): OpenClawConfig {
+/** An OpenClaw configuration with one Social Harness account. */
+export function openClawConfig(mode?: "shared" | "private"): OpenClawConfig {
   return {
     channels: {
       sharness: {
@@ -538,16 +393,15 @@ export function openClawConfig(
         ],
       },
     },
-    session: { store: stateDirectory },
   };
 }
 
 /**
- * An account runtime that hands every rendered turn to the test, standing in
+ * An account runtime that hands every turn it runs to the test, standing in
  * for the model that reads it, and completes the turn at once.
  */
 export function makeTurnQueueRuntime(
-  turns: Queue.Queue<OpenClawInboundContext>,
+  turns: Queue.Queue<OpenClawRunTurn>,
 ): ObservedOpenClawAccountRuntime {
   return {
     channel: {
@@ -556,9 +410,11 @@ export function makeTurnQueueRuntime(
         buildContext: buildOpenClawContext,
         run: (input) =>
           Effect.runPromise(
-            Queue.offer(turns, input.adapter.resolveTurn().ctxPayload).pipe(
-              Effect.as({}),
-            ),
+            Queue.offer(turns, {
+              ...input.adapter.resolveTurn(),
+              event: input.adapter.ingest(),
+              raw: input.raw.turn,
+            }).pipe(Effect.as({})),
           ),
       },
       routing: {
@@ -579,8 +435,8 @@ export function makeTurnQueueRuntime(
   };
 }
 
-/** Requires a rendered host turn before the process-fixture deadline. */
-export function nextTurn(turns: Queue.Queue<OpenClawInboundContext>) {
+/** Requires a host turn before the process-fixture deadline. */
+export function nextTurn(turns: Queue.Queue<OpenClawRunTurn>) {
   return Queue.take(turns).pipe(
     Effect.timeoutFail({
       duration: DELIVERY_TIMEOUT,
@@ -618,6 +474,20 @@ export function effectFromPromise<A>(
   });
 }
 
+/** Fails with the named host event when its bounded wait expires. */
+function awaitSignal(
+  signal: Deferred.Deferred<undefined>,
+  description: string,
+) {
+  return Deferred.await(signal).pipe(
+    Effect.timeoutFail({
+      duration: DELIVERY_TIMEOUT,
+      onTimeout: () =>
+        new ProcessTestError({ message: `timed out awaiting ${description}` }),
+    }),
+  );
+}
+
 function isStableOpenClawEntry(value: unknown): value is StableOpenClawEntry {
   return (
     typeof value === "object" &&
@@ -631,31 +501,13 @@ function buildOpenClawContext(
   input: OpenClawBuildContextInput,
 ): OpenClawInboundContext {
   return {
-    AccountId: input.accountId,
     Body: input.message.body,
     BodyForAgent: input.message.bodyForAgent,
-    BodyForCommands: input.message.commandBody,
-    ChatId: input.conversation.id,
     ChatType: input.conversation.kind,
-    CommandAuthorized: false,
-    CommandBody: input.message.commandBody,
     From: input.from,
-    InboundEventKind: "message",
     MessageSid: input.messageId,
-    OriginatingTo: input.reply.originatingTo,
-    Provider: input.provider,
-    RawBody: input.message.rawBody,
-    SenderId: input.sender.id,
     SenderName: input.sender.name,
     SessionKey: input.route.routeSessionKey,
-    Surface: input.surface,
-    To: input.reply.to,
-    ...(input.extra?.GroupMembers === undefined
-      ? {}
-      : {
-          GroupMembers: input.extra.GroupMembers,
-          GroupSubject: input.conversation.label,
-        }),
   };
 }
 
@@ -690,88 +542,6 @@ function hasActions(value: object): boolean {
   return (
     "handleAction" in value.actions &&
     typeof value.actions.handleAction === "function"
-  );
-}
-
-function runObservedTurn(
-  input: OpenClawInboundRunnerInput,
-  fixture: OpenClawRuntimeFixture,
-) {
-  return Effect.gen(function* () {
-    const ingested = input.adapter.ingest();
-    expect(ingested.id).toBe(input.raw.turn.id);
-    expect(ingested.raw).toEqual(input.raw.turn);
-    const turn = input.adapter.resolveTurn();
-    expect(turn.route).toEqual({
-      agentId: "primary",
-      sessionKey: OPENCLAW_MAIN_SESSION_KEY,
-    });
-    expect(turn.record?.updateLastRoute).toEqual({
-      sessionKey: OPENCLAW_MAIN_SESSION_KEY,
-      channel: "sharness",
-      to: fixture.callerAddress,
-      accountId: OPENCLAW_ACCOUNT_ID,
-    });
-    yield* recordInboundSession(
-      {
-        ctx: turn.ctxPayload,
-        sessionKey: turn.route.sessionKey,
-        storePath: turn.cfg.session.store,
-      },
-      fixture.sessions,
-    );
-    return yield* effectFromPromise("OpenClaw reply dispatch", () =>
-      dispatchOpenClawReply(
-        {
-          ctx: turn.ctxPayload,
-          dispatcherOptions: turn.delivery,
-          ...(turn.replyOptions === undefined
-            ? {}
-            : { replyOptions: turn.replyOptions }),
-        },
-        fixture,
-      ),
-    );
-  });
-}
-
-function recordInboundSession(
-  input: OpenClawRecordInput,
-  sessions: RecordedSessionStore,
-) {
-  return Effect.sync(() => {
-    expect(input.sessionKey).toBe(OPENCLAW_MAIN_SESSION_KEY);
-    sessions.acceptMessage(input.sessionKey, input.ctx.MessageSid);
-  });
-}
-
-function dispatchOpenClawReply(
-  input: OpenClawReplyDispatcherInput,
-  fixture: OpenClawReplyFixture,
-  // eslint-disable-next-line agent-code-guard/promise-type -- OpenClaw host callbacks require promises at this boundary.
-): Promise<OpenClawReplyResult> {
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      expect(input.ctx.Body).toBe(OPENCLAW_INITIAL_TEXT);
-      expect(input.ctx.SessionKey).toBe(OPENCLAW_MAIN_SESSION_KEY);
-      const sent = yield* effectFromPromise("OpenClaw message tool send", () =>
-        fixture.sendReply(),
-      );
-      expect(sent.details).toEqual({ ok: true, to: fixture.callerAddress });
-      const delivery = yield* effectFromPromise("OpenClaw reply delivery", () =>
-        input.dispatcherOptions.deliver(
-          { text: "private final text" },
-          { kind: "final" },
-        ),
-      );
-      expect(delivery).toEqual({ visibleReplySent: false });
-      yield* Deferred.succeed(fixture.responseSent, undefined);
-      return {
-        queuedFinal: false,
-        counts: { tool: 1, block: 0, final: 1 },
-        sourceReplyDeliveryMode: "message_tool_only",
-      };
-    }),
   );
 }
 

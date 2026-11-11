@@ -55,7 +55,7 @@ const nonCanonicalTexts = [
   },
 ] as const;
 
-describe("canonical identity JSON encoding", () => {
+describe("canonical JSON encoding", () => {
   it("encodes member order, Unicode, and numbers as canonical UTF-8", () => {
     const encoded = Effect.runSync(
       encodeCanonicalJson({ z: 1.0, text: "€", negativeZero: -0, a: true }),
@@ -80,7 +80,7 @@ describe("canonical identity JSON encoding", () => {
   });
 });
 
-describe("canonical identity JSON parsing", () => {
+describe("canonical JSON parsing", () => {
   it.each(nonCanonicalTexts)("rejects $caseName", ({ text }) => {
     expect(parses(utf8(text))).toBe(false);
   });
@@ -90,7 +90,7 @@ describe("canonical identity JSON parsing", () => {
   });
 });
 
-describe("canonical identity JSON value domain", () => {
+describe("canonical JSON value domain", () => {
   it.each([
     undefined,
     Number.NaN,
@@ -112,7 +112,7 @@ describe("canonical identity JSON value domain", () => {
   });
 });
 
-describe("canonical identity JSON bounds and domain decoding", () => {
+describe("canonical JSON bounds and domain decoding", () => {
   it.each([nestedArray(16), nestedObject(16), "0", '"scalar"'])(
     "accepts the bounded container depth in %s",
     (text) => {

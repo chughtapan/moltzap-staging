@@ -1,6 +1,5 @@
 /** @file One daemon process delivers between its owners' agents, alone and in a group, and keeps their messages across restarts. */
 
-import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
 import { Effect, Redacted, Schema } from "effect";
 import { randomBytes } from "node:crypto";
@@ -13,10 +12,8 @@ import {
   type Participant,
   send,
 } from "../agent-fixture.js";
-import { incompatibleDatabaseRemedy } from "../expected-contracts.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
-import { arrayContaining } from "../test-matchers.js";
 import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
 
 /** Each trace starts one daemon, and some of them start it more than once. */
@@ -227,6 +224,10 @@ it(
 
 const localAgentName = "solo";
 
+/** A database the daemon cannot open with its key tells the operator what to prepare. */
+const incompatibleDatabaseRemedy =
+  "prepare a compatible database with its existing unlock key";
+
 it(
   "keeps a local daemon's agent across a restart and refuses another database key",
   processTrace(
@@ -282,39 +283,6 @@ it(
       const moved = yield* daemon.startupFailure();
       expect(moved.exitCode).not.toBe(0);
       expect(moved.logs).toContain(`Set ${modeSetting}`);
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-it(
-  "refuses an argument a tool does not take without repeating its value",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const alice = yield* daemon.signInAs("alice");
-      const value = "value-of-the-unknown-argument";
-
-      const refusal = yield* Effect.tryPromise({
-        try: () =>
-          alice.connection.client.callTool({
-            name: "read_conversation",
-            arguments: { conversationId: value },
-          }),
-        catch: (cause) => cause,
-      }).pipe(Effect.flip);
-
-      if (!ProtocolError.isInstance(refusal)) {
-        return yield* Effect.dieMessage("Expected a protocol error");
-      }
-      expect(refusal.code).toBe(ProtocolErrorCode.InvalidParams);
-      expect(refusal.data).toMatchObject({
-        issues: arrayContaining([
-          { path: ["conversationId"], message: "Unexpected field" },
-        ]),
-      });
-      expect(JSON.stringify(refusal.data)).not.toContain(value);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

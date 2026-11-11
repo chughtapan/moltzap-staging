@@ -86,21 +86,6 @@ export interface McpConnection {
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
 
-/** TLS, literal loopback or host-approved HTTP can carry the private bearer. */
-export function safeCredentialEndpoint(
-  endpoint: URL,
-  allowHttp = false,
-): boolean {
-  const privateAuthority =
-    !endpoint.username && !endpoint.password && !endpoint.hash;
-  const local =
-    endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
-  const secure =
-    endpoint.protocol === "https:" ||
-    (endpoint.protocol === "http:" && (local || allowHttp));
-  return privateAuthority && secure;
-}
-
 /**
  * Returns after MCP negotiation succeeds. Closing the caller's scope interrupts
  * active reception and closes the client.
@@ -109,7 +94,7 @@ export function acquireMcpConnection(
   settings: McpConnectionSettings,
   implementation: Implementation,
 ): Effect.Effect<McpConnection, McpConnectError, Scope.Scope> {
-  const endpoint = new URL(settings.endpoint.href);
+  const { endpoint } = settings;
   const transportOptions: StreamableHTTPClientTransportOptions = {
     requestInit: {
       headers: {
@@ -333,4 +318,16 @@ function receiveInbox<E, R>(
       return yield* Effect.forever(readPending(owner.client, accept));
     }),
   );
+}
+
+/** TLS, literal loopback or host-approved HTTP can carry the private bearer. */
+function safeCredentialEndpoint(endpoint: URL, allowHttp = false): boolean {
+  const privateAuthority =
+    !endpoint.username && !endpoint.password && !endpoint.hash;
+  const local =
+    endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
+  const secure =
+    endpoint.protocol === "https:" ||
+    (endpoint.protocol === "http:" && (local || allowHttp));
+  return privateAuthority && secure;
 }

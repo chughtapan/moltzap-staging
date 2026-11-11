@@ -11,6 +11,8 @@ import {
   Option,
   Queue,
   Schema,
+  TestClock,
+  TestContext,
 } from "effect";
 import { expect } from "vitest";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
@@ -28,7 +30,7 @@ import {
 } from "./__tests__/requests-fixtures.js";
 import {
   Message,
-  readCollectiveValue,
+  messageInterpretation,
   RequestError,
   type ResultDelivery,
 } from "./messages.js";
@@ -150,16 +152,19 @@ it("records invalid answers as selected sources while leaving silent members una
     });
   }));
 
-it("does not count an answer first received after the collector deadline", () =>
+it("does not count an answer received when the deadline has come", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives();
     const captured = question((yield* Clock.currentTimeMillis) + 200);
     yield* fixture.collect();
     yield* fixture.service.accept(captured);
     yield* Queue.take(fixture.sent);
-    const result = yield* Queue.take(fixture.results);
     const late = yield* declineMessage(bob, [alice], captured.operationId, 14);
-    yield* fixture.service.receive(late);
+    yield* TestClock.setTime(captured.deadlineAt).pipe(
+      Effect.zipRight(fixture.service.receive(late)),
+      Effect.provide(TestContext.TestContext),
+    );
+    const result = yield* Queue.take(fixture.results);
     expect(result.sources.answers).toEqual([]);
     expect(result.item.result).toMatchObject({
       outcomes: [{ member: bob, outcome: { kind: "no-answer" } }],
@@ -192,7 +197,7 @@ it("publishes the all_gather close with both parts of every selected message ide
     yield* fixture.service.receive(one);
     yield* fixture.service.receive(two);
     const close = yield* Queue.take(fixture.sent);
-    const value = yield* readCollectiveValue(close.content);
+    const value = yield* messageInterpretation(close);
     expect(value).toEqual(
       Option.some(
         expect.objectContaining({
@@ -227,7 +232,7 @@ it("delivers a closed all_gather result after a restart without an answer that c
     );
     yield* fixture.service.receive(selected);
     const close = yield* Queue.take(fixture.sent);
-    expect(yield* readCollectiveValue(close.content)).toEqual(
+    expect(yield* messageInterpretation(close)).toEqual(
       Option.some(
         expect.objectContaining({
           included: [{ authorAgentId: bob.agentId, msgId: selected.msgId }],
@@ -457,7 +462,7 @@ it("ends a malformed close with repeated authors without reopening its answer sl
     ).toBeInstanceOf(RequestError);
   }));
 
-it("refuses a new answer when the captured request expires before custody", () =>
+it("refuses an answer to a request whose deadline has passed", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives({ agent: bob });
     const operationId = collectiveOperationId(alice.agentId);

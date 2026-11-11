@@ -185,12 +185,12 @@ const managementStatusResultSchema = Schema.Struct({
 });
 
 /** Canonically ordered local-conversation page selector. */
-export const managementListConversationsRequestSchema = exactStruct({
+const managementListConversationsRequestSchema = exactStruct({
   ...PaginatedRequest.fields,
 });
 
 /** At most fifty canonical addresses and an opaque position for the next page. */
-export const managementListConversationsResultSchema = Schema.Struct({
+const managementListConversationsResultSchema = Schema.Struct({
   addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));

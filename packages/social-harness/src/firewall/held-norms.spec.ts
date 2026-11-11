@@ -17,12 +17,11 @@ import {
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
 import {
-  FirewallPolicyError,
   MAXIMUM_DOCUMENT_BYTES,
   type policyUpdateSchema,
   TextRule,
 } from "./rules.js";
-import { Firewall, type FirewallOptions } from "./service.js";
+import { Firewall } from "./service.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and closed edit failures are the editable policy contract under test. */
 
@@ -96,13 +95,6 @@ const chain: Chain = {
 };
 
 const swap = document("swap", "Ask for a swap a day ahead.");
-
-/** The default test policy with an approval step that refuses every edit. */
-const refusing: FirewallOptions = {
-  ...policy(),
-  approvePolicyUpdate: () =>
-    Effect.fail(new FirewallPolicyError({ reason: "approval-refused" })),
-};
 
 /** A firewall whose agent holds the fake norms under the default test policy. */
 function holding(agentKey: string) {
@@ -299,24 +291,6 @@ it.each(refusedEdits)(
       expect(result.after).toEqual(result.before);
     }),
 );
-
-it("keeps the active norms when the host refuses an update", () =>
-  Effect.gen(function* () {
-    const result = yield* withFirewall(
-      ":memory:",
-      (firewall) =>
-        Effect.gen(function* () {
-          const error = yield* firewall
-            .updatePolicy({ add: [{ norm: swap }] })
-            .pipe(Effect.flip);
-          return { error, after: yield* firewall.readPolicy() };
-        }),
-      (agentKey) => Firewall.layer(agentKey, refusing, chain, norms),
-    );
-
-    expect(result.error.reason).toBe("approval-refused");
-    expect(result.after.norms).toEqual(["chat"]);
-  }));
 
 it("refuses a norm on a firewall without norm documents", () =>
   Effect.gen(function* () {

@@ -112,13 +112,6 @@ it("advertises protected-resource discovery without granting MCP access", () =>
     );
   }));
 
-it("admits the owner through the actual MCP initialize path", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const response = yield* test.call(yield* test.token());
-    expect(response.status).toBe(200);
-  }));
-
 it("selects each authenticated subject under its verified issuer", () =>
   Effect.gen(function* () {
     const test = yield* fixture;

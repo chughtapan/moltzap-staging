@@ -19,7 +19,7 @@ import {
 } from "effect";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
-import { type LocalGuidance, PermittedItem } from "../../firewall/index.js";
+import { PermittedItem } from "../../firewall/index.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../inbox.js";
 import { INBOX_PENDING_EVENT } from "../mcp/contracts.js";
 import { makeWebhookEvents } from "../mcp/webhook.js";
@@ -123,7 +123,7 @@ export const enqueue = (store: InboxFixture, byte: number) =>
 /**
  * Webhook events over `store` whose callback is scripted: it records each
  * post, echoes verification challenges, and answers with the status the test
- * sets, running `onEvent` before it answers a wake-up.
+ * sets.
  */
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
@@ -133,7 +133,6 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   const key = unlockKey ?? Redacted.make(new Uint8Array(32).fill(7));
   let status = 200;
   let challengeValid = true;
-  let onEvent = Effect.void;
   const currentScope = yield* Ref.make<Scope.CloseableScope | undefined>(
     undefined,
   );
@@ -142,13 +141,10 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     readonly headers: Readonly<Record<string, string>>;
   }> = [];
   const client = HttpClient.make((request) =>
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const body = requestBody(request.body);
       posts.push({ body, headers: { ...request.headers } });
       const decoded = Schema.decodeUnknownSync(callback)(body);
-      if (!("type" in decoded)) {
-        yield* onEvent;
-      }
       return callbackResponse(request, decoded, status, challengeValid);
     }).pipe(Effect.withSpan("webhookCallback")),
   );
@@ -159,9 +155,6 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     },
     challenge: (value: boolean) => {
       challengeValid = value;
-    },
-    onEvent: (effect: Effect.Effect<void>) => {
-      onEvent = effect;
     },
     acquire: Effect.gen(function* () {
       const scope = yield* Scope.make();
@@ -194,12 +187,10 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
   const save = (
     deliveryToken: DeliveryToken,
     item: typeof PermittedItem.Type,
-    guidance?: typeof LocalGuidance.Type,
   ) =>
     Schema.encode(payload)({
       address: Schema.decodeUnknownSync(InboxEvent.fields.address)("agent:bob"),
       item,
-      ...(guidance === undefined ? {} : { guidance }),
     }).pipe(
       Effect.flatMap(
         (bytes) =>

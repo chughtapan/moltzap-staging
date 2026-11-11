@@ -14,8 +14,7 @@
       ]
     },
     "customConditions": [
-      "sharness-test",
-      "sharness-internal"
+      "sharness-test"
     ]
   },
   "include": [

@@ -126,10 +126,11 @@ export function peer(name: string, byte: number): AgentCard {
   });
 }
 
-/** Firewall options with the given editable seed and fixed rules, judged by `judgments`. */
+/** Firewall options with the given editable seed and fixed rules, judged by `provider`. */
 export function policy(
   initialRules: readonly TextRule[] = [],
   fixedRules: readonly TextRule[] = [],
+  provider: DecisionProvider = judgments,
 ): FirewallOptions {
   return {
     facts: [],
@@ -141,7 +142,7 @@ export function policy(
     text: {
       fixedRules,
       initialRules,
-      provider: judgments,
+      provider,
       settings: {
         minimumProbability: 0.5,
         maximumRequestBytes: 60_000,

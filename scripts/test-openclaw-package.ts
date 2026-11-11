@@ -6,7 +6,7 @@
  * that OpenClaw into an isolated consumer, and checks three behaviours: the
  * package typechecks for a TypeScript consumer, OpenClaw loads it from its
  * install path and registers the `sharness` channel, and OpenClaw serves every
- * skill the packed Client ships to the model. Every check goes through the
+ * skill the packed daemon package ships to the model. Every check goes through the
  * channel's public entry point or OpenClaw's CLI, so a new OpenClaw release
  * changes only the `openclaw` entry of the `pnpm-workspace.yaml` catalog.
  */
@@ -218,8 +218,8 @@ function verifyPluginLoaded(
 
 /**
  * Requires that OpenClaw shows the model every skill the packed
- * `@social-harness/social-harness` ships, with Client's text: the channel installs Client's
- * skills rather than its own.
+ * `@social-harness/social-harness` ships, with that package's text: the
+ * channel installs its skills rather than its own.
  * @param openclaw The isolated OpenClaw CLI.
  * @param consumerRoot Directory the packed closure is installed in.
  */
@@ -238,7 +238,7 @@ function verifySkillsServed(
     const names = yield* fs.readDirectory(skillsRoot);
     yield* requireCondition(
       names.length > 0,
-      "expected the packed Client to ship its skills",
+      "expected the packed daemon package to ship its skills",
     );
     yield* Effect.forEach(
       names,
@@ -270,14 +270,14 @@ function verifySkillServed(
         readText(servedPath, `OpenClaw serves a missing skill ${servedPath}`),
         readText(
           join(skillsRoot, name, "SKILL.md"),
-          `packed Client ${name} skill is missing`,
+          `packed daemon package ${name} skill is missing`,
         ),
       ],
       { concurrency: 2 },
     );
     yield* requireCondition(
       served === packed,
-      `expected OpenClaw to serve the packed Client ${name} skill text`,
+      `expected OpenClaw to serve the packed daemon package ${name} skill text`,
     );
   });
 }

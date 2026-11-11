@@ -32,9 +32,9 @@ export const openTestDatabase = (directory?: string) =>
     };
   }).pipe(
     Effect.provide(NodeFileSystem.layer),
-    Effect.withSpan("openCommunicationTestDatabase"),
+    Effect.withSpan("openTestDatabase"),
   );
-/** Reopening the same database exercises the production recovery readers. */
+/** An open test database. A fixture given one reopens it, as a restart does. */
 export type TestDatabase = Effect.Effect.Success<
   ReturnType<typeof openTestDatabase>
 >;

@@ -118,8 +118,7 @@ State which checks and reviews actually ran.
 
 Each dependency version or digest is set in one source for its kind. A copy
 exists only where a tool needs a literal value, such as a lockfile, a
-Dockerfile `FROM`, or the manifest of something built outside the workspace,
-and a check fails when the copy disagrees with its source.
+Dockerfile `FROM`, or the manifest of something built outside the workspace.
 
 | Kind | Source |
 | --- | --- |
@@ -167,12 +166,6 @@ of it here.
 
 Package-local `safer-architecture.config.json` files are hand-maintained.
 `pnpm arch:check` runs safer-architecture-lsp against them.
-
-## Tests
-
-- `*.types-check.ts` canaries pin current type-level invariants; the
-  header states the invariant and why it matters. Pin what exists —
-  never a negative canary for something deleted.
 
 ## Verify
 

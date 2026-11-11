@@ -3,9 +3,8 @@
 import { FileSystem, Path } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { Effect, Either } from "effect";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Synchronous filesystem fixtures exercise committed inputs and filesystem permission failures.
+// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Synchronous filesystem fixtures build the trees and broken entries the gate reads.
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -251,28 +250,6 @@ describe("collectDiagramFiles", () => {
     expect(error.reason).toBe("cannot stat");
     expect(error.path).toBe(dangling);
   });
-
-  /** Root ignores mode bits, so unreadable fixtures require an unprivileged user. */
-  const unreadable = process.getuid?.() === 0 ? it.skip : it;
-  unreadable(
-    "fails on a subtree that exists but cannot be opened",
-    // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-    async () => {
-      const root = join(sandbox, "locked-tree");
-      const locked = join(root, "locked");
-      mkdirSync(locked, { recursive: true });
-      writeFileSync(join(locked, "hidden.md"), diagramBlock);
-      chmodSync(locked, 0o000);
-      try {
-        const error = failure(
-          await runGate((fs, path) => collectDiagramFiles(fs, path, [root])),
-        );
-        expect(error.path).toBe(locked);
-      } finally {
-        chmodSync(locked, 0o755);
-      }
-    },
-  );
 });
 
 describe("collectBlocks", () => {

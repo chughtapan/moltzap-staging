@@ -3,9 +3,9 @@ import { Data } from "effect";
 import { readFileSync } from "node:fs";
 
 /** Fields remain unknown until a consumer narrows them. */
-export type JsonObject = Readonly<Record<string, unknown>>;
+type JsonObject = Readonly<Record<string, unknown>>;
 
-/** Malformed manifests cannot supply dependency-version evidence. */
+/** A manifest, or one of its fields, is not the JSON object a reader requires. */
 class MalformedJsonInput extends Data.TaggedError("MalformedJsonInput")<{
   readonly message: string;
 }> {}
