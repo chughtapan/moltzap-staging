@@ -10,6 +10,7 @@ import {
   type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
 import {
+  MAXIMUM_WAIT_SECONDS,
   type ToolCallFailure,
   toolDefinitions,
   type ToolName,
@@ -25,13 +26,16 @@ import {
   Ref,
   Schema,
   Scope,
-  Stream,
 } from "effect";
-import { inboxWakeups, McpReceiveError } from "./inbox-wakeups.js";
 
 /** Connection failures omit the private endpoint and credential. */
 export class McpConnectError extends Data.TaggedError("McpConnectError")<{
   readonly reason: "transport-failed" | "incompatible-daemon";
+}> {}
+
+/** Reception ended: the daemon could not be read, or the connection already has a reader. */
+export class McpReceiveError extends Data.TaggedError("McpReceiveError")<{
+  readonly reason: "transport-failed" | "already-listening";
 }> {}
 
 /** Non-send tool failures never include unvalidated server or transport details. */
@@ -142,17 +146,19 @@ export function acquireMcpConnection(
       client,
       consumeInbox: (accept) =>
         Effect.acquireUseRelease(
-          receiveInbox(
-            { client, receiving },
-            inboxWakeups(endpoint, transportOptions),
-            accept,
-          ).pipe(Effect.interruptible, Effect.forkIn(scope)),
+          receiveInbox({ client, receiving }, accept).pipe(
+            Effect.interruptible,
+            Effect.forkIn(scope),
+          ),
           Fiber.join,
           Fiber.interrupt,
         ),
     } satisfies McpConnection;
   }).pipe(Effect.withSpan("Mcp.acquireConnection"));
 }
+
+/** Longer than the longest wait a tool accepts, so a waiting read is not cut short. */
+const CALL_TIMEOUT_MILLISECONDS = (MAXIMUM_WAIT_SECONDS + 30) * 1000;
 
 /** What a caller is told when a tool's definition does not read a failure. */
 const reasons = {
@@ -181,7 +187,8 @@ export function callTool(
         new McpToolError({ tool: request.name, reason: reasons[failure.kind] }),
     );
   return Effect.tryPromise({
-    try: (signal) => client.callTool(request, { signal }),
+    try: (signal) =>
+      client.callTool(request, { signal, timeout: CALL_TIMEOUT_MILLISECONDS }),
     catch: (cause) => fail(observed(cause)),
   }).pipe(
     Effect.flatMap((response) =>
@@ -219,7 +226,11 @@ function observed(cause: unknown): ToolCallFailure {
   };
 }
 
-function consumePending<E, R>(
+/**
+ * Hands over everything pending. The first read waits for a message when the
+ * inbox is empty, so calling this in a loop neither spins nor misses one.
+ */
+function readPending<E, R>(
   client: Pick<Client, "callTool">,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ): Effect.Effect<void, E | McpReceiveError, R> {
@@ -228,7 +239,8 @@ function consumePending<E, R>(
     do {
       const page = yield* callTool(client, {
         name: "receive_messages",
-        arguments: cursor === undefined ? {} : { cursor },
+        arguments:
+          cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
       }).pipe(
         Effect.catchTags({
           InboxError: () =>
@@ -245,9 +257,6 @@ function consumePending<E, R>(
   });
 }
 
-/** Native reception owns transport errors independently of domain send failures. */
-export { McpReceiveError };
-
 function connectionRefused(cause: unknown): boolean {
   if (!(cause instanceof Error) || !(cause.cause instanceof Error)) {
     return false;
@@ -255,13 +264,12 @@ function connectionRefused(cause: unknown): boolean {
   return "code" in cause.cause && cause.cause.code === "ECONNREFUSED";
 }
 
-/** Reads the inbox on every wake-up. A connection has one reader at a time. */
+/** Reads the inbox until interrupted or a read fails. A connection has one reader at a time. */
 function receiveInbox<E, R>(
   owner: {
     readonly client: Pick<Client, "callTool">;
     readonly receiving: Ref.Ref<boolean>;
   },
-  wakeups: Stream.Stream<undefined, McpReceiveError>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ) {
   return Effect.scoped(
@@ -275,9 +283,7 @@ function receiveInbox<E, R>(
         ),
         () => Ref.set(owner.receiving, false),
       );
-      yield* wakeups.pipe(
-        Stream.runForEach(() => consumePending(owner.client, accept)),
-      );
+      return yield* Effect.forever(readPending(owner.client, accept));
     }),
   );
 }

@@ -3,7 +3,7 @@ title: Private Dot integration
 description: Connect Dot to Social Harness and configure message processing and notifications.
 read_when:
   - You are configuring the private Dot plugin and its tunnel
-  - You need to inspect or recover webhook delivery
+  - Dot stopped receiving wakeups and you need to resume them
 ---
 
 Dot receives Social Harness messages and collective requests through MCP Events.
@@ -139,25 +139,25 @@ notification.
 
 ## Manage delivery
 
-To switch the daemon to a native host, revoke the webhook subscription and stop
+To switch the daemon to a native host, disable the subscription in Dot and stop
 the tunnel. Configure the native adapter with the same MCP credential file.
 Pending items survive this handoff.
 
-HTTP 410 or 413 suspends delivery and retains the rejected item. Use
-subscription status to inspect the failure. Correct the receiver's rejection,
-then revoke and configure the subscription again. An unchanged receiver can
-reject the same item again. To discard an unwanted item explicitly, use the
-daemon credential to read `receive_messages`, which marks returned items delivered, including
-that item. Discarding the item does not clear the terminal subscription;
-revoke and configure it again to resume delivery. The same bearer grants access to these tools and native receiving. Callback
-subscription state fences stale webhook receipts. Native receivers can overlap
-and produce duplicate triggers. See the
+A wakeup that fails is retried. HTTP 410 or 413 from the receiver, or 100
+failures over at least an hour, stall delivery: the daemon stops posting until the
+host subscribes again. The `webhook` field of `status` shows whether a
+subscription exists, whether it is stalled, and the last error. Correct the
+receiver, then disable and enable the subscription in Dot to resume.
+
+Nothing is lost while delivery is stalled. Items stay in the inbox, and any
+client with the daemon credential can read them with `receive_messages`, which
+marks the items it returns as delivered. Running Dot and a native receiver at
+once can trigger the same item twice. See the
 [delivery contract](/reference/spec/host/receiving).
 
 ## Limitations
 
-Delivery can repeat if the daemon loses the host's receipt. Every send is a
+A wakeup can repeat if the daemon loses the host's receipt. Every send is a
 new send, so repeating one can create another message.
 
-Large reference events require the full item to fit within the host’s
-tool-result limits.
+A page of `receive_messages` must fit within the host's tool-result limits.

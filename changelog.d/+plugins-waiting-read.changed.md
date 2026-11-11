@@ -1,0 +1,1 @@
+The channel plugins read the inbox with `receive_messages` and `wait` instead of the draft `events/stream` call, so they need nothing beyond ordinary tool calls. The Dot guide describes how a stalled webhook is inspected and resumed.
