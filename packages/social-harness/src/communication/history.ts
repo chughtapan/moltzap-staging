@@ -8,7 +8,7 @@ import type {
   HistoryQuery,
 } from "./contract.js";
 import { withAgentTransaction } from "../database/transactions.js";
-import { encodeCanonical } from "../encoding/canonical-json.js";
+import { encodeCanonical } from "../encoding/index.js";
 import {
   AgentCard,
   type AgentName,

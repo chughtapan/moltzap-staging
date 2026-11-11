@@ -3,7 +3,7 @@
 import { Effect, Either, Encoding, Redacted, Schema } from "effect";
 import { exportJWK, GeneralEncrypt, generateKeyPair } from "jose";
 import { generateKeyPairSync } from "node:crypto";
-import { encodeCanonicalJson } from "../../encoding/canonical-json.js";
+import { encodeCanonicalJson } from "../../encoding/index.js";
 import {
   AgentId,
   AgentName,

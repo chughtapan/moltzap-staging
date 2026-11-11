@@ -18,11 +18,11 @@ import {
   Schema,
 } from "effect";
 import type { AgentSigningAuthority } from "../../../identity/keys.js";
-import { decodeCanonical } from "../../../encoding/canonical-json.js";
 import {
   canonicalIdentifier,
+  decodeCanonical,
   hasCanonicalBase64UrlLength,
-} from "../../../encoding/identifier.js";
+} from "../../../encoding/index.js";
 import { AgentId } from "../../../identity/agent-cards.js";
 import {
   AgentSigningError,

@@ -15,7 +15,7 @@ import {
   ClientRepresentationError,
   decodeCanonical,
   encodeCanonical,
-} from "../encoding/canonical-json.js";
+} from "../encoding/index.js";
 import {
   AgentId,
   AgentIdentityCard,

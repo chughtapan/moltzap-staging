@@ -27,7 +27,7 @@ import {
   ReceivedRequest,
   Request,
 } from "../communication/service.js";
-import { compareAscii } from "../encoding/identifier.js";
+import { compareAscii } from "../encoding/index.js";
 import { FirewallPolicyError } from "../firewall/rules.js";
 import {
   decisionResponse,

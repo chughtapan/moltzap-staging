@@ -18,8 +18,7 @@ import {
   importPKCS8,
   type JWK,
 } from "jose";
-import { exactStruct } from "../encoding/canonical-json.js";
-import { decodeCanonicalBase64Url } from "../encoding/identifier.js";
+import { decodeCanonicalBase64Url, exactStruct } from "../encoding/index.js";
 import { type BoundedCache, makeBoundedCache } from "./bounded-cache.js";
 
 const PUBLIC_KEY_BYTE_LENGTH = 32;

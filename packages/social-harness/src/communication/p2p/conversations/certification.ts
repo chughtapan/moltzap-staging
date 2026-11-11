@@ -17,7 +17,7 @@ import {
   decodeCanonical,
   encodeCanonical,
   equalCanonical,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,

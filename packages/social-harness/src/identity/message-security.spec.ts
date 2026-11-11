@@ -6,10 +6,7 @@ import * as fc from "fast-check";
 import { generalDecrypt, GeneralEncrypt } from "jose";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { expect, it } from "vitest";
-import {
-  decodeCanonicalJson,
-  encodeCanonicalJson,
-} from "../encoding/canonical-json.js";
+import { decodeCanonicalJson, encodeCanonicalJson } from "../encoding/index.js";
 import { WIRE_VERSION } from "../version.js";
 import {
   AgentIdentityCardIssuedAt,

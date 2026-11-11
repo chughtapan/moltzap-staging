@@ -9,18 +9,16 @@ import type {
 import {
   type ClientRepresentationError,
   decodeCanonical,
+  decodeCanonicalBase64Url,
   encodeCanonical,
   equalCanonical,
   exactParseOptions,
   exactStruct,
-  representationFailure,
-  sameBytes,
-} from "../encoding/canonical-json.js";
-import {
-  decodeCanonicalBase64Url,
   isCanonicalIdentifier,
   isStrictlyAscending,
-} from "../encoding/identifier.js";
+  representationFailure,
+  sameBytes,
+} from "../encoding/index.js";
 import {
   AgentId,
   AgentIdentityCard,

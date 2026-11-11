@@ -11,7 +11,7 @@ import type {
   CertifiedRecord as StoredCertifiedRecord,
 } from "../p2p/conversations/store.js";
 import type { TestDatabase } from "./store-fixtures.js";
-import { encodeCanonical } from "../../encoding/canonical-json.js";
+import { encodeCanonical } from "../../encoding/index.js";
 import {
   agentCardOf,
   type VerifiedAgentIdentityCard,

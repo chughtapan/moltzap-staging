@@ -36,8 +36,7 @@ import {
   type Request,
   RequestedSchema,
 } from "../communication/service.js";
-import { exactStruct } from "../encoding/canonical-json.js";
-import { compareAscii } from "../encoding/identifier.js";
+import { compareAscii, exactStruct } from "../encoding/index.js";
 import { type AgentCard, AgentName } from "../identity/agent-cards.js";
 import { MessageAddress } from "./inbox.js";
 

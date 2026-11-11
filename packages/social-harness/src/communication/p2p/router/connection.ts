@@ -20,7 +20,7 @@ import type {
   VerifiedAgentIdentityCard,
 } from "../../../identity/agent-cards.js";
 import type { AgentSigningAuthority } from "../../../identity/keys.js";
-import { decodeCanonical } from "../../../encoding/canonical-json.js";
+import { decodeCanonical } from "../../../encoding/index.js";
 import {
   type LiveSignedMessage,
   SignedMessage,

@@ -3,7 +3,7 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Data, Effect, Schema } from "effect";
 
-import { decodeCanonical } from "../../../encoding/canonical-json.js";
+import { decodeCanonical } from "../../../encoding/index.js";
 import { AgentId, AgentIdentityCard } from "../../../identity/agent-cards.js";
 import {
   conversationSortKey,

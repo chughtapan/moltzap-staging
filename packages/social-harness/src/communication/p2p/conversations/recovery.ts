@@ -21,7 +21,7 @@ import type {
 import {
   ClientRepresentationError,
   decodeCanonical,
-} from "../../../encoding/canonical-json.js";
+} from "../../../encoding/index.js";
 import {
   exitOutcome,
   markRetries,

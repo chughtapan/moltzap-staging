@@ -40,8 +40,7 @@ import {
   Request,
   RequestError,
 } from "../communication/service.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/canonical-json.js";
-import { compareAscii } from "../encoding/identifier.js";
+import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import {
   Firewall,
   type FirewallRefusal,

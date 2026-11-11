@@ -38,10 +38,7 @@ import {
   makeTestAuthority,
   type RegistryKeyPair,
 } from "../../../__tests__/agents.js";
-import {
-  decodeCanonical,
-  encodeCanonical,
-} from "../../../encoding/canonical-json.js";
+import { decodeCanonical, encodeCanonical } from "../../../encoding/index.js";
 import {
   agentCardOf,
   AgentIdentityCard,

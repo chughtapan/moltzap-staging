@@ -16,7 +16,7 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { exactStruct } from "../encoding/canonical-json.js";
+import { exactStruct } from "../encoding/index.js";
 import {
   installedMessagePolicy,
   loadMessagePolicy,

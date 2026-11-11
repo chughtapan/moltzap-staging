@@ -13,7 +13,7 @@ import type { RegistryLookupResult } from "../registry.js";
 import {
   decodeCanonicalJson,
   encodeCanonicalJson,
-} from "../../encoding/canonical-json.js";
+} from "../../encoding/index.js";
 import { wireVersions } from "../../version.js";
 import {
   AgentId,

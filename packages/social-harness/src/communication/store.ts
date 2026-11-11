@@ -9,7 +9,7 @@ import {
   decodeCanonical,
   encodeCanonical,
   sameBytes,
-} from "../encoding/canonical-json.js";
+} from "../encoding/index.js";
 import { AgentId } from "../identity/agent-cards.js";
 import { type SendFailure, sendFailureReasons } from "./errors.js";
 import {

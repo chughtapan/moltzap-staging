@@ -19,11 +19,11 @@ import {
 } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import {
+  canonicalIdentifier,
   decodeCanonical,
   encodeCanonical,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding/canonical-json.js";
-import { canonicalIdentifier } from "../encoding/identifier.js";
+} from "../encoding/index.js";
 import {
   type IncomingDecision,
   LocalGuidance,

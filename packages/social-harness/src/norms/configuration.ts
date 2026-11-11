@@ -21,8 +21,7 @@ import {
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NormDocuments } from "../firewall/editable-policy.js";
-import { exactStruct } from "../encoding/canonical-json.js";
-import { compareAscii } from "../encoding/identifier.js";
+import { compareAscii, exactStruct } from "../encoding/index.js";
 import { type Chain, chainRuleFileSchema } from "../firewall/chain.js";
 import { type FirewallPolicyError, TextRule } from "../firewall/rules.js";
 import { Firewall } from "../firewall/service.js";
