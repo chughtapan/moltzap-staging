@@ -65,13 +65,9 @@ export async function stageInputs(directory: string) {
     join(channel, "sharness.ts"),
   );
   await mkdir(join(channel, "mcp"), { recursive: true });
-  await Promise.all(
-    ["mcp-client.ts", "inbox-wakeups.ts"].map((name) =>
-      copyFile(
-        join(imageRoot, "../../plugins/shared", name),
-        join(channel, "mcp", name),
-      ),
-    ),
+  await copyFile(
+    join(imageRoot, "../../plugins/shared/mcp-client.ts"),
+    join(channel, "mcp/mcp-client.ts"),
   );
   await writeFile(
     join(directory, "inputs.json"),

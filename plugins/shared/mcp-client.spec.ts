@@ -46,7 +46,9 @@ const inboxFixture = Effect.gen(function* () {
     harness: {
       listInbox: () =>
         Ref.get(acknowledged).pipe(
-          Effect.map((count) => ({ items: count === 0 ? [entry] : [] })),
+          Effect.flatMap((count) =>
+            count === 0 ? Effect.succeed({ items: [entry] }) : Effect.never,
+          ),
         ),
       acknowledgeDelivery: () =>
         Ref.update(acknowledged, (count) => count + 1).pipe(

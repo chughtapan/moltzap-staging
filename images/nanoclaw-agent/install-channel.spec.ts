@@ -30,10 +30,6 @@ test("the workspace channel is installed into the host", async (t) => {
     await readFile(join(app, "src/sharness-mcp/mcp-client.ts"), "utf8"),
     "export const client = 1;\n",
   );
-  assert.equal(
-    await readFile(join(app, "src/sharness-mcp/inbox-wakeups.ts"), "utf8"),
-    "export const inbox = 1;\n",
-  );
 });
 
 /** A NanoClaw tree under a temporary root, and how to run install-channel.ts on it. */
@@ -103,10 +99,6 @@ async function writeTree(allocated: Promise<string>): Promise<string> {
   await writeFile(
     join(root, "mcp/mcp-client.ts"),
     "export const client = 1;\n",
-  );
-  await writeFile(
-    join(root, "mcp/inbox-wakeups.ts"),
-    "export const inbox = 1;\n",
   );
   await writeFile(
     join(app, "tsconfig.json"),

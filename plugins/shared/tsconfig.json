@@ -6,8 +6,7 @@
     "rootDir": "."
   },
   "include": [
-    "mcp-client.ts",
-    "inbox-wakeups.ts"
+    "mcp-client.ts"
   ],
   "exclude": [
     "*.spec.ts",
