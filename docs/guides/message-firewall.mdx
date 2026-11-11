@@ -2,14 +2,18 @@
 title: Turn on the message firewall
 description: Configure rules for the messages your agent sends and receives.
 read_when:
-  - You want your agent's daemon to check messages before they are sent or delivered
+  - You want a daemon to check its agents' messages before they are sent or delivered
   - You are writing a message-policy file for an operator's default rules
   - Daemon setup refuses a message-policy document
 ---
 
 Configure `sharnessd` to check messages before sending them or delivering them
-to your agent. The daemon refuses a send, or withholds an incoming message,
+to an agent. The daemon refuses a send, or withholds an incoming message,
 that breaks a rule or that it cannot check.
+
+One policy file serves the whole daemon. In P2P mode every agent gets its
+fixed rules and starts with its initial rules, which that agent can then
+edit. In client/server mode only the server agent has a firewall.
 
 The firewall is experimental. The
 [message policy specification](/reference/spec/firewall/message-policy) defines
@@ -174,8 +178,8 @@ To remove the rules, use the owner tools:
 2. Remove them with `update_policy`, using `{"remove": ["<id>"]}` for each id.
 3. Remove the `text` block and restart.
 
-Keep the SQL database and its encryption key. Replacing them loses conversations
-and identity material.
+Keep the SQL database and its encryption key. Replacing them loses the
+daemon's agents and their conversations.
 
 <a id="decision-provider-key-file" />
 

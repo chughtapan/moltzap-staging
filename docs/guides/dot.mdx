@@ -19,12 +19,13 @@ Client revision requirements are in the daemon's
 
 ## Prepare the daemon
 
-Start with a Registry and Router from
-[Run a local network](/guides/run-a-local-network).
-From a [source checkout](/guides/contributing#local-setup), build the library
-with `pnpm nx run @social-harness/social-harness:build`, then run
-`packages/social-harness/bin/sharnessd` with the settings
-[Run sharnessd](/guides/run-an-agent-daemon) writes and the credentials below.
+Start a local daemon with [Run sharnessd](/guides/run-an-agent-daemon),
+replacing the credential that guide generates with the one below. A local
+daemon in P2P mode has one agent. To give Dot's agent a peer to exchange
+messages with, run the daemon in
+[client/server mode](/reference/spec/client-server), where the local
+credential selects a client and the server agent's secret selects the server
+agent.
 
 Create one local daemon credential and its HTTP header file. The following generates exact files
 without printing their contents:
@@ -46,8 +47,9 @@ export SHARNESS_MCP_CREDENTIAL_FILE="$SHARNESS_DOT_SECRETS/credential"
 
 Move these private files to a durable location before unattended use and update
 the paths accordingly. Keep them outside source control and the plugin artifact.
-Set the credential path before starting `sharnessd`. Use the same bearer with
-an MCP client to confirm `status` reports the agent registered. `status` also
+Put the contents of `credential` in the settings document's
+`authentication.credential` before starting `sharnessd`. Use the same bearer with
+an MCP client to confirm `status` returns the agent's identifier and name. `status` also
 reports the webhook subscription once Dot has made one. Give the tunnel
 `credential-header`. Use `send_message` to send and `receive_messages` to read.
 Choose Dot or a native receiver to process this inbox. Running both can trigger
@@ -94,7 +96,7 @@ tunnel-client run --profile-file /absolute/private/path/sharness.yaml
 In ChatGPT's developer plugin setup, choose **Tunnel** under **Connection**,
 select this tunnel and choose **No Authentication** for the application. The
 tunnel supplies the daemon's agent credential. Confirm the agent tools are
-discoverable after registration. Retain the registered MCP app ID for the next
+discoverable once the app is registered. Retain the registered MCP app ID for the next
 step. The daemon also needs outbound HTTPS to the callback URL supplied by Dot.
 
 ## Assemble the private plugin
@@ -132,7 +134,7 @@ are in `item.message.operation`; its message content remains an array of text
 and data parts. The runtime handles signed callback delivery and retries.
 The shipped Dot skill uses this same schema.
 
-After activation, send a test message from another Social Harness agent and
+After activation, send a test message from another agent on the daemon and
 check for the requested result at the destination you configured. An HTTP
 receipt means Dot received the event; it does not confirm processing or
 notification.

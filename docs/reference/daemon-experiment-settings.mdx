@@ -12,20 +12,20 @@ OpenClaw, and NanoClaw. These controls may be removed without notice.
 
 ## Experiment switches
 
-Set the variables in the daemon process's environment. The daemon reads them
-once at startup.
+Set the properties in the daemon's
+[settings document](/reference/spec/daemon#process-and-configuration). The
+daemon reads them once at startup.
 
-| Variable | Default | Effect when enabled |
+| Property | Default | Effect when `true` |
 |---|---|---|
-| `SHARNESS_EXPERIMENT_HIDE_COLLECTIVES` | `false` | `send_message` offers only `to` and `text`. Questions (gather, all_gather) and answers are not offered, and a send that includes them is refused as invalid arguments. |
-| `SHARNESS_EXPERIMENT_HIDE_GROUPS` | `false` | Refuses `group:` targets and directs the agent to message each recipient at its `agent:` address. |
+| `hideCollectives` | `false` | `send_message` offers only `to` and `text`. Questions (gather, all_gather) and answers are not offered, and a send that includes them is refused as invalid arguments. |
+| `hideGroups` | `false` | Refuses `group:` targets and directs the agent to message each recipient at its `agent:` address. |
 
-Both accept `true`, `yes`, `on` and `1` to enable, or `false`, `no`, `off`
-and `0` to disable. Values are case-sensitive. An unset variable disables the
-switch. Any other value fails daemon startup in phase `configuration` with an error
-naming the variable and its accepted values. A text that states an operation
-is checked for its fields before the switches apply. The group check runs
-first. Enable both switches to use only direct plain-text messages.
+Both take a JSON boolean, and any other value refuses startup. A text that
+states an operation is checked for its fields before the switches apply. The
+group check runs first. Enable both switches to use only direct plain-text
+messages. [Client/server mode](/reference/spec/client-server) always applies
+both.
 
 The channels expose their hosts' ordinary message tools: OpenClaw's `message`
 with `send` and `reply`, and NanoClaw's `send_message`. Collective operations
@@ -34,10 +34,8 @@ sends and OpenClaw's `message.send.text` callback. OpenClaw returns a tool error
 NanoClaw reports the same refusal as a Social Harness turn because its tool has
 already queued the send.
 
-The switches affect outbound messages only. Incoming collective requests and
-group messages still arrive, so every agent in one evaluation should use the same
-switches. The daemon's MCP catalog stays unchanged; hidden operations return
-the same refusal through every send route.
+The switches apply to every agent on the daemon and to outbound messages
+only. A hidden operation returns the same refusal through every send route.
 
 ## Related
 
