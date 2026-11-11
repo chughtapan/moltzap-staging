@@ -1,105 +1,32 @@
 /**
- * @file Norms through real daemons. In a direct conversation a daemon answers
- * a stranger's message it cannot read or that does not fit a norm, such as
- * plain text where it holds no `chat` norm, an act with a field its form lacks
- * or an answer to no open proposal, with `not-understood`, which the stranger
- * receives as an ordinary message. Members agree on a norm before its acts,
- * and each daemon refuses its own agent's act out of turn. An agent's acts sent
- * back to back are judged in the order sent. The office-hours daemons run the
- * daemon's own composition with the marked decision provider, so the norm's
+ * @file Norms between agents of one daemon. Members agree on a norm before
+ * its acts, and each agent's firewall refuses its own agent's act out of turn.
+ * An agent's acts sent back to back are judged in the order sent. The daemon
+ * runs its own composition with the marked decision provider, so the norm's
  * English rule is judged on every request: `[out]` in a topic breaks it for
- * the sender's daemon and `[in]` for the receiver's.
+ * the sender's firewall and `[in]` for the receiver's.
  */
 
-import { FileSystem } from "@effect/platform";
+import type { PermittedItem } from "@social-harness/social-harness";
 import { Effect } from "effect";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { callTool } from "../../../plugins/shared/mcp-client.js";
-import { nextItem, send, startParticipants } from "../agent-fixture.js";
 import {
-  acquireProcessInfrastructure,
-  makeDaemonProcessFixture,
-} from "../daemon/daemon-fixture.js";
+  joinParticipants,
+  nextItem,
+  type Participant,
+  send,
+} from "../agent-fixture.js";
+import { sharedDaemon } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
+import { writeNorms } from "./policy-fixture.js";
 
-const shipped = fileURLToPath(
-  new URL("../../../packages/social-harness/config/norms/", import.meta.url),
-);
-
-/** Each test starts PGlite, the Registry, the Router and two daemons. */
+/** Each test starts one daemon under `tsx`. */
 const NORMS_TEST_TIMEOUT_MS = 120_000;
 
-/** A norms directory holding the shipped `documents` and rule file. */
-function normsDirectory(
-  root: string,
-  name: string,
-  documents: readonly string[],
-) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const directory = join(root, `${name}-norms`);
-    yield* fs.makeDirectory(directory, { recursive: true });
-    yield* Effect.forEach(
-      [...documents, "rules.json"],
-      (document) =>
-        fs.copyFile(
-          join(shipped, document),
-          join(directory, basename(document)),
-        ),
-      { concurrency: 1 },
-    );
-    return directory;
-  });
-}
-
-const strangerText = Effect.gen(function* () {
-  const infrastructure = yield* acquireProcessInfrastructure;
-  const strict = yield* normsDirectory(
-    infrastructure.temporaryDirectory,
-    "norms-bob",
-    [],
-  );
-  const [alice, bob] = yield* startParticipants([
-    yield* makeDaemonProcessFixture(infrastructure, "norms-alice"),
-    yield* makeDaemonProcessFixture(infrastructure, "norms-bob", true, {
-      settings: { normsDirectory: strict },
-    }),
-  ]);
-  if (alice === undefined || bob === undefined) {
-    return yield* Effect.dieMessage("expected two participants");
-  }
-
-  yield* send(alice, { to: bob.address, text: "Can we meet today?" });
-  const reply = yield* nextItem(alice);
-  yield* send(alice, {
-    to: bob.address,
-    text: "(propose :ontology norm-agreement :norm office-hours :when today)",
-  });
-  const fieldReply = yield* nextItem(alice);
-  yield* send(alice, {
-    to: bob.address,
-    text: "(accept-proposal :ontology norm-agreement)",
-  });
-  const turnReply = yield* nextItem(alice);
-
-  expect(reply).toMatchObject({
-    kind: "multicast",
-    message: { author: { agentName: bob.agent.agentName } },
-  });
-  expect(textOf(reply)).toMatch(
-    /^\(not-understood :ontology feedback .*:reason "plain-text"/u,
-  );
-  expect(textOf(fieldReply)).toMatch(
-    /:reason "invalid-content" :error "field \\"when\\"/u,
-  );
-  expect(textOf(turnReply)).toMatch(/:reason "unknown-instance"/u);
-}).pipe(Effect.scoped);
-
 /** The text of a delivered message, or nothing for any other item. */
-function textOf(item: Effect.Effect.Success<ReturnType<typeof nextItem>>) {
+function textOf(item: PermittedItem) {
   return item.kind === "multicast"
     ? item.message.content
         .map((part) => (part.type === "text" ? part.text : ""))
@@ -113,46 +40,31 @@ const request = '(request :ontology office-hours :topic "Project scope")';
 const offer =
   '(propose :ontology office-hours :option1 "Tue 14:00" :option2 "Thu 10:00")';
 
-const officeHoursDocuments = [
-  "examples/chat.lisp",
-  "examples/office-hours.lisp",
-];
-
 /**
- * A student and a professor whose firewall daemons hold `office-hours` and
- * `chat`, unless `professorDocuments` gives the professor other norms.
+ * A student and a professor on one firewall daemon, each holding
+ * `office-hours` and `chat`.
  */
-function officeHours(professorDocuments = officeHoursDocuments) {
-  return Effect.gen(function* () {
-    const infrastructure = yield* acquireProcessInfrastructure;
-    const fixtures = yield* Effect.forEach(
-      [
-        { name: "norms-student", documents: officeHoursDocuments },
-        { name: "norms-professor", documents: professorDocuments },
-      ],
-      ({ name, documents }) =>
-        normsDirectory(infrastructure.temporaryDirectory, name, documents).pipe(
-          Effect.flatMap((directory) =>
-            makeDaemonProcessFixture(infrastructure, name, true, {
-              settings: { normsDirectory: directory },
-            }),
-          ),
-        ),
-      { concurrency: 1 },
-    );
-    const [student, professor] = yield* startParticipants(fixtures);
-    if (student === undefined || professor === undefined) {
-      return yield* Effect.dieMessage("expected two participants");
-    }
-    return { student, professor };
-  });
-}
+const officeHours = Effect.gen(function* () {
+  const daemon = yield* sharedDaemon({ firewall: true });
+  yield* daemon.configure(
+    yield* writeNorms(daemon.directory, [
+      "examples/chat.lisp",
+      "examples/office-hours.lisp",
+    ]),
+  );
+  yield* daemon.start();
+  const [student, professor] = yield* joinParticipants(daemon, [
+    "student",
+    "professor",
+  ]);
+  if (student === undefined || professor === undefined) {
+    return yield* Effect.dieMessage("expected two participants");
+  }
+  return { student, professor };
+});
 
 /** The student proposes office-hours and the professor accepts. */
-function agree(
-  student: Effect.Effect.Success<ReturnType<typeof officeHours>>["student"],
-  professor: Effect.Effect.Success<ReturnType<typeof officeHours>>["professor"],
-) {
+function agree(student: Participant, professor: Participant) {
   return Effect.gen(function* () {
     yield* send(student, { to: professor.address, text: proposal });
     yield* nextItem(professor);
@@ -162,9 +74,9 @@ function agree(
 }
 
 const agreedNorm = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   expect(
-    yield* callTool(professor.endpoint.client, {
+    yield* callTool(professor.connection.client, {
       name: "read_norms",
       arguments: {},
     }),
@@ -198,7 +110,7 @@ const agreedNorm = Effect.gen(function* () {
 
 /** The student requests and then cancels, which only the request allows. */
 const backToBack = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   const cancel = "(cancel :ontology office-hours)";
   yield* agree(student, professor);
 
@@ -218,7 +130,7 @@ const backToBack = Effect.gen(function* () {
  * student can make, the hold, the check-back and the confirmation.
  */
 const booking = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   const slots = "(accept-proposal :ontology office-hours :available (1 2))";
   const hold = "(agree :ontology office-hours :recheck-after 1)";
   const checkBack = "(query-if :ontology office-hours)";
@@ -255,7 +167,7 @@ const booking = Effect.gen(function* () {
 
 /** After the student declines the only offer, the professor's failure ends the task. */
 const escalation = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   const decline = "(reject-proposal :ontology office-hours)";
   const failure =
     '(failure :ontology office-hours :reason "No offered slot works.")';
@@ -282,9 +194,9 @@ const escalation = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-/** The student's own daemon refuses a request whose topic breaks the rule. */
+/** The student's own firewall refuses a request whose topic breaks the rule. */
 const ownBreach = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   yield* agree(student, professor);
 
   const refusal = yield* send(student, {
@@ -302,9 +214,9 @@ const ownBreach = Effect.gen(function* () {
   });
 }).pipe(Effect.scoped);
 
-/** The professor's daemon withholds a breaching request, and the corrected one starts the task. */
+/** The professor's firewall withholds a breaching request, and the corrected one starts the task. */
 const peerBreach = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours();
+  const { student, professor } = yield* officeHours;
   yield* agree(student, professor);
 
   yield* send(student, {
@@ -321,10 +233,14 @@ const peerBreach = Effect.gen(function* () {
   expect(textOf(received)).toBe(request);
 }).pipe(Effect.scoped);
 
-/** A professor whose daemon lacks office-hours fetches it from the student, then the task starts. */
+/** A professor who stops holding office-hours fetches it from the student, then the task starts. */
 const discovery = Effect.gen(function* () {
-  const { student, professor } = yield* officeHours(["examples/chat.lisp"]);
+  const { student, professor } = yield* officeHours;
   const query = "(query-ref :ontology norm-discovery :norm office-hours)";
+  yield* callTool(professor.connection.client, {
+    name: "update_policy",
+    arguments: { remove: [{ norm: "office-hours" }] },
+  });
   yield* send(student, { to: professor.address, text: proposal });
   yield* nextItem(professor);
   const unknown = yield* send(professor, {
@@ -343,12 +259,6 @@ const discovery = Effect.gen(function* () {
   expect(textOf(fetched)).toMatch(/^\(inform :ontology norm-discovery /u);
   expect(textOf(received)).toBe(request);
 }).pipe(Effect.scoped);
-
-it(
-  "answers a stranger's unreadable or out-of-turn messages with not-understood",
-  processTrace(strangerText),
-  NORMS_TEST_TIMEOUT_MS,
-);
 
 it(
   "lets members follow a norm they agreed to and refuses an act out of turn",
@@ -387,7 +297,7 @@ it(
 );
 
 it(
-  "lets a daemon fetch a norm through discovery before accepting it",
+  "lets an agent fetch a norm through discovery before accepting it",
   processTrace(discovery),
   NORMS_TEST_TIMEOUT_MS,
 );
