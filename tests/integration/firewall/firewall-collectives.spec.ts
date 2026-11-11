@@ -1,34 +1,64 @@
 /**
- * @file Gather and all_gather run end to end through real daemons that
- * install firewalls, beside an open member whose daemon installs none.
+ * @file Gather and all_gather run end to end between agents of one daemon
+ * whose firewalls hold a rule, beside an open member whose firewall holds
+ * none.
  *
- * Every other daemon runs `firewall-daemon.ts`, whose policy withholds an
- * incoming text carrying `[in]`, refuses an outgoing text carrying `[out]`,
- * and is unsure about a text carrying `[unsure]`: it refuses such a text
- * outgoing and admits it incoming with a reminder. Each endpoint
- * checks with its own firewall: a requester checks the question it sends and
- * the answers it receives, a member checks the question it is asked.
+ * The daemon runs `firewall-daemon.ts`, and each of its agents starts with the
+ * marked rule among the rules it can edit; the open member removes it. Under
+ * that rule a firewall withholds an incoming text carrying `[in]`, refuses an
+ * outgoing text carrying `[out]`, and is unsure about a text carrying
+ * `[unsure]`: it refuses such a text outgoing and admits it incoming with a
+ * reminder. Each agent checks with its own firewall: a requester checks the
+ * question it sends and the answers it receives, a member checks the question
+ * it is asked.
  */
 
 import { FirewallRefusal } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
+import { callTool } from "../../../plugins/shared/mcp-client.js";
 import {
-  acquireParticipants,
   groupAddress,
   groupRound,
+  joinParticipants,
   measuredDeadlineSeconds,
   nextItem,
   type Participant,
   send,
 } from "../agent-fixture.js";
+import { inNameOrder } from "../collectives/name-order.js";
+import { sharedDaemon } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
-import { anyNumber, anyString } from "../test-matchers.js";
+import { anyNumber, anyString, objectContaining } from "../test-matchers.js";
+import {
+  markedPolicy,
+  markedRule,
+  writeMessagePolicy,
+} from "./policy-fixture.js";
 
-const requireAll = (participants: readonly Participant[], count: 3 | 4) =>
-  participants.length === count
-    ? Effect.succeed(participants)
-    : Effect.dieMessage(`expected ${count} participants`);
+/**
+ * One agent per owner on a firewall daemon, in name order. Each starts with
+ * the marked rule among the rules it can edit.
+ */
+const acquireStrict = (owners: readonly string[]) =>
+  Effect.gen(function* () {
+    const daemon = yield* sharedDaemon({ firewall: true });
+    yield* daemon.configure(
+      yield* writeMessagePolicy(
+        daemon.directory,
+        markedPolicy({ initialRules: [markedRule] }),
+      ),
+    );
+    yield* daemon.start();
+    return inNameOrder(yield* joinParticipants(daemon, owners));
+  });
+
+/** Removes the marked rule from the member's firewall, which then holds no rule. */
+const withoutRule = (member: Participant) =>
+  callTool(member.connection.client, {
+    name: "update_policy",
+    arguments: { remove: [markedRule.id] },
+  }).pipe(Effect.as(member));
 
 const formSchema = {
   type: "object",
@@ -68,44 +98,40 @@ interface AllGatherScenario {
   readonly deadline: number;
 }
 
+/**
+ * The open member is first in name order, so it is first among the members of
+ * the requester's gathers and of the strict member's.
+ */
 const acquireGatherScenario = Effect.gen(function* () {
-  const [requester, open, strict] = yield* acquireParticipants(
-    ["fw-gather-requester", "fw-gather-open", "fw-gather-strict"],
-    ["fw-gather-requester", "fw-gather-strict"],
-  ).pipe(Effect.flatMap((all) => requireAll(all, 3)));
-  if (requester === undefined || open === undefined || strict === undefined) {
+  const [open, requester, strict] = yield* acquireStrict([
+    "alice",
+    "bob",
+    "carol",
+  ]);
+  if (open === undefined || requester === undefined || strict === undefined) {
     return yield* Effect.dieMessage("expected three participants");
   }
-  const members = [open, strict];
+  const members = [yield* withoutRule(open), strict];
   return { requester, open, strict, members };
 });
 
+/** The requester is last in name order, and its members come before it in theirs. */
 const acquireAllGatherScenario = Effect.gen(function* () {
-  const all = yield* acquireParticipants(
-    [
-      "fw-all-gather-requester",
-      "fw-all-gather-open",
-      "fw-all-gather-strict-a",
-      "fw-all-gather-strict-b",
-    ],
-    [
-      "fw-all-gather-requester",
-      "fw-all-gather-strict-a",
-      "fw-all-gather-strict-b",
-    ],
-  ).pipe(Effect.flatMap((participants) => requireAll(participants, 4)));
-  const [requester, open, strictA, strictB] = all;
-  if (
-    requester === undefined ||
-    open === undefined ||
-    strictA === undefined ||
-    strictB === undefined
-  ) {
+  const [open, strictA, strictB, requester] = yield* acquireStrict([
+    "alice",
+    "bob",
+    "carol",
+    "dave",
+  ]);
+  if (open === undefined || strictA === undefined) {
     return yield* Effect.dieMessage("expected four participants");
   }
-  const members = [open, strictA, strictB];
-  /** Canonical conversation address shared by every participant. */
-  const group = groupAddress([open, requester, strictA, strictB]);
+  if (strictB === undefined || requester === undefined) {
+    return yield* Effect.dieMessage("expected four participants");
+  }
+  const members = [yield* withoutRule(open), strictA, strictB];
+  /** The address every member's daemon reports: the members in name order. */
+  const group = groupAddress([...members, requester]);
   const deadline = yield* measuredDeadlineSeconds(
     groupRound(requester, members),
   );
@@ -113,10 +139,10 @@ const acquireAllGatherScenario = Effect.gen(function* () {
 });
 
 /**
- * Each test starts PGlite, the Registry, the Router and three or four
- * daemons under `tsx`, and one step of each waits out a deadline of several
- * measured message rounds. The limit is the only wall-clock bound these traces
- * set themselves apart from that measured deadline.
+ * Each test starts one daemon under `tsx`, and one step of each waits out a
+ * deadline of several measured message rounds. The limit is the only
+ * wall-clock bound these traces set themselves apart from that measured
+ * deadline.
  */
 const FIREWALL_TEST_TIMEOUT_MS = 300_000;
 
@@ -135,7 +161,7 @@ const accept = (
   });
 
 /**
- * A requester and a member with firewalls, and one open member. A refused
+ * A requester and a member whose firewalls hold the rule, and one open member. A refused
  * question sends nothing; a question the strict member's firewall withholds
  * never reaches it, and the requester records it as no-answer at the
  * deadline; an answer the requester's firewall withholds is marked withheld
@@ -152,11 +178,11 @@ const gatherBehavior = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 /**
- * A requester and two members with firewalls, and one open member. A
- * question the strict members' firewalls withhold never reaches them, yet
- * each still applies the close and receives the result with the question
- * withheld. An answer the firewalled endpoints withhold is marked withheld in
- * their results and nowhere else. Every endpoint's result has the same
+ * A requester and two members whose firewalls hold the rule, and one open
+ * member. A question the strict members' firewalls withhold never reaches
+ * them, yet each still applies the close and receives the result with the
+ * question withheld. An answer those firewalls withhold is marked withheld in
+ * their agents' results and nowhere else. Every agent's result has the same
  * members and the same outcome for every answer it shows.
  */
 const allGatherBehavior = Effect.gen(function* () {
@@ -167,7 +193,7 @@ const allGatherBehavior = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 it(
-  "checks a gather's question at each endpoint and its answers at the requester",
+  "checks a gather's question at each agent and its answers at the requester",
   processTrace(gatherBehavior),
   FIREWALL_TEST_TIMEOUT_MS,
 );
@@ -347,7 +373,7 @@ function expectUnsureQuestionRefused(
   });
 }
 
-/** Withheld questions never reach enforcing members, yet those members still receive the close with the question hidden. */
+/** Withheld questions never reach the strict members, yet those members still receive the close with the question hidden. */
 function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
   const { requester, open, members, group, deadline } = scenario;
   return Effect.gen(function* () {
@@ -367,11 +393,17 @@ function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
     ).toMatchObject({ failure: { kind: "request-none" } });
     const outcomes = [
       {
-        member: open.agent,
+        member: objectContaining(open.agent),
         outcome: { kind: "answered", content: { slot: "mon" } },
       },
-      { member: scenario.strictA.agent, outcome: { kind: "no-answer" } },
-      { member: scenario.strictB.agent, outcome: { kind: "no-answer" } },
+      {
+        member: objectContaining(scenario.strictA.agent),
+        outcome: { kind: "no-answer" },
+      },
+      {
+        member: objectContaining(scenario.strictB.agent),
+        outcome: { kind: "no-answer" },
+      },
     ];
     const shown = {
       kind: "collectiveResult",
@@ -440,14 +472,14 @@ function expectAllGatherAnswerVisibility(
 ) {
   return Effect.gen(function* () {
     const openAnswer = {
-      member: open.agent,
+      member: objectContaining(open.agent),
       outcome: {
         kind: "answered",
         content: { slot: "mon", note: "[in] private" },
       },
     };
     const withheldAnswer = {
-      member: open.agent,
+      member: objectContaining(open.agent),
       outcome: {
         kind: "withheld",
         checkId: anyString,
@@ -456,10 +488,13 @@ function expectAllGatherAnswerVisibility(
     };
     const others = [
       {
-        member: strictA.agent,
+        member: objectContaining(strictA.agent),
         outcome: { kind: "answered", content: { slot: "tue" } },
       },
-      { member: strictB.agent, outcome: { kind: "declined" } },
+      {
+        member: objectContaining(strictB.agent),
+        outcome: { kind: "declined" },
+      },
     ];
     const result = {
       kind: "collectiveResult",
