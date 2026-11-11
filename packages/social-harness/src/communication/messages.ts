@@ -15,12 +15,13 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   canonicalIdentifier,
   type ClientRepresentationError,
   compareAgentIds as compareAgentIdBytes,
   compareAscii,
+  encodeCanonical,
   exactStruct,
   isCanonicalIdentifier,
   isStrictlyAscending,
@@ -130,6 +131,38 @@ export type Content = typeof Content.Type;
 
 /** The largest group membership a conversation address or descriptor admits. */
 export const maximumMembers = 32;
+
+const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
+const ConversationMembers = exactStruct({
+  kind: Schema.Literal("conversation_identity"),
+  memberAgentIds: Schema.Tuple([AgentId, AgentId], AgentId).pipe(
+    Schema.maxItems(maximumMembers),
+  ),
+});
+
+/**
+ * The identifier of the conversation among these members: a hash of their
+ * agent identifiers, which must be given in ascending order with no repeats.
+ */
+export const deriveConversationId = (
+  memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
+): Effect.Effect<typeof ConversationId.Type, ClientRepresentationError> =>
+  isStrictlyAscending(memberAgentIds, compareAgentIds)
+    ? encodeCanonical(ConversationMembers, {
+        kind: "conversation_identity" as const,
+        memberAgentIds,
+      }).pipe(
+        Effect.map(
+          (bytes) =>
+            `cnv_${createHash("sha256")
+              .update("org.social-harness/client/v2/conversation\0")
+              .update(bytes)
+              .digest("base64url")}`,
+        ),
+        Effect.flatMap(Schema.decodeUnknown(ConversationId)),
+        Effect.mapError(representationFailure),
+      )
+    : Effect.fail(representationFailure());
 
 /** The scheme of an address naming one agent. */
 export const AGENT_ADDRESS_PREFIX = "agent:";

@@ -5,9 +5,9 @@ import { Cause, Clock, Deferred, Effect, Option, Schema, Scope } from "effect";
 import {
   encodeCanonical,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../../encoding/index.js";
-import { AgentCard } from "../../identity/agent-cards.js";
-import { CommunicationError } from "../errors.js";
+} from "../encoding/index.js";
+import { AgentCard } from "../identity/agent-cards.js";
+import { CommunicationError } from "./errors.js";
 import {
   type collectiveClosure,
   type CollectiveId,
@@ -28,7 +28,7 @@ import {
   type ResultDelivery,
   ResultSources,
   validateAnswer,
-} from "../messages.js";
+} from "./messages.js";
 import {
   completeCollectiveOperation,
   encodeRuntimeValue,
@@ -50,7 +50,7 @@ import {
   saveRemoteClose,
   type StoredCollectiveMessage,
   type StoredCollectiveOperation,
-} from "../store.js";
+} from "./store.js";
 
 // safer-arch-ignore no-fat-orchestrator: Request lifecycle and its workers share one private owner inside Communication.
 

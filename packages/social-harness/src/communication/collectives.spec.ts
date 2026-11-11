@@ -13,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import { collectiveOperationId } from "../__tests__/request-ids.js";
+import { collectiveOperationId } from "./__tests__/request-ids.js";
 import {
   alice,
   aliceClose,
@@ -26,15 +26,15 @@ import {
   pendingBob,
   question,
   wireMessage,
-} from "../__tests__/requests-fixtures.js";
+} from "./__tests__/requests-fixtures.js";
 import {
   Message,
   readCollectiveValue,
   RequestError,
   type ResultDelivery,
-} from "../messages.js";
-import { CommunicationError } from "../service.js";
-import { transaction } from "../store.js";
+} from "./messages.js";
+import { CommunicationError } from "./service.js";
+import { transaction } from "./store.js";
 
 class HandlerUnavailable extends Data.TaggedError("HandlerUnavailable") {}
 

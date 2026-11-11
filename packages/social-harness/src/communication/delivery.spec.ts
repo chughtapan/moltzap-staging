@@ -3,10 +3,10 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Layer, Queue, Schema } from "effect";
 import { expect } from "vitest";
-import { conversationIdentityFixture } from "../__tests__/conversation-fixtures.js";
-import { agentCardOf } from "../../identity/agent-cards.js";
-import { Message } from "../messages.js";
-import { Communication, type Conversation } from "../service.js";
+import { conversationIdentityFixture } from "./__tests__/conversation-fixtures.js";
+import { agentCardOf } from "../identity/agent-cards.js";
+import { Message } from "./messages.js";
+import { Communication, type Conversation } from "./service.js";
 
 const fixture = Effect.gen(function* () {
   const subject = yield* conversationIdentityFixture;

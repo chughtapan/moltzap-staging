@@ -1,4 +1,10 @@
-/** @file Publishes direct client/server messages through the shared message store. */
+/**
+ * @file Delivers messages between agents hosted by one daemon.
+ *
+ * A send orders the message in its conversation and saves it for every member
+ * in one transaction. Questions and answers are messages that the request
+ * worker interprets.
+ */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Option, Schema } from "effect";
 import { randomBytes } from "node:crypto";
@@ -6,31 +12,33 @@ import type {
   CommunicationService,
   CommunicationSettings,
   Incoming,
-} from "../contract.js";
-import { withAgentTransaction } from "../../database/transactions.js";
+  Outgoing,
+} from "./contract.js";
+import { makeRequests } from "./collectives.js";
+import { withAgentTransaction } from "../database/transactions.js";
 import {
   decodeCanonical,
   encodeCanonical,
   sameBytes,
-} from "../../encoding/index.js";
+} from "../encoding/index.js";
 import {
   AgentCard,
   agentCardOf,
   AgentIdentityCard,
   type AgentName,
-} from "../../identity/agent-cards.js";
-import { EnvelopeId, SignedMessage } from "../../identity/message-security.js";
-import { CommunicationError } from "../errors.js";
-import { messageHistory } from "../history.js";
+} from "../identity/agent-cards.js";
+import { EnvelopeId, SignedMessage } from "../identity/message-security.js";
+import { CommunicationError } from "./errors.js";
+import { messageHistory } from "./history.js";
 import {
   compareAgentIds,
   Message,
   messageInterpretation,
   type MessageReference,
   RequestError,
-} from "../messages.js";
-import { bindCommunicationMode } from "../mode.js";
-import { deriveConversationId } from "../records.js";
+  deriveConversationId,
+} from "./messages.js";
+import { bindCommunicationMode } from "./mode.js";
 import {
   acceptMessage,
   acknowledgeMessage,
@@ -39,12 +47,13 @@ import {
   readAcceptedMessage,
   readMessages,
   type StoredMessage,
-} from "../store.js";
+} from "./store.js";
 
 interface Environment {
   readonly sql: SqlClient;
+  /** With a server agent named, a conversation is that agent and one other. */
   readonly settings: CommunicationSettings & {
-    readonly serverAgentName: AgentName;
+    readonly serverAgentName?: AgentName;
   };
 }
 const unavailable = () =>
@@ -58,11 +67,11 @@ const signatureRow = Schema.Struct({
   signedMessage: Schema.Uint8ArrayFromSelf,
 });
 
-/** Each caller owns an ordinary registered identity; only the configured server connects clients. */
-export function makeClientServer(settings: Environment["settings"]) {
+/** One agent's sends, incoming work and history on this daemon. */
+export function makeDelivery(settings: Environment["settings"]) {
   return Effect.gen(function* () {
     const environment = { sql: yield* SqlClient, settings };
-    yield* bindCommunicationMode("client-server", settings.serverAgentName);
+    yield* claimMode(settings);
     yield* initializeCommunication(settings.agentKey, settings.identityCard);
     yield* registerHosted(environment);
     const history = messageHistory({
@@ -72,23 +81,29 @@ export function makeClientServer(settings: Environment["settings"]) {
       check: checkHistory(environment),
       verify: (entries) => verifyMessages(environment, entries),
     });
+    const requests = yield* makeRequests(settings.agentKey, {
+      self: agentCardOf(settings.identityCard),
+      acceptMessage: (message) =>
+        capture(environment, sendMessage(environment, message)).pipe(
+          Effect.mapError((error) =>
+            error instanceof CommunicationError ? error : unavailable(),
+          ),
+        ),
+    });
     const consumer = yield* Effect.makeSemaphore(1);
     return {
       send: (value) =>
-        capture(
-          environment,
-          "kind" in value
-            ? Effect.fail(new CommunicationError({ reason: "content-invalid" }))
-            : sendMessage(environment, value),
-        ),
+        capture(environment, send(environment, requests, value)),
       getRequest: (operationId) =>
-        Effect.fail(
-          new RequestError({ operationId, failure: { kind: "request-none" } }),
-        ),
+        capture(environment, requests.getRequest(operationId)),
       waitForMessage: (reference) =>
         capture(environment, waitForMessage(environment, reference)),
       consume: (handle) =>
-        consumer.withPermits(1)(consume(environment, handle)),
+        consumer.withPermits(1)(
+          consume(environment, requests, handle).pipe(
+            Effect.raceFirst(requests.failed),
+          ),
+        ),
       getConversation: (names) =>
         capture(environment, history.getConversation(names)),
       listConversations: (query = {}) =>
@@ -99,8 +114,33 @@ export function makeClientServer(settings: Environment["settings"]) {
     Effect.mapError((error) =>
       error instanceof CommunicationError ? error : unavailable(),
     ),
-    Effect.withSpan("Communication.clientServerLayer"),
+    Effect.withSpan("Communication.delivery"),
   );
+}
+
+type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
+
+/** A database serves one mode, and in client/server mode one server agent. */
+const claimMode = (settings: Environment["settings"]) =>
+  settings.serverAgentName === undefined
+    ? bindCommunicationMode("p2p")
+    : bindCommunicationMode("client-server", settings.serverAgentName);
+
+/** A question starts a request, an answer joins one, and anything else is sent as it is. */
+function send(environment: Environment, requests: Requests, value: Outgoing) {
+  if ("kind" in value) {
+    return requests.accept(value);
+  }
+  return Effect.gen(function* () {
+    const decoded = yield* messageInterpretation(value).pipe(
+      Effect.catchTag("CollectivePartInvalidError", () =>
+        Effect.succeed(Option.none()),
+      ),
+    );
+    return yield* Option.isSome(decoded) && decoded.value.kind === "response"
+      ? requests.answer({ ...value, operation: decoded.value })
+      : sendMessage(environment, value);
+  });
 }
 
 function registerHosted(environment: Environment) {
@@ -144,7 +184,11 @@ function hosted({ sql, settings }: Environment, agentId: string) {
   });
 }
 
-/** Pair locks precede acceptance so opposite-direction sends cannot hold one another's tenant row. */
+/**
+ * Orders one message and saves it for every member, or changes nothing.
+ * Members' rows are locked in one fixed order, so sends in opposite directions
+ * cannot hold each other's rows.
+ */
 function sendMessage(environment: Environment, message: Message) {
   const { sql, settings } = environment;
   return sql.withTransaction(
@@ -158,16 +202,24 @@ function sendMessage(environment: Environment, message: Message) {
         return yield* invalid();
       }
       const conversationId = yield* messageConversation(settings, message);
-      if (Option.isSome(yield* messageInterpretation(message))) {
-        return yield* new CommunicationError({ reason: "content-invalid" });
-      }
-      const recipient = message.recipients[0];
-      const remote = yield* hosted(environment, recipient.agentId);
-      if (!Schema.equivalence(AgentCard)(recipient, agentCardOf(remote.card))) {
-        return yield* invalid();
-      }
-      yield* bindCommunicationMode("client-server", settings.serverAgentName);
-      const agentKeys = [settings.agentKey, remote.agentKey].sort((a, b) =>
+      const recipientKeys = yield* Effect.forEach(
+        message.recipients,
+        (recipient) =>
+          hosted(environment, recipient.agentId).pipe(
+            Effect.filterOrFail(
+              (remote) =>
+                Schema.equivalence(AgentCard)(
+                  recipient,
+                  agentCardOf(remote.card),
+                ),
+              () => invalid(),
+            ),
+            Effect.map((remote) => remote.agentKey),
+          ),
+        { concurrency: 1 },
+      );
+      yield* claimMode(settings);
+      const agentKeys = [settings.agentKey, ...recipientKeys].sort((a, b) =>
         a.localeCompare(b),
       );
       for (const agentKey of agentKeys) {
@@ -203,11 +255,11 @@ function sendMessage(environment: Environment, message: Message) {
       if (position === undefined) {
         return yield* unavailable();
       }
-      // eslint-disable-next-line no-restricted-properties -- Client/server trusts the daemon for plaintext custody and signs the Message directly; it creates no P2P outer envelope.
+      // eslint-disable-next-line no-restricted-properties -- The daemon keeps plaintext custody and signs the Message directly; it creates no outer envelope.
       const signed = yield* SignedMessage.sign({
         identityCard: settings.identityCard,
         signingAuthority: settings.signingAuthority,
-        recipientAgentIds: new Set([recipient.agentId]),
+        recipientAgentIds: new Set(recipientIds(message)),
         envelopeId: yield* Schema.decodeUnknown(EnvelopeId)(
           `env_${randomBytes(16).toString("base64url")}`,
         ),
@@ -233,40 +285,40 @@ function sendMessage(environment: Environment, message: Message) {
   );
 }
 
-/** Signed membership binds retained rows to the local tenant, topology and conversation. */
+const recipientIds = (message: Message) =>
+  message.recipients.map((recipient) => recipient.agentId);
+
+/**
+ * The conversation a message belongs to: its author and recipients, who must
+ * be distinct and include this agent. With a server agent named, they must be
+ * that agent and one other.
+ */
 function messageConversation(
   settings: Environment["settings"],
   message: Message,
 ) {
   return Effect.gen(function* () {
-    const recipient = message.recipients[0];
-    if (
-      message.recipients.length !== 1 ||
-      recipient.agentId === message.author.agentId
-    ) {
-      return yield* invalid();
-    }
-    const members = [message.author, recipient];
-    if (
-      !members.some(
-        (member) => member.agentName === settings.serverAgentName,
-      ) ||
-      !members.some((member) =>
-        Schema.equivalence(AgentCard)(
-          member,
-          agentCardOf(settings.identityCard),
-        ),
-      )
-    ) {
-      return yield* invalid();
-    }
-    const [first, second] = members
+    const members = [message.author, ...message.recipients];
+    const [first, second, ...rest] = members
       .map((member) => member.agentId)
       .sort(compareAgentIds);
     if (first === undefined || second === undefined) {
       return yield* invalid();
     }
-    return yield* deriveConversationId([first, second]);
+    const memberIds = [first, second, ...rest] as const;
+    const distinct = new Set(memberIds).size === memberIds.length;
+    const local = members.some((member) =>
+      Schema.equivalence(AgentCard)(member, agentCardOf(settings.identityCard)),
+    );
+    const { serverAgentName } = settings;
+    const allowed =
+      serverAgentName === undefined ||
+      (members.length === 2 &&
+        members.some((member) => member.agentName === serverAgentName));
+    if (!distinct || !local || !allowed) {
+      return yield* invalid();
+    }
+    return yield* deriveConversationId(memberIds);
   });
 }
 
@@ -344,13 +396,16 @@ function verifyMessage(environment: Environment, entry: StoredMessage) {
       row.signedMessage,
     );
     yield* SignedMessage.verify({ signedMessage, identityCard: author.card });
+    const recipients = recipientIds(entry.message).sort(compareAgentIds);
     if (
       !sameBytes(
         signedMessage.body,
         yield* encodeCanonical(Message, entry.message),
       ) ||
-      signedMessage.recipientAgentIds.length !== 1 ||
-      signedMessage.recipientAgentIds[0] !== entry.message.recipients[0].agentId
+      signedMessage.recipientAgentIds.length !== recipients.length ||
+      signedMessage.recipientAgentIds.some(
+        (agentId, index) => agentId !== recipients[index],
+      )
     ) {
       return yield* invalid();
     }
@@ -376,8 +431,13 @@ function waitForMessage(
   });
 }
 
+/**
+ * Hands each pending message, question and result to `handle` in order, then
+ * waits for more. A message is marked consumed only after `handle` succeeds.
+ */
 function consume<E, R>(
   environment: Environment,
+  requests: Requests,
   handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
 ) {
   return Effect.gen(function* () {
@@ -391,7 +451,13 @@ function consume<E, R>(
         }).pipe(Effect.tap((entries) => verifyMessages(environment, entries))),
       );
       for (const entry of rows) {
-        yield* handle({ kind: "message", message: entry.message });
+        const classified = yield* capture(
+          environment,
+          requests.receive(entry.message),
+        );
+        if (Option.isSome(classified)) {
+          yield* handle(classified.value);
+        }
         yield* capture(
           environment,
           acknowledgeMessage(environment.settings.agentKey, {
@@ -399,6 +465,18 @@ function consume<E, R>(
             msgId: entry.message.msgId,
           }),
         );
+      }
+      while (
+        yield* capture(
+          environment,
+          requests.deliverNextResult((delivery) =>
+            delivery.item.kind === "result"
+              ? handle({ ...delivery.item, sources: delivery.sources })
+              : handle(delivery.item),
+          ),
+        )
+      ) {
+        continue;
       }
       yield* Effect.sleep("100 millis");
     }

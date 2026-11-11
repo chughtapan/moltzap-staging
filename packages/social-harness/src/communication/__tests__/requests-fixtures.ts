@@ -14,9 +14,9 @@ import {
   MsgId,
   Request,
   type ResultDelivery,
+  deriveConversationId,
 } from "../messages.js";
 import { makeRequests } from "../p2p/collectives.js";
-import { deriveConversationId } from "../records.js";
 import { CommunicationError } from "../service.js";
 import { acceptMessage } from "../store.js";
 import { collectiveOperationId } from "./request-ids.js";

@@ -22,8 +22,8 @@ import {
   messageInterpretation,
   messageMembers,
   type MessageReference,
+  deriveConversationId,
 } from "./messages.js";
-import { deriveConversationId } from "./records.js";
 import {
   readMessages,
   readPendingMessages,

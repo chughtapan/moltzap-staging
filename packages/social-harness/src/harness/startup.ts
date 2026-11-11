@@ -19,13 +19,12 @@ import {
   ScopedCache,
 } from "effect";
 import { MessageAddressInput } from "../communication/messages.js";
-import { Router } from "../communication/p2p/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
+import type { AgentPublicKey } from "../identity/keys.js";
 import { localRegistry } from "../identity/local-registry.js";
-import { Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion, WIRE_VERSION } from "../version.js";
@@ -73,17 +72,19 @@ function runDaemon() {
           : yield* serviceNorms(settings.norms);
       const mode =
         settings.mode.kind === "p2p"
-          ? yield* p2pMode(settings, settings.mode)
+          ? yield* p2pMode(settings)
           : yield* clientServerMode(settings.mode, {
               unlockKey: access.unlockKey,
               hasNorms: norms !== undefined,
             });
+      const registry = yield* localRegistry(access.unlockKey);
       const selectApp = yield* makeAgentSelector({
         settings,
         unlockKey: access.unlockKey,
+        registrySignerPublicKey: registry.registrySignerPublicKey,
         mode,
         norms,
-      }).pipe(Effect.provide(yield* Layer.build(mode.registry)));
+      }).pipe(Effect.provide(yield* Layer.build(registry.layer)));
       const app = yield* makeMcpHttpApp(
         settings.authentication,
         selectApp,
@@ -99,30 +100,13 @@ function runDaemon() {
 }
 
 /**
- * The peers' shared Registry names every agent, and each agent sends and
- * receives through the Router. Every agent is a peer: it runs the daemon's
- * own firewall and may address any other agent.
+ * Every agent is a peer: it runs the daemon's own firewall and may message
+ * any other agent on the daemon, alone or in a group.
  */
-function p2pMode(
-  settings: DaemonSettings,
-  mode: Extract<DaemonSettings["mode"], { readonly kind: "p2p" }>,
-) {
-  const router = Router.layer({
-    origin: mode.routerOrigin,
-    sendTimeout: Duration.seconds(30),
-    pollTimeout: Duration.seconds(35),
-  }).pipe(Layer.provide(NodeHttpClient.layer));
+function p2pMode(settings: DaemonSettings) {
   return Effect.as(Communication.p2p.claim, {
-    registrySignerPublicKey: mode.registrySignerPublicKey,
-    registry: Registry.layer({
-      origin: mode.registryOrigin,
-      registrySignerPublicKey: mode.registrySignerPublicKey,
-      requestTimeout: Duration.seconds(30),
-      admissionCredential: Option.fromNullable(mode.admissionCredential),
-    }).pipe(Layer.provide(NodeHttpClient.layer)),
     agent: () => ({
-      communication: (options: Parameters<typeof Communication.p2p.layer>[0]) =>
-        Communication.p2p.layer(options).pipe(Layer.provide(router)),
+      communication: Communication.p2p.layer,
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: { hideGroups: settings.hideGroups },
       app: {
@@ -135,8 +119,7 @@ function p2pMode(
 }
 
 /**
- * The daemon names its own agents and delivers their messages itself. The
- * agent named in the settings is the server agent, created here if it does
+ * The agent named in the settings is the server agent, created here if it does
  * not exist. It runs the daemon's firewall and holds its norms. Every other
  * agent is a client: it exchanges messages only with the server agent, runs
  * no check of its own, and reads the server agent's norms.
@@ -156,7 +139,6 @@ function clientServerMode(
       input.unlockKey,
       serverAgentName,
     );
-    const registry = yield* localRegistry(input.unlockKey);
     const serverNorms = yield* Ref.make(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
@@ -194,8 +176,6 @@ function clientServerMode(
       started: () => Effect.void,
     };
     return {
-      registrySignerPublicKey: registry.registrySignerPublicKey,
-      registry: registry.layer,
       agent: (agentName: string) =>
         agentName === serverAgentName ? server : client,
     };
@@ -234,6 +214,8 @@ type Mode =
 interface DaemonResources {
   readonly settings: DaemonSettings;
   readonly unlockKey: Redacted.Redacted<Uint8Array>;
+  /** The key the daemon signs its agents' identity cards with. */
+  readonly registrySignerPublicKey: AgentPublicKey;
   readonly mode: Mode;
   readonly norms?: ServiceNorms;
 }
@@ -302,7 +284,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
     const identity = Identity.layer({
       agentKey,
       signingAuthority: registration.signingAuthority,
-      registrySignerPublicKey: mode.registrySignerPublicKey,
+      registrySignerPublicKey: daemon.registrySignerPublicKey,
       registration: registration.registration,
     });
     const policy = settings.messagePolicy?.policy;
@@ -316,7 +298,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
               agentKey,
               identityCard,
               signingAuthority: registration.signingAuthority,
-              registrySignerPublicKey: mode.registrySignerPublicKey,
+              registrySignerPublicKey: daemon.registrySignerPublicKey,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
             }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,

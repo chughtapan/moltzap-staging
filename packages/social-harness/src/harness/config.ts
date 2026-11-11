@@ -136,13 +136,7 @@ const commonFields = {
   host: Schema.NonEmptyString,
   authentication: Schema.Union(localBearer, publicOAuth),
   mode: Schema.Union(
-    exactStruct({
-      kind: Schema.Literal("p2p"),
-      routerOrigin: origin,
-      registryOrigin: origin,
-      registrySignerPublicKey: AgentPublicKey,
-      admissionCredential: Schema.optional(credential),
-    }),
+    exactStruct({ kind: Schema.Literal("p2p") }),
     exactStruct({
       kind: Schema.Literal("client-server"),
       serverAgentName: AgentName,
