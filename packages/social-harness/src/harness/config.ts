@@ -28,7 +28,7 @@ import {
   installedNorms,
   loadNorms,
   type NormsConfigurationError,
-} from "../norms/configuration.js";
+} from "../norms/index.js";
 import { packageVersion } from "../version.js";
 
 /** Messages identify the failed operation without disclosing documents or credentials. */

@@ -18,7 +18,7 @@ import { issuesText, SendError } from "../../communication/errors.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
 import { AgentIdentityCard } from "../../identity/agent-cards.js";
 import { Identity } from "../../identity/service.js";
-import { HeldNorms } from "../../norms/configuration.js";
+import { HeldNorms } from "../../norms/index.js";
 import {
   CallToolResult,
   ProtocolError,
