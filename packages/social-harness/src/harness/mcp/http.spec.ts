@@ -9,7 +9,6 @@ import { createServer } from "node:http";
 import { expect } from "vitest";
 import type { McpAuthentication } from "./http.js";
 import { mcpFixture, mcpRequest } from "../__tests__/mcp-fixtures.js";
-import { INBOX_PENDING_EVENT } from "./contracts.js";
 
 const resource = new URL("https://mcp.example.test/mcp");
 const owner = "owner-subject";
@@ -158,7 +157,7 @@ it("rejects a different Host even for the correct owner's token", () =>
   }));
 
 it(
-  "closes an admitted Events stream at token expiry without closing later requests",
+  "closes an admitted stream at token expiry without closing later requests",
   () =>
     Effect.gen(function* () {
       const test = yield* fixture;
@@ -168,12 +167,8 @@ it(
       const response = yield* Effect.tryPromise(() =>
         test.fetch(
           mcpRequest(
-            "events/stream",
-            {
-              name: INBOX_PENDING_EVENT,
-              arguments: {},
-              cursor: null,
-            },
+            "subscriptions/listen",
+            { notifications: { toolsListChanged: true } },
             {
               headers: {
                 host: resource.host,
@@ -185,7 +180,7 @@ it(
       );
       expect(response.status).toBe(200);
       const body = yield* Effect.tryPromise(() => response.text());
-      expect(body).toContain("notifications/events/active");
+      expect(body).toContain("notifications/subscriptions/acknowledged");
       const later = yield* test.call(yield* test.token());
       expect(later.status).toBe(200);
     }),

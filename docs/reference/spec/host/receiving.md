@@ -51,19 +51,10 @@ separate acknowledgment call.
 
 The daemon advertises `capabilities.events: {}` on MCP `2026-07-28` under the
 [pinned Events draft](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/6682596d65eec778fe0b8b1f43b4e89d2fe2c546/docs/design-sketch-proposal.md).
-Push notifications named `org.social-harness/inbox.pending` contain only
-`{pendingCount}`. Inbox reads recover lost notifications.
-
-Open `events/stream` before reading. Activation precedes events. Frames carry
-the parent request id in `_meta["io.modelcontextprotocol/subscriptionId"]`.
-Under `notifications/events/`, `active` confirms activation, `event` announces
-work, `error` reports a recoverable error while staying active, and `terminated`
-ends the stream. Heartbeats arrive at least every 30 seconds. Detect loss from
-silence, not a tool timeout. Reread after reattachment. Canceled-subscription
-failures cannot close replacements.
-
-Notification cursors are `null`. A `wake_` plus a random UUID identifies only the
-notification.
+Its one event, `org.social-harness/inbox.pending`, contains only
+`{pendingCount}` and is delivered to a [webhook](#webhook-consumer). Its cursor
+is `null`, and a `wake_` plus a random UUID identifies only the notification.
+Inbox reads recover lost notifications.
 
 `receive_messages` takes an optional `cursor` and returns `items` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
@@ -79,15 +70,16 @@ waiting.
 The caller chooses the wait; the daemon sets no default. Without `wait`, a
 read returns at once.
 
-Polling repeats `receive_messages`, following `nextCursor` until absent. A push stream
-wakes the same reads, and a host without one can wait in the read instead.
+Polling repeats `receive_messages`, following `nextCursor` until absent. A
+webhook wakes the same reads, and a host without one can wait in the read
+instead.
 Invalid cursors return `invalid-cursor`. Start a new traversal after
 reconnecting.
 
 ## Webhook consumer
 
 Authenticated `events/subscribe` and `events/unsubscribe` use
-`org.social-harness/inbox.pending`, the same wakeup the push stream sends.
+`org.social-harness/inbox.pending`.
 Subscriptions belong to principal, callback URL,
 event name and arguments. Refresh preserves id. Leases default to and cannot
 exceed 24 hours, with a 60-second minimum.

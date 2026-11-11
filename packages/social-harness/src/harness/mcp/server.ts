@@ -21,7 +21,6 @@ import { Identity } from "../../identity/service.js";
 import { HeldNorms } from "../../norms/configuration.js";
 import {
   CallToolResult,
-  McpServerClient,
   ProtocolError,
   Tool,
   ToolAnnotations,
@@ -33,7 +32,6 @@ import { SocialHarness } from "../social-harness.js";
 import {
   clientToolDefinitions,
   eventListInput,
-  eventStreamInput,
   eventSubscribeInput,
   eventUnsubscribeInput,
   type HarnessWebhookEvents,
@@ -44,7 +42,6 @@ import {
   toolDefinitions,
 } from "./contracts.js";
 import { limitResponseStream } from "./http.js";
-import { countPendingInbox, inboxPendingEvent } from "./webhook.js";
 
 interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
@@ -71,7 +68,7 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const harness = yield* SocialHarness;
   const firewall = yield* Firewall;
   const server = yield* McpServer.make;
-  server.events.current = inboxEvents(harness, settings.webhook);
+  server.events.current = inboxEvents(settings.webhook);
   yield* Effect.forEach(
     [
       yield* statusTool(settings.webhook),
@@ -399,10 +396,10 @@ function openObjects(value: unknown): unknown {
 
 /**
  * The one event a host can follow: a wake-up saying how many inbox items
- * wait. A host follows it on an open stream or through a webhook it
- * subscribes, and reads the items themselves with `receive_messages`.
+ * wait. A host subscribes a webhook for it, and reads the items themselves
+ * with `receive_messages`.
  */
-function inboxEvents(harness: Harness, webhook: HarnessWebhookEvents) {
+function inboxEvents(webhook: HarnessWebhookEvents) {
   const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
     Schema.decodeUnknown(schema)(input).pipe(
       Effect.catchTag("ParseError", () =>
@@ -417,11 +414,6 @@ function inboxEvents(harness: Harness, webhook: HarnessWebhookEvents) {
           () => new ProtocolError(-32602, "Invalid event catalog cursor"),
         ),
         Effect.as({ events: [inboxPendingCatalogEntry] }),
-      ),
-    stream: (raw: unknown) =>
-      decode(eventStreamInput, raw).pipe(
-        Effect.flatMap(onlyInboxPending),
-        Effect.zipRight(streamPending(harness)),
       ),
     subscribe: (raw: unknown) =>
       decode(eventSubscribeInput, raw).pipe(
@@ -461,48 +453,4 @@ function onlyInboxPending<
           },
         ),
       );
-}
-
-/**
- * Tells the caller how many inbox items wait: once when the stream opens and
- * again whenever the inbox changes, with a heartbeat every 20 seconds.
- */
-function streamPending(harness: Harness) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const { notify } = yield* McpServerClient;
-      if (notify === undefined) {
-        return yield* Effect.fail(
-          new ProtocolError(-32603, "Event stream unavailable"),
-        );
-      }
-      yield* notify("notifications/events/active", {
-        cursor: null,
-        truncated: false,
-      });
-      yield* Effect.sleep("20 seconds").pipe(
-        Effect.zipRight(
-          notify("notifications/events/heartbeat", { cursor: null }),
-        ),
-        Effect.forever,
-        Effect.forkScoped,
-      );
-      yield* Stream.concat(Stream.make(undefined), harness.inboxChanged).pipe(
-        Stream.runForEach(() =>
-          countPendingInbox(harness).pipe(
-            Effect.catchTag("InboxError", () =>
-              Effect.fail(new ProtocolError(-32603, "Inbox unavailable")),
-            ),
-            Effect.flatMap((count) =>
-              notify(
-                "notifications/events/event",
-                inboxPendingEvent(count, Date.now()),
-              ),
-            ),
-          ),
-        ),
-      );
-      return {};
-    }),
-  );
 }

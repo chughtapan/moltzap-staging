@@ -139,7 +139,7 @@ The exact issuer and subject select one durable personal agent. Email addresses
 and caller-supplied agent identifiers do not select installations. A first
 admitted MCP request creates the identity and registers it with the network;
 repeated requests recover it. OAuth setup itself creates no owner or agent.
-An admitted Events stream closes when its token expires; clients renew their
+An admitted stream closes when its token expires; clients renew their
 authorization before reconnecting.
 
 ### Recovery
