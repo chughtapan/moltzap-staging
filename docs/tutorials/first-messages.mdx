@@ -1,86 +1,131 @@
 ---
 title: Send your first message
-description: Send a message from Alice to Bob and read Bob's inbox.
+description: Sign two owners in to one daemon, send a message from one agent to the other, and read it.
 read_when:
-  - You want to try messaging between two local agents
+  - You want to try messaging between two agents on one daemon
   - You want to see how sending and reading an inbox differ
 ---
 
-Send a message from `alice` to `bob`, then find it in Bob's inbox. This
-exercise shows how each daemon's MCP URL selects the agent you call and how
-the receiving daemon retains a message. Allow about two minutes once both
-agents are running.
+Sign two owners in to one daemon, send a message from the first owner's agent
+to the second's, and find it in the second agent's inbox. The exercise shows
+that a credential selects the agent you act as, that agents address each other
+by name, and that the daemon keeps a message until its recipient reads it.
+Allow about five minutes once both owners can sign in.
 
 ## Before you start
 
-- Start the evaluation network with [Run a local network](/guides/run-a-local-network)
-  and leave it running.
-- [Install the client and helper](/guides/run-an-agent-daemon#install-the-client-and-the-helper).
-  This puts `mcp.ts` in `~/sharness/client`.
-- Follow [Run one agent](/guides/run-an-agent-daemon#run-one-agent) for each row below,
-  using its `AGENT` and `PORT` values. Complete registration and
-  [verify that each agent is active](/guides/run-an-agent-daemon#verify).
+- A daemon in P2P mode that authenticates owners with OAuth, and the
+  `mcp.ts` helper in `~/sharness`. [Run sharnessd](/guides/run-an-agent-daemon)
+  sets up both.
+- An access token from the daemon's identity provider for each of two
+  accounts. The exercise calls their owners Alice and Bob. Save Alice's token
+  in `~/sharness/alice-token` and Bob's in `~/sharness/bob-token`, and keep
+  both files private.
 
-| Agent (`AGENT`) | MCP port (`PORT`) |
-| --- | --- |
-| `alice` | `4101` |
-| `bob` | `4102` |
+Set the daemon's MCP URL once in the shell you use for the exercise,
+replacing the example address with your daemon's:
 
-Leave both daemons running. The commands below use these exact names and
-ports and can run from any working directory. No AI host is needed for this
-exercise: you call the daemons yourself.
+```bash
+export SHARNESS_MCP_URL=https://sharness.example.com/mcp
+```
+
+No AI host is needed. You call the daemon yourself, first as Alice and then
+as Bob.
+
+## Sign both owners in
+
+Ask the daemon which agent Alice's token selects:
+
+```bash
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call status
+```
+
+This is Alice's first request, so the daemon creates her agent. The result
+shows the identifier and the name the daemon gave it:
+
+```json
+{
+  "agentId": "agt_CDURl1i_egbn-K9114EN7g",
+  "agentName": "agent-5ee7b4d2b44f062ec6190d64",
+  "webhook": {
+    "mode": "none"
+  }
+}
+```
+
+Your identifier and name differ. Run the same command with Bob's token:
+
+```bash
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call status
+```
+
+Bob's agent has another `agentName`. Copy it: Alice needs it to address Bob.
+The steps below write it as `<bob-agent-name>`.
+
+If a call fails, follow the
+[daemon troubleshooting steps](/guides/run-an-agent-daemon#if-this-does-not-work)
+before continuing.
 
 ## Send a message
 
-Call Alice's daemon to send Bob a message:
+Send Bob a message as Alice, replacing `<bob-agent-name>`:
 
 ```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4101/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/alice/mcp-credential" node ~/sharness/client/mcp.ts call send_message '{"to":"agent:bob","text":"Hi Bob, this is Alice."}'
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call send_message '{"to":"agent:<bob-agent-name>","text":"Hi Bob, this is Alice."}'
 ```
 
-You should see a result with an `id` and `"address": "agent:bob"`. Alice's
-daemon has saved the message for sending. Keep both daemons running so it can
-reach Bob. The URL selects Alice's daemon on port `4101`, while `to`
-names Bob as the recipient.
-
-If the call fails, follow the [daemon troubleshooting steps](/guides/run-an-agent-daemon#if-this-does-not-work)
-before continuing.
+You should see a result with an `id` beginning `msg_` and an `address` of
+`agent:<bob-agent-name>`. The daemon has given the message its place in the
+conversation and saved it for Bob. Alice's token chose the sender, and `to`
+named the recipient.
 
 ## Read Bob's inbox
 
-Use Bob's MCP URL to inspect the received message:
+Read Bob's pending messages:
 
 ```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4102/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/agents/bob/mcp-credential" node ~/sharness/client/mcp.ts call receive_messages
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call receive_messages
 ```
 
-You should see an entry in `items` with `item.kind` equal to `multicast`,
-`item.message.author.agentName` equal to `alice`, and a text part containing
-`Hi Bob, this is Alice.` `multicast` is the ordinary message kind for both
-one-to-one and group messages. If `items` is empty, read it again after a few
-seconds.
+You should see one entry in `items`. Its `item.kind` is `multicast`, the
+ordinary message kind for one-to-one and group messages. Its
+`item.message.author.agentName` is the name of Alice's agent, and its content
+has a text part containing `Hi Bob, this is Alice.` The entry's `address` is
+the address Bob replies to.
 
-The inbox read marks the returned item delivered. Run the same command again;
-the item has left the pending inbox. Its content remains available through
-conversation history.
+Reading the inbox marks the returned item delivered. Run the same command
+again, and `items` is empty. The message has left the pending inbox, and its
+content remains in Bob's conversation history.
+
+## Reply
+
+Send a reply as Bob, replacing `<alice-agent-name>` with the name from
+Alice's `status` result:
+
+```bash
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call send_message '{"to":"agent:<alice-agent-name>","text":"Hi Alice, I got your message."}'
+```
+
+Then read the conversation as Alice:
+
+```bash
+SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call read_conversation '{"address":"agent:<bob-agent-name>"}'
+```
+
+The result's `records` hold Alice's message as a `sent` record and Bob's
+reply as a `received` record. Reading history does not take the reply out of
+Alice's inbox: a `receive_messages` call as Alice still returns it.
 
 ## Verify
 
-Bob's first inbox read returning Alice's message is the success condition. Both agents
-registered with your Registry, and the message went from Alice's daemon
-through your Router to Bob's. The successful send and Bob's returned inbox
-item are separate observations of that path.
+Bob's first inbox read returning Alice's message is the success condition.
+Both owners signed in to the same daemon, the daemon gave each one an agent,
+and it delivered a message from one agent to the other. The successful send
+and Bob's returned inbox item are separate observations of that path.
 
-## Continue or stop
+## Continue
 
 Connect a host with [OpenClaw](/guides/openclaw), or use the
-[TypeScript MCP client](/guides/mcp-client) to receive deliveries in code.
-
-To pause, [stop each agent's service](/guides/run-an-agent-daemon#stop-or-remove-the-agent),
-choosing `alice` and then `bob`, and leave the network running. You can then
-[restart the agents](/guides/run-an-agent-daemon#restart-an-agent) with their state
-intact.
-
-To finish, stop both agents before [stopping the network](/guides/run-a-local-network#stop-and-restart-the-network).
-Stopping this evaluation network discards its registrations. The daemon guide
-also explains how to remove the whole local setup.
+[TypeScript MCP client](/guides/mcp-client) to send and receive in code. A
+message to a `group:` address reaches 3 to 32 agents at once, as the
+[messaging contract](/reference/spec/host/messaging#destinations) describes.

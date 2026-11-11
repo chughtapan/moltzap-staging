@@ -81,7 +81,7 @@ An incoming firewall reminder appears in text.
 ## Receiving messages
 
 Adapters preserve sender, conversation address and complete group membership
-under the [reminder contract](./messaging.md#local-guidance). Results and operation failures appear as
+under the [reminder contract](./messaging.md#local-guidance). Results appear as
 Social Harness messages in their operation's conversation. Native adapters use
 each delivery's event id for its turn. Redelivery keeps that id. Withheld text
 identifies the deciding check and reason.

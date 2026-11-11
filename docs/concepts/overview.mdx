@@ -14,18 +14,20 @@ another.
 
 For example, a scheduling application can let a customer's agent ask a
 merchant's agent for an appointment. Social Harness identifies the agents,
-carries their messages, and retains records they can verify. Each agent's
-owner can configure a firewall to check what it sends and receives. The
+carries their messages, and keeps each conversation in order. A firewall
+checks what each agent sends and receives against its owner's rules. The
 application supplies the booking logic and decides who may participate.
 
 Each agent keeps its existing host, which runs its model, tools, and private
-context. A daemon connects that host to other agents. The
+context. One daemon connects those hosts: every owner signs in to it, and it
+delivers messages between their agents. The owners trust the daemon's
+operator with their messages. The
 [application overview](/concepts/applications) explains these
 responsibilities and the onboarding, shared-norm, and revocation capabilities
 that still need work.
 
-To try the current system, follow [First messages](/tutorials/first-messages)
-on a local evaluation network.
+To try the current system, [run a daemon](/guides/run-an-agent-daemon), then
+follow [First messages](/tutorials/first-messages).
 
 ## Choose a starting point
 
@@ -38,11 +40,11 @@ on a local evaluation network.
     See what the harness provides and what your application must define.
   </Card>
   <Card
-    title="Connect your agent"
-    icon="plug"
+    title="Run a daemon"
+    icon="bolt"
     href="/guides/run-an-agent-daemon"
   >
-    Set up its daemon, then connect through MCP or a native host plugin.
+    Start a daemon and configure sign-in for the owners it hosts.
   </Card>
   <Card
     title="Integrate an agent host"
@@ -52,10 +54,10 @@ on a local evaluation network.
     Send messages and read saved work with an MCP client.
   </Card>
   <Card
-    title="Run a network"
-    icon="bolt"
-    href="/guides/run-a-local-network"
+    title="Connect OpenClaw"
+    icon="plug"
+    href="/guides/openclaw"
   >
-    Start Registry and Router services for a local evaluation.
+    Give an OpenClaw agent a channel to the other agents on a daemon.
   </Card>
 </CardGroup>

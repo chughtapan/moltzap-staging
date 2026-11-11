@@ -1,46 +1,30 @@
-/** @file Real-daemon fixtures and the OpenClaw host contract used by adapter acceptance. */
+/**
+ * @file One daemon whose agents message an OpenClaw host, and the OpenClaw
+ * host contract the channel plugin runs against.
+ */
 
+import type { PermittedItem } from "@social-harness/social-harness";
 import openClawPlugin from "@social-harness/openclaw-channel";
-import {
-  AgentAddress,
-  type AgentCard,
-  type Content,
-  GroupAddress,
-  type InboxEntry,
-  type PermittedItem,
-} from "@social-harness/social-harness";
-import {
-  Deferred,
-  Duration,
-  Effect,
-  Option,
-  Queue,
-  Schema,
-  type Scope,
-  Stream,
-} from "effect";
+import { Deferred, Duration, Effect, Queue, type Scope } from "effect";
 import { expect, vi } from "vitest";
+import { joinParticipants, type Participant } from "../agent-fixture.js";
 import {
-  acquireDaemonManagementClient,
-  acquireDaemonProcess,
-  acquireProcessInfrastructure,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
+  type Daemon,
+  type DaemonOptions,
   ProcessTestError,
+  sharedDaemon,
+  type SignedIn,
 } from "../daemon/daemon-fixture.js";
-import { historyMessage } from "../saved-history.js";
 
-interface RegisteredFixture extends DaemonProcessFixture {
-  readonly agent: AgentCard;
-}
-
-interface Scenario {
-  readonly caller: RegisteredFixture;
-  readonly target: RegisteredFixture;
-}
-
-interface GroupScenario extends Scenario {
-  readonly peer: RegisteredFixture;
+/**
+ * A running daemon, the agent the OpenClaw host connects as, and two agents
+ * that message it.
+ */
+export interface Scenario {
+  readonly daemon: Daemon;
+  readonly target: SignedIn;
+  readonly caller: Participant;
+  readonly peer: Participant;
 }
 
 interface RecordedSessionSnapshot {
@@ -340,113 +324,42 @@ export const OPENCLAW_REPLY = "reply from the real OpenClaw adapter";
 /** The greeting shared by the caller and the host-side reply assertion. */
 export const OPENCLAW_INITIAL_TEXT = "hello through the real OpenClaw adapter";
 
-/** Ordinary messages retain their text through certification and delivery. */
-export function multicastContent(text: string): Content {
-  return [{ type: "text", text }];
-}
-
-/** Canonicalizes group membership before decoding the wire address. */
-export function groupAddress(agentNames: readonly string[]) {
-  return Schema.decodeUnknownSync(GroupAddress)(
-    `group:${[...agentNames].sort((left, right) => left.localeCompare(right)).join(",")}`,
-  );
-}
-
-/** Starts and registers two isolated daemon endpoints under the caller’s scope. */
-export function acquireScenario(
-  prefix: string,
-  firewall = false,
-): Effect.Effect<Scenario, ProcessTestError, Scope.Scope> {
-  return Effect.gen(function* () {
-    const infrastructure = yield* acquireProcessInfrastructure;
-    const [caller, target] = yield* Effect.all(
-      [
-        makeDaemonProcessFixture(infrastructure, `${prefix}-caller`),
-        makeDaemonProcessFixture(infrastructure, `${prefix}-target`, firewall),
-      ] as const,
-      { concurrency: 2 },
-    );
-    yield* Effect.all(
-      [acquireDaemonProcess(caller), acquireDaemonProcess(target)] as const,
-      { concurrency: 2 },
-    );
-    const [registeredCaller, registeredTarget] = yield* Effect.all(
-      [registerFixture(caller), registerFixture(target)] as const,
-      { concurrency: 2 },
-    );
-    return { caller: registeredCaller, target: registeredTarget };
+const acquireScenario = (
+  options: DaemonOptions,
+  signInHost: (
+    daemon: Daemon,
+  ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>,
+): Effect.Effect<Scenario, ProcessTestError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const daemon = yield* sharedDaemon(options);
+    yield* daemon.start();
+    const target = yield* signInHost(daemon);
+    const [caller, peer] = yield* joinParticipants(daemon, ["caller", "peer"]);
+    if (caller === undefined || peer === undefined) {
+      return yield* Effect.dieMessage("expected two participants");
+    }
+    return { daemon, target, caller, peer };
   }).pipe(Effect.withSpan("acquireScenario"));
-}
 
-/** Starts three registered daemons so all-gather exercises multiple remote members. */
-export function acquireGroupScenario(
-  prefix: string,
-  firewall = false,
-): Effect.Effect<GroupScenario, ProcessTestError, Scope.Scope> {
-  return Effect.gen(function* () {
-    const infrastructure = yield* acquireProcessInfrastructure;
-    const [caller, target, peer] = yield* Effect.all(
-      [
-        makeDaemonProcessFixture(infrastructure, `${prefix}-caller`),
-        makeDaemonProcessFixture(infrastructure, `${prefix}-target`, firewall),
-        makeDaemonProcessFixture(infrastructure, `${prefix}-peer`),
-      ] as const,
-      { concurrency: 3 },
-    );
-    yield* Effect.all(
-      [
-        acquireDaemonProcess(caller),
-        acquireDaemonProcess(target),
-        acquireDaemonProcess(peer),
-      ] as const,
-      { concurrency: 3 },
-    );
-    const [registeredCaller, registeredTarget, registeredPeer] =
-      yield* Effect.all(
-        [
-          registerFixture(caller),
-          registerFixture(target),
-          registerFixture(peer),
-        ] as const,
-        { concurrency: 3 },
-      );
-    return {
-      caller: registeredCaller,
-      target: registeredTarget,
-      peer: registeredPeer,
-    };
-  }).pipe(Effect.withSpan("acquireGroupScenario"));
-}
+/** A P2P daemon, where the host's agent and the two others are peers. */
+export const acquirePeers = acquireScenario({}, (daemon) =>
+  daemon.signInAs("openclaw-host"),
+);
 
-/** Checks that both daemons retain the same unique certified messages after the exchange. */
-export function assertDurableExchange(
-  scenario: Scenario,
-  initial: Content,
-  replies: readonly Content[],
-) {
-  return Effect.all(
-    [
-      assertFixtureHistory(
-        scenario.caller,
-        directAddress(scenario.target.agentName),
-        initial,
-        replies,
-      ),
-      assertFixtureHistory(
-        scenario.target,
-        directAddress(scenario.caller.agentName),
-        initial,
-        replies,
-      ),
-    ] as const,
-    { concurrency: 2, discard: true },
-  );
-}
-
-/** Validates the wire address built from a registered fixture agent name. */
-export function directAddress(agentName: string) {
-  return Schema.decodeUnknownSync(AgentAddress)(`agent:${agentName}`);
-}
+/**
+ * A client/server daemon whose server agent is the host's and runs the marked
+ * message policy. The two others are clients, whose messages only the server
+ * agent's firewall checks.
+ */
+export const acquireGuardedServer = acquireScenario(
+  {
+    firewall: true,
+    settings: {
+      mode: { kind: "client-server", serverAgentName: "openclaw-host" },
+    },
+  },
+  (daemon) => daemon.signIn(daemon.serverAgentBearer),
+);
 
 /**
  * Creates the smallest account runtime needed by the process-boundary test.
@@ -529,11 +442,11 @@ export function registerOpenClawChannel(): Effect.Effect<
 }
 
 /**
- * Start the registered plugin's account against one daemon, with OpenClaw's
- * gateway context, and wait until it reports connected.
+ * Starts the registered plugin's account as the scenario's target agent, with
+ * OpenClaw's gateway context, and waits until it reports connected.
  */
 export function startOpenClawGateway(
-  target: DaemonProcessFixture,
+  scenario: Pick<Scenario, "daemon" | "target">,
   channelPlugin: StableOpenClawChannelPlugin,
   runtime: ObservedOpenClawAccountRuntime,
   options: {
@@ -542,9 +455,9 @@ export function startOpenClawGateway(
   } = {},
 ) {
   return Effect.gen(function* () {
-    const cfg = openClawConfig(target.stateDirectory, options.mode);
+    const cfg = openClawConfig(scenario.daemon.directory, options.mode);
     const connected = yield* Deferred.make<undefined>();
-    yield* useDaemonEndpoint(target);
+    yield* useDaemonEndpoint(scenario);
 
     const abortController = new AbortController();
     yield* Effect.addFinalizer(() =>
@@ -612,7 +525,7 @@ export function awaitSignal(
   );
 }
 
-/** Binds the host session store to one isolated daemon state directory. */
+/** An OpenClaw configuration with one Social Harness account and its session store in `stateDirectory`. */
 export function openClawConfig(
   stateDirectory: string,
   mode?: "shared" | "private",
@@ -679,35 +592,6 @@ export function nextTurn(turns: Queue.Queue<OpenClawInboundContext>) {
   );
 }
 
-/** Acknowledges delivery after reading the next harness item. */
-export function nextItem<E>(stream: Stream.Stream<InboxEntry, E>) {
-  return nextDelivery(stream).pipe(
-    Effect.map((delivery): PermittedItem => delivery.item),
-  );
-}
-
-/** Accepts one delivery while its subscription is live, before the fixture deadline. */
-export function nextDelivery<E>(stream: Stream.Stream<InboxEntry, E>) {
-  return Stream.runHead(stream).pipe(
-    Effect.timeoutFail({
-      duration: DELIVERY_TIMEOUT,
-      onTimeout: () =>
-        new ProcessTestError({
-          message: "timed out awaiting addressed delivery",
-        }),
-    }),
-    Effect.flatMap(
-      Option.match({
-        onNone: () =>
-          Effect.fail(
-            new ProcessTestError({ message: "delivery stream ended" }),
-          ),
-        onSome: Effect.succeed,
-      }),
-    ),
-  );
-}
-
 /** Fails the scenario when an expected collective request has another item kind. */
 export function requireRequest(item: PermittedItem) {
   return item.kind === "collectiveRequest"
@@ -740,46 +624,6 @@ function isStableOpenClawEntry(value: unknown): value is StableOpenClawEntry {
     value !== null &&
     "register" in value &&
     typeof value.register === "function"
-  );
-}
-
-/** The identity the daemon registered with when it started. */
-function registerFixture(fixture: DaemonProcessFixture) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const management = yield* acquireDaemonManagementClient(fixture);
-      const registered = yield* management.identityCard();
-      return {
-        ...fixture,
-        agent: {
-          agentId: registered.agentId,
-          agentName: registered.agentName,
-          principalId: registered.principalId,
-        },
-      };
-    }),
-  );
-}
-
-function assertFixtureHistory(
-  fixture: DaemonProcessFixture,
-  peerAddress: ReturnType<typeof directAddress>,
-  initial: Content,
-  replies: readonly Content[],
-) {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const management = yield* acquireDaemonManagementClient(fixture);
-      expect(yield* management.listConversations()).toEqual({
-        addresses: [peerAddress],
-      });
-      const history = yield* management.readConversation(peerAddress);
-      expect(history.nextCursor).toBeUndefined();
-      expect(history.records).toHaveLength(1 + replies.length);
-      expect(
-        history.records.map((record) => historyMessage(record).content),
-      ).toEqual([initial, ...replies]);
-    }),
   );
 }
 
@@ -931,11 +775,17 @@ function dispatchOpenClawReply(
   );
 }
 
-/** Restores the process-global endpoint after the serial OpenClaw acceptance scope. */
-function useDaemonEndpoint(fixture: DaemonProcessFixture) {
+/**
+ * Points the plugin, which reads this process's environment, at the daemon
+ * with the target agent's credential until the scope closes.
+ */
+function useDaemonEndpoint({
+  daemon,
+  target,
+}: Pick<Scenario, "daemon" | "target">) {
   return Effect.gen(function* () {
-    vi.stubEnv("SHARNESS_MCP_URL", fixture.endpoint.href);
-    vi.stubEnv("SHARNESS_MCP_CREDENTIAL_FILE", fixture.mcpCredentialFile);
+    vi.stubEnv("SHARNESS_MCP_URL", daemon.endpoint.href);
+    vi.stubEnv("SHARNESS_MCP_CREDENTIAL_FILE", target.credentialFile);
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {

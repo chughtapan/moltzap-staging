@@ -123,10 +123,12 @@ function question(
   });
 }
 
-function localFailure(subject: Fixture, recipient?: AgentCard) {
+/** The result of a question this agent asked and nobody answered. */
+function unanswered(subject: Fixture, recipient?: AgentCard) {
+  const member = recipient ?? subject.bob;
   return Request.create({
     author: subject.self,
-    recipients: [recipient ?? subject.bob],
+    recipients: [member],
     op: "gather",
     question: "Which day works?",
     requestedSchema: { type: "object", properties: {} },
@@ -135,30 +137,20 @@ function localFailure(subject: Fixture, recipient?: AgentCard) {
     Effect.map(
       (request) =>
         ({
-          kind: "request-failed",
-          request,
-          error: "The request could not complete.",
+          kind: "result",
+          result: {
+            request,
+            closedAt: request.deadlineAt,
+            closedBy: "deadline",
+            outcomes: [{ member, outcome: { kind: "no-answer" } }],
+          },
+          sources: { answers: [] },
         }) as const,
     ),
   );
 }
 
 // @agent-code-guard/regression-only: These timelines cover cancellation, restart, ordering and atomic publication through real SQLite.
-it("reuses the saved identity without calling the Registry again", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const scope = yield* Scope.make();
-    const runtime = yield* subject.open().pipe(Scope.extend(scope));
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* subject.open({
-      beforeRegistration: Effect.dieMessage(
-        "Saved registration must not call Registry again",
-      ),
-    });
-    expect(reopened.identity.me).toEqual(runtime.identity.me);
-    expect((yield* reopened.harness.listInbox()).items).toEqual([]);
-  }));
-
 it("serves the inbox while communication starts", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -194,30 +186,17 @@ it("gives each host invocation a fresh message identity", () =>
     ).toEqual([first.id, second.id]);
   }));
 
-it("reports an uncertain send without repeating accepted work", () =>
+it("reports a failed send once without sending it again", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    yield* subject.uncertainSend();
+    yield* subject.failSends();
     expect(
       yield* runtime.harness
-        .send({
-          to: bobAddress,
-          text: "Accepted before the connection failed",
-        })
+        .send({ to: bobAddress, text: "Not stored" })
         .pipe(Effect.flip),
-    ).toMatchObject({ reason: "outcome-unknown" });
+    ).toMatchObject({ reason: "persistence-failed" });
     expect(subject.submitted).toHaveLength(1);
-    expect(
-      (yield* runtime.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([
-      {
-        kind: "sent",
-        message: {
-          content: [{ text: "Accepted before the connection failed" }],
-        },
-      },
-    ]);
   }));
 
 it("checks each conversation in order while another conversation progresses", () =>
@@ -307,7 +286,7 @@ it("recovers an interrupted check and retains its published view after edits, ac
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     expect((yield* resumed.harness.listInbox()).items).toEqual([]);
-    yield* subject.disconnectRegistry();
+    yield* subject.failNameResolution();
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "received", ...saved }]);
@@ -320,20 +299,20 @@ it("recovers an interrupted check and retains its published view after edits, ac
     expect((yield* reopened.harness.listInbox()).items).toEqual([]);
   }));
 
-it("reads result-only history without contacting Registry", () =>
+it("reads result-only history without resolving names", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     const [entry] = (yield* waitForInbox(runtime)).items;
     if (entry === undefined) {
       return yield* Effect.dieMessage("Expected result delivery");
     }
     yield* runtime.harness.acknowledgeDelivery(entry.deliveryToken);
-    yield* subject.disconnectRegistry();
+    yield* subject.failNameResolution();
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "result", item: { kind: "operationFailed" } }]);
+    ).toMatchObject([{ kind: "result", item: { kind: "collectiveResult" } }]);
   }));
 
 it("keeps an inbox page boundary while arrivals and acknowledgments change pending work", () =>
@@ -341,7 +320,7 @@ it("keeps an inbox page boundary while arrivals and acknowledgments change pendi
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     for (let index = 0; index < 57; index++) {
-      yield* subject.deliver(yield* localFailure(subject));
+      yield* subject.deliver(yield* unanswered(subject));
     }
     yield* readInbox(runtime).pipe(
       Effect.repeat({
@@ -364,7 +343,7 @@ it("keeps an inbox page boundary while arrivals and acknowledgments change pendi
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
     yield* runtime.harness.acknowledgeDelivery(acknowledged.deliveryToken);
-    const later = yield* localFailure(subject);
+    const later = yield* unanswered(subject);
     yield* subject.deliver(later);
     yield* readInbox(runtime).pipe(
       Effect.repeat({
@@ -601,7 +580,7 @@ it("continues history through a fixed message and local-result boundary", () =>
         yield* ordinaryMessage(subject, `Message ${index}`),
       );
     }
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     yield* waitForInbox(runtime);
     const first = yield* runtime.harness.readHistory({
       address: bobAddress,
@@ -611,7 +590,7 @@ it("continues history through a fixed message and local-result boundary", () =>
       return yield* Effect.dieMessage("Expected history cursor");
     }
     yield* subject.retain(yield* ordinaryMessage(subject, "Later message"));
-    yield* subject.deliver(yield* localFailure(subject));
+    yield* subject.deliver(yield* unanswered(subject));
     yield* waitForInbox(runtime, 2);
     const remaining = yield* runtime.harness.readHistory({
       address: bobAddress,
@@ -659,7 +638,7 @@ it("merges live conversation and result catalogs into bounded ordered pages", ()
       );
       expected.push(`agent:${peer.agentName}`);
       if (index % 3 === 0) {
-        yield* subject.deliver(yield* localFailure(subject, peer));
+        yield* subject.deliver(yield* unanswered(subject, peer));
       } else {
         yield* subject.addConversation([subject.self, peer]);
       }
@@ -901,7 +880,7 @@ it("retains a draft's input while its caller changes the original object", () =>
 
 const hiddenSends: readonly SendRequest[] = [
   {
-    to: MessageAddressInput.make("group:bob,carol,http-signer"),
+    to: MessageAddressInput.make("group:alice,bob,carol"),
     text: "Hello",
   },
 ];
@@ -924,13 +903,13 @@ it.each(hiddenSends)(
         yield* runtime.harness
           .send(request)
           .pipe(Effect.flip, Effect.provide(Logger.add(logger))),
-      ).toMatchObject({ reason: "content-invalid" });
+      ).toMatchObject({ reason: "invalid-address" });
       expect(subject.submitted).toEqual([]);
       expect(logs).toHaveLength(1);
       expect(logs[0]?.message).toEqual(["Send failed"]);
       expect(typeof logs[0]?.annotations.agentKey).toBe("string");
       expect(logs[0]?.annotations.error).toBe("SendError");
-      expect(logs[0]?.annotations.reason).toContain("content is invalid");
+      expect(logs[0]?.annotations.reason).toContain("does not offer groups");
     }),
 );
 
@@ -946,7 +925,7 @@ it("requires canonical history addresses and identifies unknown agents", () =>
     expect(
       yield* harness
         .readHistory({
-          address: MessageAddressInput.make("group:carol,bob,http-signer"),
+          address: MessageAddressInput.make("group:carol,bob,alice"),
         })
         .pipe(Effect.flip),
     ).toMatchObject({ reason: "invalid-address" });
@@ -1012,7 +991,7 @@ it("uses the public invalid-answer reason without exposing the original answer",
     ).not.toContain(privateAnswer);
   }));
 
-it("sends the first message under a configured policy without inventing a history gap", () =>
+it("sends the first message of a conversation under a configured policy", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({

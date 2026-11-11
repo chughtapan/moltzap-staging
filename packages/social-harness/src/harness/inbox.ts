@@ -223,9 +223,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       case "result":
         operationId = incoming.result.request.operationId;
         break;
-      case "request-failed":
-        operationId = incoming.request.operationId;
-        break;
       case "request":
         operationId = incoming.message.operation.operationId;
         break;
@@ -515,7 +512,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
           )
           .where("address", "=", address)
-          .where("kind", "in", ["result", "request-failed"])
+          .where("kind", "=", "result")
           .where("view", "is not", null),
       ).pipe(
         Effect.map((rows) => rows[0]?.head ?? 0),
@@ -537,7 +534,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .where("address", "=", address)
               .where("sequence", ">", after)
               .where("sequence", "<=", through)
-              .where("kind", "in", ["result", "request-failed"])
+              .where("kind", "=", "result")
               .where("view", "is not", null)
               .orderBy("sequence")
               .limit(limit + 1),
@@ -565,7 +562,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .select("address")
               .distinct()
               .where("address", ">", after)
-              .where("kind", "in", ["result", "request-failed"])
+              .where("kind", "=", "result")
               .where("view", "is not", null)
               .orderBy("address")
               .limit(51),

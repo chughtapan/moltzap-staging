@@ -27,8 +27,6 @@ const AGENT_GROUP_ID = "agent";
 const INBOUND_TIMEOUT_MILLIS = 60_000;
 const POLL_MILLIS = 50;
 const INBOUND_HISTORY_LIMIT = 10;
-/** The sender NanoClaw records for a message Social Harness itself gives the model. */
-const ENDPOINT_SENDER = "Social Harness";
 /** The prefix of the report line, which `nanoclaw.spec.ts` looks for. */
 const REPORT_PREFIX = "nanoclaw probe report: ";
 /**
@@ -94,7 +92,6 @@ interface HostModules {
 interface DeliveryReport {
   readonly delivered: number;
   readonly retried: number;
-  readonly endpointMessages: readonly string[];
 }
 
 /** Whether the channel announced the expected conversation before content. */
@@ -221,8 +218,8 @@ async function importHostModules(): Promise<HostModules> {
 /**
  * Start the channel adapters, wait for the Social Harness message in the agent's
  * inbox, queue the destinations from that session's workspace, deliver
- * them in two passes, and print what the first pass completed, what the
- * second sent again and what Social Harness told the model.
+ * them in two passes, and print what the first pass completed and what the
+ * second sent again.
  */
 async function exchangeMessages(
   modules: HostModules,
@@ -256,15 +253,7 @@ async function exchangeMessages(
   const delivered = await deliveredIds(modules.sessionManager, sessionId);
   const retried = await dueCount(modules.sessionManager, sessionId, delivered);
   await call(modules.delivery, "deliverSessionMessages", session);
-  const report: DeliveryReport = {
-    delivered: delivered.size,
-    retried,
-    endpointMessages: await endpointMessages(
-      modules.sessionManager,
-      sessionId,
-      expected.platformId,
-    ),
-  };
+  const report: DeliveryReport = { delivered: delivered.size, retried };
   process.stdout.write(`${REPORT_PREFIX}${JSON.stringify(report)}\n`);
 }
 
@@ -470,39 +459,6 @@ async function dueCount(
     (mailbox: unknown) => call(asRecord(mailbox), "getDueMessages", delivered),
   );
   return Array.isArray(due) ? due.length : 0;
-}
-
-/**
- * The text of each message Social Harness itself gave the model in the
- * conversation at `address`, newest first.
- */
-async function endpointMessages(
-  sessionManager: ModuleRecord,
-  sessionId: string,
-  address: string,
-): Promise<readonly string[]> {
-  const history: unknown = await call(
-    sessionManager,
-    "withMailboxSession",
-    AGENT_GROUP_ID,
-    sessionId,
-    (mailbox: unknown) =>
-      call(asRecord(mailbox), "getInboundHistory", INBOUND_HISTORY_LIMIT),
-  );
-  if (!Array.isArray(history)) {
-    return [];
-  }
-  return history.flatMap((row: unknown) => {
-    const { content } = asRecord(row);
-    const message = asRecord(
-      typeof content === "string" ? JSON.parse(content) : undefined,
-    );
-    return message.sender === ENDPOINT_SENDER &&
-      message.address === address &&
-      typeof message.text === "string"
-      ? [message.text]
-      : [];
-  });
 }
 
 async function importModule(specifier: string): Promise<ModuleRecord> {

@@ -1,51 +1,12 @@
-/** @file Shared test agents, signing authorities and deterministic identifiers. */
+/** @file Shared test agents and deterministic identifiers. */
 
-import canonicalize from "canonicalize";
-import { Effect, Encoding, Redacted, Schema } from "effect";
-import {
-  createHash,
-  generateKeyPairSync,
-  type KeyObject,
-  sign,
-} from "node:crypto";
-import {
-  AgentCard,
-  AgentId,
-  AgentIdentityCard,
-  AgentName,
-  PrincipalId,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
-import { AgentPublicKey, AgentSigningAuthority } from "../identity/keys.js";
-import { WIRE_VERSION } from "../version.js";
+import { Context, Effect, Encoding, Layer, Schema } from "effect";
+import { createHash } from "node:crypto";
+import { getOrCreateOwnedAgent } from "../harness/ownership.js";
+import { AgentCard, AgentName } from "../identity/agent-cards.js";
+import { Identity } from "../identity/service.js";
 
-/** A Registry signing key pair, as `generateKeyPairSync("ed25519")` returns. */
-export interface RegistryKeyPair {
-  readonly publicKey: KeyObject;
-  readonly privateKey: KeyObject;
-}
-
-/** What one test card binds; `byte` fills both its AgentId and PrincipalId. */
-interface TestCardInput {
-  readonly byte: number;
-  readonly name: string;
-  readonly authority: AgentSigningAuthority;
-  /** The Registry key pair the card is issued and verified under. */
-  readonly registryKeys: RegistryKeyPair;
-}
-
-/**
- * A prefixed identifier over 16 repeated bytes, the form of AgentId,
- * PrincipalId, RouterInstanceId and the other short protocol identifiers.
- * @param prefix Identifier prefix, such as `agt_`.
- * @param byte Value repeated across all 16 bytes.
- * @returns The identifier text, before schema decoding.
- */
-export function identifier(prefix: string, byte: number): string {
-  return `${prefix}${Encoding.encodeBase64Url(new Uint8Array(16).fill(byte))}`;
-}
-
-/** Host projection fixtures use the same immutable identities as the signed Alice, Bob and Carol fixtures. */
+/** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */
 export function testAgentCard(address: string): AgentCard {
   const name = address.startsWith("agent:")
     ? address.slice("agent:".length)
@@ -67,9 +28,8 @@ export function testAgentCard(address: string): AgentCard {
 }
 
 /**
- * A prefixed identifier over 32 repeated bytes, the form of MsgId,
- * RecordHash, DeliveryToken and the other digest-shaped
- * identifiers.
+ * A prefixed identifier over 32 repeated bytes, the form of MsgId and
+ * DeliveryToken.
  * @param prefix Identifier prefix, such as `msg_`.
  * @param byte Value repeated across all 32 bytes.
  * @returns The identifier text, before schema decoding.
@@ -79,69 +39,15 @@ export function digest(prefix: string, byte: number): string {
 }
 
 /**
- * A signing authority over a fresh Ed25519 key.
- * @returns The authority; a key Node generated always imports.
+ * Creates an agent named `name` the way the daemon does for a new owner.
+ * Returns the key its rows are stored under and the card the daemon gave it.
  */
-export function makeTestAuthority(): Effect.Effect<AgentSigningAuthority> {
-  const { privateKey } = generateKeyPairSync("ed25519");
-  return AgentSigningAuthority.fromPkcs8(
-    Redacted.make(privateKey.export({ format: "pem", type: "pkcs8" })),
-  ).pipe(Effect.orDie);
-}
-
-/**
- * Issue the AgentIdentityCard the Registry would sign for `input` and verify it as an
- * endpoint does, so a test holds only cards that pass `AgentIdentityCard.verify`.
- * @param input Identifier byte, agent name, agent key and Registry key pair.
- * @returns The verified card.
- */
-export function issueTestCard(
-  input: TestCardInput,
-): Effect.Effect<VerifiedAgentIdentityCard> {
-  return Effect.gen(function* () {
-    const registrySignerPublicKey = yield* Schema.decodeUnknown(AgentPublicKey)(
-      input.registryKeys.publicKey.export({ format: "jwk" }),
+export const createTestAgent = (name: string) =>
+  Effect.gen(function* () {
+    const agentKey = yield* getOrCreateOwnedAgent(
+      { issuer: "urn:social-harness:test", subject: name },
+      Schema.decodeUnknownSync(AgentName)(name),
     );
-    const thumbprint = createHash("sha256")
-      .update(canonicalize(registrySignerPublicKey) ?? "")
-      .digest("base64url");
-    const protectedText = canonicalize({
-      alg: "Ed25519",
-      kid: `urn:ietf:params:oauth:jwk-thumbprint:sha-256:${thumbprint}`,
-      typ: "application/vnd.sharness.agent-card+jws",
-    });
-    const payloadText = canonicalize({
-      agentId: Schema.decodeUnknownSync(AgentId)(
-        identifier("agt_", input.byte),
-      ),
-      agentName: Schema.decodeUnknownSync(AgentName)(input.name),
-      issuedAt: "2026-08-27T12:00:00Z",
-      kind: "agentCard",
-      sharnessVersion: WIRE_VERSION,
-      principalId: Schema.decodeUnknownSync(PrincipalId)(
-        identifier("prn_", input.byte),
-      ),
-      publicKey: AgentSigningAuthority.publicKey(input.authority),
-    });
-    if (protectedText === undefined || payloadText === undefined) {
-      return yield* Effect.dieMessage(
-        "canonical AgentIdentityCard fixture failed",
-      );
-    }
-    const protectedValue = Buffer.from(protectedText).toString("base64url");
-    const payload = Buffer.from(payloadText).toString("base64url");
-    const signature = sign(
-      null,
-      Buffer.from(`${protectedValue}.${payload}`),
-      input.registryKeys.privateKey,
-    ).toString("base64url");
-    const card = yield* Schema.decodeUnknown(AgentIdentityCard)({
-      payload,
-      signatures: [{ protected: protectedValue, signature }],
-    });
-    return yield* AgentIdentityCard.verify({
-      identityCard: card,
-      registrySignerPublicKey,
-    });
-  }).pipe(Effect.orDie, Effect.withSpan("issueTestCard"));
-}
+    const identity = yield* Layer.build(Identity.layer(agentKey));
+    return { agentKey, card: Context.get(identity, Identity).me };
+  }).pipe(Effect.scoped, Effect.orDie, Effect.withSpan("createTestAgent"));

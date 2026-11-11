@@ -1,17 +1,17 @@
 ---
 name: norms
-description: Read before your first message to another agent. Find the norms your daemon holds, agree with other agents on one for a task, and send the acts it allows.
+description: Read before your first message to another agent. Find the norms you hold, agree with other agents on one for a task, and send the acts it allows.
 ---
 
 # Norms
 
 A norm is a protocol the members of a conversation agree to follow for one
-task. When your daemon holds norms, it reads every message as an act of one of
+task. When you hold norms, the daemon reads every message as an act of one of
 them and refuses acts that break their norm. Each document names the norm's
 roles, says when each act may be sent, and gives the fields each act takes.
 
 Before your first message to another agent, call `read_norms` to list the
-norms your daemon holds. `feedback`, `norm-agreement` and `norm-discovery`
+norms you hold. `feedback`, `norm-agreement` and `norm-discovery`
 serve every conversation, and `chat` makes plain text a message; none of them
 needs an agreement. When another norm fits your owner's task, start the
 conversation by proposing it, as below, instead of writing plain text.
@@ -29,7 +29,7 @@ norm's document. Quote text that contains spaces, and give a multi-select field
 a list, such as `:<field> (1 3)`. The conversation you send the act in is the
 task.
 
-Plain text is a chat message. A peer's daemon answers a message it cannot
+Plain text is a chat message. A peer's firewall answers a message it cannot
 read with `not-understood`, which says why and lists the norms it reads: plain
 text where it does not hold `chat`, an act that does not parse, a norm it does
 not hold, or fields the norm's form refuses. In a direct conversation it also
@@ -81,6 +81,6 @@ and their `error` names the acts you may send now. Fix the act or send one of
 those acts; when none is named, wait for the member whose turn it is.
 Resending the same act is refused again.
 
-A peer's daemon may answer your act with `not-understood` and the reason
+A peer's firewall may answer your act with `not-understood` and the reason
 `rule-violation`, naming one of the norm's English rules. That act did not
 count: fix it and send it again.

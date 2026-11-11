@@ -9,7 +9,7 @@ const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 
 /** Rejects missing required fields and unknown properties. */
-export const exactParseOptions = {
+const exactParseOptions = {
   exact: true,
   onExcessProperty: "error",
 } satisfies ParseOptions;
@@ -67,39 +67,6 @@ export const sameBytes = (left: Uint8Array, right: Uint8Array): boolean => {
   }
   return true;
 };
-
-/**
- * Parses RFC 8785 canonical UTF-8 JSON with finite numbers, valid Unicode
- * and at most sixteen nested containers.
- */
-export const parseCanonicalJson = (bytes: Uint8Array) =>
-  parseJsonBytes(bytes).pipe(
-    Effect.flatMap((parsed) =>
-      Effect.try({
-        try: () => {
-          if (!sameBytes(parsed.bytes, encodeJsonValue(parsed.value))) {
-            throw new CanonicalJsonError();
-          }
-          return parsed.value;
-        },
-        catch: () => new CanonicalJsonError(),
-      }),
-    ),
-    Effect.withSpan("parseCanonicalJson"),
-  );
-
-/**
- * Validates canonical JSON bytes, then decodes them with the schema.
- * Schema defaults affect the returned value, not the required input bytes.
- */
-export const decodeCanonicalJson = <A, I, R>(
-  schema: Schema.Schema<A, I, R>,
-  bytes: Uint8Array,
-): Effect.Effect<A, CanonicalJsonError, R> =>
-  parseCanonicalJson(bytes).pipe(
-    Effect.flatMap(Schema.decodeUnknown(schema, exactParseOptions)),
-    Effect.catchTag("ParseError", () => Effect.fail(new CanonicalJsonError())),
-  );
 
 /**
  * Copies a JSON value into canonical UTF-8 bytes. Rejects invalid Unicode,
@@ -164,17 +131,6 @@ export const decodeCanonical = <A, I, R>(
     }
     return decoded;
   }).pipe(Effect.withSpan("decodeCanonical"));
-
-/** Whether two schema values have the same canonical encoded bytes. */
-export const equalCanonical = <A, I, R>(
-  schema: Schema.Schema<A, I, R>,
-  left: A,
-  right: A,
-): Effect.Effect<boolean, ClientRepresentationError, R> =>
-  Effect.all([
-    encodeCanonical(schema, left),
-    encodeCanonical(schema, right),
-  ]).pipe(Effect.map(([a, b]) => sameBytes(a, b)));
 
 function parseJsonBytes(bytes: Uint8Array) {
   return Effect.gen(function* () {

@@ -70,7 +70,6 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
         env: { NODE_PATH: "" },
       },
     );
-    yield* verifyInternalResolution(consumerRoot);
     yield* verifyPolicyAssets(consumerRoot);
     return "social-harness package consumer check passed";
   }),
@@ -96,38 +95,6 @@ function publicImports(): string {
     )
     .map((specifier) => `await import(${JSON.stringify(specifier)});`)
     .join("\n");
-}
-
-/** Service capabilities resolve only under the private service condition. */
-function verifyInternalResolution(consumerRoot: string) {
-  return Effect.gen(function* () {
-    yield* runCommand(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `
-try {
-  await import("@social-harness/social-harness/internal");
-  throw new Error("internal entry resolved without its condition");
-} catch (error) {
-  if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
-}
-`,
-      ],
-      { cwd: consumerRoot, env: { NODE_PATH: "" } },
-    );
-    yield* runCommand(
-      process.execPath,
-      [
-        "--conditions=sharness-internal",
-        "--input-type=module",
-        "-e",
-        'await import("@social-harness/social-harness/internal");',
-      ],
-      { cwd: consumerRoot, env: { NODE_PATH: "" } },
-    );
-  });
 }
 
 /** The installed package retains the preset and its shipped behavior documents. */

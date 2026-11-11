@@ -58,29 +58,6 @@
         "@modelcontextprotocol/client"
       ]
     },
-    "packages/router": {
-      "entry": [
-        "src/**/*.spec.ts",
-        "src/**/*.types-check.ts",
-        "vitest*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ]
-    },
-    "packages/registry": {
-      "ignoreDependencies": ["@electric-sql/pglite-socket"],
-      "entry": [
-        "src/**/*.spec.ts",
-        "src/**/*.types-check.ts",
-        "vitest*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ]
-    },
     "tests/integration": {
       "entry": [
         "**/*.spec.ts",
@@ -90,9 +67,6 @@
       ],
       "project": [
         "**/*.ts"
-      ],
-      "ignoreDependencies": [
-        "@electric-sql/pglite-socket"
       ]
     },
     "images/openclaw-agent": {

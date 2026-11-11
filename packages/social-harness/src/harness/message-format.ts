@@ -129,7 +129,7 @@ export type SendResult = typeof SendResultSchema.Type;
 
 /* eslint-enable @typescript-eslint/naming-convention -- Restore ordinary symbol naming. */
 
-/** A destination in canonical form, before any Registry lookup. */
+/** A destination in canonical form, before its names are resolved. */
 type CanonicalMessageAddress =
   | {
       readonly kind: "direct";
@@ -143,7 +143,7 @@ type CanonicalMessageAddress =
     };
 
 /**
- * Canonicalizes a destination before Registry lookup. Groups include the local
+ * Canonicalizes a destination before its names are resolved. Groups include the local
  * agent, reject duplicate names, and sort names in unsigned ASCII order.
  * One peer becomes a direct address. Larger groups contain 3 to `maximumMembers`
  * agents. Invalid names and membership return `invalid-address` or
@@ -217,8 +217,6 @@ export function renderInboxItem(
       };
     case "collectiveResult":
       return guided(renderCollectiveResult(item), "endpoint");
-    case "operationFailed":
-      return guided(item.error, "endpoint");
     default:
       return absurd(item);
   }

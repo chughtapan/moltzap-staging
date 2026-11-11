@@ -4,31 +4,15 @@
   "facadeFiles": [
     {
       "file": "identity/agent-cards.ts",
-      "reason": "Agent cards, immutable identity cards and signing authority"
-    },
-    {
-      "file": "identity/keys.ts",
-      "reason": "Cryptographic key capabilities"
+      "reason": "Agent identifiers, names and cards"
     },
     {
       "file": "version.ts",
-      "reason": "Package version and protocol compatibility"
+      "reason": "Package version"
     },
     {
       "file": "identity/service.ts",
-      "reason": "Identity and registration service"
-    },
-    {
-      "file": "identity/http-authentication.ts",
-      "reason": "Request authentication service"
-    },
-    {
-      "file": "identity/registry.ts",
-      "reason": "Registry service"
-    },
-    {
-      "file": "identity/message-security.ts",
-      "reason": "Signed message envelopes"
+      "reason": "This agent and name resolution"
     },
     {
       "file": "communication/service.ts",
@@ -41,10 +25,6 @@
     {
       "file": "communication/errors.ts",
       "reason": "Closed communication failures"
-    },
-    {
-      "file": "communication/p2p/router/client.ts",
-      "reason": "Opaque Router operations used by server composition"
     },
     {
       "file": "harness/startup.ts",
@@ -71,10 +51,6 @@
       "reason": "Work progress instrumentation"
     },
     {
-      "file": "communication/records.ts",
-      "reason": "One private protocol record model owns its schemas, encoding and verification."
-    },
-    {
       "file": "communication/store.ts",
       "reason": "One private communication store owns SQL operations and row types."
     }
@@ -85,12 +61,8 @@
       "reason": "Public value exports"
     },
     {
-      "path": "src/internal.ts",
-      "reason": "Network service construction and wire contracts"
-    },
-    {
       "path": "src/test.ts",
-      "reason": "Offline evaluation and test-only wire overrides"
+      "reason": "Offline evaluation and database qualification for tests"
     },
     {
       "path": "package.json",
@@ -98,7 +70,7 @@
     },
     {
       "path": "src/harness/startup.ts",
-      "reason": "Process database and network construction"
+      "reason": "Process database and agent construction"
     }
   ],
   "domains": [
@@ -119,13 +91,9 @@
       ],
       "entrypoints": [
         "src/identity/agent-cards.ts",
-        "src/identity/keys.ts",
-        "src/identity/service.ts",
-        "src/identity/http-authentication.ts",
-        "src/identity/registry.ts",
-        "src/identity/message-security.ts"
+        "src/identity/service.ts"
       ],
-      "reason": "Identity, authentication and Registry services"
+      "reason": "Agent identifiers and the agents of one daemon"
     },
     {
       "name": "communication",
@@ -135,10 +103,9 @@
       "entrypoints": [
         "src/communication/service.ts",
         "src/communication/messages.ts",
-        "src/communication/errors.ts",
-        "src/communication/p2p/router/client.ts"
+        "src/communication/errors.ts"
       ],
-      "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
+      "reason": "Messages, requests and ordered history"
     },
     {
       "name": "firewall",
@@ -193,7 +160,7 @@
       "entrypoints": [
         "src/version.ts"
       ],
-      "reason": "Package identity and shared protocol compatibility"
+      "reason": "Package version"
     },
     {
       "name": "database",
@@ -206,7 +173,7 @@
         "src/database/secrets.ts",
         "src/database/migrations.ts"
       ],
-      "reason": "SQL connections, typed query compilation, transaction context and credential persistence shared by daemon domains"
+      "reason": "SQL connections, typed query compilation, transaction context and sealed secrets shared by daemon domains"
     }
   ],
   "layers": [
@@ -237,14 +204,14 @@
       "folders": [
         "communication"
       ],
-      "reason": "Reliable communication uses verified identities"
+      "reason": "Delivery names agents by their cards"
     },
     {
       "name": "identity",
       "folders": [
         "identity"
       ],
-      "reason": "Identity and authentication"
+      "reason": "Agent identifiers and name resolution"
     },
     {
       "name": "encoding",
@@ -264,7 +231,7 @@
   "publicTypePackages": [
     {
       "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon\u2019s shared SqlClient through its Effect environment"
+      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
     },
     {
       "package": "effect",
@@ -282,7 +249,7 @@
   "allowedTestPublicSubpaths": [
     {
       "subpath": "./test",
-      "reason": "Management schemas and wire overrides require the explicit sharness-test resolution condition"
+      "reason": "Database qualification and decision-provider overrides require the explicit sharness-test resolution condition"
     }
   ],
   "maxFolderImportDistance": 6,

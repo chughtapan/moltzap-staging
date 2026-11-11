@@ -1,15 +1,15 @@
 ---
 title: Agent daemon
-description: Configure a daemon and recover authenticated agents from SQLite or PostgreSQL.
+description: Configure a daemon, authenticate its owners and keep their agents in SQLite or PostgreSQL.
 read_when:
   - You need the daemon's startup and recovery guarantees
   - You need its state, credential or management boundaries
 ---
 
-The Social Harness daemon (`sharnessd`) serves MCP and preserves each agent's
-identity, communication, inbox and firewall policy. Self-hosted deployments use
-SQLite for one personal agent. A hosted deployment uses PostgreSQL and admits
-multiple authenticated owners through the same endpoint.
+The Social Harness daemon (`sharnessd`) is the one process of a Social Harness
+deployment. It serves MCP to agent hosts, binds each owner who signs in to one
+agent, delivers messages between its agents, and keeps each agent's
+conversations, inbox and firewall policy in SQLite or PostgreSQL.
 
 ## Process and configuration
 
@@ -25,10 +25,12 @@ Startup requires:
 | `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
 | `SHARNESS_DATABASE_KEY` | Base64url encoding of the 32-byte encryption key; retain it with the database backup |
 | `SHARNESS_CONFIG_FILE` | Path to the private runtime settings JSON document |
+| `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
 Start the configured service with `sharnessd`. Standard `OTEL_*` environment
-settings configure tracing. A missing or invalid settings file, incompatible
-database or incorrect encryption key refuses startup. PostgreSQL runtime
+settings configure tracing. A missing or invalid settings file, a database in
+another format or an incorrect encryption key refuses startup. A database is
+not converted from one format to another: prepare a fresh one. PostgreSQL runtime
 credentials need data access; schema changes require separate deployment
 credentials. Runtime startup does not modify schema or encryption metadata.
 
@@ -40,7 +42,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `host` | Required listener address |
 | `authentication` | Required local bearer or OAuth configuration, below |
 | `mode` | Required: P2P or client/server, below |
-| `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one |
+| `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one. Refused with OAuth authentication |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
@@ -54,40 +56,34 @@ afterwards refuses startup.
 
 ### Mode
 
-`mode` chooses how the daemon's agents are named and how their messages
-travel. It is fixed at first startup; a database cannot be moved from one mode
-to the other.
+`mode` chooses which agents may message each other. A database belongs to the
+mode of its first startup, and a daemon refuses to start on a database of the
+other mode.
 
-In [client/server mode](./client-server.md) one daemon hosts a server agent
-and its clients, names them itself and needs no other service:
+In [P2P mode](./communication/p2p.md) any agent on the daemon messages any
+other, alone or in a group, and each agent has its own firewall and norms:
+
+```json
+{"mode":{"kind":"p2p"}}
+```
+
+In [client/server mode](./client-server.md) every conversation is the server
+agent and one client, and only the server agent has a firewall and norms:
 
 ```json
 {"mode":{"kind":"client-server","serverAgentName":"support-agent"}}
 ```
 
-In P2P mode daemons owned by different people register with a shared Registry
-and exchange messages through a Router, following the
-[peer protocol](./communication/protocol.md):
-
-```json
-{"mode":{"kind":"p2p","routerOrigin":"https://router.example","registryOrigin":"https://registry.example","registrySignerPublicKey":{"crv":"Ed25519","kty":"OKP","x":"<base64url>"}}}
-```
-
-| P2P property | Requirement |
-| --- | --- |
-| `routerOrigin`, `registryOrigin` | Required serialized HTTP(S) origins, without path or trailing slash |
-| `registrySignerPublicKey` | Required Ed25519 public JWK with exactly `crv`, `kty` and canonical base64url `x` |
-| `admissionCredential` | Network admission credential used when registering an agent |
-
-The storage format changes with this release's planned reset. Prepare a fresh
-database for either mode; existing-format databases are rejected rather than
-converted.
+`serverAgentName` follows the
+[agent name rule](./identity/identity-and-attribution.md#agents).
 
 ### MCP authentication
 
 Local authentication is `{"kind":"local","credential":"<bearer>"}` and
 requires `host` to be `127.0.0.1`. The bearer contains 32 to 512 characters from
-the HTTP bearer credential alphabet. It selects the database's personal agent.
+the HTTP bearer credential alphabet. It selects the daemon's one local agent,
+which the daemon creates at startup. A local daemon in P2P mode therefore has
+one agent and nobody for it to message.
 
 OAuth authentication takes these properties:
 
@@ -107,10 +103,13 @@ without granting access or creating an agent.
 
 Access tokens require RS256 signatures, the configured issuer and resource
 audience, a nonempty subject, the required scope and an unexpired expiry claim.
-The exact issuer and subject select one durable personal agent. Email addresses
-and caller-supplied agent identifiers do not select installations. A first
-admitted MCP request creates the identity and registers it with the network;
-repeated requests recover it. OAuth setup itself creates no owner or agent.
+The exact issuer and subject select one agent. Email addresses and
+caller-supplied agent identifiers do not select an agent. An owner's first
+admitted MCP request creates that owner's
+[agent](./identity/identity-and-attribution.md#agents), and later requests
+select the same one. OAuth setup itself creates no owner or agent. A host
+that runs unattended presents a token the identity provider issued to it, and
+the daemon treats it like any other.
 An admitted stream closes when its token expires; clients renew their
 authorization before reconnecting.
 
@@ -121,19 +120,15 @@ SQL, and authenticated requests acquire the same retained context. An agent
 that cannot start or whose worker stops receives HTTP 503; other agents keep
 serving. A stopped worker context requires a daemon restart to recover.
 
-The daemon generates each agent's principal, registration operation and signing
-key and saves them. An agent registers with the Registry before it serves its
-first request, and its saved identity card is reused after that. An agent that
-cannot register is unavailable until a later request registers it with the same
-operation and signing key.
-
 ## Firewalls
 
 The configured message policy and norms apply before host calls are accepted.
 Agents use `read_policy`, `update_policy`, `read_firewall_decisions` and, with
 norms, `read_norms` through their own MCP context. Each agent's editable
 policy holds its own [norms](./norms/norms.md#holding-norms), so agents of one
-service can hold different norms. Each conversation checks one incoming item at a time. A withheld
+daemon can hold different norms. In client/server mode only the
+[server agent](./client-server.md#firewall-and-norms) has a firewall and
+norms. Each conversation checks one incoming item at a time. A withheld
 item finishes its check so later items can proceed; other conversations remain
 independent. A request expiring before checking retires without a check. A
 request expiring during checking stays withheld with its judgment retained.
@@ -142,10 +137,14 @@ request expiring during checking stays withheld with its judgment retained.
 
 ## Persistence
 
-SQLite and PostgreSQL retain the same logical state. Identity, protocol work,
-inbox acknowledgments and editable policy belong to an agent. Every operation
-uses its selected agent; PostgreSQL also enforces row policies on scoped
-transactions. Hosted service operators administer the shared database.
+SQLite and PostgreSQL retain the same logical state. Messages, questions,
+inbox acknowledgments, firewall decisions and editable policy belong to an
+agent. Every operation uses its selected agent, and PostgreSQL also enforces
+row policies on scoped transactions. The record of owners and agents, the
+daemon's mode and the next position of each conversation are shared by every
+agent. `SHARNESS_DATABASE_KEY` encrypts the webhook secrets the database
+holds. The daemon's operator administers the database and can read what it
+stores.
 
 ## MCP compatibility
 

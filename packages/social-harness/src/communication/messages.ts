@@ -15,12 +15,13 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   canonicalIdentifier,
   type ClientRepresentationError,
   compareAgentIds as compareAgentIdBytes,
   compareAscii,
+  encodeCanonical,
   exactStruct,
   isCanonicalIdentifier,
   isStrictlyAscending,
@@ -32,11 +33,7 @@ import {
   AgentId,
   AgentName,
 } from "../identity/agent-cards.js";
-import {
-  CommunicationError,
-  communicationFailure,
-  issuesText,
-} from "./errors.js";
+import { CommunicationError, issuesText } from "./errors.js";
 
 /** Order validated agent identities by their decoded identifier bytes. */
 export const compareAgentIds: (left: AgentId, right: AgentId) => number =
@@ -45,7 +42,7 @@ export const compareAgentIds: (left: AgentId, right: AgentId) => number =
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 
 /** The canonical JSON byte limit of one message's content. */
-export const maximumContentBytes = 32_768;
+const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
 
 /**
@@ -131,6 +128,38 @@ export type Content = typeof Content.Type;
 /** The largest group membership a conversation address or descriptor admits. */
 export const maximumMembers = 32;
 
+const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
+const ConversationMembers = exactStruct({
+  kind: Schema.Literal("conversation_identity"),
+  memberAgentIds: Schema.Tuple([AgentId, AgentId], AgentId).pipe(
+    Schema.maxItems(maximumMembers),
+  ),
+});
+
+/**
+ * The identifier of the conversation among these members: a hash of their
+ * agent identifiers, which must be given in ascending order with no repeats.
+ */
+export const deriveConversationId = (
+  memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
+): Effect.Effect<typeof ConversationId.Type, ClientRepresentationError> =>
+  isStrictlyAscending(memberAgentIds, compareAgentIds)
+    ? encodeCanonical(ConversationMembers, {
+        kind: "conversation_identity" as const,
+        memberAgentIds,
+      }).pipe(
+        Effect.map(
+          (bytes) =>
+            `cnv_${createHash("sha256")
+              .update("org.social-harness/client/v2/conversation\0")
+              .update(bytes)
+              .digest("base64url")}`,
+        ),
+        Effect.flatMap(Schema.decodeUnknown(ConversationId)),
+        Effect.mapError(representationFailure),
+      )
+    : Effect.fail(representationFailure());
+
 /** The scheme of an address naming one agent. */
 export const AGENT_ADDRESS_PREFIX = "agent:";
 /** The scheme of an address listing a group's members. */
@@ -139,7 +168,7 @@ export const GROUP_ADDRESS_PREFIX = "group:";
 const isAgentName = Schema.is(AgentName);
 
 /**
- * The registry name an `agent:` address names.
+ * The agent name an `agent:` address names.
  * @param value A candidate address.
  * @returns The name, or undefined when the value is not an agent address.
  */
@@ -179,7 +208,7 @@ const addressInput = Schema.String.pipe(
   Schema.brand("MessageAddressInput"),
 );
 
-/** An explicit direct destination using one canonical Registry name. */
+/** An explicit direct destination using one agent name. */
 export const AgentAddress = addressInput.pipe(
   Schema.filter((value) => parseAgentAddress(value) !== undefined),
   Schema.brand("AgentAddress"),
@@ -191,7 +220,7 @@ export const AgentAddress = addressInput.pipe(
  */
 export type AgentAddress = typeof AgentAddress.Type;
 
-/** The direct destination of an agent with a validated immutable Registry name. */
+/** The direct destination of an agent with a validated name. */
 export const agentAddressOf = (agent: {
   readonly agentName: AgentName;
 }): AgentAddress =>
@@ -220,7 +249,7 @@ export type MessageAddressInput = typeof MessageAddressInput.Type;
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore the package naming rules after the Schema/type pairs. */
 
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
-export const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
+const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
   Effect.try({
     try: () => `msg_${randomBytes(32).toString("base64url")}`,
     catch: representationFailure,
@@ -339,26 +368,12 @@ const CollectiveResponse = Schema.Union(AcceptResponse, DeclineResponse);
 /** A validated collective response. */
 export type CollectiveResponse = typeof CollectiveResponse.Type;
 
-/** Members a send could not reach. */
-const unreachableMembers = Schema.NonEmptyArray(
-  exactStruct({
-    member: AgentCard,
-    reason: communicationFailure,
-    detail: Schema.optionalWith(Schema.String, { exact: true }),
-  }),
-);
-
 /**
  * Why a collective send was refused, discriminated by `kind`: a gather or
- * all_gather whose schema is outside the form-mode grammar, whose request
- * message some member could not receive, or whose deadline passed while its
- * check ran; or a response the member's endpoint cannot send.
+ * all_gather whose schema is outside the form-mode grammar or whose deadline
+ * passed while its check ran; or a response the member's endpoint cannot send.
  */
 const collectiveFailure = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("members-unreachable"),
-    members: unreachableMembers,
-  }),
   exactStruct({
     kind: Schema.Literal("schema-invalid"),
     detail: Schema.String,
@@ -414,7 +429,7 @@ export type AnswerFieldFailures = Extract<
 /** A failure that carries nothing beyond its kind. */
 type FixedFailureKind = Exclude<
   CollectiveFailure["kind"],
-  "members-unreachable" | "schema-invalid" | "answer-invalid"
+  "schema-invalid" | "answer-invalid"
 >;
 
 /** The text of each failure that carries nothing beyond its kind. */
@@ -773,7 +788,7 @@ const CollectiveValue = Schema.Union(
 /** A validated collective value. */
 export type CollectiveValue = typeof CollectiveValue.Type;
 
-/** An accepted or declined answer carried in a certified message. */
+/** An accepted or declined answer carried in a message. */
 export type ResponseValue = Extract<
   CollectiveValue,
   { readonly kind: "response" }
@@ -918,8 +933,6 @@ type CollectiveFieldFailure = AnswerFieldFailures[number];
 
 /* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the schema owner. */
 
-// safer-arch-ignore no-module-cycle: Request form parsing imports only the result type from its owner; runtime imports have no cycle.
-
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with the values they decode. */
 
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
@@ -969,7 +982,7 @@ const MessageHeader = MessageParticipants.pipe(
   Schema.extend(exactStruct({ msgId: MsgId })),
 );
 
-/** Decoded request and reply meaning stays outside signed content bytes. */
+/** The request or reply a message's content carries, decoded. */
 const MessageOperation = Schema.Union(
   exactStruct({
     kind: Schema.Literal("request"),
@@ -1249,14 +1262,7 @@ export type ResultSources = typeof ResultSources.Type;
 /** The item and its sources use one durable result identity through retries and restart. */
 export const ResultDelivery = exactStruct({
   operationId: CollectiveId,
-  item: Schema.Union(
-    exactStruct({ kind: Schema.Literal("result"), result: RequestResult }),
-    exactStruct({
-      kind: Schema.Literal("request-failed"),
-      request: requestSchema,
-      error: Schema.String,
-    }),
-  ),
+  item: exactStruct({ kind: Schema.Literal("result"), result: RequestResult }),
   sources: ResultSources,
 });
 /** Public item bytes and private source bytes are bounded separately. */
@@ -1266,7 +1272,7 @@ export type ResultDelivery = typeof ResultDelivery.Type;
 
 /**
  * Read the requester embedded in an operation ID. Request admission compares
- * this identity with the certified author before accepting the operation.
+ * this identity with the message author before accepting the operation.
  */
 export function collectiveRequesterOf(operationId: CollectiveId): AgentId {
   return decodeAgentId(
@@ -1432,7 +1438,7 @@ export function messageInterpretation(
 
 /**
  * Find and decode the collective value in one message's content.
- * @param content Certified message content.
+ * @param content Message content.
  * @returns The decoded value, or none when the content carries no collective part.
  */
 export function readCollectiveValue(
@@ -1506,17 +1512,6 @@ export function messageFromIntent(
 export function messageMembers(message: Participants): readonly AgentCard[] {
   return [message.author, ...message.recipients].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
-  );
-}
-
-/** Private semantic index keys put directs before group member-name tuples. */
-export function conversationSortKey(
-  members: ReadonlyArray<Message["author"]>,
-  localAgentId: Message["author"]["agentId"],
-) {
-  return conversationNameKey(
-    members.map((member) => member.agentName),
-    members.find((member) => member.agentId === localAgentId)?.agentName,
   );
 }
 
@@ -1594,13 +1589,6 @@ function describeCollectiveFailure(failure: CollectiveFailure): string {
     return fixedFailureText[failure.kind];
   }
   switch (failure.kind) {
-    case "members-unreachable":
-      return `send failed: ${failure.members
-        .map(
-          ({ member, reason, detail }) =>
-            `${member.agentName} could not be reached: ${detail ?? reason}`,
-        )
-        .join("; ")}`;
     case "schema-invalid":
       return `send failed: the form is invalid (${failure.detail})`;
     case "answer-invalid":

@@ -1,4 +1,4 @@
-/** @file Request handling retains answer claims and completion across handoff and restart. */
+/** @file Questions keep their answers and results across handoff and restart. */
 
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -13,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import { collectiveOperationId } from "../__tests__/request-ids.js";
+import { collectiveOperationId } from "./__tests__/request-ids.js";
 import {
   alice,
   aliceClose,
@@ -23,18 +23,17 @@ import {
   declineMessage,
   form,
   openCollectives,
-  pendingBob,
   question,
   wireMessage,
-} from "../__tests__/requests-fixtures.js";
+} from "./__tests__/requests-fixtures.js";
 import {
   Message,
   readCollectiveValue,
   RequestError,
   type ResultDelivery,
-} from "../messages.js";
-import { CommunicationError } from "../service.js";
-import { transaction } from "../store.js";
+} from "./messages.js";
+import { CommunicationError } from "./service.js";
+import { transaction } from "./store.js";
 
 class HandlerUnavailable extends Data.TaggedError("HandlerUnavailable") {}
 
@@ -111,9 +110,7 @@ it("counts the first answer once and retains its original source", () =>
     yield* fixture.service.receive(later);
     const result = yield* Queue.take(fixture.results);
     expect(result.sources.answers).toEqual([first]);
-    expect(
-      result.item.kind === "result" ? result.item.result : result.item,
-    ).toMatchObject({
+    expect(result.item.result).toMatchObject({
       request: { operationId: captured.operationId },
       outcomes: [{ member: bob, outcome: { content: { slot: "mon" } } }],
     });
@@ -144,9 +141,7 @@ it("records invalid answers as selected sources while leaving silent members una
     yield* fixture.service.receive(invalid);
     const result = yield* Queue.take(fixture.results);
     expect(result.sources.answers).toEqual([invalid]);
-    expect(
-      result.item.kind === "result" ? result.item.result : result.item,
-    ).toMatchObject({
+    expect(result.item.result).toMatchObject({
       request: { operationId: captured.operationId },
       outcomes: [
         { member: bob, outcome: { kind: "invalid" } },
@@ -166,9 +161,7 @@ it("does not count an answer first received after the collector deadline", () =>
     const late = yield* declineMessage(bob, [alice], captured.operationId, 14);
     yield* fixture.service.receive(late);
     expect(result.sources.answers).toEqual([]);
-    expect(
-      result.item.kind === "result" ? result.item.result : result.item,
-    ).toMatchObject({
+    expect(result.item.result).toMatchObject({
       outcomes: [{ member: bob, outcome: { kind: "no-answer" } }],
     });
   }));
@@ -216,9 +209,9 @@ it("publishes the all_gather close with both parts of every selected message ide
     expect(result.sources.answers).toEqual([one, two]);
   }));
 
-it("recovers a frozen result while its accepted close is still certifying", () =>
+it("delivers a closed all_gather result after a restart without an answer that came later", () =>
   Effect.gen(function* () {
-    const fixture = yield* openCollectives({ pendingCompletion: true });
+    const fixture = yield* openCollectives();
     const captured = question(
       (yield* Clock.currentTimeMillis) + 250,
       [bob, carol],
@@ -253,9 +246,7 @@ it("recovers a frozen result while its accepted close is still certifying", () =
     yield* restarted.collect();
     const result = yield* Queue.take(restarted.results);
     expect(result.sources.answers).toEqual([selected]);
-    expect(
-      result.item.kind === "result" ? result.item.result : result.item,
-    ).toMatchObject({
+    expect(result.item.result).toMatchObject({
       outcomes: [
         { member: bob, outcome: { kind: "declined" } },
         { member: carol, outcome: { kind: "no-answer" } },
@@ -263,7 +254,7 @@ it("recovers a frozen result while its accepted close is still certifying", () =
     });
   }));
 
-it("rolls back an answer claim when Communication refuses its acceptance", () =>
+it("takes a new answer after the send of an earlier one failed", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives({
       agent: bob,
@@ -290,9 +281,9 @@ it("rolls back an answer claim when Communication refuses its acceptance", () =>
     expect(yield* Queue.take(restarted.sent)).toEqual(accepted);
   }));
 
-it("retains a received question and pending own answer without minting another message on restart", () =>
+it("accepts its own answer again after a restart and refuses a different one", () =>
   Effect.gen(function* () {
-    const fixture = yield* pendingBob();
+    const fixture = yield* openCollectives({ agent: bob });
     const operationId = collectiveOperationId(alice.agentId);
     const request = yield* aliceRequest(
       (yield* Clock.currentTimeMillis) + 5000,
@@ -398,10 +389,9 @@ it("ignores an unknown close permanently rather than applying it to a later requ
     expect(yield* Queue.take(restarted.sent)).toEqual(answer);
   }));
 
-it("waits for its own accepted answer before presenting a close that selects it", () =>
+it("presents the result of a close that selects its own answer", () =>
   Effect.gen(function* () {
-    const fixture = yield* pendingBob();
-    const { complete } = fixture;
+    const fixture = yield* openCollectives({ agent: bob });
     const operationId = collectiveOperationId(alice.agentId);
     const request = yield* aliceRequest(
       (yield* Clock.currentTimeMillis) + 5000,
@@ -433,7 +423,6 @@ it("waits for its own accepted answer before presenting a close that selects it"
       "settled",
     );
     yield* fixture.service.receive(close);
-    yield* complete;
     const result = yield* Queue.take(fixture.results);
     expect(result.sources.request).toEqual(request);
     expect(result.sources.answers).toEqual([own, peer]);

@@ -7,9 +7,9 @@ read_when:
 ---
 
 Social Harness helps applications connect agents that act for different people
-or organizations. The application defines the work they do together. Each
-participant's harness identifies its agent, carries its messages, and applies
-any configured message rules before sending or delivering them.
+or organizations. The application defines the work they do together. The
+daemon its participants share identifies each agent, carries its messages,
+and applies that agent's message rules before sending or delivering them.
 
 A scheduling application, for example, supplies the booking logic. Its agents
 exchange requests with students' and professors' agents through Social Harness.
@@ -30,41 +30,39 @@ role and revocation protocol remains to be defined.
 
 ## From an application request to another agent
 
-The application supplies a destination and a message. Its daemon checks
-the message against any installed firewall, signs and encrypts the network
-messages carrying it, and coordinates the conversation records. Router carries
-the encrypted messages to the other participants. Each receiving daemon
-verifies and stores the records, applies its own message rules, and offers
-admitted content to its agent's host.
+The application supplies a destination and a message. The daemon checks the
+message against the sender's firewall, gives it the next position in its
+conversation and stores it for every member. It then applies each recipient's
+message rules and offers admitted content to that recipient's host.
 
-The host runs the model and tools. The daemon keeps the signing key, policy and
-conversation state. OpenClaw and NanoClaw connect through native channels.
+The host runs the model and tools. The daemon keeps policy and conversation
+state. OpenClaw and NanoClaw connect through native channels.
 Other hosts can use the [MCP client](/guides/mcp-client), with
 receiving behavior defined by the [delivery contract](/reference/spec/host/receiving).
 The [architecture](/concepts/architecture) explains how the components fit
 together.
 
-A successful ordinary send establishes a certified conversation record.
-Delivery to the host is a later handoff. The host controls when its agent
+A successful ordinary send means the daemon has ordered and stored the
+message. Delivery to the host is a later handoff. The host controls when its agent
 processes that message and whether it informs a human. A reply is another
 message with its own checks and outcome.
 
 ## Joining and accepting shared rules
 
-An agent needs a registered identity and a running daemon. Its AgentCard binds
-its key to its identity and declared principal. Registry checks the registration
-credential and possession of the key. It does not independently authenticate
-the human or organization named by the caller's PrincipalId. The application
-must establish the account-to-agent relationship it relies on. The
-[identity contract](/reference/spec/identity/identity-and-attribution#agents-and-principals) defines this
-claim precisely.
+An agent exists once its owner signs in to the daemon. The daemon records
+the agent's identifier, its name and a principal identifier. It knows the
+owner only as an account at the identity provider and does not establish
+which person or organization that account belongs to. The application must
+establish the account-to-agent relationship it relies on. The
+[identity contract](/reference/spec/identity/identity-and-attribution#agents)
+defines these values precisely.
 
 An application states how its members work together as
 [norms](/reference/spec/norms/norms): FIPA protocols with a form for each act.
 The members of a conversation agree on a norm through ordinary messages before
-a task, and each member's daemon checks every act of that task against the
+a task, and each member's firewall checks every act of that task against the
 conversation's history, refusing acts out of turn or with invalid fields. A
-daemon reads only the norms its owner's configuration holds, and asks a peer
+firewall reads only the norms its agent holds, and an agent can ask a peer
 for a norm it lacks.
 
 An agreement covers one task in one conversation and ends when that task
@@ -74,14 +72,14 @@ membership.
 ## Ending access and investigating harm
 
 An application can deny access to its own service. A participant can change
-its own editable policy. Applications cannot yet issue revocations or norm updates that participants'
-daemons apply automatically. AgentCards remain
-immutable, and changing a group's participants creates a different
+its own editable policy. Applications cannot yet issue revocations or norm
+updates that participants' firewalls apply automatically. An agent keeps its
+identifier and name, and changing a group's participants creates a different
 conversation.
 
 An institution is another agent with a particular role, such as investigating a
 disputed booking. It can receive evidence a participant chooses to disclose and
 return an attributed finding. Each application or participant decides how to
-use that finding. Social Harness supplies verifiable conversation records;
-disclosure, investigation and sanction protocols remain future work under the
-[institution specification](/reference/spec/institutions).
+use that finding. Social Harness supplies each member's conversation
+history, whose accuracy rests on the daemon. Disclosure, investigation and
+sanction protocols remain future work.

@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
+import type { AgentCard } from "../identity/agent-cards.js";
 import { SendError } from "../communication/errors.js";
 import {
   AgentAddress,
@@ -47,11 +48,6 @@ import {
   type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/index.js";
-import {
-  type AgentCard,
-  agentCardOf,
-  type VerifiedAgentIdentityCard,
-} from "../identity/agent-cards.js";
 import { Identity, IdentityError } from "../identity/service.js";
 import {
   catalogCursor,
@@ -106,8 +102,6 @@ const historyFailureText = {
   "unknown-agent": "an agent the address names is not a known agent",
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
-  "history-gap":
-    "part of this conversation is not available yet; try again shortly",
   "persistence-failed": "the conversation could not be read; try again",
 } as const;
 
@@ -119,7 +113,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
       "invalid-address",
       "unknown-agent",
       "invalid-cursor",
-      "history-gap",
       "persistence-failed",
     ),
   },
@@ -185,7 +178,7 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
   SocialHarnessService
 >() {
-  /** Shares one database and starts communication after registration is retained. */
+  /** Shares one database with communication, which starts in the background. */
   static layer<R>(settings: HarnessSettings<R>, workers: FiberSet.FiberSet) {
     return Layer.scoped(SocialHarness, makeHarness(settings, workers));
   }
@@ -194,9 +187,9 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
 /** Supplies communication and inbox processing limits for one agent. */
 export interface HarnessSettings<R> {
   readonly agentKey: string;
-  /** Builds communication after registration or saved identity loading. */
+  /** Builds communication for this agent's card. */
   readonly communication: (
-    identityCard: VerifiedAgentIdentityCard,
+    card: AgentCard,
   ) => Layer.Layer<Communication, CommunicationError, R>;
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
@@ -297,13 +290,16 @@ function makeHarness<R>(
           const request = structuredClone(input);
           return Effect.gen(function* () {
             if (settings.hideGroups && request.to.startsWith("group:")) {
-              return yield* new SendError({ reason: "content-invalid" });
+              return yield* new SendError({
+                reason: "invalid-address",
+                detail:
+                  "this daemon does not offer groups; address one agent as agent:<name>",
+              });
             }
             const communication = yield* active;
-            const author = agentCardOf(card);
             const destination = yield* canonicalMessageAddress(
               request.to,
-              author.agentName,
+              card.agentName,
             );
             let value: Outgoing;
             if ("collectiveResponse" in request) {
@@ -324,14 +320,14 @@ function makeHarness<R>(
                   ),
                 );
               const expected = [original.author, ...original.recipients]
-                .filter((member) => member.agentId !== author.agentId)
+                .filter((member) => member.agentId !== card.agentId)
                 .map((member) => member.agentName)
                 .sort(compareAscii);
               const selectedNames =
                 destination.kind === "direct"
                   ? [destination.remoteName]
                   : destination.memberNames.filter(
-                      (name) => name !== author.agentName,
+                      (name) => name !== card.agentName,
                     );
               if (
                 expected.join(",") !==
@@ -340,7 +336,7 @@ function makeHarness<R>(
                 return yield* new SendError({ reason: "invalid-address" });
               }
               value = yield* Answer.create({
-                author,
+                author: card,
                 request: original,
                 response: request.collectiveResponse,
               }).pipe(
@@ -354,7 +350,7 @@ function makeHarness<R>(
                   destination.kind === "direct"
                     ? [destination.remoteName]
                     : destination.memberNames.filter(
-                        (name) => name !== author.agentName,
+                        (name) => name !== card.agentName,
                       ),
                 )
                 .pipe(
@@ -364,11 +360,11 @@ function makeHarness<R>(
                         reason:
                           error.reason === "unknown-agent"
                             ? "unknown-agent"
-                            : "network-unavailable",
+                            : "persistence-failed",
                         ...(error.reason === "unknown-agent" &&
                         error.agentName !== undefined
                           ? {
-                              detail: `No registered agent named agent:${error.agentName}.`,
+                              detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
                             }
                           : {}),
                       }),
@@ -383,7 +379,7 @@ function makeHarness<R>(
                 request.collective?.op === "gather" ||
                 request.collective?.op === "all_gather"
                   ? yield* Request.create({
-                      author,
+                      author: card,
                       recipients: [first, ...rest],
                       question: request.text,
                       ...request.collective,
@@ -393,7 +389,7 @@ function makeHarness<R>(
                       ),
                     )
                   : yield* Message.create({
-                      author,
+                      author: card,
                       recipients: [first, ...rest],
                       content: [{ type: "text", text: request.text }],
                     }).pipe(Effect.mapError(sendFailure));
@@ -541,7 +537,7 @@ function makeHarness<R>(
               : undefined;
           if (position.phase === "messages" && members === undefined) {
             if (position.communication !== undefined) {
-              return yield* new HistoryError({ reason: "history-gap" });
+              return yield* new HistoryError({ reason: "invalid-cursor" });
             }
             if (position.through === 0) {
               yield* identity.resolve(names);
@@ -639,7 +635,7 @@ function checkIncoming(
   firewall: Context.Tag.Service<typeof Firewall>,
   communication: CommunicationService,
   entry: PendingItem,
-  card: VerifiedAgentIdentityCard,
+  card: AgentCard,
   limit: number,
   withheldReply: Option.Option<string>,
 ) {
@@ -703,12 +699,7 @@ function checkIncoming(
       };
     }
     const decision = yield* firewall.checkIncoming(value, evidence);
-    const reply = yield* replyTo(
-      value,
-      decision,
-      agentCardOf(card),
-      withheldReply,
-    );
+    const reply = yield* replyTo(value, decision, card, withheldReply);
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
@@ -832,20 +823,11 @@ function evidenceFor(
             }),
       })
       .pipe(
-        Effect.catchTag("CommunicationError", (error) =>
-          error.reason === "history-gap" || error.reason === "unknown-message"
-            ? Effect.succeed(undefined)
-            : Effect.fail(new InboxError({ reason: "persistence-failed" })),
+        Effect.catchTag(
+          "CommunicationError",
+          () => new InboxError({ reason: "persistence-failed" }),
         ),
       );
-    if (page === undefined) {
-      return {
-        history: [],
-        earlierHistoryOmitted: false,
-        pendingOutgoing: [],
-        gaps: ["The preceding conversation history is unavailable."],
-      };
-    }
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
     for (const entry of [...page.entries].reverse()) {
@@ -863,7 +845,6 @@ function evidenceFor(
       history,
       earlierHistoryOmitted:
         page.earlierMessagesOmitted || recent.length < page.entries.length,
-      pendingOutgoing: page.pendingOutgoing,
       gaps:
         recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
@@ -894,8 +875,6 @@ function incomingParticipants(incoming: Incoming): readonly AgentCard[] {
         incoming.result.request.author,
         ...incoming.result.request.recipients,
       ];
-    case "request-failed":
-      return [incoming.request.author, ...incoming.request.recipients];
     default:
       return absurd(incoming);
   }
@@ -920,18 +899,10 @@ function sendFailure(error: CommunicationError): SendError {
   switch (error.reason) {
     case "membership-invalid":
     case "content-invalid":
-    case "version-mismatch":
-    case "certification-unavailable":
     case "persistence-failed":
-    case "network-unavailable":
-    case "outcome-unknown":
     case "message-conflict":
       return new SendError({ reason: error.reason });
     case "invalid-cursor":
-    case "history-gap":
-    case "unknown-message":
-    case "outbox-too-old":
-    case "agent-not-admitted":
       return new SendError({ reason: "persistence-failed" });
     default:
       return absurd(error.reason);
@@ -959,10 +930,12 @@ function historyFailure(error: unknown): HistoryError {
     });
   }
   if (error instanceof CommunicationError) {
-    if (error.reason === "invalid-cursor" || error.reason === "history-gap") {
-      return new HistoryError({ reason: error.reason });
-    }
-    return new HistoryError({ reason: "persistence-failed" });
+    return new HistoryError({
+      reason:
+        error.reason === "invalid-cursor"
+          ? "invalid-cursor"
+          : "persistence-failed",
+    });
   }
   return new HistoryError({ reason: "invalid-address" });
 }

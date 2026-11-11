@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { type Network, startNetwork } from "../process-network-fixture.ts";
+import { type DaemonAccess, openDaemon } from "../promise-fixture.ts";
 import { fakeClaude } from "./claude-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
@@ -38,13 +38,13 @@ const skip =
 const text = "peer message through the separate daemon container";
 
 async function deliverTurn(
-  network: Network,
+  daemon: DaemonAccess,
   options: { runtime: string; directory: string; container: string },
   provider: { requests: string[] },
 ): Promise<undefined> {
   const { runtime, directory, container } = options;
-  const target = await network.daemon(`openclaw-${runtime}`);
-  const caller = await network.endpoint(`caller-${runtime}`);
+  const target = await daemon.signIn("openclaw");
+  const caller = await daemon.signIn("caller");
   await caller.send({ to: target.address, text });
   await startHost({
     container,
@@ -69,9 +69,13 @@ interface HostOptions {
   readonly mcpCredentialFile: string;
 }
 
-/** The image user copies fixture state so OpenClaw owns the directories it secures. */
+/**
+ * The image user copies fixture state so OpenClaw owns the directories it
+ * secures, and reads the credential file its agent's owner signed in with.
+ */
 async function startHost(options: HostOptions): Promise<undefined> {
   const { container, daemon, directory, mcp, mcpCredentialFile } = options;
+  await chmod(mcpCredentialFile, 0o644);
   await docker("docker", [
     "run",
     "--detach",
@@ -289,18 +293,18 @@ for (const runtime of ["provider", "claude-cli"]) {
     { skip, timeout: 300_000 },
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "openclaw-container-"));
-      const network = await startNetwork(startDaemonContainer);
+      const daemon = await openDaemon(startDaemonContainer);
       const provider = await startProvider();
       const container = `openclaw-host-${runtime}-${Date.now()}`;
       try {
         await prepareHost(directory, runtime, provider.port);
-        await deliverTurn(network, { runtime, directory, container }, provider);
+        await deliverTurn(daemon, { runtime, directory, container }, provider);
       } finally {
         await docker("docker", ["rm", "--force", container]).catch(
           () => undefined,
         );
         await provider.close();
-        await network.close();
+        await daemon.close();
         await rm(directory, { recursive: true, force: true });
       }
     },

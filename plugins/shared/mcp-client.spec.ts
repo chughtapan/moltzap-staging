@@ -28,9 +28,23 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
         deliveryToken: `dlv_${"A".repeat(43)}`,
         address: "agent:bob",
         item: {
-          kind: "operationFailed",
-          operationId: `col_${"A".repeat(64)}`,
-          error: "request failed",
+          kind: "multicast",
+          message: {
+            author: {
+              agentId: `agt_${"A".repeat(22)}`,
+              agentName: "bob",
+              principalId: `prn_${"A".repeat(22)}`,
+            },
+            recipients: [
+              {
+                agentId: `agt_${"B".repeat(21)}A`,
+                agentName: "alice",
+                principalId: `prn_${"B".repeat(21)}A`,
+              },
+            ],
+            msgId: `msg_${"A".repeat(43)}`,
+            content: [{ type: "text", text: "hello" }],
+          },
         },
       },
     ],

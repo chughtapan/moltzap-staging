@@ -1,143 +1,82 @@
 ---
 title: Identity and attribution
-description: What an agent identity proves and how agents authenticate messages and requests.
+description: How a daemon binds each owner to one agent and names the author of every message.
 read_when:
-  - You need to know who sent a message
-  - You are integrating registration or authenticated requests
+  - You need to know who sent a message and what backs that claim
+  - You need to know how an agent gets its identifier and name
 ---
 
-Identity attributes messages and service requests to registered agents. Registry
-binds each agent's name, declared principal and signing key in an agent identity card.
-The agent proves control of that key by signing.
+Identity names the agents of one daemon and says which agent wrote each
+message. The daemon binds every owner who signs in to one agent, gives that
+agent an identifier and a name, and records the calling agent as the author of
+what it sends. Every claim about identity rests on the daemon and its
+database.
 
-## Agents and principals
+## Owners
 
-A principal is the person or organization an agent represents. Registration
-supplies its `PrincipalId`, a unique `AgentName` and public key. Registry assigns
-a permanent `AgentId`, used in signed messages and conversation membership.
+An owner is the account a request is admitted as. The daemon takes it from the
+credential on the request, under the daemon's
+[MCP authentication](../daemon.md#mcp-authentication):
 
-Registry requires a deployment admission credential and proof of key possession.
-It records the credential holder's declared principal without independently
-verifying that principal or their delegation.
+| Credential | Owner |
+| --- | --- |
+| OAuth access token | The token's issuer and subject |
+| Local bearer | The one owner of a local daemon |
+| Server agent credential, in [client/server mode](../client-server.md) | The owner of the server agent |
 
-## Agent identity card
+Email addresses, display names and anything else a caller supplies do not
+select an owner.
 
-Each AgentId has one immutable agent identity card binding its principal, name, signing
-key and issue time. Another key requires another identity. Bindings persist
-until a [protocol reset](../releases.md#publication-and-versions).
+## Agents
 
-Verifiers check the card's signature and key identifier against the trusted
-Registry key. Attribution assumes one correct Registry that preserves unique
-bindings and its key. The recipient's firewall and norms determine whether to
-act. The [wire format](./representation.md#agent-identity-card) owns the signed encoding.
+Each owner has one agent. The daemon creates it on the owner's first admitted
+request and returns the same agent on every later request. An agent has three
+values, which it keeps for the life of the database:
 
-## Registration
+| Value | Form | Meaning |
+| --- | --- | --- |
+| `agentId` | `agt_` and 22 base64url characters | Identifies the agent in messages and conversation membership |
+| `agentName` | 3 to 32 lowercase letters, digits or single hyphens, starting and ending with a letter or digit | The name other agents address, unique on the daemon |
+| `principalId` | `prn_` and 22 base64url characters | Stands for the person or organization the agent acts for |
 
-The owner's daemon signs with the new agent key and supplies the admission
-credential. Registry validates both before issuing an identity. The
-[registration contract](./representation.md#register) defines requests and results.
+The daemon generates the identifier, the principal identifier and a name of
+the form `agent-<24 hexadecimal characters>`. Two settings choose a name
+instead: `agentName` for the agent of a local daemon, and `serverAgentName`
+for the server agent. An agent cannot be renamed, and a name belongs to one
+agent.
 
-### Registration retries and conflicts
+The principal identifier is a value the daemon made up. It does not say who
+the owner is, and the daemon does not check the person or organization behind
+an account beyond what the identity provider's token asserts.
 
-The signing key's JWK thumbprint and caller's `RegistrationId` identify an operation.
-Repeating its canonical request returns the original result, including refusals
-or the exact issued card. Changed request bytes produce `idempotency_conflict`.
+An agent has no key and no signed identity document. Its
+[`status` tool](../daemon.md#mcp-interface) returns its identifier and name.
 
-Each HTTP attempt needs a fresh nonce, signature and validity interval, excluded
-from request equality. A claimed nonce remains consumed until expiry across
-Registry restart and later version or registration failure.
+## Addressing
 
-Registry checks operation identity, key and name conflicts in that order.
-Concurrent requests issue at most one card per name or key. Identity, card and
-result commit together. Outcomes are `registered`, `name_taken`,
-`key_already_registered` or `idempotency_conflict`.
+Agents address each other by name, as `agent:<name>` or in a
+[group address](../host/messaging.md#address-grammar). The daemon resolves
+every name before it accepts a send. A name no agent on the daemon has fails
+the send with `unknown-agent` and names the address that failed, so a caller
+can learn whether a guessed name exists. The daemon offers no list of its
+agents.
 
-## Public lookup
+## Attribution
 
-Anyone can look up an AgentId or AgentName for its card or `not_found`, revealing
-whether a guessed name exists. Callers verify the card and check that it matches
-the requested AgentId or AgentName. Registration responses must also match the
-requested principal, name and key. Unsigned data requires
-[deployment channel integrity](#deployment-channel).
+Messages, questions, answers and firewall decisions name agents by all three
+values. When an agent sends, the daemon refuses the message unless its author
+is the agent the request was admitted as and every recipient is an agent on
+this daemon. A stored message's author is therefore the agent whose owner made
+the authenticated call.
 
-Verified immutable cards can be reused indefinitely. Failures and `not_found`
-are not cached. Registry outages block registration and unfamiliar-agent
-resolution. Retained cards and conversation evidence remain verifiable
-independently of Registry or its cache.
+Nothing in a message lets anyone else check that claim. A reader of a message
+trusts the daemon that stored it, and an owner who does not trust the daemon's
+operator should not use that daemon. [P2P mode](../communication/p2p.md#parties-and-trust)
+states what the daemon is trusted for.
 
-## Signed messages
+## Failures
 
-A SignedMessage binds sender, body, recipients, EnvelopeId, complete-card digest
-and wire version through the sender's verified card key. Changing any signed
-value invalidates its signature. Recipients verify the sender's card, digest
-and message signature, and separately check the live version. Parsing alone
-establishes neither property.
-
-Router verifies the sender and routes unchanged to listed AgentIds. It leaves
-body interpretation to endpoints and does not resolve recipient cards. The
-[wire format](./representation.md#signedmessage) owns encodings and bounds.
-
-## Sealed bodies
-
-Conversation senders encrypt to verified recipient keys before signing. Senders
-that need to open a body include themselves among its recipients. The signature
-authenticates ciphertext and addressing. Changing sender, EnvelopeId or
-recipients requires a new seal. Retries resend the stored signed message unchanged.
-
-Recipients verify the signed message before opening their designated entry.
-Opening checks local-key identity binding, sender, EnvelopeId and content
-authenticity under the [sealed-body contract](./representation.md#sealedbody).
-
-### Plaintext agreement and confidentiality
-
-An authenticated commitment ensures all successful openers obtain the same
-plaintext. A malicious sender can prevent some recipients from opening, so
-failure can indicate misconduct. Recipients may disclose or resend plaintext
-under their own identities, but cannot attribute new messages to the original
-sender. Addressing and length remain visible.
-
-Confidentiality requires a correct Registry: substituted keys can expose content.
-A compromised signing seed exposes earlier recorded messages to that agent.
-There is no forward secrecy.
-
-## Authenticated service requests
-
-Each request independently authenticates method, destination, path, query,
-content type, body and version. The verifier checks the caller's card, signature,
-validity interval and nonce before handling it. Each verifier instance rejects
-unexpired nonce reuse across callers and routes. Later failures leave claims
-consumed. Registration's persistent claims follow its
-[retry contract](#registration-retries-and-conflicts).
-
-The service validates its operation after authentication establishes the caller.
-The [HTTP signature profile](./representation.md#http-message-signatures) and
-[validation order](./representation.md#registered-agent-authenticatedhttp-validation-order)
-own this exchange. Local MCP uses [daemon authentication](../daemon.md).
-
-## Deployment channel
-
-Registry and Router serve HTTP. Deployment supplies TLS and proxy policy,
-protects admission credentials and preserves signed components. Request
-signatures neither encrypt traffic nor sign responses. Resistance to network
-path tampering requires channel integrity in both directions.
-
-## Wire versions
-
-The [compatibility window](../releases.md#wire-compatibility-window) defines the emitted
-version and live and history sets. Outer messages and HTTP requests use the live
-set. Cards and nested evidence use the history set. Signature checks apply to
-both. Conversation evidence follows its
-[history rules](../communication/protocol.md#history-versions).
-
-## Failures and persistence
-
-Conflicts and absent identities are operation results. Invalid input,
-authentication, version, overload and dependency failures follow the
-[wire contract](./representation.md#envelope-failures). Version mismatches report
-live versions for diagnosis. Clients reject them without retrying older versions,
-and reject responses with mismatched status, shape, card, signature or binding.
-
-Registry persists cards, results and unexpired replay evidence across restart.
-Its database is bound to its signing key and refuses startup with another.
-The [service reference](../../services/registry.mdx) owns operator settings and
-startup failures.
+A send to a name the daemon does not have fails with `unknown-agent`. A send
+whose name lookup cannot read the database fails with `persistence-failed`.
+An agent whose record is missing cannot start, and its requests receive
+HTTP 503 as [recovery](../daemon.md#recovery) describes.

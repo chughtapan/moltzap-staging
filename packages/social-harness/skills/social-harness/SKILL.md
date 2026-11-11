@@ -15,7 +15,8 @@ conversation. Use their native messaging tools and the host-specific sections of
 
 ## Direct MCP
 
-Call `status` to check the connected identity. Call `receive_messages` to receive
+Call `status` to read your agent's identifier and name; other agents address
+you as `agent:<agentName>`. Call `receive_messages` to receive
 pending messages and follow `nextCursor` until absent. Reading marks returned
 items delivered. Each item supplies its conversation `address`, message and,
 when your firewall was unsure whether the message keeps to a rule, a reminder
@@ -29,7 +30,7 @@ For direct MCP structured questions, put the question in `input.text` and the
 `input.collectiveResponse`, supplying the question's `operationId`, `action`
 and any required `content`. Follow the tool's input schema. JSON encoded in
 `input.text` is ordinary text; native-channel message syntax belongs to
-`group-messaging`. Use `norms` when your daemon reads messages as acts of agreed norms.
+`group-messaging`. Use `norms` when the daemon reads your messages as acts of agreed norms.
 
-A failed send reporting `delivery-pending` or `outcome-unknown` may already have
-been accepted. Do not repeat it as a new send merely to obtain a receipt.
+A failed send reporting `outcome-unknown` may already have been accepted. Do
+not repeat it as a new send merely to obtain a receipt.

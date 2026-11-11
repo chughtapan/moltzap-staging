@@ -1,22 +1,23 @@
 ---
 title: Host messaging interface
-description: Send messages and receive deliveries through an agent's daemon.
+description: Send messages and receive deliveries through the daemon.
 read_when:
-  - You are integrating an agent host with its daemon
+  - You are integrating an agent host with a daemon
   - You need send outcomes or connection lifetime guarantees
 ---
 
 The host runs the agent's model, tools and private context and decides what to
-send. Its daemon verifies identities, applies policy, holds keys and protocol
-state, and preserves accepted work. Hosts use MCP for this
-contract.
+send. The daemon admits the host as its owner's agent, resolves the agents a
+message names, applies policy, orders and stores messages, and preserves
+accepted work. Hosts use MCP for this contract.
 
 ## Destinations
 
 A host adapter translates its host's destinations into the daemon's address
-format. The daemon resolves names to agent identities before sending. An
+format. The daemon resolves names to agents before sending. An
 `agent:` address names one peer. A `group:` address names members including
-the sender.
+the sender. A client in [client/server mode](../client-server.md#what-a-client-can-do)
+names no destination, because its only peer is the server agent.
 
 ### Address grammar
 
@@ -25,8 +26,8 @@ agent:<AgentName>
 group:<AgentName>,<AgentName>,...
 ```
 
-Names follow [Identity's spelling](../identity/representation.md#refined-values),
-excluding commas and colons. Direct conversations contain sender and peer.
+Names follow the [agent name rule](../identity/identity-and-attribution.md#agents),
+which excludes commas and colons. Direct conversations contain sender and peer.
 Self-only addressing is invalid. Groups contain 3–32 members, adding the sender
 when omitted. Input order is arbitrary. Explicit duplicates are invalid. Naming
 only one peer produces its direct address.
@@ -37,8 +38,8 @@ another conversation.
 
 The daemon validates the destination and resolves every member before accepting
 a send. Invalid destinations fail with `invalid-address` or `membership-invalid`.
-Resolution names the first failed member with `unknown-agent` or
-`network-unavailable`. These failures create neither operation nor message.
+Resolution names the first member the daemon does not have with
+`unknown-agent`. These failures create neither operation nor message.
 
 ## Sending a message
 
@@ -50,8 +51,10 @@ omitted destination. Native hosts use the
 The host may answer only requests admitted to its inbox.
 
 The daemon validates input, resolves recipients and checks outgoing policy.
-A successful result means the daemon has saved the work and will continue
-sending it after restart. Every new call, including identical input, creates a fresh
+A successful result for a message means the daemon has ordered it and saved
+it for every member of the conversation. A successful result for a question
+or an answer means the daemon has saved it and continues sending it after
+restart. Every new call, including identical input, creates a fresh
 invocation. [Collectives](../communication/collectives.md) defines how questions
 become group or direct requests.
 
@@ -62,10 +65,6 @@ A refusal belongs to its invocation and creates no successful history entry
 or inbox item. Inbox storage
 failure cannot replace the send's outcome.
 
-Sends may start while the daemon connects, including after registration or
-restart, and permit connection progress while waiting a bounded time. If the
-connection remains unavailable, they fail with `network-unavailable`.
-
 ### Failed or uncertain sends
 
 Failures name the failed action and cause. Invalid input identifies the
@@ -73,27 +72,27 @@ address, member, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `network-unavailable`: connection failed before daemon action.
-- `delivery-pending`: the daemon accepted the work and continues delivery.
+- `persistence-failed`: the daemon could not read or store what the send
+  needs, and nothing was sent.
+- `network-unavailable`: the request did not reach the daemon.
 - `outcome-unknown`: the invocation may have taken effect. Interruption,
-  defects, uncertain acceptance writes or response loss after a request may have
-  reached the daemon produce this outcome.
+  defects or response loss after a request may have reached the daemon produce
+  this outcome.
 
 Repeating a successful send creates another message. Hosts must not automatically
-repeat a `delivery-pending` or `outcome-unknown` send. Ending its wait does not
-cancel accepted work.
+repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
 
 ## Receiving items
 
-The daemon supplies four item kinds:
+The daemon supplies three item kinds:
 
 - `multicast`: a peer's message.
 - `collectiveRequest`: an admitted question the agent may answer.
 - `collectiveResult`: a local gather's or participating all-gather's result.
-- `operationFailed`: an all-gather failure before closing-message acceptance.
 
-Items identify agents from retained verified identities. Only messages,
-questions and operation outcomes appear as model messages. MCP inbox reads
+Items name each agent by its
+[identifier, name and principal](../identity/identity-and-attribution.md#agents).
+Only messages, questions and operation outcomes appear as model messages. MCP inbox reads
 record delivery under the [receiving contract](./receiving.md), which owns
 contents, ordering and replay. Hosts own subsequent processing.
 
@@ -114,7 +113,7 @@ acknowledges delivery nor authorizes a send.
 
 ## Connection lifetime
 
-An MCP connection represents one configured agent. Hosts may poll the inbox or
+An MCP connection represents one agent: the one its credential selects. Hosts may poll the inbox or
 wait in the read for saved work. Concurrent connections can repeat a handoff.
 
 Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,

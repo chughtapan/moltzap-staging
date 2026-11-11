@@ -172,8 +172,6 @@
         {
           "projects": [
             "@social-harness/social-harness",
-            "@social-harness/registry",
-            "@social-harness/router",
             "@social-harness/openclaw-channel",
             "@social-harness/nanoclaw-channel"
           ],

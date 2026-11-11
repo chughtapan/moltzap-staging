@@ -1,24 +1,10 @@
-/** @file Tracks background work between attempts, including idle waits. */
+/** @file Marks each firewall check in activity traces from its start to its outcome. */
 
 import { Effect, Exit } from "effect";
 
-/** Background work included in activity traces. */
-export type RetryKind =
-  | "proposal"
-  | "catch-up"
-  | "reanchor"
-  | "outbound"
-  | "firewall-check";
+const kind = "firewall-check";
 /** How a tracked operation finished. */
-export type RetryOutcome =
-  | "certified"
-  | "superseded"
-  | "recovered"
-  | "sent"
-  | "checked"
-  | "gave-up"
-  | "interrupted"
-  | "failed";
+type RetryOutcome = "checked" | "interrupted" | "failed";
 
 /** Uses the supplied outcome for success, otherwise marks failure or interruption. */
 export function exitOutcome(
@@ -31,8 +17,22 @@ export function exitOutcome(
   return Exit.isInterrupted(exit) ? "interrupted" : "failed";
 }
 
-/** Opens an activity that `retrySettled` closes under the same kind and ID. */
-export function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
+/** Pairs activity markers even when work fails or is cancelled. */
+export function markRetries<A, E, R>(
+  id: string,
+  outcome: (exit: Exit.Exit<A, E>) => RetryOutcome,
+): (work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> {
+  return (work) =>
+    Effect.uninterruptibleMask((restore) =>
+      retryPending(id).pipe(
+        Effect.zipRight(restore(work)),
+        Effect.onExit((exit) => retrySettled(id, outcome(exit))),
+      ),
+    );
+}
+
+/** Opens an activity that `retrySettled` closes under the same ID. */
+function retryPending(id: string): Effect.Effect<void> {
   return Effect.withSpan(Effect.void, "retry.pending", {
     captureStackTrace: false,
     attributes: { kind, id },
@@ -40,28 +40,9 @@ export function retryPending(kind: RetryKind, id: string): Effect.Effect<void> {
 }
 
 /** Closes the matching `retryPending` activity. */
-export function retrySettled(
-  kind: RetryKind,
-  id: string,
-  outcome: RetryOutcome,
-): Effect.Effect<void> {
+function retrySettled(id: string, outcome: RetryOutcome): Effect.Effect<void> {
   return Effect.withSpan(Effect.void, "retry.settled", {
     captureStackTrace: false,
     attributes: { kind, id, outcome },
   });
-}
-
-/** Pairs activity markers even when work fails or is cancelled. */
-export function markRetries<A, E, R>(
-  kind: RetryKind,
-  id: string,
-  outcome: (exit: Exit.Exit<A, E>) => RetryOutcome,
-): (work: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> {
-  return (work) =>
-    Effect.uninterruptibleMask((restore) =>
-      retryPending(kind, id).pipe(
-        Effect.zipRight(restore(work)),
-        Effect.onExit((exit) => retrySettled(kind, id, outcome(exit))),
-      ),
-    );
 }

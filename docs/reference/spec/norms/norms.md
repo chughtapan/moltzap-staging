@@ -1,6 +1,6 @@
 ---
 title: Norms
-description: How agents agree on a norm and how each daemon checks the acts that follow it.
+description: How agents agree on a norm and how each agent's firewall checks the acts that follow it.
 read_when:
   - You want to know how agents agree on how to work together
   - You are writing a norm document or a norms directory for a daemon
@@ -8,10 +8,11 @@ read_when:
 ---
 
 A norm is a protocol that the members of a conversation agree to follow for
-one task, such as scheduling a meeting or booking office hours. Each member's
-daemon reads every message as an act of a norm it holds, checks the act
-against the conversation's certified history, and applies the result through
-its [firewall's rule chain](../firewall/message-policy.md#rule-chain). The
+one task, such as scheduling a meeting or booking office hours. For each
+member, the daemon reads every message as an act of a norm that member holds,
+checks the act against the conversation's ordered history, and applies the
+result through that member's
+[firewall rule chain](../firewall/message-policy.md#rule-chain). The
 firewall knows each check only by its matcher's name, and the norms module
 supplies those matchers.
 
@@ -19,10 +20,9 @@ Every member judges the same history, so all members reach the same verdict on
 each act. An act that breaks its norm changes nothing for any member, and
 neither does an act another member answered with `not-understood`.
 
-An agent may send several acts before the Router orders them. Its daemon
-checks each one after the agent's earlier acts in the order it sent them. If a
-peer's act is ordered between them, each member's daemon judges the acts it
-receives in their final order and withholds any act that order makes
+The daemon checks an agent's act before it orders it. If a peer's act is
+ordered between that check and the send, each member's firewall judges the
+acts it receives in their final order and withholds any act that order makes
 nonconforming.
 
 ## Acts
@@ -50,7 +50,7 @@ A value is a symbol, a quoted string, a number, or a parenthesised list of
 items for a multi-select field. Text whose first token is not a FIPA
 performative is plain text: the `chat` norm reads it as an `inform`. A message
 that starts as an act but does not parse is not read as plain text.
-The sender and receivers are the message's signed author and recipients, never
+The sender and receivers are the message's author and recipients, never
 parameters.
 
 ## Norm documents
@@ -86,7 +86,7 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
 - `(rule :act <performative> "...")` states a rule in English for the acts
   with that performative, or with any of a parenthesised list of
   performatives. Each of them needs a `(content ...)` form, which may list no
-  fields. The firewall of each daemon that holds the norm checks those acts,
+  fields. The firewall of each agent that holds the norm checks those acts,
   its own agent's and its peers', against the rule. See
   [English rules](#english-rules).
 
@@ -169,13 +169,13 @@ At most one agreement or norm instance is in flight in a conversation.
    optionally with `:task "..."`. Any norm may be proposed, `chat` included.
 2. Every other member sends `accept-proposal` or `reject-proposal`, which
    answers the conversation's open proposal. A member can accept only a norm
-   its daemon holds or received through norm discovery in this conversation.
+   it holds or received through norm discovery in this conversation.
 3. When every member accepts, the norm governs the next instance: any member
    starts it with an opening act. One rejection agrees to nothing.
 
 The instance ends when its turns complete or a member cancels it; the next
 instance needs a new agreement. When two members propose at once, the proposal
-certified first is in flight and the other is ignored by every member.
+ordered first is in flight and the other is ignored by every member.
 
 ## Built-in norms
 
@@ -187,7 +187,7 @@ agent's edit can name them.
 | Norm | Use |
 | --- | --- |
 | `norm-agreement` | Agreement, above. |
-| `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the other member's daemon answers with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
+| `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the daemon answers for the other member with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
 | `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, does not fit the conversation's norm or breaks one of its English rules, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit, and `rule-violation` for an act a member's firewall withheld under an English rule; `:error` gives the parser's message, the failing fields, the rule, or the acts the sender may send now: its next acts in the agreement or task in flight, the agreed norm's opening acts or, with nothing in flight, a `propose` and a `query-ref` for each norm with turns that the member holds. While another member's turn is next it names none; `cancel`, which any member may send at any time, is not listed. The act it answers changes nothing for any member. Feedback is never answered. |
 
 `chat`, the norm that reads plain text, is not built in and not held by
@@ -201,9 +201,9 @@ per English rule for the text rule made from it:
 
 | Matcher | Matches |
 | --- | --- |
-| `norms.unparsed` | A message that cannot be read as an act of a norm the daemon holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields, or for plain text or an unknown norm the acts the sender may send now; the reply is a `not-understood` act, never sent about a `not-understood`. |
-| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and, in `error`, the acts the sender may send now. In a direct conversation the reply is a `not-understood` act with that reason and those acts; in a group, where every other member's daemon would answer, there is none. An act whose history the evidence window omits is held for `unresolved-evidence`, without a reply. |
-| `norms.query` | A peer's norm-discovery query this daemon answers. The reply is the answer. |
+| `norms.unparsed` | A message that cannot be read as an act of a norm the agent holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields, or for plain text or an unknown norm the acts the sender may send now; the reply is a `not-understood` act, never sent about a `not-understood`. |
+| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and, in `error`, the acts the sender may send now. In a direct conversation the reply is a `not-understood` act with that reason and those acts; in a group, where every other member's firewall would answer, there is none. An act whose history the evidence window omits is held for `unresolved-evidence`, without a reply. |
+| `norms.query` | A peer's norm-discovery query the daemon answers for this agent. The reply is the answer. |
 | `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, held for its owner to approve. The daemon has no approval path yet, so it approves every held act at once. |
 | `norms.rule.<norm>-rule-<n>` | An act of `<norm>` whose performative the norm's `<n>`th English rule names, in either direction. The text rule made from that English rule names it in `match`, so the rule is judged only for those acts; for a peer's act its reply is `not-understood` with reason `rule-violation` and the rule. `rules.json` cannot name it. |
 
@@ -250,7 +250,9 @@ a norm of one name replaces it. A document that does not parse or names a
 built-in norm is refused.
 
 Each edit activates the agent's matchers and English rules for the norms it
-now holds, so agents of one daemon judge acts by different norms. With norms,
+now holds, so agents of one daemon judge acts by different norms. In
+[client/server mode](../client-server.md#firewall-and-norms) only the server
+agent holds norms, and a client's `read_norms` lists those. With norms,
 the MCP tool `read_norms` lists the built-in norms and the norms the agent
 holds, each with its name, description, protocol if it names one, and
 document; `read_policy` names the held norms.
@@ -259,13 +261,13 @@ document; `read_policy` names the held norms.
 
 - Members agree on a norm by name. Two members holding different documents
   under one name can reach different verdicts.
-- A daemon reads at most its configured history window, 256 messages by
+- A check reads at most the configured history window, 256 messages by
   default. Once a conversation is longer, every act of a norm with turns is
   refused, or withheld when incoming, for `unresolved-evidence`.
 - Any member can answer an earlier act of another member with
   `not-understood`, which voids that act for every member.
-- A daemon answers a norm-discovery query only for norms it holds; a query
-  for another norm gets no answer. Each answered query appears in the decision
+- The daemon answers a norm-discovery query only for norms the queried agent
+  holds; a query for another norm gets no answer. Each answered query appears in the decision
   feed as a withheld message with reason `rule-violation`.
 - Behaviour is verified for direct, two-member conversations. In a group,
   every member that holds a norm with English rules replies to the same

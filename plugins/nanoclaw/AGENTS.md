@@ -5,11 +5,10 @@ NanoClaw channel adapter and integration canary. Publication follows `docs/refer
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import Identity, Router, protocol, server, Client internals, simulator, evals,
-or another adapter. NanoClaw creates it through the native channel registry,
+import daemon services, Client internals, simulator, evals, or another
+adapter. NanoClaw creates it through NanoClaw's native channel list,
 and it connects the stock MCP client to the configured MCP URL. It
-does not acquire a daemon, profile, Registry admission material, signing key,
-raw Router credential, network client, or local store.
+does not acquire a daemon, a database, an owner's sign-in or a local store.
 
 ## Host integration law
 
@@ -44,14 +43,12 @@ raw Router credential, network client, or local store.
 - NanoClaw owns sessions, implicit replies, prompt and final-text behavior
   beyond the explicit-address capability and route, inbox replay, scheduling,
   and runtime isolation.
-- Discovery, search, history, status, registration, and proof inspection use
-  the MCP catalog.
+- History and status use the MCP catalog.
 - Keep host-shape failures distinct from closed Client failures without
   exposing private action evidence, credentials, or protocol state.
 
-Send returns no receipt or proof; completion means the local endpoint durably accepted
-the message. `ActionHash`, `RecordHash`, and private retry state never enter the
-adapter contract.
+Send returns no receipt; completion means the daemon durably accepted the
+message. Private retry state never enters the adapter contract.
 
 ## Tests
 

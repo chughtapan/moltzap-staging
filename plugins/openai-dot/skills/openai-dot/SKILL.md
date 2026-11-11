@@ -90,8 +90,7 @@ the named request remains open in that conversation. Ordinary assistant output i
 
 Every successful send returns `id` and `address`. For a gather or all_gather,
 match that `id` against the later result's `operationId`. Its answers arrive later as
-a `collectiveResult` item. An `operationFailed` item reports a refusal to send
-an all-gather close. It requires no answer.
+a `collectiveResult` item.
 
 If a send has an uncertain outcome, do not repeat it just to recover a missing
 result: another send can create another message.

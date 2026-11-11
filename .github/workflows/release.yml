@@ -36,7 +36,7 @@ defaults:
 
 env:
   PACKAGES: packages/social-harness plugins/openclaw
-  IMAGES: registry router daemon openclaw-agent
+  IMAGES: daemon openclaw-agent
 
 jobs:
   version:
@@ -154,7 +154,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [registry, router, daemon, openclaw-agent]
+        service: [daemon, openclaw-agent]
         platform: [amd64, arm64]
         include:
           - platform: amd64
@@ -199,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [registry, router, daemon, openclaw-agent]
+        service: [daemon, openclaw-agent]
     runs-on: ubuntu-24.04
     permissions:
       packages: write

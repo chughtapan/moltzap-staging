@@ -1,8 +1,7 @@
-/** @file Shared fixtures for firewall service tests: a registered agent's firewall, messages, rules and a test provider. */
+/** @file Shared fixtures for firewall service tests: an agent's firewall, messages, rules and a test provider. */
 
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { type Context, Effect, Encoding, Layer } from "effect";
-import type { IdentityFixture } from "../../identity/__tests__/authentication-fixtures.js";
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
 import type { TextRule } from "../rules.js";
@@ -10,13 +9,10 @@ import { Message } from "../../communication/messages.js";
 import { migrateDaemon } from "../../database/migrations.js";
 import {
   AgentCard,
-  agentCardOf,
   AgentId,
   AgentName,
-  AgentSigningAuthority,
   PrincipalId,
 } from "../../identity/agent-cards.js";
-import { RegistrationId, Registry } from "../../identity/registry.js";
 import { Identity } from "../../identity/service.js";
 import { Firewall, type FirewallOptions } from "../service.js";
 
@@ -27,11 +23,10 @@ export const privacy = {
   text: "Do not reveal the owner's private records.",
   feedback: { text: "Keep private records private." },
 } satisfies TextRule;
-/** Complete evidence with no history, pending sends or gaps. */
+/** Complete evidence with no history or gaps. */
 export const evidence: FirewallEvidence = {
   history: [],
   earlierHistoryOmitted: false,
-  pendingOutgoing: [],
   gaps: [],
 };
 /** The raw provider text, which no decision may expose. */
@@ -63,10 +58,9 @@ export const judgments: DecisionProvider = {
     }),
 };
 
-/** Runs `use` with a registered agent's firewall built by `configure`, over the given SQLite storage. */
+/** Runs `use` with Alice's firewall built by `configure`, over the given SQLite storage. */
 export function withFirewall<A, E, R>(
   storage: string | { readonly filename: string; readonly agentKey: string },
-  fixture: IdentityFixture,
   use: (
     firewall: Context.Tag.Service<typeof Firewall>,
     self: AgentCard,
@@ -75,33 +69,13 @@ export function withFirewall<A, E, R>(
 ) {
   const filename = typeof storage === "string" ? storage : storage.filename;
   const agentKey = typeof storage === "string" ? storage : storage.agentKey;
-  const identity = Identity.layer({
-    agentKey,
-    signingAuthority: fixture.signingAuthority,
-    registrySignerPublicKey: AgentSigningAuthority.publicKey(
-      fixture.registryAuthority,
-    ),
-    registration: {
-      operationId: RegistrationId.make(
-        `opn_${Encoding.encodeBase64Url(new Uint8Array(16))}`,
-      ),
-      principalId: fixture.identityCard.principalId,
-      agentName: fixture.identityCard.agentName,
-    },
-  }).pipe(
-    Layer.provide(
-      Layer.succeed(
-        Registry,
-        Registry.of({
-          register: () =>
-            Effect.succeed({
-              kind: "registered",
-              identityCard: fixture.identityCard,
-            }),
-          lookup: () => Effect.succeed({ kind: "not_found" }),
-        }),
-      ),
-    ),
+  const self = peer("alice", 1);
+  const identity = Layer.succeed(
+    Identity,
+    Identity.of({
+      me: self,
+      resolve: () => Effect.dieMessage("Unexpected name resolution"),
+    }),
   );
   const layer = configure(agentKey);
   const services = layer.pipe(
@@ -114,7 +88,7 @@ export function withFirewall<A, E, R>(
   );
   return Effect.scoped(
     Effect.gen(function* () {
-      return yield* use(yield* Firewall, agentCardOf(fixture.identityCard));
+      return yield* use(yield* Firewall, self);
     }).pipe(Effect.provide(services), Effect.withSpan("withFirewall")),
   );
 }

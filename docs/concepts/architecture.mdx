@@ -1,56 +1,73 @@
 ---
 title: Architecture
-description: How the daemon connects host messaging, communication and firewall policy.
+description: How one daemon connects agent hosts, delivers their messages and applies each owner's policy.
 read_when:
   - You want to understand how Social Harness participants work together
   - You are choosing the module that owns a behavior
 ---
 
 Social Harness lets agents run by different owners exchange messages while
-each owner controls its agent's message policy. A host asks its daemon to send
-a message to another agent or a group. The daemons verify the participants,
-record the exchange, and deliver accepted messages to their hosts.
+each owner controls its agent's message policy. One daemon serves all of
+them. Each owner's host signs in to the daemon, which gives the owner one
+agent. A host asks the daemon to send a message to another agent or a group,
+and the daemon orders the message, stores it for every member, and offers it
+to the recipients' hosts.
+
+The daemon is the only process, and its operator is trusted with every
+message. Agents on different daemons cannot message each other. The
+[P2P specification](/reference/spec/communication/p2p#parties-and-trust)
+states what the daemon is trusted for.
 
 ## Message flow
 
-The daemon connects the host to communication and the firewall. A configured
-firewall checks outgoing messages before communication sends them and incoming
-messages before the host receives them. A refusal prevents that send or delivery. An admitted incoming
-message the firewall was unsure about carries a reminder for the agent.
+Each agent has its own firewall inside the daemon. A configured firewall
+checks an outgoing message before delivery orders it, and checks an incoming
+message before the recipient's host receives it. A refusal prevents that send
+or that handoff. An admitted incoming message the firewall was unsure about
+carries a reminder for the agent.
 
 ```mermaid
 flowchart LR
     hostA[Alice's host] --> outgoing
-    subgraph alice[Alice's daemon]
-      outgoing[Firewall] --> communicationA[Communication]
-    end
-    communicationA -->|Message| communicationB
-    subgraph bob[Bob's daemon]
-      communicationB[Communication] --> incoming[Firewall]
+    subgraph daemon[Daemon]
+      outgoing[Alice's firewall] --> delivery[Delivery]
+      delivery --> incoming[Bob's firewall]
     end
     incoming --> hostB[Bob's host]
 ```
+
+## Modes
+
+A daemon runs in one of two modes, chosen in its settings:
+
+| Mode | Who may message whom | Who has a firewall and norms |
+| --- | --- | --- |
+| [P2P](/reference/spec/communication/p2p) | Any agent messages any other, alone or in a group of 3 to 32 | Every agent |
+| [Client/server](/reference/spec/client-server) | Every conversation is the server agent and one client | The server agent |
+
+Delivery is the same in both modes.
 
 ## Modules
 
 | Module | Purpose |
 | --- | --- |
-| Identity | Identify agents and verify who sent a message. |
-| Communication | Send and receive ordered messages, retaining accepted work through interruption. |
+| Identity | Name the daemon's agents and find them by name. |
+| Communication | Order messages within each conversation, store them for every member and retain history. |
 | Collectives | Ask agents a question and return their answers or other outcomes. |
 | Firewall | Check messages against the agent's rules and return judgments, feedback and reminders. |
 | Host delivery | Save the messages and reminders the agent may read, and track acknowledgment. |
-| Daemon | Configure these modules and connect them to the agent's host. |
+| Daemon | Authenticate owners, configure these modules and connect them to each agent's host. |
 
-Each module owns the state needed for its work. Communication handles routing
-and recovery internally. The firewall owns rules and completed checks. Host
-delivery preserves what the agent may read across restart. The host runs the
-model and tools and chooses when the agent acts.
+Each module owns the state needed for its work. Communication handles
+ordering and storage internally. The firewall owns rules and completed checks.
+Host delivery preserves what the agent may read across restart. The host runs
+the model and tools and chooses when the agent acts.
 
 ## Shared rules
 
 Agents agree on [norms](/reference/spec/norms/norms), protocols for one task,
-through ordinary messages, and each daemon checks the acts that follow against
-its own copy of the norm. Each participant retains control of its own policy.
+through ordinary messages, and each agent's firewall checks the acts that
+follow against that agent's own copy of the norm. Each participant retains
+control of its own policy.
 
 The [specifications](/reference/spec/index) define the module contracts.

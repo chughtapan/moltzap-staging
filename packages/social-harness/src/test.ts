@@ -1,9 +1,5 @@
 /** @file Offline evaluation and process fixtures under the test import condition. */
 
-/** Wire-version overrides for process tests. */
-export { HISTORY_WIRE_VERSIONS, WireVersions } from "./version.js";
-/** HTTP signing for process fixtures. */
-export { signAgentRequest } from "./identity/http-authentication.js";
 /** Replaces a configured decision provider around the daemon's own composition. */
 export { DecisionProviderOverride } from "./firewall/index.js";
 /** Offline firewall checks with a caller-supplied provider. */
@@ -26,34 +22,8 @@ export { databaseAccess, databaseConnection } from "./database/sql.js";
 export { withAgentTransaction } from "./database/transactions.js";
 /** Process qualification persists deliveries through the daemon inbox. */
 export { makeInbox } from "./harness/inbox.js";
-/** Concurrent admission tests retain production ownership and key generation. */
-export { getOrCreateOwnedAgent } from "./harness/ownership.js";
-
-/** Database qualification drives the daemon's acceptance and request recovery operations. */
-export {
-  acceptMessage,
-  encodeRuntimeValue,
-  failMessage,
-  initializeCommunication,
-  putCollectiveOperation,
-  readAcceptedMessage,
-  readCollectiveOperation,
-  readCollectiveOperationIds,
-  retireCollectiveOperation,
-  transaction,
-} from "./communication/store.js";
+/** Creates agents for owners the way the daemon does. */
+export { getOrCreateOwnedAgent, localOwner } from "./harness/ownership.js";
 
 /** Integration fixtures compose the existing domain services without startup overrides. */
 export { loadDaemonSettings } from "./harness/config.js";
-/** Retained registration inputs are shared with process fixtures. */
-export { loadAgentRegistration, localOwner } from "./harness/ownership.js";
-/** Real Router connections are retained in deterministic provider traces. */
-export { Router } from "./communication/p2p/router/client.js";
-
-/** Policy process fixtures use the same per-agent webhook capability as startup. */
-export { makeWebhookEvents } from "./harness/mcp/webhook.js";
-/** Peer preparation is exposed only to the explicit test entry. */
-export { readUnpreparedMessages } from "./communication/p2p/conversations/store.js";
-
-/** Trusted process fixtures supply the production callback HTTP client. */
-export { webhookHttpClientLayer } from "./harness/mcp/webhook-client.js";

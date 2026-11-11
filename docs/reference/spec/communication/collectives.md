@@ -11,19 +11,19 @@ decline, invalid answer with its validation error, or `no-answer`. A `gather`
 returns results to the requester. An `all_gather` gives every group member the
 same result.
 
-Callers supply verified participants, a question, an answer schema and a
-deadline. Communication exchanges messages between those participants.
+Callers supply participants, a question, an answer schema and a deadline.
+Communication exchanges messages between those participants. Collectives are
+offered in [P2P mode](./p2p.md) and not in
+[client/server mode](../client-server.md).
 
 ## Request validation
 
-Retain the supplied verified member identities before accepting or sending a
-request.
+Retain the supplied member identities before accepting or sending a request.
 
 Validate `requestedSchema` before sending. After validating the participants and schema,
 convert `deadline`, an integer from 1–2,592,000 seconds, to absolute Unix-millisecond
 `deadlineAt`. Participants assume zero clock skew. Each invocation receives a
-fresh `operationId`. Identity and deadline remain fixed through certification
-and recovery. Time spent before sending, including policy checks, consumes deadline time. Expiry before acceptance
+fresh `operationId`. Identity and deadline remain fixed across restart. Time spent before sending, including policy checks, consumes deadline time. Expiry before acceptance
 returns `deadline-passed` without a message.
 
 ## Gather
@@ -31,30 +31,26 @@ returns `deadline-passed` without a message.
 Send one request per peer in its direct conversation. The requester is excluded
 from the respondents. Gathering from several peers does not create a group
 conversation. Return the operation id after the question and its request messages
-are durably accepted. Certification and delivery continue independently.
+are saved. Each peer's host reads its request when it next receives.
 
-Communication accepts a send when it retains the message for completion.
-Acceptance of the operation and its request messages is atomic. A refusal leaves
-no accepted operation. After acceptance, validate each first answer against the
+One transaction saves the operation and orders its request messages. A refusal
+leaves no operation. Validate each first answer against the
 stored schema and complete when every member has an outcome or the deadline passes.
 
 ## All-gather
 
 Require the requester and at least two peers. Smaller sets fail with
 `membership-invalid`. Send one group request,
-returning its operation id after durable acceptance. Certification and delivery
-continue independently of the caller.
+returning its operation id after the request is saved.
 
 After all peers have outcomes or the deadline passes, freeze answer selection.
-Accept a close in the group conversation identifying the counted answers.
+Send a close in the group conversation identifying the counted answers.
 Communication preserves the request-before-close order. Members retain answers but show none to their
 agents before the close. Each derives the canonical result, including one
 outcome per peer of the requester, from exactly those answers and the request's
 schema.
 
-The requester emits its result after the close certifies. An accepted close keeps
-the frozen result pending under the same message identity. A terminal preparation
-or certification failure replaces the unpublished result with a request failure.
+One transaction completes the requester's result and orders its close.
 
 ## Answers
 
@@ -65,27 +61,25 @@ or `request-expired` from retained state.
 
 Each request accepts one answer. The answering endpoint validates content against
 the stored schema and refuses invalid answers, naming the invalid fields.
-The request must still be open when the operation accepts the answer for
-sending. Closure or
+The request must still be open when the answer is sent. Closure or
 expiry returns `request-expired`. An earlier answer returns `request-answered`.
 A refusal leaves the request open.
 
-Repeating an accepted answer resumes the same message. Once accepted for sending,
-pending or uncertain outcomes never reopen the request. Recovery resumes the same answer. Acknowledging request delivery
+Repeating a sent answer changes nothing. Once an answer is sent, the request
+never reopens. Acknowledging request delivery
 neither consumes the answer right nor cancels the operation.
 
 ## Receiving messages
 
-Process messages after communication verifies and orders them. Requests must use the appropriate
-direct/group conversation, identify the verified sender as requester, carry an
+Process messages after communication orders them. Requests must use the appropriate
+direct/group conversation, identify the sender as requester, carry an
 admitted schema and expire no more than 30 days and one hour ahead. Reusing a
 retained operation id for another request is invalid. Consume malformed or duplicate collective parts without delivery.
 
 Hide expired requests. Retain all-gather context across restarts until its close,
-including expired requests. Only the requester's first certified close in conversation order counts.
+including expired requests. Only the requester's first close in conversation order counts.
 Listed answers precede it in conversation order. Record a member's own answer
-when communication completes it; a close arriving while that message is
-in flight waits. Closes from the wrong sender, for unknown requests or listing unavailable answers
+when it is sent. Closes from the wrong sender, for unknown requests or listing unavailable answers
 are consumed without a result. Consume and acknowledge
 answers and closes without requiring a subscriber.
 
@@ -94,22 +88,22 @@ answers and closes without requiring a subscriber.
 Completion fixes outcomes and the requester's decision metadata:
 
 - `closedAt`: first completion selection, in Unix milliseconds.
-- `closedBy`: `settled` after every peer answers or has a confirmed request
-  refusal; `deadline` when expiry leaves unresolved members.
+- `closedBy`: `settled` after every peer answers; `deadline` when expiry
+  leaves unresolved members.
 
-`no-answer` includes refused or pending requests and late answers. The requester
+`no-answer` includes unanswered requests and late answers. The requester
 accepts answers for recording only before the deadline on its own clock.
 Accepted answers count even if saving or processing finishes later. `closedAt`
 may follow expiry, including after restart. Later answers cannot change results.
 
 All-gather participants use the requester's close time, reason and selection.
-Verified authorship attributes the decision without proving clock accuracy or complete
+The close names its author without proving clock accuracy or complete
 inclusion of received answers.
 
-Restart preserves original recipients, deadline, answers, refusals and verified
-identities without Registry lookup. Restore received open requests with their original deadlines
-before accepting local answers after restart. Results and failures preserve their content and identity.
-`delivery-pending` and `outcome-unknown` preserve accepted work and authorize no
+Restart preserves original recipients, deadline, answers and member
+identities. Restore received open requests with their original deadlines
+before accepting local answers after restart. Results preserve their content and identity.
+A send that fails with `outcome-unknown` may have been accepted and authorizes no
 replacement request, answer or close. A fresh request has a new operation id.
 
 ## Message payloads
@@ -137,8 +131,8 @@ each at most 8,640,000,000,000,000.
 
 Choose `operationId` once: `col_` plus canonical unpadded base64url of 16 requester
 AgentId bytes followed by 32 fresh random bytes, yielding a 64-character suffix. Answers and
-closes reuse it. Exceeding the [content bound](./protocol.md#encoding-and-notation)
-returns `content-invalid`.
+closes reuse it. A message's content is at most 32,768 bytes of canonical
+JSON, and exceeding that bound returns `content-invalid`.
 
 ### Answer schema
 

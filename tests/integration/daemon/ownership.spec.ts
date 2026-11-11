@@ -1,76 +1,60 @@
-/** @file Owner bindings preserve registration identity across reconnects and interrupted setup. */
+/** @file Each owner is bound to one agent, which keeps its identifiers across connections and interrupted setup. */
 import { NodeContext } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import {
-  AgentName,
-  AgentSigningAuthority,
-} from "@social-harness/social-harness";
+import { AgentName } from "@social-harness/social-harness";
+import { Identity } from "@social-harness/social-harness/service";
 import {
   databaseConnection,
   getOrCreateOwnedAgent,
-  loadAgentRegistration,
   migrateDaemon,
 } from "@social-harness/social-harness/test";
 import { Context, Effect, Exit, Layer, Redacted } from "effect";
 import { expect } from "vitest";
 import { acquirePostgres } from "./postgres-fixture.js";
 
-const unlockKey = Redacted.make(new Uint8Array(32).fill(7));
 const owner = { issuer: "https://issuer.example", subject: "owner" };
 const database = databaseConnection(Redacted.make("sqlite::memory:"));
 
-// @agent-code-guard/regression-only: Real SQL covers racing setup, rollback and encrypted identity recovery.
-it("reuses identity material for concurrent and repeated connections", () =>
+/** The card the daemon gives the agent stored under `agentKey`. */
+const cardOf = (agentKey: string) =>
+  Layer.build(Identity.layer(agentKey)).pipe(
+    Effect.map((identity) => Context.get(identity, Identity).me),
+  );
+
+// @agent-code-guard/regression-only: Real SQL covers racing setup and rollback.
+it("gives concurrent and repeated connections of one owner the same agent", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
     const agentKeys = yield* Effect.all(
-      Array.from({ length: 8 }, () => getOrCreateOwnedAgent(owner, unlockKey)),
+      Array.from({ length: 8 }, () => getOrCreateOwnedAgent(owner)),
       { concurrency: 8 },
     );
-    const reopened = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    expect(agentKeys).toHaveLength(8);
-    for (const agentKey of agentKeys) {
-      expect(agentKey).toBe(reopened);
-    }
-    const hydrated = yield* loadAgentRegistration(reopened, unlockKey);
-    const repeated = yield* loadAgentRegistration(
-      yield* getOrCreateOwnedAgent(owner, unlockKey),
-      unlockKey,
-    );
-    expect(repeated.registration).toEqual(hydrated.registration);
-    expect(AgentSigningAuthority.publicKey(repeated.signingAuthority)).toEqual(
-      AgentSigningAuthority.publicKey(hydrated.signingAuthority),
-    );
+    const reopened = yield* getOrCreateOwnedAgent(owner);
+    expect(new Set(agentKeys)).toEqual(new Set([reopened]));
+    const card = yield* cardOf(reopened);
+    expect(yield* cardOf(yield* getOrCreateOwnedAgent(owner))).toEqual(card);
     const sql = yield* SqlClient.SqlClient;
-    const bindings = yield* sql`SELECT * FROM owner_bindings`;
-    expect(bindings).toHaveLength(1);
+    expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(1);
   }).pipe(Effect.provide(database)));
 
 it("distinguishes both issuer and subject without merging accounts", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
-    const first = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    const otherIssuer = yield* getOrCreateOwnedAgent(
-      { ...owner, issuer: "https://other.example" },
-      unlockKey,
+    const agentKeys = [
+      yield* getOrCreateOwnedAgent(owner),
+      yield* getOrCreateOwnedAgent({
+        ...owner,
+        issuer: "https://other.example",
+      }),
+      yield* getOrCreateOwnedAgent({ ...owner, subject: "another" }),
+    ];
+    expect(new Set(agentKeys).size).toBe(agentKeys.length);
+    const cards = yield* Effect.forEach(agentKeys, cardOf, { concurrency: 1 });
+    expect(new Set(cards.map((card) => card.principalId)).size).toBe(
+      cards.length,
     );
-    const otherSubject = yield* getOrCreateOwnedAgent(
-      { ...owner, subject: "another" },
-      unlockKey,
-    );
-    expect(new Set([first, otherIssuer, otherSubject]).size).toBe(
-      [first, otherIssuer, otherSubject].length,
-    );
-    const registrations = yield* Effect.forEach(
-      [first, otherIssuer, otherSubject],
-      (agentKey) => loadAgentRegistration(agentKey, unlockKey),
-      { concurrency: 1 },
-    );
-    expect(
-      new Set(registrations.map((value) => value.registration.principalId))
-        .size,
-    ).toBe(registrations.length);
+    expect(new Set(cards.map((card) => card.agentId)).size).toBe(cards.length);
   }).pipe(Effect.provide(database)));
 
 it("rolls back the owner binding when saving its profile fails", () =>
@@ -80,49 +64,22 @@ it("rolls back the owner binding when saving its profile fails", () =>
     yield* sql`CREATE TRIGGER reject_profile BEFORE INSERT ON agent_profiles BEGIN
       SELECT RAISE(ABORT, 'profile unavailable'); END`;
     expect(
-      Exit.isFailure(
-        yield* getOrCreateOwnedAgent(owner, unlockKey).pipe(Effect.exit),
-      ),
+      Exit.isFailure(yield* getOrCreateOwnedAgent(owner).pipe(Effect.exit)),
     ).toBeTruthy();
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     yield* sql`DROP TRIGGER reject_profile`;
-    const recovered = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    expect(
-      (yield* loadAgentRegistration(recovered, unlockKey)).registration
-        .agentName,
-    ).toMatch(/^agent-/u);
-  }).pipe(Effect.provide(database)));
-
-it("rejects a credential substituted from another agent or unlocked with another key", () =>
-  Effect.gen(function* () {
-    yield* migrateDaemon;
-    const first = yield* getOrCreateOwnedAgent(owner, unlockKey);
-    const second = yield* getOrCreateOwnedAgent(
-      { ...owner, subject: "another" },
-      unlockKey,
-    );
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE agent_profiles SET private_key = (SELECT private_key FROM agent_profiles WHERE agent_key = ${first}) WHERE agent_key = ${second}`;
-    const substituted = yield* loadAgentRegistration(second, unlockKey).pipe(
-      Effect.exit,
-    );
-    const wrongKey = yield* loadAgentRegistration(
-      first,
-      Redacted.make(new Uint8Array(32).fill(9)),
-    ).pipe(Effect.exit);
-    expect(Exit.isFailure(substituted)).toBeTruthy();
-    expect(Exit.isFailure(wrongKey)).toBeTruthy();
+    const recovered = yield* getOrCreateOwnedAgent(owner);
+    expect((yield* cardOf(recovered)).agentName).toMatch(/^agent-/u);
   }).pipe(Effect.provide(database)));
 
 it("refuses to rename a saved agent", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;
-    yield* getOrCreateOwnedAgent(owner, unlockKey);
+    yield* getOrCreateOwnedAgent(owner);
     const sql = yield* SqlClient.SqlClient;
     const before = yield* sql`SELECT * FROM agent_profiles`;
     const changed = yield* getOrCreateOwnedAgent(
       owner,
-      unlockKey,
       AgentName.make("another"),
     ).pipe(Effect.exit);
     expect(Exit.isFailure(changed)).toBe(true);
@@ -130,7 +87,7 @@ it("refuses to rename a saved agent", () =>
   }).pipe(Effect.provide(database)));
 
 it(
-  "reuses owner identity across concurrent PostgreSQL connections with a restricted login",
+  "gives concurrent PostgreSQL connections of one owner the same agent with a restricted login",
   () =>
     Effect.gen(function* () {
       const postgres = yield* acquirePostgres;
@@ -138,7 +95,7 @@ it(
         yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
         SqlClient.SqlClient,
       );
-      const provision = getOrCreateOwnedAgent(owner, unlockKey).pipe(
+      const provision = getOrCreateOwnedAgent(owner).pipe(
         Effect.provideService(SqlClient.SqlClient, runtime),
       );
       const agentKeys = yield* Effect.all(
@@ -147,15 +104,11 @@ it(
       );
       const reopened = yield* provision;
       expect(new Set(agentKeys)).toEqual(new Set([reopened]));
-      const load = loadAgentRegistration(reopened, unlockKey).pipe(
-        Effect.provideService(SqlClient.SqlClient, runtime),
-      );
-      const hydrated = yield* load;
-      const repeated = yield* load;
-      expect(repeated.registration).toEqual(hydrated.registration);
-      expect(
-        AgentSigningAuthority.publicKey(repeated.signingAuthority),
-      ).toEqual(AgentSigningAuthority.publicKey(hydrated.signingAuthority));
+      const card = (agentKey: string) =>
+        cardOf(agentKey).pipe(
+          Effect.provideService(SqlClient.SqlClient, runtime),
+        );
+      expect(yield* card(yield* provision)).toEqual(yield* card(reopened));
       expect(yield* postgres.admin`SELECT * FROM owner_bindings`).toHaveLength(
         1,
       );
@@ -175,7 +128,7 @@ it(
         yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
         SqlClient.SqlClient,
       );
-      const provision = getOrCreateOwnedAgent(owner, unlockKey).pipe(
+      const provision = getOrCreateOwnedAgent(owner).pipe(
         Effect.provideService(SqlClient.SqlClient, runtime),
       );
       expect(Exit.isFailure(yield* provision.pipe(Effect.exit))).toBeTruthy();
@@ -183,9 +136,9 @@ it(
       yield* sql`DROP TRIGGER reject_profile ON agent_profiles`;
       const recovered = yield* provision;
       expect(
-        (yield* loadAgentRegistration(recovered, unlockKey).pipe(
+        (yield* cardOf(recovered).pipe(
           Effect.provideService(SqlClient.SqlClient, runtime),
-        )).registration.agentName,
+        )).agentName,
       ).toMatch(/^agent-/u);
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,

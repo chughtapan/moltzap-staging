@@ -1,6 +1,6 @@
 /** @file Opens configured storage and owns agent resources independently of MCP connections. */
 import { HttpClient } from "@effect/platform";
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
+import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   Cause,
@@ -18,18 +18,17 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
+import type { AgentCard, AgentName } from "../identity/agent-cards.js";
 import { MessageAddressInput } from "../communication/messages.js";
-import { Router } from "../communication/p2p/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
-import { localRegistry } from "../identity/local-registry.js";
-import { Registry } from "../identity/registry.js";
 import { Identity } from "../identity/service.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
-import { packageVersion, WIRE_VERSION } from "../version.js";
+import { packageVersion } from "../version.js";
 import {
+  DaemonConfigurationError,
   type DaemonSettings,
   loadDaemonSettings,
   processHelp,
@@ -42,7 +41,6 @@ import { makeWebhookEvents } from "./mcp/webhook.js";
 import {
   getOrCreateOwnedAgent,
   listOwnedAgentKeys,
-  loadAgentRegistration,
   localOwner,
   type OwnerAccount,
   serverAgentOwner,
@@ -57,6 +55,10 @@ export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
   Layer.provide(spanExport),
 );
 
+/** A startup refusal that names the setting to change. */
+const refused = (message: string) =>
+  new DaemonConfigurationError({ reason: "document", message });
+
 function runDaemon() {
   return Effect.gen(function* () {
     const access = yield* databaseAccess;
@@ -65,7 +67,13 @@ function runDaemon() {
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
       if (settings.authentication.kind === "local") {
-        yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agentName);
+        yield* getOrCreateOwnedAgent(localOwner, agentName).pipe(
+          Effect.catchTag("OwnershipError", () =>
+            refused(
+              "This database's agent has another name than agentName in the settings, or another agent has that name. Set agentName to the name the database was first started with, or prepare a new database.",
+            ),
+          ),
+        );
       }
       const norms =
         settings.norms === undefined
@@ -73,25 +81,34 @@ function runDaemon() {
           : yield* serviceNorms(settings.norms);
       const mode =
         settings.mode.kind === "p2p"
-          ? yield* p2pMode(settings, settings.mode)
-          : yield* clientServerMode(settings.mode, {
-              unlockKey: access.unlockKey,
-              hasNorms: norms !== undefined,
-            });
+          ? yield* p2pMode(settings)
+          : yield* clientServerMode(settings.mode, norms !== undefined);
       const selectApp = yield* makeAgentSelector({
         settings,
         unlockKey: access.unlockKey,
         mode,
         norms,
-      }).pipe(Effect.provide(yield* Layer.build(mode.registry)));
+      });
       const app = yield* makeMcpHttpApp(
         settings.authentication,
         selectApp,
         serverAgentCredential,
+      ).pipe(
+        Effect.catchTag("AuthenticationRefused", () =>
+          refused(
+            "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
+          ),
+        ),
       );
-      yield* serveMcp(settings.port, app, settings.host);
+      yield* serveMcp(settings.port, app, settings.host).pipe(
+        Effect.catchTag("ServeError", () =>
+          refused(
+            `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
+          ),
+        ),
+      );
       yield* Console.log(
-        `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion}; WIRE_VERSION ${WIRE_VERSION})`,
+        `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
       );
       return yield* Effect.never;
     }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
@@ -99,30 +116,13 @@ function runDaemon() {
 }
 
 /**
- * The peers' shared Registry names every agent, and each agent sends and
- * receives through the Router. Every agent is a peer: it runs the daemon's
- * own firewall and may address any other agent.
+ * Every agent is a peer: it runs the daemon's own firewall and may message
+ * any other agent on the daemon, alone or in a group.
  */
-function p2pMode(
-  settings: DaemonSettings,
-  mode: Extract<DaemonSettings["mode"], { readonly kind: "p2p" }>,
-) {
-  const router = Router.layer({
-    origin: mode.routerOrigin,
-    sendTimeout: Duration.seconds(30),
-    pollTimeout: Duration.seconds(35),
-  }).pipe(Layer.provide(NodeHttpClient.layer));
-  return Effect.as(Communication.p2p.claim, {
-    registrySignerPublicKey: mode.registrySignerPublicKey,
-    registry: Registry.layer({
-      origin: mode.registryOrigin,
-      registrySignerPublicKey: mode.registrySignerPublicKey,
-      requestTimeout: Duration.seconds(30),
-      admissionCredential: Option.fromNullable(mode.admissionCredential),
-    }).pipe(Layer.provide(NodeHttpClient.layer)),
+function p2pMode(settings: DaemonSettings) {
+  return Effect.as(claimDatabase("p2p"), {
     agent: () => ({
-      communication: (options: Parameters<typeof Communication.p2p.layer>[0]) =>
-        Communication.p2p.layer(options).pipe(Layer.provide(router)),
+      communication: Communication.layer,
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: { hideGroups: settings.hideGroups },
       app: {
@@ -135,40 +135,38 @@ function p2pMode(
 }
 
 /**
- * The daemon names its own agents and delivers their messages itself. The
- * agent named in the settings is the server agent, created here if it does
+ * The agent named in the settings is the server agent, created here if it does
  * not exist. It runs the daemon's firewall and holds its norms. Every other
  * agent is a client: it exchanges messages only with the server agent, runs
  * no check of its own, and reads the server agent's norms.
  */
 function clientServerMode(
   mode: Extract<DaemonSettings["mode"], { readonly kind: "client-server" }>,
-  input: {
-    readonly unlockKey: Redacted.Redacted<Uint8Array>;
-    readonly hasNorms: boolean;
-  },
+  hasNorms: boolean,
 ) {
   return Effect.gen(function* () {
     const { serverAgentName } = mode;
-    yield* Communication.clientServer.claim(serverAgentName);
-    yield* getOrCreateOwnedAgent(
-      serverAgentOwner,
-      input.unlockKey,
-      serverAgentName,
+    yield* claimDatabase("client-server");
+    yield* getOrCreateOwnedAgent(serverAgentOwner, serverAgentName).pipe(
+      Effect.catchTag("OwnershipError", () =>
+        refused(
+          `This database's server agent is not named ${serverAgentName}, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.`,
+        ),
+      ),
     );
-    const registry = yield* localRegistry(input.unlockKey);
     const serverNorms = yield* Ref.make(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
+    const permits = serverAndOne(serverAgentName);
     const communication = (
-      options: Parameters<typeof Communication.p2p.layer>[0],
-    ) => Communication.clientServer.layer({ ...options, serverAgentName });
+      options: Parameters<typeof Communication.layer>[0],
+    ) => Communication.layer({ ...options, permits });
     const server = {
       communication,
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: {
         hideGroups: true,
-        withheldReply: input.hasNorms
+        withheldReply: hasNorms
           ? "Your message was not accepted: it breaks a rule this agent applies to incoming messages. Call read_norms to see which messages it accepts."
           : "Your message was not accepted: it breaks a rule this agent applies to incoming messages.",
       },
@@ -179,7 +177,7 @@ function clientServerMode(
     const client = {
       communication,
       checks: ({ agentKey }: { readonly agentKey: string }) =>
-        input.hasNorms
+        hasNorms
           ? readsNormsOf(serverNorms).pipe(
               Layer.provideMerge(Firewall.layer(agentKey)),
             )
@@ -194,12 +192,30 @@ function clientServerMode(
       started: () => Effect.void,
     };
     return {
-      registrySignerPublicKey: registry.registrySignerPublicKey,
-      registry: registry.layer,
       agent: (agentName: string) =>
         agentName === serverAgentName ? server : client,
     };
   }).pipe(Effect.withSpan("clientServerMode"));
+}
+
+/** Marks the database as serving `mode`, or refuses a database that serves the other. */
+function claimDatabase(mode: DaemonSettings["mode"]["kind"]) {
+  return Communication.claim(mode).pipe(
+    Effect.catchIf(
+      (error) => error.reason === "membership-invalid",
+      () =>
+        refused(
+          `This database was first started in the other mode. Set mode to that one, or prepare a new database for ${mode} mode.`,
+        ),
+    ),
+  );
+}
+
+/** Whether `members` are the server agent and one other agent. */
+function serverAndOne(serverAgentName: AgentName) {
+  return (members: readonly AgentCard[]) =>
+    members.length === 2 &&
+    members.some((member) => member.agentName === serverAgentName);
 }
 
 /** Norms a client reads: the ones the server agent holds, once it has started. */
@@ -233,6 +249,7 @@ type Mode =
 /** What every agent of the daemon is built from. */
 interface DaemonResources {
   readonly settings: DaemonSettings;
+  /** Opens the webhook secrets sealed in the database. */
   readonly unlockKey: Redacted.Redacted<Uint8Array>;
   readonly mode: Mode;
   readonly norms?: ServiceNorms;
@@ -240,7 +257,6 @@ interface DaemonResources {
 
 /** Requests borrow a prepared app; their cancellation never owns its acquisition. */
 function makeAgentSelector(daemon: DaemonResources) {
-  const { unlockKey } = daemon;
   return Effect.gen(function* () {
     const processScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
@@ -267,7 +283,7 @@ function makeAgentSelector(daemon: DaemonResources) {
       { concurrency: 4, discard: true },
     ).pipe(Effect.forkScoped);
     return (owner: OwnerAccount) =>
-      getOrCreateOwnedAgent(owner, unlockKey).pipe(
+      getOrCreateOwnedAgent(owner).pipe(
         Effect.flatMap(acquire),
         Effect.provideService(SqlClient.SqlClient, sql),
         Effect.interruptible,
@@ -295,28 +311,20 @@ function ownChecks(daemon: DaemonResources, agentKey: string) {
 function makeAgentApp(daemon: DaemonResources, agentKey: string) {
   const { settings, unlockKey, mode } = daemon;
   return Effect.gen(function* () {
-    const registration = yield* loadAgentRegistration(agentKey, unlockKey);
-    const agent = mode.agent(registration.registration.agentName);
+    const identity = yield* Layer.build(Identity.layer(agentKey));
+    const agent = mode.agent(Context.get(identity, Identity).me.agentName);
     const workers = yield* FiberSet.make();
     const stopped = yield* Deferred.make<undefined>();
-    const identity = Identity.layer({
-      agentKey,
-      signingAuthority: registration.signingAuthority,
-      registrySignerPublicKey: mode.registrySignerPublicKey,
-      registration: registration.registration,
-    });
     const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
           ...agent.harness,
           agentKey,
-          communication: (identityCard) =>
+          communication: (card) =>
             agent.communication({
               agentKey,
-              identityCard,
-              signingAuthority: registration.signingAuthority,
-              registrySignerPublicKey: mode.registrySignerPublicKey,
+              card,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
             }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
@@ -327,7 +335,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
         Layer.provideMerge(
           agent
             .checks({ agentKey, own: ownChecks(daemon, agentKey) })
-            .pipe(Layer.provideMerge(identity)),
+            .pipe(Layer.provideMerge(Layer.succeedContext(identity))),
         ),
       ),
     );
@@ -368,18 +376,11 @@ export { prepareDatabase } from "../database/migrations.js";
 
 /** Trusted embeddings use the same services as the process's MCP adapter. */
 export { type SendRequest, SocialHarness } from "./social-harness.js";
-/** Local identity and registration remain independent of delivery recovery. */
+/** This agent's card and the other agents of its daemon by name. */
 export { Identity } from "../identity/service.js";
-/** Message transport owns requests, replies and verified history. */
+/** Message delivery, questions and ordered history. */
 export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/index.js";
-/** Network services expose complete calls through their owning layers. */
-export {
-  RegistrationId,
-  Registry,
-  RegistryError,
-} from "../identity/registry.js";
-
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

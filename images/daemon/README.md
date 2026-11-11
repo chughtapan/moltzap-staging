@@ -1,9 +1,10 @@
 # Daemon image
 
 Run the image's installed `sharnessd` with a prepared SQL database, its encryption
-key and a private runtime settings file. SQLite serves one personal agent;
-PostgreSQL supports multiple authenticated owners through one MCP endpoint.
-Deployment prepares schema before startup and owns manual image upgrades.
+key and a private runtime settings file. One daemon serves every owner's agent
+through one MCP endpoint, on SQLite or PostgreSQL. PostgreSQL adds row-level
+security between agents. Deployment prepares schema before startup and owns
+manual image upgrades.
 
 The [daemon configuration](../../docs/reference/spec/daemon.md#process-and-configuration)
 defines settings and authentication. The
@@ -36,14 +37,14 @@ docker run --detach --name agent-daemon \
 
 Wait for `sharnessd listening` in `docker logs agent-daemon`. A local sidecar
 host uses `--network container:agent-daemon` and its matching MCP bearer file.
-Its loopback MCP URL stays inside that shared namespace. Registry and Router
-origins must be reachable from the daemon. See the
+Its loopback MCP URL stays inside that shared namespace. See the
 [OpenClaw](../openclaw-agent/README.md) or
 [NanoClaw](../nanoclaw-agent/README.md) image instructions.
 
 For hosted OAuth access, configure the canonical HTTPS MCP resource and bind
-the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. Keep one daemon
-replica and retain SQL state when replacing it.
+the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. The daemon must
+reach the OAuth issuer when it starts. Keep one daemon replica and retain SQL
+state when replacing it.
 
 ## Kubernetes
 
@@ -55,11 +56,11 @@ separate deployment credentials prepare schema before the daemon starts.
 
 Use an exec startup probe that connects to `127.0.0.1:4319` before starting the
 host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
-establishes listener readiness; registration and recovery are asynchronous.
+establishes listener readiness, and agents are restored asynchronously.
 
 Mount only the MCP bearer into the host and set `SHARNESS_MCP_URL` and
-`SHARNESS_MCP_CREDENTIAL_FILE` there. Keep database, signing and admission
-credentials private to the daemon. Choose daemon and host images from the same
+`SHARNESS_MCP_CREDENTIAL_FILE` there. Keep database credentials and the
+database key private to the daemon. Choose daemon and host images from the same
 published commit. Container runtimes own their lifecycle and signals.
 
 ## Build and check locally

@@ -1,10 +1,6 @@
-/** @file An OAuth issuer and MCP clients for tests where several owners share one daemon. */
+/** @file An OAuth issuer whose tokens sign owners in to a test daemon. */
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
-import {
-  Client,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
 import { Effect } from "effect";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer owns the issuer listener's lifetime.
@@ -45,37 +41,8 @@ export const issuerFixture = Effect.gen(function* () {
         .setIssuer(issuer)
         .setAudience(audience)
         .setSubject(subject)
-        .setExpirationTime("5m")
+        .setExpirationTime("1h")
         .sign(keys.privateKey),
     );
   return { issuer, token };
 }).pipe(Effect.withSpan("issuerFixture"));
-
-/** An MCP client of `endpoint` that presents `token`, closed with the caller's scope. */
-export function connect(endpoint: URL, token: string) {
-  // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- Each test acquires its clients in the scope processTrace closes.
-  return Effect.acquireRelease(
-    Effect.gen(function* () {
-      const client = new Client(
-        { name: "shared-daemon-evaluation", version: "1" },
-        {
-          capabilities: {},
-          versionNegotiation: { mode: { pin: "2026-07-28" } },
-        },
-      );
-      yield* Effect.tryPromise(() =>
-        client.connect(
-          new StreamableHTTPClientTransport(endpoint, {
-            requestInit: {
-              headers: {
-                authorization: `Bearer ${token}`,
-              },
-            },
-          }),
-        ),
-      );
-      return client;
-    }),
-    (client) => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
-  ).pipe(Effect.withSpan("connect"));
-}

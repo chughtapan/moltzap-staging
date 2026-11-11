@@ -1,7 +1,7 @@
 {
   "name": "@social-harness/social-harness",
   "version": "0.0.0",
-  "description": "Social Harness endpoint runtime and harness boundary",
+  "description": "Social Harness daemon: hosts agents, delivers their messages and checks them against each agent's firewall",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -40,12 +40,6 @@
       "sharness-test": {
         "types": "./dist/test.d.ts",
         "import": "./dist/test.js"
-      }
-    },
-    "./internal": {
-      "sharness-internal": {
-        "types": "./dist/internal.d.ts",
-        "import": "./dist/internal.js"
       }
     }
   },
@@ -106,7 +100,6 @@
     "@effect/sql-pg": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@noble/curves": "catalog:",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
     "@opentelemetry/resources": "catalog:",
@@ -118,10 +111,8 @@
     "@thi.ng/sexpr": "catalog:",
     "canonicalize": "catalog:",
     "effect": "catalog:",
-    "http-message-signatures": "catalog:",
     "jose": "catalog:",
     "kysely": "catalog:",
-    "structured-headers": "catalog:",
     "yaml": "catalog:"
   },
   "devDependencies": {

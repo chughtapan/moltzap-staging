@@ -1,17 +1,12 @@
-/** @file Exercises NanoClaw native inbox and sends against the disposable network. */
+/** @file Exercises NanoClaw's native inbox and sends against a daemon container. */
 import { replyAddress } from "@social-harness/social-harness";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { chmod } from "node:fs/promises";
 import { describe, test } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { inspect, isDeepStrictEqual, promisify } from "node:util";
-import {
-  type Network,
-  type Endpoint as NetworkEndpoint,
-  startNetwork,
-} from "../process-network-fixture.ts";
+import { isDeepStrictEqual, promisify } from "node:util";
+import { type AgentAccess, openDaemon } from "../promise-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";
@@ -19,8 +14,6 @@ const SKIP =
   IMAGE.length === 0 || process.env.DAEMON_INTEGRATION_IMAGE === undefined
     ? "set NANOCLAW_INTEGRATION_IMAGE and DAEMON_INTEGRATION_IMAGE to built images"
     : false;
-const RECORD_TIMEOUT_MILLIS = 60_000;
-const RECORD_POLL_MILLIS = 50;
 const CASE_TIMEOUT_MILLIS = 300_000;
 const PROBE_TIMEOUT_MILLIS = 180_000;
 const PROBE_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -34,11 +27,6 @@ const executeFile = promisify(execFile);
 const DIRECT_REPLY = "direct from NanoClaw send_message";
 const GROUP_REPLY = "group from NanoClaw final output";
 const INBOUND = "hello through the native NanoClaw inbox";
-const PENDING_SEND = "sent while the Router does not answer";
-const FENCE = "sent after the Router answers again";
-/** What the channel tells the model of a send that failed as `delivery-pending`. */
-const PENDING_REPORT =
-  "send failed: the message is pending and Social Harness will still deliver it";
 const GATHER_QUESTION = "Which day works?";
 const SLOT_SCHEMA = {
   type: "object",
@@ -47,19 +35,19 @@ const SLOT_SCHEMA = {
 };
 
 /** Native image tests use the same public MCP fixture as other process consumers. */
-type Endpoint = NetworkEndpoint;
-type InboundItem = Awaited<ReturnType<Endpoint["next"]>>[number];
+type InboundItem = Awaited<ReturnType<AgentAccess["next"]>>[number];
 type RequestItem = Extract<InboundItem, { readonly kind: "collectiveRequest" }>;
+type ResultItem = Extract<InboundItem, { readonly kind: "collectiveResult" }>;
 
 /** A caller and the NanoClaw agent it talks to. */
 interface Pair {
-  readonly caller: Endpoint;
-  readonly target: Endpoint;
+  readonly caller: AgentAccess;
+  readonly target: AgentAccess;
 }
 
 /** A caller, the NanoClaw agent, and a third group member. */
 interface Trio extends Pair {
-  readonly peer: Endpoint;
+  readonly peer: AgentAccess;
 }
 
 /** What the probe waits for in NanoClaw's native inbox. */
@@ -83,11 +71,9 @@ interface ProbeReport {
   readonly delivered: number;
   /** Rows still due after that pass, which the second pass sends again. */
   readonly retried: number;
-  /** The text of each message Social Harness itself gave the model in the expected conversation. */
-  readonly endpointMessages: readonly string[];
 }
 
-describe("the NanoClaw agent image on a real network", { skip: SKIP }, () => {
+describe("the NanoClaw agent image on a real daemon", { skip: SKIP }, () => {
   test(
     "routes NanoClaw inbound and outbound through its native host boundaries",
     { timeout: CASE_TIMEOUT_MILLIS },
@@ -104,12 +90,6 @@ describe("the NanoClaw agent image on a real network", { skip: SKIP }, () => {
     "answers and starts an all_gather through NanoClaw's send_message text",
     { timeout: CASE_TIMEOUT_MILLIS },
     () => withTrio(answersAndStartsAllGather),
-  );
-
-  test(
-    "completes a delivery-pending send once, tells the model, and posts it once",
-    { timeout: CASE_TIMEOUT_MILLIS },
-    () => withPair(completesPendingSendOnce),
   );
 });
 
@@ -193,7 +173,7 @@ async function answersAndStartsGather({
     collective: { op: "gather", deadline: 120, requestedSchema: SLOT_SCHEMA },
   });
   const operationId = started.id;
-  const received = caller.next(1);
+  const received = caller.next(2);
   await runProbe(
     target,
     [
@@ -208,34 +188,30 @@ async function answersAndStartsGather({
   );
 
   assert.match(operationId, /^col_/u);
-  const results = (await received).map(asRecord);
-  const [result] = results;
-  assert.ok(result);
+  const [first, second] = await received;
+  const result = requireResult(first);
   assert.equal(typeof result.closedAt, "number");
-  assert.deepEqual(results, [
-    {
-      kind: "collectiveResult",
-      op: "gather",
-      operationId,
-      question: GATHER_QUESTION,
-      closedAt: result.closedAt,
-      closedBy: "settled",
-      outcomes: [
-        {
-          member: target.agent,
-          outcome: { kind: "answered", content: { slot: "tue" } },
-        },
-      ],
-    },
-  ]);
-  const request = requireRequest((await caller.next(1))[0]);
-  assertGatherRequest(request, target);
+  assert.deepEqual(withReportedMembers(result), {
+    kind: "collectiveResult",
+    op: "gather",
+    operationId,
+    question: GATHER_QUESTION,
+    closedAt: result.closedAt,
+    closedBy: "settled",
+    outcomes: [
+      {
+        member: target.agent,
+        outcome: { kind: "answered", content: { slot: "tue" } },
+      },
+    ],
+  });
+  assertGatherRequest(requireRequest(second), target);
 }
 
-function assertGatherRequest(request: RequestItem, target: Endpoint) {
+function assertGatherRequest(request: RequestItem, target: AgentAccess) {
   assert.equal(request.kind, "collectiveRequest");
   assert.equal(request.message.operation.op, "gather");
-  assert.deepEqual(request.message.author, target.agent);
+  assert.deepEqual(reported(request.message.author), target.agent);
   assert.equal(replyAddress(request.message), target.address);
   assert.equal(request.message.operation.question, GATHER_QUESTION);
   assert.deepEqual(request.message.operation.requestedSchema, SLOT_SCHEMA);
@@ -304,27 +280,27 @@ async function assertAllGatherAnswered(
   operationId: string,
 ): Promise<RequestItem> {
   const callerItems = await caller.next(2);
-  const result = callerItems.find((item) => item.kind === "collectiveResult");
-  const nanoClawRequest = callerItems.find(
-    (item) => item.kind === "collectiveRequest",
+  const result = requireResult(
+    callerItems.find((item) => item.kind === "collectiveResult"),
   );
-  assert.ok(result, "the caller received no all_gather result");
+  const nanoClawRequest = requireRequest(
+    callerItems.find((item) => item.kind === "collectiveRequest"),
+  );
   assert.equal(typeof result.closedAt, "number");
-  assert.ok(nanoClawRequest, "the caller received no NanoClaw request");
-  assert.deepEqual(result, {
+  assert.deepEqual(withReportedMembers(result), {
     kind: "collectiveResult",
     op: "all_gather",
     operationId,
     question: GATHER_QUESTION,
     closedAt: result.closedAt,
     closedBy: "settled",
-    outcomes: [
+    outcomes: inMemberNameOrder([
       { member: peer.agent, outcome: { kind: "declined" } },
       {
         member: target.agent,
         outcome: { kind: "answered", content: { slot: "tue" } },
       },
-    ],
+    ]),
   });
   const peerItems = await peer.next(2);
   assert.ok(
@@ -349,7 +325,7 @@ async function assertNanoClawAllGather(
   request: RequestItem,
 ): Promise<undefined> {
   assert.equal(request.message.operation.op, "all_gather");
-  assert.deepEqual(request.message.author, target.agent);
+  assert.deepEqual(reported(request.message.author), target.agent);
   assert.equal(replyAddress(request.message), group);
   const operationId = request.message.operation.operationId;
 
@@ -365,121 +341,22 @@ async function assertNanoClawAllGather(
     to: group,
     collectiveResponse: { action: "decline", operationId },
   });
-  const [received] = await caller.next(1);
-  const result = asRecord(received);
-  assert.equal(result.kind, "collectiveResult");
+  const result = requireResult((await caller.next(1))[0]);
   assert.equal(result.op, "all_gather");
   assert.equal(result.operationId, operationId);
   assert.equal(typeof result.closedAt, "number");
   assert.equal(result.closedBy, "settled");
-  assert.deepEqual(result.outcomes, [
-    {
-      member: caller.agent,
-      outcome: { kind: "answered", content: { slot: "mon" } },
-    },
-    { member: peer.agent, outcome: { kind: "declined" } },
-  ]);
-  assert.deepEqual(await peer.next(1), [received]);
-}
-
-/**
- * NanoClaw sends while the Router does not answer, so the daemon queues the
- * post, its own drain times out, and the send fails as `delivery-pending`.
- * The row completes on the first delivery pass, so the second sends nothing
- * again, and the model is told the message is pending. Once the Router
- * answers, the caller records the post once, then a fence the target sends
- * after it, so a second copy NanoClaw queued would be recorded before the
- * fence.
- */
-async function completesPendingSendOnce(
-  { caller, target }: Pair,
-  network: Network,
-): Promise<undefined> {
-  await caller.send({ to: target.address, text: INBOUND });
-  await awaitRecordedLast(target, caller.address, INBOUND);
-  const delivery = await whileRouterHeld(network, () =>
-    probeDelivery(target, [{ to: caller.address, text: PENDING_SEND }], {
-      platformId: caller.address,
-      sender: caller.address,
-      text: INBOUND,
-    }),
-  );
-  await target.send({ to: caller.address, text: FENCE });
-
   assert.deepEqual(
-    {
-      ...delivery,
-      posts: await awaitRecordedLast(caller, target.address, FENCE),
-    },
-    {
-      delivered: 1,
-      retried: 0,
-      endpointMessages: [PENDING_REPORT],
-      posts: [
-        textContent(INBOUND),
-        [{ type: "text", text: PENDING_SEND }],
-        [{ type: "text", text: FENCE }],
-      ],
-    },
+    withReportedMembers(result).outcomes,
+    inMemberNameOrder([
+      {
+        member: caller.agent,
+        outcome: { kind: "answered", content: { slot: "mon" } },
+      },
+      { member: peer.agent, outcome: { kind: "declined" } },
+    ]),
   );
-}
-
-/** Run `body` with the network's Router held, releasing it however `body` ends. */
-async function whileRouterHeld<Result>(
-  network: Network,
-  body: () => Promise<Result>,
-): Promise<Result> {
-  const release = await network.holdRouter();
-  try {
-    return await body();
-  } finally {
-    release();
-  }
-}
-
-/**
- * Poll `endpoint`'s conversation at `address` until its last record is a
- * multicast of `text`, and return every record's content. A read the daemon
- * refuses while it still catches the conversation up, as `history-gap`,
- * counts as not yet recorded; the timeout names the last read.
- */
-async function awaitRecordedLast(
-  endpoint: Endpoint,
-  address: string,
-  text: string,
-): Promise<readonly unknown[]> {
-  const expected = [{ type: "text", text }];
-  const deadline = Date.now() + RECORD_TIMEOUT_MILLIS;
-  let lastRead: HistoryRead = { failure: "no read" };
-  while (Date.now() < deadline) {
-    lastRead = await readHistory(endpoint, address);
-    if (
-      "contents" in lastRead &&
-      isDeepStrictEqual(lastRead.contents.at(-1), expected)
-    ) {
-      return lastRead.contents;
-    }
-    await delay(RECORD_POLL_MILLIS);
-  }
-  throw new Error(
-    `${endpoint.address} did not record "${text}" in time; last read: ${inspect(lastRead, { depth: 6 })}`,
-  );
-}
-
-/** One conversation read: its records' contents, or why the daemon refused it. */
-type HistoryRead =
-  | { readonly contents: readonly unknown[] }
-  | { readonly failure: unknown };
-
-async function readHistory(
-  endpoint: Endpoint,
-  address: string,
-): Promise<HistoryRead> {
-  try {
-    return { contents: await endpoint.history(address) };
-  } catch (failure) {
-    return { failure };
-  }
+  assert.deepEqual(await peer.next(1), [result]);
 }
 
 /** Ordinary messages retain their text parts unchanged. */
@@ -488,7 +365,7 @@ function textContent(text: string): readonly object[] {
 }
 
 /** The group address of `members`, their names sorted. */
-function groupAddress(members: readonly Endpoint[]): string {
+function groupAddress(members: readonly AgentAccess[]): string {
   const names = members.map(({ address }) => address.slice("agent:".length));
   return `group:${names.toSorted(compareCodeUnits).join(",")}`;
 }
@@ -500,7 +377,7 @@ function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-/** The kind of an inbound item and its message's kind, address, sender and content. */
+/** The text a model sends to ask the question as a gather or an all_gather. */
 function gatherText(operation: "gather" | "all_gather"): string {
   return JSON.stringify({
     [operation]: GATHER_QUESTION,
@@ -523,7 +400,7 @@ function multicastSummary(
     kind: item.kind,
     messageKind: item.message.recipients.length === 1 ? "direct" : "group",
     address: replyAddress(item.message),
-    sender: item.message.author,
+    sender: reported(item.message.author),
     content: item.message.content,
   };
 }
@@ -533,42 +410,58 @@ function requireRequest(item?: InboundItem): RequestItem {
   return item;
 }
 
+function requireResult(item?: InboundItem): ResultItem {
+  assert(item?.kind === "collectiveResult", "expected a received result");
+  return item;
+}
+
+/** The fields of an agent's card that `status` reports, which an endpoint holds. */
+function reported({ agentId, agentName }: AgentAccess["agent"]) {
+  return { agentId, agentName };
+}
+
+/** A result with each outcome's member as an endpoint holds its agent. */
+function withReportedMembers(result: ResultItem) {
+  return {
+    ...result,
+    outcomes: result.outcomes.map(({ member, outcome }) => ({
+      member: reported(member),
+      outcome,
+    })),
+  };
+}
+
 /**
- * Run the probe against the daemon at `mcp` and require that the first
- * delivery pass completed every send, leaving none for a retry.
+ * A result lists its outcomes in the order of the members' names, which the
+ * daemon chooses.
  */
-async function runProbe(
-  daemon: Pick<Endpoint, "mcp" | "mcpCredentialFile">,
-  destinations: readonly Destination[],
-  inbound: ExpectedInbound,
-): Promise<undefined> {
-  const { delivered, retried } = await probeDelivery(
-    daemon,
-    destinations,
-    inbound,
-  );
-  assert.deepEqual(
-    { delivered, retried },
-    { delivered: destinations.length, retried: 0 },
+function inMemberNameOrder<
+  Outcome extends { readonly member: AgentAccess["agent"] },
+>(outcomes: readonly Outcome[]) {
+  return outcomes.toSorted((left, right) =>
+    compareCodeUnits(left.member.agentName, right.member.agentName),
   );
 }
 
 /**
- * Run the probe in a container of the image under test against the daemon
- * at `mcp`, and return its report once it exits 0.
+ * Run the probe in a container of the image under test, connected to the
+ * daemon at `mcp` as the agent whose credential file it reads, and require
+ * that the first delivery pass completed every send, leaving none for a
+ * retry.
  */
-async function probeDelivery(
-  daemon: Pick<Endpoint, "mcp" | "mcpCredentialFile">,
+async function runProbe(
+  daemon: Pick<AgentAccess, "mcp" | "mcpCredentialFile">,
   destinations: readonly Destination[],
   inbound: ExpectedInbound,
-): Promise<ProbeReport> {
+): Promise<undefined> {
+  await chmod(daemon.mcpCredentialFile, 0o644);
   const { stdout } = await executeFile(
     "docker",
     [
       "run",
       "--rm",
       "--pull=never",
-      `--network=container:${daemon.mcp.port ? "sharness-daemon-" + daemon.mcp.port : ""}`,
+      `--network=container:sharness-daemon-${daemon.mcp.port}`,
       "--entrypoint=node",
       "--env",
       `SHARNESS_MCP_URL=${daemon.mcp.href}`,
@@ -587,7 +480,10 @@ async function probeDelivery(
     ],
     { maxBuffer: PROBE_OUTPUT_BYTES, timeout: PROBE_TIMEOUT_MILLIS },
   );
-  return decodeProbeReport(stdout);
+  assert.deepEqual(decodeProbeReport(stdout), {
+    delivered: destinations.length,
+    retried: 0,
+  });
 }
 
 /** The report on the probe's last report line, refusing any other shape. */
@@ -595,29 +491,24 @@ function decodeProbeReport(stdout: string): ProbeReport {
   const line = stdout
     .split("\n")
     .findLast((each) => each.startsWith(PROBE_REPORT_PREFIX));
-  const { delivered, retried, endpointMessages } = asRecord(
+  const { delivered, retried } = asRecord(
     JSON.parse(line?.slice(PROBE_REPORT_PREFIX.length) ?? "null"),
   );
-  if (
-    typeof delivered !== "number" ||
-    typeof retried !== "number" ||
-    !Array.isArray(endpointMessages) ||
-    !endpointMessages.every((text) => typeof text === "string")
-  ) {
+  if (typeof delivered !== "number" || typeof retried !== "number") {
     throw new Error(`the probe printed no report:\n${stdout}`);
   }
-  return { delivered, retried, endpointMessages };
+  return { delivered, retried };
 }
 
 function withPair(
-  body: (endpoints: Pair, network: Network) => Promise<undefined>,
+  body: (endpoints: Pair) => Promise<undefined>,
 ): Promise<undefined> {
-  return withNetwork(async (start, network) => {
+  return withDaemon(async (signIn) => {
     const [caller, target] = await Promise.all([
-      start("caller"),
-      start("target"),
+      signIn("caller"),
+      signIn("target"),
     ]);
-    await body({ caller, target }, network);
+    await body({ caller, target });
     return undefined;
   });
 }
@@ -625,11 +516,11 @@ function withPair(
 function withTrio(
   body: (endpoints: Trio) => Promise<undefined>,
 ): Promise<undefined> {
-  return withNetwork(async (start) => {
+  return withDaemon(async (signIn) => {
     const [caller, target, peer] = await Promise.all([
-      start("caller"),
-      start("target"),
-      start("peer"),
+      signIn("caller"),
+      signIn("target"),
+      signIn("peer"),
     ]);
     await body({ caller, target, peer });
     return undefined;
@@ -637,22 +528,17 @@ function withTrio(
 }
 
 /**
- * Start a network, run `body` with a starter for registered endpoints named
- * for this run and the network itself, and close the network however `body`
- * ends.
+ * Start a daemon container, run `body` with a function that signs a named
+ * owner's agent in to it, and stop the daemon however `body` ends.
  */
-async function withNetwork(
-  body: (
-    start: (role: string) => Promise<Endpoint>,
-    network: Network,
-  ) => Promise<undefined>,
+async function withDaemon(
+  body: (signIn: (owner: string) => Promise<AgentAccess>) => Promise<undefined>,
 ): Promise<undefined> {
-  const network = await startNetwork(startDaemonContainer);
+  const daemon = await openDaemon(startDaemonContainer);
   try {
-    const run = randomBytes(4).toString("hex");
-    await body((role) => network.endpoint(`nanoclaw-${run}-${role}`), network);
+    await body(daemon.signIn);
   } finally {
-    await network.close();
+    await daemon.close();
   }
 }
 

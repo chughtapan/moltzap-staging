@@ -17,12 +17,6 @@
             "runtime": "node --version"
           },
           {
-            "env": "SHARNESS_EXPERIMENT_HIDE_COLLECTIVES"
-          },
-          {
-            "env": "SHARNESS_EXPERIMENT_HIDE_GROUPS"
-          },
-          {
             "env": "SHARNESS_MCP_URL"
           },
           {
@@ -74,17 +68,6 @@
           }
         ]
       },
-      "test:network": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "dependsOn": [
-          "@social-harness/social-harness:build"
-        ],
-        "options": {
-          "cwd": "tests/integration",
-          "command": "tsx documented-network.ts"
-        }
-      },
       "test:live": {
         "cache": false,
         "executor": "nx:run-commands",
@@ -103,26 +86,17 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
-    "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
-    "@electric-sql/pglite-socket": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "@social-harness/openclaw-channel": "workspace:*",
-    "@social-harness/registry": "workspace:*",
-    "@social-harness/router": "workspace:*",
     "@social-harness/social-harness": "workspace:*",
     "@testcontainers/postgresql": "catalog:",
     "@typescript/native": "catalog:",
     "effect": "catalog:",
     "eslint": "catalog:",
-    "http-message-signatures": "catalog:",
     "jose": "catalog:",
     "protobufjs": "catalog:",
     "tsx": "catalog:",
     "vitest": "catalog:"
-  },
-  "exports": {
-    "./process-network": "./process-network-fixture.ts",
-    "./daemon-process-harness": "./daemon/daemon-fixture.ts"
   }
 }

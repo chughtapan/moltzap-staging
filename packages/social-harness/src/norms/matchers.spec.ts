@@ -101,17 +101,10 @@ function check(
     : found.match(input);
 }
 
-/** What the evidence lacks or holds beyond its ordered history. */
-interface EvidenceOptions {
-  readonly earlierHistoryOmitted?: boolean;
-  readonly pendingOutgoing?: readonly Message[];
-}
-
 function incoming(
   self: AgentCard,
   message: Message,
   history: readonly Message[] = [],
-  { pendingOutgoing = [] }: EvidenceOptions = {},
 ): MatchInput {
   return {
     direction: "incoming",
@@ -120,7 +113,6 @@ function incoming(
     evidence: {
       history: history.map((sent) => ({ message: sent, visibleToAgent: true })),
       earlierHistoryOmitted: false,
-      pendingOutgoing,
       gaps: [],
     },
   };
@@ -129,7 +121,7 @@ function incoming(
 function outgoing(
   message: Message,
   history: readonly Message[] = [],
-  { earlierHistoryOmitted = false, pendingOutgoing = [] }: EvidenceOptions = {},
+  { earlierHistoryOmitted = false } = {},
 ): MatchInput {
   return {
     direction: "outgoing",
@@ -138,7 +130,6 @@ function outgoing(
     evidence: {
       history: history.map((sent) => ({ message: sent, visibleToAgent: true })),
       earlierHistoryOmitted,
-      pendingOutgoing,
       gaps: [],
     },
   };
@@ -852,74 +843,6 @@ describe("a norm's own turns", () => {
           outgoing(second, history),
         ),
       ).toMatchObject({ matched: true, detail: { reason: "no-agreement" } });
-    }));
-});
-
-describe("acts the Router has not ordered yet", () => {
-  const matchers = holding("examples/office-hours.lisp");
-  const pair = [alice, bob];
-
-  /** Bob proposes office-hours and Alice accepts. */
-  const agreed = Effect.all([
-    from(
-      bob,
-      pair,
-      '(propose :ontology norm-agreement :norm office-hours :task "Book a slot")',
-    ),
-    from(alice, pair, "(accept-proposal :ontology norm-agreement)"),
-  ]);
-  const request = '(request :ontology office-hours :topic "Scope")';
-
-  it("judges an outgoing act while the agent's own acts wait to be ordered", () =>
-    Effect.gen(function* () {
-      const history = yield* agreed;
-      const asked = yield* from(bob, pair, request);
-      const cancel = yield* from(bob, pair, "(cancel :ontology office-hours)");
-
-      const result = yield* check(
-        "norms.nonconforming",
-        matchers,
-        outgoing(cancel, history, { pendingOutgoing: [asked] }),
-      );
-
-      expect(result).toEqual({ matched: false });
-    }));
-
-  it("refuses an outgoing act out of turn after the agent's own act still waiting to be ordered", () =>
-    Effect.gen(function* () {
-      const history = yield* agreed;
-      const asked = yield* from(bob, pair, request);
-      const again = yield* from(bob, pair, request);
-
-      const result = yield* check(
-        "norms.nonconforming",
-        matchers,
-        outgoing(again, history, { pendingOutgoing: [asked] }),
-      );
-
-      expect(result).toMatchObject({
-        matched: true,
-        detail: { reason: "out-of-turn" },
-      });
-    }));
-
-  it("judges an incoming act on the ordered history alone", () =>
-    Effect.gen(function* () {
-      const history = yield* agreed;
-      const asked = yield* from(bob, pair, request);
-      const note = yield* from(
-        alice,
-        pair,
-        "One moment, checking the calendar.",
-      );
-
-      const result = yield* check(
-        "norms.nonconforming",
-        matchers,
-        incoming(alice, asked, history, { pendingOutgoing: [note] }),
-      );
-
-      expect(result).toEqual({ matched: false });
     }));
 });
 

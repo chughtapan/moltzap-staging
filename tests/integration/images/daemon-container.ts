@@ -1,42 +1,41 @@
-/** @file Runs a shared daemon fixture in the image under test. */
+/** @file Runs a prepared daemon in the daemon image under test. */
 import { Duration, Effect } from "effect";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import {
-  acquireDaemonProcess,
   awaitReady,
+  type Daemon,
   daemonListening,
-  type DaemonProcessFixture,
   managedProcess,
-  processTestError,
+  ProcessTestError,
 } from "../daemon/daemon-fixture.ts";
 
 const docker = promisify(execFile);
 
-/**
- * A cohort starts all its daemon containers at once on a runner other builds
- * share, so each container gets sixty seconds to listen.
- */
+/** A runner other builds share gives the container sixty seconds to listen. */
 const CONTAINER_READINESS_TIMEOUT = Duration.seconds(60);
 
 /**
- * Runs the fixture's daemon in the `DAEMON_INTEGRATION_IMAGE` container, or as
- * a local process when that variable is unset. Docker initializes the home
- * volume with the image user's ownership.
+ * Runs the prepared daemon in a `DAEMON_INTEGRATION_IMAGE` container named
+ * `sharness-daemon-` and its port, or as a local process when that variable
+ * is unset. The container uses the host's network, because the daemon answers
+ * only requests addressed to its loopback endpoint and checks its owners'
+ * tokens against an issuer on the host's loopback. Its database is a copy of
+ * the prepared one in a volume the image's user owns.
  */
-export const startDaemonContainer = (fixture: DaemonProcessFixture) => {
+export const startDaemonContainer = (daemon: Daemon) => {
   const image = process.env.DAEMON_INTEGRATION_IMAGE;
   if (image === undefined) {
-    return acquireDaemonProcess(fixture);
+    return daemon.start();
   }
-  const container = `sharness-daemon-${fixture.endpoint.port}`;
+  const container = `sharness-daemon-${daemon.endpoint.port}`;
   const volume = `sharness-daemon-state-${randomBytes(16).toString("hex")}`;
   return Effect.gen(function* () {
-    yield* prepareDaemonMount(fixture);
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- startNetwork owns the enclosing scope and releases the volume after the container.
+    yield* prepareDaemonMount(daemon);
+    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- openDaemon owns the enclosing scope and releases the volume after the container.
     yield* Effect.acquireRelease(
       executeDocker(["volume", "create", volume]),
       () => executeDocker(["volume", "rm", volume]).pipe(Effect.orDie),
@@ -49,22 +48,22 @@ export const startDaemonContainer = (fixture: DaemonProcessFixture) => {
       "--entrypoint",
       "sh",
       "--volume",
-      `${fixture.stateDirectory}:/source:ro`,
+      `${daemon.directory}:/source:ro`,
       "--mount",
       `type=volume,src=${volume},dst=/state`,
       image,
       "-c",
       "cp /source/sharnessd.sqlite3 /state/sharnessd.sqlite3 && chown 1000:1000 /state /state/sharnessd.sqlite3",
     ]);
-    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- startNetwork owns the enclosing scope and removes the container after its attached process stops.
+    // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- openDaemon owns the enclosing scope and removes the container after its attached process stops.
     yield* Effect.acquireRelease(
-      executeDocker(containerArguments(fixture, image, container, volume)),
+      executeDocker(containerArguments(daemon, image, container, volume)),
       () =>
         executeDocker(["rm", "--force", "--volumes", container]).pipe(
           Effect.orDie,
         ),
     );
-    const daemon = yield* managedProcess("docker", [
+    const running = yield* managedProcess("docker", [
       "start",
       "--attach",
       container,
@@ -73,47 +72,46 @@ export const startDaemonContainer = (fixture: DaemonProcessFixture) => {
       executeDocker(["stop", "--timeout", "5", container]).pipe(Effect.orDie),
     );
     yield* awaitReady(
-      daemon,
-      daemonListening(daemon, fixture.endpoint),
+      running,
+      daemonListening(running, daemon.endpoint),
       "listening",
       CONTAINER_READINESS_TIMEOUT,
     );
-    return daemon;
+    return running;
   }).pipe(Effect.withSpan("startDaemonContainer"));
 };
 
-function prepareDaemonMount(fixture: DaemonProcessFixture) {
-  const directory = dirname(fixture.stateDirectory);
+/** Lets the image's user read the daemon's directory and database. */
+function prepareDaemonMount(daemon: Daemon) {
   return Effect.tryPromise({
     try: async () => {
-      await chmod(dirname(directory), 0o755);
-      await chmod(directory, 0o755);
-      await chmod(fixture.stateDirectory, 0o755);
-      await chmod(join(fixture.stateDirectory, "sharnessd.sqlite3"), 0o644);
-      await chmod(fixture.admissionCredentialFile, 0o644);
-      await chmod(fixture.mcpCredentialFile, 0o644);
+      await chmod(daemon.directory, 0o755);
+      await chmod(join(daemon.directory, "sharnessd.sqlite3"), 0o644);
     },
-    catch: (cause) => processTestError("could not prepare daemon mount", cause),
+    catch: (cause) =>
+      new ProcessTestError({
+        message: "could not prepare daemon mount",
+        cause,
+      }),
   });
 }
 
 function containerArguments(
-  fixture: DaemonProcessFixture,
+  daemon: Daemon,
   image: string,
   container: string,
   volume: string,
 ) {
-  const directory = dirname(fixture.stateDirectory);
   return [
     "create",
     "--network=host",
     "--name",
     container,
     "--volume",
-    `${directory}:${directory}:ro`,
+    `${daemon.directory}:${daemon.directory}:ro`,
     "--mount",
     `type=volume,src=${volume},dst=/home/node`,
-    ...Object.entries(fixture.environment).flatMap(([name, value]) => [
+    ...Object.entries(daemon.environment).flatMap(([name, value]) => [
       "--env",
       `${name}=${value}`,
     ]),
@@ -126,6 +124,7 @@ function containerArguments(
 function executeDocker(args: readonly string[]) {
   return Effect.tryPromise({
     try: () => docker("docker", args),
-    catch: (cause) => processTestError(`docker ${args[0]} failed`, cause),
+    catch: (cause) =>
+      new ProcessTestError({ message: `docker ${args[0]} failed`, cause }),
   });
 }

@@ -78,9 +78,10 @@ for the Internet", is the goal plans and docs serve (audit rule 11.5):
 - [ ] A network service's API and client live with the layer whose job the
   service does, and its server is a separate package. Shared code gives the
   server whole operations, such as "verify this request", rather than steps.
-- [ ] Each daemon holds its agent's state and keys. A relay sees only what
-  routing needs, and no central service holds members' conversations or
-  secrets.
+- [ ] One daemon hosts every owner's agent and is the only process. It holds
+  each agent's messages, policy and secrets, and is trusted for the sender,
+  order, delivery and custody of every message. Agents on different daemons
+  do not exchange messages.
 
 ## Interfaces
 
@@ -111,8 +112,8 @@ directly; these items do not restate them.
 - [ ] One owning module and one parser per wire contract, called by both
   sides; readers reject fields they do not know. Only interfaces designed to
   grow, such as the results an agent reads from the daemon's tools, take
-  additions at any time. Every other change an existing reader would reject,
-  and any change to signed data, waits for the planned breaking release.
+  additions at any time. Every other change an existing reader would reject
+  waits for the planned breaking release.
   Encode an invariant in a type only the right parser produces. Never parse
   another system's configuration strictly.
 - [ ] Before defining a contract between repositories, look for the design
@@ -135,15 +136,15 @@ directly; these items do not restate them.
   policy.
 - [ ] The firewall checks a request before the agent acts on it and a reply
   before it leaves. It does not inspect tool calls or change the host.
-- [ ] Who is asking comes from the message's verified signature, never from
-  what the message claims.
+- [ ] Who is asking comes from the author the daemon recorded when it
+  admitted the sender, never from what the message text claims.
 - [ ] When the owner must approve something, the firewall holds it and the
   agent asks through the host's own ask-the-user feature. There is no second
   approval mechanism.
 - [ ] Stop a leak with a policy on the messages that leave. Keep the
   capability legitimate use needs.
-- [ ] Agreements between agents and services are ordinary signed messages
-  plus firewall policies. A norm is a plain-English rule the parties agree to,
+- [ ] Agreements between agents and services are ordinary messages plus
+  firewall policies. A norm is a plain-English rule the parties agree to,
   and each adds it to its own firewall.
 - [ ] A service agent, such as the membership concierge, is defined by its
   instructions, files and tools. Specify what the system provides, and leave

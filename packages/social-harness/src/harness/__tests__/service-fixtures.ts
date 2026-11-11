@@ -1,4 +1,4 @@
-/** @file Main-service fixtures combine real identity, policy and SQLite with controllable communication. */
+/** @file Main-service fixtures combine real policy and SQLite with controllable identity and communication. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
@@ -10,12 +10,11 @@ import {
   FiberSet,
   Layer,
   Queue,
-  Redacted,
   Schedule,
   Schema,
 } from "effect";
-import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
+import type { AgentCard, AgentName } from "../../identity/agent-cards.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
   Communication,
@@ -39,25 +38,7 @@ import {
   Firewall,
   type FirewallOptions,
 } from "../../firewall/index.js";
-import {
-  AgentIdentityCardIssuedAt,
-  type IdentityFixture,
-  makeIdentityFixture,
-  makeVerifiedCard,
-} from "../../identity/__tests__/authentication-fixtures.js";
-import {
-  type AgentCard,
-  agentCardOf,
-  type AgentName,
-  AgentSigningAuthority,
-  type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import {
-  RegistrationId,
-  Registry,
-  RegistryError,
-} from "../../identity/registry.js";
-import { Identity, type RegistrationRequest } from "../../identity/service.js";
+import { Identity, IdentityError } from "../../identity/service.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
 type Main = Context.Tag.Service<typeof SocialHarness>;
@@ -188,23 +169,21 @@ interface Network {
 interface OpenOptions
   extends Omit<HarnessSettings<never>, "communication" | "agentKey"> {
   readonly policy?: FirewallOptions;
-  readonly beforeRegistration?: Effect.Effect<undefined>;
   readonly startCommunication?: Effect.Effect<undefined, CommunicationError>;
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 interface FixtureEnvironment {
-  readonly identity: IdentityFixture;
   readonly filename: string;
-  readonly cards: Map<AgentName, VerifiedAgentIdentityCard>;
+  /** The agents `resolve` finds by name. */
+  readonly cards: Map<AgentName, AgentCard>;
   readonly network: Network;
   readonly communication: Context.Tag.Service<typeof Communication>;
-  registryAvailable: boolean;
+  namesResolvable: boolean;
 }
 
 /** Main scopes share completed lower-layer history while SQLite retains Main's own work. */
 export const makeHarnessFixture = Effect.gen(function* () {
-  const identity = yield* makeIdentityFixture;
-  const self = agentCardOf(identity.identityCard);
+  const self = testAgentCard("agent:alice");
   const directory = yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     return yield* fs.makeTempDirectoryScoped({ prefix: "sharness-main-" });
@@ -222,30 +201,23 @@ export const makeHarnessFixture = Effect.gen(function* () {
     activated: yield* Deferred.make<undefined>(),
   };
   const environment: FixtureEnvironment = {
-    identity,
     network,
     filename: join(directory, "harness.sqlite3"),
     communication: communicationFor(network),
-    registryAvailable: true,
-    cards: new Map([[self.agentName, identity.identityCard]]),
+    namesResolvable: true,
+    cards: new Map([[self.agentName, self]]),
   };
-  const bob = yield* addPeer(environment, "bob");
-  const carol = yield* addPeer(environment, "carol");
-  const request: RegistrationRequest = {
-    operationId: RegistrationId.make("opn_AAAAAAAAAAAAAAAAAAAAAA"),
-    principalId: self.principalId,
-    agentName: self.agentName,
-  };
+  const bob = addPeer(environment, "bob");
+  const carol = addPeer(environment, "carol");
   return {
     self,
     bob,
     carol,
     submitted: network.submitted,
     activated: network.activated,
-    open: (options: OpenOptions = {}) =>
-      openHarness(environment, request, options),
+    open: (options: OpenOptions = {}) => openHarness(environment, options),
     deliver: (value: Incoming) => deliver(network, value),
-    addPeer: (name: string) => addPeer(environment, name),
+    addPeer: (name: string) => Effect.sync(() => addPeer(environment, name)),
     retain: (message: Message) =>
       Effect.sync(() => {
         retain(network, message);
@@ -254,15 +226,15 @@ export const makeHarnessFixture = Effect.gen(function* () {
       Effect.sync(() => {
         network.catalog.set(addressOf(self, members), members);
       }),
-    uncertainSend: () =>
+    failSends: () =>
       Effect.sync(() => {
         network.sendFailure = new CommunicationError({
-          reason: "outcome-unknown",
+          reason: "persistence-failed",
         });
       }),
-    disconnectRegistry: () =>
+    failNameResolution: () =>
       Effect.sync(() => {
-        environment.registryAvailable = false;
+        environment.namesResolvable = false;
       }),
     message: (text: string, author: AgentCard = bob) =>
       Message.create({
@@ -273,22 +245,10 @@ export const makeHarnessFixture = Effect.gen(function* () {
   };
 }).pipe(Effect.withSpan("makeHarnessFixture"));
 
-function openHarness(
-  environment: FixtureEnvironment,
-  request: RegistrationRequest,
-  options: OpenOptions,
-) {
+function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
   return Effect.gen(function* () {
     const workers = yield* FiberSet.make();
-    const identity = Identity.layer({
-      agentKey: environment.filename,
-      signingAuthority: environment.identity.signingAuthority,
-      registrySignerPublicKey: AgentSigningAuthority.publicKey(
-        environment.identity.registryAuthority,
-      ),
-      registration: request,
-    }).pipe(
-      Layer.provideMerge(registryFor(environment, options)),
+    const identity = Layer.succeed(Identity, identityFor(environment)).pipe(
       Layer.provideMerge(
         Layer.effectDiscard(migrateDaemon).pipe(
           Layer.provideMerge(
@@ -334,43 +294,36 @@ function openHarness(
     const harness = Context.get(context, SocialHarness);
     return {
       harness,
-      identity: Context.get(services, Identity),
       firewall,
       failed: FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
     };
   });
 }
 
-function registryFor(environment: FixtureEnvironment, options: OpenOptions) {
-  return Layer.succeed(
-    Registry,
-    Registry.of({
-      register: () =>
-        (options.beforeRegistration ?? Effect.void).pipe(
-          Effect.as({
-            kind: "registered",
-            identityCard: environment.identity.identityCard,
+/** Resolves the fixture's peers by name until name resolution is made to fail. */
+function identityFor(environment: FixtureEnvironment) {
+  return Identity.of({
+    me: environment.network.self,
+    resolve: (names) =>
+      Effect.forEach(
+        names,
+        (agentName) =>
+          Effect.suspend(() => {
+            if (!environment.namesResolvable) {
+              return Effect.fail(
+                new IdentityError({ reason: "persistence-failed", agentName }),
+              );
+            }
+            const found = environment.cards.get(agentName);
+            return found === undefined
+              ? Effect.fail(
+                  new IdentityError({ reason: "unknown-agent", agentName }),
+                )
+              : Effect.succeed(found);
           }),
-        ),
-      lookup: (input) =>
-        Effect.suspend(() => {
-          if (!environment.registryAvailable) {
-            return Effect.fail(new RegistryError({ reason: "connection" }));
-          }
-          const found =
-            "agentName" in input
-              ? environment.cards.get(input.agentName)
-              : [...environment.cards.values()].find(
-                  (card) => card.agentId === input.agentId,
-                );
-          return Effect.succeed(
-            found === undefined
-              ? { kind: "not_found" }
-              : { kind: "found", identityCard: found },
-          );
-        }),
-    }),
-  );
+        { concurrency: 1 },
+      ),
+  });
 }
 
 function communicationFor(network: Network) {
@@ -385,29 +338,19 @@ function communicationFor(network: Network) {
     send: (value) =>
       Effect.suspend(() => {
         network.submitted.push(value);
+        if (network.sendFailure !== undefined) {
+          return Effect.fail(network.sendFailure);
+        }
         if (!("kind" in value)) {
           retain(network, value);
         }
-        return network.sendFailure === undefined
-          ? Effect.void
-          : Effect.fail(network.sendFailure);
+        return Effect.void;
       }),
     getRequest: (id) =>
       Effect.suspend(() => {
         const found = network.requests.get(id);
         return found === undefined
           ? Effect.fail(new RequestError({ failure: { kind: "request-none" } }))
-          : Effect.succeed(found);
-      }),
-    waitForMessage: (reference) =>
-      Effect.suspend(() => {
-        const found = network.messages.find(
-          (message) =>
-            message.author.agentId === reference.authorAgentId &&
-            message.msgId === reference.msgId,
-        );
-        return found === undefined
-          ? Effect.fail(new CommunicationError({ reason: "unknown-message" }))
           : Effect.succeed(found);
       }),
     consume: (handle) =>
@@ -455,9 +398,6 @@ function listConversations(network: Network, query: ConversationQuery) {
 function readHistory(network: Network, query: HistoryQuery) {
   return Effect.gen(function* () {
     const address = addressOf(network.self, query.members);
-    if (!network.catalog.has(address) && query.order !== "newest") {
-      return yield* new CommunicationError({ reason: "history-gap" });
-    }
     const all = network.messages.filter(
       (message) => addressOf(network.self, membersOf(message)) === address,
     );
@@ -472,7 +412,7 @@ function readHistory(network: Network, query: HistoryQuery) {
                 message.msgId === before.msgId,
             );
       if (position < 0) {
-        return yield* new CommunicationError({ reason: "unknown-message" });
+        return yield* new CommunicationError({ reason: "content-invalid" });
       }
       const available = all.slice(0, position);
       return historyPage(
@@ -515,7 +455,6 @@ function historyPage(
         .byteLength,
     })),
     earlierMessagesOmitted,
-    pendingOutgoing: [],
     ...(nextCursor === undefined ? {} : { nextCursor }),
   };
 }
@@ -579,22 +518,9 @@ function addressOf(self: AgentCard, members: readonly AgentCard[]) {
 }
 
 function addPeer(environment: FixtureEnvironment, name: string) {
-  return Effect.gen(function* () {
-    const { privateKey } = generateKeyPairSync("ed25519");
-    const authority = yield* AgentSigningAuthority.fromPkcs8(
-      Redacted.make(privateKey.export({ format: "pem", type: "pkcs8" })),
-    );
-    const signed = yield* makeVerifiedCard({
-      ...testAgentCard(`agent:${name}`),
-      publicKey: AgentSigningAuthority.publicKey(authority),
-      issuedAt: AgentIdentityCardIssuedAt.make(
-        environment.identity.identityCard.issuedAt,
-      ),
-      registrySigningAuthority: environment.identity.registryAuthority,
-    });
-    environment.cards.set(signed.agentName, signed);
-    return agentCardOf(signed);
-  });
+  const card = testAgentCard(`agent:${name}`);
+  environment.cards.set(card.agentName, card);
+  return card;
 }
 
 function sameNames(members: Conversation, names: readonly AgentName[]) {

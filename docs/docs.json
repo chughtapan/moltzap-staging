@@ -28,12 +28,10 @@
           {
             "group": "Guides",
             "pages": [
-              "guides/run-a-local-network",
               "guides/run-an-agent-daemon",
               "guides/mcp-client",
               "guides/openclaw",
               "guides/message-firewall",
-              "guides/upgrades",
               "guides/contributing"
             ]
           },
@@ -49,14 +47,7 @@
             "pages": [
               "reference/constitution",
               "reference/daemon-experiment-settings",
-              {
-                "group": "Services",
-                "pages": [
-                  "reference/services/registry",
-                  "reference/services/router",
-                  "reference/services/daemon"
-                ]
-              },
+              "reference/services/daemon",
               {
                 "group": "Specifications",
                 "pages": [
@@ -82,10 +73,8 @@
                   {
                     "group": "P2P",
                     "pages": [
-                      "reference/spec/communication/protocol",
-                      "reference/spec/communication/collectives",
-                      "reference/spec/identity/representation",
-                      "reference/spec/institutions"
+                      "reference/spec/communication/p2p",
+                      "reference/spec/communication/collectives"
                     ]
                   },
                   "reference/spec/package-boundaries",

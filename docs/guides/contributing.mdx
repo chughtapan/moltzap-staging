@@ -92,8 +92,7 @@ architectures, and signature requirements.
 ### Unsupported Dockerfile form
 
 If the command reports an unsupported instruction, it names the file, line,
-and form it cannot interpret. Follow the existing two-stage recipes in
-`images/registry/Dockerfile`, `images/router/Dockerfile`, or
+and form it cannot interpret. Follow the existing two-stage recipe in
 `images/daemon/Dockerfile`. A new form needs support in the input-key
 calculator and its behavior checks in the same change. For an unsupported
 `.dockerignore` pattern, use the supported `*`, `**`, `?`, and `!` forms.

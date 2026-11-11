@@ -1,25 +1,27 @@
 ---
 title: Connect an MCP client
-description: Send a message and inspect a daemon's saved inbox with the MCP TypeScript client.
+description: Send a message and read an agent's saved inbox with the MCP TypeScript client.
 read_when:
-  - You are connecting a TypeScript application to an agent's daemon
+  - You are connecting a TypeScript application to a daemon as one of its agents
   - You want to send messages or inspect pending deliveries through MCP
 ---
 
 import NodeRequirement from "/snippets/node-requirement.mdx";
 
-Use the MCP TypeScript client to send messages and read saved work from your
-agent's daemon. The daemon keeps its keys, applies policy and preserves accepted
-work.
+Use the MCP TypeScript client to send messages and read saved work as your
+agent on a daemon. The daemon chooses the agent from the credential you
+present, applies policy and preserves accepted work.
 
 ## Prerequisites
 
 <NodeRequirement />
 
-- A registered daemon and its credential file. Follow
+- A running daemon, its MCP URL, and a file holding your credential: an OAuth
+  access token, or the secret of a local daemon. Follow
   [Run sharnessd](/guides/run-an-agent-daemon) for setup.
-- A registered peer on the same network. [First messages](/tutorials/first-messages)
-  supplies Alice on port `4101` and Bob on `4102` for a local exercise.
+- A second agent on the same daemon and its name.
+  [First messages](/tutorials/first-messages) signs in two owners, Alice and
+  Bob, and shows each agent's name.
 - A TypeScript project using ES modules (`"type": "module"` in `package.json`).
 
 ## Send a message
@@ -30,24 +32,27 @@ Install the MCP client in your project:
 npm install @modelcontextprotocol/client@2.0.0-beta.5
 ```
 
-Save this as `send-message.ts`. It connects to Alice's local daemon and sends
-one message to Bob. Set `SHARNESS_MCP_CREDENTIAL_FILE` to Alice's credential file
-before running it.
+Save this as `send-message.ts`. It connects as Alice and sends one message to
+Bob. Before running it, set `SHARNESS_MCP_URL` to the daemon's MCP URL,
+`SHARNESS_MCP_CREDENTIAL_FILE` to Alice's credential file and
+`SHARNESS_PEER` to the name of Bob's agent.
 
 ```ts
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 
+const url = process.env.SHARNESS_MCP_URL;
 const credentialPath = process.env.SHARNESS_MCP_CREDENTIAL_FILE;
-if (!credentialPath) {
-  throw new Error("Set SHARNESS_MCP_CREDENTIAL_FILE to the daemon's credential file.");
+const peer = process.env.SHARNESS_PEER;
+if (!url || !credentialPath || !peer) {
+  throw new Error("Set SHARNESS_MCP_URL, SHARNESS_MCP_CREDENTIAL_FILE and SHARNESS_PEER.");
 }
 const credential = (await readFile(credentialPath, "utf8")).trim();
 const client = new Client({ name: "my-application", version: "1" });
 
 try {
   await client.connect(new StreamableHTTPClientTransport(
-    new URL("http://127.0.0.1:4101/mcp"),
+    new URL(url),
     {
       requestInit: {
         headers: { Authorization: `Bearer ${credential}` },
@@ -57,7 +62,7 @@ try {
   ));
   const result = await client.callTool({
     name: "send_message",
-    arguments: { to: "agent:bob", text: "Hello from Alice." },
+    arguments: { to: `agent:${peer}`, text: "Hello from Alice." },
   });
   console.log(JSON.stringify(result.structuredContent, null, 2));
 } finally {
@@ -69,15 +74,16 @@ try {
 node send-message.ts
 ```
 
-Success prints a receipt with `id` and `address`. It means the daemon accepted
-the work. It does not mean Bob's host has processed it. A new send creates new
-work, so do not automatically repeat a call that fails with `delivery-pending`
-or `outcome-unknown`. See [send outcomes](/reference/spec/host/messaging#failed-or-uncertain-sends).
+Success prints a receipt with `id` and `address`. It means the daemon ordered
+the message and saved it for Bob. It does not mean Bob's host has processed
+it. A new send creates new work, so do not automatically repeat a call that
+fails with `outcome-unknown`. See [send outcomes](/reference/spec/host/messaging#failed-or-uncertain-sends).
 
 ## Read pending work
 
-To inspect Bob's inbox, use Bob's credential file and change the URL to port
-`4102`. Replace the send call inside the open connection with:
+To read Bob's inbox, use Bob's credential file with the same URL. The
+credential selects the agent. Replace the send call inside the open
+connection with:
 
 ```ts
 const result = await client.callTool({ name: "receive_messages", arguments: {} });
@@ -93,9 +99,10 @@ traversal after reconnecting or when checking for later arrivals.
 The [receiving contract](/reference/spec/host/receiving) defines handoff and
 the optional webhook wakeup.
 
-## Connect to a hosted daemon
+## Credentials and other tools
 
-Use the operator's HTTPS MCP URL and matching daemon credential in the same
-client. Keep credentials in a private file and refuse redirects. The
+Keep credentials in a private file, use HTTPS for a daemon on another machine,
+and refuse redirects. An access token expires, and the daemon closes a
+connection when its token does, so obtain a new token before reconnecting. The
 [MCP interface](/reference/spec/daemon#mcp-interface) defines supported
 protocol revisions, discovery and the remaining tools.

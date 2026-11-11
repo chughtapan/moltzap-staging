@@ -31,7 +31,7 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
-import { AgentCard, agentCardOf } from "../identity/agent-cards.js";
+import { AgentCard } from "../identity/agent-cards.js";
 import { Identity } from "../identity/service.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
@@ -186,11 +186,6 @@ export const PermittedItem = Schema.Union(
     message: ReceivedRequest,
   }),
   CollectiveResult,
-  exactStruct({
-    kind: Schema.Literal("operationFailed"),
-    operationId: CollectiveId,
-    error: Schema.String,
-  }),
 );
 /** @useDeclaredType */
 export type PermittedItem = typeof PermittedItem.Type;
@@ -319,8 +314,8 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   FirewallService
 >() {
   /**
-   * Policy resources are fixed for this scope. Registration supplies immutable
-   * local attribution. `chain` rules apply before the text rules of `source`;
+   * Policy resources are fixed for this scope. Identity supplies this agent's
+   * card. `chain` rules apply before the text rules of `source`;
    * a rule naming an unregistered matcher fails with `build-failed`. With
    * `norms`, the agent holds norm documents in its editable policy, and each
    * activation adds the matchers and fixed rules they compile to.
@@ -347,7 +342,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         }
         const chainRevision =
           rules === undefined ? "" : yield* chainDigest(rules);
-        const localAgent = agentCardOf(identity.me);
+        const localAgent = identity.me;
         const installed: Installation = {
           store,
           ...(policy === undefined ? {} : { policy }),
@@ -417,18 +412,6 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
             }),
           checkIncoming: (value, evidence) =>
             Effect.gen(function* () {
-              if (value.kind === "request-failed") {
-                return {
-                  kind: "allowed",
-                  item: {
-                    kind: "operationFailed",
-                    operationId: value.request.operationId,
-                    error: value.error,
-                  },
-                  save: Effect.void,
-                  visibility: [],
-                } satisfies IncomingDecision;
-              }
               const agent = localAgent;
               if (value.kind === "result") {
                 return yield* checkResult(installed, agent, value, evidence);
@@ -826,12 +809,7 @@ function saveDecision(store: FirewallStore, ...decisions: readonly Decision[]) {
     : store.saveDecisions(completions);
 }
 
-/**
- * Checks candidates against the text rules. An outgoing check also sees this
- * agent's sends the Router has not ordered yet, after the ordered history and
- * in the order they were sent, because the Router orders them before this one.
- * An incoming check sees only the ordered history before its message.
- */
+/** Checks candidates against the text rules, each with the history before it. */
 function assess(
   policy: Policy,
   self: AgentCard,
@@ -843,34 +821,27 @@ function assess(
     const active = policy.active;
     const inputs: RuleCheckInput[] = [];
     for (const candidate of candidates) {
-      const pending =
-        direction === "outgoing" ? candidate.evidence.pendingOutgoing : [];
       const cards = new Map<string, AgentCard>();
       for (const card of [
         self,
         candidate.value.author,
         ...candidate.value.recipients,
-        ...[
-          ...candidate.evidence.history.map(({ message }) => message),
-          ...pending,
-        ].flatMap((message) => [message.author, ...message.recipients]),
+        ...candidate.evidence.history.flatMap(({ message }) => [
+          message.author,
+          ...message.recipients,
+        ]),
       ]) {
         cards.set(card.agentId, card);
       }
-      const history: HistoryEntry[] = [
-        ...candidate.evidence.history.map((entry) => ({
+      const history: HistoryEntry[] = candidate.evidence.history.map(
+        (entry) => ({
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
           ...assessmentText(entry.message),
           visibleToAgent:
             entry.visibleToAgent ||
             entry.message.author.agentId === self.agentId,
-        })),
-        ...pending.map((message) => ({
-          // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
-          ...assessmentText(message),
-          visibleToAgent: true,
-        })),
-      ];
+        }),
+      );
       const context: MessageContext = {
         agentId: self.agentId,
         principal: self.principalId,
@@ -1354,9 +1325,7 @@ function assessRule(
     const input = yield* capturePrepared(options.configuration, requested);
     const checkId = mintCheckId();
     const assessed = yield* evaluateMessage(options, active, input).pipe(
-      markRetries("firewall-check", input.direction, (exit) =>
-        exitOutcome(exit, "checked"),
-      ),
+      markRetries(input.direction, (exit) => exitOutcome(exit, "checked")),
     );
     const projection = yield* guidanceProjection(assessed, checkId);
     const { result } = projection;

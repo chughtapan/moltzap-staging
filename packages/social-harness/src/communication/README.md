@@ -9,19 +9,18 @@ Callers submit messages and questions through `send`; a successful return
 means the work is saved. Receiving code consumes ordered messages, requests
 and results, and local policy decides which content reaches the agent.
 
-The files at this level are what both modes share: messages, the store,
-history and the service contract. Each mode supplies the service in its own
-way:
+Both modes use the same [delivery](./delivery.ts). A send finds each recipient
+among the daemon's agents, gives the message the next position in its
+conversation and saves it for every member in one transaction.
 
-- [`client-server/`](./client-server/delivery.ts): the daemon orders and stores
-  messages between the server agent and its clients itself. See the
-  [client/server contract](../../../../docs/reference/spec/client-server.md).
-- [`p2p/`](./p2p/index.ts): an agent certifies each message with its
-  recipients and exchanges it through the Router, so accepted work continues
-  while the Router is offline and after a restart. `waitForMessage` waits for
-  certification. See the
-  [protocol](../../../../docs/reference/spec/communication/protocol.md) and the
-  [collective contract](../../../../docs/reference/spec/communication/collectives.md).
+- [P2P](../../../../docs/reference/spec/communication/p2p.md): any agent
+  messages any other, alone or in a group.
+- [Client/server](../../../../docs/reference/spec/client-server.md): every
+  conversation is the server agent and one client.
 
-A database belongs to one mode. `Communication.p2p.claim` and
-`Communication.clientServer.claim` mark it before any agent starts.
+Questions and answers are messages that the
+[request worker](./collectives.ts) interprets. See the
+[collective contract](../../../../docs/reference/spec/communication/collectives.md).
+
+A database belongs to one mode. `Communication.claim` marks it before any
+agent starts.

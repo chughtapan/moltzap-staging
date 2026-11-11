@@ -1,84 +1,51 @@
-/** @file The documented operator CLI calls real daemon and network processes. */
+/** @file The documented operator script calls a real daemon's tools. */
 
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import {
-  AgentIdentityCard,
-  toolDefinitions,
-} from "@social-harness/social-harness";
+import { toolDefinitions } from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { runProcess } from "../../../scripts/test/packed-workspace.js";
 import { processTrace } from "../scenario-fixture.js";
-import {
-  acquireDaemonProcess,
-  acquireProcessInfrastructure,
-  configureDaemonFixture,
-  type DaemonProcessFixture,
-  makeDaemonProcessFixture,
-  reservePort,
-} from "./daemon-fixture.js";
+import { sharedDaemon } from "./daemon-fixture.js";
 
 const CLI = fileURLToPath(new URL("../../../images/mcp.ts", import.meta.url));
 const TEST_DIRECTORY = fileURLToPath(new URL("../.cache/", import.meta.url));
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Exit codes, tool status and closed failure reasons are the CLI's public contract. */
 it(
-  "reports the identity each daemon registered when it started",
+  "reports the agent of the owner whose credential it reads",
   processTrace(
     Effect.gen(function* () {
-      const infrastructure = yield* acquireProcessInfrastructure;
-      const alice = yield* makeDaemonProcessFixture(
-        infrastructure,
-        "cli-alice",
+      const daemon = yield* sharedDaemon();
+      yield* daemon.start();
+      const alice = yield* daemon.signInAs("alice");
+      const bob = yield* daemon.signInAs("bob");
+      const status = (credentialFile: string) =>
+        operator({ endpoint: daemon.endpoint, credentialFile }, [
+          "call",
+          "status",
+        ]).pipe(
+          Effect.flatMap(({ stdout }) =>
+            Schema.decode(Schema.parseJson(toolDefinitions.status.output))(
+              stdout,
+            ),
+          ),
+        );
+      expect((yield* status(alice.credentialFile)).agentName).toBe(
+        alice.agent.agentName,
       );
-      const other = yield* makeDaemonProcessFixture(
-        infrastructure,
-        "cli-other",
+      expect((yield* status(bob.credentialFile)).agentName).toBe(
+        bob.agent.agentName,
       );
-      yield* acquireDaemonProcess(alice);
-      yield* acquireDaemonProcess(other);
-      expect((yield* identity(alice)).agentName).toBe(alice.agentName);
-      expect((yield* identity(other)).agentName).toBe(other.agentName);
-    }),
-  ),
-  120_000,
-);
-
-// @agent-code-guard/regression-only: A failed first registration must reuse the SQL identity after its dependency is repaired.
-it(
-  "registers with the saved identity once an unreachable Registry is repaired",
-  processTrace(
-    Effect.gen(function* () {
-      const infrastructure = yield* acquireProcessInfrastructure;
-      const fixture = yield* makeDaemonProcessFixture(
-        infrastructure,
-        "cli-retry",
-      );
-      const unavailable = yield* configureDaemonFixture(fixture, {
-        mode: { registryOrigin: `http://127.0.0.1:${yield* reservePort}` },
-      });
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          yield* acquireDaemonProcess(unavailable);
-          const failed = yield* operator(fixture, ["call", "status"]);
-          expect(failed.exitCode).toBe(1);
-          expect(failed.stderr).toContain("could not connect");
-        }),
-      );
-      yield* configureDaemonFixture(fixture, {
-        mode: { registryOrigin: infrastructure.registryOrigin.origin },
-      });
-      yield* acquireDaemonProcess(fixture);
-      expect((yield* identity(fixture)).agentName).toBe(fixture.agentName);
     }),
   ),
   120_000,
 );
 
 // @agent-code-guard/regression-only: The standalone CLI must reject cleartext DNS destinations before reading its private bearer file.
+/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- The exit code and the refusal text are the CLI's public contract. */
 it(
   "refuses credential delivery to an HTTP endpoint named by DNS",
   processTrace(
@@ -87,9 +54,8 @@ it(
       const directory = yield* fs.makeTempDirectoryScoped();
       const refused = yield* operator(
         {
-          stateDirectory: directory,
           endpoint: new URL("http://localhost:1/mcp"),
-          mcpCredentialFile: join(directory, "unread-credential"),
+          credentialFile: join(directory, "unread-credential"),
         },
         ["call", "status"],
       );
@@ -100,25 +66,11 @@ it(
     }),
   ),
 );
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary assertions after the operator contract scenarios. */
+/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore ordinary assertions after the operator contract scenario. */
 
-function identity(fixture: DaemonProcessFixture) {
-  return operator(fixture, ["call", "status"]).pipe(
-    Effect.flatMap(({ stdout }) =>
-      Schema.decode(Schema.parseJson(toolDefinitions.status.output))(stdout),
-    ),
-    Effect.flatMap((status) =>
-      Schema.decodeUnknown(AgentIdentityCard)(status.identityCard),
-    ),
-  );
-}
-
-/** The copied CLI resolves the integration package's installed public dependencies. */
+/** Runs a copy of the script, which resolves the integration package's installed public dependencies. */
 function operator(
-  fixture: Pick<
-    DaemonProcessFixture,
-    "stateDirectory" | "endpoint" | "mcpCredentialFile"
-  >,
+  target: { readonly endpoint: URL; readonly credentialFile: string },
   args: readonly string[],
 ) {
   return Effect.scoped(
@@ -132,10 +84,10 @@ function operator(
       const script = join(directory, "mcp.ts");
       yield* fs.copyFile(CLI, script);
       return yield* runProcess(process.execPath, [script, ...args], {
-        cwd: fixture.stateDirectory,
+        cwd: directory,
         env: {
-          SHARNESS_MCP_URL: fixture.endpoint.href,
-          SHARNESS_MCP_CREDENTIAL_FILE: fixture.mcpCredentialFile,
+          SHARNESS_MCP_URL: target.endpoint.href,
+          SHARNESS_MCP_CREDENTIAL_FILE: target.credentialFile,
           NODE_PATH: "",
         },
       });
