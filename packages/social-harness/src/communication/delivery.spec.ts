@@ -1,12 +1,17 @@
-/** @file Both delivery modes expose durable messages through the Communication contract. */
+/** @file Messages, groups and questions between agents on one daemon, in both modes. */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
-import { Context, Effect, Layer, Queue, Schema } from "effect";
+import { Chunk, Context, Effect, Layer, Queue, Schema } from "effect";
 import { expect } from "vitest";
 import { conversationIdentityFixture } from "./__tests__/conversation-fixtures.js";
 import { agentCardOf } from "../identity/agent-cards.js";
-import { Message } from "./messages.js";
-import { Communication, type Conversation } from "./service.js";
+import { form } from "./__tests__/requests-fixtures.js";
+import { Answer, Message, Request } from "./messages.js";
+import {
+  Communication,
+  type Conversation,
+  type Incoming,
+} from "./service.js";
 
 const fixture = Effect.gen(function* () {
   const subject = yield* conversationIdentityFixture;
@@ -240,4 +245,126 @@ it("refuses missing recipient tails and conversations retained by delivery evide
         (entry) => entry.message,
       ),
     ).toEqual([first, last]);
+  }));
+
+const peers = Effect.gen(function* () {
+  const subject = yield* conversationIdentityFixture;
+  const open = (identity: typeof subject.local, agentKey: string) =>
+    Layer.build(
+      Communication.p2p.layer({
+        agentKey,
+        identityCard: identity.card,
+        signingAuthority: identity.authority,
+        registrySignerPublicKey: subject.signer,
+      }),
+    ).pipe(
+      Effect.provideService(SqlClient, subject.sql),
+      Effect.map((context) => Context.get(context, Communication)),
+    );
+  const alice = yield* open(subject.local, subject.agentKey);
+  const bob = yield* open(subject.remote, "bob");
+  const carol = yield* open(subject.third, "carol");
+  const cards = {
+    alice: agentCardOf(subject.local.card),
+    bob: agentCardOf(subject.remote.card),
+    carol: agentCardOf(subject.third.card),
+  };
+  const received = (agent: typeof alice) =>
+    Effect.gen(function* () {
+      const inbox = yield* Queue.unbounded<Incoming>();
+      yield* agent
+        .consume((item) => Queue.offer(inbox, item).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      return inbox;
+    });
+  return { alice, bob, carol, cards, received };
+});
+
+it("delivers a group message to every member in one order, between any agents", () =>
+  Effect.gen(function* () {
+    const f = yield* peers;
+    const bobInbox = yield* f.received(f.bob);
+    const carolInbox = yield* f.received(f.carol);
+    const first = yield* Message.create({
+      author: f.cards.alice,
+      recipients: [f.cards.bob, f.cards.carol],
+      content: [{ type: "text", text: "to the group" }],
+    });
+    const second = yield* Message.create({
+      author: f.cards.bob,
+      recipients: [f.cards.alice, f.cards.carol],
+      content: [{ type: "text", text: "from another member" }],
+    });
+    yield* f.alice.send(first);
+    yield* f.bob.send(second);
+    expect(yield* Queue.take(bobInbox)).toEqual({
+      kind: "message",
+      message: first,
+    });
+    expect(yield* Queue.takeN(carolInbox, 2)).toEqual(
+      Chunk.make(
+        { kind: "message", message: first },
+        { kind: "message", message: second },
+      ),
+    );
+    const members: Conversation = [f.cards.alice, f.cards.bob, f.cards.carol];
+    const histories = yield* Effect.forEach(
+      [f.alice, f.bob, f.carol],
+      (agent) => agent.readHistory({ members }),
+    );
+    for (const history of histories) {
+      expect(history.entries.map((entry) => entry.message)).toEqual([
+        first,
+        second,
+      ]);
+    }
+    const direct = yield* Message.create({
+      author: f.cards.bob,
+      recipients: [f.cards.carol],
+      content: [{ type: "text", text: "between two members" }],
+    });
+    yield* f.bob.send(direct);
+    expect(yield* Queue.take(carolInbox)).toEqual({
+      kind: "message",
+      message: direct,
+    });
+  }));
+
+it("carries a question to its recipient and the answer back as a result", () =>
+  Effect.gen(function* () {
+    const f = yield* peers;
+    const aliceInbox = yield* f.received(f.alice);
+    const bobInbox = yield* f.received(f.bob);
+    const answer = { slot: "tue" };
+    const request = yield* Request.create({
+      author: f.cards.alice,
+      recipients: [f.cards.bob],
+      question: "Which day works?",
+      op: "gather",
+      requestedSchema: form,
+      deadline: 60,
+    });
+    yield* f.alice.send(request);
+    const asked = yield* Queue.take(bobInbox);
+    if (asked.kind !== "request") {
+      return yield* Effect.dieMessage("Expected Bob to receive the question");
+    }
+    yield* f.bob.send(
+      yield* Answer.create({
+        author: f.cards.bob,
+        request: asked.message,
+        response: { action: "accept", content: answer },
+      }),
+    );
+    const settled = yield* Queue.take(aliceInbox);
+    expect(settled).toMatchObject({
+      kind: "result",
+      result: {
+        request,
+        closedBy: "settled",
+        outcomes: [
+          { member: f.cards.bob, outcome: { kind: "answered", content: answer } },
+        ],
+      },
+    });
   }));

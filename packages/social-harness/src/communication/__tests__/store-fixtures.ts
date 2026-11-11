@@ -6,9 +6,7 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
 import { migrateDaemon } from "../../database/migrations.js";
-import * as StoreProtocol from "../p2p/conversations/store.js";
-import * as StoreMessages from "../store.js";
-const storeOperations = { ...StoreMessages, ...StoreProtocol };
+import * as storeOperations from "../store.js";
 /** The scope closes SQLite before its temporary state directory is removed. */
 export const openTestDatabase = (directory?: string) =>
   Effect.gen(function* () {
@@ -48,44 +46,5 @@ function testStore(agentKey: string) {
       undefined,
       agentKey,
     ),
-    bindMessageIntent: storeOperations.bindMessageIntent.bind(
-      undefined,
-      agentKey,
-    ),
-    putConversationFoundation: storeOperations.putConversationFoundation.bind(
-      undefined,
-      agentKey,
-    ),
-    lockProposal: storeOperations.lockProposal.bind(undefined, agentKey),
-    lockFirstMessageProposal: storeOperations.lockFirstMessageProposal.bind(
-      undefined,
-      agentKey,
-    ),
-    recoverStoredState: storeOperations.recoverStoredState.bind(
-      undefined,
-      agentKey,
-    ),
-    acceptMessage: storeOperations.acceptMessage.bind(undefined, agentKey),
-    readAcceptedMessage: storeOperations.readAcceptedMessage.bind(
-      undefined,
-      agentKey,
-    ),
-    stageRecordAndOutbound: storeOperations.stageRecordAndOutbound.bind(
-      undefined,
-      agentKey,
-    ),
-    mergeEvidence: storeOperations.mergeEvidence.bind(undefined, agentKey),
-    applyCertifiedRecord: storeOperations.applyCertifiedRecord.bind(
-      undefined,
-      agentKey,
-    ),
-    enqueueOutbound: storeOperations.enqueueOutbound.bind(undefined, agentKey),
-    beginOutbound: storeOperations.beginOutbound.bind(undefined, agentKey),
-    completeOutbound: storeOperations.completeOutbound.bind(
-      undefined,
-      agentKey,
-    ),
-    transaction: <A, E, R>(work: Effect.Effect<A, E, R>) =>
-      storeOperations.transaction(agentKey, work),
   };
 }
