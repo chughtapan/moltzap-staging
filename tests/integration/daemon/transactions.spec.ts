@@ -74,10 +74,9 @@ it(
       const firstServer = AgentName.make("first-server");
       const secondServer = AgentName.make("second-server");
       const bind = (serverAgentName: AgentName) =>
-        Communication.configureTransport({
-          kind: "client-server",
-          serverAgentName,
-        }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+        Communication.clientServer
+          .claim(serverAgentName)
+          .pipe(Effect.provideService(SqlClient.SqlClient, sql));
       yield* bind(firstServer);
       const locked = yield* Deferred.make<undefined>();
       const release = yield* Deferred.make<undefined>();

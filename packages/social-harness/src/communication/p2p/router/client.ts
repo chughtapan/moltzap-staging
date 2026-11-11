@@ -17,13 +17,13 @@ import {
   Option,
   Schema,
 } from "effect";
-import type { AgentSigningAuthority } from "../../identity/keys.js";
-import { decodeCanonical } from "../../encoding/canonical-json.js";
+import type { AgentSigningAuthority } from "../../../identity/keys.js";
+import { decodeCanonical } from "../../../encoding/canonical-json.js";
 import {
   canonicalIdentifier,
   hasCanonicalBase64UrlLength,
-} from "../../encoding/identifier.js";
-import { AgentId } from "../../identity/agent-cards.js";
+} from "../../../encoding/identifier.js";
+import { AgentId } from "../../../identity/agent-cards.js";
 import {
   AgentSigningError,
   AuthenticationFailedError,
@@ -37,9 +37,9 @@ import {
   UnavailableError,
   UnsupportedMediaTypeError,
   VersionMismatchError,
-} from "../../identity/http-authentication.js";
-import { SignedMessage } from "../../identity/message-security.js";
-import { LIVE_WIRE_VERSIONS } from "../../version.js";
+} from "../../../identity/http-authentication.js";
+import { SignedMessage } from "../../../identity/message-security.js";
+import { LIVE_WIRE_VERSIONS } from "../../../version.js";
 
 /** Exact Router send target. */
 const routerSendPath = "/v1/messages:send";

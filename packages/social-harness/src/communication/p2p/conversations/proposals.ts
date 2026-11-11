@@ -10,15 +10,19 @@ import type {
   EngineOutboxError,
   EngineRuntime,
 } from "./conversation.js";
-import { encodeCanonical } from "../../encoding/canonical-json.js";
+import { encodeCanonical } from "../../../encoding/canonical-json.js";
 import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import { markRetries, type RetryOutcome } from "../../tracing.js";
-import { isTerminalSendFailure, SendError } from "../errors.js";
-import { compareAgentIds, type Message, messageMembers } from "../messages.js";
+} from "../../../identity/agent-cards.js";
+import { markRetries, type RetryOutcome } from "../../../tracing.js";
+import { isTerminalSendFailure, SendError } from "../../errors.js";
+import {
+  compareAgentIds,
+  type Message,
+  messageMembers,
+} from "../../messages.js";
 import {
   type ActionCore,
   type ActionHash,
@@ -32,8 +36,8 @@ import {
   type MessageIntent,
   MessageIntent as MessageIntentSchema,
   type VerifiedMembership,
-} from "../records.js";
-import { type EndpointStoreError, failMessage } from "../store.js";
+} from "../../records.js";
+import { type EndpointStoreError, failMessage } from "../../store.js";
 import { anchorHashAtHead } from "./history.js";
 import { catchUpRetrySchedule, pendingRecoveryFence } from "./recovery.js";
 import {

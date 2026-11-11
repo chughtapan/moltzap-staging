@@ -19,7 +19,7 @@ import {
   ScopedCache,
 } from "effect";
 import { MessageAddressInput } from "../communication/messages.js";
-import { Router } from "../communication/router/client.js";
+import { Router } from "../communication/p2p/router/client.js";
 import { Communication } from "../communication/service.js";
 import { checkDatabase } from "../database/migrations.js";
 import { databaseAccess, databaseConnection } from "../database/sql.js";
@@ -69,7 +69,6 @@ function runDaemon() {
       yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
       yield* checkDatabase(access.unlockKey);
-      yield* Communication.configureTransport(settings.mode);
       if (settings.authentication.kind === "local") {
         yield* getOrCreateOwnedAgent(localOwner, access.unlockKey, agentName);
       }
@@ -79,7 +78,7 @@ function runDaemon() {
           : yield* serviceNorms(settings.norms);
       const mode =
         settings.mode.kind === "p2p"
-          ? p2pMode(settings, settings.mode)
+          ? yield* p2pMode(settings, settings.mode)
           : yield* clientServerMode(settings.mode, {
               unlockKey: access.unlockKey,
               hasNorms: norms !== undefined,
@@ -118,7 +117,7 @@ function p2pMode(
     sendTimeout: Duration.seconds(30),
     pollTimeout: Duration.seconds(35),
   }).pipe(Layer.provide(NodeHttpClient.layer));
-  return {
+  return Effect.as(Communication.p2p.claim, {
     registrySignerPublicKey: mode.registrySignerPublicKey,
     registry: Registry.layer({
       origin: mode.registryOrigin,
@@ -127,8 +126,8 @@ function p2pMode(
       admissionCredential: Option.fromNullable(mode.admissionCredential),
     }).pipe(Layer.provide(NodeHttpClient.layer)),
     agent: () => ({
-      communication: (options: Parameters<typeof Communication.layer>[0]) =>
-        Communication.layer(options).pipe(Layer.provide(router)),
+      communication: (options: Parameters<typeof Communication.p2p.layer>[0]) =>
+        Communication.p2p.layer(options).pipe(Layer.provide(router)),
       checks: <Own>({ own }: { readonly own: Own }) => own,
       harness: { hideGroups: settings.hideGroups },
       app: {
@@ -137,7 +136,7 @@ function p2pMode(
       },
       started: () => Effect.void,
     }),
-  };
+  });
 }
 
 /**
@@ -156,6 +155,7 @@ function clientServerMode(
 ) {
   return Effect.gen(function* () {
     const { serverAgentName } = mode;
+    yield* Communication.clientServer.claim(serverAgentName);
     yield* getOrCreateOwnedAgent(
       serverAgentOwner,
       input.unlockKey,
@@ -166,8 +166,8 @@ function clientServerMode(
       Option.none<Context.Tag.Service<typeof HeldNorms>>(),
     );
     const communication = (
-      options: Parameters<typeof Communication.layer>[0],
-    ) => Communication.clientServerLayer({ ...options, serverAgentName });
+      options: Parameters<typeof Communication.p2p.layer>[0],
+    ) => Communication.clientServer.layer({ ...options, serverAgentName });
     const server = {
       communication,
       checks: <Own>({ own }: { readonly own: Own }) => own,
@@ -232,7 +232,7 @@ function readsNormsOf(
 
 /** The one decision the daemon makes about how its agents are named, checked and reached. */
 type Mode =
-  | ReturnType<typeof p2pMode>
+  | Effect.Effect.Success<ReturnType<typeof p2pMode>>
   | Effect.Effect.Success<ReturnType<typeof clientServerMode>>;
 
 /** What every agent of the daemon is built from. */

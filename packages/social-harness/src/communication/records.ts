@@ -37,7 +37,7 @@ import {
 } from "../identity/message-security.js";
 import { wireVersions } from "../version.js";
 import { compareAgentIds, Content, maximumMembers, MsgId } from "./messages.js";
-import { RouterInstanceId } from "./router/client.js";
+import { RouterInstanceId } from "./p2p/router/client.js";
 
 /* eslint-disable jsdoc/require-jsdoc -- These package-private Schema names are the exact closed protocol vocabulary. */
 

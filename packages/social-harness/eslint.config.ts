@@ -8,14 +8,14 @@ import { packageEslintConfig } from "../../eslint.shared.js";
 const testFiles = ["src/**/*.spec.ts", "src/**/__tests__/**"];
 
 /**
- * Keeps `communication/conversations/service.ts` the one production module that signs
+ * Keeps `communication/p2p/conversations/service.ts` the one production module that signs
  * an outer envelope, which it stores before the Router worker sends it.
  * `communication/records.ts` defines the signers.
  */
 const soleOuterSigner = {
   files: ["src/**/*.ts"],
   ignores: [
-    "src/communication/conversations/conversation.ts",
+    "src/communication/p2p/conversations/conversation.ts",
     "src/communication/records.ts",
     ...testFiles,
   ],
@@ -28,7 +28,7 @@ const soleOuterSigner = {
             regex: "(^|/)records\\.js$",
             importNames: ["signOuterPacket", "signOuterEvidence"],
             message:
-              "Only communication/conversations/service.ts signs outer envelopes; queue the body through the engine outbox.",
+              "Only communication/p2p/conversations/service.ts signs outer envelopes; queue the body through the engine outbox.",
           },
         ],
       },
@@ -89,11 +89,10 @@ export default [
       "src/identity/http-authentication.ts",
       "src/identity/http-authentication.spec.ts",
       "src/identity/message-security.spec.ts",
-      "src/communication/conversations/certification.ts",
+      "src/communication/p2p/conversations/certification.ts",
       "src/identity/message-security.ts",
       "src/communication/messages.ts",
       "src/communication/records.ts",
-      "src/communication/service.ts",
     ],
     rules: {
       "max-lines": [
@@ -103,7 +102,7 @@ export default [
     },
   },
   {
-    files: ["src/communication/conversations/store.ts"],
+    files: ["src/communication/p2p/conversations/store.ts"],
     rules: {
       "max-lines": [
         "error",
@@ -145,12 +144,12 @@ export default [
   },
   {
     files: [
-      "src/communication/conversations/reanchor.ts",
-      "src/communication/conversations/recovery.ts",
-      "src/communication/router/connection.ts",
-      "src/communication/collectives.ts",
+      "src/communication/p2p/conversations/reanchor.ts",
+      "src/communication/p2p/conversations/recovery.ts",
+      "src/communication/p2p/router/connection.ts",
+      "src/communication/p2p/collectives.ts",
       "src/communication/records.spec.ts",
-      "src/communication/conversations/history.ts",
+      "src/communication/p2p/conversations/history.ts",
     ],
     rules: {
       "max-lines": [

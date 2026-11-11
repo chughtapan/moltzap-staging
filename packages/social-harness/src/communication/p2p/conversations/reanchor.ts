@@ -2,18 +2,18 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../identity/agent-cards.js";
+import type { AgentId } from "../../../identity/agent-cards.js";
 import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
   encodeCanonical,
   sameBytes,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../identity/message-security.js";
+} from "../../../identity/message-security.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,
@@ -39,7 +39,8 @@ import {
   verifyDeliveredEvidence,
   verifyOuterMessage,
   verifyStableEvidence,
-} from "../records.js";
+} from "../../records.js";
+import { isSemanticStoreRejection } from "../../store.js";
 import {
   type RouterDiscontinuityReason,
   type RouterIngressDisposition,
@@ -47,7 +48,6 @@ import {
   RouterWorkerPersistenceError,
   type RouterWorkerRecovery,
 } from "../router/connection.js";
-import { isSemanticStoreRejection } from "../store.js";
 import {
   anchorRouterInstanceId,
   durablePosition,

@@ -6,7 +6,7 @@ import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer } from "effect";
 import { join } from "node:path";
 import { migrateDaemon } from "../../database/migrations.js";
-import * as StoreProtocol from "../conversations/store.js";
+import * as StoreProtocol from "../p2p/conversations/store.js";
 import * as StoreMessages from "../store.js";
 const storeOperations = { ...StoreMessages, ...StoreProtocol };
 /** The scope closes SQLite before its temporary state directory is removed. */

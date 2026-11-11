@@ -51,7 +51,7 @@
       "reason": "Closed communication failures"
     },
     {
-      "file": "communication/router/client.ts",
+      "file": "communication/p2p/router/client.ts",
       "reason": "Opaque Router operations used by server composition"
     },
     {
@@ -177,7 +177,7 @@
         "src/communication/service.ts",
         "src/communication/messages.ts",
         "src/communication/errors.ts",
-        "src/communication/router/client.ts"
+        "src/communication/p2p/router/client.ts"
       ],
       "reason": "Messages, requests and retained history encapsulate protocol and Router recovery"
     },

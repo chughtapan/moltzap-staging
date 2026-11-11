@@ -4,8 +4,8 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { absurd, Effect } from "effect";
-import type { SignedMessage } from "../../identity/message-security.js";
-import type { SendError } from "../errors.js";
+import type { SignedMessage } from "../../../identity/message-security.js";
+import type { SendError } from "../../errors.js";
 import type {
   EngineActionFold,
   EngineConversation,
@@ -17,7 +17,7 @@ import {
   decodeCanonical,
   encodeCanonical,
   equalCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -43,13 +43,16 @@ import {
   verifyMembershipDescriptor,
   verifyOuterMessage,
   verifyStableEvidence,
-} from "../records.js";
+} from "../../records.js";
+import {
+  type EndpointStoreError,
+  isSemanticStoreRejection,
+} from "../../store.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
   RouterWorkerPersistenceError,
 } from "../router/connection.js";
-import { type EndpointStoreError, isSemanticStoreRejection } from "../store.js";
 import {
   evidenceMatchesFold,
   type EvidenceRoute,

@@ -18,15 +18,15 @@ import { createHash } from "node:crypto";
 import type {
   AgentId,
   VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import type { AgentSigningAuthority } from "../../identity/keys.js";
-import { decodeCanonical } from "../../encoding/canonical-json.js";
+} from "../../../identity/agent-cards.js";
+import type { AgentSigningAuthority } from "../../../identity/keys.js";
+import { decodeCanonical } from "../../../encoding/canonical-json.js";
 import {
   type LiveSignedMessage,
   SignedMessage,
   type VerifiedSignedMessage,
-} from "../../identity/message-security.js";
-import { Registry } from "../../identity/registry.js";
+} from "../../../identity/message-security.js";
+import { Registry } from "../../../identity/registry.js";
 import {
   beginOutbound,
   completeOutbound,

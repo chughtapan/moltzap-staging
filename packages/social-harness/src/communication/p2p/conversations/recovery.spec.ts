@@ -21,53 +21,53 @@ import {
 } from "effect";
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, vi } from "vitest";
-import type { RegistryLookupResult } from "../../identity/registry.js";
+import type { RegistryLookupResult } from "../../../identity/registry.js";
 import type { EndpointRecovery, StoredOutboundMessage } from "./store.js";
 import {
   authoredMessage,
   forwardStoredOutbound,
   openOuterBody,
   untilLive,
-} from "../__tests__/conversation-fixtures.js";
+} from "../../__tests__/conversation-fixtures.js";
 import {
   buildCertifiedFirstMessage,
   signEvidence,
   type SigningIdentity,
-} from "../__tests__/records-fixtures.js";
+} from "../../__tests__/records-fixtures.js";
 import {
   corruptSignature,
   pollCursor as fixturePollCursor,
-} from "../__tests__/router-fixtures.js";
+} from "../../__tests__/router-fixtures.js";
 import {
   openTestDatabase,
   type TestDatabase,
-} from "../__tests__/store-fixtures.js";
+} from "../../__tests__/store-fixtures.js";
 import {
   digest,
   identifier,
   issueTestCard,
   makeTestAuthority,
   type RegistryKeyPair,
-} from "../../__tests__/agents.js";
+} from "../../../__tests__/agents.js";
 import {
   decodeCanonical,
   encodeCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   agentCardOf,
   AgentIdentityCard,
   type VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import { AgentPublicKey } from "../../identity/keys.js";
-import { SignedMessage } from "../../identity/message-security.js";
-import { WIRE_VERSION } from "../../version.js";
+} from "../../../identity/agent-cards.js";
+import { AgentPublicKey } from "../../../identity/keys.js";
+import { SignedMessage } from "../../../identity/message-security.js";
+import { WIRE_VERSION } from "../../../version.js";
 import {
   compareAgentIds,
   Message,
   messageFromIntent,
   messageMembers,
   mintMsgId,
-} from "../messages.js";
+} from "../../messages.js";
 import {
   type ActionCertifiedRecord as ActionCertifiedRecordValue,
   type ActionProposal,
@@ -104,7 +104,9 @@ import {
   verifyCatchUpPage,
   verifyCompletedReanchor,
   verifyMembershipDescriptor,
-} from "../records.js";
+} from "../../records.js";
+import * as testStoreMessages from "../../store.js";
+import { initializeCommunication } from "../../store.js";
 import { RouterInstanceId } from "../router/client.js";
 import {
   type RouterDiscontinuityReason,
@@ -112,8 +114,6 @@ import {
   RouterWorkerDiscontinuityError,
   type RouterWorkerIngress,
 } from "../router/connection.js";
-import * as testStoreMessages from "../store.js";
-import { initializeCommunication } from "../store.js";
 import { acceptEngineRecoveryIngress } from "./certification.js";
 import {
   type EndpointEngine,

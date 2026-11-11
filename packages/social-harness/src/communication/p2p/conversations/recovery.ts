@@ -11,8 +11,8 @@ import {
   Schedule,
   Scope,
 } from "effect";
-import type { AgentId } from "../../identity/agent-cards.js";
-import type { SignedMessage } from "../../identity/message-security.js";
+import type { AgentId } from "../../../identity/agent-cards.js";
+import type { SignedMessage } from "../../../identity/message-security.js";
 import type {
   EngineActionFold,
   EngineConversation,
@@ -21,14 +21,14 @@ import type {
 import {
   ClientRepresentationError,
   decodeCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   exitOutcome,
   markRetries,
   type RetryOutcome,
   retryPending,
   retrySettled,
-} from "../../tracing.js";
+} from "../../../tracing.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -47,7 +47,7 @@ import {
   verifyActionCertifiedRecord,
   verifyDeliveredEvidence,
   verifyOuterMessage,
-} from "../records.js";
+} from "../../records.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,

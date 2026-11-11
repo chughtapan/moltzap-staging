@@ -10,7 +10,7 @@ import {
   PollCursor,
   RouterInstanceId,
   type RouterPollResult,
-} from "../router/client.js";
+} from "../p2p/router/client.js";
 
 /**
  * Construct a deterministic test RouterInstanceId.

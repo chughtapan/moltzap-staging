@@ -12,22 +12,22 @@ import {
 import type {
   AgentId,
   VerifiedAgentIdentityCard,
-} from "../../identity/agent-cards.js";
-import type { Registry } from "../../identity/registry.js";
-import type { SendError } from "../errors.js";
-import type { Message } from "../messages.js";
-import type { EndpointStoreError } from "../store.js";
+} from "../../../identity/agent-cards.js";
+import type { Registry } from "../../../identity/registry.js";
+import type { SendError } from "../../errors.js";
+import type { Message } from "../../messages.js";
+import type { EndpointStoreError } from "../../store.js";
 import {
   type ClientRepresentationError,
   encodeCanonical,
-} from "../../encoding/canonical-json.js";
+} from "../../../encoding/canonical-json.js";
 import {
   type AgentPublicKey,
   AgentSigningAuthority,
-} from "../../identity/keys.js";
-import { SignedMessage } from "../../identity/message-security.js";
-import { exitOutcome, markRetries } from "../../tracing.js";
-import { wireVersions } from "../../version.js";
+} from "../../../identity/keys.js";
+import { SignedMessage } from "../../../identity/message-security.js";
+import { exitOutcome, markRetries } from "../../../tracing.js";
+import { wireVersions } from "../../../version.js";
 import {
   type ActionCertifiedRecord,
   type ActionCore,
@@ -42,7 +42,7 @@ import {
   signOuterEvidence,
   signOuterPacket,
   type VerifiedMembership,
-} from "../records.js";
+} from "../../records.js";
 import {
   describeRouterWorkerFailure,
   isTransientRouterWorkerError,

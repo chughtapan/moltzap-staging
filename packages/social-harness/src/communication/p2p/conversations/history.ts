@@ -2,7 +2,7 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, type ParseResult, Schema } from "effect";
-import type { AgentPublicKey } from "../../identity/keys.js";
+import type { AgentPublicKey } from "../../../identity/keys.js";
 import type {
   EndpointEngineInput,
   EngineActionFold,
@@ -16,13 +16,13 @@ import {
   encodeCanonical,
   representationFailure,
   sameBytes,
-} from "../../encoding/canonical-json.js";
-import { agentCardOf, type AgentId } from "../../identity/agent-cards.js";
+} from "../../../encoding/canonical-json.js";
+import { agentCardOf, type AgentId } from "../../../identity/agent-cards.js";
 import {
   SignedMessage,
   type SignedMessage as SignedMessageValue,
-} from "../../identity/message-security.js";
-import { compareAgentIds, Message, messageFromIntent } from "../messages.js";
+} from "../../../identity/message-security.js";
+import { compareAgentIds, Message, messageFromIntent } from "../../messages.js";
 import {
   type ActionCertifiedRecord,
   ActionCore,
@@ -56,7 +56,7 @@ import {
   verifyOuterMessage,
   verifyRecordCore,
   verifyStableEvidence,
-} from "../records.js";
+} from "../../records.js";
 import {
   RouterWorkerPersistenceError,
   RouterWorkerRecoveryError,

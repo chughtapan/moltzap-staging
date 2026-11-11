@@ -9,7 +9,7 @@ import type { AgentSigningAuthority } from "../../identity/keys.js";
 import type {
   ProtocolEvidence,
   CertifiedRecord as StoredCertifiedRecord,
-} from "../conversations/store.js";
+} from "../p2p/conversations/store.js";
 import type { TestDatabase } from "./store-fixtures.js";
 import { encodeCanonical } from "../../encoding/canonical-json.js";
 import {
@@ -18,8 +18,11 @@ import {
 } from "../../identity/agent-cards.js";
 import { SignedMessage } from "../../identity/message-security.js";
 import { WIRE_VERSION } from "../../version.js";
-import { protocolEvidence, stagedRecord } from "../conversations/history.js";
 import { Message, messageFromIntent, mintMsgId } from "../messages.js";
+import {
+  protocolEvidence,
+  stagedRecord,
+} from "../p2p/conversations/history.js";
 import {
   ActionCore,
   type ActionHash,

@@ -5,13 +5,13 @@
 
 import type { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Schema } from "effect";
-import type { AgentId } from "../../identity/agent-cards.js";
+import type { AgentId } from "../../../identity/agent-cards.js";
 import type { EngineActionFold, EngineRuntime } from "./conversation.js";
 import {
   type ClientRepresentationError,
   decodeCanonical,
-} from "../../encoding/canonical-json.js";
-import { SignedMessage } from "../../identity/message-security.js";
+} from "../../../encoding/canonical-json.js";
+import { SignedMessage } from "../../../identity/message-security.js";
 import {
   AnchorHash,
   type AnchorHash as AnchorHashValue,
@@ -34,7 +34,7 @@ import {
   verifyCatchUpIncomplete,
   verifyCatchUpPage,
   verifyOuterMessage,
-} from "../records.js";
+} from "../../records.js";
 import {
   type RouterIngressDisposition,
   type RouterWorkerIngress,
