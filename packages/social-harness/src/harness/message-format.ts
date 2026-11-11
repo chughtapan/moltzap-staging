@@ -19,26 +19,24 @@ import type {
 } from "../firewall/index.js";
 import { SendError, type ValidationIssue } from "../communication/errors.js";
 import {
+  AcceptResponse,
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
   agentAddressOf,
+  CollectiveId,
   type Content,
+  DeadlineSeconds,
+  DeclineResponse,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
+  type Message,
   MessageAddressInput,
   MsgId,
-  wellFormedString,
-} from "../communication/messages.js";
-import {
-  AcceptResponse,
-  CollectiveId,
-  DeadlineSeconds,
-  DeclineResponse,
-  type Message,
   type Request,
   RequestedSchema,
-} from "../communication/service.js";
+  wellFormedString,
+} from "../communication/messages.js";
 import { compareAscii, exactStruct } from "../encoding/index.js";
 import { type AgentCard, AgentName } from "../identity/agent-cards.js";
 import { MessageAddress } from "./inbox.js";

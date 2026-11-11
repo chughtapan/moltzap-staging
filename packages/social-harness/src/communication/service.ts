@@ -37,13 +37,9 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
 export { CommunicationError } from "./errors.js";
 /** Messages and requests retain the same semantic values at every service handoff. */
 export {
-  AcceptResponse,
   Answer,
   AnswerOutcome,
   CollectiveId,
-  DeadlineSeconds,
-  DeclineResponse,
-  decodeCollectiveFailure,
   Message,
   MessageReference,
   PaginatedRequest,
