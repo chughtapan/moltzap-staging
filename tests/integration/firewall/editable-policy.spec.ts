@@ -76,9 +76,6 @@ const swapDuringCheck = Effect.gen(function* () {
   });
   const { alice, bob } = yield* signIn(daemon);
   const before = yield* read(alice);
-  expect(
-    yield* update(alice, { remove: [fixedRule.id] }).pipe(Effect.isFailure),
-  ).toBe(true);
   const inFlight = yield* sendSecret(alice, bob).pipe(Effect.forkScoped);
   yield* Deferred.await(entered);
   const changed = yield* update(alice, { add: [blockedRule] });

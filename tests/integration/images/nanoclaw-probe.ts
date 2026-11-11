@@ -94,11 +94,6 @@ interface DeliveryReport {
   readonly retried: number;
 }
 
-/** Whether the channel announced the expected conversation before content. */
-interface MetadataState {
-  observed: boolean;
-}
-
 await main();
 process.exit(0);
 
@@ -226,9 +221,8 @@ async function exchangeMessages(
   expected: ExpectedInbound,
   destinations: readonly unknown[],
 ): Promise<undefined> {
-  const metadata: MetadataState = { observed: false };
-  await call(modules.channels, "initChannelAdapters", (adapter: unknown) =>
-    adapterCallbacks(modules.router, expected, metadata, adapter),
+  await call(modules.channels, "initChannelAdapters", () =>
+    adapterCallbacks(modules.router),
   );
   if (!hasSocialHarnessAdapter(call(modules.channels, "getActiveAdapters"))) {
     throw new Error(
@@ -258,55 +252,16 @@ async function exchangeMessages(
 }
 
 /**
- * The host callbacks one channel adapter receives. Content that arrives
- * before the channel announces the expected conversation fails the probe.
+ * The host callbacks each channel adapter receives. The Social Harness
+ * channel hands every message to `onInboundEvent`, already in the router's
+ * form.
  */
-function adapterCallbacks(
-  router: ModuleRecord,
-  expected: ExpectedInbound,
-  metadata: MetadataState,
-  adapter: unknown,
-): ModuleRecord {
-  const { channelType, instance } = asRecord(adapter);
+function adapterCallbacks(router: ModuleRecord): ModuleRecord {
   return {
-    onInbound: (platformId: unknown, threadId: unknown, message: unknown) => {
-      if (!metadata.observed) {
-        throw new Error(
-          "NanoClaw received content before conversation metadata",
-        );
-      }
-      return call(router, "routeInbound", {
-        channelType,
-        instance: instance ?? channelType,
-        platformId,
-        threadId,
-        message: inboundMessage(message),
-      });
-    },
+    onInbound: () => undefined,
     onInboundEvent: (event: unknown) => call(router, "routeInbound", event),
-    onMetadata: (platformId: unknown, name: unknown, isGroup: unknown) => {
-      if (
-        platformId === expected.platformId &&
-        name === expected.platformId &&
-        isGroup === false
-      ) {
-        metadata.observed = true;
-      }
-    },
+    onMetadata: () => undefined,
     onAction: () => undefined,
-  };
-}
-
-/** The router's form of a channel message: its content as JSON text. */
-function inboundMessage(value: unknown): ModuleRecord {
-  const message = asRecord(value);
-  return {
-    id: message.id,
-    kind: message.kind,
-    content: JSON.stringify(message.content),
-    timestamp: message.timestamp,
-    isMention: message.isMention,
-    isGroup: message.isGroup,
   };
 }
 

@@ -146,19 +146,12 @@ async function assertRepliesRecorded(
   { caller, target, peer }: Trio,
   shared: string,
 ): Promise<undefined> {
-  assert.deepEqual(await caller.history(target.address), [
-    textContent(INBOUND),
-    [{ type: "text", text: DIRECT_REPLY }],
-  ]);
-  assert.deepEqual(await target.history(caller.address), [
-    [{ type: "text", text: INBOUND }],
-    textContent(DIRECT_REPLY),
-  ]);
+  const direct = [textContent(INBOUND), textContent(DIRECT_REPLY)];
+  assert.deepEqual(await caller.history(target.address), direct);
+  assert.deepEqual(await target.history(caller.address), direct);
   for (const endpoint of [caller, target, peer]) {
     assert.deepEqual(await endpoint.history(shared), [
-      endpoint === target
-        ? textContent(GROUP_REPLY)
-        : [{ type: "text", text: GROUP_REPLY }],
+      textContent(GROUP_REPLY),
     ]);
   }
 }
