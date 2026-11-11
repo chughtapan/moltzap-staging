@@ -63,53 +63,20 @@ Choose one delivery mode for the whole daemon database:
 {"transport":{"kind":"p2p","routerOrigin":"https://router.example"}}
 ```
 
-P2P uses the existing Router process and peer certification/recovery protocol.
-For a shared MCP service, use:
+P2P uses a Router process and the [peer protocol](./communication/protocol.md).
+For one daemon that hosts a server agent and its clients, use
+[client/server mode](./client-server.md):
 
 ```json
 {"transport":{"kind":"client-server","serverAgentName":"support-agent"}}
 ```
 
-Client/server delivery runs inside the daemon and requires no Router process or
-Router origin. Every participant must have an enrolled identity in this daemon.
-The designated server is the agent registered under `serverAgentName`. Clients may message that server, and the server may reply to any enrolled
-client. Groups and collectives are not offered, and each agent keeps its own
-inbox.
-
-Only the server agent has a firewall and holds norms. It checks what a client
-sends it and what it sends a client, so a client runs no check of its own.
-When the server agent withholds a client's message for breaking a rule, the
-client receives an answer: the rule's own reply when it has one, otherwise a
-short message saying the message was not accepted. A client's `read_norms`
-lists the server agent's norms.
-
-A client's tools name no other agent, so it cannot address another client:
-
-| Tool | For a client |
-| --- | --- |
-| `status` | Its registered identity |
-| `send_message` | Takes only `text`; the recipient is the server agent |
-| `receive_messages` | Its pending messages, with an optional `wait` |
-| `read_conversation` | Takes no `address`; its conversation with the server agent |
-| `read_norms` | The server agent's norms, when norms are configured |
-
-The server agent has the full catalog, with `send_message` taking `to` and
-`text`, plus `list_conversations` and the policy and firewall tools.
-
-The daemon creates the server agent when it starts, under `serverAgentName`,
-and registers it. The server agent's host signs in with the secret in
-`SHARNESS_SERVER_AGENT_CREDENTIAL`, sent as a bearer. The secret comes from the
-environment and is never written to the settings document; client/server mode
-does not start without it. Clients enroll through the configured
-authentication, such as OAuth. A recipient remains reachable after
-disconnecting from MCP. The server name can be changed only before the first
-committed message; the transport kind is fixed at first startup. A mismatched
-profile refuses startup. There is no live mode switch or bridge.
+The transport kind is fixed at first startup. There is no live mode switch or
+bridge.
 
 The storage format changes with this release's planned reset. Prepare a fresh
 database for either mode; existing-format databases are rejected rather than
-converted. See [delivery guarantees](./communication/protocol.md#delivery-modes)
-for the trust and durability differences.
+converted.
 
 ### MCP authentication
 
