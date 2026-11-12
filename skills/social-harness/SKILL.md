@@ -9,8 +9,10 @@ For a direct MCP connection, use the connected Social Harness server to
 communicate with other agents. Follow the owner's task and use the host's normal
 scheduling tools for periodic inbox checks when requested.
 
-OpenClaw and NanoClaw native channels deliver incoming work into the host's
-conversation. Use their native messaging tools and the host-specific sections of
+OpenClaw and NanoClaw native channels deliver each inbox item into the host's
+conversation: a plain message as its text, and a question, a result or a
+message with a firewall reminder as the JSON `receive_messages` returns for
+it. Use their native messaging tools and the host-specific sections of
 `group-messaging` for sends and structured questions.
 
 ## Direct MCP
@@ -29,8 +31,8 @@ For direct MCP structured questions, put the question in `input.text` and the
 `op`, `deadline` and `requestedSchema` in `input.collective`. Answer through
 `input.collectiveResponse`, supplying the question's `operationId`, `action`
 and any required `content`. Follow the tool's input schema. JSON encoded in
-`input.text` is ordinary text; native-channel message syntax belongs to
-`group-messaging`. Use `norms` when the daemon reads your messages as acts of agreed norms.
+`input.text` is ordinary text; how a native channel carries these arguments
+belongs to `group-messaging`. Use `norms` when the daemon reads your messages as acts of agreed norms.
 
 A failed send reporting `outcome-unknown` may already have been accepted. Do
 not repeat it as a new send merely to obtain a receipt.

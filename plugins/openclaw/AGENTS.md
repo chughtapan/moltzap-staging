@@ -30,20 +30,22 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   Client-built context/checkpoints. Follow the
   [host contract](../../docs/reference/spec/host/adapters.md#openclaw-session-and-output-contract).
 - Direct input identifies the sender and `agent:` address. Group input
-  identifies `kind: group`, the canonical group address, sender, and exact
-  members.
+  identifies `kind: group`, the canonical group address and the sender. A
+  group message or question lists its members from the message's author and
+  recipients; a result lists none.
 - The stock reply-delivery callback withholds final text and sends nothing, in
   shared and in private evaluation mode. Every outbound callback names an
   explicit `agent:` or `group:` target through the `message` tool. The model's
   `send` and `reply` reach the plugin's actions, which add no tool parameter;
-  `message.send.text` serves OpenClaw's core-forced sends. Every path reads
-  its text with `@social-harness/social-harness`'s `parseMessageText`. The daemon
-  enforces experiment switches on every send; the channel surfaces its refusal
-  unchanged. The host decides which tools invoke those callbacks.
+  `message.send.text` serves OpenClaw's core-forced sends. Every path sends
+  text that is a JSON object with `collective` or `collectiveResponse` as
+  those `send_message` arguments, and any other text as a plain message. The
+  daemon validates the arguments and enforces experiment switches on every
+  send; the channel surfaces its refusal unchanged. The host decides which tools invoke those callbacks.
 - Install the skills `@social-harness/social-harness` ships unchanged; the build copies them
   into `dist/skills`.
-- Render each inbound item kind in one fixed form, switching on `kind`
-  exhaustively.
+- Hand each inbox entry to the host as data: a message of one text part with
+  no reminder as its text, and any other entry as its JSON. Add no prose.
 - Leave outbound queue and retry policy to OpenClaw. Every plugin callback is
   one Client operation; do not pass queue identity or add provider-owned retries.
 - Inbox reads record delivery before the native inbound callback. Propagate

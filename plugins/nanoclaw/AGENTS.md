@@ -21,15 +21,17 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   skills `@social-harness/social-harness` ships into NanoClaw's shared container skills
   unchanged. Do not extend the host ABI, inbound
   router, inbox, session model, persistence, retry policy, or runtime driver.
-- Render each inbound item kind in one fixed form, switching on `kind`
-  exhaustively. A multicast's direct input identifies the sender and `agent:`
-  address; its group input retains the canonical group address, sender, exact
-  members, and native group flag.
+- Hand each inbox entry to the host as data: a message of one text part with
+  no reminder as its text, and any other entry as its JSON. Add no prose.
+  Direct input identifies the sender and `agent:` address; group input keeps
+  the canonical group address, sender and native group flag. A group message
+  or question lists its members from the message's author and recipients; a
+  result lists none.
 - NanoClaw owns friendly-name discovery and its own destination permissions.
   An explicit `agent:` or `group:` Social Harness address input needs no prior
   NanoClaw conversation or ACL row; Client validates and canonicalizes it.
 - Leave outbound queue and retry policy to NanoClaw. Every adapter call is one
-  Client operation, decoded from the `messages_out` content's text; do not pass `messages_out.id` or
+  Client operation, taken from the `messages_out` content's text; do not pass `messages_out.id` or
   add adapter deduplication. `send_message` has returned before the adapter
   sends, so the adapter presents a collective refusal through the native inbound
   callback and completes NanoClaw's outbound queue item after that callback

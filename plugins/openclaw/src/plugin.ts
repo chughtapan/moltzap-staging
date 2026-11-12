@@ -12,21 +12,16 @@ import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry"
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import {
   type AgentCard,
-  callTool,
+  callToolAsWritten,
   connectFromEnvironment,
-  groupMembers,
   type InboxEntry,
   type McpConnection,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
-  type MessageTextError,
   packageVersion,
-  parseMessageText,
-  renderInboxItem,
-  type SendRequest,
   type SendResult,
 } from "@social-harness/social-harness";
-import { Data, Effect, Option, Schema } from "effect";
+import { absurd, Data, Effect, Option, Schema } from "effect";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
 import {
   buildChannelOutboundSessionRoute,
@@ -59,9 +54,6 @@ type MessageAction = (typeof MESSAGE_ACTIONS)[number];
 
 /** Distinguishes model tool sends from OpenClaw core sends in gateway logs. */
 type OutboundOrigin = `message-action:${MessageAction}` | "send.text";
-
-/** The operation an outbound log line names. An answer is a collective response. */
-type OutboundOperation = "plain" | "gather" | "all_gather" | "answer";
 
 type OpenClawTargetKind = "user" | "group";
 type OpenClawOutboundFailure =
@@ -125,7 +117,8 @@ interface TurnSender {
 
 /**
  * One retained delivery becomes one host turn under its stable event id.
- * `address` selects the conversation for replies.
+ * `address` selects the conversation for replies. `members` lists a group
+ * message's author and recipients. `body` is what the model reads.
  */
 interface HostTurn {
   readonly id: string;
@@ -134,7 +127,6 @@ interface HostTurn {
   readonly sender: TurnSender;
   readonly members?: readonly string[];
   readonly body: string;
-  readonly bodyForAgent?: string;
 }
 
 interface InboundTurnInput {
@@ -143,7 +135,7 @@ interface InboundTurnInput {
   readonly turn: HostTurn;
 }
 
-/** One host send before validation. The host supplies each field untyped. */
+/** One host send as the host supplies it, each field unchecked. */
 interface TextSend {
   readonly accountId?: string | null;
   readonly to: unknown;
@@ -214,9 +206,15 @@ const isMessageAddressInput = Schema.is(MessageAddressInput);
 
 const carriesTargets = Schema.is(Schema.NonEmptyArray(Schema.Unknown));
 
+const decodeJsonObject = Schema.decodeUnknownOption(
+  Schema.parseJson(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+);
+
 /**
  * Each account retains its own runtime and MCP connection until reception ends
- * or OpenClaw aborts it. Inbox reads record delivery before native rendering.
+ * or OpenClaw aborts it. Inbox reads record delivery before the host's turn.
  * OpenClaw owns processing and retries. Final assistant text stays private.
  *
  * @internal
@@ -355,7 +353,7 @@ function handleMessageAction(
         text: ctx.params.message,
       }),
     ),
-    Effect.map(({ input }) => jsonResult({ ok: true, to: input.to })),
+    Effect.map(({ to }) => jsonResult({ ok: true, to })),
   );
 }
 
@@ -578,54 +576,73 @@ function reportConnected(
 function handleInboxEntry(
   ctx: ChannelGatewayContext<Account>,
   runtime: OpenClawAccountRuntime,
-  delivery: InboxEntry,
+  entry: InboxEntry,
 ) {
-  const id = delivery.deliveryToken;
-  const rendered = renderInboxItem(
-    delivery,
-    requestAnswerInstructions(delivery.address),
-  );
+  const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const turn: HostTurn = {
-    ...addressedTurn(
-      {
-        id,
-        sender:
-          rendered.author === undefined
-            ? { id: `sharness:${id}`, name: ENDPOINT_SENDER_NAME }
-            : agentSender(rendered.author),
-      },
-      delivery.address,
-      rendered.text,
-    ),
-    bodyForAgent: rendered.textForAgent,
+    id: entry.deliveryToken,
+    kind,
+    address: entry.address,
+    ...turnParticipants(entry, kind),
+    body: entryText(entry),
   };
   return logInbound(ctx, turn).pipe(
     Effect.zipRight(runOpenClawTurn(ctx, runtime, turn)),
   );
 }
 
-/** Reply instructions belong to the endpoint rather than the peer's quoted question. */
-function requestAnswerInstructions(to: MessageAddressInputValue): string {
-  return `Send the answer once as the whole message text, with the message tool's reply action or send to ${to}.`;
+/**
+ * What the model reads for an entry. A message of one text part with no
+ * firewall reminder is that text. Any other entry is its JSON, as
+ * `receive_messages` returns it.
+ */
+function entryText(entry: InboxEntry): string {
+  if (entry.item.kind === "multicast" && entry.guidance === undefined) {
+    const [part, ...rest] = entry.item.message.content;
+    if (part.type === "text" && rest.length === 0) {
+      return part.text;
+    }
+  }
+  return JSON.stringify(entry);
 }
 
 /**
- * A turn in the conversation `address` names: a group address makes a group
- * turn listing its members.
+ * Who a turn is from and, for a group message or question, who is in the
+ * group. A result is from Social Harness and names only the agents asked, so
+ * its turn lists no members.
  */
-function addressedTurn(
-  author: Pick<HostTurn, "id" | "sender">,
-  address: MessageAddressInputValue,
-  body: string,
-): HostTurn {
-  const members = groupMembers(address);
-  return members.length === 0
-    ? { ...author, kind: "direct", address, body }
-    : { ...author, kind: "group", address, members, body };
+function turnParticipants(
+  entry: InboxEntry,
+  kind: HostTurn["kind"],
+): Pick<HostTurn, "sender" | "members"> {
+  const { item } = entry;
+  switch (item.kind) {
+    case "multicast":
+    case "collectiveRequest": {
+      const { author, recipients } = item.message;
+      const sender = agentSender(author);
+      return kind === "direct"
+        ? { sender }
+        : { sender, members: [author, ...recipients].map(agentAddress) };
+    }
+    case "collectiveResult":
+      return {
+        sender: {
+          id: `sharness:${entry.deliveryToken}`,
+          name: ENDPOINT_SENDER_NAME,
+        },
+      };
+    default:
+      return absurd(item);
+  }
 }
 
 function agentSender(agent: AgentCard): TurnSender {
-  return { id: `agent:${agent.agentName}`, name: agent.agentName };
+  return { id: agentAddress(agent), name: agent.agentName };
+}
+
+function agentAddress(agent: AgentCard): string {
+  return `agent:${agent.agentName}`;
 }
 
 function logInbound(
@@ -660,7 +677,7 @@ function runOpenClawTurn(
           ingest: () => ({
             id: turn.id,
             rawText: turn.body,
-            textForAgent: modelBody(turn),
+            textForAgent: turn.body,
             textForCommands: turn.body,
             raw: turn,
           }),
@@ -741,16 +758,11 @@ function buildInboundContext(
     message: {
       body: turn.body,
       rawBody: turn.body,
-      bodyForAgent: modelBody(turn),
+      bodyForAgent: turn.body,
       commandBody: turn.body,
     },
     extra: inboundGroupFacts(turn),
   });
-}
-
-/** The host keeps its raw body while Client renders the model-facing guidance. */
-function modelBody(turn: HostTurn): string {
-  return turn.bodyForAgent ?? turn.body;
 }
 
 /**
@@ -840,76 +852,53 @@ function sendOpenClawText(
 }
 
 /**
- * Performs the operation stated in the message text and returns refusals as
- * model-facing tool errors. Each attempt logs its origin. A parse failure
- * has no operation to log.
+ * Sends what the message text states and returns refusals as model-facing
+ * tool errors. Each attempt logs its origin.
  */
 function sendText(
   connectedAccount: ConnectedAccountState,
   origin: OutboundOrigin,
   params: TextSend,
 ) {
-  return readSendRequest(params).pipe(
+  const prefix = `Social Harness: outbound via ${origin} to ${
+    typeof params.to === "string" ? params.to.slice(0, LOG_PREVIEW_CHARS) : "-"
+  }`;
+  return Effect.gen(function* () {
+    const { to, text } = yield* readTextSend(params);
+    const connection = yield* requireEndpoint(connectedAccount, params);
+    const result = yield* callToolAsWritten(
+      connection.client,
+      "send_message",
+      sendArguments(to, text),
+    );
+    yield* logOutbound(
+      connectedAccount,
+      `${prefix} id=${result.id} chars=${text.length}: ${text.slice(0, LOG_PREVIEW_CHARS)}`,
+    );
+    return { to, result };
+  }).pipe(
     Effect.tapError((error) =>
-      logOutboundFailure(
-        connectedAccount,
-        outboundLogPrefix(origin, params, "-"),
-        error,
-      ),
-    ),
-    Effect.flatMap((input) =>
-      requireEndpoint(connectedAccount, params).pipe(
-        Effect.flatMap((connection) =>
-          callTool(connection.client, {
-            name: "send_message",
-            arguments: input,
-          }),
-        ),
-        Effect.tapBoth({
-          onFailure: (error) =>
-            logOutboundFailure(
-              connectedAccount,
-              outboundLogPrefix(origin, params, outboundOperation(input)),
-              error,
-            ),
-          onSuccess: (result) =>
-            logOutbound(
-              connectedAccount,
-              `${outboundLogPrefix(origin, params, outboundOperation(input))} id=${result.id} chars=${textLength(params)}: ${textPreview(params)}`,
-            ),
-        }),
-        Effect.map((result) => ({ input, result })),
-      ),
+      logOutboundFailure(connectedAccount, prefix, error),
     ),
   );
 }
 
-function outboundOperation(input: SendRequest): OutboundOperation {
-  if ("collectiveResponse" in input) {
-    return "answer";
-  }
-  const op = input.collective?.op;
-  return op === undefined || op === "multicast" ? "plain" : op;
-}
-
-function outboundLogPrefix(
-  origin: OutboundOrigin,
-  params: TextSend,
-  operation: OutboundOperation | "-",
-): string {
-  const to =
-    typeof params.to === "string" ? params.to.slice(0, LOG_PREVIEW_CHARS) : "-";
-  return `Social Harness: outbound via ${origin} to ${to} op=${operation}`;
-}
-
-function textLength(params: TextSend): number {
-  return typeof params.text === "string" ? params.text.length : 0;
-}
-
-function textPreview(params: TextSend): string {
-  return typeof params.text === "string"
-    ? params.text.slice(0, LOG_PREVIEW_CHARS)
-    : "";
+/**
+ * The `send_message` arguments a host send amounts to. Text that is a JSON
+ * object with a `collective` or `collectiveResponse` property is the tool's
+ * own arguments for a question or an answer, which the daemon validates. Any
+ * other text is a plain message.
+ */
+function sendArguments(
+  to: MessageAddressInputValue,
+  text: string,
+): Readonly<Record<string, unknown>> {
+  const written = Option.getOrUndefined(decodeJsonObject(text));
+  return written !== undefined &&
+    (Object.hasOwn(written, "collective") ||
+      Object.hasOwn(written, "collectiveResponse"))
+    ? { ...written, to }
+    : { to, text };
 }
 
 function logOutboundFailure(
@@ -944,16 +933,12 @@ function requireEndpoint(
     : Effect.succeed(endpoint);
 }
 
-/**
- * Validate OpenClaw's optional target and text fields before handing them to
- * the shared message-text parser.
- */
-function readSendRequest({
+function readTextSend({
   to,
   text,
 }: TextSend): Effect.Effect<
-  SendRequest,
-  OpenClawOutboundError | MessageTextError
+  { readonly to: MessageAddressInputValue; readonly text: string },
+  OpenClawOutboundError
 > {
   if (!isMessageAddressInput(to)) {
     return Effect.fail(
@@ -965,7 +950,7 @@ function readSendRequest({
       new OpenClawOutboundError({ reason: "invalid-operation" }),
     );
   }
-  return parseMessageText(to, text);
+  return Effect.succeed({ to, text });
 }
 
 /**

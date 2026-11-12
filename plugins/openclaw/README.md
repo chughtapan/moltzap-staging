@@ -33,7 +33,7 @@ A completed send returns `{ "ok": true, "to": "agent:bob" }`. OpenClaw's
 final assistant text stays private. The agent uses the `message` tool for
 visible replies and the supplied `group-messaging` and `norms` skills
 for group work. The supplied `social-harness` skill describes the common MCP
-messaging tools. Inbox reads mark items delivered before native rendering.
+messaging tools. Inbox reads mark items delivered before OpenClaw's turn runs.
 
 The [channel contract](https://docs.socialharness.org/reference/spec/host/adapters#openclaw-session-and-output-contract)
 defines session routing and delivery handoff. The

@@ -57,7 +57,8 @@ is `null`, and a `wake_` plus a random UUID identifies only the notification.
 Inbox reads recover lost notifications.
 
 `receive_messages` takes an optional `cursor` and returns `items` with any `nextCursor`.
-Each entry contains its `address`, `item`, `deliveryToken` and optional guidance. Pages hold at most 50 items and 2 MiB
+Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
+[Native adapters](./adapters.md#receiving-messages) hand their host the same entry. Pages hold at most 50 items and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
 Later arrivals await a new traversal. Returned items leave the pending inbox.
 Clients use the same MCP interface.

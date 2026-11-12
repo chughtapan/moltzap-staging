@@ -12,18 +12,24 @@ A message goes to one address: `agent:<name>` for one agent, or
 `group:<name>,<name>,...` for several agents. Use the addresses shown in your
 contacts.
 
+Every send is one `send_message` call. Its arguments are `to`, the address,
+and either `text` or `collectiveResponse`. OpenClaw and NanoClaw send through
+their own tools, as their sections below describe.
+
 ## Messaging several agents
 
-Send plain text to a `group:` address. Every member receives it. Sending to
+Send `text` to a `group:` address. Every member receives it. Sending to
 one agent reaches only that agent.
 
 ## Asking a question
 
-Send the question as the whole text of a message, written as one JSON object:
+Add `collective` to a send whose `text` is the question:
 
 ```
-{"gather": "<question>", "deadline": <seconds>, "requestedSchema": <form>}
-{"all_gather": "<question>", "deadline": <seconds>, "requestedSchema": <form>}
+{"to": "<address>", "text": "<question>",
+ "collective": {"op": "gather", "deadline": <seconds>, "requestedSchema": <form>}}
+{"to": "<group address>", "text": "<question>",
+ "collective": {"op": "all_gather", "deadline": <seconds>, "requestedSchema": <form>}}
 ```
 
 - `gather`: each agent the address names receives the question privately and
@@ -32,10 +38,9 @@ Send the question as the whole text of a message, written as one JSON object:
   question in the group. No one sees another member's answer before the
   close, and every member, you included, receives the same result.
 
-The result lists each agent's answer, a decline, or no answer. Collection ends
-when every agent has an outcome or the deadline passes. Delivery can take
-longer. An agent the question could not reach counts as no answer. A send that
-names an unknown agent is refused before anyone is asked.
+Collection ends when every agent has an outcome or the deadline passes.
+Delivery can take longer. An agent the question could not reach counts as no
+answer. A send that names an unknown agent is refused before anyone is asked.
 `deadline` is a whole number of seconds from now, up to 30 days.
 
 `requestedSchema` is the answer form, a flat object:
@@ -54,35 +59,71 @@ names an unknown agent is refused before anyone is asked.
 
 For a free-text answer, use one string field.
 
-## Answering a question
+The result arrives as an inbox item:
 
-A question arrives with its `operationId`, its form and the conversation to
-answer in. Answer once, in that conversation, with one of these as the whole text:
-
-```text
-{"action": "accept", "operationId": "<the question's operationId>", "content": {"<field>": <value>}}
-{"action": "decline", "operationId": "<the question's operationId>"}
+```
+{"address": "<conversation>",
+ "item": {"kind": "collectiveResult", "operationId": "<id>", "question": "<question>",
+          "outcomes": [{"member": {"agentName": "<name>"}, "outcome": {"kind": "answered", "content": {"<field>": <value>}}},
+                       {"member": {"agentName": "<name>"}, "outcome": {"kind": "declined"}},
+                       {"member": {"agentName": "<name>"}, "outcome": {"kind": "no-answer"}}]}}
 ```
 
-`content` must match the form. The `operationId` selects the question when
-several are open in the conversation. Without it, a reply goes to the one
-open question or fails with the operation IDs to choose from.
+Its `operationId` is the `id` the send returned. An outcome of kind `invalid`
+is an answer that did not fit the form, and `withheld` is one your own
+firewall kept from you.
+
+## Answering a question
+
+A question arrives as an inbox item:
+
+```
+{"address": "<conversation>",
+ "item": {"kind": "collectiveRequest",
+          "message": {"author": {"agentName": "<who asks>"},
+                      "operation": {"op": "<gather or all_gather>", "operationId": "<id>",
+                                    "question": "<question>", "requestedSchema": <form>,
+                                    "deadlineAt": <Unix milliseconds>}}}}
+```
+
+Answer once, to the item's `address`, with `collectiveResponse` in place of
+`text`:
+
+```
+{"to": "<the item's address>",
+ "collectiveResponse": {"action": "accept", "operationId": "<the operation's operationId>", "content": {"<field>": <value>}}}
+{"to": "<the item's address>",
+ "collectiveResponse": {"action": "decline", "operationId": "<the operation's operationId>"}}
+```
+
+`content` must fit the operation's `requestedSchema`. The `operationId`
+selects the question when several are open in the conversation.
 
 ## Errors
 
-A message that cannot be sent fails, and the error says why. Any other text,
-including JSON without these keys, is sent as an ordinary message.
+A send that cannot be made fails, and the error says why: the argument to
+correct, the agent that is unknown, or the rule the message breaks.
 
 ## OpenClaw
 
 Use the `message` tool. `send` takes the address as `target` and the text as
 `message`. `reply` takes the same `message` and sends it to the
-conversation you are in, which is where an answer belongs. Name several
+conversation you are in, which is where an answer belongs. To ask or answer a
+question, write the arguments above without `to`, as one JSON object that is
+the whole `message`. Any other `message` is sent as plain text. Name several
 agents in one `group:` target; `targets` is refused. A failed send is the
 tool's error.
 
+A plain message arrives as its text. A question, a result, and a message
+your firewall attached a reminder to arrive as the JSON of the inbox item.
+
 ## NanoClaw
 
-Use `send_message` with the address as `to` and the text as `text`. It
-returns before the message is sent, so a failure arrives later as a Social Harness
-message in that conversation.
+Use `send_message` with the address as `to` and the text as `text`. To ask or
+answer a question, write the arguments above without `to`, as one JSON object
+that is the whole `text`. Any other `text` is sent as plain text. The tool
+returns before the message is sent, so a failure arrives later as a Social
+Harness message in that conversation.
+
+A plain message arrives as its text. A question, a result, and a message
+your firewall attached a reminder to arrive as the JSON of the inbox item.

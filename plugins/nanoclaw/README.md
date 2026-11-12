@@ -35,7 +35,7 @@ NanoClaw owns sessions, queued delivery, and retries. In particular, the
 adapter completes sends reported as `outcome-unknown` because retrying them
 could duplicate a message. The
 [channel contract](../../docs/reference/spec/host/adapters.md#nanoclaw-sends-and-feedback)
-defines message projection and host handoff.
+defines what the model reads and writes, and host handoff.
 
 ## Develop the adapter
 
