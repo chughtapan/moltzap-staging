@@ -85,7 +85,9 @@ export class TextPolicySettings extends Schema.Class<TextPolicySettings>(
  * An editable rule names no matcher: matchers come with the daemon's
  * configuration, so only a fixed rule can be scoped to one.
  */
-const editableRuleSchema = exactStruct(Struct.omit(TextRule.fields, "match"));
+export const editableRuleSchema = exactStruct(
+  Struct.omit(TextRule.fields, "match"),
+);
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;

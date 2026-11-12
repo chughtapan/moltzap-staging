@@ -7,7 +7,6 @@ import {
   Effect,
   Layer,
   Option,
-  Predicate,
   Schedule,
   Schema,
   Struct,
@@ -1637,27 +1636,11 @@ function buildPolicy(
 }
 
 /**
- * Hashes a value's JSON text with every object's members in code-unit key
- * order. A rule added by an edit keeps its caller's member order and the same
- * rule read back from storage has its schema's, and both give one digest.
+ * Hashes a value's JSON text. Every part of the value is decoded through a
+ * struct schema, which fixes the order of its members.
  */
 function digest(value: unknown) {
-  return createHash("sha256")
-    .update(sortedJson(JSON.parse(JSON.stringify(value))))
-    .digest("hex");
-}
-
-function sortedJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(sortedJson).join(",")}]`;
-  }
-  if (!Predicate.isRecord(value)) {
-    return JSON.stringify(value);
-  }
-  const members = Object.entries(value)
-    .sort(([left], [right]) => (left < right ? -1 : 1))
-    .map(([key, member]) => `${JSON.stringify(key)}:${sortedJson(member)}`);
-  return `{${members.join(",")}}`;
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 /**
