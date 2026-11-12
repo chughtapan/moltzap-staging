@@ -13,6 +13,7 @@ import type {
   Incoming,
   Outgoing,
 } from "./contract.js";
+import { executeQuery } from "../database/sql.js";
 import { AgentCard } from "../identity/agent-cards.js";
 import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
@@ -26,6 +27,7 @@ import {
 } from "./messages.js";
 import {
   acknowledgeMessage,
+  communicationQueries,
   hasMessage,
   readMessages,
   saveMessage,
@@ -87,11 +89,19 @@ export function makeDelivery(settings: CommunicationSettings) {
  */
 export function claimMode(mode: string) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`INSERT INTO communication_mode(singleton,kind) VALUES(1,${mode}) ON CONFLICT(singleton) DO NOTHING`;
-    const [row] = yield* sql<{
-      kind: string;
-    }>`SELECT kind FROM communication_mode WHERE singleton=1`;
+    const db = yield* communicationQueries;
+    yield* executeQuery(
+      db
+        .insertInto("communication_mode")
+        .values({ singleton: 1, kind: mode })
+        .onConflict((conflict) => conflict.column("singleton").doNothing()),
+    );
+    const [row] = yield* executeQuery(
+      db
+        .selectFrom("communication_mode")
+        .select("kind")
+        .where("singleton", "=", 1),
+    );
     if (row?.kind !== mode) {
       return yield* invalid();
     }
@@ -121,10 +131,20 @@ function send(environment: Environment, requests: Requests, value: Outgoing) {
 }
 
 /** The key of the agent on this daemon that `recipient` names, which must match its stored card. */
-function recipientKey({ sql }: Environment, recipient: AgentCard) {
+function recipientKey(recipient: AgentCard) {
   return Effect.gen(function* () {
-    const [raw] =
-      yield* sql`SELECT agent_key AS "agentKey",agent_id AS "agentId",agent_name AS "agentName",principal_id AS "principalId" FROM agent_profiles WHERE agent_id=${recipient.agentId}`;
+    const db = yield* communicationQueries;
+    const [raw] = yield* executeQuery(
+      db
+        .selectFrom("agent_profiles")
+        .select([
+          "agent_key as agentKey",
+          "agent_id as agentId",
+          "agent_name as agentName",
+          "principal_id as principalId",
+        ])
+        .where("agent_id", "=", recipient.agentId),
+    );
     if (raw === undefined) {
       return yield* invalid();
     }
@@ -152,17 +172,24 @@ function sendMessage(environment: Environment, message: Message) {
       const conversationId = yield* messageConversation(settings, message);
       const recipientKeys = yield* Effect.forEach(
         message.recipients,
-        (recipient) => recipientKey(environment, recipient),
+        recipientKey,
         { concurrency: 1 },
       );
       if (yield* hasMessage(settings.agentKey, conversationId, message)) {
         return;
       }
-      const [next] = yield* sql<{
-        ordinal: number;
-      }>`INSERT INTO message_sequences(conversation_id,next_ordinal) VALUES(${conversationId},1)
-        ON CONFLICT(conversation_id) DO UPDATE SET next_ordinal=message_sequences.next_ordinal+1
-        RETURNING next_ordinal-1 AS ordinal`;
+      const db = yield* communicationQueries;
+      const [next] = yield* executeQuery(
+        db
+          .insertInto("message_sequences")
+          .values({ conversation_id: conversationId, next_ordinal: 1 })
+          .onConflict((conflict) =>
+            conflict.column("conversation_id").doUpdateSet((eb) => ({
+              next_ordinal: eb("message_sequences.next_ordinal", "+", 1),
+            })),
+          )
+          .returning((eb) => eb("next_ordinal", "-", 1).as("ordinal")),
+      );
       if (next === undefined) {
         return yield* unavailable();
       }

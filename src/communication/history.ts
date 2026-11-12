@@ -1,5 +1,4 @@
 /** @file Reads an agent's conversations and their ordered messages. */
-import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Option, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import type {
@@ -7,6 +6,7 @@ import type {
   ConversationQuery,
   HistoryQuery,
 } from "./contract.js";
+import { executeQuery } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import { AgentCard, type AgentName } from "../identity/agent-cards.js";
 import { CommunicationError } from "./errors.js";
@@ -19,7 +19,11 @@ import {
   messageMembers,
   type MessageReference,
 } from "./messages.js";
-import { readMessages, type StoredMessage } from "./store.js";
+import {
+  communicationQueries,
+  readMessages,
+  type StoredMessage,
+} from "./store.js";
 
 interface HistoryInput {
   readonly agentKey: string;
@@ -153,12 +157,16 @@ function readHistory(environment: Environment, query: HistoryQuery) {
 
 function retainedConversations(environment: Environment) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
+    const db = yield* communicationQueries;
     const rows = yield* withAgentTransaction(
       environment.agentKey,
-      sql<{
-        conversationId: string;
-      }>`SELECT DISTINCT conversation_id AS "conversationId" FROM message_log WHERE agent_key=${environment.agentKey}`,
+      executeQuery(
+        db
+          .selectFrom("message_log")
+          .select("conversation_id as conversationId")
+          .distinct()
+          .where("agent_key", "=", environment.agentKey),
+      ),
     );
     const conversations: Conversation[] = [];
     for (const row of rows) {
@@ -266,12 +274,18 @@ function position(
   reference: MessageReference,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
+    const db = yield* communicationQueries;
     const [row] = yield* withAgentTransaction(
       environment.agentKey,
-      sql<{
-        ordinal: number;
-      }>`SELECT ordinal FROM message_log WHERE agent_key=${environment.agentKey} AND conversation_id=${conversationId} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`,
+      executeQuery(
+        db
+          .selectFrom("message_log")
+          .select("ordinal")
+          .where("agent_key", "=", environment.agentKey)
+          .where("conversation_id", "=", conversationId)
+          .where("author_agent_id", "=", reference.authorAgentId)
+          .where("msg_id", "=", reference.msgId),
+      ),
     );
     return row === undefined ? yield* fail("content-invalid") : row.ordinal;
   });
