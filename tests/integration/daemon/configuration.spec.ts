@@ -100,7 +100,6 @@ const postgresFixture = Effect.gen(function* () {
   };
 });
 
-// @agent-code-guard/regression-only: These finite file, schema and key custody boundaries use real SQL and filesystem operations.
 it("names the missing settings-file variable", () =>
   loadDaemonSettings().pipe(
     Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),

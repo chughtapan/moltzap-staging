@@ -264,7 +264,6 @@ function agentImageSections() {
     {
       files: ["**/*.spec.ts"],
       rules: {
-        "agent-code-guard/no-example-only-tests": "off",
         "agent-code-guard/no-hardcoded-assertion-literals": "off",
         "sonarjs/no-os-command-from-path": "off",
       },
@@ -277,6 +276,10 @@ function integrationSections() {
   return [
     makeStrictBlock(["**/*.ts"], makeStrictRules(DEFAULT_MAX_LINES)),
     makePresetBlock(["**/*.spec.ts"], guard.configs.integrationTests),
+    {
+      files: ["**/*.spec.ts"],
+      rules: { "agent-code-guard/no-example-only-tests": "off" },
+    },
     disableCommentRules,
     configModuleRules,
   ];

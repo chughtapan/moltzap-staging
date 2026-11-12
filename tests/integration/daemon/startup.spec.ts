@@ -51,7 +51,6 @@ function runProcess(
   }).pipe(Effect.timeout("10 seconds"), Effect.provide(NodeContext.layer));
 }
 
-// @agent-code-guard/regression-only: These process traces exercise the finite CLI help, validation and shutdown contracts.
 it(
   "prints environment requirements and defaults without starting",
   () =>
