@@ -131,7 +131,7 @@ each at most 8,640,000,000,000,000.
 
 Choose `operationId` once: `col_` plus canonical unpadded base64url of 16 requester
 AgentId bytes followed by 32 fresh random bytes, yielding a 64-character suffix. Answers and
-closes reuse it. A message's content is at most 32,768 bytes of canonical
+closes reuse it. A message's content is at most 32,768 bytes of compact
 JSON, and exceeding that bound returns `content-invalid`.
 
 ### Answer schema

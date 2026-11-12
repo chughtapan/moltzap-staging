@@ -1,4 +1,4 @@
-/** @file Prepares versioned daemon storage for deployment and checks its runtime compatibility. */
+/** @file Prepares daemon storage for deployment and checks that the runtime can open it. */
 
 import { Migrator, SqlClient } from "@effect/sql";
 import { Data, Effect, type Redacted } from "effect";
@@ -8,9 +8,6 @@ import {
   databaseConnection,
   prepareDatabaseDirectory,
 } from "./sql.js";
-
-/** Identifies the table layout. A database with another number is not opened. */
-const daemonDatabaseFormat = 6;
 
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const agentTables = [
@@ -28,8 +25,6 @@ const agentTables = [
 /** Encryption check, owners and the agents the daemon has created for them. */
 const agentSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE database_format (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)`;
-  yield* sql`INSERT INTO database_format(singleton,version) VALUES(1,${daemonDatabaseFormat})`;
   yield* sql`CREATE TABLE database_encryption (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1), verifier TEXT NOT NULL
   )`;
@@ -48,7 +43,7 @@ const agentSchema = Effect.gen(function* () {
 });
 
 /** Each agent's inbox, webhook subscription and firewall. */
-const hostSchema = (binary: string, sequence: string) =>
+const hostSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe(`CREATE TABLE harness_items (
@@ -61,8 +56,8 @@ const hostSchema = (binary: string, sequence: string) =>
     author TEXT,
     message_id TEXT,
     operation_id TEXT,
-    incoming ${binary},
-    view ${binary},
+    incoming TEXT,
+    view TEXT,
     status TEXT NOT NULL CHECK(status IN ('checking','withheld','pending','acknowledged')),
     UNIQUE(agent_key, identity),
     UNIQUE(agent_key, token)
@@ -81,17 +76,17 @@ const hostSchema = (binary: string, sequence: string) =>
     sequence ${sequence},
     check_id TEXT NOT NULL,
     direction TEXT NOT NULL CHECK(direction IN ('incoming','outgoing')),
-    canonical_candidate ${binary} NOT NULL,
-    canonical_input ${binary} NOT NULL,
-    canonical_result ${binary} NOT NULL,
+    candidate TEXT NOT NULL,
+    input TEXT NOT NULL,
+    result TEXT NOT NULL,
     decided_at BIGINT NOT NULL,
     disposition TEXT NOT NULL CHECK(disposition IN ('admitted','withheld')),
     UNIQUE(agent_key, check_id)
   )`);
-    yield* sql.unsafe(`CREATE TABLE firewall_policy (
+    yield* sql`CREATE TABLE firewall_policy (
     agent_key TEXT PRIMARY KEY,
-    canonical_rules ${binary} NOT NULL
-  )`);
+    policy TEXT NOT NULL
+  )`;
     yield* sql.unsafe(`CREATE TABLE firewall_activations (
     agent_key TEXT NOT NULL,
     sequence ${sequence},
@@ -105,7 +100,7 @@ const hostSchema = (binary: string, sequence: string) =>
   });
 
 /** Each conversation's next position, each agent's messages, and the questions and answers built on them. */
-const messageSchema = (binary: string, sequence: string) =>
+const messageSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`CREATE TABLE communication_mode(singleton INTEGER PRIMARY KEY CHECK(singleton=1), kind TEXT NOT NULL)`;
@@ -113,7 +108,7 @@ const messageSchema = (binary: string, sequence: string) =>
     yield* sql.unsafe(`CREATE TABLE message_log (
     agent_key TEXT NOT NULL, sequence ${sequence}, conversation_id TEXT NOT NULL,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0), author_agent_id TEXT NOT NULL,
-    msg_id TEXT NOT NULL, canonical_message ${binary} NOT NULL,
+    msg_id TEXT NOT NULL, message TEXT NOT NULL,
     consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
     UNIQUE(agent_key,author_agent_id,msg_id), UNIQUE(agent_key,conversation_id,ordinal)
   )`);
@@ -124,11 +119,11 @@ const messageSchema = (binary: string, sequence: string) =>
     operation_id TEXT NOT NULL,
     creator_agent_id TEXT NOT NULL,
     origin TEXT NOT NULL CHECK(origin IN ('local','remote')),
-    canonical_request ${binary} NOT NULL,
+    request TEXT NOT NULL,
     deadline_at BIGINT NOT NULL,
     phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','completed')),
-    canonical_result ${binary},
-    canonical_answer_refs ${binary},
+    result TEXT,
+    answer_refs TEXT,
     delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1)),
     UNIQUE (agent_key, operation_id)
   )`);
@@ -137,7 +132,7 @@ const messageSchema = (binary: string, sequence: string) =>
     sequence ${sequence},
     operation_id TEXT NOT NULL,
     member TEXT NOT NULL,
-    canonical_message ${binary} NOT NULL,
+    message TEXT NOT NULL,
     FOREIGN KEY (agent_key,operation_id) REFERENCES collective_operations(agent_key,operation_id),
     UNIQUE (agent_key, operation_id,member)
   )`);
@@ -147,17 +142,13 @@ const messageSchema = (binary: string, sequence: string) =>
 /** Every table the daemon uses, created in one step. */
 const daemonSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const binary = sql.onDialectOrElse({
-    pg: () => "BYTEA",
-    orElse: () => "BLOB",
-  });
   const sequence = sql.onDialectOrElse({
     pg: () => "INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY",
     orElse: () => "INTEGER PRIMARY KEY AUTOINCREMENT",
   });
   yield* agentSchema;
-  yield* hostSchema(binary, sequence);
-  yield* messageSchema(binary, sequence);
+  yield* hostSchema(sequence);
+  yield* messageSchema(sequence);
   yield* sql.onDialectOrElse({
     pg: () =>
       Effect.forEach(
@@ -214,16 +205,9 @@ export const migrateDaemon = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("migrateDaemon"));
 
-/** Fails unless the database has this format and `unlockKey` opens it. Changes nothing. */
+/** Fails unless the database has been prepared and `unlockKey` opens it. Changes nothing. */
 export const checkDatabase = Effect.fn("checkDatabase")(
   function* (unlockKey: Redacted.Redacted<Uint8Array>) {
-    const sql = yield* SqlClient.SqlClient;
-    const [format] = yield* sql<{
-      version: number;
-    }>`SELECT version FROM database_format WHERE singleton=1`;
-    if (format?.version !== daemonDatabaseFormat) {
-      return yield* new DatabasePreparationError({ reason: "schema" });
-    }
     yield* verifyDatabaseKey(unlockKey);
   },
   Effect.catchTags({
@@ -286,8 +270,8 @@ export const prepareDatabase = Effect.gen(function* () {
 );
 
 /**
- * Only an empty database or one already in this format can be prepared. An
- * empty database may hold the migration ledger table with no rows.
+ * Only an empty database or one that already holds the daemon's tables can be
+ * prepared. An empty database may hold the migration ledger table with no rows.
  */
 function compatibleDatabase() {
   return Effect.gen(function* () {
@@ -302,14 +286,8 @@ function compatibleDatabase() {
           name: string;
         }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
     });
-    if (tables.some((table) => table.name === "database_format")) {
-      const [format] = yield* sql<{
-        version: number;
-      }>`SELECT version FROM database_format WHERE singleton=1`;
-      if (format?.version === daemonDatabaseFormat) {
-        return;
-      }
-      return yield* new DatabasePreparationError({ reason: "schema" });
+    if (tables.some((table) => table.name === "database_encryption")) {
+      return;
     }
     if (tables.some((table) => table.name !== migrationsTable)) {
       return yield* new DatabasePreparationError({ reason: "schema" });

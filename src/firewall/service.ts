@@ -25,9 +25,7 @@ import {
   type ResultSources,
 } from "../communication/service.js";
 import {
-  canonicalBytes,
-  decodeCanonical,
-  encodeCanonicalJson,
+  decodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
@@ -341,7 +339,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           yield* validateChain(rules);
         }
         const chainRevision =
-          rules === undefined ? "" : yield* chainDigest(rules);
+          rules === undefined ? "" : digest({ chain: rules.rules });
         const localAgent = identity.me;
         const installed: Installation = {
           store,
@@ -471,7 +469,7 @@ interface Candidate {
 
 interface RuleCheckInput {
   readonly direction: "incoming" | "outgoing";
-  readonly canonicalCandidate: Uint8Array;
+  readonly candidate: string;
   readonly message: AssessmentText;
   readonly context: MessageContext;
   readonly agents: readonly AgentCard[];
@@ -731,12 +729,9 @@ function chainDecision(
     const completion: FirewallCompletion = {
       checkId: mintCheckId(),
       direction,
-      canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
-      canonicalInput: yield* canonicalBytes({
-        activeRevision,
-        rule: outcome.rule,
-      }),
-      canonicalResult: yield* canonicalBytes({
+      candidate: JSON.stringify(candidate.value),
+      input: JSON.stringify({ activeRevision, rule: outcome.rule }),
+      result: JSON.stringify({
         result: {
           rule: outcome.rule,
           ...(outcome.kind === "refused" ? { refusal: outcome.refusal } : {}),
@@ -764,14 +759,7 @@ function chainDecision(
         ...(outcome.reply === undefined ? {} : { reply: outcome.reply }),
       },
     } satisfies Decision;
-  }).pipe(
-    Effect.catchTags({
-      CanonicalJsonError: () =>
-        Effect.fail(new CheckInputError({ reason: "message" })),
-      ClientRepresentationError: () =>
-        Effect.fail(new CheckInputError({ reason: "message" })),
-    }),
-  );
+  });
 }
 
 /** One summary row per peer, as for text checks, naming the deciding chain rule. */
@@ -864,7 +852,7 @@ function assess(
       inputs.push({
         direction,
         ...scope,
-        canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
+        candidate: JSON.stringify(candidate.value),
         message: {
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
           ...assessmentText(candidate.value),
@@ -882,11 +870,7 @@ function assess(
         ),
       { concurrency: policy.options.configuration.maximumConcurrentChecks },
     );
-  }).pipe(
-    Effect.catchTag("CanonicalJsonError", () =>
-      Effect.fail(new CheckInputError({ reason: "context" })),
-    ),
-  );
+  });
 }
 
 /**
@@ -1135,7 +1119,7 @@ function loadRules(store: FirewallStore, options: CapturedOptions) {
     const saved =
       stored === undefined
         ? undefined
-        : yield* decodeCanonical(storedPolicySchema, stored).pipe(
+        : yield* decodeJson(storedPolicySchema, stored).pipe(
             Effect.mapError(persistenceFailure),
           );
     const rules = saved?.rules ?? options.text?.initialRules ?? [];
@@ -1233,15 +1217,6 @@ function captureChain(chain: Chain) {
   );
 }
 
-/** Names a chain-only installation, which has no text policy revision. */
-function chainDigest(chain: Chain) {
-  return digest({ chain: chain.rules }).pipe(
-    Effect.catchTag("ClientRepresentationError", () =>
-      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-    ),
-  );
-}
-
 function captureText(selected: NonNullable<FirewallOptions["text"]>) {
   return Effect.gen(function* () {
     return {
@@ -1327,16 +1302,16 @@ function assessRule(
     const assessed = yield* evaluateMessage(options, active, input).pipe(
       markRetries(input.direction, (exit) => exitOutcome(exit, "checked")),
     );
-    const projection = yield* guidanceProjection(assessed, checkId);
+    const projection = guidanceProjection(assessed, checkId);
     const { result } = projection;
     const admit = result.judgment === "allow";
     const completion: FirewallCompletion = {
       checkId,
       direction: input.direction,
-      canonicalCandidate: input.canonicalCandidate,
-      canonicalInput: yield* retainedInput(active, input),
+      candidate: input.candidate,
+      input: retainedInput(active, input),
       admit,
-      canonicalResult: yield* canonicalBytes({
+      result: JSON.stringify({
         result: Struct.omit(result, "trace"),
         summaries: yield* decisionSummaries(active, input, result),
       }),
@@ -1363,12 +1338,7 @@ function assessRule(
         ...(reply === "" ? {} : { reply }),
       },
     } satisfies Decision;
-  }).pipe(
-    Effect.catchTag("ClientRepresentationError", () =>
-      Effect.fail(new CheckInputError({ reason: "context" })),
-    ),
-    Effect.withSpan("assessMessage"),
-  );
+  }).pipe(Effect.withSpan("assessMessage"));
 }
 
 /**
@@ -1415,7 +1385,7 @@ function capturePrepared(
       try: () =>
         structuredClone({
           direction: input.direction,
-          canonicalCandidate: input.canonicalCandidate,
+          candidate: input.candidate,
           evidence: {
             event: { direction: input.direction, message: input.message },
             context: Object.assign({}, input.context, {
@@ -1459,7 +1429,7 @@ function evaluateMessage(
 }
 
 function retainedInput(active: ActiveRules, input: CapturedCheck) {
-  return canonicalBytes({
+  return JSON.stringify({
     configurationDigest: active.configurationDigest,
     installation: active.metadata,
     context: input.evidence.context,
@@ -1523,19 +1493,17 @@ function mintCheckId() {
  * Reminders over the runtime item bound make the check unavailable.
  */
 function guidanceProjection(result: FirewallCheck, checkId: string) {
-  return Effect.gen(function* () {
-    if (result.guidance.length === 0) {
-      return { result };
-    }
-    const guidance: CheckedGuidance = {
-      checkId,
-      instructions: result.guidance,
-    };
-    const bytes = yield* canonicalBytes(guidance);
-    return bytes.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
-      ? { result: { ...unavailable(), findings: result.findings } }
-      : { result, guidance };
-  });
+  if (result.guidance.length === 0) {
+    return { result };
+  }
+  const guidance: CheckedGuidance = {
+    checkId,
+    instructions: result.guidance,
+  };
+  return Buffer.byteLength(JSON.stringify(guidance)) >
+    MAXIMUM_RUNTIME_ITEM_BYTES
+    ? { result: { ...unavailable(), findings: result.findings } }
+    : { result, guidance };
 }
 
 /** Missing or invalid assessment input holds without inventing a deciding rule. */
@@ -1639,7 +1607,7 @@ function buildPolicy(
             model: options.text.provider.model ?? null,
           }),
     };
-    const configurationDigest = yield* digest(metadata);
+    const configurationDigest = digest(metadata);
     yield* validateChecks({
       rules: documents,
       settings: options.settings,
@@ -1658,22 +1626,21 @@ function buildPolicy(
       matchers,
     };
   }).pipe(
-    Effect.catchTags({
-      CheckInputError: () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-      ClientRepresentationError: () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-    }),
+    Effect.catchTag("CheckInputError", () =>
+      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+    ),
     Effect.catchAllDefect(() =>
       Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
     ),
   );
 }
 
+/**
+ * Hashes a value's JSON text. Every part of the value is decoded through a
+ * struct schema, which fixes the order of its members.
+ */
 function digest(value: unknown) {
-  return canonicalBytes(value).pipe(
-    Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
-  );
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 /**
@@ -1708,14 +1675,11 @@ function persistRules(
   norms: readonly HeldNorm[],
   activation?: FirewallActivation,
 ) {
-  return canonicalBytes({
-    format: storedPolicyFormat,
-    rules,
-    norms: norms.map((norm) => norm.document),
-  }).pipe(
-    Effect.flatMap((bytes) => store.writePolicy(bytes, activation)),
-    Effect.catchTag("ClientRepresentationError", () =>
-      Effect.fail(persistenceFailure()),
-    ),
-  );
+  return Effect.sync(() =>
+    JSON.stringify({
+      format: storedPolicyFormat,
+      rules,
+      norms: norms.map((norm) => norm.document),
+    }),
+  ).pipe(Effect.flatMap((policy) => store.writePolicy(policy, activation)));
 }

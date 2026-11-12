@@ -28,11 +28,11 @@ Startup requires:
 | `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
 Start the configured service with `sharnessd`. Standard `OTEL_*` environment
-settings configure tracing. A missing or invalid settings file, a database in
-another format or an incorrect encryption key refuses startup. A database is
-not converted from one format to another: prepare a fresh one. PostgreSQL runtime
-credentials need data access; schema changes require separate deployment
-credentials. Runtime startup does not modify schema or encryption metadata.
+settings configure tracing. A missing or invalid settings file, a database that
+has not been prepared or an incorrect encryption key refuses startup.
+PostgreSQL runtime credentials need data access; schema changes require
+separate deployment credentials. Runtime startup does not modify schema or
+encryption metadata.
 
 The runtime JSON document takes these properties. Unknown properties are refused.
 

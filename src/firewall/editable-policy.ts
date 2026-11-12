@@ -7,10 +7,11 @@
 
 import { Effect, Option } from "effect";
 import type { Chain } from "./chain.js";
-import { freezeData } from "./check.js";
+import { decodeFrozen, freezeData } from "./check.js";
 import {
   decodeBehavior,
   type editableDocumentSchema,
+  editableRuleSchema,
   FirewallPolicyError,
   MAXIMUM_DOCUMENT_BYTES,
   MAXIMUM_EDITABLE_RULES,
@@ -218,7 +219,11 @@ export function invalidRule(
   return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
 }
 
-/** One added item: an inline rule, a behavior's rule or a named norm document. */
+/**
+ * One added item: an inline rule, a behavior's rule or a named norm document.
+ * An inline rule is decoded, so its members are in its schema's order like
+ * those of a rule read back from storage.
+ */
 function addition(
   item: AddedItem,
   index: number,
@@ -235,7 +240,12 @@ function addition(
       Effect.map((norm) => ({ kind: "norm", index, norm }) as const),
     );
   }
-  return Effect.succeed({ kind: "rule", index, rule: item });
+  return decodeFrozen(editableRuleSchema, item).pipe(
+    Effect.mapBoth({
+      onFailure: () => invalidRule("schema", { path }),
+      onSuccess: (rule) => ({ kind: "rule", index, rule }) as const,
+    }),
+  );
 }
 
 /** A norm document within the size limit that the daemon's norms name, or `invalid-norm`. */

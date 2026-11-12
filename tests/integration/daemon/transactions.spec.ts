@@ -45,7 +45,7 @@ it(
           yield* Deferred.await(entered);
           yield* Fiber.interrupt(fiber);
           expect(yield* key).toBe(sender);
-          yield* sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message) VALUES('sender','conversation',0,'sender','message',${new Uint8Array([1])})`;
+          yield* sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,message) VALUES('sender','conversation',0,'sender','message','{}')`;
           expect(yield* sql`SELECT * FROM message_log`).toHaveLength(1);
         }),
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));

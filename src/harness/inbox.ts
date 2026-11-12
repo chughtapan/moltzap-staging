@@ -20,8 +20,8 @@ import {
 import { withAgentTransaction } from "../database/transactions.js";
 import {
   canonicalIdentifier,
-  decodeCanonical,
-  encodeCanonical,
+  decodeJson,
+  encodeJson,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
 import {
@@ -109,13 +109,13 @@ const queuedRow = Schema.Struct({
   sequence: Schema.Number,
   token: DeliveryToken,
   address: MessageAddress,
-  incoming: Schema.Uint8ArrayFromSelf,
+  incoming: Schema.String,
 });
 const savedRow = Schema.Struct({
   sequence: Schema.Number,
   token: DeliveryToken,
   address: MessageAddress,
-  view: Schema.Uint8ArrayFromSelf,
+  view: Schema.String,
 });
 const inboxCursor = Schema.Struct({
   operation: Schema.Literal("inbox"),
@@ -150,7 +150,7 @@ type InboxTables = Record<
   "harness_items",
   Record<"agent_key" | "identity" | "token" | "address" | "kind", string> &
     Record<"author" | "message_id" | "operation_id", string | null> &
-    Record<"incoming" | "view", Uint8Array | null> &
+    Record<"incoming" | "view", string | null> &
     Record<"sequence", Generated<number>> &
     Record<"status", "checking" | "withheld" | "pending" | "acknowledged">
 > &
@@ -213,7 +213,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     address: MessageAddress,
     incoming: Incoming,
   ) {
-    const bytes = yield* encodeCanonical(Incoming, incoming);
+    const saved = yield* encodeJson(Incoming, incoming);
     const message =
       incoming.kind === "message" || incoming.kind === "request"
         ? incoming.message
@@ -250,7 +250,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           author: message?.author.agentId ?? null,
           message_id: message?.msgId ?? null,
           operation_id: operationId ?? null,
-          incoming: bytes,
+          incoming: saved,
           view: null,
           status: "checking",
         })
@@ -284,12 +284,13 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     let bytes = 0;
     let after = position.after;
     for (const row of rows.slice(0, 50)) {
-      if (bytes + row.view.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES) {
+      const size = Buffer.byteLength(row.view);
+      if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }
-      const event = yield* decodeCanonical(InboxEvent, row.view);
+      const event = yield* decodeJson(InboxEvent, row.view);
       items.push({ ...event, deliveryToken: row.token });
-      bytes += row.view.byteLength;
+      bytes += size;
       after = row.sequence;
     }
     return {
@@ -310,7 +311,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     decision: IncomingDecision,
     expired: boolean,
   ) {
-    let view: Uint8Array | undefined;
+    let view: string | undefined;
     let event: InboxEvent | undefined;
     if (decision.kind === "allowed" && !expired) {
       event = {
@@ -320,15 +321,15 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ? {}
           : { guidance: decision.guidance }),
       };
-      view = yield* encodeCanonical(InboxEvent, event);
+      view = yield* encodeJson(InboxEvent, event);
       if (
-        view.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES &&
+        Buffer.byteLength(view) > MAXIMUM_RUNTIME_ITEM_BYTES &&
         decision.item.kind === "collectiveResult"
       ) {
         event = { address: item.address, item: decision.item };
-        view = yield* encodeCanonical(InboxEvent, event);
+        view = yield* encodeJson(InboxEvent, event);
       }
-      if (view.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES) {
+      if (Buffer.byteLength(view) > MAXIMUM_RUNTIME_ITEM_BYTES) {
         view = undefined;
         event = undefined;
       }
@@ -437,7 +438,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           Effect.forEach(
             rows,
             (row) =>
-              decodeCanonical(Incoming, row.incoming).pipe(
+              decodeJson(Incoming, row.incoming).pipe(
                 Effect.map((incoming): PendingItem => ({ ...row, incoming })),
               ),
             { concurrency: 1 },
@@ -501,7 +502,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         Effect.flatMap((rows) =>
           rows[0]?.view == null
             ? Effect.succeed(undefined)
-            : decodeCanonical(InboxEvent, rows[0].view),
+            : decodeJson(InboxEvent, rows[0].view),
         ),
         Effect.mapError(persistenceFailure),
       ),
@@ -544,7 +545,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           Effect.forEach(
             rows,
             (row) =>
-              decodeCanonical(InboxEvent, row.view).pipe(
+              decodeJson(InboxEvent, row.view).pipe(
                 Effect.map((event) => ({ ...row, event })),
               ),
             { concurrency: 1 },
@@ -584,9 +585,9 @@ function encodeCursor<A, I>(
   value: A,
   key: Uint8Array,
 ) {
-  return encodeCanonical(schema, value).pipe(
-    Effect.map((bytes) => {
-      const payload = Encoding.encodeBase64Url(bytes);
+  return encodeJson(schema, value).pipe(
+    Effect.map((text) => {
+      const payload = Encoding.encodeBase64Url(text);
       const signature = createHmac("sha256", key)
         .update(payload)
         .digest("base64url");
@@ -618,8 +619,8 @@ function decodeCursor<A, I>(
     ) {
       return yield* new InboxError({ reason: "invalid-cursor" });
     }
-    const bytes = yield* Encoding.decodeBase64Url(payload);
-    return yield* decodeCanonical(schema, bytes);
+    const text = yield* Encoding.decodeBase64UrlString(payload);
+    return yield* decodeJson(schema, text);
   }).pipe(
     // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- Malformed, expired and foreign cursor diagnostics share the public invalid-cursor failure.
     Effect.mapError(() => new InboxError({ reason: "invalid-cursor" })),
