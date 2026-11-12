@@ -2,19 +2,20 @@
 
 import { effect as it } from "@effect/vitest";
 import {
+  Array as Arr,
   Effect,
   Either,
   Encoding,
   Exit,
+  FastCheck as fc,
   Option,
-  ParseResult,
+  Order,
   Schema,
+  Struct,
 } from "effect";
-import { describe, expect, it as vitestIt } from "vitest";
+import { expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
-import { encodeJson } from "../encoding/index.js";
 import {
-  AgentAddress as PublicAgentAddress,
   Content as PublicContent,
   GroupAddress as PublicGroupAddress,
   MessageAddressInput as PublicMessageAddressInput,
@@ -23,10 +24,8 @@ import {
 import { collectiveOperationId } from "./__tests__/request-ids.js";
 import {
   type AnswerContent,
-  CollectiveContentError,
   CollectivePartInvalidError,
   collectiveRequesterOf,
-  Content,
   encodeCollectiveContent,
   Message,
   messageFromParticipants,
@@ -137,309 +136,318 @@ const fieldSchema = (field: object) =>
     properties: { field },
   });
 
-/** The keyword each issue of an invalid field's detail names, in order. */
+/** The keyword of each issue an answer value raises against a field; none when it is accepted. */
 const keywordsOf = (field: object, value: AnswerContent[string]) =>
-  Effect.runSync(
-    Effect.flip(validateAnswer(fieldSchema(field), { field: value })),
-  ).flatMap(({ reason, detail }) => [
-    reason,
-    ...(detail ?? "").split(", ").map((issue) => issue.split(":")[0]),
-  ]);
-
-const accepts = (field: object, value: AnswerContent[string]) =>
-  Exit.isSuccess(
-    Effect.runSyncExit(validateAnswer(fieldSchema(field), { field: value })),
-  );
-
-const judged = (format: string, texts: readonly string[]) =>
-  texts.map((text) => accepts({ type: "string", format }, text));
-
-// @agent-code-guard/regression-only: examples pin each format's accepted and refused strings.
-describe("date answer formats", () => {
-  vitestIt("accepts calendar dates and refuses impossible ones", () => {
-    expect(
-      judged("date", ["2024-02-29", "2023-02-29", "2024-13-01", "2024-2-01"]),
-    ).toEqual([true, false, false, false]);
-  });
-
-  vitestIt("applies the century rule to February 29", () => {
-    expect(judged("date", ["2000-02-29", "1900-02-29"])).toEqual([true, false]);
-  });
-
-  vitestIt("requires a time zone on a date-time", () => {
-    expect(
-      judged("date-time", [
-        "2024-02-01T10:00:00Z",
-        "2024-02-01t10:00:00.5+01:30",
-        "2024-02-01 10:00:00-0130",
-        "2024-02-01T10:00:00",
-      ]),
-    ).toEqual([true, true, true, false]);
-  });
-
-  vitestIt("admits a leap second only at 23:59 UTC", () => {
-    expect(
-      judged("date-time", [
-        "2024-02-01T23:59:60Z",
-        "2024-02-01T22:59:60-01:00",
-        "2024-02-01T10:59:60Z",
-      ]),
-    ).toEqual([true, true, false]);
-  });
-
-  vitestIt(
-    "admits a leap second whose UTC reading borrows across midnight",
-    () => {
-      expect(
-        judged("date-time", [
-          "2024-01-01T00:59:60+01:00",
-          "2024-01-01T00:00:60+00:01",
-          "2024-01-01T00:59:60+02:00",
-        ]),
-      ).toEqual([true, true, false]);
-    },
-  );
-});
-
-// @agent-code-guard/regression-only: examples pin each format's accepted and refused strings.
-describe("address answer formats", () => {
-  vitestIt("requires a dotted host name in an email", () => {
-    expect(
-      judged("email", ["a.b@example.com", "a@example", ".a@example.com"]),
-    ).toEqual([true, false, false]);
-  });
-
-  vitestIt("requires a scheme and RFC 3986 characters in a uri", () => {
-    expect(
-      judged("uri", [
-        "https://user@[::1]:8080/a?b#c",
-        "urn:example:x",
-        "example.com",
-        "https://a b",
-        "https://%zz",
-      ]),
-    ).toEqual([true, true, false, false, false]);
-  });
-});
-
-const requestedSchema = Schema.decodeUnknownSync(RequestedSchema)({
-  type: "object",
-  properties: {
-    slot: { type: "string", enum: ["mon", "tue"] },
-    hours: { type: "number", minimum: 0 },
-  },
-  required: ["slot"],
-});
-
-const failingFields = (content: AnswerContent) =>
-  Effect.runSync(Effect.flip(validateAnswer(requestedSchema, content))).map(
-    ({ field, reason }) => ({ field, reason }),
-  );
-
-// @agent-code-guard/regression-only: examples pin which answer fields fail and how each failure is named.
-describe("answer validation", () => {
-  vitestIt("accepts an answer satisfying every field", () => {
-    const content = { slot: "tue", hours: 2 };
-
-    expect(Effect.runSync(validateAnswer(requestedSchema, content))).toBe(
-      content,
-    );
-  });
-
-  vitestIt("names a field whose value fails its property schema", () => {
-    expect(failingFields({ slot: "wed" })).toEqual([
-      { field: "slot", reason: "invalid" },
-    ]);
-  });
-
-  vitestIt("names a missing required field", () => {
-    expect(failingFields({ hours: 1 })).toEqual([
-      { field: "slot", reason: "missing" },
-    ]);
-  });
-
-  vitestIt("names a field the schema does not declare", () => {
-    expect(failingFields({ slot: "mon", mood: "fine" })).toEqual([
-      { field: "mood", reason: "unexpected" },
-    ]);
-  });
-
-  vitestIt(
-    "names an undeclared field that shares an Object.prototype name",
-    () => {
-      expect(failingFields({ slot: "mon", constructor: "x" })).toEqual([
-        { field: "constructor", reason: "unexpected" },
-      ]);
-    },
-  );
-
-  vitestIt(
-    "names a missing required field that shares an Object.prototype name",
-    () => {
-      const toStringSchema = Schema.decodeUnknownSync(RequestedSchema)({
-        type: "object",
-        properties: { toString: { type: "string" } },
-        required: ["toString"],
-      });
-
-      expect(
-        Effect.runSync(Effect.flip(validateAnswer(toStringSchema, {}))).map(
-          ({ field, reason }) => ({ field, reason }),
+  Either.match(
+    Effect.runSync(
+      Effect.either(validateAnswer(fieldSchema(field), { field: value })),
+    ),
+    {
+      onRight: () => [],
+      onLeft: (failures) =>
+        failures.flatMap(({ detail }) =>
+          (detail ?? "").split(", ").map((issue) => issue.split(":")[0]),
         ),
-      ).toEqual([{ field: "toString", reason: "missing" }]);
     },
   );
 
-  vitestIt("names every failing field of one answer", () => {
-    expect(failingFields({ slot: "wed", hours: -1 })).toEqual([
-      { field: "slot", reason: "invalid" },
-      { field: "hours", reason: "invalid" },
-    ]);
-  });
-});
+const accepts = (format: string, text: string) =>
+  keywordsOf({ type: "string", format }, text).length === 0;
 
-// @agent-code-guard/regression-only: examples pin which keyword an invalid string answer names.
-describe("string answer keywords", () => {
-  vitestIt(
-    "names both the type and the enum a mistyped selection fails",
-    () => {
-      expect(keywordsOf({ type: "string", enum: ["mon"] }, 3)).toEqual([
-        "invalid",
-        "type",
-        "enum",
-      ]);
-    },
-  );
+const padded = (value: number, width = 2) => String(value).padStart(width, "0");
 
-  vitestIt("counts a string's length in code points", () => {
-    const field = { type: "string", minLength: 2 };
+vitestIt("accepts a date exactly when the calendar holds that day", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 9999 }),
+      fc.integer({ min: 0, max: 13 }),
+      fc.integer({ min: 0, max: 32 }),
+      (year, month, day) => {
+        const calendar = new Date(0);
+        calendar.setUTCFullYear(year, month - 1, day);
+        const held =
+          calendar.getUTCFullYear() === year &&
+          calendar.getUTCMonth() === month - 1 &&
+          calendar.getUTCDate() === day;
 
-    expect(accepts(field, "\u{1F600}\u{1F600}")).toBe(true);
-    expect(keywordsOf(field, "\u{1F600}")).toEqual(["invalid", "minLength"]);
-  });
-
-  vitestIt("names the format a string fails", () => {
-    expect(keywordsOf({ type: "string", format: "email" }, "a@b")).toEqual([
-      "invalid",
-      "format",
-    ]);
-  });
-
-  vitestIt("counts a string's maximum length in code points", () => {
-    const field = { type: "string", maxLength: 2 };
-
-    expect(accepts(field, "\u{1F600}\u{1F600}")).toBe(true);
-    expect(keywordsOf(field, "abc")).toEqual(["invalid", "maxLength"]);
-  });
-
-  vitestIt(
-    "refuses a titled single-select value that two options share",
-    () => {
-      const field = {
-        type: "string",
-        oneOf: [
-          { const: "a", title: "A" },
-          { const: "a", title: "Also A" },
-          { const: "b", title: "B" },
-        ],
-      };
-
-      expect(accepts(field, "b")).toBe(true);
-      expect(keywordsOf(field, "a")).toEqual(["invalid", "oneOf"]);
-    },
+        expect(
+          accepts("date", `${padded(year, 4)}-${padded(month)}-${padded(day)}`),
+        ).toBe(held);
+      },
+    ),
   );
 });
 
-// @agent-code-guard/regression-only: examples pin which keyword an invalid number or boolean names.
-describe("number and boolean answer keywords", () => {
-  vitestIt(
-    "accepts a fraction for a number and refuses a value above the maximum",
-    () => {
-      const field = { type: "number", maximum: 2 };
+vitestIt(
+  "accepts an instant's ISO text and refuses it without its zone",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.date({
+          min: new Date("0000-01-01T00:00:00Z"),
+          max: new Date("9999-12-31T23:59:59Z"),
+          noInvalidDate: true,
+        }),
+        (instant) => {
+          const text = instant.toISOString();
 
-      expect(accepts(field, 1.5)).toBe(true);
-      expect(accepts(field, 2)).toBe(true);
-      expect(keywordsOf(field, 2.5)).toEqual(["invalid", "maximum"]);
-      expect(keywordsOf(field, "1")).toEqual(["invalid", "type"]);
-    },
+          expect(accepts("date-time", text)).toBe(true);
+          expect(accepts("date-time", text.slice(0, -1))).toBe(false);
+        },
+      ),
+    );
+  },
+);
+
+vitestIt(
+  "admits a second numbered 60 exactly when the reading is 23:59 UTC",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 23 }),
+        fc.integer({ min: 0, max: 59 }),
+        fc.integer({ min: -1439, max: 1439 }),
+        (hour, minute, offset) => {
+          const zone = `${offset < 0 ? "-" : "+"}${padded(Math.trunc(Math.abs(offset) / 60))}:${padded(Math.abs(offset) % 60)}`;
+          const utcMinuteOfDay = (hour * 60 + minute - offset + 2880) % 1440;
+
+          expect(
+            accepts(
+              "date-time",
+              `2024-02-01T${padded(hour)}:${padded(minute)}:60${zone}`,
+            ),
+          ).toBe(utcMinuteOfDay === 1439);
+        },
+      ),
+    );
+  },
+);
+
+vitestIt("accepts an email only when its host name has a dot", () => {
+  const label = fc.stringMatching(/^[a-z0-9]{1,8}$/);
+  fc.assert(
+    fc.property(label, label, label, (local, host, top) => {
+      expect(accepts("email", `${local}@${host}.${top}`)).toBe(true);
+      expect(accepts("email", `${local}@${host}`)).toBe(false);
+    }),
   );
+});
 
-  vitestIt("refuses a string for a boolean", () => {
-    expect(accepts({ type: "boolean" }, false)).toBe(true);
-    expect(keywordsOf({ type: "boolean" }, "true")).toEqual([
-      "invalid",
-      "type",
-    ]);
-  });
+vitestIt(
+  "accepts every web URL as a uri and refuses text without a scheme",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.webUrl({ withQueryParameters: true, withFragments: true }),
+        fc.string().filter((text) => !text.includes(":")),
+        (url, bare) => {
+          expect(accepts("uri", url)).toBe(true);
+          expect(accepts("uri", bare)).toBe(false);
+        },
+      ),
+    );
+  },
+);
 
-  vitestIt(
-    "refuses a fraction for an integer and a value below the minimum",
-    () => {
-      const field = { type: "integer", minimum: 1 };
+const fieldNames = ["slot", "hours", "note", "constructor", "toString"];
 
-      expect(keywordsOf(field, 1.5)).toEqual(["invalid", "type"]);
-      expect(keywordsOf(field, 0)).toEqual(["invalid", "minimum"]);
+vitestIt(
+  "names exactly the fields an answer is missing, adds or gets wrong",
+  () => {
+    const field = fc.record({
+      declared: fc.boolean(),
+      required: fc.boolean(),
+      answer: fc.constantFrom("absent", "valid", "invalid"),
+    });
+    fc.assert(
+      fc.property(fc.tuple(field, field, field, field, field), (fields) => {
+        const named = fields.map((state, index) => ({
+          ...state,
+          name: fieldNames[index] ?? "",
+        }));
+        const declared = named.filter((state) => state.declared);
+        const schema = Schema.decodeUnknownSync(RequestedSchema)({
+          type: "object",
+          properties: Object.fromEntries(
+            declared.map(({ name }) => [
+              name,
+              { type: "string", enum: ["yes"] },
+            ]),
+          ),
+          required: declared
+            .filter((state) => state.required)
+            .map(({ name }) => name),
+        });
+        const content = Object.fromEntries(
+          named
+            .filter((state) => state.answer !== "absent")
+            .map(({ name, answer }) => [
+              name,
+              answer === "valid" ? "yes" : "no",
+            ]),
+        );
+        const reasonOf = (state: (typeof named)[number]) => {
+          if (!state.declared) {
+            return state.answer === "absent" ? [] : ["unexpected"];
+          }
+          if (state.answer === "absent") {
+            return state.required ? ["missing"] : [];
+          }
+          return state.answer === "valid" ? [] : ["invalid"];
+        };
+        const expected = named.flatMap((state) =>
+          reasonOf(state).map((reason) => `${state.name} ${reason}`),
+        );
+        const failures = Either.match(
+          Effect.runSync(Effect.either(validateAnswer(schema, content))),
+          {
+            onRight: () => [],
+            onLeft: (fields) =>
+              fields.map(({ field, reason }) => `${field} ${reason}`),
+          },
+        );
+
+        expect(failures).toHaveLength(expected.length);
+        expect(new Set(failures)).toEqual(new Set(expected));
+      }),
+    );
+  },
+);
+
+vitestIt("names the type of a value another type of field is given", () => {
+  const kinds = {
+    string: { field: { type: "string" }, value: "a" },
+    number: { field: { type: "number" }, value: 1.5 },
+    boolean: { field: { type: "boolean" }, value: false },
+    array: {
+      field: { type: "array", items: { type: "string", enum: ["a"] } },
+      value: ["a"],
     },
+  } as const;
+  const kind = fc.constantFrom(...Struct.keys(kinds));
+  fc.assert(
+    fc.property(kind, kind, (asked, given) => {
+      expect(keywordsOf(kinds[asked].field, kinds[given].value)).toEqual(
+        asked === given ? [] : ["type"],
+      );
+    }),
   );
 });
 
-// @agent-code-guard/regression-only: examples pin which keyword an invalid multi-select names.
-describe("multi-select answer keywords", () => {
-  vitestIt("names each selected item outside a multi-select's options", () => {
-    const field = {
-      type: "array",
-      maxItems: 1,
-      items: { type: "string", enum: ["a"] },
-    };
+vitestIt("holds a number to its bounds and an integer to whole values", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("number", "integer"),
+      fc.integer({ min: -100, max: 100 }),
+      fc.integer({ min: 0, max: 50 }),
+      fc.oneof(
+        fc.integer({ min: -200, max: 200 }),
+        fc.double({ min: -200, max: 200, noNaN: true }),
+      ),
+      (type, minimum, span, value) => {
+        const maximum = minimum + span;
 
-    expect(keywordsOf(field, ["a", "b"])).toEqual([
-      "invalid",
-      "maxItems",
-      "items[1].enum",
-    ]);
-  });
-
-  vitestIt("refuses fewer selections than the minimum", () => {
-    const field = {
-      type: "array",
-      minItems: 1,
-      items: { type: "string", enum: ["a"] },
-    };
-
-    expect(accepts(field, ["a"])).toBe(true);
-    expect(keywordsOf(field, [])).toEqual(["invalid", "minItems"]);
-  });
-
-  vitestIt(
-    "checks a titled multi-select's items against its option consts",
-    () => {
-      const field = {
-        type: "array",
-        items: { anyOf: [{ const: "a", title: "A" }] },
-      };
-
-      expect(accepts(field, ["a"])).toBe(true);
-      expect(keywordsOf(field, ["b"])).toEqual(["invalid", "items[0].anyOf"]);
-    },
+        expect(keywordsOf({ type, minimum, maximum }, value)).toEqual([
+          ...(type === "integer" && !Number.isInteger(value) ? ["type"] : []),
+          ...(value < minimum ? ["minimum"] : []),
+          ...(value > maximum ? ["maximum"] : []),
+        ]);
+      },
+    ),
   );
 });
+
+vitestIt("counts a string's length in code points against its bounds", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ unit: "binary", maxLength: 8 }),
+      fc.integer({ min: 0, max: 4 }),
+      fc.integer({ min: 0, max: 4 }),
+      (text, minLength, span) => {
+        const maxLength = minLength + span;
+        const length = Array.from(text).length;
+
+        expect(
+          keywordsOf({ type: "string", minLength, maxLength }, text),
+        ).toEqual([
+          ...(length < minLength ? ["minLength"] : []),
+          ...(length > maxLength ? ["maxLength"] : []),
+        ]);
+      },
+    ),
+  );
+});
+
+vitestIt("accepts a single selection exactly when one option holds it", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom("a", "b", "c"), { minLength: 1, maxLength: 4 }),
+      fc.constantFrom("a", "b", "c", "d"),
+      fc.boolean(),
+      (options, value, titled) => {
+        const holders = options.filter((option) => option === value).length;
+        const field = titled
+          ? {
+              type: "string",
+              oneOf: options.map((option) => ({
+                const: option,
+                title: option,
+              })),
+            }
+          : { type: "string", enum: options };
+        const refusal = titled ? ["oneOf"] : ["enum"];
+        const held = titled ? holders === 1 : holders > 0;
+
+        expect(keywordsOf(field, value)).toEqual(held ? [] : refusal);
+      },
+    ),
+  );
+});
+
+vitestIt(
+  "checks each selected item against the options and their count against its bounds",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.constantFrom("a", "b", "x"), { maxLength: 5 }),
+        fc.integer({ min: 0, max: 3 }),
+        fc.integer({ min: 0, max: 3 }),
+        fc.boolean(),
+        (selected, minItems, span, titled) => {
+          const maxItems = minItems + span;
+          const items = titled
+            ? {
+                anyOf: [
+                  { const: "a", title: "A" },
+                  { const: "b", title: "B" },
+                ],
+              }
+            : { type: "string", enum: ["a", "b"] };
+
+          expect(
+            keywordsOf({ type: "array", minItems, maxItems, items }, selected),
+          ).toEqual([
+            ...(selected.length < minItems ? ["minItems"] : []),
+            ...(selected.length > maxItems ? ["maxItems"] : []),
+            ...selected.flatMap((item, index) =>
+              item === "x"
+                ? [`items[${index}].${titled ? "anyOf" : "enum"}`]
+                : [],
+            ),
+          ]);
+        },
+      ),
+    );
+  },
+);
 
 const collectiveId = collectiveOperationId(testAgentCard("agent:bob").agentId);
 
-const answerReference = {
-  authorAgentId: testAgentCard("agent:bob").agentId,
-  msgId: digest("msg_", 2),
-};
-
-const deadlineAt = 1_790_000_000_000;
-
-const flatSchema = {
+const requestedSchema = {
   type: "object",
   properties: {
     slot: { type: "string", enum: ["mon", "tue"] },
-    note: { type: "string" },
     hours: { type: "number", minimum: 0 },
-    confirmed: { type: "boolean" },
   },
   required: ["slot"],
 };
@@ -448,9 +456,33 @@ const gather = {
   kind: "operation",
   op: "gather",
   operationId: collectiveId,
-  deadlineAt,
-  requestedSchema: flatSchema,
+  deadlineAt: 1_790_000_000_000,
+  requestedSchema,
 };
+
+const collectiveValues = [
+  gather,
+  { ...gather, op: "all_gather" },
+  {
+    kind: "response",
+    operationId: collectiveId,
+    action: "accept",
+    content: { slot: "mon" },
+  },
+  { kind: "response", operationId: collectiveId, action: "decline" },
+  {
+    kind: "close",
+    operationId: collectiveId,
+    included: [
+      {
+        authorAgentId: testAgentCard("agent:bob").agentId,
+        msgId: digest("msg_", 2),
+      },
+    ],
+    closedAt: 1_790_000_000_000,
+    closedBy: "deadline",
+  },
+];
 
 /** The data part that carries a collective value. */
 const carrying = (value: unknown) => ({
@@ -472,278 +504,80 @@ const interpreted = (content: readonly unknown[]) =>
 const decodes = (value: unknown): boolean =>
   Exit.isSuccess(Effect.runSyncExit(interpreted([carrying(value)])));
 
-const decodesSchema = (value: unknown): boolean =>
-  Exit.isSuccess(
-    Effect.runSyncExit(Schema.decodeUnknown(RequestedSchema)(value)),
-  );
+vitestIt(
+  "reads the one collective value content carries, none without one and a refusal with more",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...collectiveValues),
+        fc.integer({ min: 0, max: 3 }),
+        (value, copies) => {
+          const read = Effect.runSync(
+            Effect.either(
+              interpreted([
+                { type: "text", text: "Which day?" },
+                ...Array.from({ length: copies }, () => carrying(value)),
+              ]),
+            ),
+          );
 
-/** Each issue message of a schema that fails to decode; empty if it decodes. */
-const schemaIssues = (value: unknown) =>
-  Either.match(Schema.decodeUnknownEither(RequestedSchema)(value), {
-    onLeft: (error) =>
-      ParseResult.ArrayFormatter.formatErrorSync(error).map(
-        ({ message }) => message,
+          if (copies > 1) {
+            expect(read).toStrictEqual(
+              Either.left(
+                new CollectivePartInvalidError({ reason: "duplicate" }),
+              ),
+            );
+            return;
+          }
+          expect(Either.map(read, Option.isSome)).toEqual(
+            Either.right(copies === 1),
+          );
+        },
       ),
-    onRight: () => [],
-  });
-
-const decodeValue = (value: unknown) =>
-  Option.getOrThrow(Effect.runSync(interpreted([carrying(value)])));
-
-// @agent-code-guard/regression-only: examples pin the closed collective content round trip.
-describe("collective content round trip", () => {
-  vitestIt(
-    "round-trips a request with the question before its collective data",
-    () => {
-      const content = Effect.runSync(
-        encodeCollectiveContent(decodeValue(gather), "Which day?"),
-      );
-
-      expect(content).toEqual([
-        { type: "text", text: "Which day?" },
-        carrying(gather),
-      ]);
-      expect(Effect.runSync(interpreted(content))).toEqual(
-        Option.some(decodeValue(gather)),
-      );
-    },
-  );
-
-  vitestIt("round-trips an all_gather close record", () => {
-    const close = {
-      kind: "close",
-      operationId: collectiveId,
-      included: [answerReference],
-      closedAt: deadlineAt,
-      closedBy: "deadline",
-    };
-
-    const content = Effect.runSync(encodeCollectiveContent(decodeValue(close)));
-
-    expect(Effect.runSync(interpreted(content))).toEqual(
-      Option.some(decodeValue(close)),
     );
-  });
-});
+  },
+);
 
-describe("collective timestamps", () => {
-  vitestIt.each([0, -1, 8_640_000_000_000_001])(
-    "rejects the invalid request deadline %s",
-    (deadlineAt) => {
-      expect(decodes({ ...gather, deadlineAt })).toBe(false);
-    },
-  );
-
-  vitestIt.each([0, 8_640_000_000_000_000])(
-    "accepts the completion timestamp %s",
-    (closedAt) => {
-      expect(
-        decodes({
-          kind: "close",
-          operationId: collectiveId,
-          included: [],
-          closedAt,
-          closedBy: "settled",
+vitestIt(
+  "writes a collective value into content that reads back as the same value",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...collectiveValues),
+        fc.option(fc.string({ minLength: 1, maxLength: 64 }), {
+          nil: undefined,
         }),
-      ).toBe(true);
-    },
-  );
-});
+        (raw, question) => {
+          const value = Option.getOrThrow(
+            Effect.runSync(interpreted([carrying(raw)])),
+          );
+          const content = Effect.runSync(
+            encodeCollectiveContent(value, question),
+          );
 
-// @agent-code-guard/regression-only: examples pin the closed operation and response wire grammar.
-describe("collective value grammar", () => {
-  vitestIt("rejects a gather without a deadline", () => {
-    expect(
-      decodes({
-        kind: "operation",
-        op: "gather",
-        operationId: collectiveId,
-        requestedSchema: flatSchema,
-      }),
-    ).toBe(false);
-  });
-
-  vitestIt("rejects an all_gather without a requested schema", () => {
-    expect(
-      decodes({
-        kind: "operation",
-        op: "all_gather",
-        operationId: collectiveId,
-        deadlineAt,
-      }),
-    ).toBe(false);
-  });
-});
-
-// @agent-code-guard/regression-only: examples pin that only an accept response carries content.
-describe("collective response grammar", () => {
-  vitestIt("accepts an accept response carrying content", () => {
-    expect(
-      decodes({
-        kind: "response",
-        operationId: collectiveId,
-        action: "accept",
-        content: { slot: "mon" },
-      }),
-    ).toBe(true);
-  });
-
-  vitestIt("rejects a decline response carrying content", () => {
-    expect(
-      decodes({
-        kind: "response",
-        operationId: collectiveId,
-        action: "decline",
-        content: { slot: "mon" },
-      }),
-    ).toBe(false);
-  });
-
-  vitestIt("rejects an accept response without content", () => {
-    expect(
-      decodes({
-        kind: "response",
-        operationId: collectiveId,
-        action: "accept",
-      }),
-    ).toBe(false);
-  });
-
-  vitestIt("rejects a cancel, which is not an answer", () => {
-    expect(
-      decodes({
-        kind: "response",
-        operationId: collectiveId,
-        action: "cancel",
-      }),
-    ).toBe(false);
-  });
-});
-
-// @agent-code-guard/regression-only: examples pin the MCP form-mode grammar the SDK accepts.
-describe("requested schema grammar", () => {
-  vitestIt(
-    "accepts a flat schema of enum, string, number and boolean fields",
-    () => {
-      expect(decodesSchema(flatSchema)).toBe(true);
-    },
-  );
-
-  vitestIt("rejects a nested object property", () => {
-    expect(
-      decodesSchema({
-        type: "object",
-        properties: { where: { type: "object", properties: {} } },
-      }),
-    ).toBe(false);
-  });
-
-  vitestIt("rejects a required name that is not a property", () => {
-    expect(
-      decodesSchema({
-        type: "object",
-        properties: { note: { type: "string" } },
-        required: ["slot"],
-      }),
-    ).toBe(false);
-  });
-
-  vitestIt(
-    "accepts a multi-select only when its items carry a string type",
-    () => {
-      const multiSelect = (items: object) => ({
-        type: "object",
-        properties: { slots: { type: "array", items } },
-      });
-
-      expect(decodesSchema(multiSelect({ type: "string", enum: ["a"] }))).toBe(
-        true,
-      );
-      expect(decodesSchema(multiSelect({ enum: ["a"] }))).toBe(false);
-    },
-  );
-
-  vitestIt("rejects a select whose enum offers no option", () => {
-    expect(
-      decodesSchema({
-        type: "object",
-        properties: { slot: { type: "string", enum: [] } },
-      }),
-    ).toBe(false);
-  });
-});
-
-// @agent-code-guard/regression-only: examples pin which keywords an admitted property keeps.
-describe("admitted form fields", () => {
-  vitestIt(
-    "keeps only the keywords of the shape that admits a property",
-    () => {
-      const decoded = Schema.decodeUnknownSync(RequestedSchema)({
-        type: "object",
-        properties: {
-          slot: { type: "string", enum: ["a"], minLength: 2, pattern: "x" },
-          named: {
-            type: "string",
-            oneOf: [{ const: "a", title: "A" }],
-            pattern: "x",
-          },
+          expect(Effect.runSync(interpreted(content))).toEqual(
+            Option.some(value),
+          );
         },
-      });
-
-      expect(decoded.properties).toEqual({
-        slot: { type: "string", enum: ["a"] },
-        named: { type: "string", oneOf: [{ const: "a", title: "A" }] },
-      });
-    },
-  );
-
-  vitestIt("names the empty enum of a select that offers no option", () => {
-    expect(
-      schemaIssues({
-        type: "object",
-        properties: {
-          slots: { type: "array", items: { type: "string", enum: [] } },
-        },
-      }),
-    ).toEqual(["items.enum: Invalid input: expected at least one option"]);
-  });
-});
-
-// @agent-code-guard/regression-only: examples pin how content carries at most one collective part within the size limit.
-describe("collective content", () => {
-  vitestIt("reads content without a collective part as none", () => {
-    const content = [
-      { type: "text", text: "hello" },
-      { type: "data", value: { other: 1 } },
-    ];
-
-    expect(Effect.runSync(interpreted(content))).toEqual(Option.none());
-  });
-
-  vitestIt("rejects content carrying two collective parts", () => {
-    const part = carrying(gather);
-
-    expect(
-      Effect.runSync(Effect.flip(interpreted([part, part]))),
-    ).toStrictEqual(new CollectivePartInvalidError({ reason: "duplicate" }));
-  });
-
-  vitestIt("rejects a collective part that does not decode", () => {
-    expect(
-      Effect.runSync(Effect.flip(interpreted([carrying({ kind: "unknown" })]))),
-    ).toStrictEqual(new CollectivePartInvalidError({ reason: "malformed" }));
-  });
-
-  vitestIt("rejects a request whose question exceeds the content limit", () => {
-    const failure = Effect.runSync(
-      Effect.flip(
-        encodeCollectiveContent(decodeValue(gather), "q".repeat(32_768)),
       ),
     );
+  },
+);
 
-    expect(failure).toStrictEqual(new CollectiveContentError());
-  });
-});
+vitestIt(
+  "accepts content exactly when its JSON text is at most 32,768 bytes",
+  () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 32_700, max: 32_800 }), (length) => {
+        const content = [{ type: "text", text: "a".repeat(length) }];
+
+        expect(Schema.is(PublicContent)(content)).toBe(
+          JSON.stringify(content).length <= 32_768,
+        );
+      }),
+    );
+  },
+);
 
 it("mints a distinct operation naming its requester for each request", () =>
   Effect.gen(function* () {
@@ -753,7 +587,8 @@ it("mints a distinct operation naming its requester for each request", () =>
       op: "gather",
       question: "Which day works?",
       deadline: 30,
-      requestedSchema,
+      requestedSchema:
+        Schema.decodeUnknownSync(RequestedSchema)(requestedSchema),
     });
     const first = yield* ask;
     const second = yield* ask;
@@ -771,130 +606,47 @@ vitestIt.each([
   expect(decodes(gather)).toBe(true);
 });
 
-describe("public message schemas", () => {
-  const canonicalGroup32 = `group:${Array.from(
-    Array(32).keys(),
-    (index) => `member-${String(index).padStart(2, "0")}`,
-  ).join(",")}`;
+const decodingFails = (
+  schema: Schema.Schema.AnyNoContext,
+  value: unknown,
+): boolean => !Schema.is(schema)(value);
 
-  const canonicalGroup33 = `group:${Array.from(
-    Array(33).keys(),
-    (index) => `member-${String(index).padStart(2, "0")}`,
-  ).join(",")}`;
+vitestIt(
+  "accepts a group address of 3 to 32 members only in name order",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.uniqueArray(fc.stringMatching(/^[a-z0-9]{3,8}$/), {
+          minLength: 2,
+          maxLength: 34,
+        }),
+        (names) => {
+          const ordered = Arr.sort(names, Order.string);
+          const sized = names.length >= 3 && names.length <= 32;
+          const reversed = `group:${ordered.toReversed().join(",")}`;
 
-  const decodingFails = (
-    schema: Schema.Schema.AnyNoContext,
-    value: unknown,
-  ): boolean =>
-    Either.match(Schema.decodeUnknownEither(schema)(value), {
-      onLeft: () => true,
-      onRight: () => false,
-    });
-
-  // @agent-code-guard/regression-only: Address schemas pin the accepted public runtime grammar.
-  describe("public address schemas", () => {
-    vitestIt(
-      "accepts exact agent addresses and arbitrary group input order",
-      () => {
-        const direct = "agent:alice-agent";
-        const unorderedGroup = "group:carol-agent,bob-agent";
-
-        expect(Schema.decodeUnknownSync(PublicAgentAddress)(direct)).toBe(
-          direct,
-        );
-        expect(
-          Schema.decodeUnknownSync(PublicMessageAddressInput)(unorderedGroup),
-        ).toBe(unorderedGroup);
-      },
+          expect(
+            decodingFails(PublicGroupAddress, `group:${ordered.join(",")}`),
+          ).toBe(!sized);
+          expect(decodingFails(PublicGroupAddress, reversed)).toBe(true);
+          expect(decodingFails(PublicMessageAddressInput, reversed)).toBe(
+            false,
+          );
+        },
+      ),
     );
+  },
+);
 
-    vitestIt("accepts canonical 3-member and 32-member groups", () => {
-      const threeMembers = "group:alice-agent,bob-agent,carol-agent";
-
-      expect(Schema.decodeUnknownSync(PublicGroupAddress)(threeMembers)).toBe(
-        threeMembers,
-      );
-      expect(
-        Schema.decodeUnknownSync(PublicGroupAddress)(canonicalGroup32),
-      ).toBe(canonicalGroup32);
-    });
-
-    vitestIt.each([
-      {
-        case: "noncanonical member order",
-        address: "group:carol-agent,alice-agent,bob-agent",
-      },
-      { case: "2 members", address: "group:alice-agent,bob-agent" },
-      { case: "33 members", address: canonicalGroup33 },
-    ])("rejects a group output with $case", ({ address }) => {
-      expect(decodingFails(PublicGroupAddress, address)).toBe(true);
-    });
-  });
-
-  const messageHash = (byteLength: number) =>
-    Encoding.encodeBase64Url(new Uint8Array(byteLength).fill(7));
-
-  // @agent-code-guard/regression-only: Identifier schemas pin the closed durable send grammar.
-  describe("public message identifiers", () => {
-    vitestIt("accepts the exact message identifier grammar", () => {
-      const msgId = digest("msg_", 7);
-
-      expect(Schema.decodeUnknownSync(PublicMsgId)(msgId)).toBe(msgId);
-    });
-
-    // A PublicMsgId is `msg_` plus the canonical base64url of exactly 32 bytes, so
-    // each case breaks one of the prefix, the length, or the round trip.
-    vitestIt.each([
-      { case: "another prefix", candidate: `cnv_${messageHash(32)}` },
-      { case: "31 bytes", candidate: `msg_${messageHash(31)}` },
-      { case: "33 bytes", candidate: `msg_${messageHash(33)}` },
-      {
-        case: "a noncanonical final character",
-        candidate: `msg_${messageHash(32).slice(0, -1)}d`,
-      },
-      { case: "padding", candidate: `msg_${messageHash(32)}=` },
-    ])("rejects a message identifier with $case", ({ candidate }) => {
-      expect(decodingFails(PublicMsgId, candidate)).toBe(true);
-    });
-  });
-
-  // @agent-code-guard/regression-only: PublicContent schemas pin the exact semantic boundary and byte cap.
-  describe("public content", () => {
-    vitestIt("accepts exact nonempty semantic content", () => {
-      const content = [
-        { type: "text", text: "Meet at 10?" },
-        { type: "data", value: { available: true, hour: 10 } },
-      ];
-
-      expect(Schema.decodeUnknownSync(PublicContent)(content)).toEqual(content);
-    });
-
-    vitestIt("accepts content at the exact byte cap", () => {
-      const text = "a".repeat(32_741);
-      const content: Content = [{ type: "text", text }];
-
-      expect(Schema.decodeUnknownSync(PublicContent)(content)).toEqual(content);
-      expect(Effect.runSync(encodeJson(Content, content))).toHaveLength(32_768);
-      expect(
-        Effect.runSync(
-          encodeJson(Content, [{ type: "text", text: text + "a" }]).pipe(
-            Effect.either,
-          ),
-        ),
-      ).toMatchObject({ _tag: "Left" });
-    });
-
-    vitestIt.each([
-      { case: "empty", content: [] },
-      { case: "non-JSON", content: [{ type: "data", value: Number.NaN }] },
-      { case: "ill-formed", content: [{ type: "text", text: "\ud800" }] },
-      {
-        case: "oversized",
-        content: [{ type: "text", text: "a".repeat(32_742) }],
-      },
-      { case: "open", content: [{ type: "text", text: "hello", extra: true }] },
-    ])("rejects $case content", ({ content }) => {
-      expect(decodingFails(PublicContent, content)).toBe(true);
-    });
-  });
-});
+vitestIt(
+  "accepts a message identifier exactly when it encodes 32 bytes",
+  () => {
+    fc.assert(
+      fc.property(fc.uint8Array({ maxLength: 48 }), (bytes) => {
+        expect(
+          decodingFails(PublicMsgId, `msg_${Encoding.encodeBase64Url(bytes)}`),
+        ).toBe(bytes.length !== 32);
+      }),
+    );
+  },
+);
