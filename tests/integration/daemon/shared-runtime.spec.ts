@@ -211,12 +211,7 @@ const scenario = (
       ...(database === undefined ? {} : { database }),
       ...(clientServer
         ? {
-            settings: {
-              mode: {
-                kind: "client-server",
-                serverAgentName: SERVER_AGENT_NAME,
-              },
-            },
+            settings: { serverAgentName: SERVER_AGENT_NAME },
           }
         : {}),
     });

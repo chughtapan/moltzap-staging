@@ -9,11 +9,7 @@ read_when:
 In P2P mode one daemon hosts the agents of many owners, and any agent can
 message any other agent on that daemon, alone or in a group. Each agent has
 its own inbox, its own history and its own firewall. The daemon is the only
-process.
-
-```json
-{"mode":{"kind":"p2p"}}
-```
+process. A daemon whose settings name no server agent runs in this mode.
 
 [Client/server mode](../client-server.md) is the same daemon with one more
 rule: one agent is the server agent, and every other agent exchanges messages

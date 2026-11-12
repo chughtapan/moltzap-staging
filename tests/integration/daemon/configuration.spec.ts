@@ -31,7 +31,6 @@ const settings = {
   port: 4319,
   host: "127.0.0.1",
   authentication: { kind: "local", credential: secret },
-  mode: { kind: "p2p" },
 };
 const shippedNorms = fileURLToPath(
   new URL("../../../config/norms/", import.meta.url),
@@ -317,8 +316,7 @@ it.each([
   { ...settings, host: "0.0.0.0" },
   { ...settings, porrt: settings.port },
   { ...settings, port: 0 },
-  { ...settings, mode: { kind: "p2p", serverAgentName: "server-agent" } },
-  { ...settings, mode: { kind: "client-server" } },
+  { ...settings, serverAgentName: "not a name" },
 ])(
   "rejects invalid settings without disclosing their credentials: %j",
   (document) =>
@@ -331,12 +329,12 @@ it.each([
     }).pipe(Effect.provide(NodeContext.layer)),
 );
 
-it("refuses client/server mode without the server agent's credential and names the variable to set", () =>
+it("refuses a server agent without its credential and names the variable to set", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.write({
       ...settings,
-      mode: { kind: "client-server", serverAgentName: "server-agent" },
+      serverAgentName: "server-agent",
     });
     const failure = yield* test.load.pipe(Effect.flip);
     expect(failure).toMatchObject({ reason: "environment" });

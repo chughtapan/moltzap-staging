@@ -113,13 +113,7 @@ const commonFields = {
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication: Schema.Union(localBearer, publicOAuth),
-  mode: Schema.Union(
-    exactStruct({ kind: Schema.Literal("p2p") }),
-    exactStruct({
-      kind: Schema.Literal("client-server"),
-      serverAgentName: AgentName,
-    }),
-  ),
+  serverAgentName: Schema.optional(AgentName),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   hideCollectives: Schema.optionalWith(Schema.Boolean, {
     default: () => false,
@@ -160,7 +154,7 @@ export const processHelp = [
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
   "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
   "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key",
-  "SHARNESS_SERVER_AGENT_CREDENTIAL: in client/server mode, the secret the server agent signs in with",
+  "SHARNESS_SERVER_AGENT_CREDENTIAL: when the settings name a server agent, the secret it signs in with",
   "Deployment prepares the database schema and encryption verifier before startup.",
   "Standard OTEL_* variables configure telemetry.",
 ].join("\n");
@@ -260,15 +254,15 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
 
 /**
  * The secret the server agent signs in with, from the environment so that it
- * is never written to a file. Client/server mode requires it. P2P mode has no
- * server agent and does not read it.
+ * is never written to a file. A daemon whose settings name a server agent
+ * requires it; one without a server agent does not read it.
  */
 function serverAgentCredential(captured: DaemonSettings) {
   return Effect.gen(function* () {
     const configured = yield* Config.option(
       Config.redacted("SHARNESS_SERVER_AGENT_CREDENTIAL"),
     ).pipe(Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()));
-    if (captured.mode.kind !== "client-server") {
+    if (captured.serverAgentName === undefined) {
       return Option.none<Redacted.Redacted>();
     }
     if (Option.isNone(configured)) {

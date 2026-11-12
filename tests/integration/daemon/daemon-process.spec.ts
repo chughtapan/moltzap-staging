@@ -59,7 +59,6 @@ const receivedOrder = (participant: Participant, count: number) =>
   );
 
 /** The settings a refused start tells the operator to change. */
-const modeSetting = "mode";
 const serverNameSetting = "serverAgentName";
 
 const greeting = "hello from the first owner";
@@ -268,11 +267,11 @@ it(
 );
 
 it(
-  "refuses another server agent name or the other mode on a started database, naming the setting",
+  "refuses another server agent name, or none, on a database started with one, naming the setting",
   processTrace(
     Effect.gen(function* () {
-      const named = (name: string) => ({
-        [modeSetting]: { kind: "client-server", [serverNameSetting]: name },
+      const named = (name?: string) => ({
+        [serverNameSetting]: name,
       });
       const daemon = yield* sharedDaemon({ settings: named("front-desk") });
       yield* stopProcess(yield* daemon.start());
@@ -282,10 +281,10 @@ it(
       expect(renamed.exitCode).not.toBe(0);
       expect(renamed.logs).toContain(`Set ${serverNameSetting}`);
 
-      yield* daemon.configure({ [modeSetting]: { kind: "p2p" } });
+      yield* daemon.configure(named());
       const moved = yield* daemon.startupFailure();
       expect(moved.exitCode).not.toBe(0);
-      expect(moved.logs).toContain(`Set ${modeSetting}`);
+      expect(moved.logs).toContain(`Set ${serverNameSetting}`);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

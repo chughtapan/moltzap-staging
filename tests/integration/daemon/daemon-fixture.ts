@@ -442,7 +442,6 @@ export const sharedDaemon = (
           issuer: issuer.issuer,
           scope: requiredScope,
         },
-        mode: { kind: "p2p" },
         ...(options.firewall === true &&
         options.settings?.messagePolicyFile === undefined
           ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(
