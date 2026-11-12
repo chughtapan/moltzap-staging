@@ -135,9 +135,12 @@ function runDaemon() {
           ? undefined
           : yield* serviceNorms(settings.norms);
       const mode =
-        settings.mode.kind === "p2p"
+        settings.serverAgentName === undefined
           ? yield* p2pMode(settings)
-          : yield* clientServerMode(settings.mode, norms !== undefined);
+          : yield* clientServerMode(
+              settings.serverAgentName,
+              norms !== undefined,
+            );
       const selectApp = yield* makeAgentSelector({
         settings,
         unlockKey: access.unlockKey,
@@ -175,18 +178,24 @@ function runDaemon() {
  * any other agent on the daemon, alone or in a group.
  */
 function p2pMode(settings: DaemonSettings) {
-  return Effect.as(claimDatabase("p2p"), {
-    agent: () => ({
-      communication: Communication.layer,
-      checks: <Own>({ own }: { readonly own: Own }) => own,
-      harness: { hideGroups: settings.hideGroups },
-      app: {
-        hideCollectives: settings.hideCollectives,
-        serverAgent: Option.none(),
-      },
-      started: () => Effect.void,
-    }),
-  });
+  return Effect.as(
+    claimDatabase(
+      "p2p",
+      "This database was first started with a server agent. Set serverAgentName to its name, or prepare a new database.",
+    ),
+    {
+      agent: () => ({
+        communication: Communication.layer,
+        checks: <Own>({ own }: { readonly own: Own }) => own,
+        harness: { hideGroups: settings.hideGroups },
+        app: {
+          hideCollectives: settings.hideCollectives,
+          serverAgent: Option.none(),
+        },
+        started: () => Effect.void,
+      }),
+    },
+  );
 }
 
 /**
@@ -195,13 +204,12 @@ function p2pMode(settings: DaemonSettings) {
  * agent is a client: it exchanges messages only with the server agent, runs
  * no check of its own, and reads the server agent's norms.
  */
-function clientServerMode(
-  mode: Extract<DaemonSettings["mode"], { readonly kind: "client-server" }>,
-  hasNorms: boolean,
-) {
+function clientServerMode(serverAgentName: AgentName, hasNorms: boolean) {
   return Effect.gen(function* () {
-    const { serverAgentName } = mode;
-    yield* claimDatabase("client-server");
+    yield* claimDatabase(
+      "client-server",
+      "This database was first started without a server agent. Remove serverAgentName from the settings, or prepare a new database.",
+    );
     yield* getOrCreateOwnedAgent(serverAgentOwner, serverAgentName).pipe(
       Effect.catchTag("OwnershipError", () =>
         refused(
@@ -253,15 +261,12 @@ function clientServerMode(
   }).pipe(Effect.withSpan("clientServerMode"));
 }
 
-/** Marks the database as serving `mode`, or refuses a database that serves the other. */
-function claimDatabase(mode: DaemonSettings["mode"]["kind"]) {
+/** Marks the database as serving `mode`, or refuses a database that serves the other with `remedy`. */
+function claimDatabase(mode: "p2p" | "client-server", remedy: string) {
   return Communication.claim(mode).pipe(
     Effect.catchIf(
       (error) => error.reason === "membership-invalid",
-      () =>
-        refused(
-          `This database was first started in the other mode. Set mode to that one, or prepare a new database for ${mode} mode.`,
-        ),
+      () => refused(remedy),
     ),
   );
 }
