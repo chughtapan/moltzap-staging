@@ -7,8 +7,6 @@ export {
   ClientRepresentationError,
   decodeJson,
   encodeJson,
-  hasWellFormedUnicode,
-  jsonText,
   MAXIMUM_RUNTIME_ITEM_BYTES,
   representationFailure,
   sameJson,

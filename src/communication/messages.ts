@@ -20,8 +20,8 @@ import {
   type ClientRepresentationError,
   compareAgentIds as compareAgentIdBytes,
   compareAscii,
+  encodeJson,
   exactStruct,
-  hasWellFormedUnicode,
   isCanonicalIdentifier,
   isStrictlyAscending,
   representationFailure,
@@ -136,15 +136,14 @@ const ConversationMembers = exactStruct({
 });
 
 /**
- * The identifier of the conversation among these members: a hash of the JSON
- * text `{"kind":"conversation_identity","memberAgentIds":[...]}` over their
+ * The identifier of the conversation among these members: a hash of their
  * agent identifiers, which must be given in ascending order with no repeats.
  */
 export const deriveConversationId = (
   memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
 ): Effect.Effect<typeof ConversationId.Type, ClientRepresentationError> =>
   isStrictlyAscending(memberAgentIds, compareAgentIds)
-    ? Schema.encode(ConversationMembers)({
+    ? encodeJson(ConversationMembers, {
         kind: "conversation_identity" as const,
         memberAgentIds,
       }).pipe(
@@ -152,12 +151,7 @@ export const deriveConversationId = (
           (members) =>
             `cnv_${createHash("sha256")
               .update("org.social-harness/client/v2/conversation\0")
-              .update(
-                JSON.stringify({
-                  kind: members.kind,
-                  memberAgentIds: members.memberAgentIds,
-                }),
-              )
+              .update(members)
               .digest("base64url")}`,
         ),
         Effect.flatMap(Schema.decodeUnknown(ConversationId)),
@@ -1494,6 +1488,31 @@ function readCollectiveValue(
       Effect.fail(new CollectivePartInvalidError({ reason: "malformed" })),
     ),
   );
+}
+
+function hasWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (isTrailingSurrogate(codeUnit)) {
+      return false;
+    }
+    if (!isLeadingSurrogate(codeUnit)) {
+      continue;
+    }
+    index += 1;
+    if (!isTrailingSurrogate(value.charCodeAt(index))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isLeadingSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
+function isTrailingSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
 }
 
 function contentFits(

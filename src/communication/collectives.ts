@@ -27,7 +27,6 @@ import {
   validateAnswer,
 } from "./messages.js";
 import {
-  encodeRuntimeValue,
   EndpointStoreError,
   putCollectiveOperation,
   readCollectingQuestionIds,
@@ -693,7 +692,6 @@ function checkResultSize(result: {
   readonly sources: ResultSources;
 }) {
   return Effect.gen(function* () {
-    const item = yield* encodeRuntimeValue(result.item);
     const sources = yield* encodeJson(ResultSources, result.sources).pipe(
       Effect.catchTag(
         "ClientRepresentationError",
@@ -701,7 +699,8 @@ function checkResultSize(result: {
       ),
     );
     if (
-      Buffer.byteLength(item) > MAXIMUM_RUNTIME_ITEM_BYTES ||
+      Buffer.byteLength(JSON.stringify(result.item)) >
+        MAXIMUM_RUNTIME_ITEM_BYTES ||
       Buffer.byteLength(sources) > MAXIMUM_RUNTIME_ITEM_BYTES
     ) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });

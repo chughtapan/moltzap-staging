@@ -10,7 +10,7 @@ import {
 } from "./sql.js";
 
 /** Identifies the table layout. A database with another number is not opened. */
-const daemonDatabaseFormat = 7;
+const daemonDatabaseFormat = 6;
 
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const agentTables = [

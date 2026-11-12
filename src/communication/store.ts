@@ -5,12 +5,7 @@ import { Cause, Data, Effect, Option, Schema } from "effect";
 
 import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
-import {
-  decodeJson,
-  encodeJson,
-  jsonText,
-  sameJson,
-} from "../encoding/index.js";
+import { decodeJson, encodeJson, sameJson } from "../encoding/index.js";
 import { AgentId } from "../identity/agent-cards.js";
 import {
   CollectiveId,
@@ -89,19 +84,12 @@ const operationRow = Schema.Struct({
   answer_refs: Schema.NullOr(Schema.String),
 });
 
+const answerReferences = Schema.Array(MessageReference).pipe(
+  Schema.maxItems(maximumMembers - 1),
+);
+
 const conflict = () => new EndpointStoreError({ reason: "conflict" });
 const corrupt = () => new EndpointStoreError({ reason: "corrupt" });
-
-/** The JSON text of a validated value, or `invalid-input` for one JSON cannot hold. */
-export const encodeRuntimeValue = (
-  value: unknown,
-): Effect.Effect<string, EndpointStoreError> =>
-  jsonText(value).pipe(
-    Effect.catchTag(
-      "ClientRepresentationError",
-      () => new EndpointStoreError({ reason: "invalid-input" }),
-    ),
-  );
 
 /** Reads stored JSON text through its schema; text the schema refuses is `corrupt`. */
 const decodeStored = <A, I>(
@@ -322,7 +310,7 @@ export function saveCollectiveResult(
         .set({
           phase: "completed",
           result: yield* encodeJson(ResultDelivery.fields.item, input.item),
-          answer_refs: yield* encodeRuntimeValue(input.answers),
+          answer_refs: yield* encodeJson(answerReferences, input.answers),
         })
         .where("phase", "=", "collecting"),
     );
@@ -616,12 +604,7 @@ function readResult(row: typeof operationRow.Type) {
     }
     return {
       item,
-      answers: yield* decodeStored(
-        Schema.Array(MessageReference).pipe(
-          Schema.maxItems(maximumMembers - 1),
-        ),
-        row.answer_refs,
-      ),
+      answers: yield* decodeStored(answerReferences, row.answer_refs),
     };
   });
 }
