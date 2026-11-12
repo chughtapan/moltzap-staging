@@ -1,10 +1,9 @@
 /** @file Opens configured storage and owns agent resources independently of MCP connections. */
 import { HttpClient } from "@effect/platform";
-import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
+import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   Cause,
-  ConfigProvider,
   Console,
   Context,
   Deferred,
@@ -32,7 +31,6 @@ import {
   DaemonConfigurationError,
   type DaemonSettings,
   loadDaemonSettings,
-  processHelp,
   spanExport,
 } from "./config.js";
 import { makeMcpHttpApp, serveMcp } from "./mcp/http.js";
@@ -48,67 +46,10 @@ import {
 } from "./ownership.js";
 import { SocialHarness } from "./social-harness.js";
 
-/** Usage names the runtime inputs without opening storage or allocating an owner. */
-export const daemonHelp = processHelp;
-
 /** A daemon scope restores saved agents and serves authenticated requests to them. */
 export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
   Layer.provide(spanExport),
 );
-
-/**
- * Runs the `sharnessd` command line as the process's main program. `--help`
- * prints the usage, no argument runs the daemon until it stops, and any other
- * arguments print the usage to standard error. A startup failure prints one
- * line. Every outcome but the usage and a stopped daemon exits unsuccessfully.
- */
-export function runCommand(args: readonly string[]): void {
-  runAsMainProgram(commandLine(args));
-}
-
-/** Printed for a startup failure that names no setting of its own. */
-const UNEXPLAINED_FAILURE =
-  "The daemon could not start. Check SHARNESS_CONFIG_FILE, SHARNESS_DATABASE_URL and SHARNESS_DATABASE_KEY; run sharnessd --help for what each must hold.";
-
-/** Prints one line to standard error and makes the process exit unsuccessfully. */
-const exitUnsuccessfully = (line: string) =>
-  Console.error(line).pipe(
-    Effect.andThen(
-      Effect.sync(() => {
-        process.exitCode = 1;
-      }),
-    ),
-  );
-
-/** Reports a startup refusal whose message names the setting to change. */
-const explained = (refusal: { readonly message: string }) =>
-  exitUnsuccessfully(refusal.message);
-
-/** The command line as one program that reports its own failures. */
-function commandLine(args: readonly string[]) {
-  return Effect.suspend(() => {
-    if (args.length === 1 && args[0] === "--help") {
-      return Console.log(daemonHelp);
-    }
-    if (args.length === 0) {
-      return Layer.launch(daemonLayer);
-    }
-    return exitUnsuccessfully(daemonHelp);
-  }).pipe(
-    Effect.catchTags({
-      DaemonConfigurationError: explained,
-      DatabaseAccessError: explained,
-      DatabasePreparationError: explained,
-    }),
-    Effect.catchAll(() => exitUnsuccessfully(UNEXPLAINED_FAILURE)),
-    Effect.withConfigProvider(ConfigProvider.fromEnv()),
-  );
-}
-
-/** The one place the process runtime is started. */
-function runAsMainProgram(program: Effect.Effect<void>): void {
-  NodeRuntime.runMain(program);
-}
 
 /** A startup refusal that names the setting to change. */
 const refused = (message: string) =>

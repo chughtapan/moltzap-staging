@@ -37,7 +37,6 @@ const program = Effect.gen(function* () {
   const url = yield* Config.url("SHARNESS_MCP_URL").pipe(
     Effect.mapError(() => commandError(USAGE)),
   );
-  // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- two positional commands; the helper installs no @effect/cli
   const [command, first, second = "{}"] = process.argv.slice(2);
   if (command === "call" && first !== undefined) {
     return yield* call(url, first, second);

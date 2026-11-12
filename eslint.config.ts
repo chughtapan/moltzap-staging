@@ -347,6 +347,8 @@ function makeStrictRules(maxLines: number) {
     // so it reports errors for statically typed object and string operands.
     "sonarjs/in-operator-type-error": "off",
     "sonarjs/argument-type": "off",
+    // `sharnessd` takes `--help` or nothing, which needs no argument parser.
+    "agent-code-guard/prefer-effect-platform": ["error", { disable: ["argv"] }],
     "local-guard/gen-finally": "error",
   };
 }
