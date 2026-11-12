@@ -1,5 +1,4 @@
 /** @file Exercises NanoClaw's native inbox and sends against a daemon container. */
-import { replyAddress } from "@social-harness/social-harness";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod } from "node:fs/promises";
@@ -50,12 +49,15 @@ interface Trio extends Pair {
   readonly peer: AgentAccess;
 }
 
-/** What the probe waits for in NanoClaw's native inbox. */
+/**
+ * What the probe waits for in NanoClaw's native inbox: a plain message with
+ * `text`, or the inbox entry of the question `operationId` names.
+ */
 interface ExpectedInbound {
   readonly platformId: string;
   readonly sender: string;
   readonly text?: string;
-  readonly textPrefix?: string;
+  readonly operationId?: string;
 }
 
 /** One send the probe queues; `final` sends through the final output. */
@@ -173,11 +175,7 @@ async function answersAndStartsGather({
       { to: caller.address, text: acceptText("tue", operationId) },
       { to: caller.address, text: gatherText("gather") },
     ],
-    {
-      platformId: caller.address,
-      sender: caller.address,
-      textPrefix: `gather from ${caller.address}, open until`,
-    },
+    { platformId: caller.address, sender: caller.address, operationId },
   );
 
   assert.match(operationId, /^col_/u);
@@ -205,7 +203,7 @@ function assertGatherRequest(request: RequestItem, target: AgentAccess) {
   assert.equal(request.kind, "collectiveRequest");
   assert.equal(request.message.operation.op, "gather");
   assert.deepEqual(reported(request.message.author), target.agent);
-  assert.equal(replyAddress(request.message), target.address);
+  assert.equal(conversationAddress(request.message), target.address);
   assert.equal(request.message.operation.question, GATHER_QUESTION);
   assert.deepEqual(request.message.operation.requestedSchema, SLOT_SCHEMA);
 }
@@ -225,11 +223,7 @@ async function answersAndStartsAllGather(endpoints: Trio): Promise<undefined> {
       { to: group, text: acceptText("tue", operationId) },
       { to: group, text: gatherText("all_gather") },
     ],
-    {
-      platformId: group,
-      sender: caller.address,
-      textPrefix: `all_gather from ${caller.address} to ${group}, open until`,
-    },
+    { platformId: group, sender: caller.address, operationId },
   );
   const nanoClawRequest = await assertAllGatherAnswered(
     endpoints,
@@ -304,7 +298,7 @@ async function assertAllGatherAnswered(
     peerItems.some(
       (item) =>
         item.kind === "collectiveRequest" &&
-        replyAddress(item.message) === group,
+        conversationAddress(item.message) === group,
     ),
     "the peer did not receive NanoClaw's request",
   );
@@ -319,7 +313,7 @@ async function assertNanoClawAllGather(
 ): Promise<undefined> {
   assert.equal(request.message.operation.op, "all_gather");
   assert.deepEqual(reported(request.message.author), target.agent);
-  assert.equal(replyAddress(request.message), group);
+  assert.equal(conversationAddress(request.message), group);
   const operationId = request.message.operation.operationId;
 
   await caller.send({
@@ -359,8 +353,7 @@ function textContent(text: string): readonly object[] {
 
 /** The group address of `members`, their names sorted. */
 function groupAddress(members: readonly AgentAccess[]): string {
-  const names = members.map(({ address }) => address.slice("agent:".length));
-  return `group:${names.toSorted(compareCodeUnits).join(",")}`;
+  return groupOf(members.map(({ agent }) => agent.agentName));
 }
 
 function compareCodeUnits(left: string, right: string): number {
@@ -371,17 +364,18 @@ function compareCodeUnits(left: string, right: string): number {
 }
 
 /** The text a model sends to ask the question as a gather or an all_gather. */
-function gatherText(operation: "gather" | "all_gather"): string {
+function gatherText(op: "gather" | "all_gather"): string {
   return JSON.stringify({
-    [operation]: GATHER_QUESTION,
-    deadline: 60,
-    requestedSchema: SLOT_SCHEMA,
+    text: GATHER_QUESTION,
+    collective: { op, deadline: 60, requestedSchema: SLOT_SCHEMA },
   });
 }
 
 /** The text a model sends to answer with `slot`. */
 function acceptText(slot: string, operationId: string): string {
-  return JSON.stringify({ action: "accept", operationId, content: { slot } });
+  return JSON.stringify({
+    collectiveResponse: { action: "accept", operationId, content: { slot } },
+  });
 }
 
 /** The kind of an inbound item and its message's kind, address, sender and content. */
@@ -392,10 +386,24 @@ function multicastSummary(
   return {
     kind: item.kind,
     messageKind: item.message.recipients.length === 1 ? "direct" : "group",
-    address: replyAddress(item.message),
+    address: conversationAddress(item.message),
     sender: reported(item.message.author),
     content: item.message.content,
   };
+}
+
+/** The address its recipient uses for the conversation `message` is in. */
+function conversationAddress({
+  author,
+  recipients,
+}: Pick<RequestItem["message"], "author" | "recipients">): string {
+  return recipients.length === 1
+    ? `agent:${author.agentName}`
+    : groupOf([author, ...recipients].map(({ agentName }) => agentName));
+}
+
+function groupOf(names: readonly string[]): string {
+  return `group:${names.toSorted(compareCodeUnits).join(",")}`;
 }
 
 function requireRequest(item?: InboundItem): RequestItem {

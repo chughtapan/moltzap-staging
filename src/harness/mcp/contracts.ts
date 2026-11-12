@@ -436,7 +436,7 @@ export const toolDefinitions = {
   send_message: {
     failure: sendFails,
     description:
-      "Send a message, ask a question, or answer a request. Returns the accepted send id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
+      "Send a message, ask a question, or answer one. Returns the accepted send id and canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send.",
     input: SendArguments,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
@@ -447,7 +447,7 @@ export const toolDefinitions = {
       (data) => new InboxError(data),
     ),
     description:
-      "Receive pending messages and other inbox items, each with any saved firewall reminder. Follow nextCursor until absent. Returned items are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an item arrives, or empty when the wait ends.",
+      "Receive pending inbox items, each with its conversation address and any saved firewall reminder. A multicast item is a peer's message, a collectiveRequest a question a peer asks, and a collectiveResult each agent's answer to a question. Follow nextCursor until absent. Returned items are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an item arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
