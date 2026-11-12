@@ -90,9 +90,6 @@ catalogs:
     ajv:
       specifier: 8.18.0
       version: 8.18.0
-    canonicalize:
-      specifier: 3.0.0
-      version: 3.0.0
     eslint:
       specifier: ^9
       version: 9.39.4
@@ -214,9 +211,6 @@ importers:
       '@thi.ng/sexpr':
         specifier: 'catalog:'
         version: 1.1.39
-      canonicalize:
-        specifier: 'catalog:'
-        version: 3.0.0
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -4537,11 +4531,6 @@ packages:
   camelcase@5.3.1:
     resolution: {integrity: sha512-L28STB170nwWS63UjtlEOE3dldQApaJXZkOI1uMFfzf3rRuPegHaHesyee+YxQ+W6SvRDQV6UrdOdRiR153wJg==}
     engines: {node: '>=6'}
-
-  canonicalize@3.0.0:
-    resolution: {integrity: sha512-yYLfHyDMIXRyRqsKBRLX023riFLpXY2YOfdtqKXZRZy9qsfOJ9U+4F9YZL7MEzL5+ziN2x2nlBvY/Voi3EBljA==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
@@ -13636,8 +13625,6 @@ snapshots:
   camelcase-css@2.0.1: {}
 
   camelcase@5.3.1: {}
-
-  canonicalize@3.0.0: {}
 
   ccount@2.0.1: {}
 

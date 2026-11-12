@@ -168,7 +168,6 @@
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@thi.ng/sexpr": "catalog:",
-    "canonicalize": "catalog:",
     "effect": "catalog:",
     "jose": "catalog:",
     "kysely": "catalog:",
