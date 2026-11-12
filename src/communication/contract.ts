@@ -114,4 +114,9 @@ export interface CommunicationSettings {
   readonly maximumHistoryRecords?: number;
   /** Whether these agents may share a conversation. Without it any may. */
   readonly permits?: (members: readonly AgentCard[]) => boolean;
+  /**
+   * The latch each agent's consumer waits on, by agent key. Every agent of a
+   * daemon is given the same map, so a send opens its recipients' latches.
+   */
+  readonly consumers: Map<string, Effect.Latch>;
 }

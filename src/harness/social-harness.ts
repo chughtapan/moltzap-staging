@@ -1,6 +1,5 @@
 /** @file Coordinates identity, message policy, communication and the agent's saved inbox. */
 
-import { SqlClient } from "@effect/sql";
 import {
   absurd,
   Clock,
@@ -39,7 +38,9 @@ import {
   type PaginatedResult,
   Request,
   RequestError,
+  restarting,
 } from "../communication/service.js";
+import { transaction } from "../database/transactions.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import {
   Firewall,
@@ -233,17 +234,19 @@ function makeHarness<R>(
           Effect.gen(function* () {
             const communication = Context.get(context, Communication);
             yield* Deferred.succeed(ready, communication);
-            return yield* communication.consume((incoming) =>
-              inbox
-                .queueIncoming(
-                  addressOf(incomingParticipants(incoming), card.agentId),
-                  incoming,
-                )
-                .pipe(
-                  Effect.zipRight(Queue.offer(wake, undefined)),
-                  Effect.asVoid,
-                ),
-            );
+            return yield* communication
+              .consume((incoming) =>
+                inbox
+                  .queueIncoming(
+                    addressOf(incomingParticipants(incoming), card.agentId),
+                    incoming,
+                  )
+                  .pipe(
+                    Effect.zipRight(Queue.offer(wake, undefined)),
+                    Effect.asVoid,
+                  ),
+              )
+              .pipe(restarting(settings.agentKey, "consumer"));
           }),
         ),
       ),
@@ -703,8 +706,7 @@ function checkIncoming(
     const expired =
       value.kind === "request" &&
       (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql.withTransaction(
+    yield* transaction(
       decision.save.pipe(
         Effect.zipRight(inbox.publish(entry, decision, expired)),
         Effect.tap(() =>

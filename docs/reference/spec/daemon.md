@@ -114,9 +114,17 @@ authorization before reconnecting.
 ### Recovery
 
 Agent workers survive MCP disconnection. Startup restores known agents from
-SQL, and authenticated requests acquire the same retained context. An agent
-that cannot start or whose worker stops receives HTTP 503; other agents keep
-serving. A stopped worker context requires a daemon restart to recover.
+SQL, and authenticated requests acquire the same retained context.
+
+An agent waits for its work: a send wakes the recipient's agent once the
+message is committed, and an agent with open questions sleeps until the
+earliest deadline. The loop that receives an agent's messages and the loop
+that closes its questions each start again after a failure, following a pause
+that doubles from one second up to thirty, and each failure is logged.
+
+An agent that cannot start, or whose worker stops in any other way, receives
+HTTP 503; other agents keep serving. A stopped worker context requires a
+daemon restart to recover.
 
 ## Firewalls
 

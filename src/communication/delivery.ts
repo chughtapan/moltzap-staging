@@ -14,6 +14,7 @@ import type {
   Outgoing,
 } from "./contract.js";
 import { executeQuery } from "../database/sql.js";
+import { afterCommit, transaction } from "../database/transactions.js";
 import { AgentCard } from "../identity/agent-cards.js";
 import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
@@ -36,6 +37,8 @@ import {
 interface Environment {
   readonly sql: SqlClient;
   readonly settings: CommunicationSettings;
+  /** Opened when a message or a result is saved for this agent. */
+  readonly arrived: Effect.Latch;
 }
 const unavailable = () =>
   new CommunicationError({ reason: "persistence-failed" });
@@ -49,7 +52,9 @@ const agentRow = Schema.Struct({
 export const makeDelivery = Effect.fn("Communication.delivery")(function* (
   settings: CommunicationSettings,
 ) {
-  const environment = { sql: yield* SqlClient, settings };
+  const arrived = yield* Effect.makeLatch();
+  settings.consumers.set(settings.agentKey, arrived);
+  const environment = { sql: yield* SqlClient, settings, arrived };
   const history = messageHistory({
     agentKey: settings.agentKey,
     local: settings.card,
@@ -63,6 +68,7 @@ export const makeDelivery = Effect.fn("Communication.delivery")(function* (
           error instanceof CommunicationError ? error : unavailable(),
         ),
       ),
+    completed: arrived.open,
   });
   const consumer = yield* Effect.makeSemaphore(1);
   return {
@@ -70,11 +76,7 @@ export const makeDelivery = Effect.fn("Communication.delivery")(function* (
     getRequest: (operationId) =>
       capture(environment, requests.getRequest(operationId)),
     consume: (handle) =>
-      consumer.withPermits(1)(
-        consume(environment, requests, handle).pipe(
-          Effect.raceFirst(requests.failed),
-        ),
-      ),
+      consumer.withPermits(1)(consume(environment, requests, handle)),
     getConversation: (names) =>
       capture(environment, history.getConversation(names)),
     listConversations: (query = {}) =>
@@ -158,11 +160,11 @@ function recipientKey(recipient: AgentCard) {
  * Orders one message and saves it for every member, or changes nothing. A
  * message this agent has already sent takes no new position. The sender locks
  * its own agent and then the conversation, as every other write of an agent
- * does, so senders cannot deadlock.
+ * does, so senders cannot deadlock. Each recipient's consumer wakes once the
+ * message is committed.
  */
-function sendMessage(environment: Environment, message: Message) {
-  const { sql, settings } = environment;
-  return sql.withTransaction(
+function sendMessage({ settings }: Environment, message: Message) {
+  return transaction(
     Effect.gen(function* () {
       if (!Schema.equivalence(AgentCard)(message.author, settings.card)) {
         return yield* invalid();
@@ -196,6 +198,13 @@ function sendMessage(environment: Environment, message: Message) {
         (agentKey) =>
           saveMessage(agentKey, conversationId, next.ordinal, message),
         { concurrency: 1, discard: true },
+      );
+      yield* afterCommit(
+        Effect.forEach(
+          recipientKeys,
+          (agentKey) => settings.consumers.get(agentKey)?.open ?? Effect.void,
+          { concurrency: 1, discard: true },
+        ),
       );
     }),
   );
@@ -233,7 +242,8 @@ function messageConversation(
  * Hands each pending message and question to `handle` in the order they were
  * saved, and each result as soon as it is complete, so a result precedes any
  * message saved after the answer that completed it. An item is marked consumed
- * only after `handle` succeeds.
+ * only after `handle` succeeds. With nothing pending it waits until a message
+ * or a result is saved for this agent.
  */
 function consume<E, R>(
   environment: Environment,
@@ -249,6 +259,7 @@ function consume<E, R>(
   ).pipe(Effect.repeat({ while: (delivered) => delivered }));
   return Effect.gen(function* () {
     while (true) {
+      yield* environment.arrived.close;
       yield* results;
       const rows = yield* capture(
         environment,
@@ -271,7 +282,9 @@ function consume<E, R>(
         );
         yield* results;
       }
-      yield* Effect.sleep("100 millis");
+      if (rows.length === 0) {
+        yield* environment.arrived.await;
+      }
     }
   });
 }

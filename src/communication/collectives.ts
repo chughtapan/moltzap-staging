@@ -1,7 +1,19 @@
 /** @file Questions, their answers and the results they complete, for one agent. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Cause, Clock, Deferred, Effect, Option, Schema, Scope } from "effect";
+import {
+  Clock,
+  Duration,
+  Effect,
+  Option,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
+import {
+  afterCommit,
+  transaction as openTransaction,
+} from "../database/transactions.js";
 import { encodeJson, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import { AgentCard } from "../identity/agent-cards.js";
 import { CommunicationError } from "./errors.js";
@@ -55,16 +67,22 @@ export const makeRequests = Effect.fn("Communication.requests")(function* (
     readonly send: (
       message: Message,
     ) => Effect.Effect<void, CommunicationError>;
+    /** Runs once a result is saved for this agent to consume. */
+    readonly completed: Effect.Effect<void>;
   },
 ) {
   const environment: Environment = {
     agentKey,
     ...input,
     sql: yield* SqlClient,
-    scope: yield* Scope.Scope,
-    failed: yield* Deferred.make<never, RequestError | CommunicationError>(),
+    asked: yield* Effect.makeLatch(),
   };
-  yield* start(environment, runWorker(environment));
+  yield* runWorker(environment).pipe(
+    Effect.provideService(SqlClient, environment.sql),
+    restarting(agentKey, "deadline worker"),
+    Effect.interruptible,
+    Effect.forkScoped,
+  );
   const capture = <A, E, R>(
     effect: Effect.Effect<A, E | EndpointStoreError, R>,
   ) =>
@@ -83,9 +101,34 @@ export const makeRequests = Effect.fn("Communication.requests")(function* (
     deliverNextResult: <E, R>(
       handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
     ) => deliverNextResult(agentKey, handle),
-    failed: Deferred.await(environment.failed),
   };
 });
+
+/**
+ * Keeps a background loop of one agent running. A failure is logged and the
+ * loop starts again after a pause that doubles from one second up to thirty.
+ */
+export function restarting(agentKey: string, loop: string) {
+  return <E, R>(work: Effect.Effect<never, E, R>) =>
+    work.pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`The ${loop} failed and will start again`).pipe(
+          Effect.annotateLogs({
+            agentKey,
+            failure: Predicate.hasProperty(error, "_tag")
+              ? String(error._tag)
+              : "unknown",
+          }),
+        ),
+      ),
+      Effect.retry(
+        Schedule.union(
+          Schedule.exponential("1 second"),
+          Schedule.spaced("30 seconds"),
+        ),
+      ),
+    );
+}
 
 /** What one agent's question handling works with for the life of its service. */
 interface Environment {
@@ -93,8 +136,9 @@ interface Environment {
   readonly sql: SqlClient;
   readonly self: AgentCard;
   readonly send: (message: Message) => Effect.Effect<void, CommunicationError>;
-  readonly scope: Scope.Scope;
-  readonly failed: Deferred.Deferred<never, RequestError | CommunicationError>;
+  readonly completed: Effect.Effect<void>;
+  /** Opened when this agent asks a question, which gives the worker a deadline to wait for. */
+  readonly asked: Effect.Latch;
 }
 
 type Closure = typeof collectiveClosure.Type;
@@ -134,6 +178,7 @@ function ask(environment: Environment, request: Request) {
         if (existing !== undefined) {
           return;
         }
+        yield* afterCommit(environment.asked.open);
         const content = yield* encodeCollectiveContent(
           {
             kind: "operation",
@@ -557,50 +602,35 @@ function deliverNextResult<E, R>(
   });
 }
 
-/** Closes each question this agent asked once its deadline has passed. */
+/**
+ * Closes each question this agent asked once its deadline has passed, then
+ * waits for the earliest deadline still open or for a new question.
+ */
 function runWorker(environment: Environment) {
   return Effect.gen(function* () {
+    yield* environment.asked.close;
+    const deadlines: number[] = [];
     for (const operationId of yield* readCollectingQuestionIds(
       environment.agentKey,
     )) {
-      yield* Effect.uninterruptible(finishLocal(environment, operationId));
+      const deadline = yield* Effect.uninterruptible(
+        finishLocal(environment, operationId),
+      );
+      if (deadline !== undefined) {
+        deadlines.push(deadline);
+      }
     }
-  }).pipe(Effect.zipRight(Effect.sleep("100 millis")), Effect.forever);
-}
-
-/** The scoped worker runs outside caller transaction contexts and reports failures to consumers. */
-function start(
-  environment: Environment,
-  work: Effect.Effect<
-    void,
-    RequestError | CommunicationError | EndpointStoreError,
-    SqlClient
-  >,
-) {
-  return work.pipe(
-    Effect.provideService(SqlClient, environment.sql),
-    Effect.catchTag("EndpointStoreError", () =>
-      Deferred.fail(
-        environment.failed,
-        new CommunicationError({ reason: "persistence-failed" }),
-      ),
-    ),
-    Effect.catchTag("RequestError", (error) =>
-      Deferred.fail(environment.failed, error),
-    ),
-    Effect.catchTag("CommunicationError", (error) =>
-      Deferred.fail(environment.failed, error),
-    ),
-    Effect.catchAllCause((cause) =>
-      Cause.isInterruptedOnly(cause)
-        ? Effect.interrupt
-        : Deferred.failCause(environment.failed, cause),
-    ),
-    Effect.asVoid,
-    Effect.interruptible,
-    Effect.forkIn(environment.scope),
-    Effect.asVoid,
-  );
+    const [first, ...rest] = deadlines;
+    if (first === undefined) {
+      return yield* environment.asked.await;
+    }
+    const remaining =
+      Math.min(first, ...rest) - (yield* Clock.currentTimeMillis);
+    yield* Effect.raceFirst(
+      environment.asked.await,
+      Effect.sleep(Duration.millis(Math.max(0, remaining))),
+    );
+  }).pipe(Effect.forever);
 }
 
 function answersFor(
@@ -620,7 +650,8 @@ function answersFor(
 /**
  * Completes a question this agent asked once every member has answered or the
  * deadline has passed. An all_gather also sends the close that tells the
- * members which answers the result holds.
+ * members which answers the result holds. Returns the deadline of a question
+ * it leaves open.
  */
 function finishLocal(environment: Environment, operationId: CollectiveId) {
   const agentKey = environment.agentKey;
@@ -642,7 +673,7 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         answers.length < participants.members.length &&
         now < operation.deadlineAt
       ) {
-        return undefined;
+        return operation.deadlineAt;
       }
       const closure: Closure = {
         closedAt: now,
@@ -662,6 +693,7 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         item: result.item,
         answers: included,
       });
+      yield* afterCommit(environment.completed);
       if (participants.op === "gather") {
         return undefined;
       }
@@ -682,6 +714,7 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         content,
       });
       yield* environment.send(close);
+      return undefined;
     }),
   ).pipe(Effect.withSpan("finishLocal"));
 }
@@ -825,7 +858,7 @@ function receivedRequest(
 
 /** Business refusals and handler failures keep their type when SQL rolls back. */
 function transaction<A, E, R>(work: Effect.Effect<A, E, R>) {
-  return Effect.flatMap(SqlClient, (sql) => sql.withTransaction(work)).pipe(
+  return openTransaction(work).pipe(
     Effect.catchTag(
       "SqlError",
       () => new EndpointStoreError({ reason: "persistence" }),
