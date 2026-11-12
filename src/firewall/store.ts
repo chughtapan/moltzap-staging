@@ -105,164 +105,158 @@ interface FirewallTables {
 /* eslint-enable @typescript-eslint/naming-convention -- Restore naming outside physical SQL types. */
 
 /** Captured ownership scopes policy, evidence and activations on every database operation. */
-export function makeFirewallStore(agentKey: string) {
-  return Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const queries = yield* makeQueries<FirewallTables>();
-    const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-      withAgentTransaction(agentKey, work).pipe(
-        Effect.provideService(SqlClient.SqlClient, sql),
-        Effect.mapError(persistenceFailure),
-      );
-    const policy = queries
-      .selectFrom("firewall_policy")
-      .select("policy")
-      .where("agent_key", "=", agentKey);
-    const checks = queries
-      .selectFrom("firewall_checks")
-      .where("agent_key", "=", agentKey);
-    const activations = queries
-      .selectFrom("firewall_activations")
-      .where("agent_key", "=", agentKey);
-    const saveDecision = (value: FirewallCompletion) =>
-      Effect.gen(function* () {
-        const applied = value.admit ? "admitted" : "withheld";
-        yield* executeQuery(
-          queries
-            .insertInto("firewall_checks")
-            .values({
-              agent_key: agentKey,
-              check_id: value.checkId,
-              direction: value.direction,
-              candidate: value.candidate,
-              input: value.input,
-              result: value.result,
-              disposition: applied,
-              decided_at: yield* Clock.currentTimeMillis,
-            })
-            .onConflict((conflict) =>
-              conflict.columns(["agent_key", "check_id"]).doNothing(),
-            ),
-        );
-        const prior = yield* executeQuery(
-          checks
-            .select([
-              "direction",
-              "candidate",
-              "input",
-              "result",
-              "disposition",
-            ])
-            .where("check_id", "=", value.checkId),
-        ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
-        const saved = prior[0];
-        if (saved === undefined) {
-          return yield* persistenceFailure();
-        }
-        const sameEvidence =
-          sameJson(saved.candidate, value.candidate) &&
-          sameJson(saved.input, value.input) &&
-          sameJson(saved.result, value.result);
-        if (
-          saved.direction !== value.direction ||
-          saved.disposition !== applied ||
-          !sameEvidence
-        ) {
-          return yield* persistenceFailure();
-        }
-      });
-    return {
-      readPolicy: () =>
-        run(
-          executeQuery(policy).pipe(
-            Effect.flatMap(
-              Schema.decodeUnknown(
-                Schema.Array(Schema.Struct({ policy: Schema.NonEmptyString })),
-              ),
-            ),
-            Effect.map((rows) => rows[0]?.policy),
+export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
+  agentKey: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const queries = yield* makeQueries<FirewallTables>();
+  const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
+    withAgentTransaction(agentKey, work).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.mapError(persistenceFailure),
+    );
+  const policy = queries
+    .selectFrom("firewall_policy")
+    .select("policy")
+    .where("agent_key", "=", agentKey);
+  const checks = queries
+    .selectFrom("firewall_checks")
+    .where("agent_key", "=", agentKey);
+  const activations = queries
+    .selectFrom("firewall_activations")
+    .where("agent_key", "=", agentKey);
+  const saveDecision = (value: FirewallCompletion) =>
+    Effect.gen(function* () {
+      const applied = value.admit ? "admitted" : "withheld";
+      yield* executeQuery(
+        queries
+          .insertInto("firewall_checks")
+          .values({
+            agent_key: agentKey,
+            check_id: value.checkId,
+            direction: value.direction,
+            candidate: value.candidate,
+            input: value.input,
+            result: value.result,
+            disposition: applied,
+            decided_at: yield* Clock.currentTimeMillis,
+          })
+          .onConflict((conflict) =>
+            conflict.columns(["agent_key", "check_id"]).doNothing(),
           ),
+      );
+      const prior = yield* executeQuery(
+        checks
+          .select(["direction", "candidate", "input", "result", "disposition"])
+          .where("check_id", "=", value.checkId),
+      ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
+      const saved = prior[0];
+      if (saved === undefined) {
+        return yield* persistenceFailure();
+      }
+      const sameEvidence =
+        sameJson(saved.candidate, value.candidate) &&
+        sameJson(saved.input, value.input) &&
+        sameJson(saved.result, value.result);
+      if (
+        saved.direction !== value.direction ||
+        saved.disposition !== applied ||
+        !sameEvidence
+      ) {
+        return yield* persistenceFailure();
+      }
+    });
+  return {
+    readPolicy: () =>
+      run(
+        executeQuery(policy).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknown(
+              Schema.Array(Schema.Struct({ policy: Schema.NonEmptyString })),
+            ),
+          ),
+          Effect.map((rows) => rows[0]?.policy),
         ),
-      writePolicy: (policy: string, activation?: FirewallActivation) =>
-        run(
-          Effect.gen(function* () {
+      ),
+    writePolicy: (policy: string, activation?: FirewallActivation) =>
+      run(
+        Effect.gen(function* () {
+          yield* executeQuery(
+            queries
+              .insertInto("firewall_policy")
+              .values({ agent_key: agentKey, policy })
+              .onConflict((conflict) =>
+                conflict.column("agent_key").doUpdateSet({ policy }),
+              ),
+          );
+          if (activation !== undefined) {
             yield* executeQuery(
-              queries
-                .insertInto("firewall_policy")
-                .values({ agent_key: agentKey, policy })
-                .onConflict((conflict) =>
-                  conflict.column("agent_key").doUpdateSet({ policy }),
+              queries.insertInto("firewall_activations").values({
+                agent_key: agentKey,
+                activated_at: activation.time,
+                active_revision: activation.activeRevision,
+                added_rule_ids: yield* Schema.encode(ruleIds)(
+                  activation.addedRuleIds,
                 ),
+                removed_rule_ids: yield* Schema.encode(ruleIds)(
+                  activation.removedRuleIds,
+                ),
+              }),
             );
-            if (activation !== undefined) {
-              yield* executeQuery(
-                queries.insertInto("firewall_activations").values({
-                  agent_key: agentKey,
-                  activated_at: activation.time,
-                  active_revision: activation.activeRevision,
-                  added_rule_ids: yield* Schema.encode(ruleIds)(
-                    activation.addedRuleIds,
-                  ),
-                  removed_rule_ids: yield* Schema.encode(ruleIds)(
-                    activation.removedRuleIds,
-                  ),
-                }),
-              );
-            }
-          }),
-        ),
-      saveDecisions: (decisions: readonly FirewallCompletion[]) =>
-        run(
-          Effect.forEach(decisions, saveDecision, {
-            discard: true,
-            concurrency: 1,
-          }),
-        ),
-      readDecisions: (request: { readonly since?: number }) =>
-        run(
-          Effect.gen(function* () {
-            const since = request.since ?? 0;
-            const rows = yield* executeQuery(
-              checks
-                .select([
-                  "check_id as checkId",
-                  "result",
-                  "disposition",
-                  "decided_at as time",
-                ])
-                .where("decided_at", ">=", since)
-                .orderBy("decided_at", "desc")
-                .orderBy("sequence", "desc")
-                .limit(100),
-            ).pipe(
-              Effect.flatMap(Schema.decodeUnknown(Schema.Array(decisionRow))),
-            );
-            const summaries = yield* Effect.forEach(
-              rows,
-              decodeDecisionSummaries,
-              { concurrency: 1 },
-            );
-            const edits = yield* executeQuery(
-              activations
-                .select([
-                  "activated_at as time",
-                  "active_revision as activeRevision",
-                  "added_rule_ids as addedRuleIds",
-                  "removed_rule_ids as removedRuleIds",
-                ])
-                .where("activated_at", ">=", since)
-                .orderBy("activated_at", "desc")
-                .orderBy("sequence", "desc")
-                .limit(100),
-            ).pipe(
-              Effect.flatMap(Schema.decodeUnknown(Schema.Array(activationRow))),
-            );
-            return { decisions: summaries.flat(), activations: edits };
-          }),
-        ),
-    };
-  }).pipe(Effect.withSpan("makeFirewallStore"));
-}
+          }
+        }),
+      ),
+    saveDecisions: (decisions: readonly FirewallCompletion[]) =>
+      run(
+        Effect.forEach(decisions, saveDecision, {
+          discard: true,
+          concurrency: 1,
+        }),
+      ),
+    readDecisions: (request: { readonly since?: number }) =>
+      run(
+        Effect.gen(function* () {
+          const since = request.since ?? 0;
+          const rows = yield* executeQuery(
+            checks
+              .select([
+                "check_id as checkId",
+                "result",
+                "disposition",
+                "decided_at as time",
+              ])
+              .where("decided_at", ">=", since)
+              .orderBy("decided_at", "desc")
+              .orderBy("sequence", "desc")
+              .limit(100),
+          ).pipe(
+            Effect.flatMap(Schema.decodeUnknown(Schema.Array(decisionRow))),
+          );
+          const summaries = yield* Effect.forEach(
+            rows,
+            decodeDecisionSummaries,
+            { concurrency: 1 },
+          );
+          const edits = yield* executeQuery(
+            activations
+              .select([
+                "activated_at as time",
+                "active_revision as activeRevision",
+                "added_rule_ids as addedRuleIds",
+                "removed_rule_ids as removedRuleIds",
+              ])
+              .where("activated_at", ">=", since)
+              .orderBy("activated_at", "desc")
+              .orderBy("sequence", "desc")
+              .limit(100),
+          ).pipe(
+            Effect.flatMap(Schema.decodeUnknown(Schema.Array(activationRow))),
+          );
+          return { decisions: summaries.flat(), activations: edits };
+        }),
+      ),
+  };
+});
 
 function decodeDecisionSummaries(row: typeof decisionRow.Type) {
   return Schema.decodeUnknown(savedSummary)(row.result).pipe(

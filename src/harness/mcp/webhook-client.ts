@@ -242,26 +242,23 @@ const boundedCallback = <A>(
   );
 
 /** Reads bounded challenge-response text and closes the connection on exit. */
-export const readWebhookChallenge = (
-  post: WebhookPost,
-): Effect.Effect<string, WebhookCallbackError, HttpClient.HttpClient> =>
-  boundedCallback(
-    executeWebhook(post).pipe(
-      Effect.flatMap((response) => response.text),
-      HttpIncomingMessage.withMaxBodySize(Option.some(4096)),
-      Effect.catchTag("ResponseError", () =>
-        Effect.fail(callbackFailure("challenge_failed")),
+export const readWebhookChallenge = Effect.fn("readWebhookChallenge")(
+  (post: WebhookPost) =>
+    boundedCallback(
+      executeWebhook(post).pipe(
+        Effect.flatMap((response) => response.text),
+        HttpIncomingMessage.withMaxBodySize(Option.some(4096)),
+        Effect.catchTag("ResponseError", () =>
+          Effect.fail(callbackFailure("challenge_failed")),
+        ),
       ),
     ),
-  ).pipe(Effect.withSpan("readWebhookChallenge"));
+);
 
 /**
  * Accepts transport delivery at 2xx headers and closes the response.
  * Response bodies cannot change that receipt.
  */
-export const sendWebhook = (
-  post: WebhookPost,
-): Effect.Effect<void, WebhookCallbackError, HttpClient.HttpClient> =>
-  boundedCallback(executeWebhook(post).pipe(Effect.asVoid)).pipe(
-    Effect.withSpan("sendWebhook"),
-  );
+export const sendWebhook = Effect.fn("sendWebhook")((post: WebhookPost) =>
+  boundedCallback(executeWebhook(post).pipe(Effect.asVoid)),
+);

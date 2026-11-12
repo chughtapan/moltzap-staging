@@ -42,12 +42,15 @@ export function digest(prefix: string, byte: number): string {
  * Creates an agent named `name` the way the daemon does for a new owner.
  * Returns the key its rows are stored under and the card the daemon gave it.
  */
-export const createTestAgent = (name: string) =>
-  Effect.gen(function* () {
+export const createTestAgent = Effect.fn("createTestAgent")(
+  function* (name: string) {
     const agentKey = yield* getOrCreateOwnedAgent(
       { issuer: "urn:social-harness:test", subject: name },
       Schema.decodeUnknownSync(AgentName)(name),
     );
     const identity = yield* Layer.build(Identity.layer(agentKey));
     return { agentKey, card: Context.get(identity, Identity).me };
-  }).pipe(Effect.scoped, Effect.orDie, Effect.withSpan("createTestAgent"));
+  },
+  Effect.scoped,
+  Effect.orDie,
+);

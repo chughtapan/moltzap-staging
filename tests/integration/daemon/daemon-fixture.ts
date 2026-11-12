@@ -214,57 +214,54 @@ const waitForExit = (running: RunningProcess): Effect.Effect<void> =>
  * so both sides are interruptible: otherwise every teardown waits out the
  * full grace for a child that has already exited.
  */
-export const stopProcess = (running: RunningProcess): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    if (hasExited(running.child)) {
-      return;
-    }
-    running.child.kill("SIGTERM");
-    const stopped = yield* Effect.raceFirst(
-      waitForExit(running).pipe(Effect.as(true), Effect.interruptible),
-      Effect.sleep(SHUTDOWN_TIMEOUT).pipe(
-        Effect.as(false),
-        Effect.interruptible,
-      ),
-    );
-    if (!stopped) {
-      running.child.kill("SIGKILL");
-      yield* waitForExit(running);
-    }
-  }).pipe(Effect.withSpan("stopProcess"));
+export const stopProcess = Effect.fn("stopProcess")(function* (
+  running: RunningProcess,
+) {
+  if (hasExited(running.child)) {
+    return;
+  }
+  running.child.kill("SIGTERM");
+  const stopped = yield* Effect.raceFirst(
+    waitForExit(running).pipe(Effect.as(true), Effect.interruptible),
+    Effect.sleep(SHUTDOWN_TIMEOUT).pipe(Effect.as(false), Effect.interruptible),
+  );
+  if (!stopped) {
+    running.child.kill("SIGKILL");
+    yield* waitForExit(running);
+  }
+});
 
 /**
  * Starts a child that the enclosing scope stops. The child sees only
  * `environment` and a `PATH`. A scope closed by a failure or an interruption,
  * as a timed-out test's is, first prints the child's output.
  */
-export const managedProcess = (
+export const managedProcess = Effect.fn("managedProcess")(function* (
   executable: string,
   processArguments: readonly string[],
   environment: Readonly<Record<string, string>> = {},
-) =>
-  Effect.gen(function* () {
-    const child = spawn(executable, processArguments, {
-      cwd: WORKSPACE_ROOT,
-      env: { PATH: CHILD_PATH, ...environment },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    const collect = (chunk: string): void => {
-      output += chunk;
-    };
-    child.stdout.setEncoding("utf8").on("data", collect);
-    child.stderr.setEncoding("utf8").on("data", collect);
-    const running: RunningProcess = { child, logs: () => output };
-    yield* Effect.addFinalizer((exit) =>
-      Exit.isFailure(exit)
-        ? Console.error(
-            `${basename(executable)} (pid ${child.pid}) output when the trace failed:\n${output}`,
-          ).pipe(Effect.zipRight(stopProcess(running)))
-        : stopProcess(running),
-    );
-    return running;
-  }).pipe(Effect.uninterruptible, Effect.withSpan("managedProcess"));
+) {
+  const child = spawn(executable, processArguments, {
+    cwd: WORKSPACE_ROOT,
+    env: { PATH: CHILD_PATH, ...environment },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  const collect = (chunk: string): void => {
+    output += chunk;
+  };
+  child.stdout.setEncoding("utf8").on("data", collect);
+  child.stderr.setEncoding("utf8").on("data", collect);
+  const running: RunningProcess = { child, logs: () => output };
+  yield* Effect.addFinalizer((exit) =>
+    Exit.isFailure(exit)
+      ? Console.error(
+          `${basename(executable)} (pid ${child.pid}) output when the trace failed:\n${output}`,
+        ).pipe(Effect.zipRight(stopProcess(running)))
+      : stopProcess(running),
+  );
+  return running;
+}, Effect.uninterruptible);
 
 /**
  * Whether the daemon printed its listening line for `endpoint`. It prints the
@@ -281,32 +278,33 @@ export const daemonListening = (running: RunningProcess, endpoint: URL) =>
  * the child exits first or `timeout` passes. `phase` names what the child had
  * yet to do.
  */
-export const awaitReady = (
-  running: RunningProcess,
-  probe: Effect.Effect<boolean>,
-  phase: string,
-  timeout: Duration.DurationInput = READINESS_TIMEOUT,
-) =>
-  Effect.gen(function* () {
-    while (!hasExited(running.child)) {
-      if ((yield* probe) && !hasExited(running.child)) {
-        return;
+export const awaitReady = Effect.fn("awaitReady")(
+  (
+    running: RunningProcess,
+    probe: Effect.Effect<boolean>,
+    phase: string,
+    timeout: Duration.DurationInput = READINESS_TIMEOUT,
+  ) =>
+    Effect.gen(function* () {
+      while (!hasExited(running.child)) {
+        if ((yield* probe) && !hasExited(running.child)) {
+          return;
+        }
+        yield* Effect.sleep(POLL_INTERVAL);
       }
-      yield* Effect.sleep(POLL_INTERVAL);
-    }
-    return yield* new ProcessTestError({
-      message: `process exited before ${phase}\n${running.logs()}`,
-    });
-  }).pipe(
-    Effect.timeoutFail({
-      duration: timeout,
-      onTimeout: () =>
-        new ProcessTestError({
-          message: `process timed out before ${phase}\n${running.logs()}`,
-        }),
-    }),
-    Effect.withSpan("awaitReady"),
-  );
+      return yield* new ProcessTestError({
+        message: `process exited before ${phase}\n${running.logs()}`,
+      });
+    }).pipe(
+      Effect.timeoutFail({
+        duration: timeout,
+        onTimeout: () =>
+          new ProcessTestError({
+            message: `process timed out before ${phase}\n${running.logs()}`,
+          }),
+      }),
+    ),
+);
 
 /** Runs a daemon that must exit before it listens on `endpoint`. */
 const startupFailure = (
@@ -403,102 +401,89 @@ const prepare = (environment: Readonly<Record<string, string>>) =>
  * own test issuer. The scope removes its directory and stops its issuer and
  * every process and connection it started.
  */
-export const sharedDaemon = (
+export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   options: DaemonOptions = {},
-): Effect.Effect<Daemon, ProcessTestError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const filesystem = yield* FileSystem.FileSystem;
-    const directory = yield* filesystem
-      .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
-      .pipe(Effect.mapError(failed("could not create the daemon directory")));
-    const issuer = yield* issuerFixture.pipe(
-      Effect.mapError(failed("could not start the test issuer")),
-    );
-    const port = yield* reservePort;
-    const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
-    const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
-    const serverAgentBearer = Redacted.make(
-      randomBytes(32).toString("base64url"),
-    );
-    const sqlite = pathToFileURL(
-      join(directory, "sharnessd.sqlite3"),
-    ).href.replace(/^file:/u, "sqlite:");
-    const environment = {
-      SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
-      SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
-      SHARNESS_DATABASE_URL: Redacted.value(
-        options.database?.runtimeLocator ?? Redacted.make(sqlite),
-      ),
-      SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
-    };
-    const configure = yield* settingsDocument(
-      environment.SHARNESS_CONFIG_FILE,
-      {
-        port,
-        host: LOOPBACK_HOST,
-        authentication: {
-          kind: "oauth",
-          resource,
-          issuer: issuer.issuer,
-          scope: requiredScope,
-        },
-        ...(options.firewall === true &&
-        options.settings?.messagePolicyFile === undefined
-          ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(
-              Effect.mapError(failed("could not write the message policy")),
-            )
-          : {}),
-        ...options.settings,
-      },
-    );
-    yield* prepare({
-      ...environment,
-      SHARNESS_DATABASE_URL: Redacted.value(
-        options.database?.configureLocator ?? Redacted.make(sqlite),
-      ),
-    });
-    const spawned = (changes: Readonly<Record<string, string>>) =>
-      managedProcess(
-        ...(options.firewall === true
-          ? FIREWALL_DAEMON_COMMAND
-          : DAEMON_COMMAND),
-        { ...environment, ...changes },
-      );
-    const bearer = (owner: string) =>
-      issuer
-        .token(owner, resource)
-        .pipe(
-          Effect.map(Redacted.make),
-          Effect.mapError(failed(`could not issue a token for ${owner}`)),
-        );
-    const daemon: Daemon = {
-      endpoint,
-      directory,
-      environment,
-      start: (changes = {}) =>
-        spawned(changes).pipe(
-          Effect.tap((running) =>
-            awaitReady(
-              running,
-              daemonListening(running, endpoint),
-              "listening",
-            ),
-          ),
-          Effect.withSpan("start"),
-        ),
-      startupFailure: (changes = {}) =>
-        startupFailure(spawned(changes), endpoint),
-      configure,
-      bearer,
-      serverAgentBearer,
-      signIn: (presented) => signIn(endpoint, directory, presented),
-      signInAs: (owner) =>
-        Effect.flatMap(bearer(owner), (presented) =>
-          signIn(endpoint, directory, presented),
-        ),
-    };
-    return daemon;
-  }).pipe(
-    Effect.provide(NodeFileSystem.layer),
-    Effect.withSpan("sharedDaemon"),
+) {
+  const filesystem = yield* FileSystem.FileSystem;
+  const directory = yield* filesystem
+    .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
+    .pipe(Effect.mapError(failed("could not create the daemon directory")));
+  const issuer = yield* issuerFixture.pipe(
+    Effect.mapError(failed("could not start the test issuer")),
   );
+  const port = yield* reservePort;
+  const endpoint = new URL(`http://${LOOPBACK_HOST}:${port}/mcp`);
+  const resource = `https://${LOOPBACK_HOST}:${port}/mcp`;
+  const serverAgentBearer = Redacted.make(
+    randomBytes(32).toString("base64url"),
+  );
+  const sqlite = pathToFileURL(
+    join(directory, "sharnessd.sqlite3"),
+  ).href.replace(/^file:/u, "sqlite:");
+  const environment = {
+    SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
+    SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
+    SHARNESS_DATABASE_URL: Redacted.value(
+      options.database?.runtimeLocator ?? Redacted.make(sqlite),
+    ),
+    SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
+  };
+  const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
+    port,
+    host: LOOPBACK_HOST,
+    authentication: {
+      kind: "oauth",
+      resource,
+      issuer: issuer.issuer,
+      scope: requiredScope,
+    },
+    ...(options.firewall === true &&
+    options.settings?.messagePolicyFile === undefined
+      ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(
+          Effect.mapError(failed("could not write the message policy")),
+        )
+      : {}),
+    ...options.settings,
+  });
+  yield* prepare({
+    ...environment,
+    SHARNESS_DATABASE_URL: Redacted.value(
+      options.database?.configureLocator ?? Redacted.make(sqlite),
+    ),
+  });
+  const spawned = (changes: Readonly<Record<string, string>>) =>
+    managedProcess(
+      ...(options.firewall === true ? FIREWALL_DAEMON_COMMAND : DAEMON_COMMAND),
+      { ...environment, ...changes },
+    );
+  const bearer = (owner: string) =>
+    issuer
+      .token(owner, resource)
+      .pipe(
+        Effect.map(Redacted.make),
+        Effect.mapError(failed(`could not issue a token for ${owner}`)),
+      );
+  const daemon: Daemon = {
+    endpoint,
+    directory,
+    environment,
+    start: (changes = {}) =>
+      spawned(changes).pipe(
+        Effect.tap((running) =>
+          awaitReady(running, daemonListening(running, endpoint), "listening"),
+        ),
+        Effect.withSpan("start"),
+      ),
+    startupFailure: (changes = {}) =>
+      startupFailure(spawned(changes), endpoint),
+    configure,
+    bearer,
+    serverAgentBearer,
+    signIn: (presented) => signIn(endpoint, directory, presented),
+    signInAs: (owner) =>
+      Effect.flatMap(bearer(owner), (presented) =>
+        signIn(endpoint, directory, presented),
+      ),
+  };
+  return daemon;
+}, Effect.provide(NodeFileSystem.layer));

@@ -70,6 +70,26 @@ export function requireCondition(
 }
 
 /**
+ * Run one command to completion and report both output streams and its exit
+ * code, for a check that expects a particular failure.
+ * @param command Executable name or path.
+ * @param args Arguments passed verbatim.
+ * @param options Working directory and environment overrides.
+ */
+export const runProcess = Effect.fn("packedWorkspace.runProcess")(function* (
+  command: string,
+  args: readonly string[],
+  options: RunOptions = {},
+) {
+  const child = yield* Command.start(configure(command, args, options));
+  const [stdout, stderr, exitCode] = yield* Effect.all(
+    [collect(child.stdout), collect(child.stderr), child.exitCode],
+    { concurrency: 3 },
+  );
+  return { stdout, stderr, exitCode };
+}, Effect.scoped);
+
+/**
  * Run one command to completion and return its standard output, failing when
  * it exits non-zero. The failure carries both output streams, because tools
  * such as `tsc` print their diagnostics on standard output.
@@ -77,69 +97,31 @@ export function requireCondition(
  * @param args Arguments passed verbatim.
  * @param options Working directory and environment overrides.
  */
-export function runCommand(
-  command: string,
-  args: readonly string[],
-  options: RunOptions = {},
-): Effect.Effect<string, GateError, CommandExecutor.CommandExecutor> {
-  return runProcess(command, args, options).pipe(
-    Effect.tap(({ stdout, stderr, exitCode }) =>
-      requireCondition(
-        exitCode === 0,
-        `${[command, ...args].join(" ")} exited with ${exitCode}:\n${stdout}${stderr}`,
+export const runCommand = Effect.fn("packedWorkspace.runCommand")(
+  (command: string, args: readonly string[], options: RunOptions = {}) =>
+    runProcess(command, args, options).pipe(
+      Effect.tap(({ stdout, stderr, exitCode }) =>
+        requireCondition(
+          exitCode === 0,
+          `${[command, ...args].join(" ")} exited with ${exitCode}:\n${stdout}${stderr}`,
+        ),
       ),
+      Effect.map(({ stdout }) => stdout),
     ),
-    Effect.map(({ stdout }) => stdout),
-    Effect.withSpan("packedWorkspace.runCommand"),
-  );
-}
-
-/** What a finished process printed and how it exited. */
-export interface Finished {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly exitCode: number;
-}
-
-/**
- * Run one command to completion and report both output streams and its exit
- * code, for a check that expects a particular failure.
- * @param command Executable name or path.
- * @param args Arguments passed verbatim.
- * @param options Working directory and environment overrides.
- */
-export function runProcess(
-  command: string,
-  args: readonly string[],
-  options: RunOptions = {},
-): Effect.Effect<Finished, GateError, CommandExecutor.CommandExecutor> {
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* Command.start(configure(command, args, options));
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [collect(child.stdout), collect(child.stderr), child.exitCode],
-        { concurrency: 3 },
-      );
-      return { stdout, stderr, exitCode };
-    }),
-  ).pipe(Effect.withSpan("packedWorkspace.runProcess"));
-}
+);
 
 /**
  * Read and decode one JSON file.
  * @param path File to read.
  * @param schema Shape the parsed JSON must have.
  */
-export function readJsonFile<A, I>(
-  path: string,
-  schema: Schema.Schema<A, I>,
-): Effect.Effect<A, GateError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
+export const readJsonFile = Effect.fn("packedWorkspace.readJsonFile")(
+  function* <A, I>(path: string, schema: Schema.Schema<A, I>) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(path);
     return yield* Schema.decodeUnknown(Schema.parseJson(schema))(text);
-  }).pipe(Effect.withSpan("packedWorkspace.readJsonFile"));
-}
+  },
+);
 
 /**
  * Run a pack gate as the process entry point: provide the Node services and a
@@ -230,8 +212,8 @@ export function packProductClosure(
  * @param workspaceRoot Source workspace root.
  * @returns Dependency specifiers for the isolated consumer.
  */
-export function readConsumerPins(workspaceRoot: string) {
-  return Effect.gen(function* () {
+export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
+  function* (workspaceRoot: string) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(
       join(workspaceRoot, "pnpm-workspace.yaml"),
@@ -254,62 +236,61 @@ export function readConsumerPins(workspaceRoot: string) {
       openclaw: workspace.catalog.openclaw,
       typescript: workspace.catalog.typescript,
     };
-  }).pipe(Effect.withSpan("packedWorkspace.readConsumerPins"));
-}
+  },
+);
 
 /**
  * Read one text file, failing with `missing` when the file system refuses.
  * @param path File to read.
  * @param missing Failure message when the file is absent or unreadable.
  */
-export function readText(
+export const readText = Effect.fn("packedWorkspace.readText")(function* (
   path: string,
   missing: string,
-): Effect.Effect<string, GateError, FileSystem.FileSystem> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.readFileString(path);
-  }).pipe(
-    Effect.catchTag("SystemError", () =>
-      Effect.fail(new PackGateError({ message: missing })),
-    ),
-    Effect.withSpan("packedWorkspace.readText"),
-  );
-}
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs
+    .readFileString(path)
+    .pipe(
+      Effect.catchTag("SystemError", () =>
+        Effect.fail(new PackGateError({ message: missing })),
+      ),
+    );
+});
 
 /**
  * Invoke the installed compiler through its declared executable; catalog aliases
  * may expose a versioned command name.
  * @param consumerRoot Isolated consumer with TypeScript installed.
  */
-export function checkConsumerTypes(consumerRoot: string) {
-  return Effect.gen(function* () {
-    const compilerRoot = join(consumerRoot, "node_modules", "typescript");
-    const compiler = yield* readJsonFile(
-      join(compilerRoot, "package.json"),
-      Schema.Struct({
-        bin: Schema.Record({ key: Schema.String, value: Schema.String }),
-      }),
-    );
-    const target = Object.entries(compiler.bin).find(([name]) =>
-      /^tsc\d*$/u.test(name),
-    )?.[1];
-    if (target === undefined) {
-      return yield* new PackGateError({
-        message: "TypeScript declares no compiler executable",
-      });
-    }
-    yield* runCommand(
-      process.execPath,
-      [
-        join(compilerRoot, target),
-        "--project",
-        join(consumerRoot, "tsconfig.json"),
-      ],
-      { cwd: consumerRoot },
-    );
-  }).pipe(Effect.withSpan("packedWorkspace.checkConsumerTypes"));
-}
+export const checkConsumerTypes = Effect.fn(
+  "packedWorkspace.checkConsumerTypes",
+)(function* (consumerRoot: string) {
+  const compilerRoot = join(consumerRoot, "node_modules", "typescript");
+  const compiler = yield* readJsonFile(
+    join(compilerRoot, "package.json"),
+    Schema.Struct({
+      bin: Schema.Record({ key: Schema.String, value: Schema.String }),
+    }),
+  );
+  const target = Object.entries(compiler.bin).find(([name]) =>
+    /^tsc\d*$/u.test(name),
+  )?.[1];
+  if (target === undefined) {
+    return yield* new PackGateError({
+      message: "TypeScript declares no compiler executable",
+    });
+  }
+  yield* runCommand(
+    process.execPath,
+    [
+      join(compilerRoot, target),
+      "--project",
+      join(consumerRoot, "tsconfig.json"),
+    ],
+    { cwd: consumerRoot },
+  );
+});
 
 /**
  * Create a consumer project under `temporaryRoot/consumer` that depends on
@@ -318,22 +299,20 @@ export function checkConsumerTypes(consumerRoot: string) {
  * @param input Consumer description.
  * @returns The consumer directory.
  */
-export function installPackedConsumer(
-  input: ConsumerInput,
-): Effect.Effect<string, GateError, GateServices> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const consumerRoot = join(input.temporaryRoot, "consumer");
-    yield* fs.makeDirectory(consumerRoot);
-    yield* writeConsumerProject(consumerRoot, input);
-    yield* runCommand(
-      "pnpm",
-      ["install", "--no-frozen-lockfile", "--prefer-offline"],
-      { cwd: consumerRoot },
-    );
-    return consumerRoot;
-  }).pipe(Effect.withSpan("packedWorkspace.installPackedConsumer"));
-}
+export const installPackedConsumer = Effect.fn(
+  "packedWorkspace.installPackedConsumer",
+)(function* (input: ConsumerInput) {
+  const fs = yield* FileSystem.FileSystem;
+  const consumerRoot = join(input.temporaryRoot, "consumer");
+  yield* fs.makeDirectory(consumerRoot);
+  yield* writeConsumerProject(consumerRoot, input);
+  yield* runCommand(
+    "pnpm",
+    ["install", "--no-frozen-lockfile", "--prefer-offline"],
+    { cwd: consumerRoot },
+  );
+  return consumerRoot;
+});
 
 /**
  * Pack the source roots into a scratch directory for consumer installation.

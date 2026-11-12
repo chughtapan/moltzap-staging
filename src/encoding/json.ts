@@ -26,17 +26,13 @@ export const encodeJson = <A, I, R>(
   );
 
 /** Reads JSON text through a schema, rejecting properties the schema does not name. */
-export const decodeJson = <A, I, R>(
-  schema: Schema.Schema<A, I, R>,
-  text: string,
-): Effect.Effect<A, ClientRepresentationError, R> =>
-  Schema.decodeUnknown(
-    Schema.parseJson(schema),
-    exactParseOptions,
-  )(text).pipe(
-    Effect.mapError(representationFailure),
-    Effect.withSpan("decodeJson"),
-  );
+export const decodeJson = Effect.fn("decodeJson")(
+  <A, I, R>(schema: Schema.Schema<A, I, R>, text: string) =>
+    Schema.decodeUnknown(
+      Schema.parseJson(schema),
+      exactParseOptions,
+    )(text).pipe(Effect.mapError(representationFailure)),
+);
 
 const parseJson = Option.liftThrowable((text: string): unknown =>
   JSON.parse(text),

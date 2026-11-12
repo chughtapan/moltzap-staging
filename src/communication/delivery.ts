@@ -46,49 +46,49 @@ const agentRow = Schema.Struct({
 });
 
 /** One agent's sends, incoming work and history on this daemon. */
-export function makeDelivery(settings: CommunicationSettings) {
-  return Effect.gen(function* () {
-    const environment = { sql: yield* SqlClient, settings };
-    const history = messageHistory({
-      agentKey: settings.agentKey,
-      local: settings.card,
-      maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
-    });
-    const requests = yield* makeRequests(settings.agentKey, {
-      self: settings.card,
-      send: (message) =>
-        capture(environment, sendMessage(environment, message)).pipe(
-          Effect.mapError((error) =>
-            error instanceof CommunicationError ? error : unavailable(),
-          ),
+export const makeDelivery = Effect.fn("Communication.delivery")(function* (
+  settings: CommunicationSettings,
+) {
+  const environment = { sql: yield* SqlClient, settings };
+  const history = messageHistory({
+    agentKey: settings.agentKey,
+    local: settings.card,
+    maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
+  });
+  const requests = yield* makeRequests(settings.agentKey, {
+    self: settings.card,
+    send: (message) =>
+      capture(environment, sendMessage(environment, message)).pipe(
+        Effect.mapError((error) =>
+          error instanceof CommunicationError ? error : unavailable(),
         ),
-    });
-    const consumer = yield* Effect.makeSemaphore(1);
-    return {
-      send: (value) => capture(environment, send(environment, requests, value)),
-      getRequest: (operationId) =>
-        capture(environment, requests.getRequest(operationId)),
-      consume: (handle) =>
-        consumer.withPermits(1)(
-          consume(environment, requests, handle).pipe(
-            Effect.raceFirst(requests.failed),
-          ),
+      ),
+  });
+  const consumer = yield* Effect.makeSemaphore(1);
+  return {
+    send: (value) => capture(environment, send(environment, requests, value)),
+    getRequest: (operationId) =>
+      capture(environment, requests.getRequest(operationId)),
+    consume: (handle) =>
+      consumer.withPermits(1)(
+        consume(environment, requests, handle).pipe(
+          Effect.raceFirst(requests.failed),
         ),
-      getConversation: (names) =>
-        capture(environment, history.getConversation(names)),
-      listConversations: (query = {}) =>
-        capture(environment, history.listConversations(query)),
-      readHistory: (query) => capture(environment, history.readHistory(query)),
-    } satisfies CommunicationService;
-  }).pipe(Effect.withSpan("Communication.delivery"));
-}
+      ),
+    getConversation: (names) =>
+      capture(environment, history.getConversation(names)),
+    listConversations: (query = {}) =>
+      capture(environment, history.listConversations(query)),
+    readHistory: (query) => capture(environment, history.readHistory(query)),
+  } satisfies CommunicationService;
+});
 
 /**
  * Marks the database as serving `mode`. Fails with `membership-invalid` when
  * it already serves another.
  */
-export function claimMode(mode: string) {
-  return Effect.gen(function* () {
+export const claimMode = Effect.fn("claimMode")(
+  function* (mode: string) {
     const db = yield* communicationQueries;
     yield* executeQuery(
       db
@@ -105,11 +105,9 @@ export function claimMode(mode: string) {
     if (row?.kind !== mode) {
       return yield* invalid();
     }
-  }).pipe(
-    Effect.catchTag("SqlError", unavailable),
-    Effect.withSpan("claimMode"),
-  );
-}
+  },
+  Effect.catchTag("SqlError", unavailable),
+);
 
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
 

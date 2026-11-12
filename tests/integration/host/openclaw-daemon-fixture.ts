@@ -315,16 +315,16 @@ export function registerOpenClawChannel(): Effect.Effect<
  * Starts the registered plugin's account as the scenario's target agent, with
  * OpenClaw's gateway context, and waits until it reports connected.
  */
-export function startOpenClawGateway(
-  scenario: Pick<Scenario, "daemon" | "target">,
-  channelPlugin: StableOpenClawChannelPlugin,
-  runtime: ObservedOpenClawAccountRuntime,
-  options: {
-    readonly mode?: "shared" | "private";
-    readonly logLines?: string[];
-  } = {},
-) {
-  return Effect.gen(function* () {
+export const startOpenClawGateway = Effect.fn("startOpenClawGateway")(
+  function* (
+    scenario: Pick<Scenario, "daemon" | "target">,
+    channelPlugin: StableOpenClawChannelPlugin,
+    runtime: ObservedOpenClawAccountRuntime,
+    options: {
+      readonly mode?: "shared" | "private";
+      readonly logLines?: string[];
+    } = {},
+  ) {
     const cfg = openClawConfig(options.mode);
     const connected = yield* Deferred.make<undefined>();
     yield* useDaemonEndpoint(scenario);
@@ -378,8 +378,8 @@ export function startOpenClawGateway(
     ).pipe(Effect.forkScoped);
     yield* awaitSignal(connected, "OpenClaw gateway connection");
     return { abortController, runningGateway };
-  }).pipe(Effect.withSpan("startOpenClawGateway"));
-}
+  },
+);
 
 /** An OpenClaw configuration with one Social Harness account. */
 export function openClawConfig(mode?: "shared" | "private"): OpenClawConfig {

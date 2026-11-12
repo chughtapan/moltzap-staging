@@ -159,8 +159,8 @@ const settingsError = (message: string) => () =>
  * the daemon, `SHARNESS_MCP_CREDENTIAL_FILE` the file holding its bearer, and
  * `SHARNESS_MCP_ALLOW_HTTP=true` permits plaintext HTTP to it.
  */
-export function connectFromEnvironment(implementation: Implementation) {
-  return Effect.gen(function* () {
+export const connectFromEnvironment = Effect.fn("Mcp.connectFromEnvironment")(
+  function* (implementation: Implementation) {
     const endpoint = yield* Config.url("SHARNESS_MCP_URL").pipe(
       Effect.catchTag(
         "ConfigError",
@@ -187,8 +187,8 @@ export function connectFromEnvironment(implementation: Implementation) {
       { endpoint, credential: Redacted.make(credential), allowHttp },
       implementation,
     );
-  }).pipe(Effect.withSpan("Mcp.connectFromEnvironment"));
-}
+  },
+);
 
 /** What a caller is told when a tool's definition does not read a failure. */
 const reasons = {

@@ -142,23 +142,21 @@ export function validateChain(
 }
 
 /** Applies the rules for the message's direction in order; the first that decides ends the chain. */
-export function evaluateChain(
+export const evaluateChain = Effect.fn("evaluateChain")(function* (
   chain: Chain,
   input: MatchInput,
-): Effect.Effect<ChainOutcome> {
-  return Effect.gen(function* () {
-    const rules = chain.rules.filter(
-      (rule) => rule.applies === "both" || rule.applies === input.direction,
-    );
-    for (const rule of rules) {
-      const outcome = yield* applyRule(chain, rule, input);
-      if (outcome !== undefined) {
-        return outcome;
-      }
+) {
+  const rules = chain.rules.filter(
+    (rule) => rule.applies === "both" || rule.applies === input.direction,
+  );
+  for (const rule of rules) {
+    const outcome = yield* applyRule(chain, rule, input);
+    if (outcome !== undefined) {
+      return outcome;
     }
-    return { kind: "unmatched" } satisfies ChainOutcome;
-  }).pipe(Effect.withSpan("evaluateChain"));
-}
+  }
+  return { kind: "unmatched" } satisfies ChainOutcome;
+});
 
 /**
  * One rule's outcome, or nothing when the chain goes on: its matcher did not

@@ -341,11 +341,8 @@ const complianceQuestion = {
  * configuration or storage, and without saving the result. Requires verified
  * attribution from the caller.
  */
-export function checkCapturedMessage(
-  input: CheckMessageInput,
-  captured: CapturedInput,
-): Effect.Effect<FirewallCheck, CheckInputError> {
-  return Effect.gen(function* () {
+export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
+  function* (input: CheckMessageInput, captured: CapturedInput) {
     yield* validateEvidence(captured);
     const selected = forDirection(
       input.rules,
@@ -409,8 +406,8 @@ export function checkCapturedMessage(
       onRight: (result) => result,
     });
     return composeDecision(captured.context, input.rules, result);
-  }).pipe(Effect.withSpan("Firewall.checkCapturedMessage"));
-}
+  },
+);
 
 /** Startup and edits reject rule sets that cannot form a bounded request. */
 export const validateChecks = Effect.fn("Firewall.validateChecks")(function* (

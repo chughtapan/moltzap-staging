@@ -108,43 +108,39 @@ export function requireRoots(
 /**
  * Markdown and TypeScript files below `roots`, sorted for stable output.
  */
-export function collectDiagramFiles(
+export const collectDiagramFiles = Effect.fn("collectDiagramFiles")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   roots: readonly string[],
-): Effect.Effect<readonly string[], MermaidGateError> {
-  return Effect.gen(function* () {
-    const ctx: WalkCtx = { fs, path, out: [] };
-    for (const root of roots) {
-      yield* walkInto(ctx, root);
-    }
-    return ctx.out.sort((left, right) => StringOps.localeCompare(right)(left));
-  }).pipe(Effect.withSpan("collectDiagramFiles"));
-}
+) {
+  const ctx: WalkCtx = { fs, path, out: [] };
+  for (const root of roots) {
+    yield* walkInto(ctx, root);
+  }
+  return ctx.out.sort((left, right) => StringOps.localeCompare(right)(left));
+});
 
 /**
  * Extracts Mermaid blocks labelled relative to `workspaceRoot`.
  * An unreadable file fails the collection instead of contributing no blocks.
  */
-export function collectBlocks(
+export const collectBlocks = Effect.fn("collectBlocks")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workspaceRoot: string,
   files: readonly string[],
-): Effect.Effect<readonly MermaidBlock[], MermaidGateError> {
-  return Effect.gen(function* () {
-    const out: MermaidBlock[] = [];
-    for (const file of files) {
-      const source = yield* fs
-        .readFileString(file)
-        .pipe(Effect.mapError(gateError("cannot read file", file)));
-      out.push(
-        ...extractMermaidBlocks(path.relative(workspaceRoot, file), source),
-      );
-    }
-    return out;
-  }).pipe(Effect.withSpan("collectBlocks"));
-}
+) {
+  const out: MermaidBlock[] = [];
+  for (const file of files) {
+    const source = yield* fs
+      .readFileString(file)
+      .pipe(Effect.mapError(gateError("cannot read file", file)));
+    out.push(
+      ...extractMermaidBlocks(path.relative(workspaceRoot, file), source),
+    );
+  }
+  return out;
+});
 
 /**
  * Extracts fenced Mermaid text with original source line numbers.
@@ -170,26 +166,20 @@ export function extractMermaidBlocks(
  * Failure to stage the input fails the Effect. Renderer and diagram errors
  * return a `MermaidFailure` so callers can collect failures across diagrams.
  */
-export function lintBlock(
+export const lintBlock = Effect.fn("lintBlock")(function* (
   block: MermaidBlock,
   tempDir: string,
-): Effect.Effect<
-  MermaidFailure | null,
-  MermaidGateError,
-  FileSystem.FileSystem | Path.Path | CommandExecutor.CommandExecutor
-> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const slug = `${block.file.replace(/[^a-zA-Z0-9]/g, "_")}-${block.startLine}`;
-    const inputPath = path.resolve(tempDir, `${slug}.mmd`);
-    const outputPath = path.resolve(tempDir, `${slug}.svg`);
-    yield* prepareInput(fs, tempDir, inputPath, block.body);
-    const result = yield* runMmdc(inputPath, outputPath);
-    yield* cleanup(fs, inputPath, outputPath);
-    return interpretResult(block, result);
-  }).pipe(Effect.withSpan("lintBlock"));
-}
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const slug = `${block.file.replace(/[^a-zA-Z0-9]/g, "_")}-${block.startLine}`;
+  const inputPath = path.resolve(tempDir, `${slug}.mmd`);
+  const outputPath = path.resolve(tempDir, `${slug}.svg`);
+  yield* prepareInput(fs, tempDir, inputPath, block.body);
+  const result = yield* runMmdc(inputPath, outputPath);
+  yield* cleanup(fs, inputPath, outputPath);
+  return interpretResult(block, result);
+});
 
 function extractFencedBlocks(
   file: string,

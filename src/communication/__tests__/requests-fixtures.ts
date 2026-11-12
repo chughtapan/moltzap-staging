@@ -42,59 +42,70 @@ export const form = {
 } as const;
 
 /** A question service for one agent. Reopening on the same database stands for a restart. */
-export function openCollectives(input: FixtureInput = {}) {
-  return Effect.gen(function* () {
-    const database = input.database ?? (yield* openTestDatabase());
-    const agent = input.agent ?? alice;
-    const sent = yield* Queue.unbounded<Message>();
-    const results = yield* Queue.unbounded<ResultDelivery>();
-    const scope = yield* Scope.make();
-    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    const requests = yield* makeRequests(database.agentKey, {
-      self: agent,
-      send: (message) =>
-        (input.send?.(message) ?? Effect.void).pipe(
-          Effect.zipRight(Queue.offer(sent, message)),
-          Effect.asVoid,
-        ),
-    }).pipe(
-      Effect.provideService(SqlClient, database.sql),
-      Scope.extend(scope),
-    );
-    const consumeResults = <E, R>(
-      handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
-    ) =>
-      requests
-        .deliverNextResult(handle)
-        .pipe(
-          Effect.zipRight(Effect.sleep("10 millis")),
-          Effect.forever,
-          Effect.raceFirst(requests.failed),
-          Effect.provideService(SqlClient, database.sql),
-        );
-    const service = {
-      accept: (request: Request) => database.run(requests.accept(request)),
-      answer: (message: Message) => database.run(requests.answer(message)),
-      getRequest: (operationId: Request["operationId"]) =>
-        database.run(requests.getRequest(operationId)),
-      receive: (message: Message) => database.run(requests.receive(message)),
-      consumeResults,
-    };
-    return {
-      database,
-      service,
-      sent,
-      results,
-      close: Scope.close(scope, Exit.void),
-      collect: () =>
-        service
-          .consumeResults((result) =>
-            Queue.offer(results, result).pipe(Effect.asVoid),
-          )
-          .pipe(Effect.forkIn(scope)),
-    };
-  }).pipe(Effect.withSpan("openCollectives"));
-}
+export const openCollectives = Effect.fn("openCollectives")(function* (
+  input: FixtureInput = {},
+) {
+  const database = input.database ?? (yield* openTestDatabase());
+  const agent = input.agent ?? alice;
+  const sent = yield* Queue.unbounded<Message>();
+  const results = yield* Queue.unbounded<ResultDelivery>();
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  const requests = yield* makeRequests(database.agentKey, {
+    self: agent,
+    send: (message) =>
+      (input.send?.(message) ?? Effect.void).pipe(
+        Effect.zipRight(Queue.offer(sent, message)),
+        Effect.asVoid,
+      ),
+  }).pipe(Effect.provideService(SqlClient, database.sql), Scope.extend(scope));
+  const consumeResults = <E, R>(
+    handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
+  ) =>
+    requests
+      .deliverNextResult(handle)
+      .pipe(
+        Effect.zipRight(Effect.sleep("10 millis")),
+        Effect.forever,
+        Effect.raceFirst(requests.failed),
+        Effect.provideService(SqlClient, database.sql),
+      );
+  const service = {
+    accept: (request: Request) => database.run(requests.accept(request)),
+    answer: (message: Message) => database.run(requests.answer(message)),
+    getRequest: (operationId: Request["operationId"]) =>
+      database.run(requests.getRequest(operationId)),
+    receive: (message: Message) => database.run(requests.receive(message)),
+    consumeResults,
+  };
+  return {
+    database,
+    service,
+    sent,
+    results,
+    close: Scope.close(scope, Exit.void),
+    collect: () =>
+      service
+        .consumeResults((result) =>
+          Queue.offer(results, result).pipe(Effect.asVoid),
+        )
+        .pipe(Effect.forkIn(scope)),
+  };
+});
+
+/** Original wire messages are constructed once with a caller-selected author-scoped id. */
+export const wireMessage = Effect.fn("wireMessage")(function* (
+  author: AgentCard,
+  recipients: readonly AgentCard[],
+  value: CollectiveValue,
+  options: { readonly byte: number; readonly text?: string },
+) {
+  const content = yield* encodeCollectiveContent(value, options.text);
+  return yield* messageFromParticipants(author, recipients, {
+    msgId: Schema.decodeUnknownSync(MsgId)(digest("msg_", options.byte)),
+    content,
+  });
+}, Effect.orDie);
 
 /** Alice's original request can be captured before the service accepts it. */
 export function aliceRequest(
@@ -153,22 +164,6 @@ export function declineMessage(
     { kind: "response", operationId, action: "decline" },
     { byte },
   );
-}
-
-/** Original wire messages are constructed once with a caller-selected author-scoped id. */
-export function wireMessage(
-  author: AgentCard,
-  recipients: readonly AgentCard[],
-  value: CollectiveValue,
-  options: { readonly byte: number; readonly text?: string },
-) {
-  return Effect.gen(function* () {
-    const content = yield* encodeCollectiveContent(value, options.text);
-    return yield* messageFromParticipants(author, recipients, {
-      msgId: Schema.decodeUnknownSync(MsgId)(digest("msg_", options.byte)),
-      content,
-    });
-  }).pipe(Effect.orDie, Effect.withSpan("wireMessage"));
 }
 
 /** The question deadline belongs to the caller's captured command. */

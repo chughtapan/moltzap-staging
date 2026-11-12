@@ -27,21 +27,23 @@ export interface Participant extends SignedIn {
  * @param owners The owner of each participant.
  * @returns The participants, in `owners` order.
  */
-export const joinParticipants = (daemon: Daemon, owners: readonly string[]) =>
-  Effect.forEach(
-    owners,
-    (owner) =>
-      Effect.gen(function* () {
-        const signedIn = yield* daemon.signInAs(owner);
-        const inbox = yield* Queue.unbounded<InboxEntry>();
-        yield* inboxStream(signedIn.connection).pipe(
-          Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
-          Effect.forkScoped,
-        );
-        return { ...signedIn, inbox };
-      }),
-    { concurrency: 1 },
-  ).pipe(Effect.withSpan("joinParticipants"));
+export const joinParticipants = Effect.fn("joinParticipants")(
+  (daemon: Daemon, owners: readonly string[]) =>
+    Effect.forEach(
+      owners,
+      (owner) =>
+        Effect.gen(function* () {
+          const signedIn = yield* daemon.signInAs(owner);
+          const inbox = yield* Queue.unbounded<InboxEntry>();
+          yield* inboxStream(signedIn.connection).pipe(
+            Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
+            Effect.forkScoped,
+          );
+          return { ...signedIn, inbox };
+        }),
+      { concurrency: 1 },
+    ),
+);
 
 /**
  * Starts one daemon and joins one participant per owner.
@@ -49,15 +51,13 @@ export const joinParticipants = (daemon: Daemon, owners: readonly string[]) =>
  * @param options How the daemon differs from the fixture's defaults.
  * @returns The participants, in `owners` order.
  */
-export const acquireParticipants = (
-  owners: readonly string[],
-  options: DaemonOptions = {},
-) =>
-  sharedDaemon(options).pipe(
-    Effect.tap((daemon) => daemon.start()),
-    Effect.flatMap((daemon) => joinParticipants(daemon, owners)),
-    Effect.withSpan("acquireParticipants"),
-  );
+export const acquireParticipants = Effect.fn("acquireParticipants")(
+  (owners: readonly string[], options: DaemonOptions = {}) =>
+    sharedDaemon(options).pipe(
+      Effect.tap((daemon) => daemon.start()),
+      Effect.flatMap((daemon) => joinParticipants(daemon, owners)),
+    ),
+);
 
 /** Takes the participant's next received item. */
 export const nextItem = (participant: Participant) =>

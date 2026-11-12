@@ -79,16 +79,17 @@ export const markedProvider: DecisionProvider = {
  * returns the settings that name them. The provider override replaces the
  * provider the key would open.
  */
-export function writeMessagePolicy(directory: string, document: unknown) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const messagePolicyFile = join(directory, "message-policy.json");
-    const decisionProviderKeyFile = join(directory, "provider.key");
-    yield* fs.writeFileString(messagePolicyFile, JSON.stringify(document));
-    yield* fs.writeFileString(decisionProviderKeyFile, "fixture-provider-key");
-    return { messagePolicyFile, decisionProviderKeyFile };
-  }).pipe(Effect.withSpan("writeMessagePolicy"));
-}
+export const writeMessagePolicy = Effect.fn("writeMessagePolicy")(function* (
+  directory: string,
+  document: unknown,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const messagePolicyFile = join(directory, "message-policy.json");
+  const decisionProviderKeyFile = join(directory, "provider.key");
+  yield* fs.writeFileString(messagePolicyFile, JSON.stringify(document));
+  yield* fs.writeFileString(decisionProviderKeyFile, "fixture-provider-key");
+  return { messagePolicyFile, decisionProviderKeyFile };
+});
 
 const shippedNorms = fileURLToPath(
   new URL("../../../config/norms/", import.meta.url),
@@ -99,41 +100,39 @@ const shippedNorms = fileURLToPath(
  * directory under `directory`, and returns the setting that names it. Each
  * new agent of a daemon with that setting holds the norms of `documents`.
  */
-export function writeNorms(directory: string, documents: readonly string[]) {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const normsDirectory = join(directory, "norms");
-    yield* fs.makeDirectory(normsDirectory);
-    yield* Effect.forEach(
-      [...documents, "rules.json"],
-      (document) =>
-        fs.copyFile(
-          join(shippedNorms, document),
-          join(normsDirectory, basename(document)),
-        ),
-      { concurrency: 1 },
-    );
-    return { normsDirectory };
-  }).pipe(Effect.withSpan("writeNorms"));
-}
+export const writeNorms = Effect.fn("writeNorms")(function* (
+  directory: string,
+  documents: readonly string[],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const normsDirectory = join(directory, "norms");
+  yield* fs.makeDirectory(normsDirectory);
+  yield* Effect.forEach(
+    [...documents, "rules.json"],
+    (document) =>
+      fs.copyFile(
+        join(shippedNorms, document),
+        join(normsDirectory, basename(document)),
+      ),
+    { concurrency: 1 },
+  );
+  return { normsDirectory };
+});
 
 /**
  * Runs the daemon's own composition in this process with `environment` as its
  * configuration, judging text rules with `provider`, until the scope closes.
  */
-export function launchDaemon(
-  environment: Readonly<Record<string, string>>,
-  provider: DecisionProvider,
-) {
-  return Layer.launch(daemonLayer).pipe(
-    Effect.provideService(DecisionProviderOverride, provider),
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map(Object.entries(environment))),
+export const launchDaemon = Effect.fn("launchDaemon")(
+  (environment: Readonly<Record<string, string>>, provider: DecisionProvider) =>
+    Layer.launch(daemonLayer).pipe(
+      Effect.provideService(DecisionProviderOverride, provider),
+      Effect.withConfigProvider(
+        ConfigProvider.fromMap(new Map(Object.entries(environment))),
+      ),
+      Effect.forkScoped,
     ),
-    Effect.forkScoped,
-    Effect.withSpan("launchDaemon"),
-  );
-}
+);
 
 function markedResponse(request: DecisionRequest) {
   const state = Schema.decodeUnknownSync(stateSchema)(request.state);

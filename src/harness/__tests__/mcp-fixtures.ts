@@ -137,8 +137,8 @@ export const loopbackMcpEndpoint = Effect.fn(function* (
 });
 
 /** A stock client connects through HTTP encoding and closes with the test scope. */
-export const connectInProcessClient = (fetch: typeof globalThis.fetch) =>
-  Effect.gen(function* () {
+export const connectInProcessClient = Effect.fn("connectInProcessClient")(
+  function* (fetch: typeof globalThis.fetch) {
     const client = new Client(
       { name: "mcp-contract-test", version: "1" },
       {
@@ -159,7 +159,8 @@ export const connectInProcessClient = (fetch: typeof globalThis.fetch) =>
       () => Effect.tryPromise(() => client.close()).pipe(Effect.ignore),
     );
     return client;
-  }).pipe(Effect.withSpan("connectInProcessClient"));
+  },
+);
 
 /** A request can vary IDs, metadata and cancellation without changing the application contract. */
 export function mcpRequest(

@@ -98,118 +98,112 @@ const noNorms: NormDocuments = {
  * Maps each `{behavior}` to a rule and names each `{norm}` document, keeping
  * every item's index in its list, and reports an invalid item at that index.
  */
-export function resolvedChange(
+export const resolvedChange = Effect.fn("resolvedChange")(function* (
   change: typeof policyUpdateSchema.Type,
   norms?: NormDocuments,
 ) {
-  return Effect.gen(function* () {
-    const captured = yield* Effect.try({
-      try: () => structuredClone(change),
-      catch: () => invalidRule("schema"),
-    });
-    freezeData(captured);
-    const additions = yield* Effect.forEach(
-      captured.add ?? [],
-      (item, index) => addition(item, index, norms ?? noNorms),
-      { concurrency: 1 },
-    );
-    const removals = captured.remove ?? [];
-    const resolved: PolicyChange = {
-      add: additions.flatMap((item) =>
-        item.kind === "rule" ? [{ index: item.index, rule: item.rule }] : [],
-      ),
-      addNorms: additions.flatMap((item) =>
-        item.kind === "norm" ? [{ index: item.index, norm: item.norm }] : [],
-      ),
-      remove: removals.flatMap((item, index) =>
-        typeof item === "string" ? [{ index, ruleId: item }] : [],
-      ),
-      removeNorms: removals.flatMap((item, index) =>
-        typeof item === "string" ? [] : [{ index, name: item.norm }],
-      ),
-    };
-    return { request: captured, change: resolved };
-  }).pipe(Effect.withSpan("resolvedChange"));
-}
+  const captured = yield* Effect.try({
+    try: () => structuredClone(change),
+    catch: () => invalidRule("schema"),
+  });
+  freezeData(captured);
+  const additions = yield* Effect.forEach(
+    captured.add ?? [],
+    (item, index) => addition(item, index, norms ?? noNorms),
+    { concurrency: 1 },
+  );
+  const removals = captured.remove ?? [];
+  const resolved: PolicyChange = {
+    add: additions.flatMap((item) =>
+      item.kind === "rule" ? [{ index: item.index, rule: item.rule }] : [],
+    ),
+    addNorms: additions.flatMap((item) =>
+      item.kind === "norm" ? [{ index: item.index, norm: item.norm }] : [],
+    ),
+    remove: removals.flatMap((item, index) =>
+      typeof item === "string" ? [{ index, ruleId: item }] : [],
+    ),
+    removeNorms: removals.flatMap((item, index) =>
+      typeof item === "string" ? [] : [{ index, name: item.norm }],
+    ),
+  };
+  return { request: captured, change: resolved };
+});
 
 /**
  * The editable document an edit leaves, or the first item it cannot apply:
  * a fixed id, a removal of an id the document lacks, an addition whose id the
  * document keeps or the edit adds twice, or more rules than the limit.
  */
-export function editedRules(
+export const editedRules = Effect.fn("editedRules")(function* (
   rules: readonly TextRule[],
   fixedRuleIds: readonly string[],
   { add, remove }: PolicyChange,
 ) {
-  return Effect.gen(function* () {
-    for (const { index, ruleId } of remove) {
-      const path: PolicyEditPath = ["remove", index];
-      if (fixedRuleIds.includes(ruleId)) {
-        return yield* new FirewallPolicyError({
-          reason: "fixed-rule",
-          ruleId,
-          path,
-        });
-      }
-      if (!rules.some((rule) => rule.id === ruleId)) {
-        return yield* invalidRule("unknown-id", { ruleId, path });
-      }
+  for (const { index, ruleId } of remove) {
+    const path: PolicyEditPath = ["remove", index];
+    if (fixedRuleIds.includes(ruleId)) {
+      return yield* new FirewallPolicyError({
+        reason: "fixed-rule",
+        ruleId,
+        path,
+      });
     }
-    const removed = new Set(remove.map(({ ruleId }) => ruleId));
-    const kept = rules.filter((rule) => !removed.has(rule.id));
-    const ids = new Set(kept.map((rule) => rule.id));
-    for (const { index, rule } of add) {
-      const path: PolicyEditPath = ["add", index];
-      if (fixedRuleIds.includes(rule.id)) {
-        return yield* new FirewallPolicyError({
-          reason: "fixed-rule",
-          ruleId: rule.id,
-          path,
-        });
-      }
-      if (ids.has(rule.id)) {
-        return yield* invalidRule("duplicate-id", { ruleId: rule.id, path });
-      }
-      ids.add(rule.id);
+    if (!rules.some((rule) => rule.id === ruleId)) {
+      return yield* invalidRule("unknown-id", { ruleId, path });
     }
-    if (kept.length + add.length > MAXIMUM_EDITABLE_RULES) {
-      return yield* invalidRule("editable-limit");
+  }
+  const removed = new Set(remove.map(({ ruleId }) => ruleId));
+  const kept = rules.filter((rule) => !removed.has(rule.id));
+  const ids = new Set(kept.map((rule) => rule.id));
+  for (const { index, rule } of add) {
+    const path: PolicyEditPath = ["add", index];
+    if (fixedRuleIds.includes(rule.id)) {
+      return yield* new FirewallPolicyError({
+        reason: "fixed-rule",
+        ruleId: rule.id,
+        path,
+      });
     }
-    return Object.freeze([...kept, ...add.map(({ rule }) => rule)]);
-  }).pipe(Effect.withSpan("editedRules"));
-}
+    if (ids.has(rule.id)) {
+      return yield* invalidRule("duplicate-id", { ruleId: rule.id, path });
+    }
+    ids.add(rule.id);
+  }
+  if (kept.length + add.length > MAXIMUM_EDITABLE_RULES) {
+    return yield* invalidRule("editable-limit");
+  }
+  return Object.freeze([...kept, ...add.map(({ rule }) => rule)]);
+});
 
 /**
  * The norms an edit leaves the agent holding, or the first item it cannot
  * apply: a removal of a norm the agent does not hold, an addition of a norm
  * it keeps or the edit adds twice, or more norms than the limit.
  */
-export function editedNorms(
+export const editedNorms = Effect.fn("editedNorms")(function* (
   norms: readonly HeldNorm[],
   { addNorms, removeNorms }: PolicyChange,
 ) {
-  return Effect.gen(function* () {
-    for (const { index, name } of removeNorms) {
-      if (!norms.some((norm) => norm.name === name)) {
-        return yield* invalidRule("unknown-id", { path: ["remove", index] });
-      }
+  for (const { index, name } of removeNorms) {
+    if (!norms.some((norm) => norm.name === name)) {
+      return yield* invalidRule("unknown-id", { path: ["remove", index] });
     }
-    const removed = new Set(removeNorms.map(({ name }) => name));
-    const kept = norms.filter((norm) => !removed.has(norm.name));
-    const names = new Set(kept.map((norm) => norm.name));
-    for (const { index, norm } of addNorms) {
-      if (names.has(norm.name)) {
-        return yield* invalidRule("duplicate-id", { path: ["add", index] });
-      }
-      names.add(norm.name);
+  }
+  const removed = new Set(removeNorms.map(({ name }) => name));
+  const kept = norms.filter((norm) => !removed.has(norm.name));
+  const names = new Set(kept.map((norm) => norm.name));
+  for (const { index, norm } of addNorms) {
+    if (names.has(norm.name)) {
+      return yield* invalidRule("duplicate-id", { path: ["add", index] });
     }
-    if (kept.length + addNorms.length > MAXIMUM_EDITABLE_RULES) {
-      return yield* invalidRule("editable-limit");
-    }
-    return Object.freeze([...kept, ...addNorms.map(({ norm }) => norm)]);
-  }).pipe(Effect.withSpan("editedNorms"));
-}
+    names.add(norm.name);
+  }
+  if (kept.length + addNorms.length > MAXIMUM_EDITABLE_RULES) {
+    return yield* invalidRule("editable-limit");
+  }
+  return Object.freeze([...kept, ...addNorms.map(({ norm }) => norm)]);
+});
 
 /** An `invalid-rule` refusal for `problem`, at the item `at` locates. */
 export function invalidRule(
