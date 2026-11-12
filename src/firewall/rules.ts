@@ -509,34 +509,30 @@ export function readPolicyCredential(
  * reads `decisionProviderKeyFile` through the supplied credential
  * reader. Invalid documents or keys fail without exposing file contents.
  */
-export const loadMessagePolicy = (
+export const loadMessagePolicy = Effect.fn("loadMessagePolicy")(function* (
   configuration: PolicyConfiguration,
   readCredential: CredentialReader,
-): Effect.Effect<
-  Option.Option<LoadedMessagePolicy>,
-  MessagePolicyConfigurationError
-> =>
-  Effect.gen(function* () {
-    const path = configuration.messagePolicyFile;
-    if (path === undefined) {
-      return Option.none();
-    }
-    const policy = yield* readPolicyText(path).pipe(
-      Effect.flatMap((text) =>
-        decodeMessagePolicy(text).pipe(Effect.mapError(invalidPolicy)),
-      ),
-    );
-    const resolved = yield* resolveBehaviors(policy, dirname(path));
-    const provider = yield* loadDecisionProvider(
-      resolved,
-      configuration,
-      readCredential,
-    );
-    return Option.some({
-      policy: resolved,
-      ...(provider === undefined ? {} : { provider }),
-    });
-  }).pipe(Effect.withSpan("loadMessagePolicy"));
+) {
+  const path = configuration.messagePolicyFile;
+  if (path === undefined) {
+    return Option.none();
+  }
+  const policy = yield* readPolicyText(path).pipe(
+    Effect.flatMap((text) =>
+      decodeMessagePolicy(text).pipe(Effect.mapError(invalidPolicy)),
+    ),
+  );
+  const resolved = yield* resolveBehaviors(policy, dirname(path));
+  const provider = yield* loadDecisionProvider(
+    resolved,
+    configuration,
+    readCredential,
+  );
+  return Option.some({
+    policy: resolved,
+    ...(provider === undefined ? {} : { provider }),
+  });
+});
 
 interface BehaviorState {
   readonly root: string;
@@ -560,30 +556,24 @@ export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
  * {@link MAXIMUM_DOCUMENT_BYTES}. Only a closed failure category reaches
  * `refused`. YAML diagnostics stay private.
  */
-export function decodeBehavior<Failure>(
+export const decodeBehavior = Effect.fn("decodeBehavior")(function* <Failure>(
   bytes: Buffer,
   refused: (reason: BehaviorRefusal) => Failure,
 ) {
-  return Effect.gen(function* () {
-    const parts = /^---\r?\n([\s\S]*?)^---[ \t]*(?:\r?\n|$)([\s\S]*)/mu.exec(
-      bytes.toString("utf8").replace(/^\uFEFF/u, ""),
-    );
-    if (
-      parts?.[1] === undefined ||
-      parts[2] === undefined ||
-      parts.index !== 0
-    ) {
-      return yield* Effect.fail(refused("frontmatter"));
-    }
-    const frontmatter = yield* decodeFrontmatter(parts[1], refused);
-    const metadata = frontmatter.metadata["social-harness"];
-    return yield* Schema.decodeUnknown(editableRuleSchema)({
-      id: frontmatter.name,
-      text: parts[2].trim(),
-      ...metadata,
-    }).pipe(Effect.mapError(() => refused("schema")));
-  }).pipe(Effect.withSpan("decodeBehavior"));
-}
+  const parts = /^---\r?\n([\s\S]*?)^---[ \t]*(?:\r?\n|$)([\s\S]*)/mu.exec(
+    bytes.toString("utf8").replace(/^\uFEFF/u, ""),
+  );
+  if (parts?.[1] === undefined || parts[2] === undefined || parts.index !== 0) {
+    return yield* Effect.fail(refused("frontmatter"));
+  }
+  const frontmatter = yield* decodeFrontmatter(parts[1], refused);
+  const metadata = frontmatter.metadata["social-harness"];
+  return yield* Schema.decodeUnknown(editableRuleSchema)({
+    id: frontmatter.name,
+    text: parts[2].trim(),
+    ...metadata,
+  }).pipe(Effect.mapError(() => refused("schema")));
+});
 
 function uniqueTextRuleIds(policy: typeof document.Type): boolean {
   const ids = [

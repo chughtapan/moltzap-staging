@@ -3,18 +3,17 @@ import { SqlClient } from "@effect/sql";
 import { Effect } from "effect";
 
 /** A nested tenant operation restores its caller after its savepoint has closed. */
-export const withAgentTransaction = <A, E, R>(
-  agentKey: string,
-  work: Effect.Effect<A, E, R>,
-) =>
-  Effect.flatMap(SqlClient.SqlClient, (sql) =>
-    sql.withTransaction(
-      sql.onDialectOrElse({
-        pg: () => postgresAgentTransaction(sql, agentKey, work),
-        orElse: () => work,
-      }),
+export const withAgentTransaction = Effect.fn("withAgentTransaction")(
+  <A, E, R>(agentKey: string, work: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(SqlClient.SqlClient, (sql) =>
+      sql.withTransaction(
+        sql.onDialectOrElse({
+          pg: () => postgresAgentTransaction(sql, agentKey, work),
+          orElse: () => work,
+        }),
+      ),
     ),
-  ).pipe(Effect.withSpan("withAgentTransaction"));
+);
 
 /** The inner savepoint rolls back a failed query before restoring the outer transaction's tenant. */
 function postgresAgentTransaction<A, E, R>(

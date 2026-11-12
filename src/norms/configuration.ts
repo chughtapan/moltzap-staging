@@ -96,72 +96,64 @@ export class NormsConfigurationError extends Data.TaggedError(
  * holds, and the directory's `rules.json`. Norm names are unique, no document
  * names a built-in norm, and every rule names a norm matcher.
  */
-export function loadNorms(directory: string) {
-  return Effect.gen(function* () {
-    const failed = (reason: string) => new NormsConfigurationError({ reason });
-    const builtIn = yield* lispDocuments(builtInDirectory);
-    const configured = yield* lispDocuments(directory);
-    const builtInNames = new Set(builtIn.map(({ norm }) => norm.name));
-    const shadowing = configured.find(({ norm }) =>
-      builtInNames.has(norm.name),
+export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
+  const failed = (reason: string) => new NormsConfigurationError({ reason });
+  const builtIn = yield* lispDocuments(builtInDirectory);
+  const configured = yield* lispDocuments(directory);
+  const builtInNames = new Set(builtIn.map(({ norm }) => norm.name));
+  const shadowing = configured.find(({ norm }) => builtInNames.has(norm.name));
+  if (shadowing !== undefined) {
+    return yield* failed(
+      `${shadowing.file} names the built-in norm ${shadowing.norm.name}`,
     );
-    if (shadowing !== undefined) {
-      return yield* failed(
-        `${shadowing.file} names the built-in norm ${shadowing.norm.name}`,
-      );
-    }
-    const documents = [...builtIn, ...configured];
-    const names = documents.map(({ norm }) => norm.name);
-    if (new Set(names).size !== names.length) {
-      return yield* failed("two documents name the same norm");
-    }
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs
-      .readFileString(join(directory, "rules.json"))
-      .pipe(Effect.mapError(() => failed("rules.json cannot be read")));
-    const chain = yield* Schema.decodeUnknown(
-      Schema.parseJson(chainRuleFileSchema),
-    )(text).pipe(
-      Effect.mapError((error) =>
-        failed(
-          `rules.json: ${ParseResult.TreeFormatter.formatErrorSync(error)}`,
-        ),
-      ),
+  }
+  const documents = [...builtIn, ...configured];
+  const names = documents.map(({ norm }) => norm.name);
+  if (new Set(names).size !== names.length) {
+    return yield* failed("two documents name the same norm");
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs
+    .readFileString(join(directory, "rules.json"))
+    .pipe(Effect.mapError(() => failed("rules.json cannot be read")));
+  const chain = yield* Schema.decodeUnknown(
+    Schema.parseJson(chainRuleFileSchema),
+  )(text).pipe(
+    Effect.mapError((error) =>
+      failed(`rules.json: ${ParseResult.TreeFormatter.formatErrorSync(error)}`),
+    ),
+  );
+  const known = normMatchers([]);
+  const unknown = chain.rules.find((rule) => !Object.hasOwn(known, rule.match));
+  if (unknown !== undefined) {
+    return yield* failed(
+      `rule ${unknown.id} names ${unknown.match}, which is not a norm matcher`,
     );
-    const known = normMatchers([]);
-    const unknown = chain.rules.find(
-      (rule) => !Object.hasOwn(known, rule.match),
-    );
-    if (unknown !== undefined) {
-      return yield* failed(
-        `rule ${unknown.id} names ${unknown.match}, which is not a norm matcher`,
-      );
-    }
-    return {
-      initial: configured.map(({ source }) => source),
-      chain,
-    } satisfies InstalledNorms;
-  }).pipe(Effect.withSpan("loadNorms"));
-}
+  }
+  return {
+    initial: configured.map(({ source }) => source),
+    chain,
+  } satisfies InstalledNorms;
+});
 
 /**
  * The daemon's norms from its settings, read once for every agent it serves:
  * the package's built-in norms and the rule chain, whose matchers each agent's
  * firewall compiles from the norms it holds.
  */
-export function serviceNorms(installed: InstalledNorms) {
-  return lispDocuments(builtInDirectory).pipe(
-    Effect.map((documents) => {
-      const builtIn = documents.map(({ norm }) => norm);
-      return {
-        chain: { rules: installed.chain.rules, matchers: {} },
-        documents: normDocuments(builtIn, installed.initial),
-        builtIn,
-      } satisfies ServiceNorms;
-    }),
-    Effect.withSpan("serviceNorms"),
-  );
-}
+export const serviceNorms = Effect.fn("serviceNorms")(
+  (installed: InstalledNorms) =>
+    lispDocuments(builtInDirectory).pipe(
+      Effect.map((documents) => {
+        const builtIn = documents.map(({ norm }) => norm);
+        return {
+          chain: { rules: installed.chain.rules, matchers: {} },
+          documents: normDocuments(builtIn, installed.initial),
+          builtIn,
+        } satisfies ServiceNorms;
+      }),
+    ),
+);
 
 /** Whether the norms each new agent holds have English rules, which need a decision provider. */
 export function initialNormsHaveRules(installed: InstalledNorms): boolean {

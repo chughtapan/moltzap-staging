@@ -488,69 +488,61 @@ function writeState(
 }
 
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
-export const makeWebhookEvents = (
+export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
   agentKey: string,
   unlockKey: Redacted.Redacted<Uint8Array>,
-) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const harness = yield* SocialHarness;
-    const client = (yield* HttpClient.HttpClient).pipe(
-      HttpClient.withTracerDisabledWhen(() => true),
-    );
-    const queries = yield* makeQueries<WebhookTables>();
-    const rows = yield* withAgentTransaction(
-      agentKey,
-      executeQuery(
-        queries
-          .selectFrom("mcp_webhook_state")
-          .select("state")
-          .where("agent_key", "=", agentKey),
-      ),
-    );
-    const row = rows[0];
-    const state =
-      row === undefined
-        ? { registration: null }
-        : yield* openCredential(
-            row.state,
-            `webhook/${agentKey}`,
-            unlockKey,
-          ).pipe(
-            Effect.flatMap((value) =>
-              Schema.decodeUnknown(Schema.parseJson(stateSchema))(
-                Redacted.value(value),
-              ),
-            ),
-          );
-    const runtime: WebhookRuntime = {
-      agentKey,
-      unlockKey,
-      sql,
-      harness,
-      client,
-      clock: yield* Effect.clock,
-      state,
-      gate: yield* Effect.makeSemaphore(1),
-      deliveryGate: yield* Effect.makeSemaphore(1),
-      generation: 0,
-      unannounced: true,
-      announced: new Set(),
-      wake: null,
-      changed: yield* Queue.sliding<undefined>(1),
-    };
-    yield* harness.inboxChanged.pipe(
-      Stream.runForEach(() => announce(runtime)),
-      Effect.forkScoped,
-    );
-    yield* deliver(runtime).pipe(
-      Effect.catchAll(() => Effect.logWarning("Webhook wake-up deferred")),
-      Effect.zipRight(untilNextAttempt(runtime)),
-      Effect.forever,
-      Effect.forkScoped,
-    );
-    return webhookOperations(runtime);
-  }).pipe(
-    Effect.mapError(persistenceFailure),
-    Effect.withSpan("Mcp.makeWebhookEvents"),
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const harness = yield* SocialHarness;
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.withTracerDisabledWhen(() => true),
   );
+  const queries = yield* makeQueries<WebhookTables>();
+  const rows = yield* withAgentTransaction(
+    agentKey,
+    executeQuery(
+      queries
+        .selectFrom("mcp_webhook_state")
+        .select("state")
+        .where("agent_key", "=", agentKey),
+    ),
+  );
+  const row = rows[0];
+  const state =
+    row === undefined
+      ? { registration: null }
+      : yield* openCredential(row.state, `webhook/${agentKey}`, unlockKey).pipe(
+          Effect.flatMap((value) =>
+            Schema.decodeUnknown(Schema.parseJson(stateSchema))(
+              Redacted.value(value),
+            ),
+          ),
+        );
+  const runtime: WebhookRuntime = {
+    agentKey,
+    unlockKey,
+    sql,
+    harness,
+    client,
+    clock: yield* Effect.clock,
+    state,
+    gate: yield* Effect.makeSemaphore(1),
+    deliveryGate: yield* Effect.makeSemaphore(1),
+    generation: 0,
+    unannounced: true,
+    announced: new Set(),
+    wake: null,
+    changed: yield* Queue.sliding<undefined>(1),
+  };
+  yield* harness.inboxChanged.pipe(
+    Stream.runForEach(() => announce(runtime)),
+    Effect.forkScoped,
+  );
+  yield* deliver(runtime).pipe(
+    Effect.catchAll(() => Effect.logWarning("Webhook wake-up deferred")),
+    Effect.zipRight(untilNextAttempt(runtime)),
+    Effect.forever,
+    Effect.forkScoped,
+  );
+  return webhookOperations(runtime);
+}, Effect.mapError(persistenceFailure));
