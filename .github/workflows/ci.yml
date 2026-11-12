@@ -32,7 +32,6 @@ jobs:
       - name: Verify the published closure installs from tarballs
         run: pnpm nx run-many -t test:pack,test:abi --parallel=4
       - run: pnpm typecheck
-      - run: pnpm nx run-many -t typecheck:tests
       - name: Lint
         run: pnpm lint
         timeout-minutes: 30
@@ -40,7 +39,7 @@ jobs:
       - run: pnpm docs:api
       - run: pnpm docs:check
       - run: pnpm docs:check:mermaid
-      - run: pnpm nx run-many -t test:release,test:image-input-key -p workspace
+      - run: pnpm nx run-many -t test:release,test:image-input-key -p @social-harness/social-harness
 
   test:
     runs-on: ubuntu-latest

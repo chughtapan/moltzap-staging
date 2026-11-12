@@ -54,7 +54,7 @@
     "build": "nx run-many -t build",
     "test": "nx run-many -t test",
     "test:integration": "nx run-many -t test:integration",
-    "lint": "pnpm nx run workspace:lint",
+    "lint": "nx run-many -t lint,arch:check,typecheck,lint:dead-code,lint:agent-files",
     "arch:check": "NODE_OPTIONS=--max-old-space-size=8192 nx run-many -t arch:check",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
@@ -63,11 +63,11 @@
     "docs:dev": "cd docs && mint dev --no-open",
     "docs:open": "cd docs && mint dev",
     "docs:check": "cd docs && mint broken-links",
-    "docs:check:mermaid": "pnpm nx run workspace:docs:check:mermaid",
+    "docs:check:mermaid": "nx run @social-harness/social-harness:docs:check:mermaid",
     "prepare": "husky",
     "effect:source": "./scripts/setup/prepare-effect.sh",
     "test:affected": "nx affected -t test",
-    "docs:api": "pnpm nx run workspace:docs:api"
+    "docs:api": "nx run @social-harness/social-harness:docs:api"
   },
   "nx": {
     "includedScripts": [],
@@ -77,20 +77,13 @@
         "{projectRoot}/config/**/*",
         "{projectRoot}/skills/**/*",
         "{projectRoot}/tsconfig.json",
-        "{projectRoot}/tsconfig.test.json",
-        "{projectRoot}/vitest.config.ts",
-        "{projectRoot}/eslint.config.ts",
         "{projectRoot}/safer-architecture.config.json",
         "sharedGlobals"
       ]
     },
     "targets": {
       "build": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": ".",
-          "command": "node scripts/build/clean-dist.ts && tsc -b"
-        },
+        "command": "node scripts/build/clean-dist.ts && tsc -b",
         "inputs": [
           "production",
           "^production",
@@ -98,55 +91,109 @@
         ]
       },
       "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": ".",
-          "command": "eslint src '*.ts' 'images/*.ts' 'scripts/**/*.ts' --cache --max-warnings=0"
-        },
+        "command": "eslint src '*.ts' 'images/*.ts' 'scripts/**/*.ts' --cache --max-warnings=0",
         "inputs": [
           "default",
           "^production",
           "{workspaceRoot}/eslint.config.ts",
-          "{workspaceRoot}/eslint.shared.ts",
           "{workspaceRoot}/knip.json",
-          "{workspaceRoot}/tsconfig.eslint.json",
+          "{workspaceRoot}/tsconfig.check.json",
           "{workspaceRoot}/*.ts",
           "{workspaceRoot}/images/*.ts",
-          "{workspaceRoot}/scripts/**/*.ts",
-          "{workspaceRoot}/scripts/tsconfig.json"
+          "{workspaceRoot}/scripts/**/*.ts"
         ]
       },
       "test": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": ".",
-          "command": "vitest run"
-        }
+        "command": "vitest run --project social-harness --project docs-tooling",
+        "inputs": [
+          "sources",
+          "^production",
+          "{workspaceRoot}/vitest.config.ts",
+          "{workspaceRoot}/scripts/docs/**/*.ts",
+          "{workspaceRoot}/scripts/docs/mermaid-puppeteer.json"
+        ]
       },
-      "typecheck:tests": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": ".",
-          "command": "tsc -p tsconfig.test.json"
-        }
+      "typecheck": {
+        "command": "tsc -p tsconfig.check.json",
+        "dependsOn": [
+          "build",
+          {
+            "projects": [
+              "@social-harness/openclaw-channel"
+            ],
+            "target": "build"
+          }
+        ]
       },
       "test:pack": {
-        "executor": "nx:run-commands",
+        "command": "node scripts/test-social-harness-package.ts",
         "dependsOn": [
           "build",
           "^build"
         ],
-        "cache": false,
-        "options": {
-          "command": "node scripts/test-social-harness-package.ts"
-        }
+        "cache": false
       },
       "arch:check": {
+        "command": "safer-architecture-lsp check ."
+      },
+      "docs:check:mermaid": {
+        "cache": true,
+        "inputs": [
+          "workspaceFiles"
+        ],
         "executor": "nx:run-commands",
         "options": {
           "cwd": ".",
-          "command": "safer-architecture-lsp check ."
+          "parallel": false,
+          "commands": [
+            "pnpm exec puppeteer browsers install chrome-headless-shell",
+            "node scripts/docs/check-mermaid.ts"
+          ]
         }
+      },
+      "lint:dead-code": {
+        "command": "agent-code-guard-knip --treat-config-hints-as-errors",
+        "cache": true,
+        "inputs": [
+          "workspaceFiles"
+        ]
+      },
+      "lint:agent-files": {
+        "command": "node scripts/repo/check-agent-files.ts",
+        "cache": true,
+        "inputs": [
+          "workspaceFiles"
+        ]
+      },
+      "test:release": {
+        "command": "bash scripts/release/compute-next-version.test.sh",
+        "cache": false
+      },
+      "docs:api": {
+        "command": "pnpm exec typedoc --options scripts/docs/typedoc.json",
+        "cache": true,
+        "dependsOn": [
+          {
+            "projects": [
+              "@social-harness/social-harness",
+              "@social-harness/openclaw-channel",
+              "@social-harness/nanoclaw-channel"
+            ],
+            "target": "build"
+          }
+        ],
+        "inputs": [
+          "{workspaceRoot}/typedoc.json",
+          "{workspaceRoot}/scripts/docs/typedoc.json",
+          "{workspaceRoot}/scripts/docs/api.css",
+          "{workspaceRoot}/src/**/*.ts",
+          "sharedGlobals",
+          "{workspaceRoot}/plugins/**/*.ts",
+          "{workspaceRoot}/plugins/**/*.json"
+        ],
+        "outputs": [
+          "{workspaceRoot}/out/api"
+        ]
       }
     }
   },

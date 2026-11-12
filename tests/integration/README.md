@@ -14,7 +14,7 @@ permission to bind sockets. PostgreSQL and image scenarios require Docker.
 | --- | --- |
 | `pnpm nx run @social-harness/integration-tests:test:integration` | Daemon, PostgreSQL and adapter acceptance suites |
 | `pnpm nx run @social-harness/integration-tests:test:live` | Docker image scenarios |
-| `pnpm nx run @social-harness/integration-tests:typecheck:tests` | Type checks for the suites and adapter fixture |
+| `pnpm typecheck` | Type checks for the suites and adapter fixture, with the rest of the repository |
 | `pnpm nx run @social-harness/integration-tests:lint` | ESLint for this workspace |
 
 A suite gets its daemon from `sharedDaemon` in `daemon/daemon-fixture.ts`. The
