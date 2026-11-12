@@ -8,10 +8,7 @@
         "scripts/build/*.ts",
         "scripts/test-*-package.ts",
         "images/*.ts",
-        "scripts/docs/check-mermaid.ts",
-        "scripts/docs/vitest.config.ts",
-        "scripts/docs/*.spec.ts",
-        "scripts/repo/check-agent-files.ts"
+        "scripts/docs/*.spec.ts"
       ],
       "project": [
         "src/**/*.ts",
@@ -28,20 +25,17 @@
         "src/vendor/effect-mcp/**"
       ],
       "ignoreDependencies": [
-        "@mermaid-js/mermaid-cli",
-        "puppeteer"
+        "@mermaid-js/mermaid-cli"
       ]
     },
     "plugins/nanoclaw": {
       "project": [
-        "src/**/*.ts",
-        "*.ts"
+        "src/**/*.ts"
       ]
     },
     "plugins/openclaw": {
       "entry": [
-        "src/**/*.spec.ts",
-        "vitest*.config.ts"
+        "src/**/*.spec.ts"
       ],
       "project": [
         "src/**/*.ts",

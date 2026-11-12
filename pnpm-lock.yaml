@@ -409,9 +409,6 @@ importers:
       '@testcontainers/postgresql':
         specifier: 'catalog:'
         version: 10.28.0
-      '@typescript/native':
-        specifier: 'catalog:'
-        version: typescript@7.0.2
       effect:
         specifier: 3.22.1
         version: 3.22.1
