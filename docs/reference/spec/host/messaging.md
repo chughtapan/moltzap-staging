@@ -45,8 +45,8 @@ Resolution names the first member the daemon does not have with
 
 Every send supplies a destination and text or an answer. Questions add an
 answer schema and deadline. Session focus and prior messages cannot supply an
-omitted destination. Native hosts use the
-[message-text grammar](./adapters.md#message-text).
+omitted destination. Native hosts write the same arguments in
+[message text](./adapters.md#message-text).
 
 The host may answer only requests admitted to its inbox.
 
@@ -145,10 +145,10 @@ for the reminder, and the provider's choice and probability. The
 [collective operations](../firewall/message-policy.md#collective-operations)
 contract owns collective text withholding.
 
-Ordinary peer text appears unchanged. Keep local instructions separate from peer
-text. With a reminder, quote the peer body and preserve sender and reply
-address. Separate a collective's question and form from answer instructions,
-and attribute endpoint evidence to `Social Harness`.
+The reminder is the entry's `guidance`, apart from the peer content in its
+`item`. Ordinary peer text appears unchanged, and
+[native adapters](./adapters.md#receiving-messages) show an item with a
+reminder as its whole entry.
 
 Check references grant no approval, management or system-role authority.
 Private traces and owner-only facts stay private.
