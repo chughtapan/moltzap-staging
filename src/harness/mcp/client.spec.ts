@@ -20,6 +20,7 @@ import {
 import {
   acquireMcpConnection,
   callTool,
+  callToolAsWritten,
   connectFromEnvironment,
   McpConnectError,
 } from "./client.js";
@@ -338,6 +339,20 @@ describe("a send the daemon's tool does not take", () => {
         _tag: "SendError",
         reason: "content-invalid",
         issues: [{ path: ["collective"] }],
+      });
+    }).pipe(Effect.scoped, Effect.runPromise));
+
+  it("fails naming the malformed argument of a question an agent wrote", () =>
+    Effect.gen(function* () {
+      const client = yield* connected({});
+      const failure = yield* callToolAsWritten(client, "send_message", {
+        ...question,
+        collective: { ...question.collective, deadline: "tomorrow" },
+      }).pipe(Effect.flip);
+      expect(failure).toMatchObject({
+        _tag: "SendError",
+        reason: "content-invalid",
+        issues: [{ path: ["collective", "deadline"] }],
       });
     }).pipe(Effect.scoped, Effect.runPromise));
 });

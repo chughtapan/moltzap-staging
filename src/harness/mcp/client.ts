@@ -197,28 +197,44 @@ const reasons = {
   unreadable: "decode-failed",
 } as const;
 
-export function callTool<Name extends ToolName>(
-  client: Pick<Client, "callTool">,
-  request: ToolRequest & { readonly name: Name },
-): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
 /**
  * Calls the named MCP tool once and never retries. The tool's definition
  * decodes its result and reads its failures.
  */
-export function callTool(
+export function callTool<Name extends ToolName>(
   client: Pick<Client, "callTool">,
-  request: ToolRequest,
+  request: ToolRequest & { readonly name: Name },
+): Effect.Effect<ToolResult<Name>, ToolFailure<Name>> {
+  return callToolAsWritten(client, request.name, request.arguments);
+}
+
+export function callToolAsWritten<Name extends ToolName>(
+  client: Pick<Client, "callTool">,
+  name: Name,
+  written: Readonly<Record<string, unknown>>,
+): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
+/**
+ * Calls a tool as {@link callTool} does, with arguments as an agent wrote
+ * them. The daemon validates them, and its refusal names each field the tool
+ * does not take.
+ */
+export function callToolAsWritten(
+  client: Pick<Client, "callTool">,
+  name: ToolName,
+  written: Readonly<Record<string, unknown>>,
 ): Effect.Effect<unknown, unknown> {
-  const definition: ToolContract = toolDefinitions[request.name];
+  const definition: ToolContract = toolDefinitions[name];
   const fail = (failure: ToolCallFailure) =>
     Option.getOrElse(
       definition.failure.read(failure),
-      () =>
-        new McpToolError({ tool: request.name, reason: reasons[failure.kind] }),
+      () => new McpToolError({ tool: name, reason: reasons[failure.kind] }),
     );
   return Effect.tryPromise({
     try: (signal) =>
-      client.callTool(request, { signal, timeout: CALL_TIMEOUT_MILLISECONDS }),
+      client.callTool(
+        { name, arguments: written },
+        { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
+      ),
     catch: (cause) => fail(observed(cause)),
   }).pipe(
     Effect.flatMap((response) =>

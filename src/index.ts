@@ -14,6 +14,7 @@ export {
 export {
   acquireMcpConnection,
   callTool,
+  callToolAsWritten,
   connectFromEnvironment,
   McpConnectError,
   type McpConnection,
