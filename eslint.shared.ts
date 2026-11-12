@@ -186,22 +186,27 @@ export function packageEslintConfig(options: PackageEslintOptions) {
   ];
 }
 
+/** TypeScript projects that together cover every file the root config lints. */
+export const ROOT_PROJECTS = [
+  "./tsconfig.json",
+  "./tsconfig.test.json",
+  "./tsconfig.eslint.json",
+  "./scripts/tsconfig.json",
+] as const;
+
 /**
- * Flat configuration for the workspace root: root modules, the `images/`
- * helper, and the Node-run scripts under `scripts/`.
+ * Flat configuration for the root modules, the `images/` helper, and the
+ * Node-run scripts under `scripts/`. The root package's `src/` takes
+ * {@link packageEslintConfig} with the same projects.
  * Owner specs stay together as their behavior coverage grows.
  */
 export function rootEslintConfig(tsconfigRootDir: string) {
-  const languageOptions = makeTsLanguageOptions(tsconfigRootDir, [
-    "./tsconfig.eslint.json",
-    "./scripts/tsconfig.json",
-  ]);
+  const languageOptions = makeTsLanguageOptions(tsconfigRootDir, ROOT_PROJECTS);
   return [
     {
       ignores: [
         ".claude/**",
         ".repos/**",
-        "packages/**",
         "tests/**",
         "images/*/**",
         "plugins/**",

@@ -11,5 +11,5 @@ from `@social-harness/social-harness/service`. `me` is this agent's
 the same daemon by name, in input order, and fails with the first name no agent
 has.
 
-[P2P mode](../../../../docs/reference/spec/communication/p2p.md) describes how
+[P2P mode](../../docs/reference/spec/communication/p2p.md) describes how
 a daemon names its agents and what it is trusted for.

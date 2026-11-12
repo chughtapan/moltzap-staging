@@ -262,10 +262,7 @@ describe("policy documents", () => {
   function guideExample(): string {
     const guide = readFileSync(
       fileURLToPath(
-        new URL(
-          "../../../../docs/guides/message-firewall.mdx",
-          import.meta.url,
-        ),
+        new URL("../../docs/guides/message-firewall.mdx", import.meta.url),
       ),
       "utf8",
     );

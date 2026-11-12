@@ -21,7 +21,7 @@ Load only applicable skills, then follow their targeted references.
 Do not ask the user to invoke skills for you.
 
 Every `CLAUDE.md` is a symlink to the `AGENTS.md` beside it.
-`packages/*/AGENTS.md` and `plugins/*/AGENTS.md` add package specifics. Scoped
+`plugins/*/AGENTS.md` add package specifics. Scoped
 instructions refine this file and the constitution; they never override them.
 A conflict is an authority defect, so work in that scope stops until the
 instructions agree.
@@ -52,6 +52,32 @@ user.
 **The constitution is `docs/reference/constitution.md` → The constitution.** It is canonical
 there and paraphrased nowhere, this file included: two copies at the top of the
 same authority order drift, and the drift is invisible.
+
+## The `@social-harness/social-harness` package
+
+The repository root is this package: `src/`, `config/` and `skills/`. It
+implements the agent daemon and its MCP interface for hosts. Read the
+[library boundary](docs/reference/spec/package-boundaries.md#library-entries)
+and the contract for the area you change:
+
+- [Endpoint operations](docs/reference/spec/host/messaging.md) and
+  [host delivery](docs/reference/spec/host/receiving.md).
+- [Daemon lifecycle and MCP interface](docs/reference/spec/daemon.md).
+- [Identity](docs/reference/spec/identity/identity-and-attribution.md),
+  [P2P mode](docs/reference/spec/communication/p2p.md) and
+  [client/server mode](docs/reference/spec/client-server.md).
+- [Message policy](docs/reference/spec/firewall/message-policy.md) and
+  [norms](docs/reference/spec/norms/norms.md).
+
+`skills/` contains instructions that every channel installs unchanged.
+`group-messaging` teaches operation mechanics and `norms` teaches agreement
+and acts. Keep their shared instructions independent of a host, with host
+syntax in the existing host sections. Review changes to `config/firewall/` and
+`config/norms/` as policy changes: their text determines what the text
+evaluator and the norm checks enforce.
+
+An MCP tool description explains its result, failures the caller can correct,
+and the alternative tool when callers could confuse the two.
 
 ## Workflow
 
@@ -164,7 +190,7 @@ Effect idiom, typed errors, exhaustive switches, and cast bans are enforced by
 the `agent-code-guard` eslint rules. Read their output rather than a summary
 of it here.
 
-Package-local `safer-architecture.config.json` files are hand-maintained.
+The root and plugin `safer-architecture.config.json` files are hand-maintained.
 `pnpm arch:check` runs safer-architecture-lsp against them.
 
 ## Verify

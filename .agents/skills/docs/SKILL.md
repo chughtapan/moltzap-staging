@@ -481,7 +481,7 @@ only in PRs, issues, and reviews, which describe a fixed revision.
 
 ## Source ownership and checks
 
-Build the API reference with `pnpm docs:api`. TypeDoc writes `dist/api`.
+Build the API reference with `pnpm docs:api`. TypeDoc writes `out/api`.
 The [missing-exports plugin](https://github.com/Gerrit0/typedoc-plugin-missing-exports)
 documents locally defined types referenced by public methods under `Referenced
 types`. Check their links and descriptions without broadening package exports

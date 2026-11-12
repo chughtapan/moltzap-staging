@@ -152,7 +152,7 @@ const require = createRequire(import.meta.url);
 
 const DAEMON_COMMAND: readonly [string, readonly string[]] = [
   process.execPath,
-  [join(WORKSPACE_ROOT, "packages/social-harness/dist/main.js")],
+  [join(WORKSPACE_ROOT, "dist/main.js")],
 ];
 
 const FIREWALL_DAEMON_COMMAND: readonly [string, readonly string[]] = [

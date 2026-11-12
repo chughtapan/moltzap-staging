@@ -3,9 +3,11 @@
 FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS build
 WORKDIR /build
 ENV HUSKY=0 NX_DAEMON=false NX_NO_CLOUD=true
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .node-version nx.json tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .node-version nx.json tsconfig.base.json tsconfig.json LICENSE NOTICE README.md ./
 COPY scripts/build/clean-dist.ts scripts/build/clean-dist.ts
-COPY packages/social-harness/ packages/social-harness/
+COPY src/ src/
+COPY config/ config/
+COPY skills/ skills/
 COPY images/daemon/package.json images/daemon/package.json
 RUN corepack enable && corepack prepare pnpm@10.6.2 --activate
 RUN pnpm install --frozen-lockfile --filter @social-harness/daemon...

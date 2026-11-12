@@ -35,7 +35,7 @@ defaults:
     shell: bash
 
 env:
-  PACKAGES: packages/social-harness plugins/openclaw
+  PACKAGES: . plugins/openclaw
   IMAGES: daemon openclaw-agent
 
 jobs:

@@ -9,9 +9,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { acquireOtlpReceiver } from "../observability/otlp-receiver.js";
 
-const binary = fileURLToPath(
-  new URL("../../../packages/social-harness/dist/main.js", import.meta.url),
-);
+const binary = fileURLToPath(new URL("../../../dist/main.js", import.meta.url));
 const processName = "sharnessd";
 const requiredVariable = "SHARNESS_DATABASE_URL";
 const defaultEntry =

@@ -20,7 +20,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const sourceRoot = ${JSON.stringify(`${workspaceRoot}/packages/social-harness/config/firewall`)};
+const sourceRoot = ${JSON.stringify(`${workspaceRoot}/config/firewall`)};
 const installedRoot = fileURLToPath(new URL("../config/firewall/", import.meta.resolve("@social-harness/social-harness")));
 const entries = await readdir(sourceRoot, { recursive: true, withFileTypes: true });
 const rules = entries.filter((entry) => entry.isFile() && entry.name === "BEHAVIOR.md");
@@ -39,7 +39,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
   Effect.gen(function* () {
     const { archives } = yield* packProductClosure(
       workspaceRoot,
-      "packages/social-harness",
+      ".",
       temporaryRoot,
     );
     const pins = yield* readConsumerPins(workspaceRoot);

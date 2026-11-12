@@ -62,32 +62,11 @@
         "command": "agent-code-guard-knip --treat-config-hints-as-errors"
       }
     },
-    "lint:eslint": {
-      "cache": true,
-      "inputs": [
-        "{workspaceRoot}/eslint.config.ts",
-        "{workspaceRoot}/eslint.shared.ts",
-        "{workspaceRoot}/tsconfig.eslint.json",
-        "{workspaceRoot}/tsconfig.base.json",
-        "{workspaceRoot}/package.json",
-        "{workspaceRoot}/pnpm-lock.yaml",
-        "{workspaceRoot}/*.ts",
-        "{workspaceRoot}/images/**/*.ts",
-        "{workspaceRoot}/scripts/**/*.ts",
-        "{workspaceRoot}/scripts/tsconfig.json"
-      ],
-      "executor": "nx:run-commands",
-      "options": {
-        "cwd": ".",
-        "command": "eslint '*.ts' 'images/**/*.ts' 'scripts/**/*.ts' --no-error-on-unmatched-pattern --cache --max-warnings=0"
-      }
-    },
     "lint:root": {
       "cache": false,
       "dependsOn": [
         "lint:typescript",
-        "lint:dead-code",
-        "lint:eslint"
+        "lint:dead-code"
       ],
       "executor": "nx:run-commands",
       "options": {
@@ -168,20 +147,21 @@
       ],
       "inputs": [
         "{workspaceRoot}/typedoc.json",
+        "{workspaceRoot}/scripts/docs/typedoc.json",
+        "{workspaceRoot}/scripts/docs/api.css",
         "{workspaceRoot}/tsconfig*.json",
-        "{workspaceRoot}/packages/**/*.ts",
-        "{workspaceRoot}/packages/**/*.json",
+        "{workspaceRoot}/src/**/*.ts",
         "sharedGlobals",
         "{workspaceRoot}/plugins/**/*.ts",
         "{workspaceRoot}/plugins/**/*.json"
       ],
       "outputs": [
-        "{workspaceRoot}/dist/api"
+        "{workspaceRoot}/out/api"
       ],
       "executor": "nx:run-commands",
       "options": {
         "cwd": ".",
-        "command": "pnpm exec typedoc"
+        "command": "pnpm exec typedoc --options scripts/docs/typedoc.json"
       }
     }
   }

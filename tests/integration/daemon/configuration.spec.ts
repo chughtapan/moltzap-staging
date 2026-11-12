@@ -34,7 +34,7 @@ const settings = {
   mode: { kind: "p2p" },
 };
 const shippedNorms = fileURLToPath(
-  new URL("../../../packages/social-harness/config/norms/", import.meta.url),
+  new URL("../../../config/norms/", import.meta.url),
 );
 
 const fixture = Effect.gen(function* () {
