@@ -108,7 +108,7 @@ exports, old attempt logs, or duplicate summaries.
 Use Node from `.node-version` and the pnpm version in `package.json`. Run build,
 test, lint, and typecheck through `pnpm nx` or the package scripts that wrap it.
 Effect and `@effect/*` are the runtime idiom. Tooling is TypeScript;
-`scripts/tsconfig.json` enforces erasable syntax for the scripts Node runs
+`tsconfig.check.json` enforces erasable syntax for the scripts Node runs
 directly. Write `.mjs` or `.js` only for a file a tool cannot load as
 TypeScript.
 

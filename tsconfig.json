@@ -1,6 +1,38 @@
 {
-  "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "noEmitOnError": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "lib": [
+      "ES2022"
+    ],
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ],
+    "types": [
+      "node"
+    ],
+    "composite": true,
     "outDir": "dist",
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "rootDir": "src"

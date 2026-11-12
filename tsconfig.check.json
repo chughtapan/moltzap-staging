@@ -1,0 +1,35 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "incremental": true,
+    "rootDir": ".",
+    "tsBuildInfoFile": "./tsconfig.check.tsbuildinfo",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "lib": [
+      "ES2024"
+    ],
+    "customConditions": [
+      "sharness-test"
+    ]
+  },
+  "include": [
+    "*.ts",
+    "src/**/*.ts",
+    "plugins/*/*.ts",
+    "plugins/*/src/**/*.ts",
+    "scripts/**/*.ts",
+    "images/*.ts",
+    "images/*/*.ts",
+    "tests/integration/**/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/dist"
+  ]
+}
