@@ -8,16 +8,13 @@ import { SqlClient } from "@effect/sql";
 import { Clock, Effect, Schema } from "effect";
 import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
-import { sameBytes } from "../encoding/index.js";
+import { sameJson } from "../encoding/index.js";
 import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
 
 /** A store failure leaves saved rules and decisions as they were. */
 export const persistenceFailure = () =>
   new FirewallPolicyError({ reason: "persistence-failed" });
 
-const bytes = Schema.Uint8ArrayFromSelf.pipe(
-  Schema.filter((value) => value.byteLength > 0),
-);
 const time = Schema.Int.pipe(
   Schema.nonNegative(),
   Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
@@ -41,35 +38,35 @@ const disposition = Schema.Literal("admitted", "withheld");
 const completedCheck = Schema.Struct({
   checkId: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
-  canonicalCandidate: bytes,
-  canonicalInput: bytes,
-  canonicalResult: bytes,
+  candidate: Schema.NonEmptyString,
+  input: Schema.NonEmptyString,
+  result: Schema.NonEmptyString,
   admit: Schema.Boolean,
 });
 const storedCheck = Schema.Struct({
   direction: completedCheck.fields.direction,
-  canonicalCandidate: bytes,
-  canonicalInput: bytes,
-  canonicalResult: bytes,
+  candidate: Schema.NonEmptyString,
+  input: Schema.NonEmptyString,
+  result: Schema.NonEmptyString,
   disposition,
 });
 const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
-  canonicalResult: bytes,
+  result: Schema.NonEmptyString,
   disposition,
   time: storedTime,
 });
 const savedSummary = Schema.parseJson(
   Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
 );
-const decoder = new TextDecoder("utf-8", { fatal: true });
 
 /** One applied policy edit: when it took effect, its revision and the rule ids it changed. */
 export type FirewallActivation = typeof activationRow.Type;
 
 /**
- * One completed check as delivery commits it. Saving the same check again must
- * carry the same bytes, so a retry cannot rewrite a decision.
+ * One completed check as delivery commits it, with its candidate, input and
+ * result as JSON text. Saving the same check again must carry the same values,
+ * so a retry cannot rewrite a decision.
  */
 export type FirewallCompletion = typeof completedCheck.Type;
 
@@ -82,16 +79,16 @@ export type FirewallStore = Effect.Effect.Success<
 interface FirewallTables {
   readonly firewall_policy: {
     readonly agent_key: string;
-    readonly canonical_rules: Uint8Array;
+    readonly policy: string;
   };
   readonly firewall_checks: {
     readonly agent_key: string;
     readonly sequence: Generated<number>;
     readonly check_id: string;
     readonly direction: typeof completedCheck.Type.direction;
-    readonly canonical_candidate: Uint8Array;
-    readonly canonical_input: Uint8Array;
-    readonly canonical_result: Uint8Array;
+    readonly candidate: string;
+    readonly input: string;
+    readonly result: string;
     readonly decided_at: number;
     readonly disposition: typeof disposition.Type;
   };
@@ -119,7 +116,7 @@ export function makeFirewallStore(agentKey: string) {
       );
     const policy = queries
       .selectFrom("firewall_policy")
-      .select("canonical_rules as rules")
+      .select("policy")
       .where("agent_key", "=", agentKey);
     const checks = queries
       .selectFrom("firewall_checks")
@@ -137,9 +134,9 @@ export function makeFirewallStore(agentKey: string) {
               agent_key: agentKey,
               check_id: value.checkId,
               direction: value.direction,
-              canonical_candidate: value.canonicalCandidate,
-              canonical_input: value.canonicalInput,
-              canonical_result: value.canonicalResult,
+              candidate: value.candidate,
+              input: value.input,
+              result: value.result,
               disposition: applied,
               decided_at: yield* Clock.currentTimeMillis,
             })
@@ -151,9 +148,9 @@ export function makeFirewallStore(agentKey: string) {
           checks
             .select([
               "direction",
-              "canonical_candidate as canonicalCandidate",
-              "canonical_input as canonicalInput",
-              "canonical_result as canonicalResult",
+              "candidate",
+              "input",
+              "result",
               "disposition",
             ])
             .where("check_id", "=", value.checkId),
@@ -163,9 +160,9 @@ export function makeFirewallStore(agentKey: string) {
           return yield* persistenceFailure();
         }
         const sameEvidence =
-          sameBytes(saved.canonicalCandidate, value.canonicalCandidate) &&
-          sameBytes(saved.canonicalInput, value.canonicalInput) &&
-          sameBytes(saved.canonicalResult, value.canonicalResult);
+          sameJson(saved.candidate, value.candidate) &&
+          sameJson(saved.input, value.input) &&
+          sameJson(saved.result, value.result);
         if (
           saved.direction !== value.direction ||
           saved.disposition !== applied ||
@@ -180,26 +177,21 @@ export function makeFirewallStore(agentKey: string) {
           executeQuery(policy).pipe(
             Effect.flatMap(
               Schema.decodeUnknown(
-                Schema.Array(Schema.Struct({ rules: bytes })),
+                Schema.Array(Schema.Struct({ policy: Schema.NonEmptyString })),
               ),
             ),
-            Effect.map((rows) => rows[0]?.rules),
+            Effect.map((rows) => rows[0]?.policy),
           ),
         ),
-      writePolicy: (rules: Uint8Array, activation?: FirewallActivation) =>
+      writePolicy: (policy: string, activation?: FirewallActivation) =>
         run(
           Effect.gen(function* () {
             yield* executeQuery(
               queries
                 .insertInto("firewall_policy")
-                .values({
-                  agent_key: agentKey,
-                  canonical_rules: rules,
-                })
+                .values({ agent_key: agentKey, policy })
                 .onConflict((conflict) =>
-                  conflict
-                    .column("agent_key")
-                    .doUpdateSet({ canonical_rules: rules }),
+                  conflict.column("agent_key").doUpdateSet({ policy }),
                 ),
             );
             if (activation !== undefined) {
@@ -234,7 +226,7 @@ export function makeFirewallStore(agentKey: string) {
               checks
                 .select([
                   "check_id as checkId",
-                  "canonical_result as canonicalResult",
+                  "result",
                   "disposition",
                   "decided_at as time",
                 ])
@@ -273,11 +265,7 @@ export function makeFirewallStore(agentKey: string) {
 }
 
 function decodeDecisionSummaries(row: typeof decisionRow.Type) {
-  return Effect.try({
-    try: () => decoder.decode(row.canonicalResult),
-    catch: persistenceFailure,
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(savedSummary)),
+  return Schema.decodeUnknown(savedSummary)(row.result).pipe(
     Effect.map(({ summaries }) =>
       summaries.map((summary) => ({
         ...summary,

@@ -7,6 +7,7 @@ import {
   Effect,
   Layer,
   Option,
+  Predicate,
   Schedule,
   Schema,
   Struct,
@@ -25,10 +26,9 @@ import {
   type ResultSources,
 } from "../communication/service.js";
 import {
-  canonicalBytes,
-  decodeCanonical,
-  encodeCanonicalJson,
+  decodeJson,
   exactStruct,
+  jsonText,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
 import { AgentCard } from "../identity/agent-cards.js";
@@ -471,7 +471,7 @@ interface Candidate {
 
 interface RuleCheckInput {
   readonly direction: "incoming" | "outgoing";
-  readonly canonicalCandidate: Uint8Array;
+  readonly candidate: string;
   readonly message: AssessmentText;
   readonly context: MessageContext;
   readonly agents: readonly AgentCard[];
@@ -731,12 +731,9 @@ function chainDecision(
     const completion: FirewallCompletion = {
       checkId: mintCheckId(),
       direction,
-      canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
-      canonicalInput: yield* canonicalBytes({
-        activeRevision,
-        rule: outcome.rule,
-      }),
-      canonicalResult: yield* canonicalBytes({
+      candidate: yield* jsonText(candidate.value),
+      input: yield* jsonText({ activeRevision, rule: outcome.rule }),
+      result: yield* jsonText({
         result: {
           rule: outcome.rule,
           ...(outcome.kind === "refused" ? { refusal: outcome.refusal } : {}),
@@ -765,12 +762,9 @@ function chainDecision(
       },
     } satisfies Decision;
   }).pipe(
-    Effect.catchTags({
-      CanonicalJsonError: () =>
-        Effect.fail(new CheckInputError({ reason: "message" })),
-      ClientRepresentationError: () =>
-        Effect.fail(new CheckInputError({ reason: "message" })),
-    }),
+    Effect.catchTag("ClientRepresentationError", () =>
+      Effect.fail(new CheckInputError({ reason: "message" })),
+    ),
   );
 }
 
@@ -864,7 +858,7 @@ function assess(
       inputs.push({
         direction,
         ...scope,
-        canonicalCandidate: yield* encodeCanonicalJson(candidate.value),
+        candidate: yield* jsonText(candidate.value),
         message: {
           // eslint-disable-next-line @typescript-eslint/no-misused-spread -- assessmentText returns plain fields with no prototype methods.
           ...assessmentText(candidate.value),
@@ -883,7 +877,7 @@ function assess(
       { concurrency: policy.options.configuration.maximumConcurrentChecks },
     );
   }).pipe(
-    Effect.catchTag("CanonicalJsonError", () =>
+    Effect.catchTag("ClientRepresentationError", () =>
       Effect.fail(new CheckInputError({ reason: "context" })),
     ),
   );
@@ -1135,7 +1129,7 @@ function loadRules(store: FirewallStore, options: CapturedOptions) {
     const saved =
       stored === undefined
         ? undefined
-        : yield* decodeCanonical(storedPolicySchema, stored).pipe(
+        : yield* decodeJson(storedPolicySchema, stored).pipe(
             Effect.mapError(persistenceFailure),
           );
     const rules = saved?.rules ?? options.text?.initialRules ?? [];
@@ -1333,10 +1327,10 @@ function assessRule(
     const completion: FirewallCompletion = {
       checkId,
       direction: input.direction,
-      canonicalCandidate: input.canonicalCandidate,
-      canonicalInput: yield* retainedInput(active, input),
+      candidate: input.candidate,
+      input: yield* retainedInput(active, input),
       admit,
-      canonicalResult: yield* canonicalBytes({
+      result: yield* jsonText({
         result: Struct.omit(result, "trace"),
         summaries: yield* decisionSummaries(active, input, result),
       }),
@@ -1415,7 +1409,7 @@ function capturePrepared(
       try: () =>
         structuredClone({
           direction: input.direction,
-          canonicalCandidate: input.canonicalCandidate,
+          candidate: input.candidate,
           evidence: {
             event: { direction: input.direction, message: input.message },
             context: Object.assign({}, input.context, {
@@ -1459,7 +1453,7 @@ function evaluateMessage(
 }
 
 function retainedInput(active: ActiveRules, input: CapturedCheck) {
-  return canonicalBytes({
+  return jsonText({
     configurationDigest: active.configurationDigest,
     installation: active.metadata,
     context: input.evidence.context,
@@ -1531,8 +1525,8 @@ function guidanceProjection(result: FirewallCheck, checkId: string) {
       checkId,
       instructions: result.guidance,
     };
-    const bytes = yield* canonicalBytes(guidance);
-    return bytes.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
+    const text = yield* jsonText(guidance);
+    return Buffer.byteLength(text) > MAXIMUM_RUNTIME_ITEM_BYTES
       ? { result: { ...unavailable(), findings: result.findings } }
       : { result, guidance };
   });
@@ -1670,10 +1664,28 @@ function buildPolicy(
   );
 }
 
+/** Hashes a value's JSON text with every object's members in code-unit key order, so the digest ignores member order. */
 function digest(value: unknown) {
-  return canonicalBytes(value).pipe(
-    Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
+  return jsonText(value).pipe(
+    Effect.map((text) =>
+      createHash("sha256")
+        .update(sortedJson(JSON.parse(text)))
+        .digest("hex"),
+    ),
   );
+}
+
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(sortedJson).join(",")}]`;
+  }
+  if (!Predicate.isRecord(value)) {
+    return JSON.stringify(value);
+  }
+  const members = Object.entries(value)
+    .sort(([left], [right]) => (left < right ? -1 : 1))
+    .map(([key, member]) => `${JSON.stringify(key)}:${sortedJson(member)}`);
+  return `{${members.join(",")}}`;
 }
 
 /**
@@ -1708,12 +1720,12 @@ function persistRules(
   norms: readonly HeldNorm[],
   activation?: FirewallActivation,
 ) {
-  return canonicalBytes({
+  return jsonText({
     format: storedPolicyFormat,
     rules,
     norms: norms.map((norm) => norm.document),
   }).pipe(
-    Effect.flatMap((bytes) => store.writePolicy(bytes, activation)),
+    Effect.flatMap((policy) => store.writePolicy(policy, activation)),
     Effect.catchTag("ClientRepresentationError", () =>
       Effect.fail(persistenceFailure()),
     ),

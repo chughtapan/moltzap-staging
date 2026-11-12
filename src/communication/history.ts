@@ -8,14 +8,13 @@ import type {
   HistoryQuery,
 } from "./contract.js";
 import { withAgentTransaction } from "../database/transactions.js";
-import { encodeCanonical } from "../encoding/index.js";
 import { AgentCard, type AgentName } from "../identity/agent-cards.js";
 import { CommunicationError } from "./errors.js";
 import {
   compareAgentIds,
   conversationNameKey,
   deriveConversationId,
-  Message,
+  type Message,
   messageInterpretation,
   messageMembers,
   type MessageReference,
@@ -141,19 +140,11 @@ function readHistory(environment: Environment, query: HistoryQuery) {
     if (window.newest) {
       page.reverse();
     }
-    const entries = yield* Effect.forEach(
-      page,
-      (row) =>
-        encodeCanonical(Message, row.message).pipe(
-          Effect.map((bytes) => ({
-            message: row.message,
-            messageBytes: bytes.byteLength,
-          })),
-        ),
-      { concurrency: 1 },
-    );
     return {
-      entries,
+      entries: page.map((row) => ({
+        message: row.message,
+        messageBytes: row.bytes,
+      })),
       earlierMessagesOmitted: window.newest && selected.length > window.limit,
       ...(nextCursor === undefined ? {} : { nextCursor }),
     };

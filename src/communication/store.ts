@@ -3,12 +3,13 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
 
+import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
 import { withAgentTransaction } from "../database/transactions.js";
 import {
-  canonicalBytes,
-  decodeCanonical,
-  encodeCanonical,
-  sameBytes,
+  decodeJson,
+  encodeJson,
+  jsonText,
+  sameJson,
 } from "../encoding/index.js";
 import { AgentId } from "../identity/agent-cards.js";
 import {
@@ -27,15 +28,6 @@ export class EndpointStoreError extends Data.TaggedError("EndpointStoreError")<{
   readonly reason: EndpointStoreFailure;
 }> {}
 
-/** Internal control-flow signal mapped to the closed store error. */
-class StoreSignal extends Error {
-  readonly reason: EndpointStoreFailure;
-  constructor(reason: EndpointStoreFailure) {
-    super(reason);
-    this.reason = reason;
-  }
-}
-
 /** Closed storage failures that never expose database diagnostics. */
 type EndpointStoreFailure =
   | "conflict"
@@ -43,40 +35,81 @@ type EndpointStoreFailure =
   | "invalid-input"
   | "persistence";
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+type CommunicationTables = Record<
+  "message_log",
+  Record<
+    "agent_key" | "conversation_id" | "author_agent_id" | "msg_id" | "message",
+    string
+  > &
+    Record<"ordinal", number> &
+    Record<"sequence" | "consumed", Generated<number>>
+> &
+  Record<
+    "collective_operations",
+    Record<
+      "agent_key" | "operation_id" | "creator_agent_id" | "request",
+      string
+    > &
+      Record<"origin", "local" | "remote"> &
+      Record<"phase", Generated<"collecting" | "completed">> &
+      Record<"deadline_at", number> &
+      Record<"result" | "answer_refs", string | null> &
+      Record<"sequence" | "delivered", Generated<number>>
+  > &
+  Record<
+    "collective_answers",
+    Record<"agent_key" | "operation_id" | "member" | "message", string> &
+      Record<"sequence", Generated<number>>
+  > &
+  Record<
+    "message_sequences",
+    Record<"conversation_id", string> & Record<"next_ordinal", number>
+  > &
+  Record<
+    "communication_mode",
+    Record<"singleton", number> & Record<"kind", string>
+  > &
+  Record<
+    "agent_profiles",
+    Record<"agent_key" | "agent_id" | "agent_name" | "principal_id", string>
+  >;
 
-/**
- * Encode immutable runtime values before they enter the endpoint store.
- * @param value Validated runtime value without process resources.
- * @returns Canonical bytes or a closed persistence failure.
- */
+/** Builds queries over the tables that hold messages, questions and the agents they name. */
+export const communicationQueries = makeQueries<CommunicationTables>();
+
+/** One question's row. PostgreSQL returns its 64-bit deadline as text. */
+const operationRow = Schema.Struct({
+  operation_id: CollectiveId,
+  creator_agent_id: AgentId,
+  origin: Schema.Literal("local", "remote"),
+  phase: Schema.Literal("collecting", "completed"),
+  deadline_at: Schema.Union(Schema.Number, Schema.NumberFromString),
+  request: Schema.String,
+  result: Schema.NullOr(Schema.String),
+  answer_refs: Schema.NullOr(Schema.String),
+});
+
+const conflict = () => new EndpointStoreError({ reason: "conflict" });
+const corrupt = () => new EndpointStoreError({ reason: "corrupt" });
+
+/** The JSON text of a validated value, or `invalid-input` for one JSON cannot hold. */
 export const encodeRuntimeValue = (
   value: unknown,
-): Effect.Effect<Uint8Array, EndpointStoreError> =>
-  canonicalBytes(value).pipe(
-    Effect.catchTag("ClientRepresentationError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "invalid-input" })),
+): Effect.Effect<string, EndpointStoreError> =>
+  jsonText(value).pipe(
+    Effect.catchTag(
+      "ClientRepresentationError",
+      () => new EndpointStoreError({ reason: "invalid-input" }),
     ),
   );
 
-/**
- * Validate stored bytes at their owning runtime boundary before reuse.
- * @param schema Closed schema of the stored runtime value.
- * @param bytes Retained canonical UTF-8 bytes.
- * @returns The decoded value or a closed corruption failure.
- */
-const decodeRuntimeValue = <A, I>(
+/** Reads stored JSON text through its schema; text the schema refuses is `corrupt`. */
+const decodeStored = <A, I>(
   schema: Schema.Schema<A, I>,
-  bytes: Uint8Array,
+  text: string,
 ): Effect.Effect<A, EndpointStoreError> =>
-  Effect.try({
-    try: () => decoder.decode(bytes),
-    catch: () => new EndpointStoreError({ reason: "corrupt" }),
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(schema))),
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new EndpointStoreError({ reason: "corrupt" })),
-    ),
+  decodeJson(schema, text).pipe(
+    Effect.catchTag("ClientRepresentationError", corrupt),
   );
 
 type OperationValue = Extract<CollectiveValue, { readonly kind: "operation" }>;
@@ -117,6 +150,8 @@ export interface StoredMessage {
   readonly ordinal: number;
   readonly sequence: number;
   readonly message: Message;
+  /** The size of the message's stored JSON text. */
+  readonly bytes: number;
 }
 
 /** A repeated operation must preserve its original request and authority. */
@@ -133,37 +168,34 @@ export function putCollectiveOperation(
   return transaction(
     agentKey,
     Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      const operationId =
-        input.origin === "local"
-          ? input.request.operationId
-          : input.value.operationId;
-      const deadlineAt =
-        input.origin === "local"
-          ? input.request.deadlineAt
-          : input.value.deadlineAt;
-      const canonicalRequest = yield* input.origin === "local"
-        ? encodeCanonical(Request, input.request)
-        : encodeCanonical(Message, input.request);
-      const [existing] = yield* sql<
-        Readonly<Record<string, unknown>>
-      >`SELECT canonical_request,origin,creator_agent_id,deadline_at FROM collective_operations WHERE agent_key=${agentKey} AND operation_id=${operationId}`;
-      if (existing !== undefined) {
-        requireSameBytes(
-          readBytes(existing, "canonical_request"),
-          canonicalRequest,
+      const db = yield* communicationQueries;
+      const { operationId, deadlineAt } =
+        input.origin === "local" ? input.request : input.value;
+      const request = yield* input.origin === "local"
+        ? encodeJson(Request, input.request)
+        : encodeJson(Message, input.request);
+      const [existing] = yield* operationRows(agentKey, operationId);
+      if (existing === undefined) {
+        yield* executeQuery(
+          db.insertInto("collective_operations").values({
+            agent_key: agentKey,
+            operation_id: operationId,
+            creator_agent_id: input.request.author.agentId,
+            origin: input.origin,
+            request,
+            deadline_at: deadlineAt,
+          }),
         );
-        if (
-          readText(existing, "origin") !== input.origin ||
-          readText(existing, "creator_agent_id") !==
-            input.request.author.agentId ||
-          readInteger(existing, "deadline_at") !== deadlineAt
-        ) {
-          return yield* new EndpointStoreError({ reason: "conflict" });
-        }
         return;
       }
-      yield* sql`INSERT INTO collective_operations(agent_key,operation_id,creator_agent_id,origin,canonical_request,deadline_at) VALUES(${agentKey},${operationId},${input.request.author.agentId},${input.origin},${canonicalRequest},${deadlineAt})`;
+      if (
+        !sameJson(existing.request, request) ||
+        existing.origin !== input.origin ||
+        existing.creator_agent_id !== input.request.author.agentId ||
+        existing.deadline_at !== deadlineAt
+      ) {
+        return yield* conflict();
+      }
     }),
   ).pipe(agentOperation(agentKey), Effect.withSpan("putCollectiveOperation"));
 }
@@ -171,14 +203,18 @@ export function putCollectiveOperation(
 /** The questions this agent asked that are still collecting answers, oldest first. */
 export function readCollectingQuestionIds(agentKey: string) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT operation_id FROM collective_operations WHERE agent_key=${agentKey} AND origin='local' AND phase='collecting' ORDER BY sequence`;
-    return yield* Effect.forEach(
-      rows,
-      (row) => decodeValue(CollectiveId, readText(row, "operation_id")),
-      { concurrency: 1 },
+    const db = yield* communicationQueries;
+    const rows = yield* executeQuery(
+      db
+        .selectFrom("collective_operations")
+        .select("operation_id")
+        .where("agent_key", "=", agentKey)
+        .where("origin", "=", "local")
+        .where("phase", "=", "collecting")
+        .orderBy("sequence"),
+    );
+    return yield* decodeValue(Schema.Array(CollectiveId))(
+      rows.map((row) => row.operation_id),
     );
   }).pipe(
     agentOperation(agentKey),
@@ -200,7 +236,7 @@ export function recordCollectiveAnswer(
   return transaction(
     agentKey,
     Effect.gen(function* () {
-      const sql = yield* SqlClient;
+      const db = yield* communicationQueries;
       const operation = yield* readCollectiveOperation(agentKey, operationId);
       if (
         operation === undefined ||
@@ -210,12 +246,22 @@ export function recordCollectiveAnswer(
         return false;
       }
       const member = message.author.agentId;
-      const prior =
-        yield* sql`SELECT 1 FROM collective_answers WHERE agent_key=${agentKey} AND operation_id=${operationId} AND member=${member}`;
+      const prior = yield* executeQuery(
+        storedAnswers(db, agentKey, operationId)
+          .select("member")
+          .where("member", "=", member),
+      );
       if (prior.length > 0) {
         return false;
       }
-      yield* sql`INSERT INTO collective_answers(agent_key,operation_id,member,canonical_message) VALUES(${agentKey},${operationId},${member},${yield* encodeCanonical(Message, message)})`;
+      yield* executeQuery(
+        db.insertInto("collective_answers").values({
+          agent_key: agentKey,
+          operation_id: operationId,
+          member,
+          message: yield* encodeJson(Message, message),
+        }),
+      );
       return true;
     }),
   ).pipe(agentOperation(agentKey), Effect.withSpan("recordCollectiveAnswer"));
@@ -248,13 +294,14 @@ export function readCollectiveAnswers(
   operationId: CollectiveId,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT canonical_message FROM collective_answers WHERE agent_key=${agentKey} AND operation_id=${operationId} ORDER BY sequence`;
+    const rows = yield* executeQuery(
+      storedAnswers(yield* communicationQueries, agentKey, operationId)
+        .select("message")
+        .orderBy("sequence"),
+    );
     return yield* Effect.forEach(
       rows,
-      (row) => decodeRuntimeValue(Message, readBytes(row, "canonical_message")),
+      (row) => decodeStored(Message, row.message),
       { concurrency: 1 },
     );
   }).pipe(agentOperation(agentKey), Effect.withSpan("readCollectiveAnswers"));
@@ -270,8 +317,15 @@ export function saveCollectiveResult(
   },
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase='completed',canonical_result=${yield* encodeCanonical(ResultDelivery.fields.item, input.item)},canonical_answer_refs=${yield* encodeRuntimeValue(input.answers)} WHERE agent_key=${agentKey} AND operation_id=${input.operationId} AND phase='collecting'`;
+    yield* executeQuery(
+      operationUpdate(yield* communicationQueries, agentKey, input.operationId)
+        .set({
+          phase: "completed",
+          result: yield* encodeJson(ResultDelivery.fields.item, input.item),
+          answer_refs: yield* encodeRuntimeValue(input.answers),
+        })
+        .where("phase", "=", "collecting"),
+    );
   }).pipe(agentOperation(agentKey), Effect.withSpan("saveCollectiveResult"));
 }
 
@@ -281,8 +335,11 @@ export function retireCollectiveResult(
   operationId: CollectiveId,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET delivered=1 WHERE agent_key=${agentKey} AND operation_id=${operationId} AND phase='completed'`;
+    yield* executeQuery(
+      operationUpdate(yield* communicationQueries, agentKey, operationId)
+        .set({ delivered: 1 })
+        .where("phase", "=", "completed"),
+    );
   }).pipe(agentOperation(agentKey), Effect.withSpan("retireCollectiveResult"));
 }
 
@@ -292,8 +349,12 @@ export function retireCollectiveOperation(
   operationId: CollectiveId,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE collective_operations SET phase='completed',delivered=1 WHERE agent_key=${agentKey} AND operation_id=${operationId}`;
+    yield* executeQuery(
+      operationUpdate(yield* communicationQueries, agentKey, operationId).set({
+        phase: "completed",
+        delivered: 1,
+      }),
+    );
   }).pipe(
     agentOperation(agentKey),
     Effect.withSpan("retireCollectiveOperation"),
@@ -311,19 +372,24 @@ export function hasMessage(
   message: Message,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const [row] = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT conversation_id,canonical_message FROM message_log
-      WHERE agent_key=${agentKey} AND author_agent_id=${message.author.agentId} AND msg_id=${message.msgId}`;
+    const db = yield* communicationQueries;
+    const [row] = yield* executeQuery(
+      db
+        .selectFrom("message_log")
+        .select(["conversation_id", "message"])
+        .where("agent_key", "=", agentKey)
+        .where("author_agent_id", "=", message.author.agentId)
+        .where("msg_id", "=", message.msgId),
+    );
     if (row === undefined) {
       return false;
     }
-    requireEqual(readText(row, "conversation_id"), conversationId);
-    requireSameBytes(
-      readBytes(row, "canonical_message"),
-      yield* encodeCanonical(Message, message),
-    );
+    if (
+      row.conversation_id !== conversationId ||
+      !sameJson(row.message, yield* encodeJson(Message, message))
+    ) {
+      return yield* conflict();
+    }
     return true;
   }).pipe(agentOperation(agentKey), Effect.withSpan("hasMessage"));
 }
@@ -342,9 +408,17 @@ export function saveMessage(
   return withAgentTransaction(
     agentKey,
     Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      yield* sql`INSERT INTO message_log(agent_key,conversation_id,ordinal,author_agent_id,msg_id,canonical_message)
-        VALUES(${agentKey},${conversationId},${ordinal},${message.author.agentId},${message.msgId},${yield* encodeCanonical(Message, message)})`;
+      const db = yield* communicationQueries;
+      yield* executeQuery(
+        db.insertInto("message_log").values({
+          agent_key: agentKey,
+          conversation_id: conversationId,
+          ordinal,
+          author_agent_id: message.author.agentId,
+          msg_id: message.msgId,
+          message: yield* encodeJson(Message, message),
+        }),
+      );
     }),
   ).pipe(storeOperation, Effect.withSpan("saveMessage"));
 }
@@ -363,44 +437,59 @@ export function readMessages(
   },
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const conversation =
-      input.conversationId === undefined
-        ? sql``
-        : sql`AND conversation_id=${input.conversationId}`;
-    const after =
-      input.after === undefined ? sql`` : sql`AND ordinal>${input.after}`;
-    const through =
-      input.through === undefined ? sql`` : sql`AND ordinal<=${input.through}`;
-    const pending =
-      input.pendingFor === undefined
-        ? sql``
-        : sql`AND consumed=0 AND author_agent_id<>${input.pendingFor}`;
+    const db = yield* communicationQueries;
+    let query = db
+      .selectFrom("message_log")
+      .select([
+        "conversation_id",
+        "ordinal",
+        "sequence",
+        "author_agent_id",
+        "msg_id",
+        "message",
+      ])
+      .where("agent_key", "=", agentKey)
+      .limit(input.limit);
+    if (input.conversationId !== undefined) {
+      query = query.where("conversation_id", "=", input.conversationId);
+    }
+    if (input.after !== undefined) {
+      query = query.where("ordinal", ">", input.after);
+    }
+    if (input.through !== undefined) {
+      query = query.where("ordinal", "<=", input.through);
+    }
+    if (input.pendingFor !== undefined) {
+      query = query
+        .where("consumed", "=", 0)
+        .where("author_agent_id", "<>", input.pendingFor);
+    }
     const ascending =
-      input.conversationId === undefined
-        ? sql`ORDER BY sequence`
-        : sql`ORDER BY ordinal`;
-    const order = input.newest ? sql`ORDER BY ordinal DESC` : ascending;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT conversation_id,ordinal,sequence,author_agent_id,msg_id,canonical_message FROM message_log WHERE agent_key=${agentKey} ${conversation} ${after} ${through} ${pending} ${order} LIMIT ${input.limit}`;
+      input.conversationId === undefined ? "sequence" : "ordinal";
+    const rows = yield* executeQuery(
+      input.newest
+        ? query.orderBy("ordinal", "desc")
+        : query.orderBy(ascending),
+    );
     return yield* Effect.forEach(
       rows,
       (row) =>
-        decodeCanonical(Message, readBytes(row, "canonical_message")).pipe(
-          Effect.map((message) => {
-            requireEqual(
-              message.author.agentId,
-              readText(row, "author_agent_id"),
-            );
-            requireEqual(message.msgId, readText(row, "msg_id"));
-            return {
-              conversationId: readText(row, "conversation_id"),
-              ordinal: readInteger(row, "ordinal"),
-              sequence: readInteger(row, "sequence"),
+        decodeStored(Message, row.message).pipe(
+          Effect.filterOrFail(
+            (message) =>
+              message.author.agentId === row.author_agent_id &&
+              message.msgId === row.msg_id,
+            conflict,
+          ),
+          Effect.map(
+            (message): StoredMessage => ({
+              conversationId: row.conversation_id,
+              ordinal: row.ordinal,
+              sequence: row.sequence,
               message,
-            };
-          }),
+              bytes: Buffer.byteLength(row.message),
+            }),
+          ),
         ),
       { concurrency: 1 },
     );
@@ -413,132 +502,148 @@ export function acknowledgeMessage(
   reference: MessageReference,
 ) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    yield* sql`UPDATE message_log SET consumed=1 WHERE agent_key=${agentKey} AND author_agent_id=${reference.authorAgentId} AND msg_id=${reference.msgId}`;
+    const db = yield* communicationQueries;
+    yield* executeQuery(
+      db
+        .updateTable("message_log")
+        .set({ consumed: 1 })
+        .where("agent_key", "=", agentKey)
+        .where("author_agent_id", "=", reference.authorAgentId)
+        .where("msg_id", "=", reference.msgId),
+    );
   }).pipe(agentOperation(agentKey), Effect.withSpan("acknowledgeMessage"));
 }
 
+type Queries = Effect.Effect.Success<typeof communicationQueries>;
+
+function storedAnswers(
+  db: Queries,
+  agentKey: string,
+  operationId: CollectiveId,
+) {
+  return db
+    .selectFrom("collective_answers")
+    .where("agent_key", "=", agentKey)
+    .where("operation_id", "=", operationId);
+}
+
+function operationUpdate(
+  db: Queries,
+  agentKey: string,
+  operationId: CollectiveId,
+) {
+  return db
+    .updateTable("collective_operations")
+    .where("agent_key", "=", agentKey)
+    .where("operation_id", "=", operationId);
+}
+
 function readOperations(agentKey: string, operationId?: CollectiveId) {
+  return operationRows(agentKey, operationId).pipe(
+    Effect.flatMap((rows) =>
+      Effect.forEach(rows, readOperation, { concurrency: 1 }),
+    ),
+    agentOperation(agentKey),
+  );
+}
+
+/** The row of one question, or without `operationId` of the oldest completed result not yet consumed. */
+function operationRows(agentKey: string, operationId?: CollectiveId) {
   return Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const selection =
+    const db = yield* communicationQueries;
+    const stored = db
+      .selectFrom("collective_operations")
+      .selectAll()
+      .where("agent_key", "=", agentKey)
+      .orderBy("sequence")
+      .limit(1);
+    return yield* executeQuery(
       operationId === undefined
-        ? sql`AND phase='completed' AND delivered=0 AND canonical_result IS NOT NULL`
-        : sql`AND operation_id=${operationId}`;
-    const rows = yield* sql<
-      Readonly<Record<string, unknown>>
-    >`SELECT * FROM collective_operations WHERE agent_key=${agentKey}
-      ${selection}
-      ORDER BY sequence LIMIT 1`;
-    return yield* Effect.forEach(rows, readOperation, { concurrency: 1 });
-  }).pipe(agentOperation(agentKey));
+        ? stored
+            .where("phase", "=", "completed")
+            .where("delivered", "=", 0)
+            .where("result", "is not", null)
+        : stored.where("operation_id", "=", operationId),
+    ).pipe(Effect.flatMap(decodeValue(Schema.Array(operationRow))));
+  });
 }
 
 function readOperation(
-  row: Readonly<Record<string, unknown>>,
+  row: typeof operationRow.Type,
 ): Effect.Effect<StoredCollectiveOperation, EndpointStoreError> {
   return Effect.gen(function* () {
-    const operationId = yield* decodeValue(
-      CollectiveId,
-      readText(row, "operation_id"),
-    );
-    const creatorAgentId = yield* decodeValue(
-      AgentId,
-      readText(row, "creator_agent_id"),
-    );
-    const origin = yield* decodeValue(
-      Schema.Literal("local", "remote"),
-      readText(row, "origin"),
-    );
-    const phase = yield* decodeValue(
-      Schema.Literal("collecting", "completed"),
-      readText(row, "phase"),
-    );
-    const result = yield* readResult(row, operationId);
+    const result = yield* readResult(row);
     const state: OperationState = {
-      operationId,
-      phase,
-      deadlineAt: readInteger(row, "deadline_at"),
+      operationId: row.operation_id,
+      phase: row.phase,
+      deadlineAt: row.deadline_at,
       ...(result === undefined ? {} : { result }),
     };
-    if (origin === "local") {
-      const request = yield* decodeRuntimeValue(
-        Request,
-        readBytes(row, "canonical_request"),
-      );
+    if (row.origin === "local") {
+      const request = yield* decodeStored(Request, row.request);
       if (
-        request.operationId !== operationId ||
-        request.author.agentId !== creatorAgentId ||
-        request.deadlineAt !== state.deadlineAt
+        request.operationId !== row.operation_id ||
+        request.author.agentId !== row.creator_agent_id ||
+        request.deadlineAt !== row.deadline_at
       ) {
-        return yield* new EndpointStoreError({ reason: "corrupt" });
+        return yield* corrupt();
       }
-      return { ...state, origin, request };
+      return { ...state, origin: row.origin, request };
     }
-    const request = yield* readRequest(readBytes(row, "canonical_request"));
+    const request = yield* readRequest(row.request);
     if (
-      request.value.operationId !== operationId ||
-      request.message.author.agentId !== creatorAgentId ||
-      request.value.deadlineAt !== state.deadlineAt
+      request.value.operationId !== row.operation_id ||
+      request.message.author.agentId !== row.creator_agent_id ||
+      request.value.deadlineAt !== row.deadline_at
     ) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
+      return yield* corrupt();
     }
-    return { ...state, origin, request };
+    return { ...state, origin: row.origin, request };
   });
 }
 
-function readResult(
-  row: Readonly<Record<string, unknown>>,
-  operationId: CollectiveId,
-) {
+function readResult(row: typeof operationRow.Type) {
   return Effect.gen(function* () {
-    const bytes = readOptionalBytes(row, "canonical_result");
-    const refs = readOptionalBytes(row, "canonical_answer_refs");
-    if (bytes === undefined && refs === undefined) {
+    if (row.result === null && row.answer_refs === null) {
       return undefined;
     }
-    if (bytes === undefined || refs === undefined) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
+    if (row.result === null || row.answer_refs === null) {
+      return yield* corrupt();
     }
-    const item = yield* decodeRuntimeValue(ResultDelivery.fields.item, bytes);
-    if (item.result.request.operationId !== operationId) {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
+    const item = yield* decodeStored(ResultDelivery.fields.item, row.result);
+    if (item.result.request.operationId !== row.operation_id) {
+      return yield* corrupt();
     }
     return {
       item,
-      answers: yield* decodeRuntimeValue(
+      answers: yield* decodeStored(
         Schema.Array(MessageReference).pipe(
           Schema.maxItems(maximumMembers - 1),
         ),
-        refs,
+        row.answer_refs,
       ),
     };
   });
 }
 
-function readRequest(bytes: Uint8Array) {
+function readRequest(text: string) {
   return Effect.gen(function* () {
-    const message = yield* decodeRuntimeValue(Message, bytes);
+    const message = yield* decodeStored(Message, text);
     const value = yield* messageInterpretation(message).pipe(
-      Effect.catchTag(
-        "CollectivePartInvalidError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
+      Effect.catchTag("CollectivePartInvalidError", corrupt),
     );
     if (Option.isNone(value) || value.value.kind !== "operation") {
-      return yield* new EndpointStoreError({ reason: "corrupt" });
+      return yield* corrupt();
     }
     return { message, value: value.value };
   });
 }
 
-function decodeValue<A, I>(schema: Schema.Schema<A, I>, value: unknown) {
-  return Schema.decodeUnknown(schema)(value).pipe(
-    Effect.catchTag(
-      "ParseError",
-      () => new EndpointStoreError({ reason: "corrupt" }),
-    ),
-  );
+function decodeValue<A, I>(schema: Schema.Schema<A, I>) {
+  return (value: unknown) =>
+    Schema.decodeUnknown(schema)(value).pipe(
+      Effect.catchTag("ParseError", corrupt),
+    );
 }
 
 /**
@@ -553,11 +658,16 @@ function agentOperation(agentKey: string) {
       agentKey,
       Effect.gen(function* () {
         const sql = yield* SqlClient;
+        const db = yield* communicationQueries;
         yield* sql.onDialectOrElse({
           pg: () =>
-            sql`SELECT agent_key FROM agent_profiles WHERE agent_key=${agentKey} FOR UPDATE`.pipe(
-              Effect.asVoid,
-            ),
+            executeQuery(
+              db
+                .selectFrom("agent_profiles")
+                .select("agent_key")
+                .where("agent_key", "=", agentKey)
+                .forUpdate(),
+            ).pipe(Effect.asVoid),
           orElse: () => Effect.void,
         });
         return yield* work;
@@ -565,7 +675,7 @@ function agentOperation(agentKey: string) {
     ).pipe(storeOperation, Effect.withSpan("agentOperation"));
 }
 
-/** SQL failures and row corruption leave through one closed storage error channel. */
+/** SQL failures, defects and row corruption leave through one closed storage error channel. */
 function storeOperation<A, E, R>(
   operation: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, EndpointStoreError, R> {
@@ -575,131 +685,11 @@ function storeOperation<A, E, R>(
         return Effect.failCause(Cause.stripFailures(cause));
       }
       const failure = Cause.failureOption(cause);
-      const defect = Cause.dieOption(cause);
       return Effect.fail(
-        mapStoreFailure(
-          Option.getOrElse(failure, () =>
-            Option.getOrElse(defect, () => undefined),
-          ),
-          "persistence",
-        ),
+        Option.isSome(failure) && failure.value instanceof EndpointStoreError
+          ? failure.value
+          : new EndpointStoreError({ reason: "persistence" }),
       );
     }),
   );
-}
-
-/**
- * Maps every internal failure to the store's closed error channel.
- *
- * @param failure Internal failure or closed control-flow signal.
- * @param fallback Closed category for unexpected implementation failures.
- * @returns A non-diagnostic endpoint-store error.
- */
-function mapStoreFailure(
-  failure: unknown,
-  fallback: EndpointStoreFailure,
-): EndpointStoreError {
-  if (failure instanceof EndpointStoreError) {
-    return failure;
-  }
-  return new EndpointStoreError({
-    reason: failure instanceof StoreSignal ? failure.reason : fallback,
-  });
-}
-
-/**
- * Reads and copies one nullable SQLite BLOB.
- *
- * @param row SQL result row.
- * @param key Selected column name.
- * @returns An isolated byte copy, or undefined for SQL NULL.
- */
-function readOptionalBytes(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): Uint8Array | undefined {
-  const value = row[key];
-  if (value === null) {
-    return undefined;
-  }
-  return readBytes(row, key);
-}
-
-/**
- * Reads and copies one required SQLite BLOB.
- *
- * @param row SQL result row.
- * @param key Selected column name.
- * @returns An isolated nonempty byte copy.
- */
-function readBytes(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): Uint8Array {
-  const value = row[key];
-  if (!(value instanceof Uint8Array) || value.byteLength === 0) {
-    throw new StoreSignal("corrupt");
-  }
-  return new Uint8Array(value);
-}
-
-/**
- * Reads one required nonempty SQL text.
- *
- * @param row SQL result row when one was selected.
- * @param key Selected column name.
- * @returns The exact nonempty text.
- */
-function readText(row: Readonly<Record<string, unknown>>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string" || value.length === 0) {
-    throw new StoreSignal("corrupt");
-  }
-  return value;
-}
-
-/**
- * Reads one safe SQL integer.
- *
- * @param row SQL result row when one was selected.
- * @param key Selected column name.
- * @returns The exact safe integer.
- */
-function readInteger(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): number {
-  const stored = row[key];
-  const value =
-    typeof stored === "string" && /^-?\d+$/u.test(stored)
-      ? Number(stored)
-      : stored;
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new StoreSignal("corrupt");
-  }
-  return value;
-}
-
-/**
- * Requires canonical byte equality for idempotent state.
- *
- * @param left Previously retained canonical bytes.
- * @param right Candidate canonical bytes.
- */
-function requireSameBytes(left: Uint8Array, right: Uint8Array): void {
-  if (!sameBytes(left, right)) {
-    throw new StoreSignal("conflict");
-  }
-}
-
-/**
- * Requires two exact bindings, including optional bindings, to agree.
- *
- * @param left Previously retained binding.
- * @param right Candidate binding.
- */
-function requireEqual<Value>(left: Value, right: Value): void {
-  if (left !== right) {
-    throw new StoreSignal("conflict");
-  }
 }

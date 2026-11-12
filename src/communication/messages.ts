@@ -1,7 +1,6 @@
 /** @file Immutable messages, questions and replies share their content grammar and constructors. */
 
 import type { ParseOptions } from "effect/SchemaAST";
-import canonicalize from "canonicalize";
 import {
   Array as Arr,
   Clock,
@@ -21,8 +20,8 @@ import {
   type ClientRepresentationError,
   compareAgentIds as compareAgentIdBytes,
   compareAscii,
-  encodeCanonical,
   exactStruct,
+  hasWellFormedUnicode,
   isCanonicalIdentifier,
   isStrictlyAscending,
   representationFailure,
@@ -41,7 +40,7 @@ export const compareAgentIds: (left: AgentId, right: AgentId) => number =
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 
-/** The canonical JSON byte limit of one message's content. */
+/** The byte limit of one message's content as JSON text. */
 const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
 
@@ -74,7 +73,7 @@ export const MessageReference = exactStruct({
  */
 export type MessageReference = typeof MessageReference.Type;
 
-/** A string without lone surrogates, so it survives canonical JSON. */
+/** A string without lone surrogates, so it survives UTF-8. */
 export const wellFormedString = Schema.String.pipe(
   Schema.filter(hasWellFormedUnicode, {
     identifier: "WellFormedUnicodeString",
@@ -117,7 +116,7 @@ export type ContentPart = typeof ContentPart.Type;
 
 const contentStructure = Schema.NonEmptyArray(ContentPart);
 
-/** Nonempty semantic content whose canonical JSON is at most 32,768 bytes. */
+/** Nonempty semantic content whose JSON text is at most 32,768 bytes. */
 export const Content = contentStructure.pipe(
   Schema.filter(contentFits),
   Schema.annotations({ identifier: "Content" }),
@@ -137,22 +136,28 @@ const ConversationMembers = exactStruct({
 });
 
 /**
- * The identifier of the conversation among these members: a hash of their
+ * The identifier of the conversation among these members: a hash of the JSON
+ * text `{"kind":"conversation_identity","memberAgentIds":[...]}` over their
  * agent identifiers, which must be given in ascending order with no repeats.
  */
 export const deriveConversationId = (
   memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
 ): Effect.Effect<typeof ConversationId.Type, ClientRepresentationError> =>
   isStrictlyAscending(memberAgentIds, compareAgentIds)
-    ? encodeCanonical(ConversationMembers, {
+    ? Schema.encode(ConversationMembers)({
         kind: "conversation_identity" as const,
         memberAgentIds,
       }).pipe(
         Effect.map(
-          (bytes) =>
+          (members) =>
             `cnv_${createHash("sha256")
               .update("org.social-harness/client/v2/conversation\0")
-              .update(bytes)
+              .update(
+                JSON.stringify({
+                  kind: members.kind,
+                  memberAgentIds: members.memberAgentIds,
+                }),
+              )
               .digest("base64url")}`,
         ),
         Effect.flatMap(Schema.decodeUnknown(ConversationId)),
@@ -461,7 +466,7 @@ export class CollectivePartInvalidError extends Data.TaggedError(
   readonly reason: "duplicate" | "malformed";
 }> {}
 
-/** A collective value and its text do not form content within the 32,768-byte canonical limit. */
+/** A collective value and its text do not form content within the 32,768-byte limit. */
 export class CollectiveContentError extends Data.TaggedError(
   "CollectiveContentError",
 ) {}
@@ -1491,41 +1496,15 @@ function readCollectiveValue(
   );
 }
 
-function hasWellFormedUnicode(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (isTrailingSurrogate(codeUnit)) {
-      return false;
-    }
-    if (!isLeadingSurrogate(codeUnit)) {
-      continue;
-    }
-    index += 1;
-    if (!isTrailingSurrogate(value.charCodeAt(index))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isLeadingSurrogate(codeUnit: number): boolean {
-  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
-}
-
-function isTrailingSurrogate(codeUnit: number): boolean {
-  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
-}
-
 function contentFits(
   content: readonly [ContentPart, ...ContentPart[]],
 ): boolean {
   return Either.match(
-    Either.try(() => canonicalize(content)),
+    Either.try(() => JSON.stringify(content)),
     {
       onLeft: () => false,
-      onRight: (canonical) =>
-        canonical !== undefined &&
-        utf8Encoder.encode(canonical).byteLength <= maximumContentBytes,
+      onRight: (text) =>
+        utf8Encoder.encode(text).byteLength <= maximumContentBytes,
     },
   );
 }

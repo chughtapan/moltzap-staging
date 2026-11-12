@@ -2,10 +2,7 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Clock, Deferred, Effect, Option, Schema, Scope } from "effect";
-import {
-  encodeCanonical,
-  MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding/index.js";
+import { encodeJson, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
 import { AgentCard } from "../identity/agent-cards.js";
 import { CommunicationError } from "./errors.js";
 import {
@@ -690,22 +687,22 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
   ).pipe(Effect.withSpan("finishLocal"));
 }
 
-/** Final item and assembled source bytes retain independent publication budgets. */
+/** The final item and its assembled sources have independent size budgets. */
 function checkResultSize(result: {
   readonly item: ResultDelivery["item"];
   readonly sources: ResultSources;
 }) {
   return Effect.gen(function* () {
     const item = yield* encodeRuntimeValue(result.item);
-    const sources = yield* encodeCanonical(ResultSources, result.sources).pipe(
+    const sources = yield* encodeJson(ResultSources, result.sources).pipe(
       Effect.catchTag(
         "ClientRepresentationError",
         () => new EndpointStoreError({ reason: "invalid-input" }),
       ),
     );
     if (
-      item.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES ||
-      sources.byteLength > MAXIMUM_RUNTIME_ITEM_BYTES
+      Buffer.byteLength(item) > MAXIMUM_RUNTIME_ITEM_BYTES ||
+      Buffer.byteLength(sources) > MAXIMUM_RUNTIME_ITEM_BYTES
     ) {
       return yield* new EndpointStoreError({ reason: "invalid-input" });
     }

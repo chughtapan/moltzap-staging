@@ -12,7 +12,7 @@ import {
 } from "effect";
 import { describe, expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
-import { encodeCanonical } from "../encoding/index.js";
+import { encodeJson } from "../encoding/index.js";
 import {
   AgentAddress as PublicAgentAddress,
   Content as PublicContent,
@@ -858,7 +858,7 @@ describe("public message schemas", () => {
     });
   });
 
-  // @agent-code-guard/regression-only: PublicContent schemas pin the exact semantic boundary and canonical byte cap.
+  // @agent-code-guard/regression-only: PublicContent schemas pin the exact semantic boundary and byte cap.
   describe("public content", () => {
     vitestIt("accepts exact nonempty semantic content", () => {
       const content = [
@@ -869,17 +869,15 @@ describe("public message schemas", () => {
       expect(Schema.decodeUnknownSync(PublicContent)(content)).toEqual(content);
     });
 
-    vitestIt("accepts content at the exact canonical byte cap", () => {
+    vitestIt("accepts content at the exact byte cap", () => {
       const text = "a".repeat(32_741);
       const content: Content = [{ type: "text", text }];
 
       expect(Schema.decodeUnknownSync(PublicContent)(content)).toEqual(content);
-      expect(Effect.runSync(encodeCanonical(Content, content))).toHaveLength(
-        32_768,
-      );
+      expect(Effect.runSync(encodeJson(Content, content))).toHaveLength(32_768);
       expect(
         Effect.runSync(
-          encodeCanonical(Content, [{ type: "text", text: text + "a" }]).pipe(
+          encodeJson(Content, [{ type: "text", text: text + "a" }]).pipe(
             Effect.either,
           ),
         ),

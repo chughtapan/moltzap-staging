@@ -1,17 +1,18 @@
-/** @file Canonical JSON bytes and canonical identifiers shared by every layer that reads or writes external data. */
+/** @file JSON text, exact structs and identifier checks shared by every layer that reads or writes external data. */
 
-/** Canonical JSON encoding, exact decoding and byte comparison, with their failures and size bound. */
+/** Struct schemas that reject unknown properties. */
+export { exactStruct } from "./exact-struct.js";
+/** JSON text encoding, decoding and comparison, with their failure and the size bound of a saved item. */
 export {
-  canonicalBytes,
   ClientRepresentationError,
-  decodeCanonical,
-  encodeCanonical,
-  encodeCanonicalJson,
-  exactStruct,
+  decodeJson,
+  encodeJson,
+  hasWellFormedUnicode,
+  jsonText,
   MAXIMUM_RUNTIME_ITEM_BYTES,
   representationFailure,
-  sameBytes,
-} from "./canonical-json.js";
+  sameJson,
+} from "./json.js";
 /** Canonical identifier and base64url checks, and the orderings sorted lists use. */
 export {
   canonicalIdentifier,
