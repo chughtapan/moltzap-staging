@@ -2,7 +2,7 @@
 import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Ref } from "effect";
+import { Effect, FastCheck as fc, Ref } from "effect";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
 import { createServer } from "node:http";
@@ -13,6 +13,7 @@ import { mcpFixture, mcpRequest } from "../__tests__/mcp-fixtures.js";
 const resource = new URL("https://mcp.example.test/mcp");
 const owner = "owner-subject";
 const scope = "use:mcp";
+const allowedOrigin = "https://owner.example.test";
 
 const fixture = Effect.gen(function* () {
   const keys = yield* Effect.tryPromise(() => generateKeyPair("RS256"));
@@ -40,25 +41,25 @@ const fixture = Effect.gen(function* () {
     resource,
     issuer,
     scope,
-    allowedOrigins: ["https://owner.example.test"],
+    allowedOrigins: [allowedOrigin],
   };
   const test = yield* mcpFixture({ authentication: oauth });
   const token = (
     changes: {
       readonly audience?: string;
       readonly subject?: string;
-      readonly scope?: string;
-      readonly expiresAt?: number;
+      readonly granted?: readonly string[];
+      readonly secondsLeft?: number;
     } = {},
   ) =>
     Effect.tryPromise(() =>
-      new SignJWT({ scope: changes.scope ?? scope })
+      new SignJWT({ scope: (changes.granted ?? [scope]).join(" ") })
         .setProtectedHeader({ alg: "RS256", kid: "issuer-key" })
         .setIssuer(issuer)
         .setAudience(changes.audience ?? resource.href)
         .setSubject(changes.subject ?? owner)
         .setExpirationTime(
-          changes.expiresAt ?? Math.floor(Date.now() / 1000) + 300,
+          Math.floor(Date.now() / 1000) + (changes.secondsLeft ?? 300),
         )
         .sign(keys.privateKey),
     );
@@ -85,8 +86,48 @@ const fixture = Effect.gen(function* () {
   return { ...test, oauth, token, call };
 });
 
+/** A scope that begins with the configured one and goes on past it. */
+const longerScope = fc
+  .stringMatching(/^[a-z:]{1,3}$/u)
+  .map((more) => `${scope}${more}`);
+
+/**
+ * A request the resource admits: its Host in any letter case, no Origin or the
+ * allowed one, and the configured scope anywhere among those granted.
+ */
+const admissible = fc.record({
+  host: fc.mixedCase(fc.constant(resource.host)),
+  origin: fc.constantFrom(undefined, allowedOrigin),
+  subject: fc.string({ minLength: 1 }),
+  granted: fc
+    .tuple(fc.array(longerScope), fc.array(longerScope))
+    .map(([before, after]) => [...before, scope, ...after]),
+});
+
+/** One claim that puts a token outside the resource's authority. */
+const defect = fc.oneof(
+  fc.record({ subject: fc.constant("") }),
+  fc.record({ audience: fc.webUrl().filter((url) => url !== resource.href) }),
+  fc.record({ granted: fc.array(longerScope) }),
+  fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
+);
+
+/**
+ * The headers of a caller the resource does not trust: another Host, or the
+ * resource's Host with an Origin that is not allowed.
+ */
+const untrusted = fc.oneof(
+  fc.record({
+    host: fc.domain().filter((host) => host !== resource.host),
+    origin: fc.constant(undefined),
+  }),
+  fc.record({
+    host: fc.constant(resource.host),
+    origin: fc.webUrl().filter((origin) => origin !== allowedOrigin),
+  }),
+);
+
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and MCP wire notifications are external conformance contracts. */
-// @agent-code-guard/regression-only: These cases pin finite OAuth admission and stream-expiry contracts against a real issuer.
 it("advertises protected-resource discovery without granting MCP access", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
@@ -112,41 +153,57 @@ it("advertises protected-resource discovery without granting MCP access", () =>
     );
   }));
 
-it("selects each authenticated subject under its verified issuer", () =>
+it("selects the subject of a token granted the scope, under the verified issuer", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const other = "another-owner";
-    expect((yield* test.call(yield* test.token())).status).toBe(200);
-    expect(
-      (yield* test.call(yield* test.token({ subject: other }))).status,
-    ).toBe(200);
-    expect(yield* Ref.get(test.owners)).toEqual([
-      { issuer: test.oauth.issuer, subject: owner },
-      { issuer: test.oauth.issuer, subject: other },
-    ]);
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(admissible, ({ host, origin, ...claims }) =>
+          Effect.gen(function* () {
+            yield* Ref.set(test.owners, []);
+            const token = yield* test.token(claims);
+            const response = yield* test.call(token, host, origin);
+            expect(response.status).toBe(200);
+            expect(yield* Ref.get(test.owners)).toEqual([
+              { issuer: test.oauth.issuer, subject: claims.subject },
+            ]);
+          }).pipe(Effect.runPromise),
+        ),
+      ),
+    );
   }));
 
-it.each([
-  { subject: "" },
-  { audience: "https://another-resource.example/mcp" },
-  { scope: "another-scope" },
-  { expiresAt: 1 },
-])("refuses a token outside the resource authority: %j", (changes) =>
+it("refuses a token with an empty subject, another audience, no grant of the scope or no time left", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const response = yield* test.call(yield* test.token(changes));
-    expect(response.status).toBe(401);
-  }),
-);
-
-it("rejects a different Host even for the correct owner's token", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const response = yield* test.call(
-      yield* test.token(),
-      "another-resource.example",
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(defect, (claim) =>
+          Effect.gen(function* () {
+            const response = yield* test.call(yield* test.token(claim));
+            expect(response.status).toBe(401);
+            expect(yield* Ref.get(test.owners)).toEqual([]);
+          }).pipe(Effect.runPromise),
+        ),
+      ),
     );
-    expect(response.status).toBe(403);
+  }));
+
+it("rejects another Host or an Origin that is not allowed, even with the owner's token", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    const token = yield* test.token();
+    yield* Effect.tryPromise(() =>
+      fc.assert(
+        fc.asyncProperty(untrusted, ({ host, origin }) =>
+          Effect.gen(function* () {
+            const response = yield* test.call(token, host, origin);
+            expect(response.status).toBe(403);
+            expect(yield* Ref.get(test.owners)).toEqual([]);
+          }).pipe(Effect.runPromise),
+        ),
+      ),
+    );
   }));
 
 it(
@@ -154,9 +211,7 @@ it(
   () =>
     Effect.gen(function* () {
       const test = yield* fixture;
-      const token = yield* test.token({
-        expiresAt: Math.floor(Date.now() / 1000) + 2,
-      });
+      const token = yield* test.token({ secondsLeft: 2 });
       const response = yield* Effect.tryPromise(() =>
         test.fetch(
           mcpRequest(
@@ -178,17 +233,6 @@ it(
       expect(later.status).toBe(200);
     }),
   15000,
-);
-
-it.each([
-  { origin: "https://owner.example.test", status: 200 },
-  { origin: "https://another-host.example", status: 403 },
-])("admits only configured browser origins: %j", ({ origin, status }) =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const response = yield* test.call(yield* test.token(), undefined, origin);
-    expect(response.status).toBe(status);
-  }),
 );
 
 /* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the assertion policy. */

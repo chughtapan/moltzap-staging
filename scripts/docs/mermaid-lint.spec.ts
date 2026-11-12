@@ -2,7 +2,8 @@
 
 import { FileSystem, Path } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
-import { Effect, Either } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FastCheck as fc } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Synchronous filesystem fixtures build the trees and broken entries the gate reads.
 import {
   mkdirSync,
@@ -13,115 +14,97 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import {
   collectBlocks,
   collectDiagramFiles,
   extractMermaidBlocks,
   lintBlock,
+  type MermaidBlock,
   type MermaidGateError,
   requireRoots,
 } from "./mermaid-lint.ts";
 
+/** Lines of prose or diagram text: never a fence, and safe inside a JSDoc comment. */
+const textLines = fc.array(fc.stringMatching(/^[A-Za-z >:-]{0,12}$/), {
+  maxLength: 3,
+});
+
+/** A stretch of prose followed by one closed fence. */
+interface Stretch {
+  readonly prose: readonly string[];
+  readonly indent: number;
+  readonly marker: string;
+  readonly language: string;
+  readonly body: readonly string[];
+}
+
+/** A document as stretches in source order. */
+const stretches = fc.array(
+  fc.record<Stretch>({
+    prose: textLines,
+    indent: fc.nat({ max: 6 }),
+    marker: fc.constantFrom("```", "~~~", "`````"),
+    language: fc.oneof(
+      fc.constant("mermaid"),
+      fc.constantFrom("", "ts", "mermaidjs"),
+    ),
+    body: textLines,
+  }),
+);
+
+/**
+ * The source lines of `document`, whose first line is numbered `firstLine`,
+ * and the diagrams a reader finds in it: the text inside each fence labelled
+ * mermaid and indented by fewer than four spaces, at the fence's line.
+ */
+const layOut = (
+  file: string,
+  document: readonly Stretch[],
+  firstLine: number,
+) => {
+  const lines: string[] = [];
+  const diagrams: MermaidBlock[] = [];
+  for (const { prose, indent, marker, language, body } of document) {
+    lines.push(...prose);
+    if (language === "mermaid" && indent < 4) {
+      const startLine = firstLine + lines.length;
+      diagrams.push({ file, startLine, body: body.join("\n") });
+    }
+    const fence = " ".repeat(indent) + marker;
+    lines.push(fence + language, ...body, fence);
+  }
+  return { lines, diagrams };
+};
+
 describe("extractMermaidBlocks", () => {
-  // @agent-code-guard/regression-only: fixed syntax and gate failure fixtures exercise distinct regressions.
-  it("returns empty list when the source has no fenced blocks", () => {
-    expect(extractMermaidBlocks("doc.md", "Plain prose.\n")).toEqual([]);
-  });
-
-  it("extracts JSDoc diagrams with source line numbers and indentation", () => {
-    const source = [
-      "const value = 1;",
-      "/**",
-      " * Flow.",
-      " * ```mermaid",
-      " * sequenceDiagram",
-      " *   A->>B: hi",
-      " * ```",
-      " */",
-    ].join("\n");
-    expect(extractMermaidBlocks("flow.ts", source)).toEqual([
-      { file: "flow.ts", startLine: 4, body: "sequenceDiagram\n  A->>B: hi" },
-    ]);
-  });
-
-  it("finds a single triple-backtick mermaid block", () => {
-    const source = [
-      "# Heading",
-      "",
-      "```mermaid",
-      "sequenceDiagram",
-      "  A->>B: hi",
-      "```",
-      "",
-    ].join("\n");
-    expect(extractMermaidBlocks("doc.md", source)).toEqual([
-      {
-        file: "doc.md",
-        startLine: 3,
-        body: "sequenceDiagram\n  A->>B: hi",
-      },
-    ]);
-  });
-
-  it("finds a triple-tilde mermaid block", () => {
-    const source = ["~~~mermaid", "flowchart TD", "  X --> Y", "~~~", ""].join(
-      "\n",
+  it("extracts exactly the mermaid fences indented by fewer than four spaces, each with its opening line and inner text", () => {
+    fc.assert(
+      fc.property(stretches, (document) => {
+        const { lines, diagrams } = layOut("doc.md", document, 1);
+        expect(extractMermaidBlocks("doc.md", lines.join("\n"))).toEqual(
+          diagrams,
+        );
+      }),
     );
-    expect(extractMermaidBlocks("doc.md", source)).toEqual([
-      {
-        file: "doc.md",
-        startLine: 1,
-        body: "flowchart TD\n  X --> Y",
-      },
-    ]);
   });
 
-  it("ignores fences indented by 4+ spaces", () => {
-    const source = [
-      "Snippet inline:",
-      "",
-      "    ```mermaid",
-      "    flowchart TD",
-      "    ```",
-      "",
-    ].join("\n");
-    expect(extractMermaidBlocks("doc.md", source)).toEqual([]);
-  });
-
-  it("ignores blocks of other languages", () => {
-    const source = [
-      "```ts",
-      "const mermaid = 'something';",
-      "```",
-      "",
-      "```mermaid",
-      "sequenceDiagram",
-      "```",
-      "",
-    ].join("\n");
-    const blocks = extractMermaidBlocks("doc.md", source);
-    expect(blocks).toHaveLength(1);
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(blocks[0]?.startLine).toBe(5);
-  });
-
-  it("collects multiple mermaid blocks with correct line numbers", () => {
-    const source = [
-      "```mermaid",
-      "A",
-      "```",
-      "",
-      "```mermaid",
-      "B",
-      "```",
-      "",
-    ].join("\n");
-    const blocks = extractMermaidBlocks("doc.md", source);
-    expect(blocks).toHaveLength(2);
-    expect(blocks[0]?.startLine).toBe(1);
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(blocks[1]?.startLine).toBe(5);
+  it("extracts from TypeScript only the fences inside a JSDoc comment, numbered by source line", () => {
+    fc.assert(
+      fc.property(stretches, stretches, (code, comment) => {
+        const loose = layOut("flow.ts", code, 1).lines;
+        const documented = layOut("flow.ts", comment, loose.length + 2);
+        const source = [
+          ...loose,
+          "/**",
+          ...documented.lines.map((line) => ` * ${line}`),
+          " */",
+        ];
+        expect(extractMermaidBlocks("flow.ts", source.join("\n"))).toEqual(
+          documented.diagrams,
+        );
+      }),
+    );
   });
 });
 
@@ -143,142 +126,182 @@ afterAll(() => {
   rmSync(sandbox, { recursive: true, force: true });
 });
 
+/**
+ * Runs a gate step against the real filesystem, yielding its value, or the
+ * path it could not inspect.
+ */
 const runGate = <A>(
   body: (
     fs: FileSystem.FileSystem,
     path: Path.Path,
   ) => Effect.Effect<A, MermaidGateError>,
 ) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      return yield* body(fs, path);
-    }).pipe(Effect.provide(NodeContext.layer), Effect.either),
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* body(fs, path);
+  }).pipe(
+    Effect.provide(NodeContext.layer),
+    Effect.mapError((error) => error.path),
+    Effect.merge,
   );
 
-const failure = <A>(result: Either.Either<A, MermaidGateError>) => {
-  return Either.match(result, {
-    onLeft: (error) => error,
-    onRight: () => {
-      throw new Error("expected the gate to fail, but it succeeded");
-    },
-  });
-};
-
 describe("requireRoots", () => {
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("accepts a real directory", async () => {
-    const dir = join(sandbox, "real-root");
-    mkdirSync(dir, { recursive: true });
-    const result = await runGate((fs) => requireRoots(fs, [dir]));
-    expect(
-      Either.match(result, { onLeft: () => false, onRight: () => true }),
-    ).toBe(true);
-  });
+  it.live.prop(
+    "accepts roots exactly when every one is a directory, and otherwise names the first that is a file or missing",
+    [fc.array(fc.constantFrom("directory", "file", "missing"))],
+    ([kinds]) =>
+      Effect.gen(function* () {
+        const base = mkdtempSync(join(sandbox, "roots-"));
+        const roots = kinds.map((kind, index) => {
+          const root = join(base, `root-${String(index)}`);
+          if (kind === "directory") {
+            mkdirSync(root);
+          }
+          if (kind === "file") {
+            writeFileSync(root, diagramBlock);
+          }
+          return root;
+        });
 
-  /** The underlying cause must explain why the named root could not be reached. */
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails and names a root that does not exist", async () => {
-    const missing = join(sandbox, "absent-root");
-    const error = failure(await runGate((fs) => requireRoots(fs, [missing])));
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error._tag).toBe("MermaidGateError");
-    expect(error.path).toBe(missing);
-    expect(String(error.cause)).toContain(missing);
-  });
+        const rejected = kinds.findIndex((kind) => kind !== "directory");
 
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails when a root is a file rather than a directory", async () => {
-    const file = join(sandbox, "root-is-a-file.md");
-    writeFileSync(file, diagramBlock);
-    const error = failure(await runGate((fs) => requireRoots(fs, [file])));
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error.reason).toContain("not a directory");
-    expect(error.path).toBe(file);
-  });
+        expect(yield* runGate((fs) => requireRoots(fs, roots))).toBe(
+          rejected === -1 ? undefined : roots[rejected],
+        );
+      }),
+  );
+
+  /** The report prints the cause to say why the root could not be reached. */
+  it.live(
+    "keeps the filesystem's own failure as the cause when a root cannot be opened",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const missing = join(sandbox, "absent-root");
+
+        const error = yield* Effect.flip(requireRoots(fs, [missing]));
+
+        expect(error.cause).toEqual(yield* Effect.flip(fs.stat(missing)));
+      }).pipe(Effect.provide(NodeContext.layer)),
+  );
 });
 
 describe("collectDiagramFiles", () => {
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("descends subdirectories and skips node_modules", async () => {
-    const root = join(sandbox, "tree");
-    mkdirSync(join(root, "nested"), { recursive: true });
-    mkdirSync(join(root, "node_modules"), { recursive: true });
-    mkdirSync(join(root, "packages"), { recursive: true });
-    writeFileSync(
-      join(root, "packages", "flow.ts"),
-      "/**\n * ```mermaid\n * flowchart TD\n * A --> B\n * ```\n */",
-    );
-    writeFileSync(join(root, "top.md"), diagramBlock);
-    writeFileSync(join(root, "nested", "deep.mdx"), diagramBlock);
-    writeFileSync(join(root, "node_modules", "vendor.md"), diagramBlock);
+  /** Directories the gate never looks inside. */
+  const skipped = ["node_modules", "dist", ".git"];
+  const visited = (directories: readonly string[]) =>
+    !directories.some((name) => skipped.includes(name));
 
-    const result = await runGate((fs, path) =>
-      collectDiagramFiles(fs, path, [root]),
-    );
-    const value = Either.getOrThrowWith(result, (error) => error);
-    expect(value).toEqual([
-      join(root, "nested", "deep.mdx"),
-      join(root, "packages", "flow.ts"),
-      join(root, "top.md"),
-    ]);
-  });
+  /** Where an entry of a generated tree sits below its root. */
+  const directories = fc.array(
+    fc.constantFrom("nested", "packages", ...skipped),
+    { maxLength: 2 },
+  );
 
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails instead of yielding no files when a directory cannot be listed", async () => {
-    const absent = join(sandbox, "absent-tree");
-    const error = failure(
-      await runGate((fs, path) => collectDiagramFiles(fs, path, [absent])),
-    );
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error.reason).toContain("cannot read directory");
-    expect(error.path).toBe(absent);
-  });
+  /**
+   * The two roots are passed in the reverse of their path order, so the
+   * expected order never depends on the order the filesystem lists entries in.
+   */
+  it.live.prop(
+    "collects exactly the .md, .mdx and .ts files outside node_modules, dist and .git, sorted by path whatever order the roots are given in",
+    [
+      fc.uniqueArray(
+        fc.record({
+          root: fc.constantFrom("docs", "plugins"),
+          under: directories,
+          name: fc.constantFrom("a.md", "b.mdx", "c.ts", "d.tsx", "e.txt"),
+        }),
+        { selector: ({ root, under, name }) => join(root, ...under, name) },
+      ),
+    ],
+    ([files]) =>
+      Effect.gen(function* () {
+        const base = mkdtempSync(join(sandbox, "tree-"));
+        const roots = [join(base, "plugins"), join(base, "docs")];
+        for (const root of roots) {
+          mkdirSync(root);
+        }
+        for (const { root, under, name } of files) {
+          mkdirSync(join(base, root, ...under), { recursive: true });
+          writeFileSync(join(base, root, ...under, name), diagramBlock);
+        }
 
-  /** A dangling entry fails during per-entry stat. */
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails on an entry that cannot be stat'ed", async () => {
-    const root = join(sandbox, "dangling-tree");
-    mkdirSync(root, { recursive: true });
-    const dangling = join(root, "dangling.md");
-    symlinkSync(join(sandbox, "no-such-target"), dangling);
-    const error = failure(
-      await runGate((fs, path) => collectDiagramFiles(fs, path, [root])),
-    );
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error.reason).toBe("cannot stat");
-    expect(error.path).toBe(dangling);
-  });
+        expect(
+          yield* runGate((fs, path) => collectDiagramFiles(fs, path, roots)),
+        ).toEqual(
+          files
+            .filter(
+              ({ under, name }) =>
+                visited(under) && /\.(md|mdx|ts)$/.test(name),
+            )
+            .map(({ root, under, name }) => join(base, root, ...under, name))
+            .sort((left, right) => left.localeCompare(right)),
+        );
+      }),
+  );
+
+  it.live.prop(
+    "fails naming a dangling link, unless the link sits under node_modules, dist or .git",
+    [directories],
+    ([under]) =>
+      Effect.gen(function* () {
+        const root = mkdtempSync(join(sandbox, "dangling-"));
+        mkdirSync(join(root, ...under), { recursive: true });
+        const dangling = join(root, ...under, "dangling.md");
+        symlinkSync(join(sandbox, "no-such-target"), dangling);
+
+        expect(
+          yield* runGate((fs, path) => collectDiagramFiles(fs, path, [root])),
+        ).toEqual(visited(under) ? dangling : []);
+      }),
+  );
+
+  it.live(
+    "fails instead of yielding no files when a directory cannot be listed",
+    () =>
+      Effect.gen(function* () {
+        const absent = join(sandbox, "absent-tree");
+        expect(
+          yield* runGate((fs, path) => collectDiagramFiles(fs, path, [absent])),
+        ).toBe(absent);
+      }),
+  );
 });
 
 describe("collectBlocks", () => {
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("extracts blocks labelled relative to the workspace root", async () => {
-    const root = join(sandbox, "blocks");
-    mkdirSync(root, { recursive: true });
-    const file = join(root, "doc.md");
-    writeFileSync(file, diagramBlock);
+  it.live.prop(
+    "labels each file's diagrams by its path below the workspace root, in file order, and fails naming the first unreadable file",
+    [fc.array(fc.option(fc.nat({ max: 2 })), { maxLength: 5 })],
+    ([diagramCounts]) =>
+      Effect.gen(function* () {
+        const root = mkdtempSync(join(sandbox, "blocks-"));
+        mkdirSync(join(root, "guides"));
+        const documents = diagramCounts.map((count, index) => ({
+          count,
+          label: join("guides", `doc-${String(index)}.md`),
+        }));
+        for (const { count, label } of documents) {
+          if (count !== null) {
+            writeFileSync(join(root, label), diagramBlock.repeat(count));
+          }
+        }
+        const files = documents.map(({ label }) => join(root, label));
+        const unreadable = documents.find(({ count }) => count === null);
 
-    const result = await runGate((fs, path) =>
-      collectBlocks(fs, path, root, [file]),
-    );
-    const value = Either.getOrThrowWith(result, (error) => error);
-    expect(value).toHaveLength(1);
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(value[0]?.file).toBe("doc.md");
-  });
-
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails instead of yielding no blocks when a file cannot be read", async () => {
-    const absent = join(sandbox, "absent-doc.md");
-    const error = failure(
-      await runGate((fs, path) => collectBlocks(fs, path, sandbox, [absent])),
-    );
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error.reason).toContain("cannot read file");
-    expect(error.path).toBe(absent);
-  });
+        expect(
+          yield* runGate((fs, path) => collectBlocks(fs, path, root, files)),
+        ).toEqual(
+          unreadable
+            ? join(root, unreadable.label)
+            : documents.flatMap(({ count, label }) =>
+                Array<unknown>(count ?? 0).fill(
+                  expect.objectContaining({ file: label }),
+                ),
+              ),
+        );
+      }),
+  );
 });
 
 describe("lintBlock", () => {
@@ -290,20 +313,16 @@ describe("lintBlock", () => {
 
   /** Staging failures do not require a browser. */
   const stage = (tempDir: string) =>
-    Effect.runPromise(
-      lintBlock(blockUnderTest, tempDir).pipe(
-        Effect.provide(NodeContext.layer),
-        Effect.either,
-      ),
+    lintBlock(blockUnderTest, tempDir).pipe(
+      Effect.provide(NodeContext.layer),
+      Effect.flip,
     );
 
-  // eslint-disable-next-line agent-code-guard/async-keyword -- Vitest awaits this Promise boundary; the implementation under test remains an Effect.
-  it("fails when the temp directory cannot be created", async () => {
-    const tempDir = join(sandbox, "temp-is-a-file");
-    writeFileSync(tempDir, "not a directory");
-    const error = failure(await stage(tempDir));
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The expected text is the observable output for this fixed input fixture.
-    expect(error.reason).toBe("cannot create temp directory");
-    expect(error.path).toBe(tempDir);
-  });
+  it.live("fails when the temp directory cannot be created", () =>
+    Effect.gen(function* () {
+      const tempDir = join(sandbox, "temp-is-a-file");
+      writeFileSync(tempDir, "not a directory");
+      expect((yield* stage(tempDir)).path).toBe(tempDir);
+    }),
+  );
 });
