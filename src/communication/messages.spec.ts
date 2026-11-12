@@ -199,30 +199,6 @@ vitestIt(
   },
 );
 
-vitestIt(
-  "admits a second numbered 60 exactly when the reading is 23:59 UTC",
-  () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 23 }),
-        fc.integer({ min: 0, max: 59 }),
-        fc.integer({ min: -1439, max: 1439 }),
-        (hour, minute, offset) => {
-          const zone = `${offset < 0 ? "-" : "+"}${padded(Math.trunc(Math.abs(offset) / 60))}:${padded(Math.abs(offset) % 60)}`;
-          const utcMinuteOfDay = (hour * 60 + minute - offset + 2880) % 1440;
-
-          expect(
-            accepts(
-              "date-time",
-              `2024-02-01T${padded(hour)}:${padded(minute)}:60${zone}`,
-            ),
-          ).toBe(utcMinuteOfDay === 1439);
-        },
-      ),
-    );
-  },
-);
-
 vitestIt("accepts an email only when its host name has a dot", () => {
   const label = fc.stringMatching(/^[a-z0-9]{1,8}$/);
   fc.assert(

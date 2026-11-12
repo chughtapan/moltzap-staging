@@ -1,6 +1,8 @@
 /** @file Immutable messages, questions and replies share their content grammar and constructors. */
 
 import type { ParseOptions } from "effect/SchemaAST";
+import { Ajv } from "ajv";
+import { fullFormats } from "ajv-formats/dist/formats.js";
 import {
   Array as Arr,
   Clock,
@@ -802,121 +804,26 @@ const CollectiveCarrier = Schema.Struct({
  */
 const decodeCollectiveValue = Schema.decodeUnknown(CollectiveValue);
 
-/**
- * The string formats a form-mode string field may require of an answer.
- *
- * Every endpoint must judge one answer the same way, since an all_gather's
- * members agree on its result, so each format is the JSON Schema 2020-12
- * format exactly as the full-mode `ajv-formats` validator judges it: `date`
- * and `date-time` per RFC 3339 with a time zone required and a leap second
- * only at 23:59 UTC, `email` as an RFC 5322 dot-atom at a dotted host name,
- * and `uri` as an RFC 3986 absolute URI. The URI grammar also admits a single
- * slash before an authority, which that validator admits.
- */
-
-/** The formats a form-mode string field may name. */
-type AnswerFormat = "email" | "uri" | "date" | "date-time";
-
-const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-const TIME =
-  /^(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)(z|([+-])(\d{2})(?::?(\d{2}))?)$/i;
-
-const DATE_TIME_SEPARATOR = /t|\s/i;
-
-const atom = "[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
-
-const hostLabel = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
-
-const EMAIL = new RegExp(
-  `^${atom}(?:\\.${atom})*@(?:${hostLabel}\\.)+${hostLabel}$`,
-  "i",
-);
-
-const hex = "[0-9a-f]";
-
-const pctEncoded = `%${hex}{2}`;
-
-const unreserved = "a-z0-9\\-._~";
-
-const subDelims = "!$&'()*+,;=";
-
-const decOctet = "(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)";
-
-const ipv4 = `(?:${decOctet}\\.){3}${decOctet}`;
-
-const h16 = `${hex}{1,4}`;
-
-const ls32 = `(?:${h16}:${h16}|${ipv4})`;
-
-const ipv6 = [
-  `(?:${h16}:){6}${ls32}`,
-  `::(?:${h16}:){5}${ls32}`,
-  `(?:${h16})?::(?:${h16}:){4}${ls32}`,
-  `(?:(?:${h16}:){0,1}${h16})?::(?:${h16}:){3}${ls32}`,
-  `(?:(?:${h16}:){0,2}${h16})?::(?:${h16}:){2}${ls32}`,
-  `(?:(?:${h16}:){0,3}${h16})?::${h16}:${ls32}`,
-  `(?:(?:${h16}:){0,4}${h16})?::${ls32}`,
-  `(?:(?:${h16}:){0,5}${h16})?::${h16}`,
-  `(?:(?:${h16}:){0,6}${h16})?::`,
-].join("|");
-
-const ipFuture = `v${hex}+\\.[${unreserved}${subDelims}:]+`;
-
-const host = `(?:\\[(?:${ipv6}|${ipFuture})\\]|${ipv4}|(?:[${unreserved}${subDelims}]|${pctEncoded})*)`;
-
-const userinfo = `(?:[${unreserved}${subDelims}:]|${pctEncoded})*`;
-
-const pchar = `(?:[${unreserved}${subDelims}:@]|${pctEncoded})`;
-
-const segments = `(?:\\/${pchar}*)*`;
-
-const hierPart = [
-  `\\/?\\/(?:${userinfo}@)?${host}(?::\\d*)?${segments}`,
-  `\\/(?:${pchar}+${segments})?`,
-  `${pchar}+${segments}`,
-].join("|");
-
-const queryOrFragment = `(?:[${unreserved}${subDelims}:@/?]|${pctEncoded})*`;
-
-const URI = new RegExp(
-  `^[a-z][a-z0-9+\\-.]*:(?:${hierPart})(?:\\?${queryOrFragment})?(?:#${queryOrFragment})?$`,
-  "i",
-);
-
-/** A full-time's clock reading and its offset from UTC. */
-interface ClockTime {
-  readonly hour: number;
-  readonly minute: number;
-  readonly second: number;
-  readonly offsetSign: number;
-  readonly offsetHour: number;
-  readonly offsetMinute: number;
-}
-
 type AnswerValue = AnswerContent[string];
 
-type MultiSelectItems = Extract<
-  FormField,
-  { readonly items: unknown }
->["items"];
-
-/** One keyword's check: each failure it finds, as `keyword: requirement`. */
-type KeywordCheck = (field: FormField, value: AnswerValue) => readonly string[];
-
-const ALLOWED_VALUES = "must be one of the allowed values";
-
-/** Every JSON Schema check a form field's keywords make of an answer. */
-const keywordChecks: readonly KeywordCheck[] = [
-  typeIssues,
-  limitIssues,
-  formatIssues,
-  enumIssues,
-  oneOfIssues,
-  itemIssues,
-];
+/**
+ * Judges an answer value against its field as JSON Schema, reporting every
+ * failing keyword. Formats are the full `ajv-formats` definitions, so every
+ * endpoint judges one answer the same way. A field is admitted by
+ * `RequestedSchema` before it reaches this validator, which therefore does
+ * not check the field against the JSON Schema meta-schema.
+ */
+const answerValidator = new Ajv({
+  allErrors: true,
+  strict: false,
+  validateSchema: false,
+  formats: {
+    date: fullFormats.date,
+    "date-time": fullFormats["date-time"],
+    email: fullFormats.email,
+    uri: fullFormats.uri,
+  },
+});
 
 /**
  * Why one answer field failed its request's schema; `detail` names each
@@ -1682,251 +1589,19 @@ function ownValue<Value>(
 }
 
 /**
- * Every failing keyword of one answer value. A titled single-select's value
- * must equal exactly one option, so options repeating a `const` admit
- * neither.
- * @param field The field's admitted property schema.
- * @param value The answer's value for the field.
- * @returns Each failing keyword with what it requires; empty when the value
- *   satisfies the field.
+ * Every failing keyword of one answer value, as `keyword: requirement`, with
+ * a selected item's keyword led by its position, such as `items[1].enum`. A
+ * titled single-select's value must equal exactly one option.
  */
 function answerIssues(field: FormField, value: AnswerValue): readonly string[] {
-  return keywordChecks.flatMap((check) => check(field, value));
-}
-
-function typeIssues(field: FormField, value: AnswerValue): readonly string[] {
-  return hasType(field, value) ? [] : [`type: must be ${field.type}`];
-}
-
-function hasType(field: FormField, value: AnswerValue): boolean {
-  switch (field.type) {
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number";
-    case "integer":
-      return typeof value === "number" && Number.isInteger(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "array":
-      return Array.isArray(value);
-    default: {
-      const exhaustive: never = field;
-      return exhaustive;
-    }
-  }
-}
-
-/**
- * Report every failed bound without skipping later diagnostics. String bounds
- * count Unicode code points, so an astral character counts once.
- */
-function limitIssues(field: FormField, value: AnswerValue): readonly string[] {
-  switch (field.type) {
-    case "string":
-      return stringLimitIssues(field, value);
-    case "number":
-    case "integer":
-      return numberLimitIssues(field, value);
-    case "array":
-      return arrayLimitIssues(field, value);
-    case "boolean":
-      return [];
-    default: {
-      const exhaustive: never = field;
-      return exhaustive;
-    }
-  }
-}
-
-function stringLimitIssues(
-  field: Extract<FormField, { readonly type: "string" }>,
-  value: AnswerValue,
-): readonly string[] {
-  if (typeof value !== "string" || "enum" in field || "oneOf" in field) {
-    return [];
-  }
-  const length = Array.from(value).length;
-  return [
-    ...(field.minLength !== undefined && length < field.minLength
-      ? [`minLength: must have at least ${field.minLength} characters`]
-      : []),
-    ...(field.maxLength !== undefined && length > field.maxLength
-      ? [`maxLength: must have at most ${field.maxLength} characters`]
-      : []),
-  ];
-}
-
-function numberLimitIssues(
-  field: Extract<FormField, { readonly type: "number" | "integer" }>,
-  value: AnswerValue,
-): readonly string[] {
-  if (typeof value !== "number") {
-    return [];
-  }
-  return [
-    ...(field.minimum !== undefined && value < field.minimum
-      ? [`minimum: must be >= ${field.minimum}`]
-      : []),
-    ...(field.maximum !== undefined && value > field.maximum
-      ? [`maximum: must be <= ${field.maximum}`]
-      : []),
-  ];
-}
-
-function arrayLimitIssues(
-  field: Extract<FormField, { readonly type: "array" }>,
-  value: AnswerValue,
-): readonly string[] {
-  if (typeof value !== "object") {
-    return [];
-  }
-  return [
-    ...(field.minItems !== undefined && value.length < field.minItems
-      ? [`minItems: must have at least ${field.minItems} items`]
-      : []),
-    ...(field.maxItems !== undefined && value.length > field.maxItems
-      ? [`maxItems: must have at most ${field.maxItems} items`]
-      : []),
-  ];
-}
-
-function formatIssues(field: FormField, value: AnswerValue): readonly string[] {
-  if (
-    typeof value !== "string" ||
-    !("format" in field) ||
-    field.format === undefined
-  ) {
-    return [];
-  }
-  return matchesFormat(field.format, value)
-    ? []
-    : [`format: must match format "${field.format}"`];
-}
-
-/**
- * Whether a string satisfies a format.
- * @param format The format a string field names.
- * @param text The answer's string.
- * @returns True when the string is in the format.
- */
-function matchesFormat(format: AnswerFormat, text: string): boolean {
-  switch (format) {
-    case "email":
-      return EMAIL.test(text);
-    case "uri":
-      return URI.test(text);
-    case "date":
-      return isDate(text);
-    case "date-time":
-      return isDateTime(text);
-    default: {
-      const exhaustive: never = format;
-      return exhaustive;
-    }
-  }
-}
-
-/** An RFC 3339 date and time, split at `T` or whitespace. */
-function isDateTime(text: string): boolean {
-  const parts = text.split(DATE_TIME_SEPARATOR);
-  if (parts.length !== 2) {
-    return false;
-  }
-  const [date = "", time = ""] = parts;
-  return isDate(date) && isTime(time);
-}
-
-function isDate(text: string): boolean {
-  const match = DATE.exec(text);
-  return (
-    match !== null &&
-    isCalendarDay(Number(match[1]), Number(match[2]), Number(match[3]))
-  );
-}
-
-function isCalendarDay(year: number, month: number, day: number): boolean {
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysIn(year, month);
-}
-
-function daysIn(year: number, month: number): number {
-  return month === 2 && isLeapYear(year) ? 29 : (DAYS_IN_MONTH[month] ?? 0);
-}
-
-function isLeapYear(year: number): boolean {
-  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-}
-
-/** An RFC 3339 full-time, offset included. */
-function isTime(text: string): boolean {
-  const match = TIME.exec(text);
-  if (match === null) {
-    return false;
-  }
-  const time: ClockTime = {
-    hour: Number(match[1]),
-    minute: Number(match[2]),
-    second: Number(match[3]),
-    offsetSign: match[5] === "-" ? -1 : 1,
-    offsetHour: Number(match[6] ?? 0),
-    offsetMinute: Number(match[7] ?? 0),
-  };
-  return (
-    time.offsetHour <= 23 &&
-    time.offsetMinute <= 59 &&
-    (isOrdinaryTime(time) || isLeapSecond(time))
-  );
-}
-
-function isOrdinaryTime({ hour, minute, second }: ClockTime): boolean {
-  return hour <= 23 && minute <= 59 && second < 60;
-}
-
-/**
- * A second numbered 60 is a leap second only when the reading, shifted to
- * UTC, is 23:59; -1 is that instant reached by borrowing across midnight.
- */
-function isLeapSecond(time: ClockTime): boolean {
-  const utcMinute = time.minute - time.offsetMinute * time.offsetSign;
-  const utcHour =
-    time.hour - time.offsetHour * time.offsetSign - (utcMinute < 0 ? 1 : 0);
-  const lastHour = utcHour === 23 || utcHour === -1;
-  const lastMinute = utcMinute === 59 || utcMinute === -1;
-  return lastHour && lastMinute && time.second < 61;
-}
-
-function enumIssues(field: FormField, value: AnswerValue): readonly string[] {
-  return "enum" in field && !field.enum.some((allowed) => allowed === value)
-    ? [`enum: ${ALLOWED_VALUES}`]
-    : [];
-}
-
-function oneOfIssues(field: FormField, value: AnswerValue): readonly string[] {
-  return "oneOf" in field &&
-    field.oneOf.filter((option) => option.const === value).length !== 1
-    ? ["oneOf: must equal exactly one option's const"]
-    : [];
-}
-
-function itemIssues(field: FormField, value: AnswerValue): readonly string[] {
-  if (typeof value !== "object" || !("items" in field)) {
-    return [];
-  }
-  const { items } = field;
-  return value.flatMap((item, index) => selectedItemIssues(items, item, index));
-}
-
-function selectedItemIssues(
-  items: MultiSelectItems,
-  item: string,
-  index: number,
-): readonly string[] {
-  if ("enum" in items) {
-    return items.enum.includes(item)
-      ? []
-      : [`items[${index}].enum: ${ALLOWED_VALUES}`];
-  }
-  return items.anyOf.some((option) => option.const === item)
-    ? []
-    : [`items[${index}].anyOf: must equal some option's const`];
+  const check = answerValidator.compile(field);
+  check(value);
+  answerValidator.removeSchema(field);
+  return (check.errors ?? [])
+    .filter(({ keyword }) => keyword !== "const")
+    .map(({ instancePath, keyword, message }) => {
+      const item =
+        instancePath === "" ? "" : `items[${instancePath.slice(1)}].`;
+      return `${item}${keyword}: ${message ?? "is invalid"}`;
+    });
 }
