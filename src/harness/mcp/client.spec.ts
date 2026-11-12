@@ -12,6 +12,7 @@ import {
 } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  connectInProcessClient,
   loopbackMcpEndpoint,
   mcpFixture,
   mcpTestCredential,
@@ -300,6 +301,45 @@ describe("send outcomes", () => {
       Effect.runPromise,
     );
   });
+});
+
+describe("a send the daemon's tool does not take", () => {
+  const question = {
+    to: "agent:bob",
+    text: "Which day?",
+    collective: {
+      op: "gather",
+      deadline: 60,
+      requestedSchema: {
+        type: "object",
+        properties: { slot: { type: "string" } },
+      },
+    },
+  };
+  const connected = (options: Parameters<typeof mcpFixture>[0]) =>
+    mcpFixture(options).pipe(
+      Effect.flatMap((fixture) =>
+        connectInProcessClient((input, init) =>
+          fixture.fetch(new Request(input, init)),
+        ),
+      ),
+    );
+
+  it("fails naming the refused argument when the daemon hides questions", () =>
+    Effect.gen(function* () {
+      const client = yield* connected({ hideCollectives: true });
+      const failure = yield* callTool(client, {
+        name: "send_message",
+        arguments: Schema.decodeUnknownSync(toolDefinitions.send_message.input)(
+          question,
+        ),
+      }).pipe(Effect.flip);
+      expect(failure).toMatchObject({
+        _tag: "SendError",
+        reason: "content-invalid",
+        issues: [{ path: ["collective"] }],
+      });
+    }).pipe(Effect.scoped, Effect.runPromise));
 });
 
 describe("management failures", () => {

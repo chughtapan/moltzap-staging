@@ -30,7 +30,8 @@ import {
   mcpRequest,
   mcpTestCredential,
 } from "../__tests__/mcp-fixtures.js";
-import { digest } from "../../__tests__/agents.js";
+import { digest, testAgentCard } from "../../__tests__/agents.js";
+import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
 import { SendError } from "../../communication/errors.js";
 import { MessageAddressInput } from "../../communication/messages.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
@@ -130,6 +131,90 @@ describe("MCP authentication", () => {
     }),
   );
 });
+
+const slotForm = {
+  type: "object",
+  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
+  required: ["slot"],
+};
+const gather = { op: "gather", deadline: 60, requestedSchema: slotForm };
+const operationId = collectiveOperationId(testAgentCard("agent:bob").agentId);
+
+/** Malformed questions and answers, each with the argument its refusal names. */
+const malformedSends = [
+  { field: "text", written: { text: 7, collective: gather } },
+  {
+    field: "collective.deadline",
+    written: { text: "Q", collective: { ...gather, deadline: 0 } },
+  },
+  {
+    field: "collective.deadline",
+    written: { text: "Q", collective: { ...gather, deadline: 1.5 } },
+  },
+  {
+    field: "collective.deadline",
+    written: {
+      text: "Q",
+      collective: { op: "gather", requestedSchema: slotForm },
+    },
+  },
+  {
+    field: "collective.requestedSchema",
+    written: { text: "Q", collective: { op: "gather", deadline: 60 } },
+  },
+  {
+    field: "collective.requestedSchema.type",
+    written: {
+      text: "Q",
+      collective: {
+        ...gather,
+        requestedSchema: { ...slotForm, type: "array" },
+      },
+    },
+  },
+  {
+    field: "collective.op",
+    written: { text: "Q", collective: { ...gather, op: "poll" } },
+  },
+  {
+    field: "collectiveResponse",
+    written: {
+      text: "Q",
+      collectiveResponse: { action: "decline", operationId },
+    },
+  },
+  {
+    field: "collectiveResponse.action",
+    written: { collectiveResponse: { action: "maybe", operationId } },
+  },
+  {
+    field: "collectiveResponse.content",
+    written: { collectiveResponse: { action: "accept", operationId } },
+  },
+  {
+    field: "collectiveResponse.operationId",
+    written: { collectiveResponse: { action: "decline" } },
+  },
+];
+
+it.each(malformedSends)(
+  "names $field when it refuses a malformed question or answer",
+  ({ field, written }) =>
+    Effect.gen(function* () {
+      const fixture = yield* mcpFixture();
+      const reply = yield* Effect.tryPromise(() =>
+        fixture.fetch(
+          mcpRequest("tools/call", {
+            name: "send_message",
+            arguments: { to: "agent:bob", ...written },
+          }),
+        ),
+      );
+      const error = (yield* json(reply)).error;
+      expect(error?.code).toBe(-32602);
+      expect(error?.message).toContain(`${field}: `);
+    }),
+);
 
 // @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
 describe("MCP tool contracts", () => {

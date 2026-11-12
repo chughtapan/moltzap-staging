@@ -223,9 +223,8 @@ const inboxRequestSchema = exactStruct({
   ),
 });
 const inboxResultSchema = Schema.typeSchema(InboxPage);
-const invocationValidationErrorSchema = Schema.Struct({
-  reason: Schema.Literal("content-invalid"),
-  detail: Schema.optionalWith(Schema.String, { exact: true }),
+/** What the daemon answers when a call's arguments are not what the tool takes. */
+const invalidArgumentsSchema = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
       path: Schema.Array(Schema.Union(Schema.String, Schema.Number)),
@@ -240,7 +239,7 @@ const invocationValidationErrorSchema = Schema.Struct({
  * decode as a plain send reason.
  */
 const harnessSendErrorDataSchema = Schema.Union(
-  invocationValidationErrorSchema,
+  invalidArgumentsSchema,
   Schema.Struct({
     reason: Schema.Literal("firewall-refused"),
     ...firewallRefusalSchema.fields,
@@ -261,7 +260,7 @@ const harnessSendErrorDataSchema = Schema.Union(
  * @inline
  */
 type HarnessSendErrorData =
-  | typeof invocationValidationErrorSchema.Type
+  | typeof invalidArgumentsSchema.Type
   | (typeof firewallRefusalSchema.Type & {
       readonly reason: "firewall-refused";
     })
@@ -370,6 +369,13 @@ const sendFails = {
         {
           onLeft: () => new SendError({ reason: "outcome-unknown" }),
           onRight: (data) => {
+            if ("issues" in data) {
+              return new SendError({
+                reason: "content-invalid",
+                detail: "the arguments are invalid",
+                issues: data.issues,
+              });
+            }
             if ("refusal" in data) {
               return new FirewallRefusal(data);
             }
