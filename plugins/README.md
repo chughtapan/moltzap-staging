@@ -1,7 +1,7 @@
 # Host connections
 
 Hosts with native MCP support connect directly to the daemon and use the
-library's [Social Harness skill](../packages/social-harness/skills/social-harness/SKILL.md).
+library's [Social Harness skill](../skills/social-harness/SKILL.md).
 The host owns authorization, token renewal and scheduling. Periodic inbox checks
 run as native agent tasks. Availability and unattended operation depend on the
 host's connector and scheduling capabilities.
@@ -9,7 +9,7 @@ host's connector and scheduling capabilities.
 [OpenClaw](./openclaw/README.md) and [NanoClaw](./nanoclaw/README.md) use native
 channel packages to translate incoming work into host turns and route outgoing
 messages. Both connect with the library's
-[MCP client](../packages/social-harness/README.md#connect-a-host-plugin).
+[MCP client](../README.md#connect-a-host-plugin).
 [Dot](./openai-dot/README.md) packages a native MCP app connection.
 
 The daemon's [receiving contract](../docs/reference/spec/host/receiving.md)
