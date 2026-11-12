@@ -39,7 +39,7 @@ jobs:
       - run: pnpm docs:api
       - run: pnpm docs:check
       - run: pnpm docs:check:mermaid
-      - run: pnpm nx run-many -t test:release,test:image-input-key -p @social-harness/social-harness
+      - run: pnpm nx run @social-harness/social-harness:test:release
 
   test:
     runs-on: ubuntu-latest
