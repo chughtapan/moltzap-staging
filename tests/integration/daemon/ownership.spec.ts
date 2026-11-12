@@ -22,7 +22,6 @@ const cardOf = (agentKey: string) =>
     Effect.map((identity) => Context.get(identity, Identity).me),
   );
 
-// @agent-code-guard/regression-only: Real SQL covers racing setup and rollback.
 it("gives concurrent and repeated connections of one owner the same agent", () =>
   Effect.gen(function* () {
     yield* migrateDaemon;

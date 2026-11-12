@@ -46,7 +46,6 @@ it(
   120_000,
 );
 
-// @agent-code-guard/regression-only: The standalone CLI must reject cleartext DNS destinations before reading its private bearer file.
 it(
   "refuses credential delivery to an HTTP endpoint named by DNS",
   processTrace(
