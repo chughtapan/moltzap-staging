@@ -3,15 +3,18 @@
   "private": true,
   "description": "Cross-package process acceptance suites",
   "type": "module",
+  "scripts": {
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "eslint . --cache --max-warnings=0",
+    "test:live": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
+  },
   "nx": {
     "targets": {
       "test:integration": {
-        "executor": "nx:run-commands",
         "inputs": [
           "sources",
           "!{projectRoot}/images/**",
           "!{projectRoot}/README.md",
-          "!{projectRoot}/eslint.config.ts",
           "^production",
           {
             "runtime": "node --version"
@@ -22,47 +25,16 @@
           {
             "env": "SHARNESS_PG_TEST_URL"
           }
-        ],
-        "options": {
-          "cwd": "tests/integration",
-          "command": "vitest run --config vitest.integration.config.ts"
-        }
-      },
-      "typecheck:tests": {
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "^build"
-        ],
-        "options": {
-          "cwd": "tests/integration",
-          "command": "tsc -p tsconfig.json"
-        },
-        "inputs": [
-          "default",
-          "^production",
-          "{workspaceRoot}/eslint.shared.ts",
-          "{workspaceRoot}/scripts/**/*.ts",
-          "{workspaceRoot}/scripts/tsconfig.json",
-          {
-            "runtime": "node --version"
-          }
         ]
       },
       "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "tests/integration",
-          "command": "eslint . --cache --max-warnings=0"
-        },
         "inputs": [
           "default",
           "^production",
           "{workspaceRoot}/eslint.config.ts",
-          "{workspaceRoot}/eslint.shared.ts",
           "{workspaceRoot}/knip.json",
-          "{workspaceRoot}/tsconfig.eslint.json",
+          "{workspaceRoot}/tsconfig.check.json",
           "{workspaceRoot}/scripts/**/*.ts",
-          "{workspaceRoot}/scripts/tsconfig.json",
           {
             "runtime": "node --version"
           }
@@ -70,14 +42,9 @@
       },
       "test:live": {
         "cache": false,
-        "executor": "nx:run-commands",
         "dependsOn": [
           "^build"
-        ],
-        "options": {
-          "cwd": "tests/integration",
-          "command": "node --conditions=sharness-test --import tsx --test --test-timeout=600000 --test-concurrency=1 images/*.spec.ts"
-        }
+        ]
       }
     }
   },
@@ -91,7 +58,6 @@
     "@social-harness/openclaw-channel": "workspace:*",
     "@social-harness/social-harness": "workspace:*",
     "@testcontainers/postgresql": "catalog:",
-    "@typescript/native": "catalog:",
     "effect": "catalog:",
     "eslint": "catalog:",
     "jose": "catalog:",

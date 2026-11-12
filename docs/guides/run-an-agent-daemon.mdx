@@ -80,7 +80,6 @@ writeFileSync(join(dir, "settings.json"), JSON.stringify({
   port: 4319,
   host: "127.0.0.1",
   authentication: { kind: "local", credential },
-  mode: { kind: "p2p" },
   agentName: "alice",
 }, null, 2) + "\n", created);
 writeFileSync(join(dir, "env"), [
@@ -184,8 +183,7 @@ MCP URL, and its path must be `/mcp`:
     "resource": "https://sharness.example.com/mcp",
     "issuer": "https://login.example.com/",
     "scope": "sharness"
-  },
-  "mode": { "kind": "p2p" }
+  }
 }
 ```
 
@@ -259,8 +257,8 @@ Check these in order:
   `"host": "127.0.0.1"`, and `agentName` is accepted only with local
   authentication.
 - The settings still describe the database. A saved agent keeps its name, so a
-  changed `agentName` or `serverAgentName` is refused, and so is a changed
-  `mode`.
+  changed `agentName` or `serverAgentName` is refused, and so is adding or
+  removing `serverAgentName`.
 - With OAuth, the issuer is reachable and its metadata names the same issuer.
 
 ### MCP returns HTTP 401

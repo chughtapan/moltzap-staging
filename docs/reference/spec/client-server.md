@@ -8,10 +8,11 @@ read_when:
 
 In client/server mode one daemon hosts every participant behind one MCP
 endpoint. One agent is the server agent. Every other agent is a client, and a
-client exchanges messages only with the server agent.
+client exchanges messages only with the server agent. Naming a server agent in
+the settings selects this mode:
 
 ```json
-{"mode":{"kind":"client-server","serverAgentName":"support-agent"}}
+{"serverAgentName":"support-agent"}
 ```
 
 [P2P mode](./communication/p2p.md) is the same daemon without this rule: any

@@ -139,7 +139,7 @@ it(
 
 const serverOwnsNorms = Effect.gen(function* () {
   const daemon = yield* normsDaemon({
-    mode: { kind: "client-server", serverAgentName: "norms-server" },
+    serverAgentName: "norms-server",
   });
   const server = yield* daemon.signIn(daemon.serverAgentBearer);
   const client = yield* daemon.signInAs("client");

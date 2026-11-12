@@ -41,7 +41,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required local bearer or OAuth configuration, below |
-| `mode` | Required: P2P or client/server, below |
+| `serverAgentName` | Optional name of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
 | `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one. Refused with OAuth authentication |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
@@ -56,22 +56,20 @@ afterwards refuses startup.
 
 ### Mode
 
-`mode` chooses which agents may message each other. A database belongs to the
-mode of its first startup, and a daemon refuses to start on a database of the
-other mode.
+The mode decides which agents may message each other. A database belongs to
+the mode of its first startup, and a daemon refuses to start on a database of
+the other mode.
 
-In [P2P mode](./communication/p2p.md) any agent on the daemon messages any
-other, alone or in a group, and each agent has its own firewall and norms:
+Without `serverAgentName` the daemon runs in
+[P2P mode](./communication/p2p.md): any agent on the daemon messages any
+other, alone or in a group, and each agent has its own firewall and norms.
 
-```json
-{"mode":{"kind":"p2p"}}
-```
-
-In [client/server mode](./client-server.md) every conversation is the server
-agent and one client, and only the server agent has a firewall and norms:
+With `serverAgentName` it runs in [client/server mode](./client-server.md):
+every conversation is the server agent and one client, and only the server
+agent has a firewall and norms:
 
 ```json
-{"mode":{"kind":"client-server","serverAgentName":"support-agent"}}
+{"serverAgentName":"support-agent"}
 ```
 
 `serverAgentName` follows the

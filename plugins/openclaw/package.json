@@ -33,17 +33,13 @@
     }
   },
   "scripts": {
-    "test": "vitest run",
-    "typecheck:tests": "tsc -p tsconfig.test.json"
+    "build": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts",
+    "lint": "eslint . --cache --max-warnings=0",
+    "test": "vitest run --root ../.. --project openclaw-channel"
   },
   "nx": {
     "targets": {
       "build": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "plugins/openclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts"
-        },
         "inputs": [
           "production",
           "^production",
@@ -51,23 +47,19 @@
           "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts"
         ]
       },
-      "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "plugins/openclaw",
-          "command": "eslint . --cache --max-warnings=0"
-        }
+      "test": {
+        "dependsOn": [
+          "build",
+          "^build"
+        ]
       },
       "test:pack": {
-        "executor": "nx:run-commands",
+        "command": "node scripts/test-openclaw-package.ts",
         "dependsOn": [
           "build",
           "^build"
         ],
-        "cache": false,
-        "options": {
-          "command": "node scripts/test-openclaw-package.ts"
-        }
+        "cache": false
       },
       "arch:check": {
         "executor": "nx:run-commands",
@@ -75,12 +67,6 @@
           "cwd": "plugins/openclaw",
           "command": "safer-architecture-lsp check ."
         }
-      },
-      "test": {
-        "dependsOn": [
-          "build",
-          "^build"
-        ]
       }
     }
   },

@@ -22,29 +22,30 @@
     }
   },
   "scripts": {
-    "typecheck:tests": "tsc -p tsconfig.test.json",
-    "test": "vitest run"
+    "build": "node ../../scripts/build/clean-dist.ts && tsc -b",
+    "lint": "eslint . --cache --max-warnings=0",
+    "test": "vitest run --root ../.. --project nanoclaw-channel",
+    "test:abi": "tsc --noEmit --incremental false --composite false -p tsconfig.json"
   },
   "nx": {
     "targets": {
       "build": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "plugins/nanoclaw",
-          "command": "node ../../scripts/build/clean-dist.ts && tsc -b"
-        },
         "inputs": [
           "production",
           "^production",
           "{workspaceRoot}/scripts/build/clean-dist.ts"
         ]
       },
-      "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "plugins/nanoclaw",
-          "command": "eslint . --cache --max-warnings=0"
-        }
+      "test": {
+        "dependsOn": [
+          "build",
+          "^build"
+        ]
+      },
+      "test:abi": {
+        "dependsOn": [
+          "^build"
+        ]
       },
       "arch:check": {
         "executor": "nx:run-commands",
@@ -52,22 +53,6 @@
           "cwd": "plugins/nanoclaw",
           "command": "safer-architecture-lsp check ."
         }
-      },
-      "test:abi": {
-        "executor": "nx:run-commands",
-        "dependsOn": [
-          "^build"
-        ],
-        "options": {
-          "cwd": "plugins/nanoclaw",
-          "command": "tsc --noEmit --incremental false --composite false -p tsconfig.json"
-        }
-      },
-      "test": {
-        "dependsOn": [
-          "build",
-          "^build"
-        ]
       }
     }
   },

@@ -2,29 +2,12 @@
   "name": "@social-harness/nanoclaw-agent",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test --test-timeout=180000 *.spec.ts",
+    "lint": "eslint . --max-warnings=0"
+  },
   "nx": {
     "targets": {
-      "test": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/nanoclaw-agent",
-          "command": "node --test --test-timeout=180000 *.spec.ts"
-        }
-      },
-      "typecheck": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/nanoclaw-agent",
-          "command": "tsc -p tsconfig.json"
-        }
-      },
-      "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/nanoclaw-agent",
-          "command": "eslint . --max-warnings=0"
-        }
-      },
       "image:prepare": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -47,23 +30,15 @@
         }
       },
       "image:build": {
-        "executor": "nx:run-commands",
+        "command": "node images/nanoclaw-agent/build.ts --tag social-harness-nanoclaw:local",
         "cache": false,
         "dependsOn": [
           "image:prepare"
-        ],
-        "options": {
-          "cwd": ".",
-          "command": "node images/nanoclaw-agent/build.ts --tag social-harness-nanoclaw:local"
-        }
+        ]
       },
       "image:smoke": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": ".",
-          "command": "bash images/nanoclaw-agent/smoke.sh social-harness-nanoclaw:local"
-        }
+        "command": "bash images/nanoclaw-agent/smoke.sh social-harness-nanoclaw:local",
+        "cache": false
       },
       "image:lock": {
         "executor": "nx:run-commands",

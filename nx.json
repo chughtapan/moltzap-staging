@@ -9,8 +9,6 @@
       "default",
       "!{projectRoot}/**/*.spec.ts",
       "!{projectRoot}/src/**/__tests__/**",
-      "!{projectRoot}/tsconfig.test.json",
-      "!{projectRoot}/vitest.config.ts",
       "!{projectRoot}/vitest.integration.config.ts",
       "!{projectRoot}/safer-architecture.config.json"
     ],
@@ -22,7 +20,6 @@
       "{workspaceRoot}/**/*"
     ],
     "sharedGlobals": [
-      "{workspaceRoot}/tsconfig.base.json",
       "{workspaceRoot}/tsconfig.json",
       "{workspaceRoot}/pnpm-lock.yaml",
       "{workspaceRoot}/pnpm-workspace.yaml",
@@ -45,30 +42,13 @@
       "cache": true
     },
     "typecheck": {
-      "dependsOn": [
-        "^build"
-      ],
       "inputs": [
-        "production",
-        "^production"
+        "{workspaceRoot}/**/*.ts",
+        "{workspaceRoot}/tsconfig.check.json",
+        "sharedGlobals"
       ],
       "outputs": [
-        "{projectRoot}/tsconfig.typecheck.tsbuildinfo"
-      ],
-      "cache": true
-    },
-    "typecheck:tests": {
-      "dependsOn": [
-        "build",
-        "^build"
-      ],
-      "inputs": [
-        "default",
-        "^production",
-        "{workspaceRoot}/eslint.shared.ts"
-      ],
-      "outputs": [
-        "{projectRoot}/tsconfig.test.tsbuildinfo"
+        "{workspaceRoot}/tsconfig.check.tsbuildinfo"
       ],
       "cache": true
     },
@@ -78,7 +58,8 @@
       ],
       "inputs": [
         "sources",
-        "^production"
+        "^production",
+        "{workspaceRoot}/vitest.config.ts"
       ],
       "cache": true
     },
@@ -103,9 +84,8 @@
         "default",
         "^production",
         "{workspaceRoot}/eslint.config.ts",
-        "{workspaceRoot}/eslint.shared.ts",
         "{workspaceRoot}/knip.json",
-        "{workspaceRoot}/tsconfig.eslint.json"
+        "{workspaceRoot}/tsconfig.check.json"
       ],
       "cache": true
     },

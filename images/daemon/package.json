@@ -13,20 +13,12 @@
         "executor": "nx:noop"
       },
       "image:build": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": ".",
-          "command": "docker buildx build --load --tag social-harness-daemon:local --file images/daemon/Dockerfile ."
-        }
+        "command": "docker buildx build --load --tag social-harness-daemon:local --file images/daemon/Dockerfile .",
+        "cache": false
       },
       "image:smoke": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": ".",
-          "command": "bash images/daemon/smoke.sh social-harness-daemon:local"
-        }
+        "command": "bash images/daemon/smoke.sh social-harness-daemon:local",
+        "cache": false
       }
     }
   },

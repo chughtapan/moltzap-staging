@@ -261,9 +261,7 @@ export const acquirePeers = acquireScenario({}, (daemon) =>
 export const acquireGuardedServer = acquireScenario(
   {
     firewall: true,
-    settings: {
-      mode: { kind: "client-server", serverAgentName: "openclaw-host" },
-    },
+    settings: { serverAgentName: "openclaw-host" },
   },
   (daemon) => daemon.signIn(daemon.serverAgentBearer),
 );

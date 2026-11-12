@@ -8,47 +8,22 @@
   "files": [
     "package.json"
   ],
+  "scripts": {
+    "test": "node --test --test-timeout=180000 *.spec.ts",
+    "lint": "eslint . --max-warnings=0"
+  },
   "nx": {
     "targets": {
       "build": {
         "executor": "nx:noop"
       },
-      "test": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/openclaw-agent",
-          "command": "node --test --test-timeout=180000 *.spec.ts"
-        }
-      },
-      "typecheck": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/openclaw-agent",
-          "command": "tsc -p tsconfig.json"
-        }
-      },
-      "lint": {
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": "images/openclaw-agent",
-          "command": "eslint . --max-warnings=0"
-        }
-      },
       "image:build": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": ".",
-          "command": "docker buildx build --load --tag social-harness-openclaw:local --file images/openclaw-agent/Dockerfile ."
-        }
+        "command": "docker buildx build --load --tag social-harness-openclaw:local --file images/openclaw-agent/Dockerfile .",
+        "cache": false
       },
       "image:smoke": {
-        "executor": "nx:run-commands",
-        "cache": false,
-        "options": {
-          "cwd": ".",
-          "command": "bash images/openclaw-agent/smoke.sh social-harness-openclaw:local"
-        }
+        "command": "bash images/openclaw-agent/smoke.sh social-harness-openclaw:local",
+        "cache": false
       }
     }
   },
