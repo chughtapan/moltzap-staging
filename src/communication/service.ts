@@ -33,6 +33,8 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
     Layer.scoped(Communication, makeDelivery(settings));
 }
 
+/** Keeps a background loop of one agent running after a failure. */
+export { restarting } from "./collectives.js";
 /** Caller failures distinguish refusal from retained or uncertain progress. */
 export { CommunicationError } from "./errors.js";
 /** Messages and requests retain the same semantic values at every service handoff. */

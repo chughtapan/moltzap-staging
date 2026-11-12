@@ -10,6 +10,7 @@ import {
   Fiber,
   Option,
   Queue,
+  Ref,
   Schema,
   TestClock,
   TestContext,
@@ -34,7 +35,7 @@ import {
   RequestError,
   type ResultDelivery,
 } from "./messages.js";
-import { CommunicationError } from "./service.js";
+import { CommunicationError, restarting } from "./service.js";
 import { transaction } from "./store.js";
 
 class HandlerUnavailable extends Data.TaggedError("HandlerUnavailable") {}
@@ -566,6 +567,26 @@ it("publishes independent results while incoming handlers share SQL transactions
       ),
     );
   }));
+
+it("starts a failed loop again after one second, then after two more", () =>
+  Effect.gen(function* () {
+    const attempts = yield* Ref.make(0);
+    yield* Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+      Effect.flatMap((count) =>
+        count < 3 ? Effect.fail(new HandlerUnavailable()) : Effect.never,
+      ),
+      restarting("agent", "loop"),
+      Effect.fork,
+    );
+    yield* TestClock.adjust(0);
+    for (const pause of [1000, 2000]) {
+      const before = yield* Ref.get(attempts);
+      yield* TestClock.adjust(pause - 1);
+      expect(yield* Ref.get(attempts)).toBe(before);
+      yield* TestClock.adjust(1);
+      expect(yield* Ref.get(attempts)).toBe(before + 1);
+    }
+  }).pipe(Effect.provide(TestContext.TestContext)));
 
 it.prop(
   "preserves ordinary text for every message passed through the collective boundary",

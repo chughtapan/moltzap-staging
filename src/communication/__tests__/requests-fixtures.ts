@@ -58,6 +58,7 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
         Effect.zipRight(Queue.offer(sent, message)),
         Effect.asVoid,
       ),
+    completed: Effect.void,
   }).pipe(Effect.provideService(SqlClient, database.sql), Scope.extend(scope));
   const consumeResults = <E, R>(
     handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
@@ -67,7 +68,6 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
       .pipe(
         Effect.zipRight(Effect.sleep("10 millis")),
         Effect.forever,
-        Effect.raceFirst(requests.failed),
         Effect.provideService(SqlClient, database.sql),
       );
   const service = {

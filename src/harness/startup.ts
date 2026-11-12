@@ -83,6 +83,7 @@ function runDaemon() {
         serverNorms: yield* Ref.make(
           Option.none<Context.Tag.Service<typeof HeldNorms>>(),
         ),
+        consumers: new Map(),
       });
       const app = yield* makeMcpHttpApp(
         settings.authentication,
@@ -196,6 +197,8 @@ interface DaemonResources {
   readonly serverNorms: Ref.Ref<
     Option.Option<Context.Tag.Service<typeof HeldNorms>>
   >;
+  /** The latch each agent's consumer waits on, which a send to that agent opens. */
+  readonly consumers: Map<string, Effect.Latch>;
 }
 
 /** Requests borrow a prepared app; their cancellation never owns its acquisition. */
@@ -312,6 +315,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
             Communication.layer({
               agentKey,
               card,
+              consumers: daemon.consumers,
               maximumHistoryRecords: policy?.maximumHistoryRecords,
               ...(place.role === "peer" ? {} : { permits: place.permits }),
             }),
