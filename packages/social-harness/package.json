@@ -19,7 +19,6 @@
   "files": [
     "dist",
     "!dist/tsconfig.tsbuildinfo",
-    "bin",
     "skills",
     "config",
     "LICENSE",
@@ -44,7 +43,7 @@
     }
   },
   "bin": {
-    "sharnessd": "./bin/sharnessd"
+    "sharnessd": "./dist/main.js"
   },
   "scripts": {
     "test": "vitest run",

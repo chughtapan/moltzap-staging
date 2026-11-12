@@ -71,6 +71,10 @@
     {
       "path": "src/harness/startup.ts",
       "reason": "Process database and agent construction"
+    },
+    {
+      "path": "src/main.ts",
+      "reason": "Where the sharnessd process starts"
     }
   ],
   "domains": [

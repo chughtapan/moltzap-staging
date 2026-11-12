@@ -1,12 +1,13 @@
-/** @file Verifies packed service entries and explicit firewall assets in an isolated consumer. */
+/** @file Verifies packed service entries, the installed `sharnessd` command and explicit firewall assets in an isolated consumer. */
 import { Effect } from "effect";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { workspacePackages } from "./repo/packages.ts";
 import {
   installPackedConsumer,
   packProductClosure,
   readConsumerPins,
+  requireCondition,
   runCommand,
   runGate,
 } from "./test/packed-workspace.ts";
@@ -70,6 +71,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
         env: { NODE_PATH: "" },
       },
     );
+    yield* verifyCommand(consumerRoot);
     yield* verifyPolicyAssets(consumerRoot);
     return "social-harness package consumer check passed";
   }),
@@ -95,6 +97,22 @@ function publicImports(): string {
     )
     .map((specifier) => `await import(${JSON.stringify(specifier)});`)
     .join("\n");
+}
+
+/** The command the package installs runs from the consumer and prints its usage. */
+function verifyCommand(consumerRoot: string) {
+  return runCommand(
+    join(consumerRoot, "node_modules", ".bin", "sharnessd"),
+    ["--help"],
+    { cwd: consumerRoot, env: { NODE_PATH: "" } },
+  ).pipe(
+    Effect.flatMap((printed) =>
+      requireCondition(
+        printed.includes("Usage: sharnessd"),
+        `expected the installed sharnessd --help to print its usage, got:\n${printed}`,
+      ),
+    ),
+  );
 }
 
 /** The installed package retains the preset and its shipped behavior documents. */
