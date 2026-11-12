@@ -32,7 +32,7 @@ export const evidence: FirewallEvidence = {
 /** The raw provider text, which no decision may expose. */
 export const privateProviderResponse = "private provider explanation";
 /** Finds `privacy` broken and every other rule followed, with certainty. */
-export const judgments: DecisionProvider = {
+const judgments: DecisionProvider = {
   decide: (request) =>
     Effect.succeed({
       provider: "test",

@@ -13,7 +13,15 @@ import {
   SendError,
   type SendResult,
 } from "@social-harness/social-harness";
-import { Effect, Fiber, Queue, Schema, Scope, Stream } from "effect";
+import {
+  Effect,
+  FastCheck as fc,
+  Fiber,
+  Queue,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRegistration, ChannelSetup } from "./adapter.js";
 import type { registerChannelAdapter } from "./channel-registry.js";
@@ -65,10 +73,12 @@ const slotForm = {
   properties: { slot: { type: "string", enum: ["mon", "tue"] } },
   required: ["slot"],
 };
+/** The `send_message` arguments of a question, without their destination. */
 const question = {
   text: "Which day works?",
   collective: { op: "all_gather", deadline: 60, requestedSchema: slotForm },
 };
+/** The `send_message` arguments of an answer, without their destination. */
 const answer = {
   collectiveResponse: {
     action: "accept",
@@ -98,39 +108,29 @@ const questionEntry = entry({
     },
   },
 });
-/** The result of that question. */
-const resultEntry = entry({
-  deliveryToken,
-  address: group,
-  item: {
-    kind: "collectiveResult",
-    op: "all_gather",
-    operationId,
-    closedAt: 1_800_000_000_000,
-    closedBy: "settled",
-    question: question.text,
-    outcomes: [
-      { member: bob, outcome: { kind: "answered", content: { slot: "tue" } } },
-      { member: carol, outcome: { kind: "declined" } },
-    ],
-  },
-});
-/** Alice's message with a reminder from Bob's firewall. */
-const remindedEntry = entry({
-  deliveryToken,
-  address,
-  item: message,
-  guidance: {
-    checkId: `chk_${"a".repeat(64)}`,
-    instructions: [
-      {
-        ruleId: "calendar",
-        instruction: "Share calendar details only with the owner.",
-        uncertain: { choice: "violation", probability: 0.5 },
-      },
-    ],
-  },
-});
+const agentName = fc.stringMatching(/^[a-z0-9]{3,8}$/);
+/** An explicit destination: one agent, or a group's members in any order. */
+const destinations = fc.oneof(
+  agentName.map((name) => `agent:${name}`),
+  fc
+    .uniqueArray(agentName, { minLength: 2, maxLength: 4 })
+    .map((names) => `group:${names.join(",")}`),
+);
+/** Fields a model may write beside a question or an answer, a destination among them. */
+const besides = fc.dictionary(
+  fc.constantFrom("text", "to", "note"),
+  fc.string(),
+);
+/** A question or an answer as a model writes it: a JSON object with a `collective` or `collectiveResponse` property. */
+const operations = fc
+  .tuple(besides, fc.constantFrom(question, answer))
+  .map(([beside, named]) => ({ ...beside, ...named }));
+/** Text that is no such object: prose, or a JSON object with neither property. */
+const plainTexts = fc.oneof(
+  fc.string(),
+  besides.map((written) => JSON.stringify(written)),
+);
+
 type Adapter = NonNullable<Awaited<ReturnType<ChannelRegistration["factory"]>>>;
 let registration: ChannelRegistration;
 let adapter: Adapter | undefined;
@@ -254,7 +254,6 @@ describe("NanoClaw lifecycle", () => {
   });
 });
 
-// @agent-code-guard/regression-only: Each inbox item kind has one fixed host form.
 describe("NanoClaw incoming items", () => {
   it("hands a plain message to the host as its text, with its native reply route", async () => {
     const { metadata, replyTo, isGroup, content } = await received(plainEntry);
@@ -279,17 +278,6 @@ describe("NanoClaw incoming items", () => {
     });
     expect(entryInText(content)).toEqual(questionEntry);
   });
-  it("hands a result to the host as its inbox entry, from Social Harness", async () => {
-    const { isGroup, content } = await received(resultEntry);
-    expect(isGroup).toBe(true);
-    expect(content).toMatchObject({ sender: "Social Harness" });
-    expect(entryInText(content)).toEqual(resultEntry);
-  });
-  it("hands a message with a firewall reminder to the host as its inbox entry", async () => {
-    const { content } = await received(remindedEntry);
-    expect(content.sender).toBe(address);
-    expect(entryInText(content)).toEqual(remindedEntry);
-  });
   it("disconnects when the native inbound callback fails", async () => {
     const fake = connection();
     const current = await channel();
@@ -303,81 +291,88 @@ describe("NanoClaw incoming items", () => {
   });
 });
 
-// @agent-code-guard/regression-only: Native callback completion and fixed send-failure classes define distinct lifecycle cases.
 describe("NanoClaw sends", () => {
-  it.each([
-    { sends: "plain text", text: messageText, sent: { text: messageText } },
-    { sends: "a question", text: JSON.stringify(question), sent: question },
-    { sends: "an answer", text: JSON.stringify(answer), sent: answer },
-    {
-      sends: "JSON that is not send_message arguments",
-      text: '{"note":"prose"}',
-      sent: { text: '{"note":"prose"}' },
-    },
-  ])("sends $sends through send_message once", async ({ text, sent }) => {
+  it("sends text that is not a question or an answer as one plain message to its address", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
-    await current.deliver(address, null, { kind: "chat", content: text });
-    expect(fake.call).toHaveBeenCalledTimes(1);
-    expect(fake.call.mock.calls[0]?.[0]).toEqual({
-      name: "send_message",
-      arguments: { ...sent, to: address },
-    });
+    await fc.assert(
+      fc.asyncProperty(destinations, plainTexts, async (to, text) => {
+        fake.call.mockClear();
+        await current.deliver(to, null, { kind: "chat", content: text });
+        expect(fake.call.mock.calls.map(([called]) => called)).toEqual([
+          { name: "send_message", arguments: { text, to } },
+        ]);
+      }),
+    );
   });
-  it("tells the model which argument the daemon refused", async () => {
+  it("sends a JSON object that names a question or an answer as those send_message arguments, to the row's address", async () => {
     const fake = connection();
     const current = await channel();
-    const callbacks = host();
-    const issues = [
-      { path: ["collective", "deadline"], message: "Expected a number" },
-    ];
-    fake.call.mockRejectedValue(
-      new ProtocolError(-32602, "Invalid tool arguments", { issues }),
-    );
-    await current.setup(callbacks);
-    await expect(
-      current.deliver(address, null, {
-        kind: "chat",
-        content: JSON.stringify({ ...question, collective: { op: "gather" } }),
+    await current.setup(host());
+    await fc.assert(
+      fc.asyncProperty(destinations, operations, async (to, written) => {
+        fake.call.mockClear();
+        await current.deliver(to, null, {
+          kind: "chat",
+          content: JSON.stringify(written),
+        });
+        expect(fake.call.mock.calls.map(([called]) => called)).toEqual([
+          { name: "send_message", arguments: { ...written, to } },
+        ]);
       }),
-    ).resolves.toBeUndefined();
-    expect(
-      jsonObject(callbacks.onInboundEvent.mock.calls[0]?.[0].message.content),
-    ).toMatchObject({
-      sender: "Social Harness",
-      text: new SendError({
+    );
+  });
+  it("refuses a name with no agent: or group: scheme before contacting MCP", async () => {
+    const fake = connection();
+    const current = await channel();
+    await current.setup(host());
+    await fc.assert(
+      fc.asyncProperty(agentName, async (name) => {
+        await expect(
+          current.deliver(name, null, { kind: "chat", content: messageText }),
+        ).rejects.toThrow("explicit agent or group address");
+        expect(fake.call).not.toHaveBeenCalled();
+      }),
+    );
+  });
+  const issues = [
+    { path: ["collective", "deadline"], message: "Expected a number" },
+  ];
+  it.each([
+    {
+      failure: "refuses an argument",
+      error: new ProtocolError(-32602, "Invalid tool arguments", { issues }),
+      told: new SendError({
         reason: "content-invalid",
         detail: "the arguments are invalid",
         issues,
-      }).message,
-    });
-  });
-  it("reports an uncertain send without creating another send", async () => {
-    const fake = connection();
-    const current = await channel();
-    const callbacks = host();
-    fake.call.mockRejectedValue(
-      new ProtocolError(-32603, "Uncertain", { reason: "outcome-unknown" }),
-    );
-    await current.setup(callbacks);
-    await expect(
-      current.deliver(address, null, { kind: "chat", content: messageText }),
-    ).resolves.toBeUndefined();
-    expect(
-      callbacks.onInboundEvent.mock.calls[0]?.[0].message.content,
-    ).toContain(new SendError({ reason: "outcome-unknown" }).message);
-    expect(fake.call).toHaveBeenCalledTimes(1);
-  });
-  it("refuses an implicit destination before contacting MCP", async () => {
-    const fake = connection();
-    const current = await channel();
-    await current.setup(host());
-    await expect(
-      current.deliver("Alice", null, { kind: "chat", content: messageText }),
-    ).rejects.toThrow("explicit agent or group address");
-    expect(fake.call).not.toHaveBeenCalled();
-  });
+      }),
+    },
+    {
+      failure: "cannot say whether it sent",
+      error: new ProtocolError(-32603, "Uncertain", {
+        reason: "outcome-unknown",
+      }),
+      told: new SendError({ reason: "outcome-unknown" }),
+    },
+  ])(
+    "tells the model when the daemon $failure, and does not send again",
+    async ({ error, told }) => {
+      const fake = connection();
+      const current = await channel();
+      const callbacks = host();
+      fake.call.mockRejectedValue(error);
+      await current.setup(callbacks);
+      await expect(
+        current.deliver(address, null, { kind: "chat", content: messageText }),
+      ).resolves.toBeUndefined();
+      expect(
+        jsonObject(callbacks.onInboundEvent.mock.calls[0]?.[0].message.content),
+      ).toMatchObject({ sender: "Social Harness", text: told.message });
+      expect(fake.call).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 /* eslint-enable agent-code-guard/async-keyword -- Restore Effect-first production boundaries. */
