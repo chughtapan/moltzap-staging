@@ -90,6 +90,9 @@ catalogs:
     ajv:
       specifier: 8.18.0
       version: 8.18.0
+    ajv-formats:
+      specifier: 3.0.1
+      version: 3.0.1
     eslint:
       specifier: ^9
       version: 9.39.4
@@ -211,6 +214,12 @@ importers:
       '@thi.ng/sexpr':
         specifier: 'catalog:'
         version: 1.1.39
+      ajv:
+        specifier: 'catalog:'
+        version: 8.18.0
+      ajv-formats:
+        specifier: 'catalog:'
+        version: 3.0.1(ajv@8.18.0)
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -248,9 +257,6 @@ importers:
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2
-      ajv:
-        specifier: 'catalog:'
-        version: 8.18.0
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
