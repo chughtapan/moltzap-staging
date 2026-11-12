@@ -14,6 +14,7 @@ export {
 export {
   acquireMcpConnection,
   callTool,
+  callToolAsWritten,
   connectFromEnvironment,
   McpConnectError,
   type McpConnection,
@@ -23,16 +24,8 @@ export {
   McpToolError,
   type ToolFailure,
 } from "./harness/mcp/client.js";
-/** Send requests, accepted-work receipts and agent-facing text for host integrations. */
-export {
-  groupMembers,
-  MessageTextError,
-  parseMessageText,
-  renderInboxItem,
-  replyAddress,
-  SendRequest,
-  type SendResult,
-} from "./harness/message-format.js";
+/** Send requests and accepted-work receipts. */
+export { SendRequest, type SendResult } from "./harness/message-format.js";
 /** Results and policy feedback that a host may show its agent. */
 export { FirewallRefusal, PermittedItem, Withheld } from "./firewall/index.js";
 /** Policy failures retain actionable reasons and bounded field information. */

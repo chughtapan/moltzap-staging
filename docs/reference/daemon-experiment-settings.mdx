@@ -21,9 +21,7 @@ daemon reads them once at startup.
 | `hideCollectives` | `false` | `send_message` offers only `to` and `text`. Questions (gather, all_gather) and answers are not offered, and a send that includes them is refused as invalid arguments. |
 | `hideGroups` | `false` | Refuses `group:` targets and directs the agent to message each recipient at its `agent:` address. |
 
-Both take a JSON boolean, and any other value refuses startup. A text that
-states an operation is checked for its fields before the switches apply. The
-group check runs first. Enable both switches to use only direct plain-text
+Both take a JSON boolean, and any other value refuses startup. Enable both switches to use only direct plain-text
 messages. [Client/server mode](/reference/spec/client-server) always applies
 both.
 

@@ -32,8 +32,8 @@ const REPORT_PREFIX = "nanoclaw probe report: ";
 /**
  * The agent runner's script that queues each destination in order: one
  * marked `final` through the agent's final output, and any other as
- * `send_message` tool arguments `to` and `text`, whose text may state a
- * gather, all_gather or answer.
+ * `send_message` tool arguments `to` and `text`, whose text may be the
+ * JSON of a question or an answer.
  */
 const OUTBOUND_SOURCE = `
   import '${RUNNER_ROOT}/modules/index.ts';
@@ -67,14 +67,15 @@ const OUTBOUND_SOURCE = `
 type ModuleRecord = Readonly<Record<string, unknown>>;
 
 /**
- * The message the probe waits for in the native inbox: its conversation,
- * sender, and either its exact text or a prefix of it.
+ * The item the probe waits for in the native inbox: its conversation,
+ * sender, and either a plain message's exact text or the `operationId` of
+ * the question whose inbox entry the text holds as JSON.
  */
 interface ExpectedInbound {
   readonly platformId: string;
   readonly sender: string;
   readonly text?: string;
-  readonly textPrefix?: string;
+  readonly operationId?: string;
 }
 
 /** The NanoClaw host modules the probe drives. */
@@ -139,12 +140,12 @@ function decodeDestinations(value: unknown): readonly unknown[] {
 }
 
 function decodeInbound(value: unknown): ExpectedInbound {
-  const { platformId, sender, text, textPrefix } = asRecord(value);
+  const { platformId, sender, text, operationId } = asRecord(value);
   if (
     typeof platformId !== "string" ||
     typeof sender !== "string" ||
     !optionalString(text) ||
-    !optionalString(textPrefix)
+    !optionalString(operationId)
   ) {
     throw new Error("NANOCLAW_INBOUND_JSON must name a platformId and sender");
   }
@@ -152,7 +153,7 @@ function decodeInbound(value: unknown): ExpectedInbound {
     platformId,
     sender,
     ...(text === undefined ? {} : { text }),
-    ...(textPrefix === undefined ? {} : { textPrefix }),
+    ...(operationId === undefined ? {} : { operationId }),
   };
 }
 
@@ -329,15 +330,30 @@ function matchesInbound(value: unknown, expected: ExpectedInbound): boolean {
     return false;
   }
   const textMatches =
-    expected.textPrefix === undefined
+    expected.operationId === undefined
       ? text === expected.text
-      : text.startsWith(expected.textPrefix);
+      : questionId(text, expected.platformId) === expected.operationId;
   return (
     textMatches &&
     address === expected.platformId &&
     sender === expected.sender &&
     senderId === expected.sender
   );
+}
+
+/**
+ * The `operationId` of the question whose inbox entry `text` holds as JSON,
+ * when that entry is in the conversation `address`.
+ */
+function questionId(text: string, address: string): unknown {
+  if (!text.startsWith("{")) {
+    return undefined;
+  }
+  const entry = asRecord(JSON.parse(text));
+  const item = asRecord(entry.item);
+  return entry.address === address && item.kind === "collectiveRequest"
+    ? asRecord(asRecord(item.message).operation).operationId
+    : undefined;
 }
 
 async function replaceWorkspace(target: string): Promise<undefined> {

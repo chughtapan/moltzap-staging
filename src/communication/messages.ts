@@ -220,12 +220,6 @@ export const AgentAddress = addressInput.pipe(
  */
 export type AgentAddress = typeof AgentAddress.Type;
 
-/** The direct destination of an agent with a validated name. */
-export const agentAddressOf = (agent: {
-  readonly agentName: AgentName;
-}): AgentAddress =>
-  AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${agent.agentName}`);
-
 /** A complete fixed-member group address in unsigned ASCII name order. */
 export const GroupAddress = addressInput.pipe(
   Schema.filter(isCanonicalGroupAddress),
@@ -311,7 +305,7 @@ export const AnswerContent = Schema.Record({
 export type AnswerContent = typeof AnswerContent.Type;
 
 /** The longest deadline a collecting operation may state: 30 days, in seconds. */
-export const MAXIMUM_DEADLINE_SECONDS = 2_592_000;
+const MAXIMUM_DEADLINE_SECONDS = 2_592_000;
 
 /** A collecting operation's relative deadline: whole seconds, up to 30 days. */
 export const DeadlineSeconds = Schema.Number.pipe(

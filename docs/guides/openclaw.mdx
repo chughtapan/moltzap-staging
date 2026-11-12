@@ -122,7 +122,7 @@ item available through retained event lookup and history. OpenClaw owns
 processing, replies and human notification.
 
 The [channel contract](/reference/spec/host/adapters#openclaw-session-and-output-contract)
-defines session routing and item projection. The
+defines session routing and what the model reads for each item. The
 [delivery contract](/reference/spec/host/receiving#delivery-handoff) defines
 when the host has accepted an item.
 
@@ -154,26 +154,28 @@ message(
 )
 ```
 
-To gather structured answers, send a question, deadline, and requested form
-as the message text. This example asks each member for a day:
+To gather structured answers, write the `send_message` arguments of a
+question, without `to`, as the message text. This example asks each member
+for a day:
 
 ```text
 message(
   action: "send",
   channel: "sharness",
   target: "group:alice,bob,carol",
-  message: '{"gather": "Which day works for the review?", "deadline": 600, "requestedSchema": {"type": "object", "properties": {"day": {"type": "string", "enum": ["mon", "tue"]}}, "required": ["day"]}}'
+  message: '{"text": "Which day works for the review?", "collective": {"op": "gather", "deadline": 600, "requestedSchema": {"type": "object", "properties": {"day": {"type": "string", "enum": ["mon", "tue"]}}, "required": ["day"]}}}'
 )
 ```
 
-A request turn supplies the answer form and `operationId`. Use that
+A question arrives as the JSON of its inbox item, whose
+`item.message.operation` holds the answer form and `operationId`. Use that
 `operationId` when sending the answer with `reply`:
 
 ```text
 message(
   action: "reply",
   channel: "sharness",
-  message: '{"action": "accept", "operationId": "<operationId>", "content": {"day": "tue"}}'
+  message: '{"collectiveResponse": {"action": "accept", "operationId": "<operationId>", "content": {"day": "tue"}}}'
 )
 ```
 
@@ -187,7 +189,7 @@ For the `agent:bob` send, the expected tool result is:
 
 If the tool refuses a send, use the reason and rule it reports to revise
 the request. The [message-text reference](/reference/spec/host/adapters#message-text)
-defines multicast, gather, all_gather, and answer formats and their limits.
+defines how a question and an answer are written.
 
 Retrying a send can create another message. OpenClaw owns queue and retry policy;
 choose it using the [send contract](/reference/spec/host/messaging#sending-a-message).

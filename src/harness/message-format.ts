@@ -1,44 +1,31 @@
-/** @file Parses host requests and formats messages for the agent. */
+/** @file The sends a host may make, their canonical destinations and what a refused one reports. */
 
 import {
   Array,
-  Data,
   Effect,
-  Either,
   Option,
   type ParseResult,
-  Predicate,
   Schema,
   SchemaAST,
 } from "effect";
-import { absurd } from "effect/Function";
-import type {
-  CheckedGuidance,
-  LocalGuidance,
-  PermittedItem,
-} from "../firewall/index.js";
 import { SendError, type ValidationIssue } from "../communication/errors.js";
 import {
   AcceptResponse,
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  agentAddressOf,
   CollectiveId,
-  type Content,
   DeadlineSeconds,
   DeclineResponse,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
-  type Message,
   MessageAddressInput,
   MsgId,
-  type Request,
   RequestedSchema,
   wellFormedString,
 } from "../communication/messages.js";
 import { compareAscii, exactStruct } from "../encoding/index.js";
-import { type AgentCard, AgentName } from "../identity/agent-cards.js";
+import { AgentName } from "../identity/agent-cards.js";
 import { MessageAddress } from "./inbox.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
@@ -94,12 +81,14 @@ export const SendArguments = exactStruct({
   collective: Schema.optionalWith(Schema.Union(multicast, question), {
     exact: true,
   }).annotations({
-    description: "With text: a collective operation to open with this message.",
+    description:
+      "With text: asks the text as a question. gather asks each agent the address names privately and returns one result to you. all_gather asks a group and returns the same result to every member. deadline is seconds from now, and requestedSchema is the form each answer fills in. The result arrives as a collectiveResult inbox item.",
   }),
   collectiveResponse: Schema.optionalWith(response, {
     exact: true,
   }).annotations({
-    description: "In place of text: the answer to an open collective request.",
+    description:
+      "In place of text: your one answer to a question, which arrives as a collectiveRequest inbox item. Send it to that item's address with the operationId in item.message.operation. accept takes content that fits that operation's requestedSchema. decline takes none.",
   }),
 }).pipe(Schema.compose(Schema.typeSchema(SendRequest), { strict: false }));
 
@@ -156,141 +145,6 @@ export function canonicalMessageAddress(
     : canonicalGroup(to, localAgentName);
 }
 
-type CollectiveRequestItem = Extract<
-  PermittedItem,
-  { readonly kind: "collectiveRequest" }
->;
-type CollectiveResultItem = Extract<
-  PermittedItem,
-  { readonly kind: "collectiveResult" }
->;
-type MemberOutcome = CollectiveResultItem["outcomes"][number]["outcome"];
-
-/**
- * Returns a canonical group's members as `agent:` addresses in address order.
- * Direct addresses return an empty list.
- */
-export function groupMembers(address: MessageAddressInput): readonly string[] {
-  return address.startsWith("group:")
-    ? address
-        .slice("group:".length)
-        .split(",")
-        .map((name) => `agent:${name}`)
-    : [];
-}
-
-/**
- * What a host shows its agent for one received item. `author` is the peer it
- * is from, and is absent for a result or failure, which Social Harness reports
- * itself. `textForAgent` adds the firewall's guidance to `text` when the item
- * has any. `howToAnswer` names the host's tool for answering a question.
- */
-export function renderInboxItem(
-  entry: { readonly item: PermittedItem; readonly guidance?: LocalGuidance },
-  howToAnswer: string,
-): {
-  readonly author?: AgentCard;
-  readonly text: string;
-  readonly textForAgent: string;
-} {
-  const { item, guidance } = entry;
-  const guided = (text: string, origin: "peer" | "endpoint") => ({
-    text,
-    textForAgent:
-      guidance === undefined
-        ? text
-        : renderLocalGuidance(guidance, { text, origin }),
-  });
-  switch (item.kind) {
-    case "multicast":
-      return {
-        author: item.message.author,
-        ...guided(renderContent(item.message.content), "peer"),
-      };
-    case "collectiveRequest":
-      return {
-        author: item.message.author,
-        text: renderCollectiveRequest(item, howToAnswer),
-        textForAgent: renderCollectiveRequest(item, howToAnswer, guidance),
-      };
-    case "collectiveResult":
-      return guided(renderCollectiveResult(item), "endpoint");
-    default:
-      return absurd(item);
-  }
-}
-
-/** Direct replies reach the author. Group replies keep every participant. */
-export function replyAddress(message: Pick<Message, "author" | "recipients">) {
-  return message.recipients.length === 1
-    ? agentAddressOf(message.author)
-    : GroupAddress.make(
-        `group:${[message.author, ...message.recipients]
-          .map((member) => member.agentName)
-          .sort(compareAscii)
-          .join(",")}`,
-      );
-}
-
-const COLLECTING_OPERATIONS = ["gather", "all_gather"] as const;
-
-type CollectingOperation = (typeof COLLECTING_OPERATIONS)[number];
-
-/**
- * Which operation a refused text stated.
- * @inline
- */
-type StatedOperation = "message" | CollectingOperation | "answer";
-
-/**
- * Reports invalid operation fields or malformed Unicode without exposing the
- * submitted text. Hosts may show its message as a tool error.
- */
-export class MessageTextError extends Data.TaggedError("MessageTextError")<{
-  readonly operation: StatedOperation;
-  readonly detail: string;
-}> {
-  override get message(): string {
-    const action = this.operation === "answer" ? "reply" : "send";
-    return `${action} failed: invalid ${this.operation}: ${this.detail}`;
-  }
-}
-
-const decodeJsonText = Schema.decodeUnknownOption(
-  Schema.parseJson(Schema.Unknown),
-);
-
-/**
- * Parses ordinary text or a structured question or answer. `to` identifies the
- * recipients, or the conversation containing the request an answer names.
- * Invalid operations return an error identifying each failing field.
- */
-export function parseMessageText(
-  to: MessageAddressInput,
-  text: string,
-): Either.Either<SendRequest, MessageTextError> {
-  const parsed = decodeJsonText(text);
-  if (Option.isSome(parsed) && Predicate.isRecord(parsed.value)) {
-    const value = parsed.value;
-    const op = COLLECTING_OPERATIONS.find((key) => Object.hasOwn(value, key));
-    if (op !== undefined) {
-      const { [op]: question, ...details } = value;
-      return decodeText(op, QuestionSendRequest, {
-        to,
-        text: question,
-        collective: { ...details, op },
-      });
-    }
-    if (Object.hasOwn(value, "action")) {
-      return decodeText("answer", AnswerSendRequest, {
-        to,
-        collectiveResponse: value,
-      });
-    }
-  }
-  return decodeText("message", MessageSendRequest, { to, text });
-}
-
 const MAXIMUM_VALIDATION_ISSUES = 20;
 
 /**
@@ -302,102 +156,6 @@ export function validationIssues(error: ParseResult.ParseError) {
   const issues: ValidationIssue[] = [];
   appendIssues(error.issue, [], issues);
   return issues;
-}
-
-/** Renders one content part per line, preserving text and serializing data as JSON. */
-function renderContent(content: Content): string {
-  return content
-    .map((part) =>
-      part.type === "text" ? part.text : (JSON.stringify(part.value) ?? "null"),
-    )
-    .join("\n");
-}
-
-/**
- * Renders a peer question, deadline, response form and answer instructions.
- * `howToAnswer` names the host's tool for sending the answer. Local guidance
- * quotes the peer question separately from instructions.
- */
-function renderCollectiveRequest(
-  item: CollectiveRequestItem,
-  howToAnswer: string,
-  guidance?: LocalGuidance,
-): string {
-  const body = renderCollectiveQuestion({
-    author: item.message.author,
-    recipients: item.message.recipients,
-    ...item.message.operation,
-  });
-  const operationId = JSON.stringify(item.message.operation.operationId);
-  const answerInstructions = [
-    `Answer with: {"action":"accept","operationId":${operationId},"content":{...}} where content matches the form, or {"action":"decline","operationId":${operationId}}`,
-    howToAnswer,
-  ];
-  if (guidance === undefined) {
-    return [body, ...answerInstructions].join("\n");
-  }
-  return [
-    renderLocalGuidance(guidance, { text: body, origin: "peer" }),
-    ...answerInstructions,
-  ].join("\n");
-}
-
-/**
- * Renders the question and one outcome per member. JSON quoting prevents peer
- * question text from appearing as another member's outcome.
- */
-function renderCollectiveResult(item: CollectiveResultItem): string {
-  const question =
-    typeof item.question === "string"
-      ? JSON.stringify(item.question)
-      : `(withheld: ${renderWithheld(item.question)})`;
-  return [
-    `${item.op} result: ${question}`,
-    ...item.outcomes.map(
-      ({ member, outcome }) =>
-        `- agent:${member.agentName}: ${renderOutcome(outcome)}`,
-    ),
-  ].join("\n");
-}
-
-/**
- * Renders the reminders for an admitted message the local firewall was unsure
- * about, separately from quoted content and its peer or endpoint attribution.
- */
-function renderLocalGuidance(
-  guidance: LocalGuidance,
-  quoted?: { text: string; origin: "peer" | "endpoint" },
-): string {
-  const entries =
-    "answers" in guidance
-      ? [
-          ...guidance.answers.map(({ member, ...checked }) => ({
-            for: `agent:${member.agentName}`,
-            ...checked,
-          })),
-          ...(guidance.question === undefined
-            ? []
-            : [{ for: "question", ...guidance.question }]),
-        ]
-      : [guidance];
-  const heading =
-    "answers" in guidance
-      ? "Social Harness reminder for this result, by answer and question: the local firewall could not tell whether these parts keep to these rules"
-      : `Social Harness reminder (${guidance.checkId}): the local firewall could not tell whether this message keeps to these rules`;
-  const instructions = entries.map((entry) => ({
-    ...("for" in entry ? { for: entry.for } : {}),
-    checkId: entry.checkId,
-    instructions: renderInstructions(entry),
-  }));
-  const advice = `${heading}:\n${quoteForAgent(instructions)}`;
-  if (quoted === undefined) {
-    return advice;
-  }
-  const label =
-    quoted.origin === "endpoint"
-      ? "Social Harness item, quoting peer answers (quoted content)"
-      : "Peer message (quoted content)";
-  return `${advice}\n\n${label}:\n${quoteForAgent(quoted.text)}`;
 }
 
 function invalidAddress(): SendError {
@@ -472,103 +230,6 @@ function canonicalGroup(
     ).pipe(Effect.mapError(invalidAddress));
     return { kind: "group", address, memberNames: names };
   });
-}
-
-function renderOutcome(outcome: MemberOutcome): string {
-  switch (outcome.kind) {
-    case "answered":
-      return `answered ${JSON.stringify(outcome.content)}`;
-    case "declined":
-      return "declined";
-    case "invalid":
-      return `answered outside the form (${outcome.reason})`;
-    case "no-answer":
-      return "no answer";
-    case "withheld":
-      return `answer withheld: ${renderWithheld(outcome)}`;
-    default: {
-      const exhaustive: never = outcome;
-      return exhaustive;
-    }
-  }
-}
-
-function renderCollectiveQuestion(
-  question: Pick<
-    Request,
-    | "author"
-    | "recipients"
-    | "question"
-    | "op"
-    | "deadlineAt"
-    | "requestedSchema"
-  >,
-): string {
-  const asked =
-    question.op === "all_gather"
-      ? `all_gather from agent:${question.author.agentName} to ${replyAddress(question)}`
-      : `gather from agent:${question.author.agentName}`;
-  return [
-    `${asked}, open until ${new Date(question.deadlineAt).toISOString()}.`,
-    `Question: ${question.question}`,
-    `Form: ${JSON.stringify(question.requestedSchema)}`,
-  ].join("\n");
-}
-
-function renderWithheld(
-  withheld: Extract<MemberOutcome, { readonly kind: "withheld" }>,
-): string {
-  return `local policy held it (${withheld.reason}, check ${withheld.checkId})`;
-}
-
-function renderInstructions(guidance: CheckedGuidance) {
-  return guidance.instructions.map((instruction) => ({
-    ruleId: instruction.ruleId,
-    uncertain: instruction.uncertain,
-    instruction: instruction.instruction,
-  }));
-}
-
-/** Escapes JSON and host prompt delimiters to keep peer text inside quoted values. */
-function quoteForAgent(value: unknown): string {
-  return JSON.stringify(value)
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e");
-}
-
-function decodeText<A, I>(
-  operation: StatedOperation,
-  schema: Schema.Schema<A, I>,
-  value: unknown,
-): Either.Either<A, MessageTextError> {
-  return Schema.decodeUnknownEither(schema, { errors: "all" })(value).pipe(
-    Either.mapLeft(
-      (error) =>
-        new MessageTextError({
-          operation,
-          detail: validationIssues(error)
-            .map(({ path, message }) => {
-              const nativePath = fieldPath(operation, path);
-              return `${nativePath.join(".")}: ${message}`;
-            })
-            .join("; "),
-        }),
-    ),
-  );
-}
-
-function fieldPath(
-  operation: StatedOperation,
-  path: ReadonlyArray<string | number>,
-) {
-  const [first, ...rest] = path;
-  if (first === "collective" || first === "collectiveResponse") {
-    return rest;
-  }
-  if (first === "text" && operation !== "message") {
-    return [operation];
-  }
-  return path;
 }
 
 function appendIssues(

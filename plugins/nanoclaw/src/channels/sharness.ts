@@ -1,21 +1,20 @@
 /** @file Projects the public Social Harness endpoint capability into NanoClaw. */
 import {
-  callTool,
+  type AgentCard,
+  callToolAsWritten,
   connectFromEnvironment,
   type DeliveryAcknowledgeError,
   type FirewallRefusal,
-  groupMembers,
   type InboxEntry,
   type McpConnectError,
   type McpConnection,
   MessageAddressInput,
   packageVersion,
-  parseMessageText,
-  renderInboxItem,
   type RequestError,
   type SendError,
 } from "@social-harness/social-harness";
 import {
+  absurd,
   Config,
   ConfigProvider,
   Data,
@@ -84,23 +83,49 @@ interface OutboundMessage {
   readonly files?: readonly OutboundFile[];
 }
 
-/** One outbound row's address and text, ready for the Client's parser. */
+/** One outbound row's address and text. */
 interface OutboundText {
   readonly to: MessageAddressInput;
   readonly text: string;
 }
 
+/**
+ * What NanoClaw's inbox shows the model for one item or refusal. `members`
+ * lists a group message's author and recipients.
+ */
 interface ProjectedItem {
   readonly id: string;
   readonly address: MessageAddressInput;
   readonly sender: string;
+  readonly members?: readonly string[];
   readonly text: string;
 }
 
+const decodeJsonObject = Schema.decodeUnknownOption(
+  Schema.parseJson(
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+);
+
 /**
- * Read one outbound row's address and text. The text is parsed separately,
- * so a refused operation text can reach the model rather than fail the row.
+ * The `send_message` arguments an outbound row amounts to. Text that is a
+ * JSON object with a `collective` or `collectiveResponse` property is the
+ * tool's own arguments for a question or an answer, which the daemon
+ * validates. Any other text is a plain message.
  */
+function sendArguments({
+  to,
+  text,
+}: OutboundText): Readonly<Record<string, unknown>> {
+  const written = Option.getOrUndefined(decodeJsonObject(text));
+  return written !== undefined &&
+    (Object.hasOwn(written, "collective") ||
+      Object.hasOwn(written, "collectiveResponse"))
+    ? { ...written, to }
+    : { to, text };
+}
+
+/** Reads one outbound row's address and text. */
 function decodeOutboundText(
   address: string,
   message: OutboundMessage,
@@ -187,27 +212,48 @@ const FINAL_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
 /** The sender NanoClaw records for an item the endpoint itself emitted. */
 const ENDPOINT_SENDER = "Social Harness";
 
-/** A message Social Harness itself sends the model: a result or a refusal. */
-function fromEndpoint(
-  id: string,
-  address: MessageAddressInput,
-  text: string,
-): InboundMessage {
-  return endpointInbound({
-    id,
-    address,
-    sender: ENDPOINT_SENDER,
-    text,
-  });
+/**
+ * What the model reads for an entry. A message of one text part with no
+ * firewall reminder is that text. Any other entry is its JSON, as
+ * `receive_messages` returns it.
+ */
+function entryText(entry: InboxEntry): string {
+  if (entry.item.kind === "multicast" && entry.guidance === undefined) {
+    const [part, ...rest] = entry.item.message.content;
+    if (part.type === "text" && rest.length === 0) {
+      return part.text;
+    }
+  }
+  return JSON.stringify(entry);
 }
 
 /**
- * NanoClaw's inbox shape for any delivered message, question, result or
- * failure. A group address keeps the native group flag and lists its members.
+ * Who an entry is from and, for a group message or question, who is in the
+ * group. A result is from Social Harness and names only the agents asked, so
+ * it lists no members.
  */
-function endpointInbound(input: ProjectedItem): InboundMessage {
-  const members = groupMembers(input.address);
-  const isGroup = members.length > 0;
+function entryParticipants(
+  entry: InboxEntry,
+): Pick<ProjectedItem, "sender" | "members"> {
+  const { item } = entry;
+  switch (item.kind) {
+    case "multicast":
+    case "collectiveRequest": {
+      const { author, recipients } = item.message;
+      const sender = agentAddress(author);
+      return isGroup(entry.address)
+        ? { sender, members: [sender, ...recipients.map(agentAddress)] }
+        : { sender };
+    }
+    case "collectiveResult":
+      return { sender: ENDPOINT_SENDER };
+    default:
+      return absurd(item);
+  }
+}
+
+/** NanoClaw's inbox shape, with the native group flag for a group address. */
+function hostMessage(input: ProjectedItem): InboundMessage {
   return {
     id: input.id,
     kind: "chat",
@@ -218,10 +264,18 @@ function endpointInbound(input: ProjectedItem): InboundMessage {
       address: input.address,
       sender: input.sender,
       senderId: input.sender,
-      ...(isGroup ? { members } : {}),
+      ...(input.members === undefined ? {} : { members: input.members }),
     },
-    isGroup,
+    isGroup: isGroup(input.address),
   };
+}
+
+function agentAddress(agent: AgentCard): string {
+  return `agent:${agent.agentName}`;
+}
+
+function isGroup(address: MessageAddressInput): boolean {
+  return address.startsWith("group:");
 }
 
 /**
@@ -368,32 +422,26 @@ class HarnessChannelAdapter {
       );
     }
     return decodeOutboundText(address, message).pipe(
-      Effect.flatMap(({ to, text }) =>
-        parseMessageText(to, text).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              this.reportRefusedText(config, to, error.message),
-            onSuccess: (input) =>
-              callTool(activation.endpoint.client, {
-                name: "send_message",
-                arguments: input,
-              }).pipe(
-                Effect.asVoid,
-                Effect.catchTag("RequestError", (error) =>
-                  this.reportRefusedText(config, to, error.message),
-                ),
-                Effect.catchTag("FirewallRefusal", (error) =>
-                  this.reportRefusedText(config, to, error.message),
-                ),
-                Effect.catchTag(
-                  "SendError",
-                  (error): Effect.Effect<void, ChannelError | SendError> =>
-                    FINAL_REFUSALS.has(error.reason)
-                      ? this.reportFinalRefusal(config, to, error)
-                      : Effect.fail(error),
-                ),
-              ),
-          }),
+      Effect.flatMap((outbound) =>
+        callToolAsWritten(
+          activation.endpoint.client,
+          "send_message",
+          sendArguments(outbound),
+        ).pipe(
+          Effect.asVoid,
+          Effect.catchTag("RequestError", (error) =>
+            this.reportRefusedText(config, outbound.to, error.message),
+          ),
+          Effect.catchTag("FirewallRefusal", (error) =>
+            this.reportRefusedText(config, outbound.to, error.message),
+          ),
+          Effect.catchTag(
+            "SendError",
+            (error): Effect.Effect<void, ChannelError | SendError> =>
+              FINAL_REFUSALS.has(error.reason)
+                ? this.reportFinalRefusal(config, outbound.to, error)
+                : Effect.fail(error),
+          ),
         ),
       ),
     );
@@ -433,7 +481,12 @@ class HarnessChannelAdapter {
     return this.handToHost(
       config,
       to,
-      fromEndpoint(`refused:${randomUUID()}`, to, report),
+      hostMessage({
+        id: `refused:${randomUUID()}`,
+        address: to,
+        sender: ENDPOINT_SENDER,
+        text: report,
+      }),
     );
   }
 
@@ -444,21 +497,14 @@ class HarnessChannelAdapter {
     if (config === null) {
       return Effect.void;
     }
-    const rendered = renderInboxItem(
-      delivery,
-      `Send the answer once as the whole text of send_message to ${delivery.address}.`,
-    );
     return this.handToHost(
       config,
       delivery.address,
-      endpointInbound({
+      hostMessage({
         id: delivery.deliveryToken,
         address: delivery.address,
-        sender:
-          rendered.author === undefined
-            ? ENDPOINT_SENDER
-            : `agent:${rendered.author.agentName}`,
-        text: rendered.textForAgent,
+        ...entryParticipants(delivery),
+        text: entryText(delivery),
       }),
     );
   }
@@ -472,7 +518,6 @@ class HarnessChannelAdapter {
     address: string,
     inbound: InboundMessage,
   ): Effect.Effect<void, ChannelError> {
-    const isGroup = inbound.isGroup === true;
     const content = JSON.stringify(inbound.content);
     if (content === undefined) {
       return Effect.fail(
@@ -483,7 +528,7 @@ class HarnessChannelAdapter {
     }
     return Effect.tryPromise({
       try: () => {
-        config.onMetadata(address, address, isGroup);
+        config.onMetadata(address, address, inbound.isGroup === true);
         return Promise.resolve(
           config.onInboundEvent({
             channelType: NANOCLAW_MAIN_CHANNEL,
