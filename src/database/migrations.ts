@@ -1,4 +1,4 @@
-/** @file Prepares versioned daemon storage for deployment and checks its runtime compatibility. */
+/** @file Prepares daemon storage for deployment and checks that the runtime can open it. */
 
 import { Migrator, SqlClient } from "@effect/sql";
 import { Data, Effect, type Redacted } from "effect";
@@ -8,9 +8,6 @@ import {
   databaseConnection,
   prepareDatabaseDirectory,
 } from "./sql.js";
-
-/** Identifies the table layout. A database with another number is not opened. */
-const daemonDatabaseFormat = 6;
 
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const agentTables = [
@@ -28,8 +25,6 @@ const agentTables = [
 /** Encryption check, owners and the agents the daemon has created for them. */
 const agentSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE database_format (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL)`;
-  yield* sql`INSERT INTO database_format(singleton,version) VALUES(1,${daemonDatabaseFormat})`;
   yield* sql`CREATE TABLE database_encryption (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1), verifier TEXT NOT NULL
   )`;
@@ -210,16 +205,9 @@ export const migrateDaemon = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("migrateDaemon"));
 
-/** Fails unless the database has this format and `unlockKey` opens it. Changes nothing. */
+/** Fails unless the database has been prepared and `unlockKey` opens it. Changes nothing. */
 export const checkDatabase = Effect.fn("checkDatabase")(
   function* (unlockKey: Redacted.Redacted<Uint8Array>) {
-    const sql = yield* SqlClient.SqlClient;
-    const [format] = yield* sql<{
-      version: number;
-    }>`SELECT version FROM database_format WHERE singleton=1`;
-    if (format?.version !== daemonDatabaseFormat) {
-      return yield* new DatabasePreparationError({ reason: "schema" });
-    }
     yield* verifyDatabaseKey(unlockKey);
   },
   Effect.catchTags({
@@ -282,8 +270,8 @@ export const prepareDatabase = Effect.gen(function* () {
 );
 
 /**
- * Only an empty database or one already in this format can be prepared. An
- * empty database may hold the migration ledger table with no rows.
+ * Only an empty database or one that already holds the daemon's tables can be
+ * prepared. An empty database may hold the migration ledger table with no rows.
  */
 function compatibleDatabase() {
   return Effect.gen(function* () {
@@ -298,14 +286,8 @@ function compatibleDatabase() {
           name: string;
         }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
     });
-    if (tables.some((table) => table.name === "database_format")) {
-      const [format] = yield* sql<{
-        version: number;
-      }>`SELECT version FROM database_format WHERE singleton=1`;
-      if (format?.version === daemonDatabaseFormat) {
-        return;
-      }
-      return yield* new DatabasePreparationError({ reason: "schema" });
+    if (tables.some((table) => table.name === "database_encryption")) {
+      return;
     }
     if (tables.some((table) => table.name !== migrationsTable)) {
       return yield* new DatabasePreparationError({ reason: "schema" });

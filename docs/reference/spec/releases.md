@@ -1,9 +1,9 @@
 ---
 title: Releases
-description: Published packages and images, their version, and what a release does to stored data.
+description: Published packages and images, and their version.
 read_when:
   - You need to choose matching daemon and adapter releases
-  - You are changing publication or the database format
+  - You are changing publication
 ---
 
 A release identifies packages and images that were built and tested together.
@@ -18,8 +18,8 @@ are outside the product release set.
 Every release publishes both packages and both images at one version,
 `YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
 `v<version>` tag already holds for that day. The OpenClaw channel depends on
-the exact Social Harness package version released with it. The package version, the
-MCP protocol revision and the database format advance independently.
+the exact Social Harness package version released with it. The package version
+and the MCP protocol revision advance independently.
 
 The [release workflow](https://github.com/social-harness/social-harness/blob/main/.github/workflows/release.yml)
 releases each commit on `main` after its CI run passes, and can be started by
@@ -31,13 +31,6 @@ the release version; the workflow writes it into what it packs and builds.
 A run for a commit that already has a version tag reuses that version and
 publishes only what is missing, so a failed release is completed by running
 the workflow again.
-
-## Stored data
-
-A daemon starts only on a database in the format its release writes. A
-database in another format is refused and is not converted, so a release that
-changes the format needs a freshly prepared database. The agents and
-conversations of the old database do not carry over.
 
 ## Service images
 
