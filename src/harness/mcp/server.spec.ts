@@ -13,14 +13,15 @@ import {
   Deferred,
   Effect,
   Exit,
+  FastCheck as fc,
   Fiber,
+  Record as Rec,
   Redacted,
   Ref,
   Schema,
   Scope,
   Stream,
 } from "effect";
-import * as fc from "fast-check";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
@@ -32,7 +33,7 @@ import {
 } from "../__tests__/mcp-fixtures.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
-import { SendError } from "../../communication/errors.js";
+import { SendError, sendFailureReasons } from "../../communication/errors.js";
 import { MessageAddressInput } from "../../communication/messages.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
 import { HistoryError } from "../social-harness.js";
@@ -44,7 +45,9 @@ import { serveMcp } from "./http.js";
 const response = Schema.parseJson(
   Schema.Struct({
     id: Schema.Unknown,
-    result: Schema.optional(Schema.Unknown),
+    result: Schema.optional(
+      Schema.Struct({ structuredContent: Schema.optional(Schema.Unknown) }),
+    ),
     error: Schema.optional(
       Schema.Struct({
         code: Schema.Number,
@@ -58,13 +61,51 @@ const json = (reply: Response) =>
   Effect.tryPromise(() => reply.text()).pipe(
     Effect.flatMap(Schema.decodeUnknown(response)),
   );
-/** Matches refusal data that names `field` as one the tool does not take. */
-const unexpectedField = (field: string): unknown =>
-  expect.arrayContaining([{ path: [field], message: "Unexpected field" }]);
 const send = {
   name: "send_message",
   arguments: { to: "agent:bob", text: "hello" },
 };
+const read = {
+  name: "read_conversation",
+  arguments: { address: "agent:bob" },
+};
+const serverAgent = MessageAddressInput.make("agent:bob");
+const sendReceipt = Schema.decodeUnknownSync(
+  toolDefinitions.send_message.output,
+)({ id: digest("msg_", 1), address: serverAgent });
+
+type Fixture = Effect.Effect.Success<ReturnType<typeof mcpFixture>>;
+/** Sends one request to `fixture`. */
+const exchange = (
+  fixture: Pick<Fixture, "fetch">,
+  ...request: Parameters<typeof mcpRequest>
+) => Effect.tryPromise(() => fixture.fetch(mcpRequest(...request)));
+/** Calls a tool on `fixture` and decodes the reply. */
+const toolCall = (
+  fixture: Pick<Fixture, "fetch">,
+  call: Readonly<Record<string, unknown>>,
+  id: string | number = 1,
+) => exchange(fixture, "tools/call", call, { id }).pipe(Effect.flatMap(json));
+
+/** Asserts `rule` for all generated `inputs`. The rule reads a fixture that the test around it built once. */
+const forAll = <Ts extends [unknown, ...unknown[]]>(
+  inputs: { [K in keyof Ts]: fc.Arbitrary<Ts[K]> },
+  rule: (...values: Ts) => Effect.Effect<void, unknown>,
+) =>
+  Effect.tryPromise(() =>
+    fc.assert(
+      fc.asyncProperty<Ts>(...inputs, (...values) =>
+        Effect.runPromise(rule(...values)),
+      ),
+    ),
+  );
+/** A value no argument accepts. A reply that contains its first word has repeated what was sent. */
+const unacceptable = fc
+  .stringMatching(/^[A-Z]{8}$/u)
+  .map((letters) => `PRIVATE${letters}`);
+/** Mostly `usual`, so that input made of several parts is often acceptable in all of them. */
+const mostly = <A>(usual: fc.Arbitrary<A>, other: fc.Arbitrary<A>) =>
+  fc.oneof({ arbitrary: usual, weight: 4 }, { arbitrary: other, weight: 1 });
 
 it("reports the agent's identifier and name in a result native draft-07 and 2020 clients accept", () =>
   Effect.gen(function* () {
@@ -101,201 +142,330 @@ it("reports the agent's identifier and name in a result native draft-07 and 2020
     });
   }));
 
-// @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
-describe("MCP authentication", () => {
-  it.each([{ authorization: "" }, { authorization: "Bearer wrong" }])(
-    "refuses an invalid bearer before invoking a service",
-    (headers) =>
-      Effect.gen(function* () {
-        const fixture = yield* mcpFixture();
-        const reply = yield* Effect.tryPromise(() =>
-          fixture.fetch(mcpRequest("tools/list", {}, { headers })),
-        );
-        expect(reply.status).toBe(401);
-        expect(reply.headers.get("www-authenticate")).toBe("Bearer");
-      }),
+const serverAgentCredential = "server-agent-credential-000000000001";
+/** Whom each credential admits a request as. */
+const owners = new Map([
+  [Redacted.value(mcpTestCredential), localOwner],
+  [serverAgentCredential, serverAgentOwner],
+]);
+/** How a Host header, then an Origin header, names the machine the daemon runs on. */
+const localHost = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/u;
+const localOrigin = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/u;
+const hosts = mostly(
+  fc.constantFrom("127.0.0.1", "localhost:8080", "[::1]"),
+  fc.oneof(fc.domain(), fc.ipV4()),
+);
+/** The Origin header of a request, which a request need not carry. */
+const origins = fc.record(
+  {
+    origin: fc
+      .tuple(
+        mostly(fc.constantFrom("http", "https"), fc.constantFrom("ws", "ftp")),
+        mostly(fc.constant("://"), fc.constant("://user@")),
+        hosts,
+        mostly(fc.constant(""), fc.constant("#part")),
+      )
+      .map((parts) => parts.join("")),
+  },
+  { requiredKeys: [] },
+);
+const bearerSchemes = mostly(
+  fc.constantFrom("Bearer ", "bearer   ", "BEARER "),
+  fc.constantFrom("Basic ", "Bearer", ""),
+);
+const tokens = fc
+  .constantFrom(...owners.keys())
+  .chain((known) =>
+    mostly(fc.constant(known), fc.constantFrom(`${known}x`, known.slice(1))),
   );
 
-  const rejectedOrigins: ReadonlyArray<Readonly<Record<string, string>>> = [
-    { host: "remote.example" },
-    { origin: "https://remote.example" },
-  ];
-  it.each(rejectedOrigins)("rejects a remote browser boundary", (headers) =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      expect(
-        (yield* Effect.tryPromise(() =>
-          fixture.fetch(mcpRequest("tools/list", {}, { headers })),
-        )).status,
-      ).toBe(403);
-    }),
-  );
-});
+it("answers 403 unless Host and Origin name this machine over plain http(s), then 401 unless the bearer is a credential, and otherwise serves that credential's owner", () =>
+  Effect.gen(function* () {
+    const fixture = yield* mcpFixture({
+      serverAgentCredential: Redacted.make(serverAgentCredential),
+    });
+    yield* forAll(
+      [hosts, origins, bearerSchemes, tokens],
+      Effect.fnUntraced(function* (host, from, scheme, token) {
+        const headers = { host, authorization: `${scheme}${token}`, ...from };
+        const reply = yield* exchange(fixture, "tools/list", {}, { headers });
+        const local =
+          localHost.test(host) &&
+          (from.origin === undefined || localOrigin.test(from.origin));
+        const owner = /^bearer +$/iu.test(scheme)
+          ? owners.get(token)
+          : undefined;
+        const refusal = local ? 401 : 403;
+        const status = local && owner !== undefined ? 200 : refusal;
+        expect(reply.status).toBe(status);
+        expect(reply.headers.get("www-authenticate") === "Bearer").toBe(
+          status === 401,
+        );
+        expect(yield* Ref.getAndSet(fixture.owners, [])).toEqual(
+          status === 200 ? [owner] : [],
+        );
+      }),
+    );
+  }));
 
 const slotForm = {
   type: "object",
   properties: { slot: { type: "string", enum: ["mon", "tue"] } },
   required: ["slot"],
 };
-const gather = { op: "gather", deadline: 60, requestedSchema: slotForm };
+const filledForm = fc.constant({ slot: "mon" });
 const operationId = collectiveOperationId(testAgentCard("agent:bob").agentId);
+const thirtyDays = 30 * 24 * 60 * 60;
+/** Seconds above `min`, up to `max`. */
+const seconds = (min: number, max: number) =>
+  fc.double({ min, max, minExcluded: true, noNaN: true });
 
-/** Malformed questions and answers, each with the argument its refusal names. */
-const malformedSends = [
-  { field: "text", written: { text: 7, collective: gather } },
+/** The values one argument accepts and the values it refuses. An `absent` value leaves the argument out. */
+interface Argument {
+  readonly accepts: fc.Arbitrary<unknown>;
+  readonly refuses: fc.Arbitrary<unknown>;
+}
+/** The arguments a call takes, each by its dotted path. */
+type Arguments = Readonly<Record<string, Argument>>;
+const absent = fc.constant(undefined);
+const absentOrUnacceptable = fc.oneof(absent, unacceptable);
+
+const recipient: Argument = {
+  accepts: fc.stringMatching(/^agent:[a-z0-9]{3,8}$/u),
+  refuses: absentOrUnacceptable,
+};
+const text: Argument = {
+  accepts: fc.string(),
+  refuses: fc.oneof(absent, fc.integer()),
+};
+/** A wait is optional, longer than no time and no longer than the limit, which is itself accepted. */
+const wait: Argument = {
+  accepts: fc.oneof(
+    absent,
+    fc.constant(MAXIMUM_WAIT_SECONDS),
+    seconds(0, MAXIMUM_WAIT_SECONDS),
+  ),
+  refuses: fc.oneof(
+    fc.constant(0),
+    seconds(-MAXIMUM_WAIT_SECONDS, 0),
+    seconds(MAXIMUM_WAIT_SECONDS, 2 * MAXIMUM_WAIT_SECONDS),
+  ),
+};
+/**
+ * What makes a message a question. Its deadline is whole seconds, from 1 to
+ * thirty days: the refused ones are the nearest whole numbers outside that
+ * range and a fraction inside it.
+ */
+const question: Arguments = {
+  "collective.op": {
+    accepts: fc.constantFrom("gather", "all_gather"),
+    refuses: unacceptable,
+  },
+  "collective.deadline": {
+    accepts: fc.integer({ min: 1, max: thirtyDays }),
+    refuses: fc.oneof(
+      absent,
+      fc.constant(0),
+      fc.constant(thirtyDays + 1),
+      fc.integer({ min: 1, max: thirtyDays - 1 }).map((whole) => whole + 0.5),
+    ),
+  },
+  "collective.requestedSchema": {
+    accepts: fc.constant(slotForm),
+    refuses: absentOrUnacceptable,
+  },
+};
+/** An answer to a question takes no text. `content` says whether its action carries a filled form. */
+const answer = (action: string, content: Argument): Arguments => ({
+  to: recipient,
+  text: { accepts: absent, refuses: fc.string() },
+  "collectiveResponse.action": {
+    accepts: fc.constant(action),
+    refuses: unacceptable,
+  },
+  "collectiveResponse.operationId": {
+    accepts: fc.constant(operationId),
+    refuses: absentOrUnacceptable,
+  },
+  "collectiveResponse.content": content,
+});
+/** Each kind of call a peer makes with arguments. */
+const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
+  { name: "read_conversation", takes: { address: recipient } },
+  { name: "receive_messages", takes: { wait } },
+  { name: "send_message", takes: { to: recipient, text } },
+  { name: "send_message", takes: { to: recipient, text, ...question } },
   {
-    field: "collective.deadline",
-    written: { text: "Q", collective: { ...gather, deadline: 0 } },
+    name: "send_message",
+    takes: answer("accept", { accepts: filledForm, refuses: absent }),
   },
   {
-    field: "collective.deadline",
-    written: { text: "Q", collective: { ...gather, deadline: 1.5 } },
-  },
-  {
-    field: "collective.deadline",
-    written: {
-      text: "Q",
-      collective: { op: "gather", requestedSchema: slotForm },
-    },
-  },
-  {
-    field: "collective.requestedSchema",
-    written: { text: "Q", collective: { op: "gather", deadline: 60 } },
-  },
-  {
-    field: "collective.requestedSchema.type",
-    written: {
-      text: "Q",
-      collective: {
-        ...gather,
-        requestedSchema: { ...slotForm, type: "array" },
-      },
-    },
-  },
-  {
-    field: "collective.op",
-    written: { text: "Q", collective: { ...gather, op: "poll" } },
-  },
-  {
-    field: "collectiveResponse",
-    written: {
-      text: "Q",
-      collectiveResponse: { action: "decline", operationId },
-    },
-  },
-  {
-    field: "collectiveResponse.action",
-    written: { collectiveResponse: { action: "maybe", operationId } },
-  },
-  {
-    field: "collectiveResponse.content",
-    written: { collectiveResponse: { action: "accept", operationId } },
-  },
-  {
-    field: "collectiveResponse.operationId",
-    written: { collectiveResponse: { action: "decline" } },
+    name: "send_message",
+    takes: answer("decline", { accepts: absent, refuses: filledForm }),
   },
 ];
+/** A call of any kind, with one value each of its arguments accepts and one value each refuses. */
+const toolCalls = fc.constantFrom(...calls).chain(({ name, takes }) =>
+  fc.record({
+    name: fc.constant(name),
+    accepted: fc.record(Rec.map(takes, (argument) => argument.accepts)),
+    refused: fc.record(Rec.map(takes, (argument) => argument.refuses)),
+  }),
+);
+/** The arguments that dotted paths stand for: `{ "a.b": 1, c: 2 }` is `{ a: { b: 1 }, c: 2 }`. */
+const nested = (flat: Readonly<Record<string, unknown>>) => {
+  const whole: Record<string, unknown> = {};
+  const groups: Record<string, Record<string, unknown>> = {};
+  for (const [path, value] of Object.entries(flat)) {
+    const [head = path, leaf] = path.split(".");
+    if (leaf === undefined) {
+      whole[head] = value;
+    } else {
+      groups[head] = { ...groups[head], [leaf]: value };
+      whole[head] = groups[head];
+    }
+  }
+  return whole;
+};
 
-it.each(malformedSends)(
-  "names $field when it refuses a malformed question or answer",
-  ({ field, written }) =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", {
-            name: "send_message",
-            arguments: { to: "agent:bob", ...written },
-          }),
-        ),
-      );
-      const error = (yield* json(reply)).error;
-      expect(error?.code).toBe(-32602);
-      expect(error?.message).toContain(`${field}: `);
-    }),
+it("runs a call when every argument holds a value its tool accepts, and refuses it when any one argument does not, naming that argument without repeating its value", () =>
+  Effect.gen(function* () {
+    const returned = yield* Ref.make<readonly unknown[]>([]);
+    const returns =
+      <A>(result: A) =>
+      () =>
+        Ref.update(returned, (all) => [...all, result]).pipe(Effect.as(result));
+    const fixture = yield* mcpFixture({
+      harness: {
+        send: returns(sendReceipt),
+        listInbox: returns({ items: [] }),
+        readHistory: returns({ records: [] }),
+      },
+    });
+    yield* forAll(
+      [toolCalls],
+      Effect.fnUntraced(function* ({ name, accepted, refused }) {
+        const reply = yield* toolCall(fixture, {
+          name,
+          arguments: nested(accepted),
+        });
+        expect(yield* Ref.getAndSet(returned, [])).toEqual([
+          reply.result?.structuredContent,
+        ]);
+        for (const wrong of Object.keys(refused)) {
+          const refusal = yield* toolCall(fixture, {
+            name,
+            arguments: nested({ ...accepted, [wrong]: refused[wrong] }),
+          });
+          expect(refusal.error?.code).toBe(-32602);
+          expect(refusal.error?.message).toContain(`${wrong}: `);
+          expect(yield* Ref.getAndSet(returned, [])).toEqual([]);
+          expect(JSON.stringify(refusal)).not.toContain("PRIVATE");
+        }
+      }),
+    );
+  }));
+
+/** A call each tool with no required argument accepts. */
+const argumentless = ["status", "receive_messages", "list_conversations"].map(
+  (name) => ({ name, arguments: {} }),
 );
 
-// @agent-code-guard/regression-only: These cases exercise finite MCP authentication and wire-error contracts.
-describe("MCP tool contracts", () => {
-  it.each(["a-string-id", 9_007_199_254_740_990])(
-    "preserves request id %s",
-    (id) =>
-      Effect.gen(function* () {
-        const fixture = yield* mcpFixture();
-        const reply = yield* Effect.tryPromise(() =>
-          fixture.fetch(
-            mcpRequest(
-              "tools/call",
-              { name: "receive_messages", arguments: {} },
-              { id },
-            ),
-          ),
-        );
-        expect((yield* json(reply)).id).toBe(id);
+it("answers a call under the id it was sent with, whether or not the call succeeds", () =>
+  Effect.gen(function* () {
+    const fixture = yield* mcpFixture();
+    yield* forAll(
+      [
+        fc.constantFrom(send, read, ...argumentless),
+        fc.oneof(fc.string(), fc.maxSafeInteger()),
+      ],
+      Effect.fnUntraced(function* (call, id) {
+        expect((yield* toolCall(fixture, call, id)).id).toBe(id);
       }),
-  );
+    );
+  }));
 
-  it("reports argument paths without submitting invalid work", () =>
+/** A field name no tool takes: none of theirs has an underscore. */
+const unknownField = fc.stringMatching(/^[a-z]{3,8}_[a-z]{1,4}$/u);
+
+it("refuses a call with a field its tool does not take, naming the field without repeating its value", () =>
+  Effect.gen(function* () {
+    const fixture = yield* mcpFixture();
+    yield* forAll(
+      [
+        fc.constantFrom(send, read, ...argumentless),
+        unknownField,
+        unacceptable,
+      ],
+      Effect.fnUntraced(function* (call, name, value) {
+        const reply = yield* toolCall(fixture, {
+          ...call,
+          arguments: { ...call.arguments, [name]: value },
+        });
+        expect(reply.error?.data).toEqual({
+          issues: [{ path: [name], message: "Unexpected field" }],
+        });
+        expect(JSON.stringify(reply)).not.toContain("PRIVATE");
+      }),
+    );
+  }));
+
+describe("MCP tool contracts", () => {
+  it("answers a send that fails with the failure's own message, reason and detail, and a send that dies as one whose outcome is unknown", () =>
     Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", {
-            name: "read_conversation",
-            arguments: { address: "private-value", unknown: "private-extra" },
-          }),
-        ),
+      const sending = yield* Ref.make<Effect.Effect<never, SendError>>(
+        Effect.never,
       );
-      const error = (yield* json(reply)).error;
-      expect(error?.code).toBe(-32602);
-      expect(JSON.stringify(error?.data)).toContain("address");
-      expect(error?.data).toMatchObject({ issues: unexpectedField("unknown") });
-      expect(JSON.stringify(error)).not.toMatch(/private-(value|extra)/u);
+      const fixture = yield* mcpFixture({
+        harness: { send: () => Effect.flatten(Ref.get(sending)) },
+      });
+      const refused = fc.record(
+        { reason: fc.constantFrom(...sendFailureReasons), detail: fc.string() },
+        { requiredKeys: ["reason"] },
+      );
+      const sendEndings = fc.oneof(
+        refused.map((data) => ({
+          data,
+          ending: Effect.fail(new SendError(data)),
+        })),
+        unacceptable.map((defect) => ({
+          data: { reason: "outcome-unknown" } as const,
+          ending: Effect.dieMessage(defect),
+        })),
+      );
+      yield* forAll(
+        [sendEndings],
+        Effect.fnUntraced(function* ({ data, ending }) {
+          yield* Ref.set(sending, ending);
+          expect((yield* toolCall(fixture, send)).error).toEqual({
+            code: -32603,
+            message: new SendError(data).message,
+            data,
+          });
+        }),
+      );
     }));
 
-  it("preserves a closed send refusal without exposing internal failures", () =>
+  it("answers a read that fails with the failure's own message and reason", () =>
     Effect.gen(function* () {
-      const fixture = yield* mcpFixture({
-        harness: {
-          send: () =>
-            Effect.fail(new SendError({ reason: "message-conflict" })),
-        },
-      });
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(mcpRequest("tools/call", send)),
+      const reading = yield* Ref.make(
+        new HistoryError({ reason: "invalid-cursor" }),
       );
-      expect((yield* json(reply)).error?.data).toEqual({
-        reason: "message-conflict",
-      });
-    }));
-
-  it("classifies an interrupted or defective send as uncertain", () =>
-    Effect.gen(function* () {
       const fixture = yield* mcpFixture({
-        harness: { send: () => Effect.dieMessage("private-stack-detail") },
+        harness: { readHistory: () => Effect.flip(Ref.get(reading)) },
       });
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(mcpRequest("tools/call", send)),
+      yield* forAll(
+        [fc.constantFrom(...HistoryError.fields.reason.literals)],
+        Effect.fnUntraced(function* (reason) {
+          const failure = new HistoryError({ reason });
+          yield* Ref.set(reading, failure);
+          expect((yield* toolCall(fixture, read)).error).toEqual({
+            code: -32603,
+            message: failure.message,
+            data: { reason },
+          });
+        }),
       );
-      const error = (yield* json(reply)).error;
-      expect(error?.data).toEqual({ reason: "outcome-unknown" });
-      expect(JSON.stringify(error)).not.toContain("private-stack-detail");
-    }));
-
-  it("publishes one receipt shape through a stock client", () =>
-    Effect.gen(function* () {
-      const receipt = yield* Schema.decodeUnknown(
-        toolDefinitions.send_message.output,
-      )({ id: digest("msg_", 1), address: "agent:bob" });
-      const fixture = yield* mcpFixture({
-        harness: { send: () => Effect.succeed(receipt) },
-      });
-      const client = yield* connectInProcessClient((input, init) =>
-        fixture.fetch(new Request(input, init)),
-      );
-      const reply = yield* Effect.tryPromise(() => client.callTool(send));
-      expect(reply.structuredContent).toEqual(receipt);
     }));
 
   it("interrupts only the aborted HTTP request", () =>
@@ -437,10 +607,6 @@ it("closes an active event stream with the listener's scope", () =>
     ).toBeInstanceOf(HttpClientError.RequestError);
   }));
 
-const serverAgent = MessageAddressInput.make("agent:bob");
-const sendReceipt = Schema.decodeUnknownSync(
-  toolDefinitions.send_message.output,
-)({ id: digest("msg_", 1), address: serverAgent });
 const clientText = "hello";
 const clientTools = [
   "read_conversation",
@@ -449,29 +615,11 @@ const clientTools = [
   "status",
 ];
 const sendTool = "send_message";
-const receiveTool = "receive_messages";
 const missingField = "text";
 const collectiveField = "collective";
 const textFields = ["to", missingField];
-const sendFields = ["to", missingField, "collective", "collectiveResponse"];
 
 describe("send_message arguments", () => {
-  const refusal = (sent: Readonly<Record<string, unknown>>) =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", { name: "send_message", arguments: sent }),
-        ),
-      );
-      return JSON.stringify((yield* json(reply)).error?.data);
-    });
-
-  it("names text when a send has neither text nor a collective response", () =>
-    Effect.gen(function* () {
-      expect(yield* refusal({ to: "agent:bob" })).toContain(missingField);
-    }));
-
   it("offers only a recipient and text when collectives are turned off", () =>
     Effect.gen(function* () {
       const fixture = yield* mcpFixture({ hideCollectives: true });
@@ -493,22 +641,6 @@ describe("send_message arguments", () => {
       );
       expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
         collectiveField,
-      );
-    }));
-
-  it("refuses a receive_messages wait longer than the limit, naming the limit", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture();
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", {
-            name: receiveTool,
-            arguments: { wait: MAXIMUM_WAIT_SECONDS + 1 },
-          }),
-        ),
-      );
-      expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
-        `at most ${String(MAXIMUM_WAIT_SECONDS)}`,
       );
     }));
 
@@ -550,83 +682,5 @@ describe("send_message arguments", () => {
       );
       expect(sent).toEqual([{ to: serverAgent, text: clientText }]);
       expect(read).toEqual([{ address: serverAgent }]);
-    }));
-
-  it("names any field it does not know", () =>
-    Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(
-          fc
-            .stringMatching(/^[a-z]{4,12}$/u)
-            .filter((name) => !sendFields.includes(name)),
-          (name) =>
-            refusal({ to: "agent:bob", text: "hello", [name]: true }).pipe(
-              Effect.tap((data) =>
-                Effect.sync(() => {
-                  expect(data).toContain(name);
-                }),
-              ),
-              Effect.asVoid,
-              Effect.scoped,
-              Effect.runPromise,
-            ),
-        ),
-        { numRuns: 20 },
-      ),
-    ));
-});
-
-describe("a tool that fails", () => {
-  it("answers with its error's own message and reason", () =>
-    Effect.gen(function* () {
-      const failure = new HistoryError({ reason: "unknown-agent" });
-      const fixture = yield* mcpFixture({
-        harness: { readHistory: () => Effect.fail(failure) },
-      });
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", {
-            name: "read_conversation",
-            arguments: { address: serverAgent },
-          }),
-        ),
-      );
-      expect((yield* json(reply)).error).toMatchObject({
-        message: failure.message,
-        data: { reason: failure.reason },
-      });
-    }));
-});
-
-describe("the server agent's credential", () => {
-  const credential = Redacted.make("server-agent-credential-000000000001");
-  const withBearer = (bearer: string) =>
-    mcpRequest(
-      "tools/list",
-      {},
-      { headers: { authorization: `Bearer ${bearer}` } },
-    );
-
-  it("admits its bearer as the server agent and leaves other bearers to the configured authentication", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture({ serverAgentCredential: credential });
-      const asServerAgent = yield* Effect.tryPromise(() =>
-        fixture.fetch(withBearer(Redacted.value(credential))),
-      );
-      const asLocalOwner = yield* Effect.tryPromise(() =>
-        fixture.fetch(withBearer(Redacted.value(mcpTestCredential))),
-      );
-      const refused = yield* Effect.tryPromise(() =>
-        fixture.fetch(withBearer(`${Redacted.value(credential)}x`)),
-      );
-      expect([asServerAgent.ok, asLocalOwner.ok, refused.ok]).toEqual([
-        true,
-        true,
-        false,
-      ]);
-      expect(yield* Ref.get(fixture.owners)).toEqual([
-        serverAgentOwner,
-        localOwner,
-      ]);
     }));
 });

@@ -402,7 +402,10 @@ const policyFailure = Schema.Struct({
   problem: FirewallPolicyError.fields.problem,
 });
 
-const empty = Schema.Struct({}).annotations({
+const empty = Schema.Record({
+  key: Schema.String,
+  value: Schema.Never,
+}).annotations({
   jsonSchema: { type: "object", properties: {}, additionalProperties: false },
 });
 const read = { readOnlyHint: true, openWorldHint: false } as const;
