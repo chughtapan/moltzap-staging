@@ -91,7 +91,7 @@ export function writeMessagePolicy(directory: string, document: unknown) {
 }
 
 const shippedNorms = fileURLToPath(
-  new URL("../../../packages/social-harness/config/norms/", import.meta.url),
+  new URL("../../../config/norms/", import.meta.url),
 );
 
 /**

@@ -4,7 +4,6 @@
 # undici 8 to a floor at its first security-patched release.
 # tsc is TypeScript 7 (@typescript/native); "typescript" is the TypeScript 6 API, which typescript-eslint (<6.1.0) and other tools load.
 packages:
-  - "packages/*"
   - "tests/*"
   - "images/*-agent"
   - "images/daemon"

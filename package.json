@@ -1,6 +1,16 @@
 {
-  "name": "social-harness",
-  "private": true,
+  "name": "@social-harness/social-harness",
+  "version": "0.0.0",
+  "description": "Social Harness daemon: hosts agents, delivers their messages and checks them against each agent's firewall",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/social-harness/social-harness.git"
+  },
+  "homepage": "https://github.com/social-harness/social-harness#readme",
+  "bugs": {
+    "url": "https://github.com/social-harness/social-harness/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -10,6 +20,35 @@
     "onlyBuiltDependencies": [
       "better-sqlite3"
     ]
+  },
+  "files": [
+    "dist",
+    "!dist/tsconfig.tsbuildinfo",
+    "skills",
+    "config",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./service": {
+      "types": "./dist/harness/startup.d.ts",
+      "import": "./dist/harness/startup.js"
+    },
+    "./test": {
+      "sharness-test": {
+        "types": "./dist/test.d.ts",
+        "import": "./dist/test.js"
+      }
+    }
+  },
+  "bin": {
+    "sharnessd": "./dist/main.js"
   },
   "scripts": {
     "build": "nx run-many -t build",
@@ -30,20 +69,124 @@
     "test:affected": "nx affected -t test",
     "docs:api": "pnpm nx run workspace:docs:api"
   },
+  "nx": {
+    "includedScripts": [],
+    "namedInputs": {
+      "default": [
+        "{projectRoot}/src/**/*",
+        "{projectRoot}/config/**/*",
+        "{projectRoot}/skills/**/*",
+        "{projectRoot}/tsconfig.json",
+        "{projectRoot}/tsconfig.test.json",
+        "{projectRoot}/vitest.config.ts",
+        "{projectRoot}/eslint.config.ts",
+        "{projectRoot}/safer-architecture.config.json",
+        "sharedGlobals"
+      ]
+    },
+    "targets": {
+      "build": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": ".",
+          "command": "node scripts/build/clean-dist.ts && tsc -b"
+        },
+        "inputs": [
+          "production",
+          "^production",
+          "{workspaceRoot}/scripts/build/clean-dist.ts"
+        ]
+      },
+      "lint": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": ".",
+          "command": "eslint src '*.ts' 'images/*.ts' 'scripts/**/*.ts' --cache --max-warnings=0"
+        },
+        "inputs": [
+          "default",
+          "^production",
+          "{workspaceRoot}/eslint.config.ts",
+          "{workspaceRoot}/eslint.shared.ts",
+          "{workspaceRoot}/knip.json",
+          "{workspaceRoot}/tsconfig.eslint.json",
+          "{workspaceRoot}/*.ts",
+          "{workspaceRoot}/images/*.ts",
+          "{workspaceRoot}/scripts/**/*.ts",
+          "{workspaceRoot}/scripts/tsconfig.json"
+        ]
+      },
+      "test": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": ".",
+          "command": "vitest run"
+        }
+      },
+      "typecheck:tests": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": ".",
+          "command": "tsc -p tsconfig.test.json"
+        }
+      },
+      "test:pack": {
+        "executor": "nx:run-commands",
+        "dependsOn": [
+          "build",
+          "^build"
+        ],
+        "cache": false,
+        "options": {
+          "command": "node scripts/test-social-harness-package.ts"
+        }
+      },
+      "arch:check": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": ".",
+          "command": "safer-architecture-lsp check ."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@effect/opentelemetry": "catalog:",
+    "@effect/platform": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/rpc": "catalog:",
+    "@effect/sql": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@modelcontextprotocol/client": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/exporter-trace-otlp-proto": "catalog:",
+    "@opentelemetry/resources": "catalog:",
+    "@opentelemetry/sdk-logs": "catalog:",
+    "@opentelemetry/sdk-metrics": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
+    "@opentelemetry/sdk-trace-node": "catalog:",
+    "@opentelemetry/semantic-conventions": "catalog:",
+    "@thi.ng/sexpr": "catalog:",
+    "canonicalize": "catalog:",
+    "effect": "catalog:",
+    "jose": "catalog:",
+    "kysely": "catalog:",
+    "yaml": "catalog:"
+  },
   "devDependencies": {
     "@chughtapan/safer-architecture-lsp": "catalog:",
     "@effect/language-service": "catalog:",
-    "@effect/platform": "catalog:",
-    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
     "@eslint-community/eslint-plugin-eslint-comments": "catalog:",
     "@mermaid-js/mermaid-cli": "catalog:",
-    "@modelcontextprotocol/client": "catalog:",
     "@types/estree": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
-    "effect": "catalog:",
+    "ajv": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-agent-code-guard": "catalog:",
+    "fast-check": "catalog:",
     "husky": "catalog:",
     "jiti": "catalog:",
     "mint": "catalog:",
@@ -53,7 +196,6 @@
     "typedoc": "catalog:",
     "typedoc-plugin-missing-exports": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "yaml": "catalog:"
+    "vitest": "catalog:"
   }
 }

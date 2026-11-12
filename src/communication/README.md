@@ -13,14 +13,14 @@ Both modes use the same [delivery](./delivery.ts). A send finds each recipient
 among the daemon's agents, gives the message the next position in its
 conversation and saves it for every member in one transaction.
 
-- [P2P](../../../../docs/reference/spec/communication/p2p.md): any agent
+- [P2P](../../docs/reference/spec/communication/p2p.md): any agent
   messages any other, alone or in a group.
-- [Client/server](../../../../docs/reference/spec/client-server.md): every
+- [Client/server](../../docs/reference/spec/client-server.md): every
   conversation is the server agent and one client.
 
 Questions and answers are messages that the
 [request worker](./collectives.ts) interprets. See the
-[collective contract](../../../../docs/reference/spec/communication/collectives.md).
+[collective contract](../../docs/reference/spec/communication/collectives.md).
 
 A database belongs to one mode. `Communication.claim` marks it before any
 agent starts.

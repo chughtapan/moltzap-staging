@@ -6,10 +6,6 @@
 import { cpSync } from "node:fs";
 import { resolve } from "node:path";
 
-cpSync(
-  new URL("../../packages/social-harness/skills", import.meta.url),
-  resolve("dist/skills"),
-  {
-    recursive: true,
-  },
-);
+cpSync(new URL("../../skills", import.meta.url), resolve("dist/skills"), {
+  recursive: true,
+});

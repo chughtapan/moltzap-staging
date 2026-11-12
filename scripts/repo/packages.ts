@@ -1,4 +1,4 @@
-/** @file The workspace packages `pnpm-workspace.yaml` selects, and the metadata their manifests own. */
+/** @file The workspace root package and the packages `pnpm-workspace.yaml` selects, with the metadata their manifests own. */
 import { Data } from "effect";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -31,8 +31,8 @@ export function workspacePackages(workspaceRoot: string) {
 
 /**
  * The package directories pnpm selects from `workspaceYaml` among the
- * repository-relative `files`: each `package.json` directory that a `packages`
- * glob includes and no `!` glob excludes.
+ * repository-relative `files`: the root, and each `package.json` directory
+ * that a `packages` glob includes and no `!` glob excludes.
  */
 function workspaceDirectories(
   workspaceYaml: string,
@@ -55,7 +55,9 @@ function workspaceDirectories(
     .filter((file) => path.posix.basename(file) === "package.json")
     .map((file) => path.posix.dirname(file))
     .filter(
-      (directory) => selected(directory, false) && !selected(directory, true),
+      (directory) =>
+        directory === "." ||
+        (selected(directory, false) && !selected(directory, true)),
     );
 }
 

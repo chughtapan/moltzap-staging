@@ -3,6 +3,8 @@
   "workspaces": {
     ".": {
       "entry": [
+        "src/**/*.spec.ts",
+        "vitest*.config.ts",
         "scripts/build/*.ts",
         "scripts/test-*-package.ts",
         "images/*.ts",
@@ -12,25 +14,22 @@
         "scripts/repo/check-agent-files.ts"
       ],
       "project": [
+        "src/**/*.ts",
         "*.ts",
         "scripts/**/*.ts"
+      ],
+      "typedoc": {
+        "config": [
+          "typedoc.json",
+          "scripts/docs/typedoc.json"
+        ]
+      },
+      "ignore": [
+        "src/vendor/effect-mcp/**"
       ],
       "ignoreDependencies": [
         "@mermaid-js/mermaid-cli",
         "puppeteer"
-      ]
-    },
-    "packages/social-harness": {
-      "entry": [
-        "src/**/*.spec.ts",
-        "vitest*.config.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
-      ],
-      "ignore": [
-        "src/vendor/effect-mcp/**"
       ]
     },
     "plugins/nanoclaw": {

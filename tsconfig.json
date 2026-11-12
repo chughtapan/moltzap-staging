@@ -1,14 +1,17 @@
 {
-  "files": [],
-  "references": [
-    {
-      "path": "packages/social-harness"
-    },
-    {
-      "path": "plugins/openclaw"
-    },
-    {
-      "path": "plugins/nanoclaw"
-    }
-  ]
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/__tests__",
+    "dist"
+  ],
+  "references": []
 }
