@@ -841,7 +841,7 @@ const pctEncoded = `%${hex}{2}`;
 
 const unreserved = "a-z0-9\\-._~";
 
-const subDelims = "!$&'()*+;=";
+const subDelims = "!$&'()*+,;=";
 
 const decOctet = "(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)";
 
