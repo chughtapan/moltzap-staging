@@ -38,8 +38,8 @@ import {
   SendError,
   sendFailureReasons,
 } from "../../communication/index.js";
+import { HistoryError } from "../message-format.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
-import { HistoryError } from "../social-harness.js";
 import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";
 import { serveMcp } from "./http.js";
 

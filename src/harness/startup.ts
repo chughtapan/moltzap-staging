@@ -18,13 +18,15 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
-import { Communication, MessageAddressInput } from "../communication/index.js";
+import { MessageAddressInput } from "../communication/index.js";
+import { Communication } from "../communication/service.js";
 import {
   checkDatabase,
   databaseAccess,
   databaseConnection,
 } from "../database/index.js";
-import { Firewall, FirewallPolicyError } from "../firewall/index.js";
+import { FirewallPolicyError } from "../firewall/index.js";
+import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
@@ -372,8 +374,8 @@ export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** This agent's card and the other agents of its daemon by name. */
 export { Identity } from "../identity.js";
 /** Message delivery, questions and ordered history. */
-export { Communication } from "../communication/index.js";
+export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
-export { Firewall, type FirewallOptions } from "../firewall/index.js";
+export { Firewall, type FirewallOptions } from "../firewall/service.js";
 /** Trusted policy providers receive typed assessment requests at construction. */
 export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

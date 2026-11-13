@@ -16,50 +16,52 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
+import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   AgentAddress,
   Answer,
-  Communication,
   CommunicationError,
-  type Conversation,
   GroupAddress,
-  type Incoming,
   Message,
   type MessageAddressInput,
   messageFromParticipants,
   MsgId,
-  type Outgoing,
   type PaginatedRequest,
   type PaginatedResult,
   Request,
   RequestError,
-  restarting,
   SendError,
 } from "../communication/index.js";
+import {
+  Communication,
+  type Conversation,
+  type Incoming,
+  type Outgoing,
+  restarting,
+} from "../communication/service.js";
 import { transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
   Firewall,
-  type FirewallEvidence,
-  type FirewallRefusal,
   type IncomingDecision,
   type ResultEvidence,
-} from "../firewall/index.js";
+} from "../firewall/service.js";
 import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
   catalogCursor,
-  type DeliveryAcknowledgeError,
-  type DeliveryToken,
   historyCursor,
-  InboxError,
-  type InboxEvent,
-  type InboxPage,
   makeInbox,
-  type MessageAddress,
   type PendingItem,
 } from "./inbox.js";
 import {
   canonicalMessageAddress,
+  type DeliveryAcknowledgeError,
+  type DeliveryToken,
+  HistoryError,
+  type HistoryRecord,
+  InboxError,
+  type InboxPage,
+  type MessageAddress,
   type SendRequest,
   type SendResult,
 } from "./message-format.js";
@@ -76,49 +78,10 @@ interface ListConversationsResult extends PaginatedResult {
 interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
 }
-/** History preserves sent messages and the saved view of received content. */
-export type HistoryRecord =
-  | { readonly kind: "sent"; readonly message: Message }
-  | ({
-      readonly kind: "received";
-      readonly message: {
-        readonly authorAgentId: Message["author"]["agentId"];
-        readonly msgId: Message["msgId"];
-      };
-    } & InboxEvent)
-  | ({
-      readonly kind: "result";
-      readonly deliveryToken: DeliveryToken;
-    } & InboxEvent);
 /** A missing nextCursor ends this fixed-boundary history traversal. */
 export interface ReadHistoryResult extends PaginatedResult {
   readonly records: readonly HistoryRecord[];
 }
-const historyFailureText = {
-  "invalid-address": "the address is not a valid agent: or group: address",
-  "unknown-agent": "an agent the address names is not a known agent",
-  "invalid-cursor":
-    "the cursor is not one this conversation returned; call again without a cursor",
-  "persistence-failed": "the conversation could not be read; try again",
-} as const;
-
-/** History failure never exposes private protocol or persistence diagnostics. */
-export class HistoryError extends Schema.TaggedError<HistoryError>()(
-  "HistoryError",
-  {
-    reason: Schema.Literal(
-      "invalid-address",
-      "unknown-agent",
-      "invalid-cursor",
-      "persistence-failed",
-    ),
-  },
-) {
-  override get message(): string {
-    return `reading failed: ${historyFailureText[this.reason]}`;
-  }
-}
-
 type CommunicationService = Context.Tag.Service<typeof Communication>;
 type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, saved inbox and history operations for one agent. */

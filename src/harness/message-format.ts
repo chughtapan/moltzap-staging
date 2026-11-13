@@ -1,4 +1,4 @@
-/** @file The sends a host may make, their canonical destinations and what a refused one reports. */
+/** @file What a host sends and receives as values: sends and their canonical destinations, inbox entries, history records, and what a refused send or read reports. */
 
 import {
   Array,
@@ -18,16 +18,93 @@ import {
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
+  type Message,
   MessageAddressInput,
   MsgId,
+  PaginatedResult,
   RequestedSchema,
   SendError,
   type ValidationIssue,
   wellFormedString,
 } from "../communication/index.js";
-import { compareAscii, exactStruct } from "../encoding.js";
+import { canonicalIdentifier, compareAscii, exactStruct } from "../encoding.js";
+import { LocalGuidance, PermittedItem } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
-import { MessageAddress } from "./inbox.js";
+
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schemas and decoded values share their public names. */
+
+/** Canonical host address of a direct or group conversation. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
+export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
+/** @useDeclaredType */
+export type MessageAddress = typeof MessageAddress.Type;
+
+/** Stable lookup and acknowledgment identity for one saved incoming item. */
+export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
+/** @useDeclaredType */
+export type DeliveryToken = typeof DeliveryToken.Type;
+
+/** Canonical host conversation containing this permitted item. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
+export const InboxEvent = Schema.Struct({
+  address: MessageAddress,
+  item: PermittedItem,
+  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
+});
+/** @useDeclaredType */
+export type InboxEvent = typeof InboxEvent.Type;
+
+/** Pending deliveries retain their token after acknowledgment. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
+export const InboxEntry = Schema.Struct({
+  ...InboxEvent.fields,
+  deliveryToken: DeliveryToken,
+});
+/** @useDeclaredType */
+export type InboxEntry = typeof InboxEntry.Type;
+
+/** Reading leaves entries pending. Absence of nextCursor ends the page traversal. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
+export const InboxPage = Schema.Struct({
+  ...PaginatedResult.fields,
+  items: Schema.Array(InboxEntry),
+});
+/** @useDeclaredType */
+export type InboxPage = typeof InboxPage.Type;
+
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schemas. */
+
+const inboxFailureText = {
+  "invalid-cursor":
+    "the cursor is not one this inbox returned; call again without a cursor",
+  "invalid-event": "a saved inbox item could not be read",
+  "persistence-failed": "the inbox could not be read; try again",
+} as const;
+
+/** Inbox reads reject unusable cursors and unavailable retained items. */
+export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
+  reason: Schema.Literal(
+    "invalid-cursor",
+    "invalid-event",
+    "persistence-failed",
+  ),
+}) {
+  override get message(): string {
+    return `receiving failed: ${inboxFailureText[this.reason]}`;
+  }
+}
+
+/** Acknowledgment changes pending delivery, not the saved content. */
+export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowledgeError>()(
+  "DeliveryAcknowledgeError",
+  {
+    reason: Schema.Literal(
+      "unknown-delivery",
+      "delivery-conflict",
+      "persistence-failed",
+    ),
+  },
+) {}
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
 
@@ -438,4 +515,44 @@ function expectedSchemaMessage(ast: SchemaAST.AST): string {
     SchemaAST.getDescriptionAnnotation(ast),
     () => String(ast),
   )}`;
+}
+
+/** History preserves sent messages and the saved view of received content. */
+export type HistoryRecord =
+  | { readonly kind: "sent"; readonly message: Message }
+  | ({
+      readonly kind: "received";
+      readonly message: {
+        readonly authorAgentId: Message["author"]["agentId"];
+        readonly msgId: Message["msgId"];
+      };
+    } & InboxEvent)
+  | ({
+      readonly kind: "result";
+      readonly deliveryToken: DeliveryToken;
+    } & InboxEvent);
+
+const historyFailureText = {
+  "invalid-address": "the address is not a valid agent: or group: address",
+  "unknown-agent": "an agent the address names is not a known agent",
+  "invalid-cursor":
+    "the cursor is not one this conversation returned; call again without a cursor",
+  "persistence-failed": "the conversation could not be read; try again",
+} as const;
+
+/** History failure never exposes private protocol or persistence diagnostics. */
+export class HistoryError extends Schema.TaggedError<HistoryError>()(
+  "HistoryError",
+  {
+    reason: Schema.Literal(
+      "invalid-address",
+      "unknown-agent",
+      "invalid-cursor",
+      "persistence-failed",
+    ),
+  },
+) {
+  override get message(): string {
+    return `reading failed: ${historyFailureText[this.reason]}`;
+  }
 }

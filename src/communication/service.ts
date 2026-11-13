@@ -534,6 +534,9 @@ function capturePersistence<A, E, R>(work: Effect.Effect<A, E, R>) {
   );
 }
 
+/** Keeps a background loop of one agent running after a failure. */
+export { restarting } from "./collectives.js";
+
 interface Environment {
   readonly sql: SqlClient;
   readonly settings: CommunicationSettings;

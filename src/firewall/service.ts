@@ -3,7 +3,6 @@
 import {
   Clock,
   Context,
-  Data,
   Effect,
   Exit,
   Layer,
@@ -13,24 +12,20 @@ import {
   Struct,
 } from "effect";
 import { createHash, randomBytes } from "node:crypto";
-import {
+import type {
   AnswerOutcome,
-  CollectiveId,
-  type Incoming,
   Message,
-  type MessageReference,
-  type Outgoing,
-  ReceivedRequest,
-  type Request,
-  RequestOperation,
-  type ResultSources,
+  MessageReference,
+  Request,
+  ResultSources,
 } from "../communication/index.js";
+import type { Incoming, Outgoing } from "../communication/service.js";
 import {
   decodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { AgentCard, Identity } from "../identity.js";
+import { type AgentCard, Identity } from "../identity.js";
 import {
   type Chain,
   type ChainOutcome,
@@ -45,18 +40,22 @@ import {
   type Message as AssessmentText,
   checkCapturedMessage,
   type CheckedGuidance,
-  checkedGuidanceSchema,
   CheckInputError,
+  type CollectiveResult,
   decidingRules,
   type DecisionProvider,
   type DecisionProviderError,
   decodeFrozen,
   type FirewallCheck,
+  FirewallRefusal,
   freezeData,
   type HistoryEntry,
+  type LocalGuidance,
   type MessageContext,
+  type PermittedItem,
   textQuestionEdition,
   validateChecks,
+  type Withheld,
 } from "./check.js";
 import {
   type CompiledNorms,
@@ -75,7 +74,7 @@ import {
   type firewallDecisionsSchema,
   type firewallDecisionSummarySchema,
   FirewallPolicyError,
-  firewallRefusalReasonSchema,
+  type firewallRefusalReasonSchema,
   FirewallSettings,
   type LoadedMessagePolicy,
   type policyReadSchema,
@@ -127,101 +126,6 @@ export interface ResultEvidence {
     readonly message: MessageReference;
     readonly evidence: FirewallEvidence;
   }>;
-}
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schema values share their domain type names. */
-
-/** A result part the local policy prevents the agent from reading. */
-export const Withheld = exactStruct({
-  kind: Schema.Literal("withheld"),
-  checkId: checkedGuidanceSchema.fields.checkId,
-  reason: firewallRefusalReasonSchema,
-});
-/** @useDeclaredType */
-export type Withheld = typeof Withheld.Type;
-
-const resultGuidance = exactStruct({
-  question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
-  answers: Schema.Array(
-    exactStruct({ member: AgentCard, ...checkedGuidanceSchema.fields }),
-  ),
-});
-
-/** Local instructions for one message, or for the question and answers in a result. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const LocalGuidance = Schema.Union(
-  checkedGuidanceSchema,
-  resultGuidance,
-);
-/** @useDeclaredType */
-export type LocalGuidance = typeof LocalGuidance.Type;
-
-/** A request result after applying local policy to each peer-controlled part. */
-const CollectiveResult = exactStruct({
-  kind: Schema.Literal("collectiveResult"),
-  op: RequestOperation,
-  operationId: CollectiveId,
-  closedAt: Schema.Number,
-  closedBy: Schema.Literal("settled", "deadline"),
-  question: Schema.Union(Schema.String, Withheld),
-  outcomes: Schema.NonEmptyArray(
-    exactStruct({
-      member: AgentCard,
-      outcome: Schema.Union(AnswerOutcome, Withheld),
-    }),
-  ),
-});
-/** @useDeclaredType */
-type CollectiveResult = typeof CollectiveResult.Type;
-
-/** The exact content local policy permits the agent to receive. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const PermittedItem = Schema.Union(
-  exactStruct({ kind: Schema.Literal("multicast"), message: Message }),
-  exactStruct({
-    kind: Schema.Literal("collectiveRequest"),
-    message: ReceivedRequest,
-  }),
-  CollectiveResult,
-);
-/** @useDeclaredType */
-export type PermittedItem = typeof PermittedItem.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema declarations. */
-
-const refusalText: Readonly<Record<RefusalReason, string>> = {
-  "rule-violation": "It breaks a rule of the agent's message policy.",
-  "unresolved-evidence":
-    "The policy check could not settle whether the message is allowed.",
-  "check-unavailable": "The policy check could not complete.",
-  "owner-approval-required": "The agent's owner has not approved it.",
-};
-
-/**
- * The sender can act on registered feedback without seeing assessment evidence.
- * `rule` names the chain rule that refused, and `detail` is that rule's matcher
- * report. The message states the reason, each deciding rule's registered
- * feedback and the detail.
- */
-export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
-  readonly reason: "firewall-refused";
-  readonly checkId: string;
-  readonly refusal: RefusalReason;
-  readonly rule?: string;
-  readonly feedback: ReadonlyArray<{ readonly text: string }>;
-  readonly detail?: unknown;
-}> {
-  override get message(): string {
-    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
-    return [
-      `Message refused by local policy (${this.refusal}${rule}, check ${this.checkId}).`,
-      refusalText[this.refusal],
-      ...this.feedback.map((entry) => entry.text),
-      ...(this.detail === undefined
-        ? []
-        : [`Details: ${JSON.stringify(this.detail)}`]),
-    ].join(" ");
-  }
 }
 
 /**

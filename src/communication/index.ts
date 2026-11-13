@@ -1,4 +1,4 @@
-/** @file Messages, questions and answers, the service that delivers them, and their failures. */
+/** @file Messages, questions and answers as values, and their failures. The service that delivers them is `service.ts`. */
 
 /** Messages, addresses, questions, answers and results as validated values. */
 export {
@@ -35,17 +35,6 @@ export {
   validateAnswer,
   wellFormedString,
 } from "./messages.js";
-/** What the service accepts, hands over and returns. */
-export {
-  type Conversation,
-  type ConversationQuery,
-  type HistoryPage,
-  type HistoryQuery,
-  Incoming,
-  type Outgoing,
-} from "./service.js";
-/** Delivers messages, completes questions and reads ordered history for one agent. */
-export { Communication } from "./service.js";
 /** Why a send, a read or a question was refused. */
 export {
   CommunicationError,
@@ -54,5 +43,3 @@ export {
   sendFailureReasons,
   type ValidationIssue,
 } from "./errors.js";
-/** Keeps a background loop of one agent running after a failure. */
-export { restarting } from "./collectives.js";

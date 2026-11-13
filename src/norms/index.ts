@@ -24,11 +24,11 @@ import { compareAscii, exactStruct } from "../encoding.js";
 import {
   type Chain,
   chainRuleFileSchema,
-  Firewall,
   type FirewallPolicyError,
   type NormDocuments,
   TextRule,
 } from "../firewall/index.js";
+import { Firewall } from "../firewall/service.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, normRuleId, ruleMatcher } from "./matchers.js";
 

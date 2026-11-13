@@ -3,15 +3,13 @@
 import { SqlClient, SqlSchema } from "@effect/sql";
 import { absurd, Effect, Encoding, Schema } from "effect";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import {
-  AgentAddress,
-  GroupAddress,
-  Incoming,
-  type Message,
-  type MessageReference,
-  type PaginatedRequest,
-  PaginatedResult,
+import type {
+  Message,
+  MessageReference,
+  PaginatedRequest,
 } from "../communication/index.js";
+import type { IncomingDecision } from "../firewall/service.js";
+import { Incoming } from "../communication/service.js";
 import {
   type Compilable,
   executeQuery,
@@ -20,91 +18,19 @@ import {
   withAgentTransaction,
 } from "../database/index.js";
 import {
-  canonicalIdentifier,
   decodeJson,
   encodeJson,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
 import {
-  type IncomingDecision,
-  LocalGuidance,
-  PermittedItem,
-} from "../firewall/index.js";
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schemas and decoded values share their public names. */
-
-/** Canonical host address of a direct or group conversation. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
-/** @useDeclaredType */
-export type MessageAddress = typeof MessageAddress.Type;
-
-/** Stable lookup and acknowledgment identity for one saved incoming item. */
-export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
-/** @useDeclaredType */
-export type DeliveryToken = typeof DeliveryToken.Type;
-
-/** Canonical host conversation containing this permitted item. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const InboxEvent = Schema.Struct({
-  address: MessageAddress,
-  item: PermittedItem,
-  guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-});
-/** @useDeclaredType */
-export type InboxEvent = typeof InboxEvent.Type;
-
-/** Pending deliveries retain their token after acknowledgment. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const InboxEntry = Schema.Struct({
-  ...InboxEvent.fields,
-  deliveryToken: DeliveryToken,
-});
-/** @useDeclaredType */
-export type InboxEntry = typeof InboxEntry.Type;
-
-/** Reading leaves entries pending. Absence of nextCursor ends the page traversal. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const InboxPage = Schema.Struct({
-  ...PaginatedResult.fields,
-  items: Schema.Array(InboxEntry),
-});
-/** @useDeclaredType */
-export type InboxPage = typeof InboxPage.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schemas. */
-
-const inboxFailureText = {
-  "invalid-cursor":
-    "the cursor is not one this inbox returned; call again without a cursor",
-  "invalid-event": "a saved inbox item could not be read",
-  "persistence-failed": "the inbox could not be read; try again",
-} as const;
-
-/** Inbox reads reject unusable cursors and unavailable retained items. */
-export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
-  reason: Schema.Literal(
-    "invalid-cursor",
-    "invalid-event",
-    "persistence-failed",
-  ),
-}) {
-  override get message(): string {
-    return `receiving failed: ${inboxFailureText[this.reason]}`;
-  }
-}
-
-/** Acknowledgment changes pending delivery, not the saved content. */
-export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowledgeError>()(
-  "DeliveryAcknowledgeError",
-  {
-    reason: Schema.Literal(
-      "unknown-delivery",
-      "delivery-conflict",
-      "persistence-failed",
-    ),
-  },
-) {}
+  DeliveryAcknowledgeError,
+  DeliveryToken,
+  type InboxEntry,
+  InboxError,
+  InboxEvent,
+  type InboxPage,
+  MessageAddress,
+} from "./message-format.js";
 
 const queuedRow = Schema.Struct({
   sequence: Schema.Number,

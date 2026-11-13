@@ -7,7 +7,8 @@
  */
 
 import { Effect, Schema } from "effect";
-import type { Message, Outgoing } from "../communication/index.js";
+import type { Message } from "../communication/index.js";
+import type { Outgoing } from "../communication/service.js";
 import type { AgentCard } from "../identity.js";
 import { exactStruct } from "../encoding.js";
 import {

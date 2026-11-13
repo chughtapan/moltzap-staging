@@ -80,7 +80,8 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/index.ts"
+        "src/communication/index.ts",
+        "src/communication/service.ts"
       ],
       "reason": "Messages, requests and ordered history"
     },
@@ -90,7 +91,8 @@
         "src/firewall"
       ],
       "entrypoints": [
-        "src/firewall/index.ts"
+        "src/firewall/index.ts",
+        "src/firewall/service.ts"
       ],
       "reason": "Policy, assessment and permitted content"
     },

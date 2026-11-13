@@ -8,7 +8,7 @@
 import type { ASTNode, Expression } from "@thi.ng/sexpr/api";
 import { parse } from "@thi.ng/sexpr/parse";
 import { Either } from "effect";
-import type { Outgoing } from "../communication/index.js";
+import type { Outgoing } from "../communication/service.js";
 
 /** The FIPA ACL communicative acts (FIPA SC00037). */
 const performatives = new Set([

@@ -5,7 +5,8 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
 import { databaseConnection, migrateDaemon } from "../database/index.js";
-import { makeInbox, MessageAddress } from "./inbox.js";
+import { makeInbox } from "./inbox.js";
+import { MessageAddress } from "./message-format.js";
 
 it("retains the same peer message independently and rejects foreign event and acknowledgment tokens", () =>
   Effect.gen(function* () {
