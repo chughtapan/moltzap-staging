@@ -19,7 +19,7 @@ import {
   SendError,
 } from "../../communication/index.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
-import { Identity } from "../../identity/index.js";
+import { Identity } from "../../identity.js";
 import { HeldNorms } from "../../norms/index.js";
 import {
   CallToolResult,

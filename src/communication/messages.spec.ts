@@ -22,7 +22,6 @@ import {
   MsgId as PublicMsgId,
 } from "../index.js";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
-import { Incoming } from "./delivery.js";
 import {
   Answer,
   type AnswerContent,
@@ -37,6 +36,7 @@ import {
   RequestedSchema,
   validateAnswer,
 } from "./messages.js";
+import { Incoming } from "./service.js";
 
 const alice = testAgentCard("alice");
 

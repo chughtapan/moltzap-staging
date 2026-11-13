@@ -29,7 +29,7 @@ import {
   RequestError,
 } from "../../communication/index.js";
 import { migrateDaemon } from "../../database/index.js";
-import { compareAscii } from "../../encoding/index.js";
+import { compareAscii } from "../../encoding.js";
 import {
   type DecisionProvider,
   type DecisionRequest,
@@ -42,7 +42,7 @@ import {
   type AgentName,
   Identity,
   IdentityError,
-} from "../../identity/index.js";
+} from "../../identity.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
 type Harness = Context.Tag.Service<typeof SocialHarness>;

@@ -20,7 +20,7 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareAscii, exactStruct } from "../encoding/index.js";
+import { compareAscii, exactStruct } from "../encoding.js";
 import {
   type Chain,
   chainRuleFileSchema,

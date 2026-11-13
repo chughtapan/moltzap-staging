@@ -24,7 +24,7 @@ import type { MessageAddressInput } from "../../communication/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { Firewall, FirewallPolicyError } from "../../firewall/index.js";
-import { Identity } from "../../identity/index.js";
+import { Identity } from "../../identity.js";
 import { makeMcpHttpApp, type McpAuthentication } from "../mcp/http.js";
 import { makeAgentMcpApp } from "../mcp/server.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../mcp/webhook.js";

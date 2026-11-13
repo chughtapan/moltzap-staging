@@ -43,9 +43,9 @@ export {
   type HistoryQuery,
   Incoming,
   type Outgoing,
-} from "./delivery.js";
+} from "./service.js";
 /** Delivers messages, completes questions and reads ordered history for one agent. */
-export { Communication } from "./delivery.js";
+export { Communication } from "./service.js";
 /** Why a send, a read or a question was refused. */
 export {
   CommunicationError,

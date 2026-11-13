@@ -18,7 +18,7 @@ import {
   compareAscii,
   exactStruct,
   isStrictlyAscending,
-} from "../../encoding/index.js";
+} from "../../encoding.js";
 import {
   checkedGuidanceSchema,
   firewallDecisionsRequestSchema,
@@ -32,7 +32,7 @@ import {
   policyUpdateResultSchema,
   policyUpdateSchema,
 } from "../../firewall/index.js";
-import { AgentId, AgentName } from "../../identity/index.js";
+import { AgentId, AgentName } from "../../identity.js";
 import {
   DeliveryToken,
   InboxError,

@@ -38,7 +38,7 @@ import {
   SendError,
 } from "../communication/index.js";
 import { transaction } from "../database/index.js";
-import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
+import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
   Firewall,
   type FirewallEvidence,
@@ -46,7 +46,7 @@ import {
   type IncomingDecision,
   type ResultEvidence,
 } from "../firewall/index.js";
-import { type AgentCard, Identity, IdentityError } from "../identity/index.js";
+import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
   catalogCursor,
   type DeliveryAcknowledgeError,

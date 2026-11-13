@@ -9,12 +9,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
 import type { MatchInput } from "../firewall/index.js";
 import { Message } from "../communication/index.js";
-import {
-  AgentCard,
-  AgentId,
-  AgentName,
-  PrincipalId,
-} from "../identity/index.js";
+import { AgentCard, AgentId, AgentName, PrincipalId } from "../identity.js";
 import { readText } from "./acts.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, ruleMatcher } from "./matchers.js";

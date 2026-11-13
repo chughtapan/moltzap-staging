@@ -13,7 +13,7 @@ import {
   AgentName,
   Identity,
   PrincipalId,
-} from "../../identity/index.js";
+} from "../../identity.js";
 import { Firewall, type FirewallOptions } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */

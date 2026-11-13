@@ -6,7 +6,7 @@ import { scopedLive as it } from "@effect/vitest";
 import { Effect, FastCheck as fc, Option, Schema } from "effect";
 import { join } from "node:path";
 import { expect } from "vitest";
-import type { AgentCard } from "../identity/index.js";
+import type { AgentCard } from "../identity.js";
 import type { Chain, Matcher } from "./chain.js";
 import type { NormDocuments } from "./editable-policy.js";
 import { Message } from "../communication/index.js";

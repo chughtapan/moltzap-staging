@@ -57,20 +57,20 @@
     {
       "name": "encoding",
       "roots": [
-        "src/encoding"
+        "src/encoding.ts"
       ],
       "entrypoints": [
-        "src/encoding/index.ts"
+        "src/encoding.ts"
       ],
       "reason": "Shared encoding at external boundaries"
     },
     {
       "name": "identity",
       "roots": [
-        "src/identity"
+        "src/identity.ts"
       ],
       "entrypoints": [
-        "src/identity/index.ts"
+        "src/identity.ts"
       ],
       "reason": "Agent identifiers and the agents of one daemon"
     },
@@ -169,20 +169,6 @@
         "communication"
       ],
       "reason": "Delivery names agents by their cards"
-    },
-    {
-      "name": "identity",
-      "folders": [
-        "identity"
-      ],
-      "reason": "Agent identifiers and name resolution"
-    },
-    {
-      "name": "encoding",
-      "folders": [
-        "encoding"
-      ],
-      "reason": "Shared serialization primitives"
     },
     {
       "name": "database",

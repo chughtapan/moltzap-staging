@@ -24,7 +24,7 @@ import {
   decodeJson,
   encodeJson,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding/index.js";
+} from "../encoding.js";
 import {
   type IncomingDecision,
   LocalGuidance,
