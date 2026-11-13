@@ -22,7 +22,7 @@ import {
   MsgId as PublicMsgId,
 } from "../index.js";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
-import { Incoming } from "./contract.js";
+import { Incoming } from "./delivery.js";
 import {
   Answer,
   type AnswerContent,

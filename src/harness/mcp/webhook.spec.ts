@@ -33,7 +33,7 @@ import {
   isPublicWebhookAddress,
   sendWebhook,
   webhookHttpClientLayer,
-} from "./webhook-client.js";
+} from "./webhook.js";
 
 type Store = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 type Callback = Effect.Effect.Success<ReturnType<typeof scriptedWebhook>>;

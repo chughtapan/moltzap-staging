@@ -27,8 +27,7 @@ import { Firewall, FirewallPolicyError } from "../../firewall/index.js";
 import { Identity } from "../../identity/index.js";
 import { makeMcpHttpApp, type McpAuthentication } from "../mcp/http.js";
 import { makeAgentMcpApp } from "../mcp/server.js";
-import { webhookHttpClientLayer } from "../mcp/webhook-client.js";
-import { makeWebhookEvents } from "../mcp/webhook.js";
+import { makeWebhookEvents, webhookHttpClientLayer } from "../mcp/webhook.js";
 import { SocialHarness } from "../social-harness.js";
 
 /** The credential has no authority beyond this process. */

@@ -36,8 +36,7 @@ import {
 } from "./config.js";
 import { makeMcpHttpApp, serveMcp } from "./mcp/http.js";
 import { makeAgentMcpApp } from "./mcp/server.js";
-import { webhookHttpClientLayer } from "./mcp/webhook-client.js";
-import { makeWebhookEvents } from "./mcp/webhook.js";
+import { makeWebhookEvents, webhookHttpClientLayer } from "./mcp/webhook.js";
 import {
   getOrCreateOwnedAgent,
   listOwnedAgentKeys,
