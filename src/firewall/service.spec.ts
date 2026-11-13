@@ -23,8 +23,6 @@ import {
 import { FirewallPolicyError, type TextRule } from "./rules.js";
 import { Firewall, type FirewallOptions } from "./service.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed policy failures and dispositions are the public contract under test. */
-
 const initial = {
   id: "brief",
   applies: "both",
@@ -719,4 +717,3 @@ describe("Firewall text rules scoped by a matcher", () => {
       ),
   );
 });
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after policy contract assertions. */

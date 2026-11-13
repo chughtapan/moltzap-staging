@@ -127,7 +127,6 @@ const untrusted = fc.oneof(
   }),
 );
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP statuses and MCP wire notifications are external conformance contracts. */
 it("advertises protected-resource discovery without granting MCP access", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
@@ -234,5 +233,3 @@ it(
     }),
   15000,
 );
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the assertion policy. */

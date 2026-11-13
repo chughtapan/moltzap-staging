@@ -35,8 +35,6 @@ import { CommunicationError, issuesText } from "./errors.js";
 export const compareAgentIds: (left: AgentId, right: AgentId) => number =
   compareAgentIdBytes;
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
-
 /** The byte limit of one message's content as JSON text. */
 const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
@@ -236,8 +234,6 @@ export const MessageAddressInput = addressInput;
  */
 export type MessageAddressInput = typeof MessageAddressInput.Type;
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore the package naming rules after the Schema/type pairs. */
-
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
 const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
   Effect.try({
@@ -247,8 +243,6 @@ const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
     Effect.flatMap(Schema.decodeUnknown(MsgId)),
     Effect.mapError(representationFailure),
   );
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their domain names with the nominal values they decode. */
 
 /**
  * Identity of one gather or all_gather, minted by the requesting endpoint.
@@ -441,9 +435,6 @@ export class RequestError extends Data.TaggedError("RequestError")<{
   }
 }
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore the package naming rules after the Schema/type pairs. */
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas preserve their specification names beside derived types. */
 /** Content carries a collective part that is duplicated or does not decode. */
 export class CollectivePartInvalidError extends Data.TaggedError(
   "CollectivePartInvalidError",
@@ -826,10 +817,6 @@ const answerValidator = new Ajv({
  */
 type CollectiveFieldFailure = AnswerFieldFailures[number];
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the schema owner. */
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with the values they decode. */
-
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
 export const PaginatedRequest = exactStruct({
   cursor: Schema.optional(Schema.String),
@@ -974,11 +961,7 @@ export const Message = Object.assign(messageSchema, {
   },
 });
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after Schema/type pairs. */
-
 type Participants = Pick<Message, "author" | "recipients">;
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect Schemas share their names with their decoded types. */
 
 /** The operation is captured before assessment, including its absolute deadline and participants. */
 const requestSchema = MessageParticipants.pipe(
@@ -1162,8 +1145,6 @@ export const ResultDelivery = exactStruct({
 });
 /** Public item bytes and private source bytes are bounded separately. */
 export type ResultDelivery = typeof ResultDelivery.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
 
 /**
  * Read the requester embedded in an operation ID. Request admission compares

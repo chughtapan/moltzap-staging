@@ -6,10 +6,6 @@ import { canonicalIdentifier } from "./encoding.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare --
- * Named Effect Schemas share their domain names with the nominal types they decode.
- */
-
 /** Identifies one agent. The daemon mints it when it creates the agent. */
 export const AgentId = canonicalIdentifier(
   "AgentId",
@@ -46,15 +42,10 @@ export const AgentName = Schema.String.pipe(
 /** Validated nominal value decoded by {@link AgentName}. */
 export type AgentName = typeof AgentName.Type;
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare --
- * Restore the general naming rules after the public Schema/type pairs.
- */
-
 /**
  * Identifies an agent and the principal it represents. Messages, results and
  * policy decisions name their agents with this value.
  */
-// eslint-disable-next-line @typescript-eslint/naming-convention -- Effect Schemas share the public domain name they decode.
 export const AgentCard = Schema.Struct({
   agentId: AgentId,
   agentName: AgentName,
@@ -64,7 +55,6 @@ export const AgentCard = Schema.Struct({
  * An agent's identifier, name and principal, as its daemon recorded them.
  * @useDeclaredType
  */
-// eslint-disable-next-line @typescript-eslint/no-redeclare -- The same-named Schema and type form one boundary model.
 export type AgentCard = typeof AgentCard.Type;
 
 /**

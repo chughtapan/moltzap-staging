@@ -10,8 +10,6 @@ import { describe, expect } from "vitest";
 import { loadNorms, serviceNorms } from "./index.js";
 import { ruleMatcher } from "./matchers.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and failure text are the configuration contract under test. */
-
 const shipped = fileURLToPath(new URL("../../config/norms/", import.meta.url));
 
 /** A directory holding `files`, by name. */
@@ -182,5 +180,3 @@ describe("the norm documents an agent holds", () => {
       expect(second?.guidance).toContain("Swap only with a trained colleague.");
     }));
 });
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

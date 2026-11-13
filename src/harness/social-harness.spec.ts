@@ -40,8 +40,6 @@ import {
   waitForInbox,
 } from "./__tests__/service-fixtures.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed public failure reasons are part of the service contract. */
-
 const bobAddress = MessageAddressInput.make("agent:bob");
 const carolAddress = MessageAddressInput.make("agent:carol");
 
@@ -990,5 +988,3 @@ it("uses the public invalid-answer reason without exposing the original answer",
       ),
     ).not.toContain(privateAnswer);
   }));
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore defaults after service contract assertions. */

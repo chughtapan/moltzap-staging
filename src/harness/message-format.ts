@@ -31,8 +31,6 @@ import { canonicalIdentifier, compareAscii, exactStruct } from "../encoding.js";
 import { LocalGuidance, PermittedItem } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schemas and decoded values share their public names. */
-
 /** Canonical host address of a direct or group conversation. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
@@ -72,8 +70,6 @@ export const InboxPage = Schema.Struct({
 /** @useDeclaredType */
 export type InboxPage = typeof InboxPage.Type;
 
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schemas. */
-
 const inboxFailureText = {
   "invalid-cursor":
     "the cursor is not one this inbox returned; call again without a cursor",
@@ -105,8 +101,6 @@ export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowl
     ),
   },
 ) {}
-
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */
 
 const multicast = exactStruct({
   op: Schema.optionalWith(Schema.Literal("multicast"), { exact: true }),
@@ -179,9 +173,6 @@ export const TextSendArguments = exactStruct({
     description: "The message text.",
   }),
 });
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore ordinary symbol naming. */
-
-/* eslint-disable @typescript-eslint/naming-convention -- Effect schemas share the public names of their derived value types. */
 
 /** Accepted ordinary messages, replies and questions share one receipt shape. */
 export const SendResultSchema = Schema.Struct({
@@ -191,8 +182,6 @@ export const SendResultSchema = Schema.Struct({
 
 /** Accepted work continues independently of the caller's lifetime. */
 export type SendResult = typeof SendResultSchema.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention -- Restore ordinary symbol naming. */
 
 /** A destination in canonical form, before its names are resolved. */
 type CanonicalMessageAddress =

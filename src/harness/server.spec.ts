@@ -43,8 +43,6 @@ import { serveMcp } from "./http.js";
 import { HistoryError } from "./message-format.js";
 import { localOwner, serverAgentOwner } from "./ownership.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
-
 const response = Schema.parseJson(
   Schema.Struct({
     id: Schema.Unknown,
@@ -560,8 +558,6 @@ it("closes a retained stream when its agent stops", () =>
     });
     expect(ended.done).toBe(true);
   }));
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore the default assertion policy. */
 
 const boundPort = Effect.gen(function* () {
   const server = yield* NodeHttpServer.make(createServer, {

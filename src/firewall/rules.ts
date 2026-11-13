@@ -382,8 +382,6 @@ const document = Schema.Struct({
   ),
 });
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The document Schema shares its domain name with the value it decodes. */
-
 /**
  * Fills omitted settings with defaults and requires a provider for text rules.
  * Fixed and initial rule ids must be unique.
@@ -403,8 +401,6 @@ const MessagePolicy = document.pipe(
 );
 
 type MessagePolicy = typeof MessagePolicy.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the Schema/type pair. */
 
 /** Rejects unknown properties so misspelled settings cannot silently weaken policy. */
 export const decodeMessagePolicy = Schema.decodeUnknown(

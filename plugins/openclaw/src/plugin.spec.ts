@@ -74,6 +74,5 @@ it("refuses account startup without the host runtime before opening MCP", () =>
         ),
       catch: (cause) => String(cause),
     }).pipe(Effect.flip);
-    // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The observable startup failure names missing host runtime support before endpoint credentials are read.
     expect(failure).toContain("channel-runtime-unavailable");
   }));
