@@ -1,12 +1,11 @@
 /**
- * @file Delivers messages between agents hosted by one daemon.
- *
- * A send orders the message in its conversation and saves it for every member
- * in one transaction. Questions and answers are messages that the request
- * worker interprets.
+ * @file One agent's communication service on a daemon that hosts every agent.
  *
  * The file opens with what the service accepts, hands to the host and
- * returns, then reads an agent's conversations and their ordered history.
+ * returns, then reads an agent's conversations and their ordered history. A
+ * send orders the message in its conversation and saves it for every member
+ * in one transaction. Questions and answers are messages that the request
+ * worker interprets.
  */
 
 import { SqlClient } from "@effect/sql/SqlClient";
@@ -18,8 +17,8 @@ import {
   transaction,
   withAgentTransaction,
 } from "../database/index.js";
-import { exactStruct } from "../encoding/index.js";
-import { AgentCard, type AgentName } from "../identity/index.js";
+import { exactStruct } from "../encoding.js";
+import { AgentCard, type AgentName } from "../identity.js";
 import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
 import {
@@ -550,7 +549,7 @@ const agentRow = Schema.Struct({
 });
 
 /** One agent's sends, incoming work and history on this daemon. */
-const makeDelivery = Effect.fn("Communication.delivery")(function* (
+const makeCommunication = Effect.fn("makeCommunication")(function* (
   settings: CommunicationSettings,
 ) {
   const arrived = yield* Effect.makeLatch();
@@ -625,7 +624,7 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
 
   /** The service of the agent `settings` names. */
   static readonly layer = (settings: CommunicationSettings) =>
-    Layer.scoped(Communication, makeDelivery(settings));
+    Layer.scoped(Communication, makeCommunication(settings));
 }
 
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;

@@ -17,8 +17,8 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { form } from "./__tests__/requests-fixtures.js";
-import { Communication, type Conversation, type Incoming } from "./delivery.js";
 import { Answer, Message, Request } from "./messages.js";
+import { Communication, type Conversation, type Incoming } from "./service.js";
 
 type Rule = Pick<Parameters<typeof Communication.layer>[0], "permits">;
 

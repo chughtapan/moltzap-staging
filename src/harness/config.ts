@@ -16,13 +16,13 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { exactStruct } from "../encoding/index.js";
+import { exactStruct } from "../encoding.js";
 import {
   installedMessagePolicy,
   loadMessagePolicy,
   readPolicyCredential,
 } from "../firewall/index.js";
-import { AgentName } from "../identity/index.js";
+import { AgentName } from "../identity.js";
 import {
   initialNormsHaveRules,
   installedNorms,

@@ -14,8 +14,8 @@ import {
   afterCommit,
   transaction as openTransaction,
 } from "../database/index.js";
-import { encodeJson, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding/index.js";
-import { AgentCard } from "../identity/index.js";
+import { encodeJson, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
+import { AgentCard } from "../identity.js";
 import { CommunicationError } from "./errors.js";
 import {
   type collectiveClosure,

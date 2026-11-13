@@ -25,8 +25,8 @@ import {
   type ValidationIssue,
   wellFormedString,
 } from "../communication/index.js";
-import { compareAscii, exactStruct } from "../encoding/index.js";
-import { AgentName } from "../identity/index.js";
+import { compareAscii, exactStruct } from "../encoding.js";
+import { AgentName } from "../identity.js";
 import { MessageAddress } from "./inbox.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */

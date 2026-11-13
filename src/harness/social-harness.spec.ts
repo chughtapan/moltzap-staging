@@ -15,7 +15,7 @@ import {
   Scope,
 } from "effect";
 import { expect } from "vitest";
-import type { AgentCard } from "../identity/index.js";
+import type { AgentCard } from "../identity.js";
 import type { InboxEntry } from "../index.js";
 import type { ReadHistoryResult } from "./social-harness.js";
 import {
@@ -26,7 +26,7 @@ import {
   ReceivedRequest,
   Request,
 } from "../communication/index.js";
-import { compareAscii } from "../encoding/index.js";
+import { compareAscii } from "../encoding.js";
 import {
   type DecisionProvider,
   type DecisionRequest,

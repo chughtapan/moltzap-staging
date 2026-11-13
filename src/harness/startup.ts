@@ -25,7 +25,7 @@ import {
   databaseConnection,
 } from "../database/index.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
-import { type AgentCard, type AgentName, Identity } from "../identity/index.js";
+import { type AgentCard, type AgentName, Identity } from "../identity.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import {
@@ -372,7 +372,7 @@ export { prepareDatabase } from "../database/index.js";
 /** Trusted embeddings use the same services as the process's MCP adapter. */
 export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** This agent's card and the other agents of its daemon by name. */
-export { Identity } from "../identity/index.js";
+export { Identity } from "../identity.js";
 /** Message delivery, questions and ordered history. */
 export { Communication } from "../communication/index.js";
 /** Message policy produces permitted content and owns its decision history. */

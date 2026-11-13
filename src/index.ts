@@ -61,12 +61,7 @@ export {
 /** A send error classifies correction, retained work and uncertain acceptance. */
 export { SendError } from "./communication/index.js";
 /** The identifiers and name an agent is known by. */
-export {
-  AgentCard,
-  AgentId,
-  AgentName,
-  PrincipalId,
-} from "./identity/index.js";
+export { AgentCard, AgentId, AgentName, PrincipalId } from "./identity.js";
 /** Installed package version. */
 export { packageVersion } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */

@@ -12,7 +12,7 @@ import {
   makeQueries,
   withAgentTransaction,
 } from "../database/index.js";
-import { sameJson } from "../encoding/index.js";
+import { sameJson } from "../encoding.js";
 import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
 
 /** A store failure leaves saved rules and decisions as they were. */

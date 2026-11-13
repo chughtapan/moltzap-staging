@@ -29,8 +29,8 @@ import {
   decodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding/index.js";
-import { AgentCard, Identity } from "../identity/index.js";
+} from "../encoding.js";
+import { AgentCard, Identity } from "../identity.js";
 import {
   type Chain,
   type ChainOutcome,

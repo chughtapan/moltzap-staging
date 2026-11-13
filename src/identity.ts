@@ -2,7 +2,7 @@
 
 import { SqlClient } from "@effect/sql";
 import { Context, Data, Effect, Layer, Schema } from "effect";
-import { canonicalIdentifier } from "../encoding/index.js";
+import { canonicalIdentifier } from "./encoding.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
 

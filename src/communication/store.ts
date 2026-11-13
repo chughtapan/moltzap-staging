@@ -9,8 +9,8 @@ import {
   makeQueries,
   withAgentTransaction,
 } from "../database/index.js";
-import { decodeJson, encodeJson, sameJson } from "../encoding/index.js";
-import { AgentId } from "../identity/index.js";
+import { decodeJson, encodeJson, sameJson } from "../encoding.js";
+import { AgentId } from "../identity.js";
 import {
   CollectiveId,
   type CollectiveValue,

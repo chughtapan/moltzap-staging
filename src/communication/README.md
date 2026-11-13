@@ -9,7 +9,7 @@ Callers submit messages and questions through `send`; a successful return
 means the work is saved. Receiving code consumes ordered messages, requests
 and results, and local policy decides which content reaches the agent.
 
-Both modes use the same [delivery](./delivery.ts). A send finds each recipient
+Both modes use the same [service](./service.ts). A send finds each recipient
 among the daemon's agents, gives the message the next position in its
 conversation and saves it for every member in one transaction.
 

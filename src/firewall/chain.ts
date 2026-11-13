@@ -8,8 +8,8 @@
 
 import { Effect, Schema } from "effect";
 import type { Message, Outgoing } from "../communication/index.js";
-import type { AgentCard } from "../identity/index.js";
-import { exactStruct } from "../encoding/index.js";
+import type { AgentCard } from "../identity.js";
+import { exactStruct } from "../encoding.js";
 import {
   FirewallPolicyError,
   type firewallRefusalReasonSchema,

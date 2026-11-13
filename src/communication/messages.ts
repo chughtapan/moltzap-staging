@@ -27,13 +27,8 @@ import {
   isCanonicalIdentifier,
   isStrictlyAscending,
   representationFailure,
-} from "../encoding/index.js";
-import {
-  AGENT_NAME_RULE,
-  AgentCard,
-  AgentId,
-  AgentName,
-} from "../identity/index.js";
+} from "../encoding.js";
+import { AGENT_NAME_RULE, AgentCard, AgentId, AgentName } from "../identity.js";
 import { CommunicationError, issuesText } from "./errors.js";
 
 /** Order validated agent identities by their decoded identifier bytes. */
