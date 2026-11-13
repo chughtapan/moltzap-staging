@@ -5,15 +5,15 @@ import { type Context, Effect, Encoding, Layer } from "effect";
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
 import type { TextRule } from "../rules.js";
-import { Message } from "../../communication/messages.js";
-import { migrateDaemon } from "../../database/migrations.js";
+import { Message } from "../../communication/index.js";
+import { migrateDaemon } from "../../database/index.js";
 import {
   AgentCard,
   AgentId,
   AgentName,
+  Identity,
   PrincipalId,
-} from "../../identity/agent-cards.js";
-import { Identity } from "../../identity/service.js";
+} from "../../identity/index.js";
 import { Firewall, type FirewallOptions } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */

@@ -14,7 +14,6 @@ import {
   Schema,
 } from "effect";
 import { join } from "node:path";
-import type { AgentCard, AgentName } from "../../identity/agent-cards.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
   Communication,
@@ -28,8 +27,8 @@ import {
   type Outgoing,
   ReceivedRequest,
   RequestError,
-} from "../../communication/service.js";
-import { migrateDaemon } from "../../database/migrations.js";
+} from "../../communication/index.js";
+import { migrateDaemon } from "../../database/index.js";
 import { compareAscii } from "../../encoding/index.js";
 import {
   type DecisionProvider,
@@ -38,7 +37,12 @@ import {
   Firewall,
   type FirewallOptions,
 } from "../../firewall/index.js";
-import { Identity, IdentityError } from "../../identity/service.js";
+import {
+  type AgentCard,
+  type AgentName,
+  Identity,
+  IdentityError,
+} from "../../identity/index.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
 type Harness = Context.Tag.Service<typeof SocialHarness>;

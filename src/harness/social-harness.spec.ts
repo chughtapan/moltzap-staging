@@ -15,19 +15,17 @@ import {
   Scope,
 } from "effect";
 import { expect } from "vitest";
-import type { AgentCard } from "../identity/agent-cards.js";
+import type { AgentCard } from "../identity/index.js";
 import type { InboxEntry } from "../index.js";
 import type { ReadHistoryResult } from "./social-harness.js";
 import {
-  encodeCollectiveContent,
-  MessageAddressInput,
-} from "../communication/messages.js";
-import {
   Answer,
+  encodeCollectiveContent,
   Message,
+  MessageAddressInput,
   ReceivedRequest,
   Request,
-} from "../communication/service.js";
+} from "../communication/index.js";
 import { compareAscii } from "../encoding/index.js";
 import {
   type DecisionProvider,

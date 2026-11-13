@@ -12,11 +12,14 @@ import {
   Schema,
   Stream,
 } from "effect";
-import type { MessageAddressInput } from "../../communication/messages.js";
-import type { RequestError } from "../../communication/service.js";
-import { issuesText, SendError } from "../../communication/errors.js";
+import {
+  issuesText,
+  type MessageAddressInput,
+  type RequestError,
+  SendError,
+} from "../../communication/index.js";
 import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
-import { Identity } from "../../identity/service.js";
+import { Identity } from "../../identity/index.js";
 import { HeldNorms } from "../../norms/index.js";
 import {
   CallToolResult,

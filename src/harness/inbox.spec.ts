@@ -3,9 +3,8 @@ import { scopedLive as it } from "@effect/vitest";
 import { Effect, Exit, Redacted, Schema } from "effect";
 import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import { Message } from "../communication/service.js";
-import { migrateDaemon } from "../database/migrations.js";
-import { databaseConnection } from "../database/sql.js";
+import { Message } from "../communication/index.js";
+import { databaseConnection, migrateDaemon } from "../database/index.js";
 import { makeInbox, MessageAddress } from "./inbox.js";
 
 it("retains the same peer message independently and rejects foreign event and acknowledgment tokens", () =>

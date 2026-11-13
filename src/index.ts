@@ -49,7 +49,7 @@ export {
   Request,
   RequestedSchema,
   RequestError,
-} from "./communication/service.js";
+} from "./communication/index.js";
 /** Names and addresses used in host messages. */
 export {
   AgentAddress,
@@ -57,16 +57,16 @@ export {
   GroupAddress,
   MessageAddressInput,
   MsgId,
-} from "./communication/messages.js";
+} from "./communication/index.js";
 /** A send error classifies correction, retained work and uncertain acceptance. */
-export { SendError } from "./communication/errors.js";
+export { SendError } from "./communication/index.js";
 /** The identifiers and name an agent is known by. */
 export {
   AgentCard,
   AgentId,
   AgentName,
   PrincipalId,
-} from "./identity/agent-cards.js";
+} from "./identity/index.js";
 /** Installed package version. */
 export { packageVersion } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */

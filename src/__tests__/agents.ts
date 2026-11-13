@@ -3,8 +3,7 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect";
 import { createHash } from "node:crypto";
 import { getOrCreateOwnedAgent } from "../harness/ownership.js";
-import { AgentCard, AgentName } from "../identity/agent-cards.js";
-import { Identity } from "../identity/service.js";
+import { AgentCard, AgentName, Identity } from "../identity/index.js";
 
 /** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */
 export function testAgentCard(address: string): AgentCard {

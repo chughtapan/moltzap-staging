@@ -23,14 +23,13 @@ import {
   type Request,
   RequestOperation,
   type ResultSources,
-} from "../communication/service.js";
+} from "../communication/index.js";
 import {
   decodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding/index.js";
-import { AgentCard } from "../identity/agent-cards.js";
-import { Identity } from "../identity/service.js";
+import { AgentCard, Identity } from "../identity/index.js";
 import { exitOutcome, markRetries } from "../tracing.js";
 import {
   type Chain,

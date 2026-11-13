@@ -8,7 +8,6 @@ import {
   Schema,
   SchemaAST,
 } from "effect";
-import { SendError, type ValidationIssue } from "../communication/errors.js";
 import {
   AcceptResponse,
   AGENT_ADDRESS_PREFIX,
@@ -22,10 +21,12 @@ import {
   MessageAddressInput,
   MsgId,
   RequestedSchema,
+  SendError,
+  type ValidationIssue,
   wellFormedString,
-} from "../communication/messages.js";
+} from "../communication/index.js";
 import { compareAscii, exactStruct } from "../encoding/index.js";
-import { AgentName } from "../identity/agent-cards.js";
+import { AgentName } from "../identity/index.js";
 import { MessageAddress } from "./inbox.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Effect schemas share the public names of their derived value types. */

@@ -22,7 +22,9 @@ import {
   MsgId as PublicMsgId,
 } from "../index.js";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
+import { Incoming } from "./contract.js";
 import {
+  Answer,
   type AnswerContent,
   CollectivePartInvalidError,
   collectiveRequesterOf,
@@ -31,9 +33,10 @@ import {
   messageFromParticipants,
   messageInterpretation,
   MsgId,
+  Request,
+  RequestedSchema,
   validateAnswer,
 } from "./messages.js";
-import { Answer, Incoming, Request, RequestedSchema } from "./service.js";
 
 const alice = testAgentCard("alice");
 

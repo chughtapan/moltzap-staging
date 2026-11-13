@@ -26,9 +26,13 @@ import {
   Stream,
 } from "effect";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { openCredential, sealCredential } from "../../database/secrets.js";
-import { executeQuery, makeQueries } from "../../database/sql.js";
-import { withAgentTransaction } from "../../database/transactions.js";
+import {
+  executeQuery,
+  makeQueries,
+  openCredential,
+  sealCredential,
+  withAgentTransaction,
+} from "../../database/index.js";
 import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
 import { SocialHarness } from "../social-harness.js";
 import {

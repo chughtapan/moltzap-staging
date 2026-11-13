@@ -13,9 +13,8 @@ import type {
   Incoming,
   Outgoing,
 } from "./contract.js";
-import { executeQuery } from "../database/sql.js";
-import { afterCommit, transaction } from "../database/transactions.js";
-import { AgentCard } from "../identity/agent-cards.js";
+import { afterCommit, executeQuery, transaction } from "../database/index.js";
+import { AgentCard } from "../identity/index.js";
 import { makeRequests } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
 import { messageHistory } from "./history.js";

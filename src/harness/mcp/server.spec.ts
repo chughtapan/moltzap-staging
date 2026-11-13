@@ -33,8 +33,11 @@ import {
 } from "../__tests__/mcp-fixtures.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
-import { SendError, sendFailureReasons } from "../../communication/errors.js";
-import { MessageAddressInput } from "../../communication/messages.js";
+import {
+  MessageAddressInput,
+  SendError,
+  sendFailureReasons,
+} from "../../communication/index.js";
 import { localOwner, serverAgentOwner } from "../ownership.js";
 import { HistoryError } from "../social-harness.js";
 import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";

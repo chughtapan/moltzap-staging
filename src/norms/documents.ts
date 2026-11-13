@@ -12,7 +12,7 @@
 import type { ASTNode, Expression } from "@thi.ng/sexpr/api";
 import { parse } from "@thi.ng/sexpr/parse";
 import { Data, Either, Option, ParseResult, Schema } from "effect";
-import { RequestedSchema } from "../communication/messages.js";
+import { RequestedSchema } from "../communication/index.js";
 
 /** The FIPA interaction protocols a norm's acts can follow. */
 const protocolNames = [
