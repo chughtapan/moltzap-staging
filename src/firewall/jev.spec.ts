@@ -7,8 +7,6 @@ import { expect } from "vitest";
 import type { DecisionRequest } from "./check.js";
 import { makeJevDecisionProvider } from "./jev.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- HTTP status, redaction and closed provider failures are the adapter contract under test. */
-
 const secret = "unit-test-credential";
 const model = "jev-1.13.0";
 const provider = makeJevDecisionProvider({
@@ -221,5 +219,3 @@ it.each([200, 503])(
       expect(error.response).toBeUndefined();
     }),
 );
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore assertion rules outside these HTTP contract tests. */

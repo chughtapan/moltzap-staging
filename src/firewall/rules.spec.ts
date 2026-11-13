@@ -31,8 +31,6 @@ import {
   readPolicyCredential as readCredential,
 } from "./rules.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Rule fields, settings and closed configuration failures are the owner policy contract. */
-
 const policyFormat = "org.social-harness/message-policy/v2";
 const directories: string[] = [];
 afterEach(() => {
@@ -758,5 +756,3 @@ ${behaviorBody}
     2_000,
   );
 });
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

@@ -101,7 +101,6 @@ it.each([
         yield* Effect.tryPromise(() => subscription.close());
 
         const reason = yield* Effect.tryPromise(() => subscription.closed);
-        // eslint-disable-next-line agent-code-guard/no-hardcoded-assertion-literals -- The SDK reports this reason when a client closes its subscription.
         expect(reason).toBe("local");
       }
     }),

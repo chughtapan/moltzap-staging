@@ -79,7 +79,7 @@ export interface HistoryPage extends PaginatedResult {
   }>;
   readonly earlierMessagesOmitted: boolean;
 }
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Named Effect schemas and their decoded values share one public contract. */
+
 /** Encodes the fixed semantic work that Communication accepts. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
 export const Outgoing = Schema.Union(Message, Request);
@@ -134,8 +134,6 @@ export interface CommunicationService {
     query: HistoryQuery,
   ) => Effect.Effect<HistoryPage, CommunicationError>;
 }
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema/type pairs. */
 
 /** The agent a communication service acts for. */
 export interface CommunicationSettings {

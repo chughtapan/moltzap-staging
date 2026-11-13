@@ -190,8 +190,8 @@ const disableCommentRules = {
  * on its sources and root modules, plus the test and barrel-documentation
  * presets.
  */
-function packageSections(maxLines = DEFAULT_MAX_LINES) {
-  const strictRules = makeStrictRules(maxLines);
+function packageSections() {
+  const strictRules = makeStrictRules();
   return [
     {
       ...makeStrictBlock(PACKAGE_SOURCE_FILES, strictRules),
@@ -214,20 +214,15 @@ function packageSections(maxLines = DEFAULT_MAX_LINES) {
 /**
  * Sections for the root modules, the `images/` helper, and the Node-run
  * scripts under `scripts/`.
- * Owner specs stay together as their behavior coverage grows.
  */
 function rootSections() {
   return [
     makeStrictBlock(
       ["*.ts", "images/*.ts", "scripts/**/*.ts"],
-      makeStrictRules(DEFAULT_MAX_LINES),
+      makeStrictRules(),
     ),
     disableCommentRules,
     configModuleRules,
-    {
-      files: ["scripts/**/*.spec.ts"],
-      rules: { "max-lines": "off" },
-    },
   ];
 }
 
@@ -263,10 +258,7 @@ function agentImageSections() {
     },
     {
       files: ["**/*.spec.ts"],
-      rules: {
-        "agent-code-guard/no-hardcoded-assertion-literals": "off",
-        "sonarjs/no-os-command-from-path": "off",
-      },
+      rules: { "sonarjs/no-os-command-from-path": "off" },
     },
   ];
 }
@@ -274,7 +266,7 @@ function agentImageSections() {
 /** Sections for process suites: the strict preset on every TypeScript file plus the integration-test preset on specs. */
 function integrationSections() {
   return [
-    makeStrictBlock(["**/*.ts"], makeStrictRules(DEFAULT_MAX_LINES)),
+    makeStrictBlock(["**/*.ts"], makeStrictRules()),
     makePresetBlock(["**/*.spec.ts"], guard.configs.integrationTests),
     {
       files: ["**/*.spec.ts"],
@@ -285,7 +277,7 @@ function integrationSections() {
   ];
 }
 
-function makeStrictRules(maxLines: number) {
+function makeStrictRules() {
   return {
     ...guard.configs.strict.rules,
     "max-lines-per-function": [
@@ -315,8 +307,18 @@ function makeStrictRules(maxLines: number) {
         modifiers: ["requiresQuotes"],
         format: null,
       },
+      // An Effect schema is a constant that shares its PascalCase name with the type it decodes.
+      {
+        selector: "variable",
+        modifiers: ["const", "global"],
+        format: ["camelCase", "PascalCase", "UPPER_CASE"],
+        leadingUnderscore: "forbid",
+        trailingUnderscore: "forbid",
+      },
       ...presetEntryOptions("@typescript-eslint/naming-convention"),
     ],
+    // TypeScript reports a real redeclaration; this rule also reports a schema and the type that shares its name.
+    "@typescript-eslint/no-redeclare": "off",
     "@typescript-eslint/no-invalid-void-type": [
       "error",
       {
@@ -336,7 +338,7 @@ function makeStrictRules(maxLines: number) {
     ],
     "max-lines": [
       "error",
-      { max: maxLines, skipBlankLines: true, skipComments: true },
+      { max: DEFAULT_MAX_LINES, skipBlankLines: true, skipComments: true },
     ],
     // Disabled: knip runs once at the workspace root (whole-monorepo)
     // via `pnpm lint`; per-package lint scripts run eslint only.
@@ -415,17 +417,19 @@ function isIdentifier(node: ESTree.Node, name: string): boolean {
   return node.type === "Identifier" && node.name === name;
 }
 
-/** Message schemas and their ordered assessment share one checking boundary. */
-const messageCheckRules = {
-  files: [
-    "src/firewall/check.ts",
-    "src/firewall/service.ts",
-    "src/firewall/check.spec.ts",
-  ],
+/** A spec asserts the literal reasons, codes and names that are the contract under test. */
+const specAssertionRules = {
+  files: ["**/*.spec.ts"],
+  rules: { "agent-code-guard/no-hardcoded-assertion-literals": "off" },
+};
+
+/** The two modules above the line ceiling. */
+const largeModuleRules = {
+  files: ["src/communication/messages.ts", "src/firewall/service.ts"],
   rules: {
     "max-lines": [
       "error",
-      { max: 1700, skipBlankLines: true, skipComments: true },
+      { max: 1500, skipBlankLines: true, skipComments: true },
     ],
   },
 };
@@ -456,13 +460,6 @@ function isPatterns(value: unknown): value is readonly string[] {
 }
 
 /**
- * `plugins/openclaw/src/plugin.ts` keeps the OpenClaw registration and channel
- * callbacks together so a reader can see the complete host contract in one
- * place, which needs a higher line ceiling.
- */
-const OPENCLAW_MAX_LINES = 1200;
-
-/**
  * Process suites take the integration sections; the image scenarios under
  * `images/` take the agent-image sections for their Node test boundary.
  */
@@ -479,24 +476,15 @@ export default [
   ...rootSections(),
   ...packageSections(),
   {
-    files: ["src/communication/messages.ts"],
-    rules: {
-      "max-lines": [
-        "error",
-        { max: 2400, skipBlankLines: true, skipComments: true },
-      ],
-    },
-  },
-  {
     files: ["src/firewall/rules.spec.ts"],
     rules: {
       "max-lines-per-function": [
         "error",
-        { max: 500, skipBlankLines: true, skipComments: true },
+        { max: 350, skipBlankLines: true, skipComments: true },
       ],
     },
   },
-  messageCheckRules,
+  largeModuleRules,
   {
     files: [
       "src/harness/social-harness.ts",
@@ -507,19 +495,20 @@ export default [
     rules: {
       "max-lines-per-function": [
         "error",
-        { max: 600, skipBlankLines: true, skipComments: true },
+        { max: 420, skipBlankLines: true, skipComments: true },
       ],
-      complexity: ["error", { max: 32 }],
-      "sonarjs/cognitive-complexity": ["error", 35],
+      complexity: ["error", { max: 25 }],
+      "sonarjs/cognitive-complexity": ["error", 32],
       "max-depth": ["error", 4],
       "sonarjs/nested-control-flow": ["error", { maximumNestingLevel: 4 }],
       "sonarjs/no-nested-functions": ["error", { threshold: 6 }],
       "max-params": ["error", 7],
     },
   },
-  ...at("plugins/openclaw", packageSections(OPENCLAW_MAX_LINES)),
+  ...at("plugins/openclaw", packageSections()),
   ...at("plugins/nanoclaw", packageSections()),
   ...at("images/openclaw-agent", agentImageSections()),
   ...at("images/nanoclaw-agent", agentImageSections()),
   ...at("tests/integration", integrationTestSections),
+  specAssertionRules,
 ];

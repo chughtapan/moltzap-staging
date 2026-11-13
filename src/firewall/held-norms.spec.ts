@@ -23,8 +23,6 @@ import {
 } from "./rules.js";
 import { Firewall } from "./service.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and closed edit failures are the editable policy contract under test. */
-
 const fakeDocument = Schema.parseJson(
   Schema.Struct({ name: Schema.String, rule: Schema.optional(Schema.String) }),
 );
@@ -303,5 +301,3 @@ it("refuses a norm on a firewall without norm documents", () =>
 
     expect(error).toMatchObject({ problem: "invalid-norm" });
   }));
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

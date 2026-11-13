@@ -27,7 +27,6 @@ import {
   validateChecks,
 } from "./check.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Closed judgments, reasons and next actions are the public contract under test. */
 const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";
 const repair =
   "Ask for acceptance of the chosen proposal. Do not claim agreement yet.";
@@ -777,5 +776,3 @@ it.prop(
       expect(outcome).toEqual(spare >= 0 ? ["allow", "allow"] : "rules");
     }),
 );
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore assertion checks after public contract cases. */

@@ -14,8 +14,6 @@ import { readText } from "./acts.js";
 import { type Norm, readNorm } from "./documents.js";
 import { normMatchers, ruleMatcher } from "./matchers.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Matcher names, breach reasons and acts are the norm contract under test. */
-
 const directory = fileURLToPath(
   new URL("../../config/norms/", import.meta.url),
 );
@@ -1090,5 +1088,3 @@ describe("a standalone norm", () => {
       }),
   );
 });
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

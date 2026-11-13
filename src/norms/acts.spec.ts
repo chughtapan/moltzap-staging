@@ -4,8 +4,6 @@ import { FastCheck as fc } from "effect";
 import { describe, expect, it } from "vitest";
 import { formatAct, readText } from "./acts.js";
 
-/* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Act parameters and performatives are the FIPA contract under test. */
-
 describe("readText", () => {
   it("reads the envelope parameters and every other parameter as a field", () => {
     expect(
@@ -83,5 +81,3 @@ describe("formatAct", () => {
     expect(readText(formatAct(act))).toEqual({ kind: "act", act });
   });
 });
-
-/* eslint-enable agent-code-guard/no-hardcoded-assertion-literals -- Restore default assertion rules. */

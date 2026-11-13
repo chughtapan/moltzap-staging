@@ -98,8 +98,6 @@ export class Message extends Schema.Class<Message>("Message")({
   operation: Schema.optional(messageOperation),
 }) {}
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- The history entry Schema shares its domain name with the value it decodes. */
-
 /**
  * Earlier message text and whether the local agent may read it.
  */
@@ -110,8 +108,6 @@ export const HistoryEntry = Schema.Struct({
 
 /** One validated message of earlier history. */
 export type HistoryEntry = typeof HistoryEntry.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after the Schema/type pair. */
 
 /**
  * Requires verified participants and authorized evidence preceding the candidate.
@@ -1092,8 +1088,6 @@ function validateTextRules(input: CheckConfiguration) {
     : Effect.fail(new CheckInputError({ reason: "rules" }));
 }
 
-/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schema values share their domain type names. */
-
 /** A result part the local policy prevents the agent from reading. */
 export const Withheld = exactStruct({
   kind: Schema.Literal("withheld"),
@@ -1152,8 +1146,6 @@ export const PermittedItem = Schema.Union(
 );
 /** @useDeclaredType */
 export type PermittedItem = typeof PermittedItem.Type;
-
-/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema declarations. */
 
 type RefusalReason = typeof firewallRefusalReasonSchema.Type;
 
