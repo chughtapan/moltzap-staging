@@ -3,28 +3,8 @@
   "maxFolderCycles": 3,
   "facadeFiles": [
     {
-      "file": "identity/agent-cards.ts",
-      "reason": "Agent identifiers, names and cards"
-    },
-    {
       "file": "version.ts",
       "reason": "Package version"
-    },
-    {
-      "file": "identity/service.ts",
-      "reason": "This agent and name resolution"
-    },
-    {
-      "file": "communication/service.ts",
-      "reason": "Message service and public semantic values"
-    },
-    {
-      "file": "communication/messages.ts",
-      "reason": "Immutable messages and participant references"
-    },
-    {
-      "file": "communication/errors.ts",
-      "reason": "Closed communication failures"
     },
     {
       "file": "harness/startup.ts",
@@ -94,8 +74,7 @@
         "src/identity"
       ],
       "entrypoints": [
-        "src/identity/agent-cards.ts",
-        "src/identity/service.ts"
+        "src/identity/index.ts"
       ],
       "reason": "Agent identifiers and the agents of one daemon"
     },
@@ -105,9 +84,7 @@
         "src/communication"
       ],
       "entrypoints": [
-        "src/communication/service.ts",
-        "src/communication/messages.ts",
-        "src/communication/errors.ts"
+        "src/communication/index.ts"
       ],
       "reason": "Messages, requests and ordered history"
     },
@@ -172,10 +149,7 @@
         "src/database"
       ],
       "entrypoints": [
-        "src/database/sql.ts",
-        "src/database/transactions.ts",
-        "src/database/secrets.ts",
-        "src/database/migrations.ts"
+        "src/database/index.ts"
       ],
       "reason": "SQL connections, typed query compilation, transaction context and sealed secrets shared by daemon domains"
     }

@@ -18,13 +18,14 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
-import type { AgentCard, AgentName } from "../identity/agent-cards.js";
-import { MessageAddressInput } from "../communication/messages.js";
-import { Communication } from "../communication/service.js";
-import { checkDatabase } from "../database/migrations.js";
-import { databaseAccess, databaseConnection } from "../database/sql.js";
+import { Communication, MessageAddressInput } from "../communication/index.js";
+import {
+  checkDatabase,
+  databaseAccess,
+  databaseConnection,
+} from "../database/index.js";
 import { Firewall, FirewallPolicyError } from "../firewall/index.js";
-import { Identity } from "../identity/service.js";
+import { type AgentCard, type AgentName, Identity } from "../identity/index.js";
 import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import {
@@ -367,14 +368,14 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
 }
 
 /** Deployment prepares schema and encryption metadata before the serving process starts. */
-export { prepareDatabase } from "../database/migrations.js";
+export { prepareDatabase } from "../database/index.js";
 
 /** Trusted embeddings use the same services as the process's MCP adapter. */
 export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** This agent's card and the other agents of its daemon by name. */
-export { Identity } from "../identity/service.js";
+export { Identity } from "../identity/index.js";
 /** Message delivery, questions and ordered history. */
-export { Communication } from "../communication/service.js";
+export { Communication } from "../communication/index.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/index.js";
 /** Trusted policy providers receive typed assessment requests at construction. */

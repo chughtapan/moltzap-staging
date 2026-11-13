@@ -2,7 +2,6 @@
 
 import { Effect, Either, Option, type ParseResult, Schema } from "effect";
 import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
-import { SendError, sendFailureReasons } from "../../communication/errors.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
@@ -11,8 +10,10 @@ import {
   PaginatedRequest,
   PaginatedResult,
   RequestError,
+  SendError,
+  sendFailureReasons,
   wellFormedString,
-} from "../../communication/messages.js";
+} from "../../communication/index.js";
 import {
   compareAscii,
   exactStruct,
@@ -31,7 +32,7 @@ import {
   policyUpdateResultSchema,
   policyUpdateSchema,
 } from "../../firewall/index.js";
-import { AgentId, AgentName } from "../../identity/agent-cards.js";
+import { AgentId, AgentName } from "../../identity/index.js";
 import {
   DeliveryToken,
   InboxError,

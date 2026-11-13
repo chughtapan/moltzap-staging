@@ -7,16 +7,6 @@ import type {
 } from "./contract.js";
 import { claimMode, makeDelivery } from "./delivery.js";
 
-/** The values the service accepts, hands over and returns in both modes. */
-export {
-  type Conversation,
-  type ConversationQuery,
-  type HistoryPage,
-  type HistoryQuery,
-  Incoming,
-  Outgoing,
-} from "./contract.js";
-
 /** Delivers messages, completes questions and reads ordered history for one agent. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
@@ -32,24 +22,3 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
   static readonly layer = (settings: CommunicationSettings) =>
     Layer.scoped(Communication, makeDelivery(settings));
 }
-
-/** Keeps a background loop of one agent running after a failure. */
-export { restarting } from "./collectives.js";
-/** Caller failures distinguish refusal from retained or uncertain progress. */
-export { CommunicationError } from "./errors.js";
-/** Messages and requests retain the same semantic values at every service handoff. */
-export {
-  Answer,
-  AnswerOutcome,
-  CollectiveId,
-  Message,
-  MessageReference,
-  PaginatedRequest,
-  PaginatedResult,
-  ReceivedRequest,
-  Request,
-  RequestedSchema,
-  RequestError,
-  RequestOperation,
-  ResultSources,
-} from "./messages.js";

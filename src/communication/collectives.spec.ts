@@ -29,13 +29,14 @@ import {
   question,
   wireMessage,
 } from "./__tests__/requests-fixtures.js";
+import { restarting } from "./collectives.js";
+import { CommunicationError } from "./errors.js";
 import {
   Message,
   messageInterpretation,
   RequestError,
   type ResultDelivery,
 } from "./messages.js";
-import { CommunicationError, restarting } from "./service.js";
 import { transaction } from "./store.js";
 
 class HandlerUnavailable extends Data.TaggedError("HandlerUnavailable") {}

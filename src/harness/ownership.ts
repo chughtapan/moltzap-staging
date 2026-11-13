@@ -2,8 +2,8 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
-import { executeQuery, makeQueries } from "../database/sql.js";
-import { AgentId, AgentName, PrincipalId } from "../identity/agent-cards.js";
+import { executeQuery, makeQueries } from "../database/index.js";
+import { AgentId, AgentName, PrincipalId } from "../identity/index.js";
 
 /** Authentication supplies both fields; email and client-provided agent selectors are excluded. */
 export interface OwnerAccount {

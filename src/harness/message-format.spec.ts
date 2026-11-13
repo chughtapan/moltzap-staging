@@ -10,10 +10,7 @@ import {
 } from "effect";
 import { expect, it } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import {
-  maximumMembers,
-  MessageAddressInput,
-} from "../communication/messages.js";
+import { maximumMembers, MessageAddressInput } from "../communication/index.js";
 import { canonicalMessageAddress } from "./message-format.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;

@@ -23,7 +23,7 @@ import {
   type AnswerFieldFailures,
   type RequestedSchema,
   validateAnswer,
-} from "../communication/messages.js";
+} from "../communication/index.js";
 import { type Norm, readNorm, standsAlone } from "./documents.js";
 import { allowedActs, ended, type Instance, openingActs } from "./protocols.js";
 

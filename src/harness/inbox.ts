@@ -3,21 +3,22 @@
 import { SqlClient, SqlSchema } from "@effect/sql";
 import { absurd, Effect, Encoding, Schema } from "effect";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { AgentAddress, GroupAddress } from "../communication/messages.js";
 import {
+  AgentAddress,
+  GroupAddress,
   Incoming,
   type Message,
   type MessageReference,
   type PaginatedRequest,
   PaginatedResult,
-} from "../communication/service.js";
+} from "../communication/index.js";
 import {
   type Compilable,
   executeQuery,
   type Generated,
   makeQueries,
-} from "../database/sql.js";
-import { withAgentTransaction } from "../database/transactions.js";
+  withAgentTransaction,
+} from "../database/index.js";
 import {
   canonicalIdentifier,
   decodeJson,

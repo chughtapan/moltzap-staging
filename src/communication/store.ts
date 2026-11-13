@@ -3,10 +3,14 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
 
-import { executeQuery, type Generated, makeQueries } from "../database/sql.js";
-import { withAgentTransaction } from "../database/transactions.js";
+import {
+  executeQuery,
+  type Generated,
+  makeQueries,
+  withAgentTransaction,
+} from "../database/index.js";
 import { decodeJson, encodeJson, sameJson } from "../encoding/index.js";
-import { AgentId } from "../identity/agent-cards.js";
+import { AgentId } from "../identity/index.js";
 import {
   CollectiveId,
   type CollectiveValue,

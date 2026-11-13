@@ -1,6 +1,6 @@
 /** @file What the communication service accepts, hands to the host and returns as history. */
 import { type Effect, Schema } from "effect";
-import type { AgentCard, AgentName } from "../identity/agent-cards.js";
+import type { AgentCard, AgentName } from "../identity/index.js";
 import type { CommunicationError } from "./errors.js";
 import { exactStruct } from "../encoding/index.js";
 import {

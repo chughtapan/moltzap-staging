@@ -6,9 +6,8 @@ import type {
   ConversationQuery,
   HistoryQuery,
 } from "./contract.js";
-import { executeQuery } from "../database/sql.js";
-import { withAgentTransaction } from "../database/transactions.js";
-import { AgentCard, type AgentName } from "../identity/agent-cards.js";
+import { executeQuery, withAgentTransaction } from "../database/index.js";
+import { AgentCard, type AgentName } from "../identity/index.js";
 import { CommunicationError } from "./errors.js";
 import {
   compareAgentIds,
