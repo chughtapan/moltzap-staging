@@ -19,7 +19,7 @@
       "reason": "Saved inbox item grammar"
     },
     {
-      "file": "harness/mcp/contracts.ts",
+      "file": "harness/contracts.ts",
       "reason": "Canonical MCP tool contracts"
     },
     {
@@ -117,7 +117,7 @@
         "src/harness/social-harness.ts",
         "src/harness/inbox.ts",
         "src/harness/message-format.ts",
-        "src/harness/mcp/contracts.ts"
+        "src/harness/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
     },

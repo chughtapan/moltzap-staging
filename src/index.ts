@@ -9,7 +9,7 @@ export {
   type ToolName,
   type ToolRequest,
   type ToolResult,
-} from "./harness/mcp/contracts.js";
+} from "./harness/contracts.js";
 /** A host's MCP connection to the daemon, its typed tool calls and inbox reception. */
 export {
   acquireMcpConnection,
@@ -23,7 +23,7 @@ export {
   McpSettingsError,
   McpToolError,
   type ToolFailure,
-} from "./harness/mcp/client.js";
+} from "./harness/client.js";
 /** Send requests and accepted-work receipts. */
 export { SendRequest, type SendResult } from "./harness/message-format.js";
 /** Results and policy feedback that a host may show its agent. */
@@ -65,4 +65,4 @@ export { AgentCard, AgentId, AgentName, PrincipalId } from "./identity.js";
 /** Installed package version. */
 export { packageVersion } from "./version.js";
 /** Notification name that prompts clients to read their saved inbox. */
-export { INBOX_PENDING_EVENT } from "./harness/mcp/contracts.js";
+export { INBOX_PENDING_EVENT } from "./harness/contracts.js";

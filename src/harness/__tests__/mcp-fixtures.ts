@@ -26,10 +26,10 @@ import { openTestDatabase } from "../../communication/__tests__/store-fixtures.j
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity.js";
-import { makeMcpHttpApp, type McpAuthentication } from "../mcp/http.js";
-import { makeAgentMcpApp } from "../mcp/server.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "../mcp/webhook.js";
+import { makeMcpHttpApp, type McpAuthentication } from "../http.js";
+import { makeAgentMcpApp } from "../server.js";
 import { SocialHarness } from "../social-harness.js";
+import { makeWebhookEvents, webhookHttpClientLayer } from "../webhook.js";
 
 /** The credential has no authority beyond this process. */
 export const mcpTestCredential = Redacted.make(

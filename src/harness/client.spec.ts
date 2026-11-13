@@ -16,7 +16,7 @@ import {
   loopbackMcpEndpoint,
   mcpFixture,
   mcpTestCredential,
-} from "../__tests__/mcp-fixtures.js";
+} from "./__tests__/mcp-fixtures.js";
 import {
   acquireMcpConnection,
   callTool,

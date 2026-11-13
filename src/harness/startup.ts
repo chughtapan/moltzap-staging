@@ -36,9 +36,7 @@ import {
   loadDaemonSettings,
   spanExport,
 } from "./config.js";
-import { makeMcpHttpApp, serveMcp } from "./mcp/http.js";
-import { makeAgentMcpApp } from "./mcp/server.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "./mcp/webhook.js";
+import { makeMcpHttpApp, serveMcp } from "./http.js";
 import {
   getOrCreateOwnedAgent,
   listOwnedAgentKeys,
@@ -46,7 +44,9 @@ import {
   type OwnerAccount,
   serverAgentOwner,
 } from "./ownership.js";
+import { makeAgentMcpApp } from "./server.js";
 import { SocialHarness } from "./social-harness.js";
+import { makeWebhookEvents, webhookHttpClientLayer } from "./webhook.js";
 
 /** A daemon scope restores saved agents and serves authenticated requests to them. */
 export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(

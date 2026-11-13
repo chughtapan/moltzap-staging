@@ -20,10 +20,10 @@ import {
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { PermittedItem } from "../../firewall/index.js";
-import { INBOX_PENDING_EVENT } from "../mcp/contracts.js";
-import { makeWebhookEvents } from "../mcp/webhook.js";
+import { INBOX_PENDING_EVENT } from "../contracts.js";
 import { DeliveryToken, InboxError, InboxEvent } from "../message-format.js";
 import { SocialHarness } from "../social-harness.js";
+import { makeWebhookEvents } from "../webhook.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 
 /** The signing secret of the scripted subscription. */
