@@ -451,7 +451,17 @@ it("answers a message that broke a rule with the configured reply when no rule g
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
       withheldReply,
-      policy: firewallOptions(violation),
+      policy: firewallOptions({
+        decide: (request) =>
+          Effect.succeed(
+            decisionResponse(
+              request,
+              decisionState(request.state).direction === "incoming"
+                ? "violation"
+                : "compliant",
+            ),
+          ),
+      }),
     });
     yield* receive(subject, "Private peer content");
     yield* waitForDecisions(runtime);
@@ -465,7 +475,20 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
-      policy: firewallOptions(violation, "reply"),
+      policy: firewallOptions(
+        {
+          decide: (request) =>
+            Effect.succeed(
+              decisionResponse(
+                request,
+                decisionState(request.state).direction === "incoming"
+                  ? "violation"
+                  : "compliant",
+              ),
+            ),
+        },
+        "reply",
+      ),
     });
 
     yield* receive(subject, "Private peer content");

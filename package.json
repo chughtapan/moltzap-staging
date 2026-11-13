@@ -214,7 +214,6 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
-    "@thi.ng/sexpr": "catalog:",
     "ajv": "catalog:",
     "ajv-formats": "catalog:",
     "effect": "catalog:",

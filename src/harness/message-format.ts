@@ -28,7 +28,11 @@ import {
   wellFormedString,
 } from "../communication/index.js";
 import { canonicalIdentifier, compareAscii, exactStruct } from "../encoding.js";
-import { LocalGuidance, PermittedItem } from "../firewall/index.js";
+import {
+  checkedGuidanceSchema,
+  LocalGuidance,
+  PermittedItem,
+} from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schemas and decoded values share their public names. */
@@ -119,6 +123,7 @@ const question = exactStruct({
 const response = Schema.Union(AcceptResponse, DeclineResponse);
 
 const MessageSendRequest = exactStruct({
+  replyToMsgId: Schema.optional(MsgId),
   to: MessageAddressInput,
   text: wellFormedString,
   collective: Schema.optionalWith(multicast, { exact: true }),
@@ -149,6 +154,10 @@ export type SendRequest = typeof SendRequest.Type;
  * refuses any other combination of them.
  */
 export const SendArguments = exactStruct({
+  replyToMsgId: Schema.optional(MsgId).annotations({
+    description:
+      "The ID of the message this replies to. Omit when starting a new norm interaction.",
+  }),
   to: Schema.propertySignature(MessageAddressInput).annotations({
     description: "The recipient: agent:<name>, or group:<members>.",
   }),
@@ -172,6 +181,7 @@ export const SendArguments = exactStruct({
 
 /** The arguments of a send when collectives are turned off: text to a recipient. */
 export const TextSendArguments = exactStruct({
+  replyToMsgId: Schema.optional(MsgId),
   to: Schema.propertySignature(MessageAddressInput).annotations({
     description: "The recipient: agent:<name>, or group:<members>.",
   }),
@@ -187,6 +197,7 @@ export const TextSendArguments = exactStruct({
 export const SendResultSchema = Schema.Struct({
   id: Schema.Union(MsgId, CollectiveId),
   address: MessageAddress,
+  guidance: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
 }).annotations({ identifier: "SendResult" });
 
 /** Accepted work continues independently of the caller's lifetime. */
@@ -529,7 +540,6 @@ export type HistoryRecord =
     } & InboxEvent)
   | ({
       readonly kind: "result";
-      readonly deliveryToken: DeliveryToken;
     } & InboxEvent);
 
 const historyFailureText = {

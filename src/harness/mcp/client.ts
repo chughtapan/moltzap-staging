@@ -22,7 +22,7 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
-import type { InboxEntry } from "../message-format.js";
+import type { InboxEvent } from "../message-format.js";
 import {
   MAXIMUM_WAIT_SECONDS,
   type ToolCallFailure,
@@ -80,7 +80,7 @@ export interface McpConnectionSettings {
 export interface McpConnection {
   readonly client: Client;
   readonly consumeInbox: <E, R>(
-    accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+    accept: (entry: InboxEvent) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | McpReceiveError, R>;
 }
 
@@ -278,7 +278,7 @@ function observed(cause: unknown): ToolCallFailure {
  */
 function readPending<E, R>(
   client: Pick<Client, "callTool">,
-  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+  accept: (entry: InboxEvent) => Effect.Effect<void, E, R>,
 ): Effect.Effect<void, E | McpReceiveError, R> {
   return Effect.gen(function* () {
     let cursor: string | undefined;
@@ -316,7 +316,7 @@ function receiveInbox<E, R>(
     readonly client: Pick<Client, "callTool">;
     readonly receiving: Ref.Ref<boolean>;
   },
-  accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
+  accept: (entry: InboxEvent) => Effect.Effect<void, E, R>,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {

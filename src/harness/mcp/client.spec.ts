@@ -17,6 +17,8 @@ import {
   mcpFixture,
   mcpTestCredential,
 } from "../__tests__/mcp-fixtures.js";
+import { digest } from "../../__tests__/agents.js";
+import { DeliveryToken } from "../message-format.js";
 import {
   acquireMcpConnection,
   callTool,
@@ -73,7 +75,18 @@ const inboxFixture = Effect.gen(function* () {
       listInbox: () =>
         Ref.get(acknowledged).pipe(
           Effect.flatMap((count) =>
-            count === 0 ? Effect.succeed({ items: [entry] }) : Effect.never,
+            count === 0
+              ? Effect.succeed({
+                  items: [
+                    {
+                      ...entry,
+                      deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(
+                        digest("dlv_", 1),
+                      ),
+                    },
+                  ],
+                })
+              : Effect.never,
           ),
         ),
       acknowledgeDelivery: () =>

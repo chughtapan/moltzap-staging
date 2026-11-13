@@ -85,9 +85,7 @@ export class TextPolicySettings extends Schema.Class<TextPolicySettings>(
  * An editable rule names no matcher: matchers come with the daemon's
  * configuration, so only a fixed rule can be scoped to one.
  */
-export const editableRuleSchema = exactStruct(
-  Struct.omit(TextRule.fields, "match"),
-);
+const editableRuleSchema = exactStruct(Struct.omit(TextRule.fields, "match"));
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
@@ -201,7 +199,6 @@ const policyProblemSchema = Schema.Literal(
   "frontmatter",
   "schema",
   "too-large",
-  "invalid-norm",
 );
 
 const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
@@ -215,8 +212,6 @@ const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   schema:
     "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance, feedback and action",
   "too-large": "the document is over 64 KiB",
-  "invalid-norm":
-    "it is not a norm document this daemon can hold: the daemon reads no norms, the document does not parse, or it names a built-in norm",
 };
 
 const policyReasonText: Readonly<

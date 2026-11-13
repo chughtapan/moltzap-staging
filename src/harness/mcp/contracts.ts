@@ -7,6 +7,7 @@ import {
   decodeCollectiveFailure,
   Message,
   MessageReference,
+  MsgId,
   PaginatedRequest,
   PaginatedResult,
   RequestError,
@@ -34,10 +35,9 @@ import {
 } from "../../firewall/index.js";
 import { AgentId, AgentName } from "../../identity.js";
 import {
-  DeliveryToken,
   HistoryError,
   InboxError,
-  InboxPage,
+  InboxEvent,
   MessageAddress,
   SendArguments,
   SendResultSchema,
@@ -170,7 +170,6 @@ const historyRecord = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("result"),
     address: MessageAddress,
-    deliveryToken: DeliveryToken,
     item: savedItemSchema,
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
@@ -221,7 +220,9 @@ const inboxRequestSchema = exactStruct({
     }),
   ),
 });
-const inboxResultSchema = Schema.typeSchema(InboxPage);
+const inboxResultSchema = Schema.typeSchema(
+  Schema.Struct({ ...PaginatedResult.fields, items: Schema.Array(InboxEvent) }),
+);
 /** What the daemon answers when a call's arguments are not what the tool takes. */
 const invalidArgumentsSchema = Schema.Struct({
   issues: Schema.Array(
@@ -509,7 +510,7 @@ export const toolDefinitions = {
   read_norms: {
     failure: failsUntyped,
     description:
-      "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+      "List the installed communication norms and their complete documents. Participants already share these norms. Start with an opening act from a document; for a continuation, supply replyToMsgId in send_message.",
     input: empty,
     output: readNormsResultSchema,
     annotations: read,
@@ -526,6 +527,7 @@ export const clientToolDefinitions = {
     description:
       "Send a message to the server agent. Returns the accepted send id. An outcome-unknown failure must not be retried as a new send.",
     input: exactStruct({
+      replyToMsgId: Schema.optional(MsgId),
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",
       }),

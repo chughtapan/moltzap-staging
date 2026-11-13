@@ -19,6 +19,7 @@ import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
 export const persistenceFailure = () =>
   new FirewallPolicyError({ reason: "persistence-failed" });
 
+const bytes = Schema.NonEmptyString;
 const time = Schema.Int.pipe(
   Schema.nonNegative(),
   Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
@@ -41,24 +42,35 @@ const activationRow = Schema.Struct({
 const disposition = Schema.Literal("admitted", "withheld");
 const completedCheck = Schema.Struct({
   checkId: Schema.NonEmptyString,
+  messageKey: Schema.String,
   direction: Schema.Literal("incoming", "outgoing"),
-  candidate: Schema.NonEmptyString,
-  input: Schema.NonEmptyString,
-  result: Schema.NonEmptyString,
+  candidate: bytes,
+  input: bytes,
+  result: bytes,
   admit: Schema.Boolean,
 });
 const storedCheck = Schema.Struct({
   direction: completedCheck.fields.direction,
-  candidate: Schema.NonEmptyString,
-  input: Schema.NonEmptyString,
-  result: Schema.NonEmptyString,
+  candidate: bytes,
+  input: bytes,
+  result: bytes,
   disposition,
 });
 const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
-  result: Schema.NonEmptyString,
+  result: bytes,
   disposition,
   time: storedTime,
+});
+const auditRow = Schema.Struct({
+  sequence: storedTime,
+  checkId: Schema.String,
+  direction: completedCheck.fields.direction,
+  candidate: bytes,
+  input: bytes,
+  result: bytes,
+  time: storedTime,
+  disposition,
 });
 const savedSummary = Schema.parseJson(
   Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
@@ -68,9 +80,8 @@ const savedSummary = Schema.parseJson(
 export type FirewallActivation = typeof activationRow.Type;
 
 /**
- * One completed check as delivery commits it, with its candidate, input and
- * result as JSON text. Saving the same check again must carry the same values,
- * so a retry cannot rewrite a decision.
+ * One completed check as delivery commits it. Saving the same check again must
+ * carry the same bytes, so a retry cannot rewrite a decision.
  */
 export type FirewallCompletion = typeof completedCheck.Type;
 
@@ -89,6 +100,7 @@ interface FirewallTables {
     readonly agent_key: string;
     readonly sequence: Generated<number>;
     readonly check_id: string;
+    readonly message_key: string | null;
     readonly direction: typeof completedCheck.Type.direction;
     readonly candidate: string;
     readonly input: string;
@@ -121,7 +133,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
     );
   const policy = queries
     .selectFrom("firewall_policy")
-    .select("policy")
+    .select("policy as rules")
     .where("agent_key", "=", agentKey);
   const checks = queries
     .selectFrom("firewall_checks")
@@ -138,6 +150,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
           .values({
             agent_key: agentKey,
             check_id: value.checkId,
+            message_key: value.messageKey,
             direction: value.direction,
             candidate: value.candidate,
             input: value.input,
@@ -151,7 +164,13 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
       );
       const prior = yield* executeQuery(
         checks
-          .select(["direction", "candidate", "input", "result", "disposition"])
+          .select([
+            "direction",
+            "candidate as candidate",
+            "input as input",
+            "result as result",
+            "disposition",
+          ])
           .where("check_id", "=", value.checkId),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
       const saved = prior[0];
@@ -171,26 +190,103 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
       }
     });
   return {
+    readAssessments: (messageKeys: readonly string[]) =>
+      run(
+        Effect.gen(function* () {
+          const rows: Array<{
+            readonly messageKey: string;
+            readonly at: number;
+            readonly disposition: "admitted" | "withheld";
+            readonly result: string;
+            readonly candidate: string;
+          }> = [];
+          for (let start = 0; start < messageKeys.length; start += 400) {
+            const batch = yield* executeQuery(
+              checks
+                .select([
+                  "message_key as messageKey",
+                  "decided_at as at",
+                  "disposition",
+                  "result as result",
+                  "candidate as candidate",
+                ])
+                .where(
+                  "message_key",
+                  "in",
+                  messageKeys.slice(start, start + 400),
+                )
+                .orderBy("sequence", "asc"),
+            ).pipe(
+              Effect.flatMap(
+                Schema.decodeUnknown(
+                  Schema.Array(
+                    Schema.Struct({
+                      messageKey: Schema.String,
+                      at: storedTime,
+                      disposition,
+                      result: bytes,
+                      candidate: bytes,
+                    }),
+                  ),
+                ),
+              ),
+            );
+            rows.push(...batch);
+          }
+          return rows;
+        }),
+      ),
+    auditSequences: () =>
+      run(
+        executeQuery(checks.select("sequence").orderBy("sequence", "asc")).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknown(
+              Schema.Array(Schema.Struct({ sequence: Schema.Int })),
+            ),
+          ),
+          Effect.map((rows) => rows.map((row) => row.sequence)),
+        ),
+      ),
+    exportAssessments: (sequences: readonly number[]) =>
+      run(
+        executeQuery(
+          checks
+            .select([
+              "sequence",
+              "check_id as checkId",
+              "direction",
+              "candidate as candidate",
+              "input as input",
+              "result as result",
+              "decided_at as time",
+              "disposition",
+            ])
+            .where("sequence", "in", sequences)
+            .orderBy("sequence", "asc")
+            .limit(100),
+        ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(auditRow)))),
+      ),
     readPolicy: () =>
       run(
         executeQuery(policy).pipe(
           Effect.flatMap(
-            Schema.decodeUnknown(
-              Schema.Array(Schema.Struct({ policy: Schema.NonEmptyString })),
-            ),
+            Schema.decodeUnknown(Schema.Array(Schema.Struct({ rules: bytes }))),
           ),
-          Effect.map((rows) => rows[0]?.policy),
+          Effect.map((rows) => rows[0]?.rules),
         ),
       ),
-    writePolicy: (policy: string, activation?: FirewallActivation) =>
+    writePolicy: (rules: string, activation?: FirewallActivation) =>
       run(
         Effect.gen(function* () {
           yield* executeQuery(
             queries
               .insertInto("firewall_policy")
-              .values({ agent_key: agentKey, policy })
+              .values({
+                agent_key: agentKey,
+                policy: rules,
+              })
               .onConflict((conflict) =>
-                conflict.column("agent_key").doUpdateSet({ policy }),
+                conflict.column("agent_key").doUpdateSet({ policy: rules }),
               ),
           );
           if (activation !== undefined) {
@@ -225,7 +321,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
             checks
               .select([
                 "check_id as checkId",
-                "result",
+                "result as result",
                 "disposition",
                 "decided_at as time",
               ])
@@ -263,7 +359,11 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
 });
 
 function decodeDecisionSummaries(row: typeof decisionRow.Type) {
-  return Schema.decodeUnknown(savedSummary)(row.result).pipe(
+  return Effect.try({
+    try: () => row.result,
+    catch: persistenceFailure,
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknown(savedSummary)),
     Effect.map(({ summaries }) =>
       summaries.map((summary) => ({
         ...summary,

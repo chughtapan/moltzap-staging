@@ -22,3 +22,6 @@ export { getOrCreateOwnedAgent, localOwner } from "./harness/ownership.js";
 
 /** Integration fixtures compose the existing domain services without startup overrides. */
 export { loadDaemonSettings } from "./harness/config.js";
+
+/** Operator-controlled export of exact retained firewall assessments. */
+export { assessmentAudit } from "./firewall/audit.js";

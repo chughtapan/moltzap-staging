@@ -5,7 +5,7 @@ import {
   connectFromEnvironment,
   type DeliveryAcknowledgeError,
   type FirewallRefusal,
-  type InboxEntry,
+  type InboxEvent,
   type McpConnectError,
   type McpConnection,
   MessageAddressInput,
@@ -109,7 +109,7 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * The `send_message` arguments an outbound row amounts to. Text that is a
- * JSON object with a `collective` or `collectiveResponse` property is the
+ * JSON object with a `collective`, `collectiveResponse` or `replyToMsgId` property is the
  * tool's own arguments for a question or an answer, which the daemon
  * validates. Any other text is a plain message.
  */
@@ -119,8 +119,9 @@ function sendArguments({
 }: OutboundText): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
   return written !== undefined &&
-    (Object.hasOwn(written, "collective") ||
-      Object.hasOwn(written, "collectiveResponse"))
+    ["collective", "collectiveResponse", "replyToMsgId"].some((field) =>
+      Object.hasOwn(written, field),
+    )
     ? { ...written, to }
     : { to, text };
 }
@@ -217,7 +218,7 @@ const ENDPOINT_SENDER = "Social Harness";
  * firewall reminder is that text. Any other entry is its JSON, as
  * `receive_messages` returns it.
  */
-function entryText(entry: InboxEntry): string {
+function entryText(entry: InboxEvent): string {
   if (entry.item.kind === "multicast" && entry.guidance === undefined) {
     const [part, ...rest] = entry.item.message.content;
     if (part.type === "text" && rest.length === 0) {
@@ -233,7 +234,7 @@ function entryText(entry: InboxEntry): string {
  * it lists no members.
  */
 function entryParticipants(
-  entry: InboxEntry,
+  entry: InboxEvent,
 ): Pick<ProjectedItem, "sender" | "members"> {
   const { item } = entry;
   switch (item.kind) {
@@ -491,7 +492,7 @@ class HarnessChannelAdapter {
   }
 
   private handleDelivery(
-    delivery: InboxEntry,
+    delivery: InboxEvent,
   ): Effect.Effect<void, ChannelError | DeliveryAcknowledgeError> {
     const config = this.setupConfig;
     if (config === null) {
@@ -501,7 +502,10 @@ class HarnessChannelAdapter {
       config,
       delivery.address,
       hostMessage({
-        id: delivery.deliveryToken,
+        id:
+          "message" in delivery.item
+            ? delivery.item.message.msgId
+            : delivery.item.operationId,
         address: delivery.address,
         ...entryParticipants(delivery),
         text: entryText(delivery),

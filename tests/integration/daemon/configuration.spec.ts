@@ -16,14 +16,16 @@ import {
 import { ConfigProvider, Context, Effect, Exit, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 
 const secret = "configuration-only-test-bearer-0000000001";
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
-const rulesFile = "rules.json";
+const normDocument = `(norm exchange :initiator Sender :participant Receiver)
+(content ask :by Sender :starts true :initiates open)
+(content answer :by Receiver :when open :ends true)`;
 /** Only the owner reaches the database directory and file. */
 const privateDirectoryMode = 0o700;
 const privateFileMode = 0o600;
@@ -32,9 +34,6 @@ const settings = {
   host: "127.0.0.1",
   authentication: { kind: "local", credential: secret },
 };
-const shippedNorms = fileURLToPath(
-  new URL("../../../config/norms/", import.meta.url),
-);
 
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
@@ -201,13 +200,9 @@ it("resolves the norms directory relative to the settings file", () =>
     const test = yield* fixture;
     const norms = join(test.directory, "norms");
     yield* test.filesystem.makeDirectory(norms);
-    yield* test.filesystem.copyFile(
-      join(shippedNorms, "examples/chat.lisp"),
-      join(norms, "chat.lisp"),
-    );
-    yield* test.filesystem.copyFile(
-      join(shippedNorms, rulesFile),
-      join(norms, rulesFile),
+    yield* test.filesystem.writeFileString(
+      join(norms, "exchange.lisp"),
+      normDocument,
     );
     yield* test.write({
       ...settings,
@@ -215,26 +210,19 @@ it("resolves the norms directory relative to the settings file", () =>
       normsDirectory: "norms",
     });
     const loaded = yield* test.load;
-    expect(loaded.settings.norms?.initial).toEqual([
-      yield* test.filesystem.readFileString(
-        join(shippedNorms, "examples/chat.lisp"),
-      ),
-    ]);
+    expect(
+      loaded.settings.norms?.contracts.map((contract) => contract.source),
+    ).toEqual([normDocument]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-/** A norms directory holding the shipped `office-hours`, whose documents give English rules. */
+/** An installed contract whose English rule needs a decision provider. */
 function normsWithRules(test: Effect.Effect.Success<typeof fixture>) {
   return Effect.gen(function* () {
     const norms = join(test.directory, "norms");
     yield* test.filesystem.makeDirectory(norms);
-    yield* Effect.forEach(
-      ["examples/office-hours.lisp", rulesFile],
-      (file) =>
-        test.filesystem.copyFile(
-          join(shippedNorms, file),
-          join(norms, file.replace("examples/", "")),
-        ),
-      { concurrency: 1 },
+    yield* test.filesystem.writeFileString(
+      join(norms, "exchange.lisp"),
+      `${normDocument}\n(rule :act ask "Keep the request concise.")`,
     );
   });
 }
@@ -251,7 +239,7 @@ it("loads the decision provider that judges initial norms' English rules, though
 
     const loaded = yield* test.load;
 
-    expect(loaded.settings.norms?.initial).toHaveLength(1);
+    expect(loaded.settings.norms?.contracts).toHaveLength(1);
     expect(loaded.settings.messagePolicy?.policy.text).toBeUndefined();
     expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
   }).pipe(Effect.provide(NodeContext.layer)));
@@ -279,7 +267,7 @@ it.each([
   }).pipe(Effect.provide(NodeContext.layer)),
 );
 
-it("refuses a norms directory without its rule file, naming the file", () =>
+it("accepts an empty norms directory without an additional rule file", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.filesystem.makeDirectory(join(test.directory, "norms"));
@@ -288,9 +276,7 @@ it("refuses a norms directory without its rule file, naming the file", () =>
       ...(yield* messagePolicy(test, false)),
       normsDirectory: "norms",
     });
-    const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "norms" });
-    expect(failure.message).toContain(rulesFile);
+    expect((yield* test.load).settings.norms?.contracts).toEqual([]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("accepts OAuth settings on a public listener", () =>

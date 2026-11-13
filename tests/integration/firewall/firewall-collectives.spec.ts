@@ -7,7 +7,7 @@
  * marked rule among the rules it can edit; the open member removes it. Under
  * that rule a firewall withholds an incoming text carrying `[in]`, refuses an
  * outgoing text carrying `[out]`, and is unsure about a text carrying
- * `[unsure]`: it refuses such a text outgoing and admits it incoming with a
+ * `[unsure]`: it admits such a text with a
  * reminder. Each agent checks with its own firewall: a requester checks the
  * question it sends and the answers it receives, a member checks the question
  * it is asked.
@@ -173,7 +173,7 @@ const gatherBehavior = Effect.gen(function* () {
   yield* expectIncomingGatherWithheld(scenario);
   yield* expectGatherAnswerWithheld(scenario);
   yield* expectUnsureAnswerReminder(scenario);
-  yield* expectUnsureQuestionRefused(scenario.requester, scenario.members);
+  yield* expectUnsureQuestionReminder(scenario.requester, scenario.members);
 }).pipe(Effect.scoped);
 
 /**
@@ -354,21 +354,30 @@ function expectUnsureAnswerReminder({
   });
 }
 
-/** A question the requester's firewall is unsure about is refused, so the agent can revise it. */
-function expectUnsureQuestionRefused(
+/** Valid uncertainty admits a question with registered guidance. */
+function expectUnsureQuestionReminder(
   requester: Participant,
   members: readonly Participant[],
 ) {
   return Effect.gen(function* () {
-    const refused = yield* collecting(requester, "gather", members, {
+    const sent = yield* collecting(requester, "gather", members, {
       question: "[unsure] Which day works for the demo?",
       deadline: ANSWERED_DEADLINE_SECONDS,
-    }).pipe(Effect.flip);
-    expect(refused).toBeInstanceOf(FirewallRefusal);
-    expect(refused).toMatchObject({
-      refusal: "unresolved-evidence",
-      feedback: [{ text: "Remove the marked text." }],
     });
+    expect(sent.guidance).toMatchObject({ instructions: [uncertainAdvice] });
+    yield* Effect.forEach(
+      members,
+      (member) =>
+        nextItem(member).pipe(
+          Effect.tap((item) => {
+            expect(item).toMatchObject({
+              kind: "collectiveRequest",
+              message: { operation: { operationId: sent.id } },
+            });
+          }),
+        ),
+      { concurrency: 1 },
+    );
   });
 }
 

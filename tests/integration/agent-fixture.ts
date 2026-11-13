@@ -2,7 +2,7 @@
 
 import {
   callTool,
-  type InboxEntry,
+  type InboxEvent,
   type PermittedItem,
   SendRequest,
 } from "@social-harness/social-harness";
@@ -17,7 +17,7 @@ import { inboxStream } from "./mcp-inbox.js";
 
 /** A signed-in owner and the items its agent has received, in order. */
 export interface Participant extends SignedIn {
-  readonly inbox: Queue.Queue<InboxEntry>;
+  readonly inbox: Queue.Queue<InboxEvent>;
 }
 
 /**
@@ -34,7 +34,7 @@ export const joinParticipants = Effect.fn("joinParticipants")(
       (owner) =>
         Effect.gen(function* () {
           const signedIn = yield* daemon.signInAs(owner);
-          const inbox = yield* Queue.unbounded<InboxEntry>();
+          const inbox = yield* Queue.unbounded<InboxEvent>();
           yield* inboxStream(signedIn.connection).pipe(
             Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
             Effect.forkScoped,

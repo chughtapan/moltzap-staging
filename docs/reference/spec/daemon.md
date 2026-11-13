@@ -45,7 +45,7 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one. Refused with OAuth authentication |
 | `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
-| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
@@ -131,7 +131,7 @@ daemon restart to recover.
 The configured message policy and norms apply before host calls are accepted.
 Agents use `read_policy`, `update_policy`, `read_firewall_decisions` and, with
 norms, `read_norms` through their own MCP context. Each agent's editable
-policy holds its own [norms](./norms/norms.md#holding-norms), so agents of one
+policy holds its own [norms](./norms/norms.md#scope-and-installation), so agents of one
 daemon can hold different norms. In client/server mode only the
 [server agent](./client-server.md#firewall-and-norms) has a firewall and
 norms. Each conversation checks one incoming item at a time. A withheld

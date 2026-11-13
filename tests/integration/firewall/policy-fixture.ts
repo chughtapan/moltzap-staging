@@ -3,8 +3,7 @@
  * provider for daemons that run the daemon's own composition. The provider
  * decides each check by the text it judges: an incoming text carrying `[in]`,
  * or an outgoing text carrying `[out]`, breaks every rule it is asked about,
- * and a text carrying `[unsure]` is left unsettled, which refuses it outgoing
- * and admits it incoming with a reminder.
+ * and a text carrying `[unsure]` is left unsettled, which admits it with a reminder.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -15,8 +14,7 @@ import {
   type DecisionRequest,
 } from "@social-harness/social-harness/test";
 import { ConfigProvider, Effect, Layer, Schema } from "effect";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 /** The marker an incoming text carries to break the rules it is checked against. */
 const INCOMING_BREACH = "[in]";
@@ -91,15 +89,18 @@ export const writeMessagePolicy = Effect.fn("writeMessagePolicy")(function* (
   return { messagePolicyFile, decisionProviderKeyFile };
 });
 
-const shippedNorms = fileURLToPath(
-  new URL("../../../config/norms/", import.meta.url),
-);
+/** A synthetic contract exercises mechanism without pinning an authored scheduling policy. */
+export const exchangeName = "exchange";
+/** Both roles can cancel; continuations carry their parent in send metadata. */
+export const exchangeDocument = `(norm ${exchangeName} :initiator Sender :participant Receiver)
+(content ask :by Sender :starts true :initiates open
+  (field text :type string))
+(content answer :by Receiver :when open :ends true
+  (field text :type string))
+(content cancel :when open :ends true)
+(rule :act ask :feedback "Remove the marked text." "Reject incoming [in] and outgoing [out].")`;
 
-/**
- * Copies the shipped rule file and the shipped `documents` into a norms
- * directory under `directory`, and returns the setting that names it. Each
- * new agent of a daemon with that setting holds the norms of `documents`.
- */
+/** Installs exactly the given source documents into a daemon's configuration. */
 export const writeNorms = Effect.fn("writeNorms")(function* (
   directory: string,
   documents: readonly string[],
@@ -108,11 +109,11 @@ export const writeNorms = Effect.fn("writeNorms")(function* (
   const normsDirectory = join(directory, "norms");
   yield* fs.makeDirectory(normsDirectory);
   yield* Effect.forEach(
-    [...documents, "rules.json"],
-    (document) =>
-      fs.copyFile(
-        join(shippedNorms, document),
-        join(normsDirectory, basename(document)),
+    documents,
+    (document, index) =>
+      fs.writeFileString(
+        join(normsDirectory, `contract-${index}.lisp`),
+        document,
       ),
     { concurrency: 1 },
   );
@@ -155,7 +156,10 @@ function markedResponse(request: DecisionRequest) {
           probabilities: Object.fromEntries(
             Object.keys(question.criteria).map((choice) => [
               choice,
-              choice === selected ? probability : 1 - probability,
+              choice === selected
+                ? probability
+                : (1 - probability) /
+                  (Object.keys(question.criteria).length - 1),
             ]),
           ),
         },

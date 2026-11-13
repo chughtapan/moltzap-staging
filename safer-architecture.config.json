@@ -57,10 +57,12 @@
     {
       "name": "encoding",
       "roots": [
-        "src/encoding.ts"
+        "src/encoding.ts",
+        "src/sexpr.ts"
       ],
       "entrypoints": [
-        "src/encoding.ts"
+        "src/encoding.ts",
+        "src/sexpr.ts"
       ],
       "reason": "Shared encoding at external boundaries"
     },
@@ -183,7 +185,7 @@
   "publicTypePackages": [
     {
       "package": "@effect/sql",
-      "reason": "The firewall acquires the daemon’s shared SqlClient through its Effect environment"
+      "reason": "The firewall acquires the daemon\u2019s shared SqlClient through its Effect environment"
     },
     {
       "package": "effect",
