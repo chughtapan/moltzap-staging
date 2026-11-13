@@ -27,10 +27,6 @@
       "reason": "Host request grammar and agent text"
     },
     {
-      "file": "tracing.ts",
-      "reason": "Work progress instrumentation"
-    },
-    {
       "file": "communication/store.ts",
       "reason": "One private communication store owns SQL operations and row types."
     }
@@ -122,16 +118,6 @@
         "src/harness/mcp/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"
-    },
-    {
-      "name": "tracing",
-      "roots": [
-        "src/tracing.ts"
-      ],
-      "entrypoints": [
-        "src/tracing.ts"
-      ],
-      "reason": "Shared work progress observation"
     },
     {
       "name": "version",

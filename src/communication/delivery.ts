@@ -6,7 +6,7 @@
  * worker interprets.
  */
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Effect, Option, Schema } from "effect";
+import { Context, Effect, Layer, Option, Schema } from "effect";
 import type {
   CommunicationService,
   CommunicationSettings,
@@ -48,7 +48,7 @@ const agentRow = Schema.Struct({
 });
 
 /** One agent's sends, incoming work and history on this daemon. */
-export const makeDelivery = Effect.fn("Communication.delivery")(function* (
+const makeDelivery = Effect.fn("Communication.delivery")(function* (
   settings: CommunicationSettings,
 ) {
   const arrived = yield* Effect.makeLatch();
@@ -88,7 +88,7 @@ export const makeDelivery = Effect.fn("Communication.delivery")(function* (
  * Marks the database as serving `mode`. Fails with `membership-invalid` when
  * it already serves another.
  */
-export const claimMode = Effect.fn("claimMode")(
+const claimMode = Effect.fn("claimMode")(
   function* (mode: string) {
     const db = yield* communicationQueries;
     yield* executeQuery(
@@ -109,6 +109,22 @@ export const claimMode = Effect.fn("claimMode")(
   },
   Effect.catchTag("SqlError", unavailable),
 );
+
+/** Delivers messages, completes questions and reads ordered history for one agent. */
+export class Communication extends Context.Tag("SocialHarness/Communication")<
+  Communication,
+  CommunicationService
+>() {
+  /**
+   * Marks the database as serving one mode before any agent starts, and fails
+   * with `membership-invalid` when it already serves another.
+   */
+  static readonly claim = claimMode;
+
+  /** The service of the agent `settings` names. */
+  static readonly layer = (settings: CommunicationSettings) =>
+    Layer.scoped(Communication, makeDelivery(settings));
+}
 
 type Requests = Effect.Effect.Success<ReturnType<typeof makeRequests>>;
 

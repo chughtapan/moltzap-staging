@@ -3,7 +3,7 @@
 import { Effect, Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { decodeJson, encodeJson, sameJson } from "./json.js";
+import { decodeJson, encodeJson, sameJson } from "./index.js";
 
 describe("JSON text of schema values", () => {
   it("round-trips generated JSON through one stable text", () => {

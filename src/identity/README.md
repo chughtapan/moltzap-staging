@@ -7,7 +7,7 @@ no key and no signed identity document.
 
 Use the [`Identity` service](./service.ts), which daemon composition imports
 from `@social-harness/social-harness/service`. `me` is this agent's
-[`AgentCard`](./agent-cards.ts). `resolve` returns the cards of other agents on
+[`AgentCard`](./index.ts). `resolve` returns the cards of other agents on
 the same daemon by name, in input order, and fails with the first name no agent
 has.
 

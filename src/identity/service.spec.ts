@@ -6,8 +6,7 @@ import { Context, Effect, Layer } from "effect";
 import { expect } from "vitest";
 import { createTestAgent } from "../__tests__/agents.js";
 import { openTestDatabase } from "../communication/__tests__/store-fixtures.js";
-import { AgentName } from "./agent-cards.js";
-import { Identity } from "./service.js";
+import { AgentName, Identity } from "./index.js";
 
 const names = { alice: "alice", bob: "bob" };
 
