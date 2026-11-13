@@ -11,17 +11,21 @@ import {
   Option,
   Schema,
   Stream,
+  Struct,
 } from "effect";
-import type { FirewallRefusal } from "../../firewall/index.js";
 import {
   issuesText,
   type MessageAddressInput,
   type RequestError,
   SendError,
 } from "../../communication/index.js";
-import { Firewall } from "../../firewall/service.js";
+import {
+  FirewallPolicyError,
+  type FirewallRefusal,
+} from "../../firewall/index.js";
+import { Firewall, type PolicyEdit } from "../../firewall/service.js";
 import { Identity } from "../../identity.js";
-import { HeldNorms } from "../../norms/index.js";
+import { compileNorm, HeldNorms } from "../../norms/index.js";
 import {
   CallToolResult,
   ProtocolError,
@@ -42,6 +46,7 @@ import {
   sendErrorData,
   textToolDefinitions,
   toolDefinitions,
+  type ToolRequest,
 } from "./contracts.js";
 import { limitResponseStream } from "./http.js";
 
@@ -103,6 +108,40 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   );
 });
 
+/** Compile agent-authored source before crossing the firewall's typed boundary. */
+function compilePolicyEdit(request: ToolRequest<"update_policy">["arguments"]) {
+  return Effect.gen(function* () {
+    const add = yield* Effect.forEach(
+      request.add ?? [],
+      (
+        item,
+        index,
+      ): Effect.Effect<
+        NonNullable<PolicyEdit["add"]>[number],
+        FirewallPolicyError
+      > => {
+        if (!("norm" in item)) {
+          return Effect.succeed(item);
+        }
+        return compileNorm(item.norm).pipe(
+          Effect.map((contract) => ({ contract })),
+          Effect.catchTag("NormDocumentError", () =>
+            Effect.fail(
+              new FirewallPolicyError({
+                reason: "invalid-rule",
+                problem: "schema",
+                path: ["add", index],
+              }),
+            ),
+          ),
+        );
+      },
+      { concurrency: 1 },
+    );
+    return { ...request, add };
+  });
+}
+
 /** The tools of a peer: it addresses any agent and owns its message policy. */
 function peerTools(
   harness: Harness,
@@ -136,7 +175,8 @@ function peerTools(
     bindWith({
       name: "update_policy",
       definition: toolDefinitions.update_policy,
-      execute: firewall.updatePolicy,
+      execute: (request) =>
+        compilePolicyEdit(request).pipe(Effect.flatMap(firewall.updatePolicy)),
       failure: (error) =>
         new ProtocolError(-32603, error.message, {
           reason: error.reason,
@@ -207,7 +247,10 @@ function receiveTool(harness: Harness) {
             ),
           );
       }
-      return page;
+      return {
+        ...page,
+        items: page.items.map((entry) => Struct.omit(entry, "deliveryToken")),
+      };
     }),
   });
 }
@@ -243,7 +286,6 @@ function normsTool(
           norms: held.map((norm) => ({
             name: norm.name,
             description: norm.description,
-            ...(norm.protocol === undefined ? {} : { protocol: norm.protocol }),
             document: norm.source,
           })),
         })),

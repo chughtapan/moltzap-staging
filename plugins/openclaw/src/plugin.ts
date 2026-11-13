@@ -14,7 +14,7 @@ import {
   type AgentCard,
   callToolAsWritten,
   connectFromEnvironment,
-  type InboxEntry,
+  type InboxEvent,
   type McpConnection,
   MessageAddressInput,
   type MessageAddressInput as MessageAddressInputValue,
@@ -137,6 +137,7 @@ interface InboundTurnInput {
 
 /** One host send as the host supplies it, each field unchecked. */
 interface TextSend {
+  readonly replyToMsgId?: string;
   readonly accountId?: string | null;
   readonly to: unknown;
   readonly text: unknown;
@@ -351,9 +352,18 @@ function handleMessageAction(
         accountId: ctx.accountId,
         to: ctx.params.to,
         text: ctx.params.message,
+        ...(ctx.reply?.source === "explicit"
+          ? { replyToMsgId: ctx.reply.replyToId }
+          : {}),
       }),
     ),
-    Effect.map(({ to }) => jsonResult({ ok: true, to })),
+    Effect.map(({ to, result }) =>
+      jsonResult({
+        ok: true,
+        to,
+        ...(result.guidance === undefined ? {} : { guidance: result.guidance }),
+      }),
+    ),
   );
 }
 
@@ -544,7 +554,7 @@ function consumeInboundMessages(
 ) {
   return Effect.raceFirst(
     endpoint.consumeInbox((delivery) =>
-      handleInboxEntry(ctx, runtime, delivery),
+      handleInboxEvent(ctx, runtime, delivery),
     ),
     Effect.tryPromise({
       try: () => waitUntilAbort(ctx.abortSignal),
@@ -573,14 +583,17 @@ function reportConnected(
   });
 }
 
-function handleInboxEntry(
+function handleInboxEvent(
   ctx: ChannelGatewayContext<Account>,
   runtime: OpenClawAccountRuntime,
-  entry: InboxEntry,
+  entry: InboxEvent,
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const turn: HostTurn = {
-    id: entry.deliveryToken,
+    id:
+      "message" in entry.item
+        ? entry.item.message.msgId
+        : entry.item.operationId,
     kind,
     address: entry.address,
     ...turnParticipants(entry, kind),
@@ -596,7 +609,7 @@ function handleInboxEntry(
  * firewall reminder is that text. Any other entry is its JSON, as
  * `receive_messages` returns it.
  */
-function entryText(entry: InboxEntry): string {
+function entryText(entry: InboxEvent): string {
   if (entry.item.kind === "multicast" && entry.guidance === undefined) {
     const [part, ...rest] = entry.item.message.content;
     if (part.type === "text" && rest.length === 0) {
@@ -612,7 +625,7 @@ function entryText(entry: InboxEntry): string {
  * its turn lists no members.
  */
 function turnParticipants(
-  entry: InboxEntry,
+  entry: InboxEvent,
   kind: HostTurn["kind"],
 ): Pick<HostTurn, "sender" | "members"> {
   const { item } = entry;
@@ -628,7 +641,7 @@ function turnParticipants(
     case "collectiveResult":
       return {
         sender: {
-          id: `sharness:${entry.deliveryToken}`,
+          id: `sharness:${"message" in entry.item ? entry.item.message.msgId : entry.item.operationId}`,
           name: ENDPOINT_SENDER_NAME,
         },
       };
@@ -848,6 +861,9 @@ function sendOpenClawText(
     accountId: ctx.accountId,
     text: ctx.text,
     to: ctx.to,
+    ...(ctx.replyToIdSource === "explicit" && ctx.replyToId != null
+      ? { replyToMsgId: ctx.replyToId }
+      : {}),
   }).pipe(Effect.map(({ result }) => makeMessageSendResult(result)));
 }
 
@@ -869,7 +885,7 @@ function sendText(
     const result = yield* callToolAsWritten(
       connection.client,
       "send_message",
-      sendArguments(to, text),
+      sendArguments(to, text, params.replyToMsgId),
     );
     yield* logOutbound(
       connectedAccount,
@@ -885,20 +901,22 @@ function sendText(
 
 /**
  * The `send_message` arguments a host send amounts to. Text that is a JSON
- * object with a `collective` or `collectiveResponse` property is the tool's
+ * object with a `collective`, `collectiveResponse` or `replyToMsgId` property is the tool's
  * own arguments for a question or an answer, which the daemon validates. Any
  * other text is a plain message.
  */
 function sendArguments(
   to: MessageAddressInputValue,
   text: string,
+  replyToMsgId?: string,
 ): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
   return written !== undefined &&
-    (Object.hasOwn(written, "collective") ||
-      Object.hasOwn(written, "collectiveResponse"))
+    ["collective", "collectiveResponse", "replyToMsgId"].some((field) =>
+      Object.hasOwn(written, field),
+    )
     ? { ...written, to }
-    : { to, text };
+    : { to, text, ...(replyToMsgId === undefined ? {} : { replyToMsgId }) };
 }
 
 function logOutboundFailure(

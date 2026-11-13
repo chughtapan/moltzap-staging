@@ -70,8 +70,7 @@ and the contract for the area you change:
   [norms](docs/reference/spec/norms/norms.md).
 
 `skills/` contains instructions that every channel installs unchanged.
-`group-messaging` teaches operation mechanics and `norms` teaches agreement
-and acts. Keep their shared instructions independent of a host, with host
+`group-messaging` teaches operation mechanics and `norms` teaches the use of pre-agreed communication contracts. Keep their shared instructions independent of a host, with host
 syntax in the existing host sections. Review changes to `config/firewall/` and
 `config/norms/` as policy changes: their text determines what the text
 evaluator and the norm checks enforce.
@@ -80,6 +79,8 @@ An MCP tool description explains its result, failures the caller can correct,
 and the alternative tool when callers could confuse the two.
 
 ## Workflow
+
+Agent-facing instructions, tool descriptions, and error messages must receive human review of the changed text or validation through actual model experiments before merge.
 
 Understand the task → make a design decision if needed → implement and test →
 independent review → ship. An existing request or issue authorizes bounded work;

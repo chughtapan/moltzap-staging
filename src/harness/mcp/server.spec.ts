@@ -620,7 +620,7 @@ const clientTools = [
 const sendTool = "send_message";
 const missingField = "text";
 const collectiveField = "collective";
-const textFields = ["to", missingField];
+const textFields = ["replyToMsgId", "to", missingField];
 
 describe("send_message arguments", () => {
   it("offers only a recipient and text when collectives are turned off", () =>
@@ -675,6 +675,7 @@ describe("send_message arguments", () => {
       );
       const send = tools.find((tool) => tool.name === sendTool);
       expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual([
+        "replyToMsgId",
         missingField,
       ]);
       yield* Effect.tryPromise(() =>

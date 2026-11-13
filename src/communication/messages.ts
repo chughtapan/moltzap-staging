@@ -874,7 +874,9 @@ const MessageParticipants = exactStruct({
 
 /** Adds the author-scoped identity to the captured participants. */
 const MessageHeader = MessageParticipants.pipe(
-  Schema.extend(exactStruct({ msgId: MsgId })),
+  Schema.extend(
+    exactStruct({ msgId: MsgId, replyToMsgId: Schema.optional(MsgId) }),
+  ),
 );
 
 /** The request or reply a message's content carries, decoded. */
@@ -950,6 +952,9 @@ const messageSchema = Schema.transformOrFail(
         author: message.author,
         recipients: message.recipients,
         msgId: message.msgId,
+        ...(message.replyToMsgId === undefined
+          ? {}
+          : { replyToMsgId: message.replyToMsgId }),
         content: message.content,
       }),
   },
@@ -957,11 +962,16 @@ const messageSchema = Schema.transformOrFail(
 
 /** Owns construction and the one decoded interpretation of reserved content. */
 export const Message = Object.assign(messageSchema, {
-  create(input: Pick<Message, "author" | "recipients" | "content">) {
+  create(
+    input: Pick<Message, "author" | "recipients" | "content" | "replyToMsgId">,
+  ) {
     return Effect.gen(function* () {
       return yield* messageFromParticipants(input.author, input.recipients, {
         msgId: yield* mintMsgId(),
         content: input.content,
+        ...(input.replyToMsgId === undefined
+          ? {}
+          : { replyToMsgId: input.replyToMsgId }),
       });
     }).pipe(
       Effect.withSpan("Message.create"),
@@ -1236,23 +1246,6 @@ export function outcomeOfResponse(
 }
 
 /**
- * Name each failing answer field, such as `field "slot" is invalid (enum)`.
- * A refused reply and a member's `invalid` outcome read the same. Field
- * names come from peers, so each is quoted as JSON: no name can close its
- * quotes or start a new line of the text a model reads.
- * @param fields The failing fields, in validation order.
- * @returns One clause per field, joined by `; `.
- */
-export function answerFieldsText(fields: AnswerFieldFailures): string {
-  return fields
-    .map(({ field, reason, detail }) => {
-      const named = `field ${JSON.stringify(field)} ${answerFieldText[reason]}`;
-      return detail === undefined ? named : `${named} (${detail})`;
-    })
-    .join("; ");
-}
-
-/**
  * Check an answer against the schema its request carried.
  * @param requestedSchema The request's form-mode schema.
  * @param content The member's answer.
@@ -1300,7 +1293,7 @@ export function messageInterpretation(
 export function messageFromParticipants(
   author: Message["author"],
   recipients: ReadonlyArray<Message["author"]>,
-  intent: Pick<Message, "msgId" | "content">,
+  intent: Pick<Message, "msgId" | "content" | "replyToMsgId">,
 ) {
   return Effect.try({
     try: () =>
@@ -1599,4 +1592,21 @@ function answerIssues(field: FormField, value: AnswerValue): readonly string[] {
         instancePath === "" ? "" : `items[${instancePath.slice(1)}].`;
       return `${item}${keyword}: ${message ?? "is invalid"}`;
     });
+}
+
+/**
+ * Name each failing answer field, such as `field "slot" is invalid (enum)`.
+ * A refused reply and a member's `invalid` outcome read the same. Field
+ * names come from peers, so each is quoted as JSON: no name can close its
+ * quotes or start a new line of the text a model reads.
+ * @param fields The failing fields, in validation order.
+ * @returns One clause per field, joined by `; `.
+ */
+function answerFieldsText(fields: AnswerFieldFailures): string {
+  return fields
+    .map(({ field, reason, detail }) => {
+      const named = `field ${JSON.stringify(field)} ${answerFieldText[reason]}`;
+      return detail === undefined ? named : `${named} (${detail})`;
+    })
+    .join("; ");
 }

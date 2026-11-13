@@ -23,10 +23,9 @@ governs withheld questions and answers.
 
 The daemon saves an incoming decision, its permitted content and guidance, and
 any answer visibility changes together. Interrupted checks leave messages
-pending for recovery. It retains payload, guidance and delivery token before exposure,
-unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
-random bytes encoded as 43 canonical unpadded base64url characters.
-Acknowledgments survive for the lifetime of the database.
+pending for recovery. It retains payload and guidance unchanged across replay and restart.
+Delivery bookkeeping stays inside the daemon; hosts receive message IDs.
+
 
 ## Messages
 
@@ -57,7 +56,7 @@ is `null`, and a `wake_` plus a random UUID identifies only the notification.
 Inbox reads recover lost notifications.
 
 `receive_messages` takes an optional `cursor` and returns `items` with any `nextCursor`.
-Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
+Each entry contains its `address`, `item` and optional `guidance`.
 [Native adapters](./adapters.md#receiving-messages) hand their host the same entry. Pages hold at most 50 items and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
 Later arrivals await a new traversal. Returned items leave the pending inbox.

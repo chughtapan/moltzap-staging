@@ -170,3 +170,10 @@ export const canonicalIdentifier = <const Name extends string>(
     }),
   );
 };
+
+/** Captures a JSON value for retained assessments and configuration digests. */
+export const jsonText = (value: unknown) =>
+  Effect.try({
+    try: () => JSON.stringify(value),
+    catch: representationFailure,
+  });

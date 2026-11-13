@@ -48,6 +48,12 @@ answer schema and deadline. Session focus and prior messages cannot supply an
 omitted destination. Native hosts write the same arguments in
 [message text](./adapters.md#message-text).
 
+Direct text sends accept `replyToMsgId`, the ID of the message being answered.
+The daemon preserves that reference in the message and history. A new contract
+interaction omits it; a continuation supplies it. The firewall validates it
+against the configured contract and does not infer or replace it. Native
+adapters forward explicit reply references through this same send input.
+
 The host may answer only requests admitted to its inbox.
 
 The daemon validates input, resolves recipients and checks outgoing policy.

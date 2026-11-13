@@ -28,7 +28,7 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
-import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
+import { HeldNorms, type InstalledNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import {
   DaemonConfigurationError,
@@ -73,10 +73,7 @@ function runDaemon() {
           ),
         );
       }
-      const norms =
-        settings.norms === undefined
-          ? undefined
-          : yield* serviceNorms(settings.norms);
+      const norms = settings.norms;
       yield* claimMode(settings.serverAgentName);
       const selectApp = yield* makeAgentSelector({
         settings,
@@ -194,7 +191,7 @@ interface DaemonResources {
   readonly settings: DaemonSettings;
   /** Opens the webhook secrets sealed in the database. */
   readonly unlockKey: Redacted.Redacted<Uint8Array>;
-  readonly norms?: ServiceNorms;
+  readonly norms?: InstalledNorms;
   /** The norms the server agent holds, once it has started; clients read them. */
   readonly serverNorms: Ref.Ref<
     Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -261,12 +258,12 @@ function checksOf(
   const firewall = Firewall.layer(
     agentKey,
     settings.messagePolicy,
-    norms?.chain,
-    norms?.documents,
+    undefined,
+    norms?.contracts,
   );
   return norms === undefined
     ? firewall
-    : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall));
+    : HeldNorms.layer.pipe(Layer.provideMerge(firewall));
 }
 
 /** Norms a client reads: the ones the server agent holds, once it has started. */

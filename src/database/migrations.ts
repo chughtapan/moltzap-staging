@@ -72,6 +72,7 @@ const hostSchema = (sequence: string) =>
   )`;
     yield* sql`CREATE TABLE mcp_webhook_state (agent_key TEXT PRIMARY KEY, state TEXT NOT NULL)`;
     yield* sql.unsafe(`CREATE TABLE firewall_checks (
+      message_key TEXT,
     agent_key TEXT NOT NULL,
     sequence ${sequence},
     check_id TEXT NOT NULL,

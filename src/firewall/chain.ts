@@ -21,12 +21,18 @@ type RefusalReason = typeof firewallRefusalReasonSchema.Type;
 
 /** Carries bounded preceding history and each message's visibility to the agent. */
 export interface FirewallEvidence {
+  /** Incoming messages awaiting persistence retain reference ancestry for refusal replies. */
+  readonly references?: readonly Message[];
+  /** Complete preceding application history for a contract, separate from the bounded text window. */
+  readonly protocolHistory?: {
+    readonly messages: readonly Message[];
+    readonly complete: boolean;
+  };
   readonly history: ReadonlyArray<{
     readonly message: Message;
     readonly visibleToAgent: boolean;
   }>;
   readonly earlierHistoryOmitted: boolean;
-  /** What else the history lacks, such as messages beyond the evidence byte limit. */
   readonly gaps: readonly string[];
 }
 
@@ -36,6 +42,50 @@ const chainRuleSchema = exactStruct({
   match: Schema.String.pipe(Schema.pattern(/^[a-z][a-z0-9.-]{0,63}$/u)),
   action: Schema.Literal("allow", "deny", "reply", "hold"),
 });
+
+/** Text matchers choose rule scope without deciding whether the rule is violated. */
+export function ruleScopes(
+  rules: readonly TextRule[],
+  matchers: Chain["matchers"],
+  input: MatchInput,
+) {
+  const inScope: MatchResult = { matched: true };
+  return Effect.forEach(
+    rules,
+    (rule) => {
+      const matcher =
+        rule.match !== undefined && Object.hasOwn(matchers, rule.match)
+          ? matchers[rule.match]
+          : undefined;
+      return (
+        matcher === undefined
+          ? Effect.succeed(inScope)
+          : matcher
+              .match(input)
+              .pipe(Effect.catchAllDefect(() => Effect.succeed(inScope)))
+      ).pipe(
+        Effect.map((result): readonly [string, MatchResult] => [
+          rule.id,
+          result,
+        ]),
+      );
+    },
+    { concurrency: 1 },
+  ).pipe(
+    Effect.map((scoped) => ({
+      outOfScope: scoped.flatMap(([id, result]) =>
+        result.matched ? [] : [id],
+      ),
+      replies: Object.fromEntries(
+        scoped.flatMap(([id, result]) =>
+          result.matched && result.reply !== undefined
+            ? [[id, result.reply]]
+            : [],
+        ),
+      ),
+    })),
+  );
+}
 
 /**
  * One rule of the chain. `id` and `applies` mean what they mean on a text rule,
@@ -66,12 +116,12 @@ export const chainRuleFileSchema = exactStruct({
   ),
 );
 
-/** What a matcher sees: the message, its direction, the permitted history and this agent. */
+/** What a matcher sees: the message, its direction and the permitted history. */
 export interface MatchInput {
+  readonly self: AgentCard;
   readonly direction: "incoming" | "outgoing";
   readonly message: Outgoing;
   readonly evidence: FirewallEvidence;
-  readonly self: AgentCard;
 }
 
 /**

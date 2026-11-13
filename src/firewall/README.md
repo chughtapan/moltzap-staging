@@ -1,59 +1,33 @@
 # Message firewall
 
-The firewall checks incoming messages and outgoing drafts against a rule chain
-and text rules. It returns a judgment and advice, and manages changes to
-editable rules.
-
-## Checking messages
+The firewall checks incoming messages and outgoing drafts against configured
+contracts, an ordered rule chain and text rules. It owns assessments and policy
+edits; the daemon owns transport and delivery.
 
 ```mermaid
 flowchart LR
-  A[Messages and permitted history] --> B[Capture input and active rules]
-  B --> C[Apply the rule chain]
-  C -->|no rule matched| D[Assess text rules]
-  C -->|a rule decided| E
-  D --> E[Combine findings and select advice]
-  E --> F[Return judgments and completed checks]
+  A[Message and conversation evidence] --> B[Structure and protocol checks]
+  B --> C[Ordered rule chain]
+  C --> D[Applicable text rules]
+  D --> E[Decision and registered feedback]
+  E --> F[Daemon retains and applies decision]
 ```
 
-The rule chain runs first: each rule names a matcher that another module
-registers, such as the norms checks, and the first rule whose matcher matches
-decides the message. A message no chain rule decides goes on to the text rules.
-One call keeps the same policy for every message, including the question and
-answers in a collective result. Advice selects registered instructions and
-references the host may see.
+Contracts are typed configuration: forms, transitions, field relationships and
+English rules. They do not add delivery acknowledgments or schedule model turns.
+A chain allow preserves required contract checks. Matchers on text rules select
+scope; the decision provider assesses compliance. Incoming feedback is itself
+an outgoing candidate and must pass policy before it can be sent.
 
-The daemon supplies the participants and permitted conversation history.
-It saves completed checks. Incoming messages remain pending if checking is
-interrupted. Daemon-generated results have no firewall check.
+`Firewall.layer` loads retained editable rules and contracts, seeding only a
+missing policy from configuration. Edits save the replacement and activation
+record together. A failed save leaves the active policy unchanged; in-flight
+checks retain the policy they captured.
 
-## Changing rules
+The daemon supplies verified participants and permitted conversation evidence.
+The firewall joins that history to its saved assessments to reconstruct protocol
+state. The caller saves completed checks in its transaction with the affected
+message or inbox record.
 
-```mermaid
-flowchart LR
-  A[Requested rule change] --> B[Validate replacement]
-  B --> C[Approval placeholder approves]
-  C --> D[Save rules and change record]
-  D --> E[Activate replacement]
-```
-
-Approval currently always succeeds. The placeholder can later use host
-elicitation. Fixed rules come from configuration and cannot be edited.
-
-The editable policy also holds the agent's norm documents, which the firewall
-saves and versions without reading them. The norms layer names and compiles
-them through `NormDocuments` in `editable-policy.ts`, and each activation adds
-the matchers and fixed rules they compile to.
-
-A failed save leaves the active rules unchanged. In-flight checks keep the
-policy they captured.
-
-## Using the firewall
-
-`Firewall.layer` loads saved editable rules and norm documents, seeding them
-from configuration on the first startup. It obtains the daemon's shared `SqlClient` and identity
-through Effect.
-
-The test-only entry exports `DecisionProviderOverride`, which replaces the
-provider a message policy configures, so tests run the daemon's own composition
-without provider credentials.
+The test entry exports `DecisionProviderOverride` to exercise the daemon's own
+composition with a deterministic provider.

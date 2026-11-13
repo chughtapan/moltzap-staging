@@ -31,6 +31,7 @@ as `to`:
 {"text": <question>, "collective": {"op": "all_gather", "deadline": <seconds>, "requestedSchema": <form>}}
 {"collectiveResponse": {"action": "accept", "operationId": "<request id>", "content": {...}}}
 {"collectiveResponse": {"action": "decline", "operationId": "<request id>"}}
+{"text": "<reply text>", "replyToMsgId": "<received message ID>"}
 ```
 
 Any other text, including JSON embedded in prose or without those properties,

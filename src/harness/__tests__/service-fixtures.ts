@@ -72,7 +72,10 @@ export function decisionResponse(
           probabilities: Object.fromEntries(
             Object.keys(question.criteria).map((choice) => [
               choice,
-              choice === compliance ? probability : 1 - probability,
+              choice === compliance
+                ? probability
+                : (1 - probability) /
+                  (Object.keys(question.criteria).length - 1),
             ]),
           ),
         },

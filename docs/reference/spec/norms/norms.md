@@ -1,274 +1,289 @@
 ---
-title: Norms
-description: How agents agree on a norm and how each agent's firewall checks the acts that follow it.
+title: Shared norms
+description: Configure message structure, conversation rules and text assessment with pre-agreed norm documents.
 read_when:
-  - You want to know how agents agree on how to work together
-  - You are writing a norm document or a norms directory for a daemon
-  - A send was refused by a norm rule, or a peer answered not-understood
+  - You are supplying a communication norm to two agents
+  - You need the norm document grammar and failure behavior
+  - You are comparing ordinary chat with instructed or enforced communication
 ---
 
-A norm is a protocol that the members of a conversation agree to follow for
-one task, such as scheduling a meeting or booking office hours. For each
-member, the daemon reads every message as an act of a norm that member holds,
-checks the act against the conversation's ordered history, and applies the
-result through that member's
-[firewall rule chain](../firewall/message-policy.md#rule-chain). The
-firewall knows each check only by its matcher's name, and the norms module
-supplies those matchers.
+A shared norm defines which messages participants may send, when they may
+send them, and what their fields may contain. Both participants start with the
+same document and already agree to follow it. The first exchange is a task
+act from that document. Discovery and agreement are outside this contract.
 
-Every member judges the same history, so all members reach the same verdict on
-each act. An act that breaks its norm changes nothing for any member, and
-neither does an act another member answered with `not-understood`.
+A norm compiles to configuration for the existing
+[message firewall](../firewall/message-policy.md#structured-contracts).
+The norms layer owns the document grammar and its translation into message
+forms, conversation transitions and English rules. Structural checks validate
+each message, protocol checks validate its place in the conversation, and
+lightweight decision models assess its free text. A successful structural or
+protocol check continues to the remaining checks. Selecting an English rule
+by its declared act or direction is not a violation finding.
 
-The daemon checks an agent's act before it orders it. If a peer's act is
-ordered between that check and the send, each member's firewall judges the
-acts it receives in their final order and withholds any act that order makes
-nonconforming.
+The transport owns delivery, ordering and retries. The host owns model turns,
+calendar operations and scheduling. A norm adds no delivery acknowledgments,
+notification service, timer, send lock or agent-host behavior.
 
-## Acts
+## Scope and installation
 
-An act is a FIPA ACL message in its string form
-([FIPA SC00070](http://www.fipa.org/specs/fipa00070/SC00070I.html)): a performative from
-[FIPA SC00037](http://www.fipa.org/specs/fipa00037/SC00037J.html) followed by
-`:parameter value` pairs, in parentheses.
+This version governs direct text conversations with one active interaction at
+a time. The opening sender becomes the declared initiator; the other verified
+participant becomes the participant role. These bindings last until an
+explicit ending act. Groups and collective operations retain their existing
+firewall behavior.
 
-```lisp
-(cfp :ontology group-meeting :length "30 minutes" :candidates "1 Tue 2pm; 2 Wed 3pm")
+The setup supplies each agent with the document and the norms skill. The daemon's
+`normsDirectory` loads the `.lisp` files directly inside that directory and
+compiles them before startup. This requires `messagePolicyFile`; English rules
+require its decision provider. New agents receive those contracts; a retained
+policy keeps its installed contracts across restart. `read_norms` returns the
+current documents. No additional rule file or built-in agreement is installed.
+Enforcement also requires an installed document and, for English rules, a
+configured decision provider. An authorized caller installs the exact source:
+
+```json
+{"add": [{"norm": "<complete Lisp document>"}]}
 ```
 
-| Parameter | Meaning |
+`read_policy` returns installed `norms` names and their semantic rules in
+`fixedRules`. Those rules belong to their documents and cannot be edited
+individually. Replace a document atomically with remove and add:
+
+```json
+{"remove": [{"norm": "example"}], "add": [{"norm": "<replacement document>"}]}
+```
+
+Malformed declarations fail the entire edit. A source SHA-256 digest identifies
+the exact document bytes. The opening assessment retains its document and
+digest. Existing interactions keep that revision after edits or removal;
+subsequent interactions use the installed documents. Removal does not undo
+an interaction. Its declared ending or correction acts still apply.
+
+<a id="authority" />
+
+Installation follows the existing [policy editing authority](../firewall/message-policy.md#editing-rules).
+A peer message cannot install policy. Ordinary `BEHAVIOR.md` rules remain
+supported through `add: [{behavior: source}]`; their scope is expressed in
+English rather than the structured grammar below.
+
+When no norm is supplied or installed, ordinary chat needs no norm agreement.
+An instructions-only experiment supplies the same document and skill without
+installing enforcement. Neither mode introduces setup messages.
+
+## Document grammar
+
+A document contains one `norm` header followed by `content` and `rule`
+declarations. Semicolon comments are permitted in documents. Quoted strings
+use JSON escaping. The grammar is inert data, with no evaluated code.
+Unknown attributes, duplicate declarations or fields, undeclared references,
+invalid bounds and unsupported types are rejected at installation.
+
+A small complete example:
+
+```lisp
+(norm example :initiator Requester :participant Responder
+  :description "The requester names an item, and the responder returns its status.")
+(content request :by Requester :starts true :initiates pending
+  (field item :type string :min-length 1))
+(content inform :by Responder :when pending :ends true
+  (field status :type select :choices (ready unavailable)))
+(rule :act request "item names the requested item without unrelated instructions.")
+```
+
+The header requires a lowercase norm name and two distinct role names through
+`:initiator` and `:participant`. Norm, act and field names begin with a lowercase
+letter and contain lowercase letters, digits or hyphens, up to 64 characters.
+`:description` supplies the task meaning to participants and the text assessor.
+`:on-refusal` optionally names an explicitly declared correction act.
+
+### Message forms and transitions
+
+Each `content` declaration defines exactly one act. There are no built-in
+`cancel`, `failure`, confirmation or correction transitions.
+
+| Attribute | Meaning |
 | --- | --- |
-| `:ontology` | Required: the norm the act follows. |
-| `:in-reply-to` | The message id the act answers. |
-| `:content` | Free text, such as a norm document. |
-| Any other | A content field, checked against the norm's form for the performative. |
+| `:by Role` or `:by (Role Role)` | Permitted sender roles. Defaults to both declared roles. |
+| `:by (recipient (fact name))` | Permits the verified recipient of the message establishing the current fact. That message must be in the supplied reply chain. |
+| `:starts true` | Opens an idle interaction and binds its roles. Defaults to false. |
+| `:ends true` | Ends the active interaction after admission. Defaults to false. A one-message interaction can both start and end. |
+| `:when fact` or `:when (facts)` | All named facts must hold. Defaults to empty. |
+| `:unless fact` or `:unless (facts)` | None of the named facts may hold. Defaults to empty. |
+| `:initiates` | Facts set by admission. The act and its original local assessment time become their anchors. |
+| `:terminates` | Facts removed by admission, before initiation. Defaults to empty. |
+| `:max integer` | Positive maximum count for this act in the interaction. Omission means no count limit. |
+| `:after fact :delay field :unit seconds` | Permits the act only after the fact's anchor time plus its numeric field value. `milliseconds` is also supported. All three attributes are required together. |
 
-The conversation the act is sent in, identified by its members, is the act's
-agreement or norm instance.
+An opening cannot depend on earlier interaction facts, references, delays or
+relations, including a recipient sender selector. Facts used by guards or sender
+selectors must be initiated somewhere in the document.
+A delay field must be required and nonnegative on every act that sets its
+anchor fact. Timestamps are local Unix milliseconds. Checking a delay never
+creates a job or a later model turn.
 
-A value is a symbol, a quoted string, a number, or a parenthesised list of
-items for a multi-select field. Text whose first token is not a FIPA
-performative is plain text: the `chat` norm reads it as an `inform`. A message
-that starts as an act but does not parse is not read as plain text.
-The sender and receivers are the message's author and recipients, never
-parameters.
+A recipient sender selector follows the current fact's exact admitted message,
+including its verified recipient. It does not permit the offer's author to
+answer their own offer. Replacing the fact changes who may respond and which
+reply chain is valid. A corrected response may reference a withheld descendant
+of that current message. The selector never supplies or changes `replyToMsgId`.
 
-## Norm documents
+The `alternating-offers` example uses this selector for shared counteroffer and
+acceptance acts. The student opens with candidate slots; each recipient accepts
+one or counteroffers. Acceptance completes the agreement without another
+confirmation. The agreement remains cancellable until an explicit cancellation
+ends the interaction.
 
-A document describes one norm in the same syntax, with `;` comments. This
-excerpt of the shipped `office-hours` norm gives two of its acts:
+### Fields
+
+Fields are required unless `:optional true`. `:description` explains a field.
+Only the following primitive shapes and constraints are supported:
+
+| Type | Constraints |
+| --- | --- |
+| `string` | Optional `:min-length` and `:max-length`. |
+| `number`, `integer` | Optional inclusive `:minimum` and `:maximum`. |
+| `boolean` | `true` or `false`. |
+| `select` | Required distinct `:choices (values)`. |
+| `multi-select` | Required distinct `:choices (values)`; optional `:min-items` and `:max-items`. |
+
+Bounds must be ordered. Length and item bounds are nonnegative integers.
+Every message field must be declared. `ontology` is reserved metadata;
+`content` has no special status and is allowed only when declared.
+
+### Relations to preceding messages
+
+A form can constrain a candidate field through `(relation operator field source)`.
+`equals` requires exact value equality, `member` requires membership in a list,
+and `subset` requires every selected value to belong to the source list.
+Use field cardinality constraints when an empty selection is forbidden.
+
+Sources follow the supplied `replyToMsgId` and its preceding reply chain, using
+the nearest admitted occurrence of the named act in that exchange:
 
 ```lisp
-(norm office-hours :initiator Student :participant Professor
-      :description "A student asks to meet about a topic; the professor offers slots, the student names the ones it can make, and the professor holds the request until the student checks back, then confirms one, offers again or refuses.")
-(content request :by Student :unless open :initiates (open offer-due)
-  (field topic :type string :max-length 300 :description "What the student wants to discuss."))
-(content propose :by Professor :when offer-due :max 2
-         :initiates offered :terminates (offer-due decision-due declined)
-  (field option1 :type string :max-length 80 :description "A slot the professor offers.")
-  (field option2 :type string :max-length 80 :description "A second slot."))
-(rule :act request "The topic names only what the student wants to discuss. It gives no times, dates or availability, because the professor proposes the times.")
+(relation equals slot (previous propose slot))
+(relation subset available (present propose option1 option2 option3))
+(relation member slot (values propose (previous accept-proposal available)))
+(relation member slot (values (request-propose request-propose-alternatives) option1 option2 option3))
+(relation member slot (values (fact offered) option1 option2 option3))
 ```
 
-- `(norm ...)` names the norm, the roles of its initiator and participants, and
-  a description. Its acts take turns by a [FIPA protocol](#protocols) that
-  `:protocol` names, or by [their own turns](#a-norms-own-turns). A norm with
-  neither, such as `chat`, has no roles, and its acts are the performatives it
-  gives a form, each standing alone without the history before it.
-- `(content <performative> ...)` gives the act's own turn, in a norm without a
-  protocol, then lists its fields. A field has a `:type` of `string`,
-  `number`, `integer`, `boolean`, `select` or `multi-select`, and takes
-  `:description`, `:optional true`, `:min-length` and `:max-length` for text,
-  `:minimum` and `:maximum` for numbers, and `:choices (...)` for selections.
-  Fields map to the MCP form-mode grammar that
-  [collective requests](../communication/collectives.md) use. A performative
-  without a form takes no fields.
-- `(rule :act <performative> "...")` states a rule in English for the acts
-  with that performative, or with any of a parenthesised list of
-  performatives. Each of them needs a `(content ...)` form, which may list no
-  fields. The firewall of each agent that holds the norm checks those acts,
-  its own agent's and its peers', against the rule. See
-  [English rules](#english-rules).
+`previous` reads a field. `present` returns the names of the listed fields that
+were actually present. `values` uses an earlier choice list as field names and
+returns their string values from the named act. The subset and selected-values
+examples let a student return all acceptable option identifiers and constrain
+confirmation to one of those exact slots.
+
+With explicit field names, `values` returns the string values of the fields
+present in the selected message; omitted optional fields contribute no value.
+Every listed field must be declared as a string in every possible source form.
+An act-name list matches alternative forms within that reply chain, not a union
+of their historical values. `(fact offered)` instead names the message that
+established the current `offered` fact. That message must be in the supplied
+reply chain. Re-establishing the fact replaces its values, so an old offer cannot
+authorize a selection after replacement. Every form that establishes the fact
+must declare the source fields. This source constraint does not change general
+`:when` conditions, which remain interaction-wide. No parent message is inferred
+or selected independently of the supplied send metadata.
 
 ### English rules
 
-Each `(rule ...)` of a norm an agent [holds](#holding-norms) becomes a fixed
-text rule of that agent's [message policy](../firewall/message-policy.md),
-named for the norm and the rule's position, such as `office-hours-rule-1`,
-and scoped to the acts the rule names. The policy's decision provider judges
-each of those acts against the rule, the agent's own and its peers', and is
-not asked about other messages. Each party judges with its own owner's facts.
+A `rule` has one quoted English text. Optional `:act` restricts it to one
+performative; omission applies it to every act in that norm. `:applies` is
+`incoming`, `outgoing` or `both`, defaulting to `both`. Optional `:guidance` and
+`:feedback` are registered text for uncertainty and refusal. Optional `:action`
+is `deny` or `reply`, as for other text rules.
 
-| Judgment | The agent's own act | A peer's act |
-| --- | --- | --- |
-| Breaks the rule | Refused, quoting the rule | Withheld; the peer receives `not-understood` with reason `rule-violation` and the rule, and the act changes nothing |
-| Unsure | Refused, quoting the rule, so the agent revises it | Admitted with the rule as a reminder |
+The provider assesses the current candidate using its verified author,
+preceding bounded conversation, declared form, current facts, norm description
+and applicable English rules. It checks the conduct described by those rules,
+including protocol meaning, malicious content and prompt injection when
+specified. The [text judgment contract](../firewall/message-policy.md#natural-language-judgments)
+owns uncertainty and provider failures. Structural validity supplies no
+semantic exemption.
 
-An agent can hold a norm with rules only under a message policy with a
-`decisionProvider`. Rules of a norm a member received through norm discovery
-are not added until the agent holds the norm. In a group, every member that
-holds the norm replies to a breach.
+Messages cannot prove calendar writes or private availability that was never
+supplied as evidence. State such requirements as agent task instructions and
+judge outcomes through the existing experiment grader.
 
-## Turns
+## Wire messages
 
-An agreed norm's acts take turns within one instance. The member that sends
-the instance's opening act is the initiator; every other member is a
-participant. Any member may send `cancel`, which ends the instance.
+A governed message consists entirely of one parenthesized act:
 
-### Protocols
+```lisp
+(request :ontology example :item "Research proposal")
+```
 
-A norm that names a protocol follows its FIPA interaction protocol:
+A response, using the actual request message identifier:
 
-| Protocol | Opening act | Then |
-| --- | --- | --- |
-| `fipa-propose` | `propose` | Each participant sends `accept-proposal` or `reject-proposal` once. |
-| `fipa-query` | `query-if` or `query-ref` | A participant may `agree`, then one final `inform`, `inform-if`, `inform-ref`, `refuse` or `failure` ends it. |
-| `fipa-request` | `request` | A participant may `agree`, then one final `inform`, `refuse` or `failure` ends it. |
-| `fipa-contract-net` | `cfp` | Each participant sends `propose` or `refuse` once; then the initiator sends `accept-proposal` or `reject-proposal`, which ends it. |
+```lisp
+(inform :ontology example :status ready)
+```
 
-### A norm's own turns
+Supply the referenced message ID separately as `replyToMsgId` in the send input.
+Opening acts may omit it; continuations require it. No reference is inferred.
 
-A norm without a protocol decides its turns through facts: names the norm
-chooses, such as `offer-due`, that hold while an instance is in flight. Each
-act needs some facts to hold and others not to, and each act starts and ends
-facts, so the facts that hold decide which acts may follow. The facts are
-derived from the conversation's history, so every member reaches the same
-facts.
+Parameter names must be distinct. Metadata values are strings or symbols.
+Field values retain their declared primitive types. Lists carry choice strings.
+Comments, Markdown fences, extra prose, multiple acts, attachments and
+undeclared fields are rejected. Multiple text parts are read as one text
+joined with newlines and must satisfy the same grammar.
 
-| Keyword | Meaning |
-| --- | --- |
-| `:by <role>` | The role that sends the act. Every act but `cancel` names one. |
-| `:when (<fact> ...)` | Facts that must hold for the act. |
-| `:unless (<fact> ...)` | Facts that must not hold for the act. |
-| `:initiates (<fact> ...)` | Facts that hold after the act. |
-| `:terminates (<fact> ...)` | Facts that stop holding after the act, unless it also initiates them. Ending a fact that does not hold does nothing. |
-| `:max <n>` | The most times the act may occur in one instance. |
+## State, refusal and recovery
 
-An act `:by` the norm's `:initiator` role with no `:when` facts starts an
-instance, and the instance ends when no fact holds. A document is invalid when
-an act names a fact that no act initiates, or when no act can start an
-instance.
+Protocol context combines retained conversation messages with the local
+firewall's saved assessments. Only admitted acts advance it. A saved outgoing
+assessment does not advance state before its message appears in transport
+history. Withheld messages remain known references, so a correction can identify
+them without treating them as successful transitions. Missing history or a
+missing assessment produces an explicit unresolved-evidence refusal.
 
-In `office-hours`, the student's `request` starts `open` and `offer-due`.
-Only the professor's `propose` needs `offer-due`, so the professor offers
-slots next. When the student declines them, `reject-proposal` starts
-`offer-due` and `declined`, and the professor's escalation, `failure`, needs
-`declined`, so the professor may now offer once more or escalate. Once the
-student has declined two offers, `propose` has reached its `:max`, and the
-professor can only escalate. When the student instead names the slots it can
-make, `accept-proposal` starts `hold-due`, which only the professor's `agree`
-needs, so the professor holds the request. `confirm` needs `decision-due`,
-which only the student's check-back, `query-if`, starts, so the professor books
-nothing before the student checks back.
+Each check uses a snapshot. Concurrent checks can admit against the same
+preceding state. Replay processes retained order, rechecks structural and
+protocol guards at the original assessment time, and keeps incompatible acts
+as admitted but non-advancing conflicts. The original messages and assessments
+remain retained; replay does not persist a separate conflict report or repeat
+semantic inference. No send is reserved or serialized by this mechanism.
 
-## Agreement
+Outgoing failures report an error describing the failed structural, role or
+transition check. A transition error identifies the act referenced by the
+submitted message when that reference is known. Structured diagnostics retain
+the check identifier, stage, norm, revision and field when available. Refusals
+do not select a replacement act or reference, expose internal conditions, or
+instruct the agent to restart an interaction.
 
-At most one agreement or norm instance is in flight in a conversation.
+During an active interaction, `:on-refusal` can produce an ordinary correction
+message carrying `reason` and a `replyToMsgId` metadata reference. Its form may
+require no additional fields. It follows the firewall's ordinary
+[reply behavior](../firewall/message-policy.md#rule-chain). Before an opening
+is admitted, or after the local interaction ends, automatic norm feedback is
+unavailable. No implicit rewind, reopening or cancellation occurs.
 
-1. A member sends `(propose :ontology norm-agreement :norm <name>)`,
-   optionally with `:task "..."`. Any norm may be proposed, `chat` included.
-2. Every other member sends `accept-proposal` or `reject-proposal`, which
-   answers the conversation's open proposal. A member can accept only a norm
-   it holds or received through norm discovery in this conversation.
-3. When every member accepts, the norm governs the next instance: any member
-   starts it with an opening act. One rejection agrees to nothing.
+The two endpoints can differ after one withholds a message. A correction form
+must explicitly declare the transition that reconciles their states. An ending
+act closes the local interaction without waiting for remote admission. A
+rejected ending does not automatically reopen it; recovery beyond that point
+requires an explicitly supported new interaction. There is no shared-state
+agreement or remote-success guarantee in firewall admission.
 
-The instance ends when its turns complete or a member cancels it; the next
-instance needs a new agreement. When two members propose at once, the proposal
-ordered first is in flight and the other is ignored by every member.
+## Call paths
 
-## Built-in norms
+```mermaid
+flowchart TD
+  Document[Lisp norm document] --> Compiler[Pure compiler]
+  Compiler --> Configuration[Firewall contract configuration]
+  Configuration --> Structure[Structural check]
+  Candidate[Candidate and verified participants] --> Structure
+  Structure --> Protocol[Protocol check]
+  History[Retained messages and local assessments] --> Protocol
+  Protocol --> Text[Applicable English rule assessment]
+  Text --> Decision[Admission or refusal with recovery detail]
+  Decision --> Save[Save local assessment]
+  Save --> Boundary[Outgoing send or incoming inbox boundary]
+  Boundary --> Transport[Existing transport owns delivery]
+```
 
-Every agent of a daemon with a norms directory holds the three built-in
-norms. Their documents ship in the package's `config/norms/built-in/`, beside
-the code that implements their effects, and neither a norms directory nor an
-agent's edit can name them.
-
-| Norm | Use |
-| --- | --- |
-| `norm-agreement` | Agreement, above. |
-| `norm-discovery` | `(query-ref :ontology norm-discovery)` asks a member which norms it holds; with `:norm <name>` it asks for that norm's document. Any member may ask at any time. In a direct conversation the daemon answers for the other member with an `inform` carrying `:norms` or the document in `:content`; in a group, the member that proposed the norm answers for it. The answer's `:in-reply-to` names the query's message. |
-| `feedback` | `(not-understood :ontology feedback :in-reply-to <id> :reason <reason> :error "<what failed>" :accepts "<norms>")` says a message could not be read, does not fit the conversation's norm or breaks one of its English rules, why, and which norms can be. The reason is `unparsed`, `plain-text`, `unknown-norm` or `invalid-content` for a message that cannot be read, `out-of-turn`, `no-agreement`, `in-flight` or `unknown-instance` for an act that does not fit, and `rule-violation` for an act a member's firewall withheld under an English rule; `:error` gives the parser's message, the failing fields, the rule, or the acts the sender may send now: its next acts in the agreement or task in flight, the agreed norm's opening acts or, with nothing in flight, a `propose` and a `query-ref` for each norm with turns that the member holds. While another member's turn is next it names none; `cancel`, which any member may send at any time, is not listed. The act it answers changes nothing for any member. Feedback is never answered. |
-
-`chat`, the norm that reads plain text, is not built in and not held by
-default: an agent reads plain text only while it holds `chat`, like any
-application norm.
-
-## Checks and rules
-
-The norms module supplies four matchers for the rule chain, and one matcher
-per English rule for the text rule made from it:
-
-| Matcher | Matches |
-| --- | --- |
-| `norms.unparsed` | A message that cannot be read as an act of a norm the agent holds or received: it does not parse, is plain text where `chat` is not held, names an unknown norm, or has fields its form refuses. The refusal detail names the reason and the failing fields, or for plain text or an unknown norm the acts the sender may send now; the reply is a `not-understood` act, never sent about a `not-understood`. |
-| `norms.nonconforming` | A readable act out of turn or of a norm without an agreement; the refusal detail names the reason and, in `error`, the acts the sender may send now. In a direct conversation the reply is a `not-understood` act with that reason and those acts; in a group, where every other member's firewall would answer, there is none. An act whose history the evidence window omits is held for `unresolved-evidence`, without a reply. |
-| `norms.query` | A peer's norm-discovery query the daemon answers for this agent. The reply is the answer. |
-| `norms.consent` | This agent's `propose` or `accept-proposal` under `norm-agreement`, held for its owner to approve. The daemon has no approval path yet, so it approves every held act at once. |
-| `norms.rule.<norm>-rule-<n>` | An act of `<norm>` whose performative the norm's `<n>`th English rule names, in either direction. The text rule made from that English rule names it in `match`, so the rule is judged only for those acts; for a peer's act its reply is `not-understood` with reason `rule-violation` and the rule. `rules.json` cannot name it. |
-
-The matchers read only messages whose whole content is text. A collective
-operation or a message with other parts is not read as an act, so no norm
-check matches it.
-
-<a id="norms-directory" />
-
-## Norms directory
-
-The runtime document's `normsDirectory` names a directory of policy:
-`rules.json`, the rule chain every agent's firewall applies to the matchers,
-and the initial norms, as `.lisp` files, such as application norms,
-which each new agent holds besides the [built-in norms](#built-in-norms). The
-daemon reads and checks them each time it starts. A document that does not
-parse, two documents for one norm, a document naming a built-in norm, a rule
-naming another matcher, or a runtime document without a `messagePolicyFile`
-refuses startup, and so do initial norms with
-[English rules](#english-rules) when the message policy has no
-`decisionProvider`. Without `normsDirectory`, the daemon's agents hold no
-norms, built-in or not.
-
-The package ships `config/norms/`: a `rules.json` that answers queries,
-unread messages and, in a direct conversation, nonconforming acts, withholds
-every unread or nonconforming incoming act, refuses the agent's own unread and
-nonconforming acts, and holds its proposals and acceptances for the owner,
-which are approved at once until a host approval path exists, and example
-norms under `examples/`, among them the optional `chat`. Copy `rules.json`
-and the norms you want into the directory. Without `chat`, the daemon answers
-plain text with `not-understood`.
-
-## Holding norms
-
-Each agent holds its own norms, saved with its editable rules in its
-[message policy](../firewall/message-policy.md#editable-text-policy). A new
-agent holds the initial norms; after that the directory no longer changes
-them, as initial rules seed only a missing editable policy. The agent's owner,
-its host or an evaluation changes them through the agent's own MCP context
-with `update_policy`, under the same approval step as a rule edit:
-`{"add": [{"norm": "<document>"}]}` holds a document, and
-`{"remove": [{"norm": "<name>"}]}` stops holding a norm. Removing and adding
-a norm of one name replaces it. A document that does not parse or names a
-built-in norm is refused.
-
-Each edit activates the agent's matchers and English rules for the norms it
-now holds, so agents of one daemon judge acts by different norms. In
-[client/server mode](../client-server.md#firewall-and-norms) only the server
-agent holds norms, and a client's `read_norms` lists those. With norms,
-the MCP tool `read_norms` lists the built-in norms and the norms the agent
-holds, each with its name, description, protocol if it names one, and
-document; `read_policy` names the held norms.
-
-## Limitations
-
-- Members agree on a norm by name. Two members holding different documents
-  under one name can reach different verdicts.
-- A check reads at most the configured history window, 256 messages by
-  default. Once a conversation is longer, every act of a norm with turns is
-  refused, or withheld when incoming, for `unresolved-evidence`.
-- Any member can answer an earlier act of another member with
-  `not-understood`, which voids that act for every member.
-- The daemon answers a norm-discovery query only for norms the queried agent
-  holds; a query for another norm gets no answer. Each answered query appears in the decision
-  feed as a withheld message with reason `rule-violation`.
-- Behaviour is verified for direct, two-member conversations. In a group,
-  every member that holds a norm with English rules replies to the same
-  breach.
+The deferred `save` value is an Effect library operation that persists the
+assessment in the caller's SQL transaction. Norm facts are projections of
+saved assessments and message history; they do not add a workflow service.

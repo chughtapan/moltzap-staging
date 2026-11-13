@@ -16,9 +16,11 @@ const provider = makeJevDecisionProvider({
   model,
 });
 const request: DecisionRequest = {
+  stage: "compliance",
   state: '{"candidate":"test"}',
   questions: {
     compliance: {
+      purpose: "assessment",
       ruleId: "privacy",
       instructions: "Does this disclose private data?",
       criteria: {

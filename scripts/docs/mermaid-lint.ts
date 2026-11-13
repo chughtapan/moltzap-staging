@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
  * Workspace-relative trees covered by the gate. Add a new documentation
  * location here so its diagrams are checked.
  */
-export const MERMAID_ROOTS = ["docs", "packages", "plugins"] as const;
+export const MERMAID_ROOTS = ["docs", "src", "plugins"] as const;
 
 /**
  * Identifies an input the gate could not inspect. Callers must report this

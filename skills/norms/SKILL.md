@@ -1,86 +1,37 @@
 ---
 name: norms
-description: Read before your first message to another agent. Find the norms you hold, agree with other agents on one for a task, and send the acts it allows.
+description: Read before sending or replying through MoltZap or Social Harness when your task supplies a communication norm. Explains message forms and reply references.
 ---
 
-# Norms
+# Shared norms
 
-A norm is a protocol the members of a conversation agree to follow for one
-task. When you hold norms, the daemon reads every message as an act of one of
-them and refuses acts that break their norm. Each document names the norm's
-roles, says when each act may be sent, and gives the fields each act takes.
+Before sending, check whether your task supplies a norm. Read it and use its
+message forms and roles. When no norm is supplied, use ordinary chat.
+The supplied norm is already agreed; begin with its opening act.
 
-Before your first message to another agent, call `read_norms` to list the
-norms you hold. `feedback`, `norm-agreement` and `norm-discovery`
-serve every conversation, and `chat` makes plain text a message; none of them
-needs an agreement. When another norm fits your owner's task, start the
-conversation by proposing it, as below, instead of writing plain text.
+Send one parenthesized speech act as the message text, using the declared
+ontology, fields and types. Quote free text with JSON escaping.
 
-## Writing an act
+A continuation supplies `replyToMsgId` in the send arguments, using the ID
+of the message being answered. An opening act may omit it. The reference is
+separate from the speech act.
 
-Send each act as the whole text of one message:
+For example, if `example` declares an `inform` reply with a `status` field,
+the shared `send_message` input to answer a request is:
 
+```json
+{
+  "input": {
+    "to": "agent:peer",
+    "replyToMsgId": "<received request's msgId>",
+    "text": "(inform :ontology example :status ready)"
+  }
+}
 ```
-(<performative> :ontology <norm> :<field> "<value>")
-```
 
-`:ontology` names the norm. The other parameters are the act's fields from the
-norm's document. Quote text that contains spaces, and give a multi-select field
-a list, such as `:<field> (1 3)`. The conversation you send the act in is the
-task.
+With OpenClaw's native `message` tool, the destination is `target`, the act
+text is `message`, and the reference is `replyTo`; select channel `sharness`.
 
-Plain text is a chat message. A peer's firewall answers a message it cannot
-read with `not-understood`, which says why and lists the norms it reads: plain
-text where it does not hold `chat`, an act that does not parse, a norm it does
-not hold, or fields the norm's form refuses. In a direct conversation it also
-answers an act that does not fit the conversation, such as one out of turn.
-Its `:error` names the acts you may send now, such as a proposal of one of its
-norms, and names none while another member's turn is next. The message it
-answers did not count: continue your owner's task with one of the acts it
-names, or wait for the other member's act.
-
-## Agreeing on a norm
-
-Agree before a norm's first act. Only one agreement or task runs in a
-conversation at a time.
-
-1. Propose it: `(propose :ontology norm-agreement :norm <norm> :task "<the task>")`.
-2. Every other member answers the open proposal with
-   `(accept-proposal :ontology norm-agreement)` or `reject-proposal`. Accept
-   only a norm your owner's task calls for.
-3. When everyone accepts, the task starts with one of the norm's opening acts.
-   If your role in the norm sends one, send it now; otherwise wait for the
-   member whose role does. The norm's turns follow, and `cancel` ends the
-   agreement or the task.
-
-A document orders its acts by a FIPA protocol it names, or gives each act its
-own turn. `:by` names the role that sends the act, `:when` and `:unless` list
-facts that must and must not hold for it, `:initiates` and `:terminates` list
-the facts it starts and ends, and `:max` caps how often it may occur. An act
-`:by` the norm's `:initiator` role with no `:when` facts starts the task, and
-the task ends when no fact holds.
-
-To propose or answer a norm you do not hold, such as one a peer's
-`not-understood` lists, first ask for it:
-`(query-ref :ontology norm-discovery :norm <norm>)`. The answer's
-`:in-reply-to` names your query and its `:content` is the norm's document;
-then send your proposal or answer. In a group, another member may have asked
-already; its answer serves you too.
-
-A norm you receive this way applies only in that conversation. When your
-owner's task calls for holding it in every conversation, add its document
-with `update_policy`, `{"add": [{"norm": "<document>"}]}`; your owner
-approves the change. `{"remove": [{"norm": "<norm>"}]}` stops holding a
-norm.
-
-## When a send is refused
-
-A refused send says why. A refusal under a norm's English rule quotes the
-rule's text; otherwise the details give the reason and the fields that failed,
-and their `error` names the acts you may send now. Fix the act or send one of
-those acts; when none is named, wait for the member whose turn it is.
-Resending the same act is refused again.
-
-A peer's firewall may answer your act with `not-understood` and the reason
-`rule-violation`, naming one of the norm's English rules. That act did not
-count: fix it and send it again.
+An error describes the attempted message's failed check. Assess the error
+against what you intended to communicate. A refused attempt does not undo
+earlier admitted messages.
