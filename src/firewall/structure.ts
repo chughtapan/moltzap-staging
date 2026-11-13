@@ -1,8 +1,8 @@
 /** @file Checks a whole structured message against its declared fields. */
 
 import { Effect, Either } from "effect";
-import { validateAnswer } from "../communication/index.js";
 import type { Outgoing } from "../communication/service.js";
+import { validateAnswer } from "../communication/index.js";
 import {
   readSExpressions,
   type SExpression,

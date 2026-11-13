@@ -13,14 +13,16 @@ import {
   Stream,
   Struct,
 } from "effect";
-import type { FirewallRefusal } from "../../firewall/index.js";
 import {
   issuesText,
   type MessageAddressInput,
   type RequestError,
   SendError,
 } from "../../communication/index.js";
-import { FirewallPolicyError } from "../../firewall/index.js";
+import {
+  FirewallPolicyError,
+  type FirewallRefusal,
+} from "../../firewall/index.js";
 import { Firewall, type PolicyEdit } from "../../firewall/service.js";
 import { Identity } from "../../identity.js";
 import { compileNorm, HeldNorms } from "../../norms/index.js";
