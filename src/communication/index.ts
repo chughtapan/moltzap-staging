@@ -45,7 +45,7 @@ export {
   type Outgoing,
 } from "./contract.js";
 /** Delivers messages, completes questions and reads ordered history for one agent. */
-export { Communication } from "./service.js";
+export { Communication } from "./delivery.js";
 /** Why a send, a read or a question was refused. */
 export {
   CommunicationError,

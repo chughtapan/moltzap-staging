@@ -3,7 +3,7 @@
 import { Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { AgentId, AgentName, PrincipalId } from "./agent-cards.js";
+import { AgentId, AgentName, PrincipalId } from "./index.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
 

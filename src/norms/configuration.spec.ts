@@ -7,7 +7,7 @@ import { Effect, Option } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import { loadNorms, serviceNorms } from "./configuration.js";
+import { loadNorms, serviceNorms } from "./index.js";
 import { ruleMatcher } from "./matchers.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Norm names, rule ids and failure text are the configuration contract under test. */
