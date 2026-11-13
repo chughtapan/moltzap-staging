@@ -11,7 +11,6 @@ export {
   answerFieldsText,
   AnswerOutcome,
   CollectiveId,
-  Content,
   DeadlineSeconds,
   DeclineResponse,
   decodeCollectiveFailure,

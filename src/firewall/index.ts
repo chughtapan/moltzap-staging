@@ -11,7 +11,6 @@ export {
 } from "./chain.js";
 /** Guidance shown with a checked message, the permitted, withheld and refused results of a check, and the decision provider that assesses text rules. */
 export {
-  type CheckedGuidance,
   checkedGuidanceSchema,
   type DecisionProvider,
   DecisionProviderError,
@@ -20,7 +19,6 @@ export {
   FirewallRefusal,
   LocalGuidance,
   PermittedItem,
-  Withheld,
 } from "./check.js";
 /** Norm documents an agent's editable policy holds. */
 export type { NormDocuments } from "./editable-policy.js";
