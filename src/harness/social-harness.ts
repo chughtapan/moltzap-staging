@@ -4,7 +4,6 @@ import {
   absurd,
   Clock,
   Context,
-  Deferred,
   type Duration,
   Effect,
   FiberSet,
@@ -176,19 +175,15 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
   SocialHarnessService
 >() {
-  /** Shares one database with communication, which starts in the background. */
-  static layer<R>(settings: HarnessSettings<R>, workers: FiberSet.FiberSet) {
+  /** One agent's harness over its identity, firewall and communication. */
+  static layer(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     return Layer.scoped(SocialHarness, makeHarness(settings, workers));
   }
 }
 
-/** Supplies communication and inbox processing limits for one agent. */
-export interface HarnessSettings<R> {
+/** Supplies inbox processing limits for one agent. */
+export interface HarnessSettings {
   readonly agentKey: string;
-  /** Builds communication for this agent's card. */
-  readonly communication: (
-    card: AgentCard,
-  ) => Layer.Layer<Communication, CommunicationError, R>;
   readonly maximumHistoryRecords?: number;
   readonly maximumConcurrentChecks?: number;
   readonly hideGroups?: boolean;
@@ -200,20 +195,13 @@ export interface HarnessSettings<R> {
   readonly withheldReply?: string;
 }
 
-function makeHarness<R>(
-  settings: HarnessSettings<R>,
-  workers: FiberSet.FiberSet,
-) {
+function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
   return Effect.gen(function* () {
     const identity = yield* Identity;
     const firewall = yield* Firewall;
+    const communication = yield* Communication;
     const scope = yield* Scope.Scope;
-    const environment = yield* Effect.context<R>();
     const inbox = yield* makeInbox(settings.agentKey);
-    const ready = yield* Deferred.make<
-      CommunicationService,
-      CommunicationError
-    >();
     const wake = yield* Queue.sliding<undefined>(1);
     const changes = yield* PubSub.sliding<undefined>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
@@ -223,35 +211,19 @@ function makeHarness<R>(
     yield* supervise(
       workers,
       scope,
-      Layer.build(settings.communication(card)).pipe(
-        Effect.provide(environment),
-        Effect.provideService(Scope.Scope, scope),
-        Effect.tapErrorCause((cause) => Deferred.failCause(ready, cause)),
-        Effect.flatMap((context) =>
-          Effect.gen(function* () {
-            const communication = Context.get(context, Communication);
-            yield* Deferred.succeed(ready, communication);
-            return yield* communication
-              .consume((incoming) =>
-                inbox
-                  .queueIncoming(
-                    addressOf(incomingParticipants(incoming), card.agentId),
-                    incoming,
-                  )
-                  .pipe(
-                    Effect.zipRight(Queue.offer(wake, undefined)),
-                    Effect.asVoid,
-                  ),
-              )
-              .pipe(restarting(settings.agentKey, "consumer"));
-          }),
-        ),
-      ),
+      communication
+        .consume((incoming) =>
+          inbox
+            .queueIncoming(
+              addressOf(incomingParticipants(incoming), card.agentId),
+              incoming,
+            )
+            .pipe(Effect.zipRight(Queue.offer(wake, undefined)), Effect.asVoid),
+        )
+        .pipe(restarting(settings.agentKey, "consumer")),
     );
-    const active = Deferred.await(ready).pipe(Effect.mapError(sendFailure));
     const pending = new Set<string>();
     const checkPending = Effect.gen(function* () {
-      const communication = yield* active;
       for (const entry of yield* inbox.pending(capacity)) {
         if (pending.size >= capacity) {
           break;
@@ -296,7 +268,6 @@ function makeHarness<R>(
                   "this daemon does not offer groups; address one agent as agent:<name>",
               });
             }
-            const communication = yield* active;
             const destination = yield* canonicalMessageAddress(
               request.to,
               card.agentName,
@@ -448,7 +419,6 @@ function makeHarness<R>(
       acknowledgeDelivery: inbox.acknowledgeDelivery,
       listConversations: (request = {}) =>
         Effect.gen(function* () {
-          const communication = yield* active;
           const position =
             request.cursor === undefined
               ? undefined
@@ -502,7 +472,6 @@ function makeHarness<R>(
         }).pipe(Effect.mapError(historyFailure)),
       readHistory: (request) =>
         Effect.gen(function* () {
-          const communication = yield* active;
           const destination = yield* canonicalMessageAddress(
             request.address,
             card.agentName,
