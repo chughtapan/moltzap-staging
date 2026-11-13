@@ -66,8 +66,6 @@ import {
   type SendResult,
 } from "./message-format.js";
 
-/** Host input is resolved before a communication value is constructed. */
-export type { SendRequest } from "./message-format.js";
 /** Start a live conversation-list traversal by omitting cursor. */
 interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
