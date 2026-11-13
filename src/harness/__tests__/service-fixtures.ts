@@ -169,10 +169,8 @@ interface Network {
   cursorId: number;
   sendFailure?: CommunicationError;
 }
-interface OpenOptions
-  extends Omit<HarnessSettings<never>, "communication" | "agentKey"> {
+interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly policy?: FirewallOptions;
-  readonly startCommunication?: Effect.Effect<undefined, CommunicationError>;
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 interface FixtureEnvironment {
@@ -272,17 +270,13 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
           ...(options.withheldReply === undefined
             ? {}
             : { withheldReply: options.withheldReply }),
-          communication: () =>
-            Layer.effect(
-              Communication,
-              (options.startCommunication ?? Effect.void).pipe(
-                Effect.as(environment.communication),
-              ),
-            ),
         },
         workers,
       ),
-    ).pipe(Effect.provide(provided));
+    ).pipe(
+      Effect.provide(provided),
+      Effect.provideService(Communication, environment.communication),
+    );
     const harness = Context.get(context, SocialHarness);
     return {
       harness,

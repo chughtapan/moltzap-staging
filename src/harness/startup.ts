@@ -295,11 +295,8 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
   const { settings, unlockKey, norms, serverNorms } = daemon;
   return Effect.gen(function* () {
     const identity = yield* Layer.build(Identity.layer(agentKey));
-    const place = placeOf(
-      settings,
-      Context.get(identity, Identity).me.agentName,
-      norms !== undefined,
-    );
+    const card = Context.get(identity, Identity).me;
+    const place = placeOf(settings, card.agentName, norms !== undefined);
     const workers = yield* FiberSet.make();
     const stopped = yield* Deferred.make<undefined>();
     const policy = settings.messagePolicy?.policy;
@@ -311,19 +308,20 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
           ...(place.role === "server"
             ? { withheldReply: place.withheldReply }
             : {}),
-          communication: (card) =>
-            Communication.layer({
-              agentKey,
-              card,
-              consumers: daemon.consumers,
-              maximumHistoryRecords: policy?.maximumHistoryRecords,
-              ...(place.role === "peer" ? {} : { permits: place.permits }),
-            }),
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
         },
         workers,
       ).pipe(
+        Layer.provideMerge(
+          Communication.layer({
+            agentKey,
+            card,
+            consumers: daemon.consumers,
+            maximumHistoryRecords: policy?.maximumHistoryRecords,
+            ...(place.role === "peer" ? {} : { permits: place.permits }),
+          }),
+        ),
         Layer.provideMerge(
           checksOf(daemon, place.role, agentKey).pipe(
             Layer.provideMerge(Layer.succeedContext(identity)),

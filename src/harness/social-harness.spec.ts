@@ -239,25 +239,6 @@ const membership = fc
     };
   });
 
-it("serves the inbox while communication starts", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const entered = yield* Deferred.make<undefined>();
-    const release = yield* Deferred.make<undefined>();
-    const runtime = yield* subject.open({
-      startCommunication: Deferred.succeed(entered, undefined).pipe(
-        Effect.zipRight(Deferred.await(release)),
-      ),
-    });
-    yield* Deferred.await(entered);
-    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
-    yield* Deferred.succeed(release, undefined);
-    yield* runtime.harness.send({
-      to: bobAddress,
-      text: "Communication started",
-    });
-  }));
-
 it("sends each call as new work to exactly the agents its address names, and refuses an address that names an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
