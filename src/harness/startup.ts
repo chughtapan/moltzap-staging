@@ -369,12 +369,8 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
 /** Deployment prepares schema and encryption metadata before the serving process starts. */
 export { prepareDatabase } from "../database/index.js";
 
-/** Trusted embeddings use the same services as the process's MCP adapter. */
-export { type SendRequest, SocialHarness } from "./social-harness.js";
 /** This agent's card and the other agents of its daemon by name. */
 export { Identity } from "../identity.js";
-/** Message delivery, questions and ordered history. */
-export { Communication } from "../communication/service.js";
 /** Message policy produces permitted content and owns its decision history. */
 export { Firewall, type FirewallOptions } from "../firewall/service.js";
 /** Trusted policy providers receive typed assessment requests at construction. */
