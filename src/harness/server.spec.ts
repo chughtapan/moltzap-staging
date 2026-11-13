@@ -25,23 +25,23 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
+import { digest, testAgentCard } from "../__tests__/agents.js";
+import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
+import {
+  MessageAddressInput,
+  SendError,
+  sendFailureReasons,
+} from "../communication/index.js";
 import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
   mcpTestCredential,
-} from "../__tests__/mcp-fixtures.js";
-import { digest, testAgentCard } from "../../__tests__/agents.js";
-import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
-import {
-  MessageAddressInput,
-  SendError,
-  sendFailureReasons,
-} from "../../communication/index.js";
-import { HistoryError } from "../message-format.js";
-import { localOwner, serverAgentOwner } from "../ownership.js";
+} from "./__tests__/mcp-fixtures.js";
 import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";
 import { serveMcp } from "./http.js";
+import { HistoryError } from "./message-format.js";
+import { localOwner, serverAgentOwner } from "./ownership.js";
 
 /* eslint-disable agent-code-guard/no-hardcoded-assertion-literals -- Wire codes, notification names and private sentinels are the observable protocol contracts. */
 

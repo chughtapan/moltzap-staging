@@ -53,9 +53,8 @@ import {
   openCredential,
   sealCredential,
   withAgentTransaction,
-} from "../../database/index.js";
-import { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
-import { SocialHarness } from "../social-harness.js";
+} from "../database/index.js";
+import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   callbackReasons,
   type EventSubscribeInput,
@@ -64,6 +63,7 @@ import {
   maximumEventBytes,
   type WebhookStatus,
 } from "./contracts.js";
+import { SocialHarness } from "./social-harness.js";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
 export type WebhookFailureReason =

@@ -2,8 +2,8 @@
 
 import { Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { testAgentCard } from "../../__tests__/agents.js";
-import { collectiveOperationId } from "../../communication/__tests__/request-ids.js";
+import { testAgentCard } from "../__tests__/agents.js";
+import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
 import { toolDefinitions } from "./contracts.js";
 
 describe("message operation contracts", () => {

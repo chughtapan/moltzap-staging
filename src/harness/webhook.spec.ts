@@ -27,7 +27,7 @@ import {
   scriptedWebhook,
   secret,
   url,
-} from "../__tests__/webhook-fixtures.js";
+} from "./__tests__/webhook-fixtures.js";
 import { INBOX_PENDING_EVENT } from "./contracts.js";
 import {
   isPublicWebhookAddress,

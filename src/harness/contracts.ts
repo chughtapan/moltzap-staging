@@ -1,7 +1,7 @@
 /** @file Canonical MCP tools, Events and wire errors share their owning schemas. */
 
 import { Effect, Either, Option, type ParseResult, Schema } from "effect";
-import type { ProtocolError } from "../../vendor/effect-mcp/McpSchema.js";
+import type { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   CollectiveId,
   decodeCollectiveFailure,
@@ -13,12 +13,8 @@ import {
   SendError,
   sendFailureReasons,
   wellFormedString,
-} from "../../communication/index.js";
-import {
-  compareAscii,
-  exactStruct,
-  isStrictlyAscending,
-} from "../../encoding.js";
+} from "../communication/index.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
 import {
   checkedGuidanceSchema,
   firewallDecisionsRequestSchema,
@@ -31,8 +27,8 @@ import {
   policyReadSchema,
   policyUpdateResultSchema,
   policyUpdateSchema,
-} from "../../firewall/index.js";
-import { AgentId, AgentName } from "../../identity.js";
+} from "../firewall/index.js";
+import { AgentId, AgentName } from "../identity.js";
 import {
   DeliveryToken,
   HistoryError,
@@ -42,7 +38,7 @@ import {
   SendArguments,
   SendResultSchema,
   TextSendArguments,
-} from "../message-format.js";
+} from "./message-format.js";
 
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
 export const maximumEventBytes = 256 * 1024;

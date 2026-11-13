@@ -8,7 +8,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createServer } from "node:http";
 import { expect } from "vitest";
 import type { McpAuthentication } from "./http.js";
-import { mcpFixture, mcpRequest } from "../__tests__/mcp-fixtures.js";
+import { mcpFixture, mcpRequest } from "./__tests__/mcp-fixtures.js";
 
 const resource = new URL("https://mcp.example.test/mcp");
 const owner = "owner-subject";

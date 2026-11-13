@@ -12,25 +12,23 @@ import {
   Schema,
   Stream,
 } from "effect";
-import type { FirewallRefusal } from "../../firewall/index.js";
+import type { FirewallRefusal } from "../firewall/index.js";
 import {
   issuesText,
   type MessageAddressInput,
   type RequestError,
   SendError,
-} from "../../communication/index.js";
-import { Firewall } from "../../firewall/service.js";
-import { Identity } from "../../identity.js";
-import { HeldNorms } from "../../norms/index.js";
+} from "../communication/index.js";
+import { Firewall } from "../firewall/service.js";
+import { Identity } from "../identity.js";
+import { HeldNorms } from "../norms/index.js";
 import {
   CallToolResult,
   ProtocolError,
   Tool,
   ToolAnnotations,
-} from "../../vendor/effect-mcp/McpSchema.js";
-import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
-import { InboxError, validationIssues } from "../message-format.js";
-import { SocialHarness } from "../social-harness.js";
+} from "../vendor/effect-mcp/McpSchema.js";
+import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
 import {
   clientToolDefinitions,
   eventListInput,
@@ -44,6 +42,8 @@ import {
   toolDefinitions,
 } from "./contracts.js";
 import { limitResponseStream } from "./http.js";
+import { InboxError, validationIssues } from "./message-format.js";
+import { SocialHarness } from "./social-harness.js";
 
 interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
