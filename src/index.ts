@@ -1,8 +1,9 @@
-/** @file MCP contracts and the values clients use to send messages and read their saved inbox. */
+/** @file What a host needs to talk to the daemon: the MCP tool contracts, a typed client, and the values and failures a tool call carries. */
 // safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
 
-/** MCP tool arguments, results and failures derive from these schemas. */
+/** The tools, the types derived from their schemas, the longest wait a read accepts and the notification that the inbox has something to read. */
 export {
+  INBOX_PENDING_EVENT,
   MAXIMUM_WAIT_SECONDS,
   type ToolCallFailure,
   toolDefinitions,
@@ -24,45 +25,35 @@ export {
   McpToolError,
   type ToolFailure,
 } from "./harness/client.js";
-/** Send requests and accepted-work receipts. */
-export { SendRequest, type SendResult } from "./harness/message-format.js";
-/** Results and policy feedback that a host may show its agent. */
-export { FirewallRefusal, PermittedItem, Withheld } from "./firewall/index.js";
-/** Policy failures retain actionable reasons and bounded field information. */
-export { FirewallPolicyError } from "./firewall/index.js";
-/** Guidance contains only the source text local policy permits the agent to read. */
-export type { CheckedGuidance } from "./firewall/index.js";
-/** Inbox items retain their content and token after acknowledgment. */
+/** What a host sends, the inbox entries and history records it reads, and why a read or an acknowledgment failed. */
 export {
   DeliveryAcknowledgeError,
   DeliveryToken,
+  HistoryError,
+  type HistoryRecord,
   InboxEntry,
   InboxError,
   InboxEvent,
+  SendRequest,
+  type SendResult,
 } from "./harness/message-format.js";
-/** History uses the saved policy view and never rechecks old content. */
-export { HistoryError, type HistoryRecord } from "./harness/message-format.js";
-/** Message, question, answer and collective result values. */
+/** The content policy permits an agent to read, and why policy refused a send or an edit. */
 export {
-  Answer,
-  Message,
-  Request,
-  RequestedSchema,
-  RequestError,
-} from "./communication/index.js";
-/** Names and addresses used in host messages. */
+  FirewallPolicyError,
+  FirewallRefusal,
+  PermittedItem,
+} from "./firewall/index.js";
+/** Messages, their identifiers and addresses, and why a send, a question or an answer was refused. */
 export {
   AgentAddress,
-  Content,
   GroupAddress,
+  Message,
   MessageAddressInput,
   MsgId,
+  RequestError,
+  SendError,
 } from "./communication/index.js";
-/** A send error classifies correction, retained work and uncertain acceptance. */
-export { SendError } from "./communication/index.js";
 /** The identifiers and name an agent is known by. */
-export { AgentCard, AgentId, AgentName, PrincipalId } from "./identity.js";
+export { AgentCard, AgentId, AgentName } from "./identity.js";
 /** Installed package version. */
 export { packageVersion } from "./version.js";
-/** Notification name that prompts clients to read their saved inbox. */
-export { INBOX_PENDING_EVENT } from "./harness/contracts.js";

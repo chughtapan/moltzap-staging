@@ -16,7 +16,7 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { InboxEntry } from "../index.js";
+import type { InboxEntry } from "./message-format.js";
 import type { ReadHistoryResult } from "./social-harness.js";
 import {
   Answer,

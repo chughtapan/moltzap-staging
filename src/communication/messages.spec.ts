@@ -15,20 +15,17 @@ import {
 } from "effect";
 import { expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
-import {
-  Content as PublicContent,
-  GroupAddress as PublicGroupAddress,
-  MessageAddressInput as PublicMessageAddressInput,
-  MsgId as PublicMsgId,
-} from "../index.js";
 import { collectiveOperationId } from "./__tests__/request-ids.js";
 import {
   Answer,
   type AnswerContent,
   CollectivePartInvalidError,
   collectiveRequesterOf,
+  Content,
   encodeCollectiveContent,
+  GroupAddress,
   Message,
+  MessageAddressInput,
   messageFromParticipants,
   messageInterpretation,
   MsgId,
@@ -550,7 +547,7 @@ vitestIt(
       fc.property(fc.integer({ min: 32_700, max: 32_800 }), (length) => {
         const content = [{ type: "text", text: "a".repeat(length) }];
 
-        expect(Schema.is(PublicContent)(content)).toBe(
+        expect(Schema.is(Content)(content)).toBe(
           JSON.stringify(content).length <= 32_768,
         );
       }),
@@ -605,12 +602,10 @@ vitestIt(
           const reversed = `group:${ordered.toReversed().join(",")}`;
 
           expect(
-            decodingFails(PublicGroupAddress, `group:${ordered.join(",")}`),
+            decodingFails(GroupAddress, `group:${ordered.join(",")}`),
           ).toBe(!sized);
-          expect(decodingFails(PublicGroupAddress, reversed)).toBe(true);
-          expect(decodingFails(PublicMessageAddressInput, reversed)).toBe(
-            false,
-          );
+          expect(decodingFails(GroupAddress, reversed)).toBe(true);
+          expect(decodingFails(MessageAddressInput, reversed)).toBe(false);
         },
       ),
     );
@@ -623,7 +618,7 @@ vitestIt(
     fc.assert(
       fc.property(fc.uint8Array({ maxLength: 48 }), (bytes) => {
         expect(
-          decodingFails(PublicMsgId, `msg_${Encoding.encodeBase64Url(bytes)}`),
+          decodingFails(MsgId, `msg_${Encoding.encodeBase64Url(bytes)}`),
         ).toBe(bytes.length !== 32);
       }),
     );
