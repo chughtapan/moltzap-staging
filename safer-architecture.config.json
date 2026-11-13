@@ -1,36 +1,4 @@
 {
-  "minFolderReadmeChildren": 9007199254740991,
-  "maxFolderCycles": 3,
-  "facadeFiles": [
-    {
-      "file": "version.ts",
-      "reason": "Package version"
-    },
-    {
-      "file": "harness/startup.ts",
-      "reason": "Process construction and trusted embedding services"
-    },
-    {
-      "file": "harness/social-harness.ts",
-      "reason": "Sending, inbox and history"
-    },
-    {
-      "file": "harness/inbox.ts",
-      "reason": "Saved inbox item grammar"
-    },
-    {
-      "file": "harness/contracts.ts",
-      "reason": "Canonical MCP tool contracts"
-    },
-    {
-      "file": "harness/message-format.ts",
-      "reason": "Host request grammar and agent text"
-    },
-    {
-      "file": "communication/store.ts",
-      "reason": "One private communication store owns SQL operations and row types."
-    }
-  ],
   "compositionRoots": [
     {
       "path": "src/index.ts",
@@ -208,14 +176,32 @@
       "reason": "Database qualification and decision-provider overrides require the explicit sharness-test resolution condition"
     }
   ],
-  "maxFolderImportDistance": 6,
-  "maxFolderChildren": 24,
-  "maxFolderChildrenIncludingTests": 48,
+  "maxFolderChildren": 12,
   "maxPublicExports": 41,
-  "minPublicFacadeModules": 26,
-  "maxExportedSiblingRatio": 1,
-  "minPackageMeshFolders": 30,
-  "minExplicitApiConcreteFiles": 20,
-  "minImplicitBoundaryIncomingFiles": 20,
-  "minSharedKernelExports": 40
+  "disabledRules": [
+    {
+      "rule": "file-implicit-boundary-module",
+      "reason": "Modules of one folder import each other directly; a folder's index exports only what other folders use"
+    },
+    {
+      "rule": "shared-kernel-cohesion",
+      "reason": "encoding.ts and identity.ts are each one module by choice, and a schema module's exports have different users by nature"
+    },
+    {
+      "rule": "folder-explicit-api-required",
+      "reason": "Only the package entry files import from harness, each naming the module it needs; vendor holds vendored source"
+    },
+    {
+      "rule": "require-curated-public-facade",
+      "reason": "The main entry re-exports the host contract from the seven modules that define it"
+    },
+    {
+      "rule": "no-package-mesh",
+      "reason": "Seven folders in declared layers; the layer and domain rules enforce their direction"
+    },
+    {
+      "rule": "folder-readme-required",
+      "reason": "A folder's index or service module states its purpose in its file comment"
+    }
+  ]
 }

@@ -190,8 +190,8 @@ Effect idiom, typed errors, exhaustive switches, and cast bans are enforced by
 the `agent-code-guard` eslint rules. Read their output rather than a summary
 of it here.
 
-The root and plugin `safer-architecture.config.json` files are hand-maintained.
-`pnpm arch:check` runs safer-architecture-lsp against them.
+The root `safer-architecture.config.json` is hand-maintained; the plugins use the
+checker's defaults. `pnpm arch:check` runs safer-architecture-lsp against each.
 
 ## Verify
 

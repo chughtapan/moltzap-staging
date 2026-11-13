@@ -1,5 +1,4 @@
 /** @file What a host needs to talk to the daemon: the MCP tool contracts, a typed client, and the values and failures a tool call carries. */
-// safer-arch-ignore no-folder-cycle: Folder grouping combines pure contracts and scoped implementations; configured service domains enforce dependency direction.
 
 /** The tools, the types derived from their schemas, the longest wait a read accepts and the notification that the inbox has something to read. */
 export {
