@@ -1,7 +1,7 @@
 /** @file Offline evaluation and process fixtures under the test import condition. */
 
 /** Replaces a configured decision provider around the daemon's own composition. */
-export { DecisionProviderOverride } from "./firewall/index.js";
+export { DecisionProviderOverride } from "./firewall/service.js";
 /** Offline firewall checks with a caller-supplied provider. */
 export {
   type DecisionProvider,

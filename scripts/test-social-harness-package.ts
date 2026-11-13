@@ -14,6 +14,27 @@ import {
 
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
+/** A host that imports the main entry for its tool contracts and client loads no database driver. */
+const hostEntryScript = `
+import { registerHooks } from "node:module";
+
+const loaded = [];
+registerHooks({
+  resolve(specifier, context, next) {
+    const found = next(specifier, context);
+    loaded.push(found.url);
+    return found;
+  },
+});
+await import("@social-harness/social-harness");
+const drivers = loaded.filter((url) =>
+  ["@effect/sql-pg", "@effect/sql-sqlite-node", "kysely", "jose"].some((name) =>
+    url.includes("/node_modules/" + name + "/"),
+  ),
+);
+if (drivers.length > 0) throw new Error("the main entry loaded " + drivers.join(", "));
+`;
+
 /** An installed consumer receives the selected preset and every shipped rule unchanged. */
 const policyAssetScript = `
 import { readFile, readdir } from "node:fs/promises";
@@ -72,6 +93,11 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
       },
     );
     yield* verifyCommand(consumerRoot);
+    yield* runCommand(
+      process.execPath,
+      ["--input-type=module", "-e", hostEntryScript],
+      { cwd: consumerRoot, env: { NODE_PATH: "" } },
+    );
     yield* verifyPolicyAssets(consumerRoot);
     return "social-harness package consumer check passed";
   }),

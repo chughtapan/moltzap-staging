@@ -22,7 +22,7 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
-import type { InboxEntry } from "../inbox.js";
+import type { InboxEntry } from "../message-format.js";
 import {
   MAXIMUM_WAIT_SECONDS,
   type ToolCallFailure,

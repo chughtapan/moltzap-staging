@@ -12,13 +12,14 @@ import {
   Schema,
   Stream,
 } from "effect";
+import type { FirewallRefusal } from "../../firewall/index.js";
 import {
   issuesText,
   type MessageAddressInput,
   type RequestError,
   SendError,
 } from "../../communication/index.js";
-import { Firewall, type FirewallRefusal } from "../../firewall/index.js";
+import { Firewall } from "../../firewall/service.js";
 import { Identity } from "../../identity.js";
 import { HeldNorms } from "../../norms/index.js";
 import {
@@ -28,8 +29,7 @@ import {
   ToolAnnotations,
 } from "../../vendor/effect-mcp/McpSchema.js";
 import { makeHttpApp, McpServer } from "../../vendor/effect-mcp/McpServer.js";
-import { InboxError } from "../inbox.js";
-import { validationIssues } from "../message-format.js";
+import { InboxError, validationIssues } from "../message-format.js";
 import { SocialHarness } from "../social-harness.js";
 import {
   clientToolDefinitions,

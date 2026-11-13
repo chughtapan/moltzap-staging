@@ -14,29 +14,30 @@ import {
   Schema,
 } from "effect";
 import { join } from "node:path";
+import type {
+  DecisionProvider,
+  DecisionRequest,
+  DecisionResponse,
+} from "../../firewall/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
-  Communication,
   CommunicationError,
+  Message,
+  ReceivedRequest,
+  RequestError,
+} from "../../communication/index.js";
+import {
+  Communication,
   type Conversation,
   type ConversationQuery,
   type HistoryPage,
   type HistoryQuery,
   type Incoming,
-  Message,
   type Outgoing,
-  ReceivedRequest,
-  RequestError,
-} from "../../communication/index.js";
+} from "../../communication/service.js";
 import { migrateDaemon } from "../../database/index.js";
 import { compareAscii } from "../../encoding.js";
-import {
-  type DecisionProvider,
-  type DecisionRequest,
-  type DecisionResponse,
-  Firewall,
-  type FirewallOptions,
-} from "../../firewall/index.js";
+import { Firewall, type FirewallOptions } from "../../firewall/service.js";
 import {
   type AgentCard,
   type AgentName,

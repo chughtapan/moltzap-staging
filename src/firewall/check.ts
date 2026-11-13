@@ -9,9 +9,17 @@ import {
   ParseResult,
   Schema,
 } from "effect";
-import { exactStruct } from "../encoding.js";
 import {
-  type firewallRefusalReasonSchema,
+  AnswerOutcome,
+  CollectiveId,
+  Message as CommunicationMessage,
+  ReceivedRequest,
+  RequestOperation,
+} from "../communication/index.js";
+import { exactStruct } from "../encoding.js";
+import { AgentCard } from "../identity.js";
+import {
+  firewallRefusalReasonSchema,
   type FirewallSettings,
   OwnerFact,
   type TextPolicySettings,
@@ -1082,4 +1090,104 @@ function validateTextRules(input: CheckConfiguration) {
   return fits
     ? Effect.void
     : Effect.fail(new CheckInputError({ reason: "rules" }));
+}
+
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Schema values share their domain type names. */
+
+/** A result part the local policy prevents the agent from reading. */
+export const Withheld = exactStruct({
+  kind: Schema.Literal("withheld"),
+  checkId: checkedGuidanceSchema.fields.checkId,
+  reason: firewallRefusalReasonSchema,
+});
+/** @useDeclaredType */
+export type Withheld = typeof Withheld.Type;
+
+const resultGuidance = exactStruct({
+  question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
+  answers: Schema.Array(
+    exactStruct({ member: AgentCard, ...checkedGuidanceSchema.fields }),
+  ),
+});
+
+/** Local instructions for one message, or for the question and answers in a result. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
+export const LocalGuidance = Schema.Union(
+  checkedGuidanceSchema,
+  resultGuidance,
+);
+/** @useDeclaredType */
+export type LocalGuidance = typeof LocalGuidance.Type;
+
+/** A request result after applying local policy to each peer-controlled part. */
+export const CollectiveResult = exactStruct({
+  kind: Schema.Literal("collectiveResult"),
+  op: RequestOperation,
+  operationId: CollectiveId,
+  closedAt: Schema.Number,
+  closedBy: Schema.Literal("settled", "deadline"),
+  question: Schema.Union(Schema.String, Withheld),
+  outcomes: Schema.NonEmptyArray(
+    exactStruct({
+      member: AgentCard,
+      outcome: Schema.Union(AnswerOutcome, Withheld),
+    }),
+  ),
+});
+/** @useDeclaredType */
+export type CollectiveResult = typeof CollectiveResult.Type;
+
+/** The exact content local policy permits the agent to receive. */
+// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
+export const PermittedItem = Schema.Union(
+  exactStruct({
+    kind: Schema.Literal("multicast"),
+    message: CommunicationMessage,
+  }),
+  exactStruct({
+    kind: Schema.Literal("collectiveRequest"),
+    message: ReceivedRequest,
+  }),
+  CollectiveResult,
+);
+/** @useDeclaredType */
+export type PermittedItem = typeof PermittedItem.Type;
+
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-redeclare -- Restore naming after schema declarations. */
+
+type RefusalReason = typeof firewallRefusalReasonSchema.Type;
+
+const refusalText: Readonly<Record<RefusalReason, string>> = {
+  "rule-violation": "It breaks a rule of the agent's message policy.",
+  "unresolved-evidence":
+    "The policy check could not settle whether the message is allowed.",
+  "check-unavailable": "The policy check could not complete.",
+  "owner-approval-required": "The agent's owner has not approved it.",
+};
+
+/**
+ * The sender can act on registered feedback without seeing assessment evidence.
+ * `rule` names the chain rule that refused, and `detail` is that rule's matcher
+ * report. The message states the reason, each deciding rule's registered
+ * feedback and the detail.
+ */
+export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
+  readonly reason: "firewall-refused";
+  readonly checkId: string;
+  readonly refusal: RefusalReason;
+  readonly rule?: string;
+  readonly feedback: ReadonlyArray<{ readonly text: string }>;
+  readonly detail?: unknown;
+}> {
+  override get message(): string {
+    const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
+    return [
+      `Message refused by local policy (${this.refusal}${rule}, check ${this.checkId}).`,
+      refusalText[this.refusal],
+      ...this.feedback.map((entry) => entry.text),
+      ...(this.detail === undefined
+        ? []
+        : [`Details: ${JSON.stringify(this.detail)}`]),
+    ].join(" ");
+  }
 }

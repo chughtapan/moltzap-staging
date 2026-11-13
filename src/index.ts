@@ -39,9 +39,9 @@ export {
   InboxEntry,
   InboxError,
   InboxEvent,
-} from "./harness/inbox.js";
+} from "./harness/message-format.js";
 /** History uses the saved policy view and never rechecks old content. */
-export { HistoryError, type HistoryRecord } from "./harness/social-harness.js";
+export { HistoryError, type HistoryRecord } from "./harness/message-format.js";
 /** Message, question, answer and collective result values. */
 export {
   Answer,

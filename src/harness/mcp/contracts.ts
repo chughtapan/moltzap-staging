@@ -35,16 +35,14 @@ import {
 import { AgentId, AgentName } from "../../identity.js";
 import {
   DeliveryToken,
+  HistoryError,
   InboxError,
   InboxPage,
   MessageAddress,
-} from "../inbox.js";
-import {
   SendArguments,
   SendResultSchema,
   TextSendArguments,
 } from "../message-format.js";
-import { HistoryError } from "../social-harness.js";
 
 /** Maximum complete UTF-8 callback body accepted by the event transport. */
 export const maximumEventBytes = 256 * 1024;

@@ -1,4 +1,4 @@
-/** @file The message firewall: its service, the rule chain other layers extend, policy loading and the results a host shows. */
+/** @file The message firewall's values: the rule chain other layers extend, policy loading and the results a host shows. Its service is `service.ts`. */
 
 /** The rule chain and the matcher contract a module implements to add checks to it. */
 export {
@@ -9,7 +9,7 @@ export {
   type MatchInput,
   type MatchResult,
 } from "./chain.js";
-/** Guidance shown with a checked message, and the decision provider that assesses text rules. */
+/** Guidance shown with a checked message, the permitted, withheld and refused results of a check, and the decision provider that assesses text rules. */
 export {
   type CheckedGuidance,
   checkedGuidanceSchema,
@@ -17,6 +17,10 @@ export {
   DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
+  FirewallRefusal,
+  LocalGuidance,
+  PermittedItem,
+  Withheld,
 } from "./check.js";
 /** Norm documents an agent's editable policy holds. */
 export type { NormDocuments } from "./editable-policy.js";
@@ -34,15 +38,3 @@ export {
   readPolicyCredential,
   TextRule,
 } from "./rules.js";
-/** The firewall service, its options, and the permitted, withheld and refused results of a check. */
-export {
-  DecisionProviderOverride,
-  Firewall,
-  type FirewallOptions,
-  FirewallRefusal,
-  type IncomingDecision,
-  LocalGuidance,
-  PermittedItem,
-  type ResultEvidence,
-  Withheld,
-} from "./service.js";
