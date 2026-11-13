@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@chughtapan/safer-architecture-lsp':
-      specifier: 0.3.1
-      version: 0.3.1
+      specifier: 0.3.2
+      version: 0.3.2
     '@effect/experimental':
       specifier: ^0.61.0
       version: 0.61.0
@@ -235,7 +235,7 @@ importers:
     devDependencies:
       '@chughtapan/safer-architecture-lsp':
         specifier: 'catalog:'
-        version: 0.3.1
+        version: 0.3.2
       '@effect/language-service':
         specifier: 'catalog:'
         version: 0.87.1
@@ -643,8 +643,8 @@ packages:
   '@chevrotain/types@11.1.2':
     resolution: {integrity: sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw==}
 
-  '@chughtapan/safer-architecture-lsp@0.3.1':
-    resolution: {integrity: sha512-EuswnjAt8uIHn8eDq+aZE5EI2thjgRETSCdZ5rxgHFzdAaVootnNvDY5CTJygUopyLTgE4mBVifdanw8GR3QPA==}
+  '@chughtapan/safer-architecture-lsp@0.3.2':
+    resolution: {integrity: sha512-hyWVEo/DKYcY5MObojRisYwLPqeqeux9OPeH+2lzj6sOxeLvLgMreXIOhgN8LWiT2DIOgTGr3vG0+rDlOzNjWg==}
     engines: {node: '>=20.19.0'}
     hasBin: true
 
@@ -9689,7 +9689,7 @@ snapshots:
 
   '@chevrotain/types@11.1.2': {}
 
-  '@chughtapan/safer-architecture-lsp@0.3.1':
+  '@chughtapan/safer-architecture-lsp@0.3.2':
     dependencies:
       chokidar: 5.0.0
       effect: 3.22.1
