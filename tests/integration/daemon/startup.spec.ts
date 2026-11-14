@@ -12,10 +12,8 @@ import { acquireOtlpReceiver } from "../observability/otlp-receiver.js";
 const binary = fileURLToPath(new URL("../../../dist/main.js", import.meta.url));
 const processName = "sharnessd";
 const requiredVariable = "SHARNESS_DATABASE_URL";
-const defaultEntry =
-  "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key";
+const settingsEntry = "SHARNESS_CONFIG_FILE: JSON daemon settings file";
 const secret = "secret-path-value";
-const invalidVariable = "SHARNESS_DATABASE_KEY";
 
 /** An empty environment makes missing-variable behavior independent of the test runner. */
 function runProcess(
@@ -56,14 +54,14 @@ it(
   () =>
     Effect.gen(function* () {
       const result = yield* runProcess(["--help"], {
-        [invalidVariable]: secret,
+        [requiredVariable]: secret,
       });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`Usage: ${processName} [--help]`);
       expect(result.stdout).toContain(
         `${requiredVariable}: sqlite file URL or PostgreSQL connection URL`,
       );
-      expect(result.stdout).toContain(defaultEntry);
+      expect(result.stdout).toContain(settingsEntry);
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).toBe("");
     }),
@@ -86,9 +84,8 @@ it(
   "reports invalid configuration without echoing supplied values",
   () =>
     Effect.gen(function* () {
-      const result = yield* runProcess([], { [invalidVariable]: secret });
+      const result = yield* runProcess([], { [requiredVariable]: secret });
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(invalidVariable);
       expect(result.stderr + result.stdout).not.toContain(secret);
       expect(result.stdout).toBe("");
     }),

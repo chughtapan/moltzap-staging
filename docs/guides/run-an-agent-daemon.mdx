@@ -63,8 +63,7 @@ npm should finish without an `ERR!` line. `ls ~/sharness` should list
 
 This writes three private files into `~/sharness/daemon`. `settings.json` is
 the daemon's settings document, `mcp-credential` holds the secret a client
-presents, and `env` names the database, a new database encryption key and the
-settings document. It prints nothing, so no secret reaches your terminal, and
+presents, and `env` names the database and the settings document. It prints nothing, so no secret reaches your terminal, and
 it stops rather than replace a file that already exists.
 
 ```bash
@@ -84,7 +83,6 @@ writeFileSync(join(dir, "settings.json"), JSON.stringify({
 }, null, 2) + "\n", created);
 writeFileSync(join(dir, "env"), [
   `SHARNESS_DATABASE_URL=sqlite://${join(dir, "daemon.sqlite3")}`,
-  `SHARNESS_DATABASE_KEY=${randomBytes(32).toString("base64url")}`,
   `SHARNESS_CONFIG_FILE=${join(dir, "settings.json")}`,
 ].join("\n") + "\n", created);
 '
@@ -240,13 +238,12 @@ The daemon prints one line saying which setting it rejected. When it cannot
 say more, it prints:
 
 ```text
-The daemon could not start. Check SHARNESS_CONFIG_FILE, SHARNESS_DATABASE_URL and SHARNESS_DATABASE_KEY; run sharnessd --help for what each must hold.
+The daemon could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.
 ```
 
 Check these in order:
 
-- `SHARNESS_DATABASE_URL`, `SHARNESS_DATABASE_KEY` and `SHARNESS_CONFIG_FILE`
-  are set, which `--env-file=daemon/env` does, and the files they name are
+- `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` are set, which `--env-file=daemon/env` does, and the files they name are
   readable.
 - The database is prepared and the key is the one written with it. A database
   from another release's format is refused: prepare a fresh one.

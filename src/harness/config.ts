@@ -153,9 +153,8 @@ export const processHelp = [
   "",
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
   "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
-  "SHARNESS_DATABASE_KEY: base64url-encoded 32-byte encryption key",
   "SHARNESS_SERVER_AGENT_CREDENTIAL: when the settings name a server agent, the secret it signs in with",
-  "Deployment prepares the database schema and encryption verifier before startup.",
+  "Deployment prepares the database schema before startup.",
   "Standard OTEL_* variables configure telemetry.",
 ].join("\n");
 

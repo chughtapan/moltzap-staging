@@ -1,8 +1,7 @@
 /** @file Prepares daemon storage for deployment and checks that the runtime can open it. */
 
 import { Migrator, SqlClient } from "@effect/sql";
-import { Data, Effect, type Redacted } from "effect";
-import { initializeDatabaseKey, verifyDatabaseKey } from "./secrets.js";
+import { Data, Effect } from "effect";
 import {
   databaseAccess,
   databaseConnection,
@@ -22,12 +21,9 @@ const agentTables = [
   "collective_answers",
 ];
 
-/** Encryption check, owners and the agents the daemon has created for them. */
+/** Owners and the agents the daemon has created for them. */
 const agentSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE database_encryption (
-    singleton INTEGER PRIMARY KEY CHECK(singleton = 1), verifier TEXT NOT NULL
-  )`;
   yield* sql`CREATE TABLE owner_bindings (
     agent_key TEXT PRIMARY KEY,
     issuer TEXT NOT NULL,
@@ -181,17 +177,17 @@ const initializeMigrationLedger = Migrator.make({})({
 });
 
 /**
- * Schema failures identify the operator action without disclosing SQL or unlock material.
+ * Schema failures identify the operator action without disclosing SQL.
  * Exported so the public preparation operation's inferred failure can be named.
  * @public
  */
 export class DatabasePreparationError extends Data.TaggedError(
   "DatabasePreparationError",
 )<{
-  readonly reason: "schema" | "key" | "preparation";
+  readonly reason: "schema" | "preparation";
 }> {
   override get message(): string {
-    return `Database ${this.reason} check failed; prepare a compatible database with its existing unlock key before starting the daemon`;
+    return `Database ${this.reason} check failed; prepare a compatible database before starting the daemon`;
   }
 }
 
@@ -204,20 +200,23 @@ export const migrateDaemon = Effect.gen(function* () {
   });
 }).pipe(Effect.withSpan("migrateDaemon"));
 
-/** Fails unless the database has been prepared and `unlockKey` opens it. Changes nothing. */
-export const checkDatabase = Effect.fn("checkDatabase")(
-  function* (unlockKey: Redacted.Redacted<Uint8Array>) {
-    yield* verifyDatabaseKey(unlockKey);
-  },
-  Effect.catchTags({
-    DatabaseKeyError: () => new DatabasePreparationError({ reason: "key" }),
-    SqlError: () => new DatabasePreparationError({ reason: "schema" }),
-  }),
+/** Fails unless the database has been prepared. Changes nothing. */
+export const checkDatabase = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const applied = yield* sql`SELECT 1 FROM ${sql(migrationsTable)} LIMIT 1`;
+  if (applied.length === 0) {
+    return yield* new DatabasePreparationError({ reason: "schema" });
+  }
+}).pipe(
+  Effect.catchTag(
+    "SqlError",
+    () => new DatabasePreparationError({ reason: "schema" }),
+  ),
   Effect.withSpan("checkDatabase"),
 );
 
 /**
- * Deployment commits domain migrations and encryption metadata atomically.
+ * Deployment commits domain migrations atomically.
  * Failed first PostgreSQL preparation can retain an empty Migrator bookkeeping table.
  */
 export const prepareDatabase = Effect.gen(function* () {
@@ -233,15 +232,6 @@ export const prepareDatabase = Effect.gen(function* () {
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* migrateDaemon;
-        yield* initializeDatabaseKey(access.unlockKey).pipe(
-          Effect.catchTags({
-            DatabaseKeyError: () =>
-              new DatabasePreparationError({ reason: "key" }),
-            StoredCredentialError: () =>
-              new DatabasePreparationError({ reason: "key" }),
-          }),
-        );
-        yield* checkDatabase(access.unlockKey);
       }),
     );
   }).pipe(Effect.provide(databaseConnection(access.locator)));
@@ -285,7 +275,7 @@ function compatibleDatabase() {
           name: string;
         }>`SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
     });
-    if (tables.some((table) => table.name === "database_encryption")) {
+    if (tables.some((table) => table.name === "owner_bindings")) {
       return;
     }
     if (tables.some((table) => table.name !== migrationsTable)) {

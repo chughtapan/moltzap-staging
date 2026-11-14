@@ -426,7 +426,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
     SHARNESS_DATABASE_URL: Redacted.value(
       options.database?.runtimeLocator ?? Redacted.make(sqlite),
     ),
-    SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
     port,

@@ -17,7 +17,6 @@ import {
   type Scope,
   Stream,
 } from "effect";
-import { randomBytes } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { MessageAddressInput } from "../../communication/index.js";
@@ -78,10 +77,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const callbackClient = yield* Layer.build(webhookHttpClientLayer);
-  const webhook = yield* makeWebhookEvents(
-    database.directory,
-    Redacted.make(randomBytes(32)),
-  ).pipe(
+  const webhook = yield* makeWebhookEvents(database.directory).pipe(
     Effect.provideService(
       HttpClient.HttpClient,
       Context.get(callbackClient, HttpClient.HttpClient),

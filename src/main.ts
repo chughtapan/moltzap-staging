@@ -12,7 +12,7 @@ import { daemonLayer } from "./harness/startup.js";
 
 /** Printed for a startup failure that names no setting of its own. */
 const UNEXPLAINED_FAILURE =
-  "The daemon could not start. Check SHARNESS_CONFIG_FILE, SHARNESS_DATABASE_URL and SHARNESS_DATABASE_KEY; run sharnessd --help for what each must hold.";
+  "The daemon could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL; run sharnessd --help for what each must hold.";
 
 /** Prints one line to standard error and makes the process exit unsuccessfully. */
 const exitUnsuccessfully = (line: string) =>

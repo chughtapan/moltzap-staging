@@ -13,7 +13,6 @@ import {
   Layer,
   Option,
   Redacted,
-  Schema,
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Kysely only compiles SQL; Effect SqlClient owns every connection and execution.
 import {
@@ -72,7 +71,7 @@ export class DatabaseLocatorError extends Data.TaggedError(
 ) {}
 
 /**
- * Database environment failures never include the supplied locator or unlock material.
+ * Database environment failures never include the supplied locator.
  * Exported so the daemon layer's inferred failure can be named.
  * @public
  */
@@ -80,33 +79,15 @@ export class DatabaseAccessError extends Data.TaggedError(
   "DatabaseAccessError",
 ) {
   override get message(): string {
-    return "Set SHARNESS_DATABASE_URL and a canonical base64url-encoded 32-byte SHARNESS_DATABASE_KEY";
+    return "Set SHARNESS_DATABASE_URL to the database the daemon uses";
   }
 }
 
-/** One database locator and canonical unlock key are shared by preparation and runtime. */
+/** The database locator that preparation and the runtime share. */
 export const databaseAccess = Config.all({
   locator: Config.redacted("SHARNESS_DATABASE_URL"),
-  encodedKey: Config.redacted("SHARNESS_DATABASE_KEY"),
 }).pipe(
-  Effect.flatMap(({ locator, encodedKey }) =>
-    Schema.decodeUnknown(Schema.Uint8ArrayFromBase64Url)(
-      Redacted.value(encodedKey),
-    ).pipe(
-      Effect.filterOrFail(
-        (bytes) =>
-          bytes.byteLength === 32 &&
-          Buffer.from(bytes).toString("base64url") ===
-            Redacted.value(encodedKey),
-        () => new DatabaseAccessError(),
-      ),
-      Effect.map((bytes) => ({ locator, unlockKey: Redacted.make(bytes) })),
-    ),
-  ),
-  Effect.catchTags({
-    ConfigError: () => new DatabaseAccessError(),
-    ParseError: () => new DatabaseAccessError(),
-  }),
+  Effect.catchTag("ConfigError", () => new DatabaseAccessError()),
   Effect.withSpan("databaseAccess"),
 );
 

@@ -226,12 +226,8 @@ it(
 
 const localAgentName = "solo";
 
-/** A database the daemon cannot open with its key tells the operator what to prepare. */
-const incompatibleDatabaseRemedy =
-  "prepare a compatible database with its existing unlock key";
-
 it(
-  "keeps a local daemon's agent across a restart and refuses another database key",
+  "keeps a local daemon's agent across a restart",
   processTrace(
     Effect.gen(function* () {
       const credential = randomBytes(32).toString("base64url");
@@ -255,12 +251,6 @@ it(
       const restarted = yield* daemon.start();
       expect(yield* signIn).toEqual(before);
       yield* stopProcess(restarted);
-
-      const failure = yield* daemon.startupFailure({
-        SHARNESS_DATABASE_KEY: randomBytes(32).toString("base64url"),
-      });
-      expect(failure.exitCode).not.toBe(0);
-      expect(failure.logs).toContain(incompatibleDatabaseRemedy);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

@@ -15,4 +15,3 @@ export {
   withAgentTransaction,
 } from "./sql.js";
 /** Seals a credential for storage and opens it again. */
-export { openCredential, sealCredential } from "./secrets.js";

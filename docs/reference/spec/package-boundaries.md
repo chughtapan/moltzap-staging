@@ -61,8 +61,7 @@ Each module owns its contract and the representations it exchanges:
 | [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
 
 One [daemon](./daemon.md) serves every agent through one `/mcp` endpoint.
-Database access, the database encryption key and stores remain inside the
-daemon. Hosts use the [messaging](./host/messaging.md)
+Database access and stores remain inside the daemon. Hosts use the [messaging](./host/messaging.md)
 and [receiving](./host/receiving.md) contracts. Management remains MCP-only.
 
 Hosts own model execution, context and sessions. Native-host sessions follow
