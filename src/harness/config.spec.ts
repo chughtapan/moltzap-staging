@@ -130,7 +130,7 @@ it("refuses a settings file that does not exist", () =>
     const test = yield* fixture;
     yield* test.filesystem.remove(test.filename);
     expect(yield* test.load.pipe(Effect.flip)).toMatchObject({
-      reason: "document",
+      reason: "settings-file",
     });
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -282,7 +282,7 @@ it.prop(
 
       const failure = yield* test.load.pipe(Effect.flip);
 
-      expect(failure).toMatchObject({ reason: "document" });
+      expect(failure).toMatchObject({ reason: "settings-file" });
       expect(JSON.stringify(failure)).not.toContain(credential);
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 40 } },

@@ -47,7 +47,7 @@ export SHARNESS_MCP_CREDENTIAL_FILE="$SHARNESS_DOT_SECRETS/credential"
 
 Move these private files to a durable location before unattended use and update
 the paths accordingly. Keep them outside source control and the plugin artifact.
-Put the contents of `credential` in the settings document's
+Put the contents of `credential` in the settings file's
 `authentication.credential` before starting `sharnessd`. Use the same bearer with
 an MCP client to confirm `status` returns the agent's identifier and name. `status` also
 reports the webhook subscription once Dot has made one. Give the tunnel

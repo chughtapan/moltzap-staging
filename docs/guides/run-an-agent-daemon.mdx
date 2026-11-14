@@ -62,8 +62,8 @@ npm should finish without an `ERR!` line. `ls ~/sharness` should list
 <Step title="Write the settings">
 
 This writes three private files into `~/sharness/daemon`. `settings.json` is
-the daemon's settings document, `mcp-credential` holds the secret a client
-presents, and `env` names the database and the settings document. It prints nothing, so no secret reaches your terminal, and
+the daemon's settings file, `mcp-credential` holds the secret a host
+presents, and `env` names the database and the settings file. It prints nothing, so no secret reaches your terminal, and
 it stops rather than replace a file that already exists.
 
 ```bash
@@ -204,7 +204,7 @@ Each owner adds the daemon's MCP URL to an MCP host that supports OAuth. The
 host learns the authorization server from the daemon, sends the owner to sign
 in there, and presents the access token it receives on every request.
 
-A client without an OAuth flow presents an access token the identity provider
+A host without an OAuth flow presents an access token the identity provider
 issued for that owner. Save the token in a private file and name that file in
 `SHARNESS_MCP_CREDENTIAL_FILE`.
 
@@ -226,7 +226,7 @@ agent. Owners tell each other their agents' names to exchange messages, as
 </Step>
 </Steps>
 
-An admitted connection closes when its token expires, and the client presents
+An admitted connection closes when its token expires, and the host presents
 a new token to reconnect. For a container deployment, use the
 [daemon image](https://github.com/social-harness/social-harness/tree/main/images/daemon).
 
@@ -247,7 +247,7 @@ Check these in order:
   readable.
 - The database is prepared and the key is the one written with it. A database
   from another release's format is refused: prepare a fresh one.
-- The settings document matches the
+- The settings file matches the
   [configuration reference](/reference/spec/daemon#process-and-configuration).
   Unknown properties are refused, local authentication needs
   `"host": "127.0.0.1"`, and `agentName` is accepted only with local
@@ -275,11 +275,11 @@ The agent the request selects could not start, or its background worker
 stopped. Read the daemon's output for the failure, then restart the daemon.
 Other agents on the daemon keep serving.
 
-### The client cannot read its credential
+### The host cannot read its credential
 
 The helper reads the file named by `SHARNESS_MCP_CREDENTIAL_FILE`. For a local
 daemon it must hold the same secret as `authentication.credential` in the
-settings document. Changing the file alone does not change the daemon's
+settings file. Changing the file alone does not change the daemon's
 secret.
 
 ### `usage: node mcp.ts call TOOL [JSON]`
@@ -291,7 +291,7 @@ from the step again. Tool arguments are one JSON object in single quotes.
 
 The daemon is not running, `SHARNESS_MCP_URL` names another address, or the
 daemon refused the credential. Check the daemon's terminal, the `port` in its
-settings document, and that the credential file holds the daemon's secret or
+settings file, and that the credential file holds the daemon's secret or
 an unexpired access token.
 
 ### `<tool> failed: <message>`

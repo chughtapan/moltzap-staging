@@ -5,7 +5,7 @@ import { Context, Effect, Exit, FastCheck as fc, Layer } from "effect";
 import { expect } from "vitest";
 import { openTestDatabase } from "../communication/__tests__/store-fixtures.js";
 import { AgentName, Identity } from "../identity.js";
-import { getOrCreateOwnedAgent } from "./ownership.js";
+import { getOrCreateOwnedAgentKey } from "./ownership.js";
 
 const owner = { issuer: "https://issuer.example", subject: "owner" };
 
@@ -39,12 +39,12 @@ it.prop(
       const distinct = new Set(owners.map(account)).size;
 
       const agentKeys = yield* Effect.all(
-        owners.map((owner) => getOrCreateOwnedAgent(owner)),
+        owners.map((owner) => getOrCreateOwnedAgentKey(owner)),
         { concurrency: owners.length },
       );
       const again = yield* Effect.forEach(
         owners,
-        (owner) => getOrCreateOwnedAgent(owner),
+        (owner) => getOrCreateOwnedAgentKey(owner),
         { concurrency: 1 },
       );
       const cards = yield* Effect.forEach(agentKeys, cardOf, {
@@ -78,20 +78,20 @@ it("rolls back the owner binding when saving its profile fails", () =>
     yield* sql`CREATE TRIGGER reject_profile BEFORE INSERT ON agent_profiles BEGIN
       SELECT RAISE(ABORT, 'profile unavailable'); END`;
     expect(
-      Exit.isFailure(yield* getOrCreateOwnedAgent(owner).pipe(Effect.exit)),
+      Exit.isFailure(yield* getOrCreateOwnedAgentKey(owner).pipe(Effect.exit)),
     ).toBeTruthy();
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     yield* sql`DROP TRIGGER reject_profile`;
-    const recovered = yield* getOrCreateOwnedAgent(owner);
+    const recovered = yield* getOrCreateOwnedAgentKey(owner);
     expect((yield* cardOf(recovered)).agentName).toMatch(/^agent-/u);
   }).pipe(Effect.provide(database)));
 
 it("refuses to rename a saved agent", () =>
   Effect.gen(function* () {
-    yield* getOrCreateOwnedAgent(owner);
+    yield* getOrCreateOwnedAgentKey(owner);
     const sql = yield* SqlClient.SqlClient;
     const before = yield* sql`SELECT * FROM agent_profiles`;
-    const changed = yield* getOrCreateOwnedAgent(
+    const changed = yield* getOrCreateOwnedAgentKey(
       owner,
       AgentName.make("another"),
     ).pipe(Effect.exit);

@@ -26,7 +26,7 @@ const postgresFixture = Effect.gen(function* () {
 });
 
 it(
-  "prepares fresh PostgreSQL storage independently of runtime settings",
+  "prepares fresh PostgreSQL storage independently of the settings file",
   () =>
     Effect.gen(function* () {
       const test = yield* postgresFixture;

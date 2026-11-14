@@ -1,12 +1,12 @@
-/** @file Binds each authenticated owner to one agent and records that agent's identifier, name and principal. */
+/** @file Binds each owner to one agent and records that agent's card. */
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
 import { executeQuery, makeQueries } from "../database/index.js";
 import { AgentId, AgentName, PrincipalId } from "../identity.js";
 
-/** Authentication supplies both fields; email and client-provided agent selectors are excluded. */
-export interface OwnerAccount {
+/** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
+export interface Owner {
   readonly issuer: string;
   readonly subject: string;
 }
@@ -57,11 +57,11 @@ const minted = (prefix: string) =>
  * same key. With `agentName`, the agent is created under that name and an
  * existing agent must already have it.
  */
-export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
-  function* (owner: OwnerAccount, agentName?: AgentName) {
+export const getOrCreateOwnedAgentKey = Effect.fn("getOrCreateOwnedAgentKey")(
+  function* (owner: Owner, agentName?: AgentName) {
     const sql = yield* SqlClient.SqlClient;
     const queries = yield* makeQueries<OwnershipTables>();
-    const lookup = () =>
+    const ownerBinding = () =>
       executeQuery(
         queries
           .selectFrom("owner_bindings")
@@ -69,7 +69,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
           .where("issuer", "=", owner.issuer)
           .where("subject", "=", owner.subject),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(bindingRow))));
-    const ownedKey = (agentKey: string) =>
+    const keyIfProfileMatches = (agentKey: string) =>
       executeQuery(
         queries
           .selectFrom("agent_profiles")
@@ -84,9 +84,9 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
         ),
         Effect.as(agentKey),
       );
-    const existing = (yield* lookup())[0];
+    const existing = (yield* ownerBinding())[0];
     if (existing !== undefined) {
-      return yield* ownedKey(existing.agent_key);
+      return yield* keyIfProfileMatches(existing.agent_key);
     }
     const candidateKey = randomUUID();
     const profile = yield* Schema.decodeUnknown(profileRow)({
@@ -109,7 +109,7 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
               conflict.columns(["issuer", "subject"]).doNothing(),
             ),
         );
-        const binding = (yield* lookup())[0];
+        const binding = (yield* ownerBinding())[0];
         if (binding === undefined) {
           return yield* new OwnershipError();
         }
@@ -123,11 +123,11 @@ export const getOrCreateOwnedAgent = Effect.fn("getOrCreateOwnedAgent")(
               ),
           );
         }
-        return yield* ownedKey(binding.agent_key);
+        return yield* keyIfProfileMatches(binding.agent_key);
       }),
     );
   },
-  Effect.withSpan("getOrCreateOwnedAgent"),
+  Effect.withSpan("getOrCreateOwnedAgentKey"),
 );
 
 /** The key of every agent the daemon has created. */

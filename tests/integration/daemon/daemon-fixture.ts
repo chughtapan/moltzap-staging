@@ -334,7 +334,7 @@ const startupFailure = (
   }).pipe(Effect.withSpan("startupFailure"));
 
 /**
- * Writes `initial` as the settings document at `file` and returns the
+ * Writes `initial` as the settings file at `file` and returns the
  * operation that changes it.
  */
 const settingsDocument = (

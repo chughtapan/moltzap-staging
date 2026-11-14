@@ -1,4 +1,4 @@
-/** @file Loads runtime daemon settings and resolves their policy and norms references from one file. */
+/** @file Reads the settings file and the files it names into the daemon's settings. */
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { FileSystem } from "@effect/platform";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
@@ -35,11 +35,22 @@ import { packageVersion } from "../version.js";
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
-  readonly reason: "environment" | "document" | "policy" | "norms";
+  readonly reason:
+    | "environment"
+    | "settings-file"
+    | "policy"
+    | "norms"
+    | "database"
+    | "issuer"
+    | "listener";
   readonly message: string;
 }> {}
 
-const refused = (reason: DaemonConfigurationError["reason"], message: string) =>
+/** A startup refusal whose message names the setting to change. */
+export const refused = (
+  reason: DaemonConfigurationError["reason"],
+  message: string,
+) =>
   new DaemonConfigurationError({
     reason,
     message,
@@ -120,21 +131,26 @@ const commonFields = {
   }),
 };
 
-const settings = exactStruct({
+const daemonSettings = exactStruct({
   ...commonFields,
   messagePolicy: Schema.optional(installedMessagePolicy),
   norms: Schema.optional(installedNorms),
 }).pipe(
   Schema.filter(
-    (value) =>
-      value.authentication.kind === "oauth" || value.host === "127.0.0.1",
+    (settings) =>
+      settings.authentication.kind === "oauth" || settings.host === "127.0.0.1",
   ),
 );
 
-/** Process settings contain resolved policy and credential values for this startup. */
-export type DaemonSettings = typeof settings.Type;
+/**
+ * What the daemon holds after reading the settings file and the files it
+ * names: the message policy, the provider credential and the norms
+ * themselves, in place of their paths.
+ */
+export type DaemonSettings = typeof daemonSettings.Type;
 
-const setup = exactStruct({
+/** The settings file as an operator writes it. */
+const settingsFile = exactStruct({
   ...commonFields,
   agentName: Schema.optional(AgentName),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
@@ -142,13 +158,13 @@ const setup = exactStruct({
   normsDirectory: Schema.optional(Schema.NonEmptyString),
 }).pipe(
   Schema.filter(
-    (value) =>
-      value.authentication.kind === "local" || value.agentName === undefined,
+    (file) =>
+      file.authentication.kind === "local" || file.agentName === undefined,
   ),
 );
 
-/** The document and its referenced files are read on every daemon start. */
-export const processHelp = [
+/** What `sharnessd --help` prints: the variables the daemon reads at every start. */
+export const daemonHelp = [
   "Usage: sharnessd [--help]",
   "",
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
@@ -158,36 +174,39 @@ export const processHelp = [
   "Standard OTEL_* variables configure telemetry.",
 ].join("\n");
 
-/** Policy and norms references resolve against the runtime document, independent of the process directory. */
+/**
+ * The paths the settings file names resolve against its own directory,
+ * whatever the daemon's working directory.
+ */
 export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
-  const selected = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
+  const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
       refused(
         "environment",
-        "Set SHARNESS_CONFIG_FILE to the daemon settings document",
+        "Set SHARNESS_CONFIG_FILE to the daemon settings file",
       ),
     ),
   );
   const filesystem = yield* FileSystem.FileSystem;
-  const document = yield* filesystem.readFileString(selected).pipe(
+  const file = yield* filesystem.readFileString(settingsPath).pipe(
     Effect.flatMap(
-      Schema.decodeUnknown(Schema.parseJson(setup), {
+      Schema.decodeUnknown(Schema.parseJson(settingsFile), {
         onExcessProperty: "error",
       }),
     ),
     Effect.mapError(() =>
       refused(
-        "document",
-        "The daemon settings document is unreadable or invalid",
+        "settings-file",
+        "The daemon settings file is unreadable or invalid",
       ),
     ),
   );
-  const root = dirname(resolve(selected));
+  const settingsDirectory = dirname(resolve(settingsPath));
   const norms =
-    document.normsDirectory === undefined
+    file.normsDirectory === undefined
       ? undefined
-      : yield* configuredNorms(resolve(root, document.normsDirectory));
-  if (norms !== undefined && document.messagePolicyFile === undefined) {
+      : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
+  if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
       "norms",
       "The configured norms need a messagePolicyFile: each agent holds its norms in its editable message policy",
@@ -196,13 +215,15 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const messagePolicy = yield* loadMessagePolicy(
     {
       messagePolicyFile:
-        document.messagePolicyFile === undefined
+        file.messagePolicyFile === undefined
           ? undefined
-          : resolve(root, document.messagePolicyFile),
+          : resolve(settingsDirectory, file.messagePolicyFile),
       decisionProviderKeyFile:
-        document.decisionProviderKeyFile === undefined
+        file.decisionProviderKeyFile === undefined
           ? undefined
-          : Redacted.make(resolve(root, document.decisionProviderKeyFile)),
+          : Redacted.make(
+              resolve(settingsDirectory, file.decisionProviderKeyFile),
+            ),
     },
     readPolicyCredential,
   ).pipe(
@@ -223,31 +244,28 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       "The configured norms have English rules, which need a messagePolicyFile with a decisionProvider to check them",
     );
   }
-  const values = Struct.omit(
-    document,
-    "agentName",
-    "messagePolicyFile",
-    "decisionProviderKeyFile",
-    "normsDirectory",
-  );
-  const captured = yield* Schema.validate(settings)({
-    ...values,
+  const settings = yield* Schema.validate(daemonSettings)({
+    ...Struct.omit(
+      file,
+      "agentName",
+      "messagePolicyFile",
+      "decisionProviderKeyFile",
+      "normsDirectory",
+    ),
     messagePolicy: Option.getOrUndefined(messagePolicy),
     ...(norms === undefined ? {} : { norms }),
   }).pipe(
     Effect.mapError(() =>
       refused(
-        "document",
+        "settings-file",
         "Local bearer access requires the 127.0.0.1 listener",
       ),
     ),
   );
   return {
-    settings: captured,
-    serverAgentCredential: yield* serverAgentCredential(captured),
-    ...(document.agentName === undefined
-      ? {}
-      : { agentName: document.agentName }),
+    settings,
+    serverAgentCredential: yield* readServerAgentCredential(settings),
+    ...(file.agentName === undefined ? {} : { agentName: file.agentName }),
   };
 }, Effect.withSpan("loadDaemonSettings"));
 
@@ -256,12 +274,12 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
  * is never written to a file. A daemon whose settings name a server agent
  * requires it; one without a server agent does not read it.
  */
-function serverAgentCredential(captured: DaemonSettings) {
+function readServerAgentCredential(settings: DaemonSettings) {
   return Effect.gen(function* () {
     const configured = yield* Config.option(
       Config.redacted("SHARNESS_SERVER_AGENT_CREDENTIAL"),
     ).pipe(Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()));
-    if (captured.serverAgentName === undefined) {
+    if (settings.serverAgentName === undefined) {
       return Option.none<Redacted.Redacted>();
     }
     if (Option.isNone(configured)) {
@@ -279,7 +297,7 @@ function serverAgentCredential(captured: DaemonSettings) {
   });
 }
 
-/** The settings document's norms directory, read and checked. */
+/** The settings file's norms directory, read and checked. */
 function configuredNorms(directory: string) {
   return loadNorms(directory).pipe(
     Effect.mapError((error: NormsConfigurationError) =>
@@ -301,7 +319,7 @@ const otelVariable = (name: string) =>
     ),
   );
 
-const spanExportSettings = Config.all({
+const otelVariables = Config.all({
   endpoint: otelVariable("OTEL_EXPORTER_OTLP_ENDPOINT"),
   tracesEndpoint: otelVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
   tracesProtocol: otelVariable("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
@@ -310,14 +328,14 @@ const spanExportSettings = Config.all({
   resourceAttributes: otelVariable("OTEL_RESOURCE_ATTRIBUTES"),
 });
 
-type SpanExportSettings = Config.Config.Success<typeof spanExportSettings>;
+type OtelVariables = Config.Config.Success<typeof otelVariables>;
 
 /**
  * Uses `OTEL_SERVICE_NAME`, then the last `service.name` resource attribute,
  * then `sharnessd`, matching OpenTelemetry's resource precedence.
  */
-function spanServiceName(settings: SpanExportSettings): string {
-  const attributed = Option.getOrElse(settings.resourceAttributes, () => "")
+function spanServiceName(otel: OtelVariables): string {
+  const attributed = Option.getOrElse(otel.resourceAttributes, () => "")
     .split(",")
     .map((attribute) => attribute.split("="))
     .filter(
@@ -325,10 +343,7 @@ function spanServiceName(settings: SpanExportSettings): string {
     )
     .at(-1)?.[1]
     ?.trim();
-  return Option.getOrElse(
-    settings.serviceName,
-    () => attributed ?? "sharnessd",
-  );
+  return Option.getOrElse(otel.serviceName, () => attributed ?? "sharnessd");
 }
 
 /**
@@ -351,32 +366,30 @@ function tracesUnder(endpoint: string): string {
  */
 function spanExportUrl(
   endpoint: string,
-  settings: SpanExportSettings,
+  otel: OtelVariables,
 ): Either.Either<string, DaemonConfigurationError> {
-  const protocol = settings.tracesProtocol.pipe(
-    Option.orElse(() => settings.protocol),
+  const protocol = otel.tracesProtocol.pipe(
+    Option.orElse(() => otel.protocol),
     Option.getOrElse(() => "http/protobuf"),
   );
   if (protocol !== "http/protobuf") {
     return Either.left(
-      new DaemonConfigurationError({
-        reason: "environment",
-        message:
-          "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
-      }),
+      refused(
+        "environment",
+        "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
+      ),
     );
   }
-  const url = Option.getOrElse(settings.tracesEndpoint, () =>
+  const url = Option.getOrElse(otel.tracesEndpoint, () =>
     tracesUnder(endpoint),
   );
   return URL.canParse(url) && /^https?:$/u.test(new URL(url).protocol)
     ? Either.right(url)
     : Either.left(
-        new DaemonConfigurationError({
-          reason: "environment",
-          message:
-            "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
-        }),
+        refused(
+          "environment",
+          "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
+        ),
       );
 }
 
@@ -402,14 +415,14 @@ const exportDiagnostics = Layer.effectDiscard(
 export const spanExport: Layer.Layer<never, DaemonConfigurationError> =
   Layer.unwrapEffect(
     Effect.gen(function* () {
-      const settings = yield* spanExportSettings.pipe(Effect.orDie);
-      if (Option.isNone(settings.endpoint)) {
+      const otel = yield* otelVariables.pipe(Effect.orDie);
+      if (Option.isNone(otel.endpoint)) {
         return Layer.empty;
       }
-      const url = yield* spanExportUrl(settings.endpoint.value, settings);
+      const url = yield* spanExportUrl(otel.endpoint.value, otel);
       return NodeSdk.layer(() => ({
         resource: {
-          serviceName: spanServiceName(settings),
+          serviceName: spanServiceName(otel),
           serviceVersion: packageVersion,
         },
         spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter({ url })),

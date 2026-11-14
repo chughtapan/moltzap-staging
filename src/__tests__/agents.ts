@@ -2,7 +2,7 @@
 
 import { Context, Effect, Encoding, Layer, Schema } from "effect";
 import { createHash } from "node:crypto";
-import { getOrCreateOwnedAgent } from "../harness/ownership.js";
+import { getOrCreateOwnedAgentKey } from "../harness/ownership.js";
 import { AgentCard, AgentName, Identity } from "../identity.js";
 
 /** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */
@@ -43,7 +43,7 @@ export function digest(prefix: string, byte: number): string {
  */
 export const createTestAgent = Effect.fn("createTestAgent")(
   function* (name: string) {
-    const agentKey = yield* getOrCreateOwnedAgent(
+    const agentKey = yield* getOrCreateOwnedAgentKey(
       { issuer: "urn:social-harness:test", subject: name },
       Schema.decodeUnknownSync(AgentName)(name),
     );

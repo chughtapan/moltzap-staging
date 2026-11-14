@@ -216,13 +216,13 @@ an act, so no norm check matches it.
 
 ## Norms directory
 
-The runtime document's `normsDirectory` names a directory of policy:
+The settings file's `normsDirectory` names a directory of policy:
 `rules.json`, the rule chain every agent's firewall applies to the matchers,
 and the initial norms, as `.lisp` files, such as application norms,
 which each new agent holds besides the [built-in norms](#built-in-norms). The
 daemon reads and checks them each time it starts. A document that does not
 parse, two documents for one norm, a document naming a built-in norm, a rule
-naming another matcher, or a runtime document without a `messagePolicyFile`
+naming another matcher, or a settings file without a `messagePolicyFile`
 refuses startup, and so do initial norms with
 [English rules](#english-rules) when the message policy has no
 `decisionProvider`. Without `normsDirectory`, the daemon's agents hold no

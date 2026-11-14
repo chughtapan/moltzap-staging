@@ -29,7 +29,7 @@ reachable after it disconnects from MCP.
 The daemon creates the server agent when it starts. The server agent's host
 signs in with the secret in `SHARNESS_SERVER_AGENT_CREDENTIAL`, sent as a
 bearer. The secret comes from the environment and is never written to the
-settings document, and the daemon does not start in this mode without it. It
+settings file, and the daemon does not start in this mode without it. It
 contains 32 to 512 characters from the HTTP bearer credential alphabet.
 Clients sign in through the configured
 [authentication](./daemon.md#mcp-authentication), and each owner's first
