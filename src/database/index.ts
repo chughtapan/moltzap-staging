@@ -1,4 +1,4 @@
-/** @file SQL access for every domain store: the connection, queries, transactions, migrations and sealed credentials. */
+/** @file SQL access for every domain store: the connection, queries, transactions and migrations. */
 
 /** Prepares a database and checks that one is prepared. */
 export { checkDatabase, migrateDaemon, prepareDatabase } from "./migrations.js";
@@ -6,12 +6,11 @@ export { checkDatabase, migrateDaemon, prepareDatabase } from "./migrations.js";
 export {
   afterCommit,
   type Compilable,
-  databaseAccess,
   databaseConnection,
+  databaseUrl,
   executeQuery,
   type Generated,
   makeQueries,
   transaction,
-  withAgentTransaction,
+  withAgentRows,
 } from "./sql.js";
-/** Seals a credential for storage and opens it again. */

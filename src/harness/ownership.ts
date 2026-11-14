@@ -23,7 +23,7 @@ export const serverAgentOwner = {
   subject: "owner",
 };
 
-const profileRow = Schema.Struct({
+const cardRow = Schema.Struct({
   agent_key: Schema.UUID,
   agent_id: AgentId,
   agent_name: AgentName,
@@ -37,7 +37,7 @@ const bindingRow = Schema.Struct({
 });
 
 type OwnershipTables = Record<"owner_bindings", typeof bindingRow.Type> &
-  Record<"agent_profiles", typeof profileRow.Type>;
+  Record<"agent_cards", typeof cardRow.Type>;
 
 /**
  * The owner's agent has another name than the one asked for, the name belongs
@@ -69,27 +69,27 @@ export const getOrCreateOwnedAgentKey = Effect.fn("getOrCreateOwnedAgentKey")(
           .where("issuer", "=", owner.issuer)
           .where("subject", "=", owner.subject),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(bindingRow))));
-    const keyIfProfileMatches = (agentKey: string) =>
+    const keyIfCardMatches = (agentKey: string) =>
       executeQuery(
         queries
-          .selectFrom("agent_profiles")
+          .selectFrom("agent_cards")
           .select("agent_name")
           .where("agent_key", "=", agentKey),
       ).pipe(
         Effect.filterOrFail(
-          ([profile]) =>
-            profile !== undefined &&
-            (agentName === undefined || profile.agent_name === agentName),
+          ([card]) =>
+            card !== undefined &&
+            (agentName === undefined || card.agent_name === agentName),
           () => new OwnershipError(),
         ),
         Effect.as(agentKey),
       );
     const existing = (yield* ownerBinding())[0];
     if (existing !== undefined) {
-      return yield* keyIfProfileMatches(existing.agent_key);
+      return yield* keyIfCardMatches(existing.agent_key);
     }
     const candidateKey = randomUUID();
-    const profile = yield* Schema.decodeUnknown(profileRow)({
+    const card = yield* Schema.decodeUnknown(cardRow)({
       agent_key: candidateKey,
       agent_id: minted("agt_"),
       agent_name: agentName ?? `agent-${randomBytes(12).toString("hex")}`,
@@ -116,14 +116,14 @@ export const getOrCreateOwnedAgentKey = Effect.fn("getOrCreateOwnedAgentKey")(
         if (binding.agent_key === candidateKey) {
           yield* executeQuery(
             queries
-              .insertInto("agent_profiles")
-              .values(profile)
+              .insertInto("agent_cards")
+              .values(card)
               .onConflict((conflict) =>
                 conflict.column("agent_name").doNothing(),
               ),
           );
         }
-        return yield* keyIfProfileMatches(binding.agent_key);
+        return yield* keyIfCardMatches(binding.agent_key);
       }),
     );
   },

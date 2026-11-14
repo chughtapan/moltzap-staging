@@ -1,4 +1,4 @@
-/** @file Deployment prepares a SQLite database's schema without touching what it cannot adopt, and the runtime check changes nothing. */
+/** @file Deployment prepares a SQLite database's schema without touching what it cannot adopt, and the daemon's check changes nothing. */
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { Migrator, SqlClient } from "@effect/sql";
@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 import { checkDatabase, migrateDaemon, prepareDatabase } from "./migrations.js";
-import { databaseAccess, databaseConnection } from "./sql.js";
+import { databaseConnection, databaseUrl } from "./sql.js";
 
 /** Only the owner reaches the database directory and file. */
 const privateDirectoryMode = 0o700;
@@ -31,22 +31,19 @@ const fixture = Effect.gen(function* () {
   const directory = yield* filesystem.makeTempDirectoryScoped({
     prefix: "sharness-database-",
   });
-  const locator = pathToFileURL(join(directory, "daemon.sqlite3")).href.replace(
-    /^file:/u,
-    "sqlite:",
-  );
+  const sqliteUrl = pathToFileURL(
+    join(directory, "daemon.sqlite3"),
+  ).href.replace(/^file:/u, "sqlite:");
   const providerFor = (database: string) =>
     ConfigProvider.fromMap(new Map([["SHARNESS_DATABASE_URL", database]]));
-  const provider = providerFor(locator);
-  const access = yield* databaseAccess.pipe(
-    Effect.withConfigProvider(provider),
-  );
+  const provider = providerFor(sqliteUrl);
+  const url = yield* databaseUrl.pipe(Effect.withConfigProvider(provider));
   const prepare = prepareDatabase.pipe(Effect.withConfigProvider(provider));
   const sql = Context.get(
-    yield* Layer.build(databaseConnection(access.locator)),
+    yield* Layer.build(databaseConnection(url)),
     SqlClient.SqlClient,
   );
-  return { filesystem, directory, access, prepare, providerFor, sql };
+  return { filesystem, directory, url, prepare, providerFor, sql };
 });
 
 it("checks an unprepared database without creating its schema", () =>
@@ -115,9 +112,9 @@ it("creates private encoded database paths only during deployment preparation", 
     const test = yield* fixture;
     const directory = join(test.directory, "private café # space");
     const filename = join(directory, "daemon.sqlite3");
-    const locator = pathToFileURL(filename).href.replace(/^file:/u, "sqlite:");
+    const url = pathToFileURL(filename).href.replace(/^file:/u, "sqlite:");
     yield* prepareDatabase.pipe(
-      Effect.withConfigProvider(test.providerFor(locator)),
+      Effect.withConfigProvider(test.providerFor(url)),
     );
     expect((yield* test.filesystem.stat(directory)).mode & 0o777).toBe(
       privateDirectoryMode,
@@ -128,7 +125,7 @@ it("creates private encoded database paths only during deployment preparation", 
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.prop(
-  "refuses a SQLite locator that carries a query or a fragment, creating nothing and repeating none of it",
+  "refuses a SQLite database URL that carries a query or a fragment, creating nothing and repeating none of it",
   [
     fc.constantFrom("?", "#"),
     fc.stringMatching(/^[a-z=&]{0,12}$/),
@@ -138,7 +135,7 @@ it.prop(
     Effect.gen(function* () {
       const test = yield* fixture;
       const directory = join(test.directory, "uncreated");
-      const locator =
+      const url =
         pathToFileURL(join(directory, "daemon.sqlite3")).href.replace(
           /^file:/u,
           "sqlite:",
@@ -148,7 +145,7 @@ it.prop(
         marker;
 
       const failure = yield* prepareDatabase.pipe(
-        Effect.withConfigProvider(test.providerFor(locator)),
+        Effect.withConfigProvider(test.providerFor(url)),
         Effect.flip,
       );
 

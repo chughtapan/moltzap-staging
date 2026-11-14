@@ -10,7 +10,7 @@ import {
   executeQuery,
   type Generated,
   makeQueries,
-  withAgentTransaction,
+  withAgentRows,
 } from "../database/index.js";
 import { sameJson } from "../encoding.js";
 import { firewallDecisionSummarySchema, FirewallPolicyError } from "./rules.js";
@@ -49,15 +49,15 @@ const checkRecord = Schema.Struct({
 });
 const storedCheck = Schema.Struct({
   direction: checkRecord.fields.direction,
-  candidate: Schema.NonEmptyString,
+  message: Schema.NonEmptyString,
   input: Schema.NonEmptyString,
   result: Schema.NonEmptyString,
-  disposition: decision,
+  decision,
 });
 const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
   result: Schema.NonEmptyString,
-  disposition: decision,
+  decision,
   time: storedTime,
 });
 const savedSummary = Schema.parseJson(
@@ -92,17 +92,17 @@ interface FirewallTables {
     readonly sequence: Generated<number>;
     readonly check_id: string;
     readonly direction: typeof checkRecord.Type.direction;
-    readonly candidate: string;
+    readonly message: string;
     readonly input: string;
     readonly result: string;
     readonly decided_at: number;
-    readonly disposition: typeof decision.Type;
+    readonly decision: typeof decision.Type;
   };
   readonly firewall_activations: {
     readonly agent_key: string;
     readonly sequence: Generated<number>;
     readonly activated_at: number;
-    readonly active_revision: string;
+    readonly revision: string;
     readonly added_rule_ids: string;
     readonly removed_rule_ids: string;
   };
@@ -117,7 +117,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
   const sql = yield* SqlClient.SqlClient;
   const queries = yield* makeQueries<FirewallTables>();
   const run = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-    withAgentTransaction(agentKey, work).pipe(
+    withAgentRows(agentKey, work).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
       Effect.mapError(persistenceFailure),
     );
@@ -143,10 +143,10 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
             agent_key: agentKey,
             check_id: record.checkId,
             direction: record.direction,
-            candidate: record.messageJson,
+            message: record.messageJson,
             input: record.inputJson,
             result: record.resultJson,
-            disposition: applied,
+            decision: applied,
             decided_at: yield* Clock.currentTimeMillis,
           })
           .onConflict((conflict) =>
@@ -155,7 +155,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
       );
       const savedRows = yield* executeQuery(
         checksQuery
-          .select(["direction", "candidate", "input", "result", "disposition"])
+          .select(["direction", "message", "input", "result", "decision"])
           .where("check_id", "=", record.checkId),
       ).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(storedCheck))));
       const savedRecord = savedRows[0];
@@ -163,12 +163,12 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
         return yield* persistenceFailure();
       }
       const sameEvidence =
-        sameJson(savedRecord.candidate, record.messageJson) &&
+        sameJson(savedRecord.message, record.messageJson) &&
         sameJson(savedRecord.input, record.inputJson) &&
         sameJson(savedRecord.result, record.resultJson);
       if (
         savedRecord.direction !== record.direction ||
-        savedRecord.disposition !== applied ||
+        savedRecord.decision !== applied ||
         !sameEvidence
       ) {
         return yield* persistenceFailure();
@@ -207,7 +207,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
               queries.insertInto("firewall_activations").values({
                 agent_key: agentKey,
                 activated_at: activation.time,
-                active_revision: activation.activeRevision,
+                revision: activation.activeRevision,
                 added_rule_ids: yield* Schema.encode(ruleIds)(
                   activation.addedRuleIds,
                 ),
@@ -235,7 +235,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
               .select([
                 "check_id as checkId",
                 "result",
-                "disposition",
+                "decision",
                 "decided_at as time",
               ])
               .where("decided_at", ">=", since)
@@ -254,7 +254,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
             activationsQuery
               .select([
                 "activated_at as time",
-                "active_revision as activeRevision",
+                "revision as activeRevision",
                 "added_rule_ids as addedRuleIds",
                 "removed_rule_ids as removedRuleIds",
               ])
@@ -277,7 +277,7 @@ function decodeDecisionSummaries(row: typeof decisionRow.Type) {
       summaries.map((summary) => ({
         ...summary,
         checkId: row.checkId,
-        decision: row.disposition,
+        decision: row.decision,
         time: row.time,
       })),
     ),

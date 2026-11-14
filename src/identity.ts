@@ -122,7 +122,7 @@ function cards(
   column: "agent_key" | "agent_name",
   value: string,
 ) {
-  return sql`SELECT agent_id AS "agentId",agent_name AS "agentName",principal_id AS "principalId" FROM agent_profiles WHERE ${sql(column)}=${value}`.pipe(
+  return sql`SELECT agent_id AS "agentId",agent_name AS "agentName",principal_id AS "principalId" FROM agent_cards WHERE ${sql(column)}=${value}`.pipe(
     Effect.flatMap(Schema.decodeUnknown(Schema.Array(AgentCard))),
     Effect.catchTags({
       SqlError: () => new IdentityError({ reason: "persistence-failed" }),

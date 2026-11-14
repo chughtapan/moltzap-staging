@@ -689,7 +689,7 @@ function checkResultSize(completed: CompletedCollective) {
       completed.sources,
     ).pipe(
       Effect.catchTag(
-        "ClientRepresentationError",
+        "JsonRepresentationError",
         () => new EndpointStoreError({ reason: "invalid-input" }),
       ),
     );

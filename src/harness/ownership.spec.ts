@@ -72,16 +72,16 @@ it.prop(
   { fastCheck: { numRuns: 25 } },
 );
 
-it("rolls back the owner binding when saving its profile fails", () =>
+it("rolls back the owner binding when saving its card fails", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TRIGGER reject_profile BEFORE INSERT ON agent_profiles BEGIN
-      SELECT RAISE(ABORT, 'profile unavailable'); END`;
+    yield* sql`CREATE TRIGGER reject_card BEFORE INSERT ON agent_cards BEGIN
+      SELECT RAISE(ABORT, 'card unavailable'); END`;
     expect(
       Exit.isFailure(yield* getOrCreateOwnedAgentKey(owner).pipe(Effect.exit)),
     ).toBeTruthy();
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    yield* sql`DROP TRIGGER reject_profile`;
+    yield* sql`DROP TRIGGER reject_card`;
     const recovered = yield* getOrCreateOwnedAgentKey(owner);
     expect((yield* cardOf(recovered)).agentName).toMatch(/^agent-/u);
   }).pipe(Effect.provide(database)));
@@ -90,11 +90,11 @@ it("refuses to rename a saved agent", () =>
   Effect.gen(function* () {
     yield* getOrCreateOwnedAgentKey(owner);
     const sql = yield* SqlClient.SqlClient;
-    const before = yield* sql`SELECT * FROM agent_profiles`;
+    const before = yield* sql`SELECT * FROM agent_cards`;
     const changed = yield* getOrCreateOwnedAgentKey(
       owner,
       AgentName.make("another"),
     ).pipe(Effect.exit);
     expect(Exit.isFailure(changed)).toBe(true);
-    expect(yield* sql`SELECT * FROM agent_profiles`).toEqual(before);
+    expect(yield* sql`SELECT * FROM agent_cards`).toEqual(before);
   }).pipe(Effect.provide(database)));

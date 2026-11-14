@@ -19,19 +19,19 @@ export const exactStruct = <Fields extends Schema.Struct.Fields>(
 export const MAXIMUM_RUNTIME_ITEM_BYTES = 2 * 1024 * 1024;
 
 /** A value did not encode to JSON text, or JSON text did not decode. */
-export class ClientRepresentationError extends Data.TaggedError(
-  "ClientRepresentationError",
+export class JsonRepresentationError extends Data.TaggedError(
+  "JsonRepresentationError",
 ) {}
 
 /** Reports a representation failure without exposing decoder details. */
-export const representationFailure = (): ClientRepresentationError =>
-  new ClientRepresentationError();
+export const representationFailure = (): JsonRepresentationError =>
+  new JsonRepresentationError();
 
 /** The JSON text of a schema's encoding of a value. */
 export const encodeJson = <A, I, R>(
   schema: Schema.Schema<A, I, R>,
   value: A,
-): Effect.Effect<string, ClientRepresentationError, R> =>
+): Effect.Effect<string, JsonRepresentationError, R> =>
   Schema.encode(Schema.parseJson(schema))(value).pipe(
     Effect.mapError(representationFailure),
   );

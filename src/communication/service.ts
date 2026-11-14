@@ -15,7 +15,7 @@ import {
   afterCommit,
   executeQuery,
   transaction,
-  withAgentTransaction,
+  withAgentRows,
 } from "../database/index.js";
 import { compareAgentIds, exactStruct } from "../encoding.js";
 import { AgentCard, type AgentName } from "../identity.js";
@@ -289,7 +289,7 @@ function readHistory(agent: HistoryAgent, query: HistoryQuery) {
 function retainedConversations(agent: HistoryAgent) {
   return Effect.gen(function* () {
     const db = yield* communicationQueries;
-    const rows = yield* withAgentTransaction(
+    const rows = yield* withAgentRows(
       agent.agentKey,
       executeQuery(
         db
@@ -395,7 +395,7 @@ function ordinalOf(
 ) {
   return Effect.gen(function* () {
     const db = yield* communicationQueries;
-    const [row] = yield* withAgentTransaction(
+    const [row] = yield* withAgentRows(
       agent.agentKey,
       executeQuery(
         db
@@ -613,7 +613,7 @@ function recipientKey(recipient: AgentCard) {
     const db = yield* communicationQueries;
     const [raw] = yield* executeQuery(
       db
-        .selectFrom("agent_profiles")
+        .selectFrom("agent_cards")
         .select([
           "agent_key as agentKey",
           "agent_id as agentId",

@@ -46,11 +46,7 @@ import {
 } from "node:crypto";
 import { lookup } from "node:dns";
 import { BlockList, isIP, type LookupFunction } from "node:net";
-import {
-  executeQuery,
-  makeQueries,
-  withAgentTransaction,
-} from "../database/index.js";
+import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
 import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   callbackReasons,
@@ -324,7 +320,7 @@ const subscriptionSchema = Schema.Struct({
   stalled: Schema.NullOr(Schema.Literal("callback", "terminal")),
   lastError: Schema.NullOr(Schema.Literal(...callbackReasons)),
 });
-/** What `mcp_webhook_state` holds for one agent. */
+/** What `subscriptions` holds for one agent. */
 const savedSubscriptionSchema = Schema.Struct({
   subscription: Schema.NullOr(subscriptionSchema),
 });
@@ -353,8 +349,8 @@ const subscriptionId = (url: string) =>
     .digest("hex")}`;
 
 type WebhookTables = Record<
-  "mcp_webhook_state",
-  Record<"agent_key" | "state", string>
+  "subscriptions",
+  Record<"agent_key" | "subscription", string>
 >;
 
 /** One agent's subscription and the wake-up being posted for it. */
@@ -747,14 +743,14 @@ function writeSavedSubscription(
       Schema.parseJson(savedSubscriptionSchema),
     )(saved);
     const queries = yield* makeQueries<WebhookTables>();
-    yield* withAgentTransaction(
+    yield* withAgentRows(
       webhook.agentKey,
       executeQuery(
         queries
-          .insertInto("mcp_webhook_state")
-          .values({ agent_key: webhook.agentKey, state: json })
+          .insertInto("subscriptions")
+          .values({ agent_key: webhook.agentKey, subscription: json })
           .onConflict((conflict) =>
-            conflict.column("agent_key").doUpdateSet({ state: json }),
+            conflict.column("agent_key").doUpdateSet({ subscription: json }),
           ),
       ),
     );
@@ -771,12 +767,12 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     HttpClient.withTracerDisabledWhen(() => true),
   );
   const queries = yield* makeQueries<WebhookTables>();
-  const rows = yield* withAgentTransaction(
+  const rows = yield* withAgentRows(
     agentKey,
     executeQuery(
       queries
-        .selectFrom("mcp_webhook_state")
-        .select("state")
+        .selectFrom("subscriptions")
+        .select("subscription")
         .where("agent_key", "=", agentKey),
     ),
   );
@@ -785,7 +781,7 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     row === undefined
       ? { subscription: null }
       : yield* Schema.decodeUnknown(Schema.parseJson(savedSubscriptionSchema))(
-          row.state,
+          row.subscription,
         );
   const webhook: AgentWebhook = {
     agentKey,

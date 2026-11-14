@@ -19,13 +19,13 @@ import {
 import { createHash, randomBytes } from "node:crypto";
 import {
   canonicalIdentifier,
-  type ClientRepresentationError,
   compareAgentIds,
   compareAscii,
   encodeJson,
   exactStruct,
   isCanonicalIdentifier,
   isStrictlyAscending,
+  type JsonRepresentationError,
   representationFailure,
 } from "../encoding.js";
 import { AGENT_NAME_RULE, AgentCard, AgentId, AgentName } from "../identity.js";
@@ -132,7 +132,7 @@ const ConversationMembers = exactStruct({
  */
 export const deriveConversationId = (
   memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
-): Effect.Effect<typeof ConversationId.Type, ClientRepresentationError> =>
+): Effect.Effect<typeof ConversationId.Type, JsonRepresentationError> =>
   isStrictlyAscending(memberAgentIds, compareAgentIds)
     ? encodeJson(ConversationMembers, {
         kind: "conversation_identity" as const,
@@ -231,7 +231,7 @@ export const MessageAddressInput = addressInput;
 export type MessageAddressInput = typeof MessageAddressInput.Type;
 
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
-const mintMsgId = (): Effect.Effect<MsgId, ClientRepresentationError> =>
+const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>
   Effect.try({
     try: () => `msg_${randomBytes(32).toString("base64url")}`,
     catch: representationFailure,
@@ -898,7 +898,7 @@ export const Message = Object.assign(messageSchema, {
       Effect.withSpan("Message.create"),
       Effect.catchTags({
         ParseError: () => new CommunicationError({ reason: "content-invalid" }),
-        ClientRepresentationError: () =>
+        JsonRepresentationError: () =>
           new CommunicationError({ reason: "content-invalid" }),
       }),
     );
@@ -956,7 +956,7 @@ export const CollectiveRequest = Object.assign(collectiveRequestSchema, {
       Effect.withSpan("CollectiveRequest.create"),
       Effect.catchTags({
         ParseError: () => new CommunicationError({ reason: "content-invalid" }),
-        ClientRepresentationError: () =>
+        JsonRepresentationError: () =>
           new CommunicationError({ reason: "content-invalid" }),
         CollectiveContentError: () =>
           new CommunicationError({ reason: "content-invalid" }),

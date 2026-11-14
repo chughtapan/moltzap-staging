@@ -42,7 +42,7 @@ NodeRuntime.runMain(
   }).pipe(
     Effect.catchTags({
       DaemonConfigurationError: explained,
-      DatabaseAccessError: explained,
+      DatabaseUrlMissingError: explained,
       DatabasePreparationError: explained,
     }),
     Effect.catchAll(() => exitUnsuccessfully(UNEXPLAINED_FAILURE)),
