@@ -22,7 +22,11 @@ const shippedNorms = fileURLToPath(
   new URL("../../config/norms/", import.meta.url),
 );
 
-/** A valid settings file in a directory of its own, loaded through the variable that names it. */
+/**
+ * A valid settings file in a directory of its own, loaded through the variable
+ * that names it. Each property run builds one, so the properties below bound
+ * their runs.
+ */
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
   const directory = yield* filesystem.makeTempDirectoryScoped({
@@ -155,6 +159,7 @@ it.prop(
         ),
       ]);
     }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 12 } },
 );
 
 it("loads the decision provider that judges initial norms' English rules, though the policy has no text rules", () =>
@@ -280,6 +285,7 @@ it.prop(
       expect(failure).toMatchObject({ reason: "document" });
       expect(JSON.stringify(failure)).not.toContain(credential);
     }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 40 } },
 );
 
 it("refuses a server agent without its credential and names the variable to set", () =>

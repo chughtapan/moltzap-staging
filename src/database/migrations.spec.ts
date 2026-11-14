@@ -27,6 +27,7 @@ const privateFileMode = 0o600;
 /**
  * A SQLite file nothing has prepared, in a directory of its own, with a
  * connection to it and the environment that names it and its unlock key.
+ * Each property run builds one, so the properties below bound their runs.
  */
 const fixture = Effect.gen(function* () {
   const filesystem = yield* FileSystem.FileSystem;
@@ -219,6 +220,7 @@ it.prop(
       ]);
       expect(yield* saved).toEqual(before);
     }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 20 } },
 );
 
 it.prop(
@@ -249,4 +251,5 @@ it.prop(
       expect(JSON.stringify(failure)).not.toContain(marker);
       expect(yield* test.filesystem.exists(directory)).toBe(false);
     }).pipe(Effect.provide(NodeContext.layer)),
+  { fastCheck: { numRuns: 20 } },
 );
