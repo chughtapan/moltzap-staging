@@ -74,4 +74,4 @@ nothing that a send returned for.
 The daemon and its database are trusted for the sender of each message, order,
 retention, isolation between clients and custody of message text. Nothing in a
 message lets a third party check who wrote it or where it stands in the
-conversation. A database belongs to one mode and cannot be moved to the other.
+conversation.

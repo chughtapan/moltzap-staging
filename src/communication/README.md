@@ -21,6 +21,3 @@ conversation and saves it for every member in one transaction.
 Questions and answers are messages that the
 [request worker](./collectives.ts) interprets. See the
 [collective contract](../../docs/reference/spec/communication/collectives.md).
-
-A database belongs to one mode. `Communication.claim` marks it before any
-agent starts.

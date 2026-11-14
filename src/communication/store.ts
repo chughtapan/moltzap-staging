@@ -65,10 +65,6 @@ type CommunicationTables = Record<
     Record<"conversation_id", string> & Record<"next_ordinal", number>
   > &
   Record<
-    "communication_mode",
-    Record<"singleton", number> & Record<"kind", string>
-  > &
-  Record<
     "agent_profiles",
     Record<"agent_key" | "agent_id" | "agent_name" | "principal_id", string>
   >;

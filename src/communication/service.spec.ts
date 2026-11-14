@@ -152,28 +152,6 @@ it("hands a message to the next consumer after one fails", () =>
     ).toEqual({ kind: "message", message });
   }));
 
-it("accepts a later claim on a database exactly when it names the mode that claimed it first", () =>
-  Effect.gen(function* () {
-    const { sql } = yield* conversationFixture;
-    const first = "client-server";
-    const claim = (mode: string) =>
-      Communication.claim(mode).pipe(
-        Effect.provideService(SqlClient, sql),
-        Effect.catchAll((refusal) => Effect.succeed(refusal.reason)),
-      );
-    yield* claim(first);
-    const property = fc.asyncProperty(
-      fc.oneof(fc.constant(first), fc.string()),
-      (mode) =>
-        Effect.gen(function* () {
-          expect(yield* claim(mode)).toBe(
-            mode === first ? undefined : "membership-invalid",
-          );
-        }).pipe(Effect.runPromise),
-    );
-    yield* Effect.tryPromise(() => fc.assert(property));
-  }));
-
 it("delivers a group message to every member in one order, between any agents", () =>
   Effect.gen(function* () {
     const f = yield* peers();

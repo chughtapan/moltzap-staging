@@ -77,7 +77,18 @@ function runDaemon() {
         settings.norms === undefined
           ? undefined
           : yield* serviceNorms(settings.norms);
-      yield* claimMode(settings.serverAgentName);
+      if (settings.serverAgentName !== undefined) {
+        yield* getOrCreateOwnedAgent(
+          serverAgentOwner,
+          settings.serverAgentName,
+        ).pipe(
+          Effect.catchTag("OwnershipError", () =>
+            refused(
+              "This database's server agent has another name than serverAgentName in the settings, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.",
+            ),
+          ),
+        );
+      }
       const selectApp = yield* makeAgentSelector({
         settings,
         unlockKey: access.unlockKey,
@@ -111,41 +122,6 @@ function runDaemon() {
       return yield* Effect.never;
     }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
   }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
-}
-
-/**
- * Marks the database as serving the mode the settings choose, and refuses a
- * database that serves the other. Naming a server agent chooses client/server
- * mode and creates that agent if it does not exist.
- */
-function claimMode(serverAgentName?: AgentName) {
-  if (serverAgentName === undefined) {
-    return claimDatabase(
-      "p2p",
-      "This database was first started with a server agent. Set serverAgentName to its name, or prepare a new database.",
-    );
-  }
-  return claimDatabase(
-    "client-server",
-    "This database was first started without a server agent. Remove serverAgentName from the settings, or prepare a new database.",
-  ).pipe(
-    Effect.zipRight(getOrCreateOwnedAgent(serverAgentOwner, serverAgentName)),
-    Effect.catchTag("OwnershipError", () =>
-      refused(
-        `This database's server agent is not named ${serverAgentName}, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.`,
-      ),
-    ),
-  );
-}
-
-/** Marks the database as serving `mode`, or refuses a database that serves the other with `remedy`. */
-function claimDatabase(mode: "p2p" | "client-server", remedy: string) {
-  return Communication.claim(mode).pipe(
-    Effect.catchIf(
-      (error) => error.reason === "membership-invalid",
-      () => refused(remedy),
-    ),
-  );
 }
 
 /**

@@ -267,12 +267,10 @@ it(
 );
 
 it(
-  "refuses another server agent name, or none, on a database started with one, naming the setting",
+  "refuses another server agent name on a database started with one, naming the setting",
   processTrace(
     Effect.gen(function* () {
-      const named = (name?: string) => ({
-        [serverNameSetting]: name,
-      });
+      const named = (name: string) => ({ [serverNameSetting]: name });
       const daemon = yield* sharedDaemon({ settings: named("front-desk") });
       yield* stopProcess(yield* daemon.start());
 
@@ -280,11 +278,6 @@ it(
       const renamed = yield* daemon.startupFailure();
       expect(renamed.exitCode).not.toBe(0);
       expect(renamed.logs).toContain(`Set ${serverNameSetting}`);
-
-      yield* daemon.configure(named());
-      const moved = yield* daemon.startupFailure();
-      expect(moved.exitCode).not.toBe(0);
-      expect(moved.logs).toContain(`Set ${serverNameSetting}`);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
