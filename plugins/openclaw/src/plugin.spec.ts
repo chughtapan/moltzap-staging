@@ -28,7 +28,7 @@ unit.each(["shared", "private"] as const)(
           ? { session: { dmScope: "per-account-channel-peer" as const } }
           : {}),
       };
-      const turn = resolveAgentRoute({
+      const turnRoute = resolveAgentRoute({
         cfg,
         channel: "sharness",
         accountId: "primary",
@@ -37,20 +37,20 @@ unit.each(["shared", "private"] as const)(
       const resolve = yield* Effect.fromNullable(
         createChannelPlugin().messaging?.resolveOutboundSessionRoute,
       );
-      const send = yield* Effect.tryPromise({
+      const sendRoute = yield* Effect.tryPromise({
         try: () =>
           Promise.resolve(
             resolve({
               cfg,
-              agentId: turn.agentId,
+              agentId: turnRoute.agentId,
               accountId: "primary",
               target: "agent:bob",
             }),
           ),
         catch: (cause) => String(cause),
       });
-      expect(send?.sessionKey).toBe(
-        mode === "shared" ? turn.mainSessionKey : turn.sessionKey,
+      expect(sendRoute?.sessionKey).toBe(
+        mode === "shared" ? turnRoute.mainSessionKey : turnRoute.sessionKey,
       );
     }).pipe(Effect.runPromise),
 );
