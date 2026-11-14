@@ -56,9 +56,10 @@ afterwards refuses startup.
 
 ### Mode
 
-The mode decides which agents may message each other. A database belongs to
-the mode of its first startup, and a daemon refuses to start on a database of
-the other mode.
+The mode decides which agents may message each other. The settings choose it
+at every start. Starting a database under the other mode keeps its saved
+conversations, and an agent can then send only in the conversations the
+current mode allows.
 
 Without `serverAgentName` the daemon runs in
 [P2P mode](./communication/p2p.md): any agent on the daemon messages any

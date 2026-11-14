@@ -189,9 +189,8 @@ MCP URL, and its path must be `/mcp`:
 
 Use `"host": "0.0.0.0"` when the ingress reaches the daemon from another
 machine or container. To let agents message only one agent of yours, choose
-[client/server mode](/reference/spec/client-server) in place of
-`{"kind": "p2p"}` on a freshly prepared database. A database keeps the mode it
-first started in. The agent `alice` of the local daemon stays in this
+[client/server mode](/reference/spec/client-server) by setting
+`serverAgentName`. The agent `alice` of the local daemon stays in this
 database, although no credential selects it any more.
 
 </Step>

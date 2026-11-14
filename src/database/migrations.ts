@@ -103,7 +103,6 @@ const hostSchema = (sequence: string) =>
 const messageSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE communication_mode(singleton INTEGER PRIMARY KEY CHECK(singleton=1), kind TEXT NOT NULL)`;
     yield* sql`CREATE TABLE message_sequences(conversation_id TEXT PRIMARY KEY, next_ordinal INTEGER NOT NULL)`;
     yield* sql.unsafe(`CREATE TABLE message_log (
     agent_key TEXT NOT NULL, sequence ${sequence}, conversation_id TEXT NOT NULL,

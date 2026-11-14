@@ -586,43 +586,11 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
   } satisfies CommunicationService;
 });
 
-/**
- * Marks the database as serving `mode`. Fails with `membership-invalid` when
- * it already serves another.
- */
-const claimMode = Effect.fn("claimMode")(
-  function* (mode: string) {
-    const db = yield* communicationQueries;
-    yield* executeQuery(
-      db
-        .insertInto("communication_mode")
-        .values({ singleton: 1, kind: mode })
-        .onConflict((conflict) => conflict.column("singleton").doNothing()),
-    );
-    const [row] = yield* executeQuery(
-      db
-        .selectFrom("communication_mode")
-        .select("kind")
-        .where("singleton", "=", 1),
-    );
-    if (row?.kind !== mode) {
-      return yield* invalid();
-    }
-  },
-  Effect.catchTag("SqlError", unavailable),
-);
-
 /** Delivers messages, completes questions and reads ordered history for one agent. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService
 >() {
-  /**
-   * Marks the database as serving one mode before any agent starts, and fails
-   * with `membership-invalid` when it already serves another.
-   */
-  static readonly claim = claimMode;
-
   /** The service of the agent `settings` names. */
   static readonly layer = (settings: CommunicationSettings) =>
     Layer.scoped(Communication, makeCommunication(settings));
