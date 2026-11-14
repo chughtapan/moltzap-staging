@@ -20,7 +20,7 @@ import {
   type Message,
   MessageAddressInput,
   MsgId,
-  PaginatedResult,
+  Page,
   RequestedSchema,
   SendError,
   type ValidationIssue,
@@ -63,7 +63,7 @@ export type InboxEntry = typeof InboxEntry.Type;
 /** Reading leaves entries pending. Absence of nextCursor ends the page traversal. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxPage = Schema.Struct({
-  ...PaginatedResult.fields,
+  ...Page.fields,
   entries: Schema.Array(InboxEntry),
 });
 /** @useDeclaredType */

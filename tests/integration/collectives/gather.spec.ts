@@ -289,7 +289,7 @@ function expectInvalidResponseRefused(
     expect(invalid).toMatchObject({
       requestId,
       failure: {
-        kind: "answer-invalid",
+        kind: "response-invalid",
         fields: [{ field: "slot", reason: "invalid" }],
       },
     });

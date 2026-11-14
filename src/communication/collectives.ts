@@ -79,7 +79,7 @@ export const makeCollectives = Effect.fn("Communication.collectives")(
         message: Message,
       ) => Effect.Effect<void, CommunicationError>;
       /** Runs once a result is saved for this agent to consume. */
-      readonly completed: Effect.Effect<void>;
+      readonly resultSaved: Effect.Effect<void>;
     },
   ) {
     const agent: CollectiveAgent = {
@@ -112,9 +112,9 @@ export const makeCollectives = Effect.fn("Communication.collectives")(
         storeFailureAsUnavailable(getRequest(agent, requestId)),
       receive: (message: Message) =>
         storeFailureAsUnavailable(receive(agent, message)),
-      deliverNextResult: <E, R>(
+      consumeNextResult: <E, R>(
         handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
-      ) => deliverNextResult(agentKey, handle),
+      ) => consumeNextResult(agentKey, handle),
     };
   },
 );
@@ -151,7 +151,7 @@ interface CollectiveAgent {
   readonly sql: SqlClient;
   readonly card: AgentCard;
   readonly send: (message: Message) => Effect.Effect<void, CommunicationError>;
-  readonly completed: Effect.Effect<void>;
+  readonly resultSaved: Effect.Effect<void>;
   /** Opened when this agent sends a collective request, which gives the worker a deadline to wait for. */
   readonly requested: Effect.Latch;
 }
@@ -198,13 +198,13 @@ function sendRequest(agent: CollectiveAgent, request: CollectiveRequest) {
             () => new CommunicationError({ reason: "content-invalid" }),
           ),
         );
-        const audiences =
+        const recipientsOfEachCopy =
           request.op === "gather"
             ? request.recipients.map((recipient): Message["recipients"] => [
                 recipient,
               ])
             : [request.recipients];
-        for (const [index, recipients] of audiences.entries()) {
+        for (const [index, recipients] of recipientsOfEachCopy.entries()) {
           const copy = yield* index === 0
             ? messageWithId(
                 request.author,
@@ -234,7 +234,7 @@ function getRequest(agent: CollectiveAgent, requestId: MsgId) {
       return yield* refused(requestId, "request-none");
     }
     if ((yield* ownResponse(agent, requestId)) !== undefined) {
-      return yield* refused(requestId, "request-answered");
+      return yield* refused(requestId, "request-responded");
     }
     if (stored.phase !== "collecting") {
       return yield* refused(requestId, "request-none");
@@ -248,7 +248,7 @@ function getRequest(agent: CollectiveAgent, requestId: MsgId) {
 
 function refused(
   requestId: MsgId,
-  kind: "request-none" | "request-answered" | "request-expired",
+  kind: "request-none" | "request-responded" | "request-expired",
 ) {
   return new RequestError({ requestId, failure: { kind } });
 }
@@ -299,7 +299,7 @@ function sendResponse(
           if (Option.isSome(fields)) {
             return yield* new RequestError({
               requestId,
-              failure: { kind: "answer-invalid", fields: fields.value },
+              failure: { kind: "response-invalid", fields: fields.value },
             });
           }
         }
@@ -307,7 +307,7 @@ function sendResponse(
         if (prior !== undefined) {
           return prior.msgId === message.msgId
             ? yield* agent.send(message)
-            : yield* refused(requestId, "request-answered");
+            : yield* refused(requestId, "request-responded");
         }
         if (stored.phase !== "collecting") {
           return yield* refused(requestId, "request-none");
@@ -523,14 +523,14 @@ function requestEligible(
   const addressedToLocal = message.recipients.some(
     (recipient) => recipient.agentId === localAgentId,
   );
-  const audience =
+  const addressedAsOpRequires =
     op === "gather"
       ? message.recipients.length === 1
       : message.recipients.length >= 2;
-  return addressedToLocal && audience && deadlineAt > now;
+  return addressedToLocal && addressedAsOpRequires && deadlineAt > now;
 }
 
-function deliverNextResult<E, R>(
+function consumeNextResult<E, R>(
   agentKey: string,
   handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
 ) {
@@ -655,7 +655,7 @@ function completeOwnRequest(agent: CollectiveAgent, requestId: MsgId) {
         result: completed.result,
         responses: included,
       });
-      yield* afterCommit(agent.completed);
+      yield* afterCommit(agent.resultSaved);
       if (request.op === "gather") {
         return undefined;
       }

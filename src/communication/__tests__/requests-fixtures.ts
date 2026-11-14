@@ -1,4 +1,4 @@
-/** @file Collective handling over real SQL, with sends recorded in place of delivery. */
+/** @file Collective handling over real SQL, with each message it sends recorded instead of saved for its recipients. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
@@ -24,20 +24,20 @@ export interface CompletedCollective {
   readonly sources: CollectiveResultSources;
 }
 
-interface FixtureInput {
+interface Overrides {
   readonly database?: TestDatabase;
   readonly agent?: AgentCard;
-  /** Runs in place of delivery for each message the service sends. */
+  /** Runs for each message the collectives send, before it is recorded. */
   readonly send?: (message: Message) => Effect.Effect<void, CommunicationError>;
 }
 
-/** Fixed identities let tests distinguish participant selection from address parsing. */
+/** Fixed cards let tests distinguish member selection from address parsing. */
 export const alice = testAgentCard("agent:alice");
 
-/** Bob's message identities remain independent of Alice's. */
+/** Bob's message ids remain independent of Alice's. */
 export const bob = testAgentCard("agent:bob");
 
-/** A third participant exercises group responses and forged selections. */
+/** A third member exercises group responses and forged selections. */
 export const carol = testAgentCard("agent:carol");
 
 /** One required field makes invalid and declined responses distinguishable. */
@@ -49,10 +49,10 @@ export const form = {
 
 /** One agent's collectives. Reopening on the same database stands for a restart. */
 export const openCollectives = Effect.fn("openCollectives")(function* (
-  input: FixtureInput = {},
+  overrides: Overrides = {},
 ) {
-  const database = input.database ?? (yield* openTestDatabase());
-  const agent = input.agent ?? alice;
+  const database = overrides.database ?? (yield* openTestDatabase());
+  const agent = overrides.agent ?? alice;
   const sent = yield* Queue.unbounded<Message>();
   const results = yield* Queue.unbounded<CompletedCollective>();
   const scope = yield* Scope.make();
@@ -60,17 +60,17 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
   const collectives = yield* makeCollectives(database.agentKey, {
     card: agent,
     send: (message) =>
-      (input.send?.(message) ?? Effect.void).pipe(
+      (overrides.send?.(message) ?? Effect.void).pipe(
         Effect.zipRight(Queue.offer(sent, message)),
         Effect.asVoid,
       ),
-    completed: Effect.void,
+    resultSaved: Effect.void,
   }).pipe(Effect.provideService(SqlClient, database.sql), Scope.extend(scope));
   const consumeResults = <E, R>(
     handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
   ) =>
     collectives
-      .deliverNextResult(handle)
+      .consumeNextResult(handle)
       .pipe(
         Effect.zipRight(Effect.sleep("10 millis")),
         Effect.forever,
@@ -98,8 +98,8 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
     close: Scope.close(scope, Exit.void),
     collect: () =>
       service
-        .consumeResults((result) =>
-          Queue.offer(results, result).pipe(Effect.asVoid),
+        .consumeResults((completed) =>
+          Queue.offer(results, completed).pipe(Effect.asVoid),
         )
         .pipe(Effect.forkIn(scope)),
   };
@@ -142,7 +142,7 @@ export function aliceRequest(
   );
 }
 
-/** A requester close selects complete author-scoped message identities. */
+/** A requester's close names each counted response by its author and message id. */
 export function aliceClose(
   requestId: MsgId,
   included: ReadonlyArray<{

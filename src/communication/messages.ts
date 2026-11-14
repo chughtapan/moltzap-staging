@@ -36,19 +36,19 @@ const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
 
 /**
- * One author-scoped message identity. Retrying a persisted message reuses it;
- * a new message receives a fresh identity.
+ * One author-scoped message id. Retrying a persisted message reuses it; a new
+ * message receives a fresh one.
  */
 export const MsgId = Schema.String.pipe(
   Schema.filter((value) => isCanonicalIdentifier("msg_", value), {
     identifier: "MsgId",
-    description: "Canonical author-scoped message identity",
+    description: "Canonical author-scoped message id",
   }),
   Schema.brand("MsgId"),
   Schema.annotations({ identifier: "MsgId" }),
 );
 /**
- * A validated author-scoped message identity.
+ * A validated author-scoped message id.
  * @useDeclaredType
  */
 export type MsgId = typeof MsgId.Type;
@@ -198,14 +198,14 @@ const addressInput = Schema.String.pipe(
   Schema.brand("MessageAddressInput"),
 );
 
-/** An explicit direct destination using one agent name. */
+/** The address of one agent. */
 export const AgentAddress = addressInput.pipe(
   Schema.filter((value) => parseAgentAddress(value) !== undefined),
   Schema.brand("AgentAddress"),
   Schema.annotations({ identifier: "AgentAddress" }),
 );
 /**
- * A validated direct destination.
+ * A validated agent address.
  * @useDeclaredType
  */
 export type AgentAddress = typeof AgentAddress.Type;
@@ -217,15 +217,15 @@ export const GroupAddress = addressInput.pipe(
   Schema.annotations({ identifier: "GroupAddress" }),
 );
 /**
- * A validated canonical complete group destination.
+ * A validated canonical group address.
  * @useDeclaredType
  */
 export type GroupAddress = typeof GroupAddress.Type;
 
-/** Either accepted destination input, including noncanonical group order. */
+/** Either address as a host may write it, with a group's names in any order. */
 export const MessageAddressInput = addressInput;
 /**
- * A validated explicit destination input.
+ * A validated address as a host wrote it.
  * @useDeclaredType
  */
 export type MessageAddressInput = typeof MessageAddressInput.Type;
@@ -283,7 +283,7 @@ const EpochMillis = Schema.Int.pipe(Schema.between(1, MAXIMUM_EPOCH_MILLIS));
 /** An absolute deadline on the daemon's clock. */
 type EpochMillis = typeof EpochMillis.Type;
 
-/** The requester's first completion decision, retained before closing or delivering a result. */
+/** The requester's first completion decision, fixed before its close is sent or its result is consumed. */
 export const collectiveClosure = exactStruct({
   closedAt: Schema.Int.pipe(
     Schema.between(0, MAXIMUM_EPOCH_MILLIS),
@@ -333,7 +333,7 @@ const collectiveFailure = Schema.Union(
     detail: Schema.String,
   }),
   exactStruct({
-    kind: Schema.Literal("answer-invalid"),
+    kind: Schema.Literal("response-invalid"),
     fields: Schema.NonEmptyArray(
       exactStruct({
         field: Schema.String,
@@ -343,7 +343,7 @@ const collectiveFailure = Schema.Union(
     ),
   }),
   exactStruct({ kind: Schema.Literal("request-none") }),
-  exactStruct({ kind: Schema.Literal("request-answered") }),
+  exactStruct({ kind: Schema.Literal("request-responded") }),
   exactStruct({ kind: Schema.Literal("request-expired") }),
   exactStruct({ kind: Schema.Literal("deadline-passed") }),
 );
@@ -377,21 +377,21 @@ const responseFieldText = {
 /** Every field of a collective response that fails its request's schema. */
 export type ResponseFieldFailures = Extract<
   CollectiveFailure,
-  { readonly kind: "answer-invalid" }
+  { readonly kind: "response-invalid" }
 >["fields"];
 
 /** A failure that carries nothing beyond its kind. */
 type FixedFailureKind = Exclude<
   CollectiveFailure["kind"],
-  "schema-invalid" | "answer-invalid"
+  "schema-invalid" | "response-invalid"
 >;
 
 /** The text of each failure that carries nothing beyond its kind. */
 const fixedFailureText: Record<FixedFailureKind, string> = {
   "request-none":
     "response failed: no collective request is open in this conversation",
-  "request-answered":
-    "response failed: the collective request was already answered",
+  "request-responded":
+    "response failed: you already responded to the collective request",
   "request-expired":
     "response failed: the collective request's deadline has passed",
   "deadline-passed":
@@ -783,16 +783,16 @@ export const PaginatedRequest = exactStruct({
  */
 export type PaginatedRequest = typeof PaginatedRequest.Type;
 /** Absence of nextCursor marks the end of the listing. */
-export const PaginatedResult = exactStruct({
+export const Page = exactStruct({
   nextCursor: Schema.optional(Schema.String),
 });
 /** Cursors confer no access and are valid only for the read that returned them.
  * @useDeclaredType
  */
-export type PaginatedResult = typeof PaginatedResult.Type;
+export type Page = typeof Page.Type;
 
 /** Recipients exclude the author and appear once each in agent-name order. */
-const MessageParticipants = exactStruct({
+const AuthorAndRecipients = exactStruct({
   author: AgentCard,
   recipients: Schema.NonEmptyArray(AgentCard).pipe(
     Schema.maxItems(maximumMembers - 1),
@@ -813,11 +813,11 @@ const MessageParticipants = exactStruct({
       new Set(message.recipients.map((recipient) => recipient.agentId)).size ===
         message.recipients.length,
   ),
-  Schema.annotations({ identifier: "MessageParticipants" }),
+  Schema.annotations({ identifier: "AuthorAndRecipients" }),
 );
 
-/** Adds the author-scoped identity to the captured participants. */
-const MessageHeader = MessageParticipants.pipe(
+/** Adds the message id to the author and recipients. */
+const MessageHeader = AuthorAndRecipients.pipe(
   Schema.extend(exactStruct({ msgId: MsgId })),
 );
 
@@ -904,8 +904,6 @@ export const Message = Object.assign(messageSchema, {
     );
   },
 });
-
-type Participants = Pick<Message, "author" | "recipients">;
 
 /**
  * A collective request as its requester states it, captured before policy
@@ -1026,7 +1024,7 @@ export const CollectiveResponse = Object.assign(collectiveResponseSchema, {
         if (Option.isSome(fields)) {
           return yield* new RequestError({
             requestId: input.request.msgId,
-            failure: { kind: "answer-invalid", fields: fields.value },
+            failure: { kind: "response-invalid", fields: fields.value },
           });
         }
       }
@@ -1235,7 +1233,9 @@ export function messageWithId(
 }
 
 /** Includes the author and every recipient in agent-name order. */
-export function messageMembers(message: Participants): readonly AgentCard[] {
+export function messageMembers(
+  message: Pick<Message, "author" | "recipients">,
+): readonly AgentCard[] {
   return [message.author, ...message.recipients].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
   );
@@ -1277,7 +1277,9 @@ function collectiveMeaning(
       collectiveRequest: {
         op: part.op,
         question: content
-          .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+          .flatMap((contentPart) =>
+            contentPart.type === "text" ? [contentPart.text] : [],
+          )
           .join("\n"),
         requestedSchema: part.requestedSchema,
         deadlineAt: part.deadlineAt,
@@ -1381,7 +1383,7 @@ function describeCollectiveFailure(failure: CollectiveFailure): string {
   switch (failure.kind) {
     case "schema-invalid":
       return `send failed: the form is invalid (${failure.detail})`;
-    case "answer-invalid":
+    case "response-invalid":
       return `response failed: ${responseFieldsText(failure.fields)}`;
     default: {
       const exhaustive: never = failure;

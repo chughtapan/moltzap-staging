@@ -1,4 +1,4 @@
-/** @file Messages, collective requests and collective responses as values, and their failures. The service that delivers them is `service.ts`. */
+/** @file Messages, collective requests and collective responses as values, and their failures. The service that carries them between agents is `service.ts`. */
 
 /** Messages, addresses, collective requests, responses and results as validated values. */
 export {
@@ -21,8 +21,8 @@ export {
   MessageReference,
   messageWithId,
   MsgId,
+  Page,
   PaginatedRequest,
-  PaginatedResult,
   RequestedSchema,
   RequestError,
   type ResponseContent,

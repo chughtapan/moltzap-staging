@@ -94,7 +94,7 @@ const hostSchema = (sequence: string) =>
     yield* sql`CREATE INDEX firewall_decisions_time ON firewall_checks(agent_key,decided_at,sequence)`;
   });
 
-/** Each conversation's next position, each agent's messages, and the questions and answers built on them. */
+/** Each conversation's next position, each agent's messages, and the collectives built on them. */
 const messageSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

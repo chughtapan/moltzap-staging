@@ -36,7 +36,7 @@ const sendFailureText: Readonly<Record<SendFailure, string>> = {
   "membership-invalid": "the address does not name a valid set of agents",
   "content-invalid": "the message content is invalid",
   "message-conflict":
-    "the message identity already belongs to different content or recipients",
+    "the message id already belongs to different content or recipients",
   "persistence-failed":
     "Social Harness is unavailable (the message could not be stored)",
   "network-unavailable": "Social Harness is unavailable (network unavailable)",
