@@ -14,7 +14,7 @@ import {
   Identity,
   PrincipalId,
 } from "../../identity.js";
-import { Firewall, type FirewallOptions } from "../service.js";
+import { type ComposedMessagePolicy, Firewall } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */
 export const privacy = {
@@ -32,7 +32,7 @@ export const evidence: FirewallEvidence = {
 /** The raw provider text, which no decision may expose. */
 export const privateProviderResponse = "private provider explanation";
 /** Finds `privacy` broken and every other rule followed, with certainty. */
-const judgments: DecisionProvider = {
+const certainProvider: DecisionProvider = {
   decide: (request) =>
     Effect.succeed({
       provider: "test",
@@ -126,15 +126,15 @@ export function peer(name: string, byte: number): AgentCard {
   });
 }
 
-/** Firewall options with the given editable seed and fixed rules, judged by `provider`. */
+/** A message policy with the given initial editable rules and fixed rules, judged by `provider`. */
 export function policy(
   initialRules: readonly TextRule[] = [],
   fixedRules: readonly TextRule[] = [],
-  provider: DecisionProvider = judgments,
-): FirewallOptions {
+  provider: DecisionProvider = certainProvider,
+): ComposedMessagePolicy {
   return {
     facts: [],
-    settings: {
+    limits: {
       timeoutMilliseconds: 10_000,
       maximumInputBytes: 1_000_000,
       maximumResultBytes: 100_000,
@@ -143,7 +143,7 @@ export function policy(
       fixedRules,
       initialRules,
       provider,
-      settings: {
+      providerSettings: {
         minimumProbability: 0.5,
         maximumRequestBytes: 60_000,
         timeoutMilliseconds: 5_000,

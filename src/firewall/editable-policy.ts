@@ -1,17 +1,18 @@
 /**
- * @file An agent's editable policy edits: the rules and norm documents an
- * update leaves the policy holding, checked item by item before the firewall
- * builds, approves and activates the result, and the interface through which
- * the norms layer names and compiles the norm documents.
+ * @file Edits to an agent's editable policy: the text rules and norm documents
+ * an update leaves the policy holding, checked one addition and removal at a
+ * time before the firewall builds, approves and activates the replacement,
+ * and the interface through which the norms layer names and compiles the norm
+ * documents.
  */
 
 import { Effect, Option } from "effect";
 import type { Chain } from "./chain.js";
-import { decodeFrozen, freezeData } from "./check.js";
+import { decodeFrozen, deepFreeze } from "./check.js";
 import {
   decodeBehavior,
-  type editableDocumentSchema,
   editableRuleSchema,
+  type editableRulesSchema,
   FirewallPolicyError,
   MAXIMUM_DOCUMENT_BYTES,
   MAXIMUM_EDITABLE_RULES,
@@ -22,8 +23,8 @@ import {
 
 /**
  * The norm documents an agent may hold in its editable policy. The firewall
- * saves, versions and approves them with the agent's rules without reading
- * them; the norms layer implements this interface to name and compile them.
+ * saves, versions and approves them with the agent's text rules without
+ * reading them; the norms layer implements this interface to name and compile them.
  */
 export interface NormDocuments {
   /** The documents a new agent holds. */
@@ -31,7 +32,7 @@ export interface NormDocuments {
   /** The name a document gives its norm, or none when the agent cannot hold it. */
   readonly name: (document: string) => Option.Option<string>;
   /**
-   * The matchers the rule chain and text rules name, and the fixed text rules,
+   * The matchers the chain rules and text rules name, and the fixed text rules,
    * that the held documents add; none when they cannot be held together.
    */
   readonly compile: (
@@ -39,14 +40,14 @@ export interface NormDocuments {
   ) => Option.Option<CompiledNorms>;
 }
 
-/** What the norms an agent holds add to its installation. */
+/** What the norms an agent holds add to its message policy. */
 export interface CompiledNorms {
   readonly matchers: Chain["matchers"];
   readonly fixedRules: readonly TextRule[];
 }
 
-/** Where an invalid item sits in an update, such as `["add", 0]`. */
-export type PolicyEditPath = NonNullable<FirewallPolicyError["path"]>;
+/** Where an invalid addition or removal sits in an update, such as `["add", 0]`. */
+type PolicyEditPath = NonNullable<FirewallPolicyError["path"]>;
 
 /** A norm document the agent holds, and the name of its norm. */
 export interface HeldNorm {
@@ -54,15 +55,15 @@ export interface HeldNorm {
   readonly document: string;
 }
 
-type EditableRule = (typeof editableDocumentSchema.Type)[number];
+type EditableRule = (typeof editableRulesSchema.Type)[number];
 
-/** An edit's items, each with its index in the request's `add` or `remove` list. */
-export interface PolicyChange {
-  readonly add: ReadonlyArray<{
+/** What an edit adds and removes, each with its index in the request's `add` or `remove` list. */
+interface PolicyChange {
+  readonly addRules: ReadonlyArray<{
     readonly index: number;
     readonly rule: EditableRule;
   }>;
-  readonly remove: ReadonlyArray<{
+  readonly removeRules: ReadonlyArray<{
     readonly index: number;
     readonly ruleId: string;
   }>;
@@ -76,9 +77,11 @@ export interface PolicyChange {
   }>;
 }
 
-type AddedItem = NonNullable<typeof policyUpdateSchema.Type.add>[number];
+type RequestedAddition = NonNullable<
+  typeof policyUpdateSchema.Type.add
+>[number];
 
-/** One added item once read: a rule, or a norm document and its name. */
+/** One requested addition once read: a rule, or a norm document and its name. */
 type Addition =
   | {
       readonly kind: "rule";
@@ -96,51 +99,53 @@ const noNorms: NormDocuments = {
 
 /**
  * Maps each `{behavior}` to a rule and names each `{norm}` document, keeping
- * every item's index in its list, and reports an invalid item at that index.
+ * every addition's and removal's index in its list, and reports an invalid
+ * one at that index.
  */
 export const resolvedChange = Effect.fn("resolvedChange")(function* (
-  change: typeof policyUpdateSchema.Type,
+  request: typeof policyUpdateSchema.Type,
   norms?: NormDocuments,
 ) {
-  const captured = yield* Effect.try({
-    try: () => structuredClone(change),
+  const frozenRequest = yield* Effect.try({
+    try: () => structuredClone(request),
     catch: () => invalidRule("schema"),
   });
-  freezeData(captured);
+  deepFreeze(frozenRequest);
   const additions = yield* Effect.forEach(
-    captured.add ?? [],
-    (item, index) => addition(item, index, norms ?? noNorms),
+    frozenRequest.add ?? [],
+    (requested, index) => addition(requested, index, norms ?? noNorms),
     { concurrency: 1 },
   );
-  const removals = captured.remove ?? [];
-  const resolved: PolicyChange = {
-    add: additions.flatMap((item) =>
-      item.kind === "rule" ? [{ index: item.index, rule: item.rule }] : [],
+  const removals = frozenRequest.remove ?? [];
+  const change: PolicyChange = {
+    addRules: additions.flatMap((added) =>
+      added.kind === "rule" ? [{ index: added.index, rule: added.rule }] : [],
     ),
-    addNorms: additions.flatMap((item) =>
-      item.kind === "norm" ? [{ index: item.index, norm: item.norm }] : [],
+    addNorms: additions.flatMap((added) =>
+      added.kind === "norm" ? [{ index: added.index, norm: added.norm }] : [],
     ),
-    remove: removals.flatMap((item, index) =>
-      typeof item === "string" ? [{ index, ruleId: item }] : [],
+    removeRules: removals.flatMap((removal, index) =>
+      typeof removal === "string" ? [{ index, ruleId: removal }] : [],
     ),
-    removeNorms: removals.flatMap((item, index) =>
-      typeof item === "string" ? [] : [{ index, name: item.norm }],
+    removeNorms: removals.flatMap((removal, index) =>
+      typeof removal === "string" ? [] : [{ index, name: removal.norm }],
     ),
   };
-  return { request: captured, change: resolved };
+  return { request: frozenRequest, change };
 });
 
 /**
- * The editable document an edit leaves, or the first item it cannot apply:
- * a fixed id, a removal of an id the document lacks, an addition whose id the
- * document keeps or the edit adds twice, or more rules than the limit.
+ * The editable rules an edit leaves, or the first addition or removal it
+ * cannot apply: a fixed id, a removal of an id no editable rule has, an
+ * addition whose id an editable rule keeps or the edit adds twice, or more
+ * rules than the limit.
  */
 export const editedRules = Effect.fn("editedRules")(function* (
   rules: readonly TextRule[],
   fixedRuleIds: readonly string[],
-  { add, remove }: PolicyChange,
+  { addRules, removeRules }: PolicyChange,
 ) {
-  for (const { index, ruleId } of remove) {
+  for (const { index, ruleId } of removeRules) {
     const path: PolicyEditPath = ["remove", index];
     if (fixedRuleIds.includes(ruleId)) {
       return yield* new FirewallPolicyError({
@@ -153,10 +158,10 @@ export const editedRules = Effect.fn("editedRules")(function* (
       return yield* invalidRule("unknown-id", { ruleId, path });
     }
   }
-  const removed = new Set(remove.map(({ ruleId }) => ruleId));
+  const removed = new Set(removeRules.map(({ ruleId }) => ruleId));
   const kept = rules.filter((rule) => !removed.has(rule.id));
   const ids = new Set(kept.map((rule) => rule.id));
-  for (const { index, rule } of add) {
+  for (const { index, rule } of addRules) {
     const path: PolicyEditPath = ["add", index];
     if (fixedRuleIds.includes(rule.id)) {
       return yield* new FirewallPolicyError({
@@ -170,15 +175,15 @@ export const editedRules = Effect.fn("editedRules")(function* (
     }
     ids.add(rule.id);
   }
-  if (kept.length + add.length > MAXIMUM_EDITABLE_RULES) {
+  if (kept.length + addRules.length > MAXIMUM_EDITABLE_RULES) {
     return yield* invalidRule("editable-limit");
   }
-  return Object.freeze([...kept, ...add.map(({ rule }) => rule)]);
+  return Object.freeze([...kept, ...addRules.map(({ rule }) => rule)]);
 });
 
 /**
- * The norms an edit leaves the agent holding, or the first item it cannot
- * apply: a removal of a norm the agent does not hold, an addition of a norm
+ * The norms an edit leaves the agent holding, or the first addition or
+ * removal it cannot apply: a removal of a norm the agent does not hold, an addition of a norm
  * it keeps or the edit adds twice, or more norms than the limit.
  */
 export const editedNorms = Effect.fn("editedNorms")(function* (
@@ -205,7 +210,7 @@ export const editedNorms = Effect.fn("editedNorms")(function* (
   return Object.freeze([...kept, ...addNorms.map(({ norm }) => norm)]);
 });
 
-/** An `invalid-rule` refusal for `problem`, at the item `at` locates. */
+/** An `invalid-rule` failure for `problem`, at the addition or removal `at` locates. */
 export function invalidRule(
   problem: PolicyProblem,
   at: { readonly path?: PolicyEditPath; readonly ruleId?: string } = {},
@@ -214,27 +219,27 @@ export function invalidRule(
 }
 
 /**
- * One added item: an inline rule, a behavior's rule or a named norm document.
- * An inline rule is decoded, so its members are in its schema's order like
- * those of a rule read back from storage.
+ * One requested addition: an inline rule, a behavior's rule or a named norm
+ * document. An inline rule is decoded, so its members are in its schema's
+ * order like those of a rule read back from storage.
  */
 function addition(
-  item: AddedItem,
+  requested: RequestedAddition,
   index: number,
   norms: NormDocuments,
 ): Effect.Effect<Addition, FirewallPolicyError> {
   const path: PolicyEditPath = ["add", index];
-  if ("behavior" in item) {
-    return behaviorRule(item.behavior, path).pipe(
+  if ("behavior" in requested) {
+    return behaviorRule(requested.behavior, path).pipe(
       Effect.map((rule) => ({ kind: "rule", index, rule }) as const),
     );
   }
-  if ("norm" in item) {
-    return heldNorm(item.norm, path, norms).pipe(
+  if ("norm" in requested) {
+    return heldNorm(requested.norm, path, norms).pipe(
       Effect.map((norm) => ({ kind: "norm", index, norm }) as const),
     );
   }
-  return decodeFrozen(editableRuleSchema, item).pipe(
+  return decodeFrozen(editableRuleSchema, requested).pipe(
     Effect.mapBoth({
       onFailure: () => invalidRule("schema", { path }),
       onSuccess: (rule) => ({ kind: "rule", index, rule }) as const,
@@ -257,7 +262,7 @@ function heldNorm(
   });
 }
 
-/** A behavior supplies the same direction and registered advice as an inline rule. */
+/** A behavior supplies the same direction, guidance and feedback as an inline rule. */
 function behaviorRule(text: string, path: PolicyEditPath) {
   const bytes = Buffer.from(text, "utf8");
   if (bytes.length > MAXIMUM_DOCUMENT_BYTES) {
@@ -268,7 +273,7 @@ function behaviorRule(text: string, path: PolicyEditPath) {
   ).pipe(
     Effect.tap((rule) =>
       Effect.sync(() => {
-        freezeData(rule);
+        deepFreeze(rule);
       }),
     ),
   );

@@ -78,16 +78,16 @@ retain NanoClaw discovery and access controls.
 
 NanoClaw keeps its normal sessions and final output. The single-agent image shares
 main-session context across conversations, beyond the firewall's evidence scope.
-An incoming firewall reminder appears in its entry's JSON.
+Incoming firewall guidance appears in its entry's JSON.
 
 ## Receiving messages
 
 A message of one text part with no
-[firewall reminder](./messaging.md#local-guidance) reaches the host's model as
+[firewall guidance](./messaging.md#local-guidance) reaches the host's model as
 that text, unchanged. Every other
 [inbox entry](./receiving.md#mcp-events-and-inbox) reaches it as its JSON, which is what
 `receive_messages` returns for it: a collective request, a collective result,
-and a message with a reminder or with other content. Adapters add no instructions and quote
+and a message with guidance or with other content. Adapters add no instructions and quote
 nothing.
 
 Adapters give the host each entry's sender and conversation address. A group

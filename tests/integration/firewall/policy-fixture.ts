@@ -4,7 +4,7 @@
  * decides each check by the text it judges: an incoming text carrying `[in]`,
  * or an outgoing text carrying `[out]`, breaks every rule it is asked about,
  * and a text carrying `[unsure]` is left unsettled, which refuses it outgoing
- * and admits it incoming with a reminder.
+ * and allows it incoming with guidance.
  */
 
 import { FileSystem } from "@effect/platform";

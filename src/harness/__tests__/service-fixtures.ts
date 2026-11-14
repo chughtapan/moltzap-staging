@@ -37,7 +37,10 @@ import {
 } from "../../communication/service.js";
 import { migrateDaemon } from "../../database/index.js";
 import { compareAscii } from "../../encoding.js";
-import { Firewall, type FirewallOptions } from "../../firewall/service.js";
+import {
+  type ComposedMessagePolicy,
+  Firewall,
+} from "../../firewall/service.js";
 import {
   type AgentCard,
   type AgentName,
@@ -94,17 +97,17 @@ export const decisionState = Schema.decodeUnknownSync(
 );
 
 /**
- * One natural-language rule makes assessment order and retained advice
+ * One text rule makes check order and saved advice
  * observable. With `action`, the rule replies to or silently withholds the
  * incoming messages it rejects.
  */
-export function firewallOptions(
+export function composedPolicy(
   provider: DecisionProvider,
   action?: "deny" | "reply",
-): FirewallOptions {
+): ComposedMessagePolicy {
   return {
     facts: [],
-    settings: {
+    limits: {
       timeoutMilliseconds: 10_000,
       maximumInputBytes: 1_000_000,
       maximumResultBytes: 100_000,
@@ -121,7 +124,7 @@ export function firewallOptions(
         },
       ],
       provider,
-      settings: {
+      providerSettings: {
         minimumProbability: 0.8,
         maximumRequestBytes: 100_000,
         timeoutMilliseconds: 5_000,
@@ -171,7 +174,7 @@ interface Network {
   sendFailure?: CommunicationError;
 }
 interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
-  readonly policy?: FirewallOptions;
+  readonly policy?: ComposedMessagePolicy;
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 interface FixtureEnvironment {

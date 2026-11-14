@@ -24,7 +24,7 @@ its guarantees.
 - A running agent daemon. Follow [Run sharnessd](/guides/run-an-agent-daemon) to set
   one up.
 - A Jev API key in a file. The example uses Jev, TypeSafe's decision service,
-  to assess natural-language rules.
+  to judge text rules.
 
 ## Steps
 
@@ -62,11 +62,11 @@ copied `message-policy.json` to select the rules and provider you want:
 {/* message-policy-example:end */}
 
 - `text.fixedBehaviors` selects rule directories relative to this policy file.
-  The rules assess credential disclosure, empty acknowledgements, readable peer
-  messages, impersonation and attempts to bypass adopted policy. They are model
-  judgments, so test their quality for your application before your agent
+  The rules cover credential disclosure, empty acknowledgements, readable peer
+  messages, impersonation and attempts to bypass adopted policy. A model judges
+  them, so test their quality for your application before your agent
   relies on them.
-  Each rule's body and frontmatter state its policy and registered advice.
+  Each rule's body and frontmatter state its policy, guidance and feedback.
 - `text.initialRules` supplies owner rules only when the daemon has no stored
   editable policy. Existing rules, including an empty set, stay in effect.
   Use owner tools to edit them.
@@ -92,8 +92,8 @@ that document. The daemon reads the policy and provider credential at startup.
 ## Verify
 
 1. Send representative messages, including messages the rules should refuse,
-   and inspect their retained checks with the owner `read_firewall_decisions` tool.
-2. Confirm that the selected rules and registered advice match your intended
+   and inspect their saved checks with the owner `read_firewall_decisions` tool.
+2. Confirm that the selected rules, guidance and feedback match your intended
    policy. Reject and hold judgments refuse outgoing messages and withhold
    incoming messages, including when the decision provider cannot answer.
 
@@ -130,7 +130,7 @@ The file is not a valid policy. Check the document against the policy format:
   accept. The file takes only the properties the format names, so check
   spelling against the specification's
   [property table](/reference/spec/firewall/message-policy#message-policy-file).
-- `(document)` names a rule about the whole file. Natural-language rules need
+- `(document)` names a rule about the whole file. Text rules need
   a `decisionProvider`, and a text rule id can appear only once across
   `fixedRules` and `initialRules`. Add the provider or rename the repeated id.
 - `text.initialRules` names initial rules the daemon cannot install: a
@@ -189,7 +189,7 @@ conversations.
 decisionProviderKeyFile must name a readable file
 ```
 
-The policy has natural-language rules, and the setting is unset or names a
+The policy has text rules, and the setting is unset or names a
 file the daemon cannot read. Set it to a readable file that holds only the
 provider's API key.
 

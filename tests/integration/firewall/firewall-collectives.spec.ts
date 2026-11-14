@@ -7,8 +7,8 @@
  * marked rule among the rules it can edit; the open recipient removes it. Under
  * that rule a firewall withholds an incoming text carrying `[in]`, refuses an
  * outgoing text carrying `[out]`, and is unsure about a text carrying
- * `[unsure]`: it refuses such a text outgoing and admits it incoming with a
- * reminder. Each agent checks with its own firewall: a requester checks the
+ * `[unsure]`: it refuses such a text outgoing and allows it incoming with
+ * guidance. Each agent checks with its own firewall: a requester checks the
  * collective request it sends and the responses it receives, a recipient
  * checks the request it receives.
  */
@@ -179,7 +179,7 @@ const gatherBehavior = Effect.gen(function* () {
   yield* expectOutgoingGatherRefused(scenario.requester, scenario.members);
   yield* expectIncomingGatherWithheld(scenario);
   yield* expectGatherResponseWithheld(scenario);
-  yield* expectUnsureResponseReminder(scenario);
+  yield* expectUnsureResponseGuidance(scenario);
   yield* expectUnsureRequestRefused(scenario.requester, scenario.members);
 }).pipe(Effect.scoped);
 
@@ -325,8 +325,8 @@ const uncertainAdvice = {
   instruction: "The marked message may break the rule.",
 };
 
-/** A strict requester admits a response its firewall is unsure about, with a reminder naming the rule. */
-function expectUnsureResponseReminder({
+/** A strict requester allows a response its firewall is unsure about, with guidance naming the rule. */
+function expectUnsureResponseGuidance({
   requester,
   open,
   strict,
@@ -362,13 +362,13 @@ function expectUnsureResponseReminder({
       ],
     });
     const guidance = result.guidance;
-    if (guidance === undefined || !("answers" in guidance)) {
+    if (guidance === undefined || !("responses" in guidance)) {
       return yield* Effect.dieMessage(
-        "expected a reminder for collective responses",
+        "expected guidance for collective responses",
       );
     }
     expect(
-      guidance.answers.find(
+      guidance.responses.find(
         ({ recipient }) => recipient.agentId === open.agent.agentId,
       ),
     ).toMatchObject({ recipient: open.agent, instructions: [uncertainAdvice] });

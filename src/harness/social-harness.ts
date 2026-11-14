@@ -42,9 +42,9 @@ import {
 import { transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
+  type CollectiveResultEvidence,
   Firewall,
   type IncomingDecision,
-  type ResultEvidence,
 } from "../firewall/service.js";
 import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
@@ -343,7 +343,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             const decision = yield* firewall
               .checkOutgoing(outgoing, evidence)
               .pipe(
-                Effect.catchTag("CheckInputError", () =>
+                Effect.catchTag("InvalidCheckError", () =>
                   Effect.fail(new SendError({ reason: "content-invalid" })),
                 ),
               );
@@ -589,7 +589,7 @@ function checkIncoming(
     ) {
       return yield* inbox.withholdExpired(unchecked.token);
     }
-    let evidence: FirewallEvidence | ResultEvidence | undefined;
+    let evidence: FirewallEvidence | CollectiveResultEvidence | undefined;
     if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
       evidence = yield* evidenceFor(
         inbox,
@@ -626,7 +626,7 @@ function checkIncoming(
         { concurrency: 1 },
       );
       evidence = {
-        answers: responses,
+        responses,
         ...(collectiveRequest === undefined
           ? {}
           : {

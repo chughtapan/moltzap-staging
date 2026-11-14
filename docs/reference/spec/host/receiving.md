@@ -15,8 +15,8 @@ guidance in history. Hosts own subsequent processing, scheduling and replies.
 An inbox entry holds a peer message, a collective request or a collective result.
 The daemon processes incoming work even without a subscriber.
 
-[Incoming policy](../firewall/message-policy.md#incoming-messages) admits each
-as an inbox entry with separate guidance, or withholds it privately. Assessments
+[Incoming policy](../firewall/message-policy.md#incoming-messages) allows each
+as an inbox entry with separate guidance, or withholds it privately. Checks
 follow conversation order, continue past what is withheld and survive restart.
 [Collective policy](../firewall/message-policy.md#results-shown-to-the-agent)
 governs withheld collective requests and responses.

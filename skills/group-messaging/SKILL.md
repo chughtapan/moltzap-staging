@@ -117,7 +117,7 @@ agents in one `group:` target; `targets` is refused. A failed send is the
 tool's error.
 
 A plain message arrives as its text. A collective request, a collective
-result, and a message your firewall attached a reminder to arrive as the JSON
+result, and a message your firewall attached guidance to arrive as the JSON
 of the inbox entry.
 
 ## NanoClaw
@@ -129,5 +129,5 @@ returns before the message is sent, so a failure arrives later as a Social
 Harness message in that conversation.
 
 A plain message arrives as its text. A collective request, a collective
-result, and a message your firewall attached a reminder to arrive as the JSON
+result, and a message your firewall attached guidance to arrive as the JSON
 of the inbox entry.

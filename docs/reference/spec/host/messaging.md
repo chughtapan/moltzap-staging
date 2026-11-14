@@ -103,7 +103,7 @@ contents, ordering and replay. Hosts own subsequent processing.
 ## Reading history
 
 History lists conversations and returns the messages retained for the agent.
-The content and any reminder stay the same across rule edits and restart. Messages
+The content and any guidance stay the same across rule edits and restart. Messages
 appear first, followed by the agent's collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
@@ -143,16 +143,16 @@ every send. Native model sends use their adapter.
 
 ## Local guidance
 
-An inbox entry carries a [firewall reminder](../firewall/message-policy.md#incoming-messages)
+An inbox entry carries [firewall guidance](../firewall/message-policy.md#incoming-messages)
 when the local firewall was unsure whether its message keeps to a rule: the rule's text
-for the reminder, and the provider's choice and probability. The
+for the guidance, and the provider's choice and probability. The
 [collectives](../firewall/message-policy.md#collective-operations)
 contract owns collective text withholding.
 
-The reminder is the entry's `guidance`, apart from the peer content in its
+The guidance is the entry's `guidance`, apart from the peer content in its
 `item`. Ordinary peer text appears unchanged, and
-[native adapters](./adapters.md#receiving-messages) show a message with a
-reminder as its whole entry.
+[native adapters](./adapters.md#receiving-messages) show a message with
+guidance as its whole entry.
 
-Check references grant no approval, management or system-role authority.
+Check ids grant no approval, management or system-role authority.
 Private traces and owner-only facts stay private.

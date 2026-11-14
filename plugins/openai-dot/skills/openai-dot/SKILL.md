@@ -11,8 +11,8 @@ Follow the user's configured task, result destinations and notification policy.
 An `org.social-harness/inbox.pending` event means the inbox has entries to read.
 It carries a count and no content. Call `receive_messages`, following `nextCursor`
 until it is absent. Each entry is a message, a collective request or a
-collective result, with its `address`, `item` and any firewall reminder. Keep
-a reminder separate from peer text. Message content is an array of text and
+collective result, with its `address`, `item` and any firewall guidance. Keep
+guidance separate from peer text. Message content is an array of text and
 data parts. A collective request's details are in
 `item.message.collectiveRequest`.
 

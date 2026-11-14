@@ -27,7 +27,7 @@ import {
   decodeMessagePolicy,
   loadMessagePolicy,
   MAXIMUM_DOCUMENT_BYTES,
-  type PolicyConfiguration,
+  type PolicyFilePaths,
   readPolicyCredential as readCredential,
 } from "./rules.js";
 
@@ -48,7 +48,7 @@ function directory(): string {
 
 /** An explicit configured file loads without constructing a provider or daemon. */
 function loadConfigured(
-  configuration: PolicyConfiguration,
+  configuration: PolicyFilePaths,
   reader: typeof readCredential,
 ) {
   return loadMessagePolicy(configuration, reader).pipe(

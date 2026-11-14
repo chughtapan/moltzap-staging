@@ -18,7 +18,7 @@
  */
 
 import { Effect, Option } from "effect";
-import type { Matcher, MatchInput, MatchResult } from "../firewall/index.js";
+import type { Match, Matcher, MessageToMatch } from "../firewall/index.js";
 import {
   type ResponseFieldFailures,
   responseFieldsText,
@@ -65,8 +65,8 @@ export function normMatchers(
   const held: ReadonlyMap<string, Norm> = new Map(
     norms.map((norm) => [norm.name, norm]),
   );
-  const analyses = new WeakMap<MatchInput, Option.Option<Analysis>>();
-  const analysis = (input: MatchInput) =>
+  const analyses = new WeakMap<MessageToMatch, Option.Option<Analysis>>();
+  const analysis = (input: MessageToMatch) =>
     Effect.gen(function* () {
       const known = analyses.get(input);
       if (known !== undefined) {
@@ -77,8 +77,8 @@ export function normMatchers(
       return computed;
     }).pipe(Effect.withSpan("normMatchers"));
   const match =
-    (decide: (input: MatchInput, analysis: Analysis) => MatchResult) =>
-    (input: MatchInput) =>
+    (decide: (input: MessageToMatch, analysis: Analysis) => Match) =>
+    (input: MessageToMatch) =>
       analysis(input).pipe(
         Effect.map(
           Option.match({
@@ -120,7 +120,7 @@ export function normRuleId(normName: string, index: number): string {
  * act for every member when the rule withholds it.
  */
 function governedBy(normName: string, ruleNumber: number, rule: NormRule) {
-  return (input: MatchInput, analysis: Analysis): MatchResult => {
+  return (input: MessageToMatch, analysis: Analysis): Match => {
     const { reading } = analysis;
     if (
       reading.kind !== "act" ||
@@ -140,7 +140,7 @@ function governedBy(normName: string, ruleNumber: number, rule: NormRule) {
 }
 
 /** Reads the message and folds the acts in the history before it. */
-function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
+function analyze(held: ReadonlyMap<string, Norm>, input: MessageToMatch) {
   return Effect.gen(function* () {
     const text = messageText(input.message);
     if (text === undefined) {
@@ -196,7 +196,7 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
  * whose fields its form refuses. A peer hears `not-understood` with what failed,
  * unless it sent one.
  */
-function unparsed(input: MatchInput, analysis: Analysis): MatchResult {
+function unparsed(input: MessageToMatch, analysis: Analysis): Match {
   const failure = unreadable(analysis);
   if (failure === undefined) {
     return unmatched;
@@ -217,7 +217,7 @@ function unparsed(input: MatchInput, analysis: Analysis): MatchResult {
  * other member's daemon would send the same answer, so none does. Without the full history before it, an act that
  * depends on that history cannot be judged and is held for missing evidence.
  */
-function nonconforming(input: MatchInput, analysis: Analysis): MatchResult {
+function nonconforming(input: MessageToMatch, analysis: Analysis): Match {
   const { reading, verdict, state, setting } = analysis;
   if (
     reading.kind !== "act" ||
@@ -234,7 +234,7 @@ function nonconforming(input: MatchInput, analysis: Analysis): MatchResult {
   ) {
     return {
       matched: true,
-      refusal: "unresolved-evidence",
+      reason: "unresolved-evidence",
       detail: { reason: "history-unavailable", norm: act.ontology },
     };
   }
@@ -332,7 +332,7 @@ function skeleton({
  * or nothing for its own send, without `feedback`, or about feedback.
  */
 function notUnderstood(
-  input: MatchInput,
+  input: MessageToMatch,
   { reading, setting }: Analysis,
   reason: string,
   error?: string,
@@ -373,7 +373,7 @@ function errorLimit(setting: Setting): number {
  * any query; in a group, a query for the norm this agent proposed. The answer
  * names the norms held here, or carries the requested norm's document.
  */
-function answerQuery(input: MatchInput, analysis: Analysis): MatchResult {
+function answerQuery(input: MessageToMatch, analysis: Analysis): Match {
   const { verdict, setting, state } = analysis;
   const act =
     input.direction === "incoming"
@@ -406,7 +406,7 @@ function answer(
   queryMsgId: string,
   fields: Readonly<Record<string, string>>,
   content?: string,
-): MatchResult {
+): Match {
   return {
     matched: true,
     reply: formatAct({
@@ -420,7 +420,7 @@ function answer(
 }
 
 /** This agent proposing or accepting a norm, which its owner approves. */
-function consent(input: MatchInput, analysis: Analysis): MatchResult {
+function consent(input: MessageToMatch, analysis: Analysis): Match {
   const act =
     input.direction === "outgoing"
       ? actUnder(analysis, normNames.agreement, ["propose", "accept-proposal"])
@@ -444,6 +444,6 @@ function actUnder(
     : undefined;
 }
 
-function msgIdOf(input: MatchInput): string {
+function msgIdOf(input: MessageToMatch): string {
   return "msgId" in input.message ? input.message.msgId : "";
 }

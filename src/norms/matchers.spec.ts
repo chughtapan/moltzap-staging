@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import type { MatchInput } from "../firewall/index.js";
+import type { MessageToMatch } from "../firewall/index.js";
 import { Message } from "../communication/index.js";
 import { AgentCard, AgentId, AgentName, PrincipalId } from "../identity.js";
 import { readText } from "./acts.js";
@@ -86,7 +86,7 @@ function from(author: AgentCard, members: readonly AgentCard[], text: string) {
 function check(
   matcher: string,
   matchers: ReturnType<typeof normMatchers>,
-  input: MatchInput,
+  input: MessageToMatch,
 ) {
   const found = matchers[matcher];
   return found === undefined
@@ -98,7 +98,7 @@ function incoming(
   self: AgentCard,
   message: Message,
   history: readonly Message[] = [],
-): MatchInput {
+): MessageToMatch {
   return {
     direction: "incoming",
     message,
@@ -115,7 +115,7 @@ function outgoing(
   message: Message,
   history: readonly Message[] = [],
   { earlierHistoryOmitted = false } = {},
-): MatchInput {
+): MessageToMatch {
   return {
     direction: "outgoing",
     message,
@@ -489,7 +489,7 @@ describe("norm instances", () => {
         ),
       ).toMatchObject({
         matched: true,
-        refusal: "unresolved-evidence",
+        reason: "unresolved-evidence",
         detail: { reason: "history-unavailable" },
       });
     }));

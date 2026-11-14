@@ -220,7 +220,7 @@ function normDocuments(
  * agent's act, or withholds a peer's act and answers it with `not-understood`
  * naming the rule, so the act changes nothing for any member. When the
  * provider is unsure, the agent's act is refused so it can revise it, and a
- * peer's act is admitted with the rule as a reminder.
+ * peer's act is allowed with the rule as guidance.
  */
 function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
   return norms.flatMap((norm) =>
