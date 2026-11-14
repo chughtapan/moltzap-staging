@@ -158,6 +158,9 @@ Dockerfile `FROM`, or the manifest of something built outside the workspace.
 
 ## Code
 
+- Name a type, a field, a function or a tool argument with the word
+  [the vocabulary](docs/reference/spec/vocabulary.md) gives its subject. A new
+  concept gets its word there first.
 - Symbol questions (where is X defined, who calls it, what type is
   this) → LSP. Grep/Explore only for breadth or text search.
 - Cite by symbol name (`file.ts → handleFrame`), never by line;

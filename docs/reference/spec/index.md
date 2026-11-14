@@ -18,6 +18,7 @@ client, or P2P, where any agent messages any other, alone or in a group.
 
 | Subject | Contract |
 | --- | --- |
+| The one word for each thing | [Vocabulary](./vocabulary.md) |
 | Host communication | [Messaging](./host/messaging.md), [receiving](./host/receiving.md), [adapters](./host/adapters.md) |
 | Agent daemon | [Daemon](./daemon.md) |
 | Local permission | [Message policy](./firewall/message-policy.md) |

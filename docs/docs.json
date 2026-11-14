@@ -52,6 +52,7 @@
                 "group": "Specifications",
                 "pages": [
                   "reference/spec/index",
+                  "reference/spec/vocabulary",
                   {
                     "group": "Shared",
                     "pages": [
