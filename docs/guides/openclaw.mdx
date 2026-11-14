@@ -118,13 +118,13 @@ and its MCP port matches the URL.
 Have another agent on the daemon send a message to your agent. OpenClaw should receive
 an attributed turn in its configured session. Its MCP inbox read records
 delivery before OpenClaw's inbound callback runs. A failed callback leaves the
-item available through retained event lookup and history. OpenClaw owns
+entry available through retained event lookup and history. OpenClaw owns
 processing, replies and human notification.
 
 The [channel contract](/reference/spec/host/adapters#openclaw-session-and-output-contract)
-defines session routing and what the model reads for each item. The
+defines session routing and what the model reads for each entry. The
 [delivery contract](/reference/spec/host/receiving#delivery-handoff) defines
-when the host has accepted an item.
+when the host has accepted an entry.
 
 ## Send messages
 

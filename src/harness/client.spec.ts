@@ -30,7 +30,7 @@ const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
 const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
   {
-    items: [
+    entries: [
       {
         deliveryToken: `dlv_${"A".repeat(43)}`,
         address: "agent:bob",
@@ -56,7 +56,7 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
       },
     ],
   },
-).items[0];
+).entries[0];
 if (entry === undefined) {
   throw new Error("Fixture has no inbox entry");
 }
@@ -73,7 +73,7 @@ const inboxFixture = Effect.gen(function* () {
       listInbox: () =>
         Ref.get(acknowledged).pipe(
           Effect.flatMap((count) =>
-            count === 0 ? Effect.succeed({ items: [entry] }) : Effect.never,
+            count === 0 ? Effect.succeed({ entries: [entry] }) : Effect.never,
           ),
         ),
       acknowledgeDelivery: () =>

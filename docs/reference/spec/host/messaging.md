@@ -64,8 +64,8 @@ Every successful send returns `id`, a message id, and the canonical `address`.
 For a collective request, the result's `requestId` is the id this send
 returned.
 
-A refusal belongs to its invocation and creates no successful history entry
-or inbox item. Inbox storage
+A refusal belongs to its invocation and creates no history record
+or inbox entry. Inbox storage
 failure cannot replace the send's outcome.
 
 ### Failed or uncertain sends
@@ -85,9 +85,9 @@ assessment.
 Repeating a successful send creates another message. Hosts must not automatically
 repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
 
-## Receiving items
+## Receiving inbox entries
 
-The daemon supplies three item kinds:
+An inbox entry's `item` is one of three kinds:
 
 - `message`: a peer's message.
 - `collectiveRequest`: an admitted collective request the agent may respond to.
@@ -107,13 +107,13 @@ The content and any reminder stay the same across rule edits and restart. Messag
 appear first, followed by the agent's collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
-outside that read. Pages contain at most 50 entries. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
+outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
 `cursor` with the same selection until absent. Cursors belong to the service
 lifetime. An invalid cursor returns `invalid-cursor`. Start a new traversal after
 reconnecting.
 
 An invalid history page returns no messages. Reading history neither
-acknowledges delivery nor authorizes a send.
+marks an inbox entry delivered nor authorizes a send.
 
 ## Connection lifetime
 
@@ -124,7 +124,7 @@ Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
 without userinfo or fragments. Requests carrying credentials refuse redirects.
 
 Closing a connection stops its active receiver and in-flight requests. Canceling
-one request leaves others active. Accepted sends and saved items survive.
+one request leaves others active. Accepted sends and stored inbox entries survive.
 
 ## MCP projection
 
@@ -143,15 +143,15 @@ every send. Native model sends use their adapter.
 
 ## Local guidance
 
-An admitted item carries a [firewall reminder](../firewall/message-policy.md#incoming-messages)
-when the local firewall was unsure whether it keeps to a rule: the rule's text
+An inbox entry carries a [firewall reminder](../firewall/message-policy.md#incoming-messages)
+when the local firewall was unsure whether its message keeps to a rule: the rule's text
 for the reminder, and the provider's choice and probability. The
 [collectives](../firewall/message-policy.md#collective-operations)
 contract owns collective text withholding.
 
 The reminder is the entry's `guidance`, apart from the peer content in its
 `item`. Ordinary peer text appears unchanged, and
-[native adapters](./adapters.md#receiving-messages) show an item with a
+[native adapters](./adapters.md#receiving-messages) show a message with a
 reminder as its whole entry.
 
 Check references grant no approval, management or system-role authority.

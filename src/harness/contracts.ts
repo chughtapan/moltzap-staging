@@ -164,7 +164,7 @@ const historyRecord = Schema.Union(
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
   Schema.Struct({
-    kind: Schema.Literal("result"),
+    kind: Schema.Literal("collectiveResult"),
     address: MessageAddress,
     deliveryToken: DeliveryToken,
     item: savedItemSchema,
@@ -443,7 +443,7 @@ export const toolDefinitions = {
       (data) => new InboxError(data),
     ),
     description:
-      "Receive pending inbox entries, each with its conversation address, its item and any saved firewall reminder. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -463,7 +463,7 @@ export const toolDefinitions = {
   list_conversations: {
     failure: historyFails,
     description:
-      "List canonical conversation addresses with completed messages or saved local results. Follow nextCursor until absent. Use read_conversation to read one address.",
+      "List canonical conversation addresses with completed messages or collective results. Follow nextCursor until absent. Use read_conversation to read one address.",
     input: managementListConversationsRequestSchema,
     output: managementListConversationsResultSchema,
     annotations: read,
@@ -471,7 +471,7 @@ export const toolDefinitions = {
   read_conversation: {
     failure: historyFails,
     description:
-      "Read saved sent messages, permitted incoming items and local results in one conversation. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
+      "Read one conversation's records: the messages you sent, the inbox entries of the messages you received, and your collective results. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
     input: managementReadConversationRequestSchema,
     output: managementReadConversationResultSchema,
     annotations: read,

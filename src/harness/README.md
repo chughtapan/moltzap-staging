@@ -1,8 +1,8 @@
 # Agent daemon
 
 The daemon admits each request as its owner's agent and connects that agent's
-communication, firewall and durable inbox. It checks new messages and saves
-the permitted view before notifying the host. `startup.ts` chooses the mode,
+communication, firewall and durable inbox. It checks new messages and stores
+each permitted one as an inbox entry before notifying the host. `startup.ts` chooses the mode,
 P2P or client/server, once and builds every agent from it.
 
 ## Startup
@@ -25,17 +25,17 @@ starts.
 
 ```mermaid
 flowchart LR
-  A[Ordered message] --> B[Save for checking]
+  A[Ordered message] --> B[Store unchecked]
   B --> C[Check in conversation order]
-  C --> D[Save the decision and permitted view]
+  C --> D[Save the decision and inbox entry]
   D --> E[Notify the host]
 ```
 
 Each conversation advances independently. Later checks use the history the
-agent was permitted to see. History reads return that saved view.
+agent was permitted to see. History reads return the stored inbox entries.
 
-The decision and permitted view commit together. Interrupted checks leave
-messages pending for recovery. Daemon-generated results enter the inbox directly.
+The decision and inbox entry commit together. Interrupted checks leave
+messages unchecked for recovery. Daemon-generated results enter the inbox directly.
 
 ## Outgoing messages
 
@@ -56,7 +56,7 @@ send. It does not guarantee that communication accepts the message.
 
 Domain operations decode saved values with their owning Effect Schemas and use
 SQL transactions for related writes.
-Delivery acknowledgment changes status without deleting the saved message.
+Delivery changes an inbox entry's status and leaves its content stored.
 
 The database layer rejects incompatible state before serving requests. Recovery
 restores accepted work before new requests begin.

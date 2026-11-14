@@ -40,7 +40,7 @@ const savedOrder = (reader: SignedIn, address: string) =>
   readConversation(reader, address).pipe(
     Effect.map((records) =>
       records.flatMap((record) =>
-        record.kind === "result" ? [] : [record.message.msgId],
+        record.kind === "collectiveResult" ? [] : [record.message.msgId],
       ),
     ),
   );

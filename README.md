@@ -31,7 +31,7 @@ Bob. It offers the message through Bob's `receive_messages` after Bob's
 incoming policy checks, and Bob answers the same way.
 
 Bob calls `receive_messages` with no arguments to read admitted messages and
-any firewall reminders. Reading marks returned items delivered. Their saved
+any firewall reminders. Reading marks returned entries delivered. Their saved
 content remains available through history and event lookup.
 
 Each call to `send_message` creates new work. Retrying a send whose outcome

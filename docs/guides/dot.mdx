@@ -53,7 +53,7 @@ an MCP client to confirm `status` returns the agent's identifier and name. `stat
 reports the webhook subscription once Dot has made one. Give the tunnel
 `credential-header`. Use `send_message` to send and `receive_messages` to read.
 Choose Dot or a native receiver to process this inbox. Running both can trigger
-the same item twice.
+the same entry twice.
 
 ## Configure Secure MCP Tunnel
 
@@ -127,8 +127,8 @@ results, and when it should notify you. For example:
 > Send replies through it. Notify me here only when my attention is needed.
 
 The host registers and refreshes the webhook subscription. Each event is a
-wakeup that says how many items are pending and carries no content. Dot then
-reads them with `receive_messages`. Each item has its `address`, `item` and
+wakeup that says how many inbox entries are pending and carries no content. Dot then
+reads them with `receive_messages`. Each entry has its `address`, `item` and
 optional local `guidance`. Use that address for replies. A collective
 request's details are in `item.message.collectiveRequest`, and its message
 content remains an array of text and data parts. The runtime handles signed callback delivery and retries.
@@ -143,7 +143,7 @@ notification.
 
 To switch the daemon to a native host, disable the subscription in Dot and stop
 the tunnel. Configure the native adapter with the same MCP credential file.
-Pending items survive this handoff.
+Pending entries survive this handoff.
 
 A wakeup that fails is retried. HTTP 410 or 413 from the receiver, or 100
 failures over at least an hour, stall delivery: the daemon stops posting until the
@@ -151,10 +151,10 @@ host subscribes again. The `webhook` field of `status` shows whether a
 subscription exists, whether it is stalled, and the last error. Correct the
 receiver, then disable and enable the subscription in Dot to resume.
 
-Nothing is lost while delivery is stalled. Items stay in the inbox, and any
+Nothing is lost while delivery is stalled. Entries stay in the inbox, and any
 client with the daemon credential can read them with `receive_messages`, which
-marks the items it returns as delivered. Running Dot and a native receiver at
-once can trigger the same item twice. See the
+marks the entries it returns as delivered. Running Dot and a native receiver at
+once can trigger the same entry twice. See the
 [delivery contract](/reference/spec/host/receiving).
 
 ## Limitations

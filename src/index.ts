@@ -32,9 +32,9 @@ export {
   type HistoryRecord,
   InboxEntry,
   InboxError,
-  InboxEvent,
   SendRequest,
   type SendResult,
+  StoredInboxEntry,
 } from "./harness/message-format.js";
 /** The content policy permits an agent to read, and why policy refused a send or an edit. */
 export {

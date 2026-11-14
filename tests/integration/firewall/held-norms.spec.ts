@@ -70,7 +70,7 @@ function firstDelivery(agent: SignedIn) {
     name: "receive_messages",
     arguments: { wait: MAXIMUM_WAIT_SECONDS },
   }).pipe(
-    Effect.map(({ items }) => items[0]?.item),
+    Effect.map(({ entries }) => entries[0]?.item),
     Effect.timeout("60 seconds"),
   );
 }

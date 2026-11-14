@@ -1,7 +1,11 @@
 /** @file Qualifies shared-agent persistence on restricted-role PostgreSQL. */
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import { AgentCard, InboxEvent, Message } from "@social-harness/social-harness";
+import {
+  AgentCard,
+  Message,
+  StoredInboxEntry,
+} from "@social-harness/social-harness";
 import {
   Firewall,
   type FirewallOptions,
@@ -60,7 +64,7 @@ const qualifyTenants = Effect.gen(function* () {
 });
 
 /** A transaction of the agent stored under `key` reads that agent's inbox rows and no other's. */
-const readsOnlyOwnItems = (key: string) =>
+const readsOnlyOwnRows = (key: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* withAgentTransaction(
@@ -78,36 +82,36 @@ const qualifyInbox = (keys: readonly string[]) =>
       recipients: [testAgentCard("bob"), testAgentCard("carol")],
       content: [{ type: "text", text: "Postgres inbox qualification" }],
     });
-    const address = yield* Schema.decodeUnknown(InboxEvent.fields.address)(
-      "agent:alice",
-    );
+    const address = yield* Schema.decodeUnknown(
+      StoredInboxEntry.fields.address,
+    )("agent:alice");
     for (const key of keys) {
       const inbox = yield* makeInbox(key);
-      yield* inbox.queueIncoming(address, { kind: "message", message });
-      const pending = (yield* inbox.pending(10))[0];
-      if (pending === undefined) {
+      yield* inbox.storeUnchecked(address, { kind: "message", message });
+      const unchecked = (yield* inbox.unchecked(10))[0];
+      if (unchecked === undefined) {
         return yield* Effect.dieMessage(
-          "Expected independent pending work for each agent",
+          "Expected an unchecked message for each agent",
         );
       }
-      yield* inbox.publish(pending, {
+      yield* inbox.recordDecision(unchecked, {
         kind: "allowed",
         item: { kind: "message", message },
         save: Effect.void,
         visibility: [],
       });
       expect(
-        (yield* inbox.listInbox()).items.map((item) => item.deliveryToken),
-      ).toEqual([pending.token]);
+        (yield* inbox.listInbox()).entries.map((entry) => entry.deliveryToken),
+      ).toEqual([unchecked.token]);
       const reopened = yield* makeInbox(key);
-      expect((yield* reopened.listInbox()).items).toEqual(
-        (yield* inbox.listInbox()).items,
+      expect((yield* reopened.listInbox()).entries).toEqual(
+        (yield* inbox.listInbox()).entries,
       );
     }
     yield* Effect.all(
       Array.from({ length: 12 })
         .flatMap(() => keys)
-        .map(readsOnlyOwnItems),
+        .map(readsOnlyOwnRows),
       { concurrency: 8 },
     );
     expect(yield* sql`SELECT * FROM harness_items`).toHaveLength(0);

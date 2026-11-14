@@ -538,7 +538,7 @@ const pendingInbox = (harness: SocialHarness["Type"]) =>
       const page = yield* harness.listInbox(
         cursor === undefined ? {} : { cursor },
       );
-      tokens.push(...page.items.map((item) => item.deliveryToken));
+      tokens.push(...page.entries.map((entry) => entry.deliveryToken));
       cursor = page.nextCursor;
     } while (cursor !== undefined);
     return tokens;

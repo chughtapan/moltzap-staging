@@ -1,4 +1,4 @@
-/** @file Coordinates identity, message policy, communication and the agent's saved inbox. */
+/** @file Coordinates identity, message policy, communication and the agent's inbox. */
 
 import {
   absurd,
@@ -48,10 +48,10 @@ import {
 } from "../firewall/service.js";
 import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
-  catalogCursor,
+  conversationsCursor,
   historyCursor,
   makeInbox,
-  type PendingItem,
+  type Unchecked,
 } from "./inbox.js";
 import {
   canonicalMessageAddress,
@@ -62,6 +62,7 @@ import {
   InboxError,
   type InboxPage,
   type MessageAddress,
+  PAGE_SIZE,
   type SendRequest,
   type SendResult,
 } from "./message-format.js";
@@ -69,7 +70,7 @@ import {
 /** Start a live conversation-list traversal by omitting cursor. */
 interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
-interface ListConversationsResult extends PaginatedResult {
+interface ConversationsPage extends PaginatedResult {
   readonly addresses: readonly MessageAddress[];
 }
 /** Keep address unchanged when supplying the next cursor. */
@@ -77,12 +78,12 @@ interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
 }
 /** A missing nextCursor ends this fixed-boundary history traversal. */
-export interface ReadHistoryResult extends PaginatedResult {
+export interface HistoryPage extends PaginatedResult {
   readonly records: readonly HistoryRecord[];
 }
 type CommunicationService = Context.Tag.Service<typeof Communication>;
 type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
-/** Sending, saved inbox and history operations for one agent. */
+/** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
   /**
    * Checks policy and saves the permitted message for delivery. The result
@@ -94,14 +95,17 @@ interface SocialHarnessService {
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
   /**
-   * Reads pending content without acknowledging it. With `wait`, a read that
-   * finds nothing waits up to that long, and returns as soon as an item is
-   * pending or empty when the wait ends.
+   * Reads pending inbox entries without marking them delivered. With `wait`,
+   * a read that finds nothing waits up to that long, and returns as soon as
+   * an entry is pending or empty when the wait ends.
    */
   readonly listInbox: (
     request?: PaginatedRequest & { readonly wait?: Duration.Duration },
   ) => Effect.Effect<InboxPage, InboxError>;
-  /** Repeating an acknowledgment is harmless and does not respond to a collective request. */
+  /**
+   * Marks a pending inbox entry delivered. Repeating it is harmless, and it
+   * does not respond to a collective request.
+   */
   readonly acknowledgeDelivery: (
     token: DeliveryToken,
   ) => Effect.Effect<void, DeliveryAcknowledgeError>;
@@ -112,14 +116,15 @@ interface SocialHarnessService {
    */
   readonly listConversations: (
     request?: ListConversationsRequest,
-  ) => Effect.Effect<ListConversationsResult, HistoryError>;
+  ) => Effect.Effect<ConversationsPage, HistoryError>;
   /**
-   * Pages include only history available at the first read. Rule edits preserve
-   * saved views. Start a new traversal after reconnecting or restarting.
+   * Pages include only history available at the first read. Rule edits leave
+   * stored inbox entries as they are. Start a new traversal after reconnecting
+   * or restarting.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<ReadHistoryResult, HistoryError>;
+  ) => Effect.Effect<HistoryPage, HistoryError>;
   /**
    * Each notification carries no data and may cover several arrivals. Read the
    * inbox initially, after each notification and after reconnecting because
@@ -129,9 +134,9 @@ interface SocialHarnessService {
 }
 
 /**
- * Hosts use this service for identity, messaging and local policy. It saves
- * permitted incoming content before notification. Saved content survives
- * acknowledgment, policy edits and restart.
+ * Hosts use this service for identity, messaging and local policy. It stores
+ * an inbox entry before notifying of it. A stored entry survives delivery,
+ * policy edits and restart.
  */
 export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarness,
@@ -169,43 +174,43 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity = settings.maximumConcurrentChecks ?? 4;
     const historyLimit = settings.maximumHistoryRecords ?? 256;
-    const card = identity.me;
+    const self = identity.me;
     yield* supervise(
       workers,
       scope,
       communication
         .consume((incoming) =>
           inbox
-            .queueIncoming(
-              addressOf(incomingParticipants(incoming), card.agentId),
+            .storeUnchecked(
+              addressOf(incomingMembers(incoming), self.agentId),
               incoming,
             )
             .pipe(Effect.zipRight(Queue.offer(wake, undefined)), Effect.asVoid),
         )
         .pipe(restarting(settings.agentKey, "consumer")),
     );
-    const pending = new Set<string>();
-    const checkPending = Effect.gen(function* () {
-      for (const entry of yield* inbox.pending(capacity)) {
-        if (pending.size >= capacity) {
+    const addressesBeingChecked = new Set<string>();
+    const startChecks = Effect.gen(function* () {
+      for (const unchecked of yield* inbox.unchecked(capacity)) {
+        if (addressesBeingChecked.size >= capacity) {
           break;
         }
-        if (!pending.has(entry.address)) {
-          pending.add(entry.address);
+        if (!addressesBeingChecked.has(unchecked.address)) {
+          addressesBeingChecked.add(unchecked.address);
           const check = checkIncoming(
             inbox,
             firewall,
             communication,
-            entry,
-            card,
+            unchecked,
+            self,
             historyLimit,
             Option.fromNullable(settings.withheldReply),
           ).pipe(
             Effect.zipRight(PubSub.publish(changes, undefined)),
             Effect.ensuring(
-              Effect.sync(() => pending.delete(entry.address)).pipe(
-                Effect.zipRight(Queue.offer(wake, undefined)),
-              ),
+              Effect.sync(() =>
+                addressesBeingChecked.delete(unchecked.address),
+              ).pipe(Effect.zipRight(Queue.offer(wake, undefined))),
             ),
           );
           yield* supervise(workers, scope, check);
@@ -215,7 +220,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     yield* supervise(
       workers,
       scope,
-      Queue.take(wake).pipe(Effect.zipRight(checkPending), Effect.forever),
+      Queue.take(wake).pipe(Effect.zipRight(startChecks), Effect.forever),
     );
     yield* Queue.offer(wake, undefined);
     return SocialHarness.of({
@@ -232,12 +237,12 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             }
             const destination = yield* canonicalMessageAddress(
               request.to,
-              card.agentName,
+              self.agentName,
             );
-            let value: Outgoing;
+            let outgoing: Outgoing;
             if ("collectiveResponse" in request) {
               if (
-                !(yield* inbox.isRequestVisible(
+                !(yield* inbox.isCollectiveRequestVisible(
                   request.collectiveResponse.requestId,
                 ))
               ) {
@@ -245,22 +250,25 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                   failure: { kind: "request-none" },
                 });
               }
-              const original = yield* communication
+              const collectiveRequest = yield* communication
                 .getCollectiveRequest(request.collectiveResponse.requestId)
                 .pipe(
                   Effect.catchTag("CommunicationError", (error) =>
                     Effect.fail(sendFailure(error)),
                   ),
                 );
-              const expected = [original.author, ...original.recipients]
-                .filter((member) => member.agentId !== card.agentId)
+              const expected = [
+                collectiveRequest.author,
+                ...collectiveRequest.recipients,
+              ]
+                .filter((member) => member.agentId !== self.agentId)
                 .map((member) => member.agentName)
                 .sort(compareAscii);
               const selectedNames =
                 destination.kind === "direct"
                   ? [destination.remoteName]
                   : destination.memberNames.filter(
-                      (name) => name !== card.agentName,
+                      (name) => name !== self.agentName,
                     );
               if (
                 expected.join(",") !==
@@ -268,9 +276,9 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               ) {
                 return yield* new SendError({ reason: "invalid-address" });
               }
-              value = yield* CollectiveResponse.create({
-                author: card,
-                request: original,
+              outgoing = yield* CollectiveResponse.create({
+                author: self,
+                request: collectiveRequest,
                 response: request.collectiveResponse,
               }).pipe(
                 Effect.catchTag("CommunicationError", (error) =>
@@ -283,7 +291,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                   destination.kind === "direct"
                     ? [destination.remoteName]
                     : destination.memberNames.filter(
-                        (name) => name !== card.agentName,
+                        (name) => name !== self.agentName,
                       ),
                 )
                 .pipe(
@@ -308,10 +316,10 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               if (first === undefined) {
                 return yield* new SendError({ reason: "membership-invalid" });
               }
-              value =
+              outgoing =
                 "collectiveRequest" in request
                   ? yield* CollectiveRequest.create({
-                      author: card,
+                      author: self,
                       recipients: [first, ...rest],
                       question: request.text,
                       ...request.collectiveRequest,
@@ -321,19 +329,19 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                       ),
                     )
                   : yield* Message.create({
-                      author: card,
+                      author: self,
                       recipients: [first, ...rest],
                       content: [{ type: "text", text: request.text }],
                     }).pipe(Effect.mapError(sendFailure));
             }
-            const context = yield* evidenceFor(
+            const evidence = yield* evidenceFor(
               inbox,
               communication,
-              [value.author, ...value.recipients],
+              [outgoing.author, ...outgoing.recipients],
               historyLimit,
             );
             const decision = yield* firewall
-              .checkOutgoing(value, context)
+              .checkOutgoing(outgoing, evidence)
               .pipe(
                 Effect.catchTag("CheckInputError", () =>
                   Effect.fail(new SendError({ reason: "content-invalid" })),
@@ -348,13 +356,13 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               return yield* decision.refusal;
             }
             yield* communication
-              .send(value)
+              .send(outgoing)
               .pipe(
                 Effect.catchTag("CommunicationError", (error) =>
                   Effect.fail(sendFailure(error)),
                 ),
               );
-            return { id: value.msgId, address: destination.address };
+            return { id: outgoing.msgId, address: destination.address };
           }).pipe(
             Effect.catchTag("InboxError", () =>
               Effect.fail(new SendError({ reason: "persistence-failed" })),
@@ -380,49 +388,55 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
           const position =
             request.cursor === undefined
               ? undefined
-              : yield* inbox.decodeCursor(catalogCursor, request.cursor);
-          const after = position?.address ?? "";
-          const addresses = new Set(yield* inbox.resultAddresses(after));
-          let cursor = position?.communication;
-          let resume = cursor;
-          let more = true;
-          while (more) {
-            const pageStart = cursor;
+              : yield* inbox.decodeCursor(conversationsCursor, request.cursor);
+          const afterAddress = position?.address ?? "";
+          const addresses = new Set(
+            yield* inbox.collectiveResultAddresses(afterAddress),
+          );
+          let nextPageCursor = position?.communicationCursor;
+          let lastPageCursor = nextPageCursor;
+          let morePages = true;
+          while (morePages) {
+            lastPageCursor = nextPageCursor;
             const page = yield* communication.listConversations(
-              cursor === undefined ? {} : { cursor },
+              lastPageCursor === undefined ? {} : { cursor: lastPageCursor },
             );
             const observed = page.conversations.map((members) =>
-              addressOf(members, card.agentId),
+              addressOf(members, self.agentId),
             );
             for (const address of observed) {
-              if (address > after) {
+              if (address > afterAddress) {
                 addresses.add(address);
               }
             }
-            cursor = page.nextCursor;
-            resume = pageStart;
-            more = cursor !== undefined;
-            const boundary = [...addresses].sort(compareAscii)[50];
+            nextPageCursor = page.nextCursor;
+            morePages = nextPageCursor !== undefined;
+            const firstAddressPastPage = [...addresses].sort(compareAscii)[
+              PAGE_SIZE
+            ];
             const lastObserved = observed[observed.length - 1];
             if (
-              boundary !== undefined &&
-              ((lastObserved !== undefined && lastObserved >= boundary) ||
-                !more)
+              firstAddressPastPage !== undefined &&
+              ((lastObserved !== undefined &&
+                lastObserved >= firstAddressPastPage) ||
+                !morePages)
             ) {
               break;
             }
           }
           const ordered = [...addresses].sort(compareAscii);
-          const selected = ordered.slice(0, 50);
+          const selected = ordered.slice(0, PAGE_SIZE);
           const last = selected[selected.length - 1];
           return {
             addresses: selected,
-            ...(last !== undefined && (ordered.length > 50 || more)
+            ...(last !== undefined && (ordered.length > PAGE_SIZE || morePages)
               ? {
-                  nextCursor: yield* inbox.encodeCursor(catalogCursor, {
+                  nextCursor: yield* inbox.encodeCursor(conversationsCursor, {
                     operation: "conversations",
                     address: last,
-                    ...(resume === undefined ? {} : { communication: resume }),
+                    ...(lastPageCursor === undefined
+                      ? {}
+                      : { communicationCursor: lastPageCursor }),
                   }),
                 }
               : {}),
@@ -432,7 +446,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
         Effect.gen(function* () {
           const destination = yield* canonicalMessageAddress(
             request.address,
-            card.agentName,
+            self.agentName,
           );
           if (destination.address !== request.address) {
             return yield* new HistoryError({ reason: "invalid-address" });
@@ -442,7 +456,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             phase: "messages",
             address: destination.address,
             after: 0,
-            through: yield* inbox.resultHead(request.address),
+            through: yield* inbox.collectiveResultHead(request.address),
           };
           const position =
             request.cursor === undefined
@@ -455,15 +469,15 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             destination.kind === "direct"
               ? [destination.remoteName]
               : destination.memberNames.filter(
-                  (name) => name !== card.agentName,
+                  (name) => name !== self.agentName,
                 );
           const records: HistoryRecord[] = [];
           const members =
             position.phase === "messages"
-              ? yield* communication.getConversation([card.agentName, ...names])
+              ? yield* communication.getConversation([self.agentName, ...names])
               : undefined;
           if (position.phase === "messages" && members === undefined) {
-            if (position.communication !== undefined) {
+            if (position.communicationCursor !== undefined) {
               return yield* new HistoryError({ reason: "invalid-cursor" });
             }
             if (position.through === 0) {
@@ -474,26 +488,26 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
           if (position.phase === "messages" && members !== undefined) {
             const page = yield* communication.readHistory({
               members,
-              ...(position.communication === undefined
+              ...(position.communicationCursor === undefined
                 ? {}
-                : { cursor: position.communication }),
+                : { cursor: position.communicationCursor }),
             });
             for (const { message } of page.entries) {
-              if (message.author.agentId === card.agentId) {
+              if (message.author.agentId === self.agentId) {
                 records.push({ kind: "sent", message });
               } else {
-                const view = yield* inbox.historyView({
+                const entry = yield* inbox.storedEntry({
                   authorAgentId: message.author.agentId,
                   msgId: message.msgId,
                 });
-                if (view !== undefined) {
+                if (entry !== undefined) {
                   records.push({
                     kind: "received",
                     message: {
                       authorAgentId: message.author.agentId,
                       msgId: message.msgId,
                     },
-                    ...view,
+                    ...entry,
                   });
                 }
               }
@@ -504,46 +518,46 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                 nextCursor: yield* inbox.encodeCursor(historyCursor, {
                   ...position,
                   operation: "history",
-                  communication: page.nextCursor,
+                  communicationCursor: page.nextCursor,
                 }),
               };
             }
           }
-          const available = 50 - records.length;
+          const available = PAGE_SIZE - records.length;
           if (available === 0 && position.through > 0) {
             return {
               records,
               nextCursor: yield* inbox.encodeCursor(historyCursor, {
                 operation: "history",
-                phase: "results",
+                phase: "collectiveResults",
                 address: destination.address,
                 after: position.after,
                 through: position.through,
               }),
             };
           }
-          const resultPage = yield* inbox.resultPage(
+          const collectiveResults = yield* inbox.collectiveResultPage(
             request.address,
             position.after,
             position.through,
             available,
           );
-          const selected = resultPage.slice(0, available);
-          for (const result of selected) {
+          const selected = collectiveResults.slice(0, available);
+          for (const collectiveResult of selected) {
             records.push({
-              kind: "result",
-              deliveryToken: result.token,
-              ...result.event,
+              kind: "collectiveResult",
+              deliveryToken: collectiveResult.token,
+              ...collectiveResult.entry,
             });
           }
           const last = selected[selected.length - 1];
           return {
             records,
-            ...(resultPage.length > selected.length && last !== undefined
+            ...(collectiveResults.length > selected.length && last !== undefined
               ? {
                   nextCursor: yield* inbox.encodeCursor(historyCursor, {
                     operation: "history",
-                    phase: "results",
+                    phase: "collectiveResults",
                     address: destination.address,
                     after: last.sequence,
                     through: position.through,
@@ -561,44 +575,44 @@ function checkIncoming(
   inbox: Inbox,
   firewall: Context.Tag.Service<typeof Firewall>,
   communication: CommunicationService,
-  entry: PendingItem,
-  card: AgentCard,
-  limit: number,
+  unchecked: Unchecked,
+  self: AgentCard,
+  historyLimit: number,
   withheldReply: Option.Option<string>,
 ) {
   return Effect.gen(function* () {
-    const value = entry.incoming;
+    const incoming = unchecked.incoming;
     if (
-      value.kind === "collectiveRequest" &&
+      incoming.kind === "collectiveRequest" &&
       (yield* Clock.currentTimeMillis) >=
-        value.message.collectiveRequest.deadlineAt
+        incoming.message.collectiveRequest.deadlineAt
     ) {
-      return yield* inbox.retire(entry.token);
+      return yield* inbox.withholdExpired(unchecked.token);
     }
     let evidence: FirewallEvidence | ResultEvidence | undefined;
-    if (value.kind === "message" || value.kind === "collectiveRequest") {
+    if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
       evidence = yield* evidenceFor(
         inbox,
         communication,
-        [value.message.author, ...value.message.recipients],
-        limit,
-        value.message,
+        [incoming.message.author, ...incoming.message.recipients],
+        historyLimit,
+        incoming.message,
       );
-    } else if (value.kind === "collectiveResult") {
-      const question =
-        value.sources.request?.author.agentId === card.agentId
+    } else if (incoming.kind === "collectiveResult") {
+      const collectiveRequest =
+        incoming.sources.request?.author.agentId === self.agentId
           ? undefined
-          : value.sources.request;
-      const answers = yield* Effect.forEach(
-        value.sources.responses.filter(
-          (message) => message.author.agentId !== card.agentId,
+          : incoming.sources.request;
+      const responses = yield* Effect.forEach(
+        incoming.sources.responses.filter(
+          (message) => message.author.agentId !== self.agentId,
         ),
         (message) =>
           evidenceFor(
             inbox,
             communication,
             [message.author, ...message.recipients],
-            limit,
+            historyLimit,
             message,
           ).pipe(
             Effect.map((evidence) => ({
@@ -612,29 +626,29 @@ function checkIncoming(
         { concurrency: 1 },
       );
       evidence = {
-        answers,
-        ...(question === undefined
+        answers: responses,
+        ...(collectiveRequest === undefined
           ? {}
           : {
               question: yield* evidenceFor(
                 inbox,
                 communication,
-                [question.author, ...question.recipients],
-                limit,
-                question,
+                [collectiveRequest.author, ...collectiveRequest.recipients],
+                historyLimit,
+                collectiveRequest,
               ),
             }),
       };
     }
-    const decision = yield* firewall.checkIncoming(value, evidence);
-    const reply = yield* replyTo(value, decision, card, withheldReply);
+    const decision = yield* firewall.checkIncoming(incoming, evidence);
+    const reply = yield* replyTo(incoming, decision, self, withheldReply);
     const expired =
-      value.kind === "collectiveRequest" &&
+      incoming.kind === "collectiveRequest" &&
       (yield* Clock.currentTimeMillis) >=
-        value.message.collectiveRequest.deadlineAt;
+        incoming.message.collectiveRequest.deadlineAt;
     yield* transaction(
       decision.save.pipe(
-        Effect.zipRight(inbox.publish(entry, decision, expired)),
+        Effect.zipRight(inbox.recordDecision(unchecked, decision, { expired })),
         Effect.tap(() =>
           reply === undefined
             ? Effect.void
@@ -661,12 +675,12 @@ function checkIncoming(
  * stays withheld.
  */
 function replyTo(
-  value: Incoming,
+  incoming: Incoming,
   decision: IncomingDecision,
   self: AgentCard,
   withheldReply: Option.Option<string>,
 ) {
-  if (decision.kind !== "withheld" || !("message" in value)) {
+  if (decision.kind !== "withheld" || !("message" in incoming)) {
     return Effect.succeed(undefined);
   }
   const text =
@@ -677,7 +691,7 @@ function replyTo(
   if (text === undefined) {
     return Effect.succeed(undefined);
   }
-  const withheld = value.message;
+  const withheld = incoming.message;
   return Schema.decodeUnknown(MsgId)(
     `msg_${createHash("sha256")
       .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)
@@ -698,9 +712,9 @@ function replyTo(
 }
 
 /**
- * Reads the inbox and, while it holds nothing, rereads after each change until
- * `wait` ends. Subscribing before the first read keeps an item that arrives
- * between that read and the wait from being missed.
+ * Reads the inbox and, while nothing is pending, rereads after each change
+ * until `wait` ends. Subscribing before the first read keeps an entry that
+ * becomes pending between that read and the wait from being missed.
  */
 function waitForInbox(
   inbox: Inbox,
@@ -712,12 +726,12 @@ function waitForInbox(
     const arrivals = yield* PubSub.subscribe(changes);
     const read = inbox.listInbox(request);
     const first = yield* read;
-    if (first.items.length > 0) {
+    if (first.entries.length > 0) {
       return first;
     }
     const arrived = yield* Queue.take(arrivals).pipe(
       Effect.zipRight(read),
-      Effect.repeat({ until: (page) => page.items.length > 0 }),
+      Effect.repeat({ until: (page) => page.entries.length > 0 }),
       Effect.timeoutOption(wait),
     );
     return Option.isSome(arrived) ? arrived.value : yield* read;
@@ -728,7 +742,7 @@ function evidenceFor(
   inbox: Inbox,
   communication: CommunicationService,
   members: readonly AgentCard[],
-  limit: number,
+  historyLimit: number,
   before?: Message,
 ): Effect.Effect<FirewallEvidence, InboxError> {
   return Effect.gen(function* () {
@@ -741,7 +755,7 @@ function evidenceFor(
       .readHistory({
         members: selected,
         order: "newest",
-        limit,
+        limit: historyLimit,
         ...(before === undefined
           ? {}
           : {
@@ -759,16 +773,16 @@ function evidenceFor(
       );
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
-    for (const entry of [...page.entries].reverse()) {
-      if (bytes + entry.messageBytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
+    for (const earlier of [...page.entries].reverse()) {
+      if (bytes + earlier.messageBytes > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }
-      recent.push(entry);
-      bytes += entry.messageBytes;
+      recent.push(earlier);
+      bytes += earlier.messageBytes;
     }
     recent.reverse();
     const history = yield* inbox.visibleMessages(
-      recent.map((entry) => entry.message),
+      recent.map((earlier) => earlier.message),
     );
     return {
       history,
@@ -794,7 +808,7 @@ function conversation(
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
-function incomingParticipants(incoming: Incoming): readonly AgentCard[] {
+function incomingMembers(incoming: Incoming): readonly AgentCard[] {
   switch (incoming.kind) {
     case "message":
     case "collectiveRequest":

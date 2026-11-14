@@ -130,7 +130,7 @@ export function firewallOptions(
   };
 }
 
-/** Await publication through the public inbox while surfacing background failures. */
+/** Waits until the inbox holds `count` pending entries, surfacing background failures. */
 export function waitForInbox(
   runtime: {
     readonly harness: Harness;
@@ -140,7 +140,7 @@ export function waitForInbox(
 ) {
   return runtime.harness.listInbox().pipe(
     Effect.repeat({
-      until: (page) => page.items.length >= count,
+      until: (page) => page.entries.length >= count,
       schedule: Schedule.spaced("5 millis"),
     }),
     Effect.zipRight(runtime.harness.listInbox()),
@@ -155,17 +155,17 @@ interface HistoryPosition {
   readonly address: string;
 }
 interface Intake {
-  readonly value: Incoming;
+  readonly incoming: Incoming;
   readonly accepted: Deferred.Deferred<undefined>;
 }
 interface Network {
   readonly self: AgentCard;
   readonly messages: Message[];
   readonly submitted: Outgoing[];
-  readonly requests: Map<string, CollectiveRequestMessage>;
-  readonly catalog: Map<string, Conversation>;
+  readonly collectiveRequests: Map<string, CollectiveRequestMessage>;
+  readonly conversations: Map<string, Conversation>;
   readonly historyPositions: Map<string, HistoryPosition>;
-  readonly catalogPositions: Map<string, string>;
+  readonly conversationPositions: Map<string, string>;
   readonly incoming: Queue.Queue<Intake>;
   cursorId: number;
   sendFailure?: CommunicationError;
@@ -193,10 +193,10 @@ export const makeHarnessFixture = Effect.gen(function* () {
     self,
     messages: [],
     submitted: [],
-    requests: new Map(),
-    catalog: new Map(),
+    collectiveRequests: new Map(),
+    conversations: new Map(),
     historyPositions: new Map(),
-    catalogPositions: new Map(),
+    conversationPositions: new Map(),
     cursorId: 0,
     incoming: yield* Queue.unbounded<Intake>(),
   };
@@ -214,7 +214,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
     carol,
     submitted: network.submitted,
     open: (options: OpenOptions = {}) => openHarness(environment, options),
-    deliver: (value: Incoming) => deliver(network, value),
+    deliver: (incoming: Incoming) => deliver(network, incoming),
     addPeer: (name: string) => Effect.sync(() => addPeer(environment, name)),
     retain: (message: Message) =>
       Effect.sync(() => {
@@ -222,7 +222,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       }),
     addConversation: (members: Conversation) =>
       Effect.sync(() => {
-        network.catalog.set(addressOf(self, members), members);
+        network.conversations.set(addressOf(self, members), members);
       }),
     failSends: () =>
       Effect.sync(() => {
@@ -312,33 +312,33 @@ function communicationFor(network: Network) {
   return Communication.of({
     getConversation: (names) =>
       Effect.sync(() =>
-        [...network.catalog.values()].find(
+        [...network.conversations.values()].find(
           (members) =>
             members.length === names.length && sameNames(members, names),
         ),
       ),
-    send: (value) =>
+    send: (outgoing) =>
       Effect.suspend(() => {
-        network.submitted.push(value);
+        network.submitted.push(outgoing);
         if (network.sendFailure !== undefined) {
           return Effect.fail(network.sendFailure);
         }
-        if (!("kind" in value)) {
-          retain(network, value);
+        if (!("kind" in outgoing)) {
+          retain(network, outgoing);
         }
         return Effect.void;
       }),
     getCollectiveRequest: (id) =>
       Effect.suspend(() => {
-        const found = network.requests.get(id);
+        const found = network.collectiveRequests.get(id);
         return found === undefined
           ? Effect.fail(new RequestError({ failure: { kind: "request-none" } }))
           : Effect.succeed(found);
       }),
     consume: (handle) =>
       Queue.take(network.incoming).pipe(
-        Effect.flatMap(({ value, accepted }) =>
-          handle(value).pipe(
+        Effect.flatMap(({ incoming, accepted }) =>
+          handle(incoming).pipe(
             Effect.zipRight(Deferred.succeed(accepted, undefined)),
           ),
         ),
@@ -354,21 +354,21 @@ function listConversations(network: Network, query: ConversationQuery) {
     const after =
       query.cursor === undefined
         ? ""
-        : network.catalogPositions.get(query.cursor);
+        : network.conversationPositions.get(query.cursor);
     if (after === undefined) {
       return Effect.fail(new CommunicationError({ reason: "invalid-cursor" }));
     }
-    const available = [...network.catalog]
+    const available = [...network.conversations]
       .filter(([address]) => address > after)
       .sort(([left], [right]) => compareAscii(left, right));
     const selected = available.slice(0, 50);
     const cursor =
       available.length > selected.length
-        ? `catalog-${++network.cursorId}`
+        ? `conversations-${++network.cursorId}`
         : undefined;
     const last = selected.at(-1);
     if (cursor !== undefined && last !== undefined) {
-      network.catalogPositions.set(cursor, last[0]);
+      network.conversationPositions.set(cursor, last[0]);
     }
     return Effect.succeed({
       conversations: selected.map(([, members]) => members),
@@ -441,20 +441,22 @@ function historyPage(
   };
 }
 
-function deliver(network: Network, value: Incoming) {
+function deliver(network: Network, incoming: Incoming) {
   return Effect.gen(function* () {
-    if (value.kind === "message" || value.kind === "collectiveRequest") {
-      retain(network, value.message);
-    } else if (value.kind === "collectiveResult") {
+    if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
+      retain(network, incoming.message);
+    } else if (incoming.kind === "collectiveResult") {
       for (const message of [
-        ...(value.sources.request === undefined ? [] : [value.sources.request]),
-        ...value.sources.responses,
+        ...(incoming.sources.request === undefined
+          ? []
+          : [incoming.sources.request]),
+        ...incoming.sources.responses,
       ]) {
         retain(network, message);
       }
     }
     const accepted = yield* Deferred.make<undefined>();
-    yield* Queue.offer(network.incoming, { value, accepted });
+    yield* Queue.offer(network.incoming, { incoming, accepted });
     yield* Deferred.await(accepted);
   });
 }
@@ -470,9 +472,9 @@ function retain(network: Network, message: Message) {
     network.messages.push(message);
   }
   const members = membersOf(message);
-  network.catalog.set(addressOf(network.self, members), members);
+  network.conversations.set(addressOf(network.self, members), members);
   if (message.collectiveRequest !== undefined) {
-    network.requests.set(
+    network.collectiveRequests.set(
       message.msgId,
       Schema.decodeUnknownSync(CollectiveRequestMessage)(message),
     );

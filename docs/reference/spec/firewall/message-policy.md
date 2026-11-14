@@ -101,10 +101,10 @@ assessment accuracy in any language.
 ## Incoming messages
 
 Admitted peer content reaches the host unchanged. When the provider was unsure
-about a rule, the item carries a reminder: the rule's registered guidance, or
+about a rule, the inbox entry carries a reminder: the rule's registered guidance, or
 its feedback when it has none, with the provider's choice and probability. A
 reminder never promotes peer text to an instruction or exposes private assessor
-evidence. In a result's reminder, each entry names its `recipient` by `AgentCard`. An item the provider
+evidence. In a result's reminder, each entry names its `recipient` by `AgentCard`. An entry the provider
 settled carries no reminder.
 
 A text rule whose `action` is `reply` answers each message it withholds for a
@@ -157,7 +157,7 @@ new message. Their content remains private, as though the agent had not seen
 it. Authored content without proof that it came from an agent caller remains
 private evidence.
 
-A reminder exceeding the 2 MiB inbox-item budget makes the check unavailable,
+A reminder exceeding the 2 MiB inbox-entry budget makes the check unavailable,
 which holds the message. Oversized combined collective reminders are omitted
 because answers were individually assessed. Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence. Messages alone cannot establish
@@ -168,7 +168,7 @@ calendar changes, retract tool actions or reveal undisclosed collusion.
 Each completed check identifies the message, evidence and policy it assessed.
 Earlier decisions retain the rules and registered advice that applied at that
 time. Only completed checks enter decision history. Completed decisions and
-reminders survive restart and acknowledgment. Daemon-generated results
+reminders survive restart and delivery. Daemon-generated results
 are stored without synthetic firewall checks. Private provider traces stay in
 memory. Each completed record saves its decision summary with the assessed
 policy revision, checked and deciding rule ids, origins and registered advice.
@@ -210,7 +210,7 @@ the assessments take effect together. Peer field names in their text are
 quoted as JSON.
 
 Only admitted requests become answerable. A withheld all-gather request still
-receives its result. Requests expiring before assessment retire unchecked;
+receives its result. Requests expiring before assessment are withheld without a check;
 those expiring during assessment are withheld. Neither reaches the host.
 
 ### Results shown to the agent
@@ -221,8 +221,8 @@ question/answer text becomes `{kind: "withheld", checkId, reason}`. A reminder
 names each recipient, check and question the provider was unsure about.
 
 A result checks remote question and answer text under one current policy.
-Earlier inbox and history items keep their saved content and reminders. Every
-delivery path serves the saved result view. Later checks distinguish shown
+Earlier inbox entries and history records keep their content and reminders. Every
+delivery path serves the stored inbox entry. Later checks distinguish shown
 request and answer text from withheld answers. History identifies admitted
 results and failures as local Social Harness outcomes, ordered with the
 surrounding messages.

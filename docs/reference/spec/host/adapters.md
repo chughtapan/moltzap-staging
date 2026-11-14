@@ -78,19 +78,19 @@ retain NanoClaw discovery and access controls.
 
 NanoClaw keeps its normal sessions and final output. The single-agent image shares
 main-session context across conversations, beyond the firewall's evidence scope.
-An incoming firewall reminder appears in its item's JSON.
+An incoming firewall reminder appears in its entry's JSON.
 
 ## Receiving messages
 
 A message of one text part with no
 [firewall reminder](./messaging.md#local-guidance) reaches the host's model as
-that text, unchanged. Every other item reaches it as the JSON of its
-[inbox entry](./receiving.md#mcp-events-and-inbox), which is what
+that text, unchanged. Every other
+[inbox entry](./receiving.md#mcp-events-and-inbox) reaches it as its JSON, which is what
 `receive_messages` returns for it: a collective request, a collective result,
 and a message with a reminder or with other content. Adapters add no instructions and quote
 nothing.
 
-Adapters give the host each item's sender and conversation address. A group
+Adapters give the host each entry's sender and conversation address. A group
 message or collective request also lists its members, the message's author and
 recipients. A collective result's sender is `Social Harness`, in its request's
 conversation; it names only the request's recipients, so its turn lists no members.
@@ -98,5 +98,5 @@ Native adapters use each delivery's token as its turn's id. Redelivery keeps
 that id. A withheld question or outcome in a collective result identifies the
 deciding check and reason.
 
-[Inbox reads](./receiving.md#delivery-handoff) mark returned items delivered
+[Inbox reads](./receiving.md#delivery-handoff) mark returned entries delivered
 before native callbacks run. Callback failure does not restore pending delivery.

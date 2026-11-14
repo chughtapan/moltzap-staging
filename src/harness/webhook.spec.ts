@@ -174,7 +174,7 @@ describe("a subscribed callback", () => {
                 .listInbox(request)
                 .pipe(
                   Effect.tap((page) =>
-                    page.items.length === 0
+                    page.entries.length === 0
                       ? Effect.void
                       : Ref.getAndSet(signalled, true).pipe(
                           Effect.flatMap((already) =>
