@@ -51,13 +51,14 @@ interface Trio extends Pair {
 
 /**
  * What the probe waits for in NanoClaw's native inbox: a plain message with
- * `text`, or the inbox entry of the question `operationId` names.
+ * `text`, or the inbox entry of the collective request whose message id is
+ * `requestId`.
  */
 interface ExpectedInbound {
   readonly platformId: string;
   readonly sender: string;
   readonly text?: string;
-  readonly operationId?: string;
+  readonly requestId?: string;
 }
 
 /** One send the probe queues; `final` sends through the final output. */
@@ -83,15 +84,15 @@ describe("the NanoClaw agent image on a real daemon", { skip: SKIP }, () => {
   );
 
   test(
-    "answers and starts a gather through NanoClaw's send_message text",
+    "responds to and starts a gather through NanoClaw's send_message text",
     { timeout: CASE_TIMEOUT_MILLIS },
-    () => withPair(answersAndStartsGather),
+    () => withPair(respondsToAndStartsGather),
   );
 
   test(
-    "answers and starts an all_gather through NanoClaw's send_message text",
+    "responds to and starts an all_gather through NanoClaw's send_message text",
     { timeout: CASE_TIMEOUT_MILLIS },
-    () => withTrio(answersAndStartsAllGather),
+    () => withTrio(respondsToAndStartsAllGather),
   );
 });
 
@@ -114,18 +115,18 @@ async function routesThroughNativeBoundaries({
   );
 
   const group = {
-    kind: "multicast",
+    kind: "message",
     messageKind: "group",
     address: shared,
     sender: target.agent,
     content: [{ type: "text", text: GROUP_REPLY }],
   };
-  const callerItems = (await callerReceived).map(multicastSummary);
+  const callerItems = (await callerReceived).map(messageSummary);
   assert.equal(callerItems.length, 2);
   assert.deepEqual(
     callerItems.find(({ messageKind }) => messageKind === "direct"),
     {
-      kind: "multicast",
+      kind: "message",
       messageKind: "direct",
       address: target.address,
       sender: target.agent,
@@ -136,7 +137,7 @@ async function routesThroughNativeBoundaries({
     callerItems.find(({ messageKind }) => messageKind === "group"),
     group,
   );
-  assert.deepEqual((await peerReceived).map(multicastSummary), [group]);
+  assert.deepEqual((await peerReceived).map(messageSummary), [group]);
   await assertRepliesRecorded({ caller, target, peer }, shared);
 }
 
@@ -158,40 +159,44 @@ async function assertRepliesRecorded(
   }
 }
 
-async function answersAndStartsGather({
+async function respondsToAndStartsGather({
   caller,
   target,
 }: Pair): Promise<undefined> {
   const started = await caller.send({
     to: target.address,
     text: GATHER_QUESTION,
-    collective: { op: "gather", deadline: 120, requestedSchema: SLOT_SCHEMA },
+    collectiveRequest: {
+      op: "gather",
+      deadline: 120,
+      requestedSchema: SLOT_SCHEMA,
+    },
   });
-  const operationId = started.id;
+  const requestId = started.id;
   const received = caller.next(2);
   await runProbe(
     target,
     [
-      { to: caller.address, text: acceptText("tue", operationId) },
+      { to: caller.address, text: acceptText("tue", requestId) },
       { to: caller.address, text: gatherText("gather") },
     ],
-    { platformId: caller.address, sender: caller.address, operationId },
+    { platformId: caller.address, sender: caller.address, requestId },
   );
 
-  assert.match(operationId, /^col_/u);
+  assert.match(requestId, /^msg_/u);
   const [first, second] = await received;
   const result = requireResult(first);
   assert.equal(typeof result.closedAt, "number");
-  assert.deepEqual(withReportedMembers(result), {
+  assert.deepEqual(withReportedRecipients(result), {
     kind: "collectiveResult",
     op: "gather",
-    operationId,
+    requestId,
     question: GATHER_QUESTION,
     closedAt: result.closedAt,
     closedBy: "settled",
     outcomes: [
       {
-        member: target.agent,
+        recipient: target.agent,
         outcome: { kind: "answered", content: { slot: "tue" } },
       },
     ],
@@ -201,34 +206,39 @@ async function answersAndStartsGather({
 
 function assertGatherRequest(request: RequestItem, target: AgentAccess) {
   assert.equal(request.kind, "collectiveRequest");
-  assert.equal(request.message.operation.op, "gather");
+  assert.equal(request.message.collectiveRequest.op, "gather");
   assert.deepEqual(reported(request.message.author), target.agent);
   assert.equal(conversationAddress(request.message), target.address);
-  assert.equal(request.message.operation.question, GATHER_QUESTION);
-  assert.deepEqual(request.message.operation.requestedSchema, SLOT_SCHEMA);
+  assert.equal(request.message.collectiveRequest.question, GATHER_QUESTION);
+  assert.deepEqual(
+    request.message.collectiveRequest.requestedSchema,
+    SLOT_SCHEMA,
+  );
 }
 
 /**
- * The caller starts an all_gather the peer declines and NanoClaw answers;
- * NanoClaw then starts its own, which the caller answers and the peer
+ * The caller starts an all_gather the peer declines and NanoClaw accepts;
+ * NanoClaw then starts its own, which the caller accepts and the peer
  * declines.
  */
-async function answersAndStartsAllGather(endpoints: Trio): Promise<undefined> {
+async function respondsToAndStartsAllGather(
+  endpoints: Trio,
+): Promise<undefined> {
   const { caller, target, peer } = endpoints;
   const group = groupAddress([caller, target, peer]);
-  const operationId = await startDeclinedAllGather(endpoints, group);
+  const requestId = await startDeclinedAllGather(endpoints, group);
   await runProbe(
     target,
     [
-      { to: group, text: acceptText("tue", operationId) },
+      { to: group, text: acceptText("tue", requestId) },
       { to: group, text: gatherText("all_gather") },
     ],
-    { platformId: group, sender: caller.address, operationId },
+    { platformId: group, sender: caller.address, requestId },
   );
-  const nanoClawRequest = await assertAllGatherAnswered(
+  const nanoClawRequest = await assertAllGatherCompleted(
     endpoints,
     group,
-    operationId,
+    requestId,
   );
   await assertNanoClawAllGather(endpoints, group, nanoClawRequest);
 }
@@ -241,30 +251,30 @@ async function startDeclinedAllGather(
   const started = await caller.send({
     to: group,
     text: GATHER_QUESTION,
-    collective: {
+    collectiveRequest: {
       op: "all_gather",
       deadline: 120,
       requestedSchema: SLOT_SCHEMA,
     },
   });
-  const operationId = started.id;
+  const requestId = started.id;
   const peerRequest = requireRequest((await peer.next(1))[0]);
-  assert.equal(peerRequest.message.operation.operationId, operationId);
+  assert.equal(peerRequest.message.msgId, requestId);
   await peer.send({
     to: group,
-    collectiveResponse: { action: "decline", operationId },
+    collectiveResponse: { action: "decline", requestId },
   });
-  return operationId;
+  return requestId;
 }
 
 /**
  * Check the caller's all_gather result reached the caller and the peer, and
  * return NanoClaw's own request the caller received.
  */
-async function assertAllGatherAnswered(
+async function assertAllGatherCompleted(
   { caller, target, peer }: Trio,
   group: string,
-  operationId: string,
+  requestId: string,
 ): Promise<RequestItem> {
   const callerItems = await caller.next(2);
   const result = requireResult(
@@ -274,17 +284,17 @@ async function assertAllGatherAnswered(
     callerItems.find((item) => item.kind === "collectiveRequest"),
   );
   assert.equal(typeof result.closedAt, "number");
-  assert.deepEqual(withReportedMembers(result), {
+  assert.deepEqual(withReportedRecipients(result), {
     kind: "collectiveResult",
     op: "all_gather",
-    operationId,
+    requestId,
     question: GATHER_QUESTION,
     closedAt: result.closedAt,
     closedBy: "settled",
-    outcomes: inMemberNameOrder([
-      { member: peer.agent, outcome: { kind: "declined" } },
+    outcomes: inRecipientNameOrder([
+      { recipient: peer.agent, outcome: { kind: "declined" } },
       {
-        member: target.agent,
+        recipient: target.agent,
         outcome: { kind: "answered", content: { slot: "tue" } },
       },
     ]),
@@ -305,42 +315,42 @@ async function assertAllGatherAnswered(
   return nanoClawRequest;
 }
 
-/** Answer NanoClaw's all_gather and check its result reaches every member. */
+/** Respond to NanoClaw's all_gather and check its result reaches every member. */
 async function assertNanoClawAllGather(
   { caller, target, peer }: Trio,
   group: string,
   request: RequestItem,
 ): Promise<undefined> {
-  assert.equal(request.message.operation.op, "all_gather");
+  assert.equal(request.message.collectiveRequest.op, "all_gather");
   assert.deepEqual(reported(request.message.author), target.agent);
   assert.equal(conversationAddress(request.message), group);
-  const operationId = request.message.operation.operationId;
+  const requestId = request.message.msgId;
 
   await caller.send({
     to: group,
     collectiveResponse: {
       action: "accept",
-      operationId,
+      requestId,
       content: { slot: "mon" },
     },
   });
   await peer.send({
     to: group,
-    collectiveResponse: { action: "decline", operationId },
+    collectiveResponse: { action: "decline", requestId },
   });
   const result = requireResult((await caller.next(1))[0]);
   assert.equal(result.op, "all_gather");
-  assert.equal(result.operationId, operationId);
+  assert.equal(result.requestId, requestId);
   assert.equal(typeof result.closedAt, "number");
   assert.equal(result.closedBy, "settled");
   assert.deepEqual(
-    withReportedMembers(result).outcomes,
-    inMemberNameOrder([
+    withReportedRecipients(result).outcomes,
+    inRecipientNameOrder([
       {
-        member: caller.agent,
+        recipient: caller.agent,
         outcome: { kind: "answered", content: { slot: "mon" } },
       },
-      { member: peer.agent, outcome: { kind: "declined" } },
+      { recipient: peer.agent, outcome: { kind: "declined" } },
     ]),
   );
   assert.deepEqual(await peer.next(1), [result]);
@@ -363,26 +373,24 @@ function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-/** The text a model sends to ask the question as a gather or an all_gather. */
+/** The text a model sends to make the question a gather or an all_gather. */
 function gatherText(op: "gather" | "all_gather"): string {
   return JSON.stringify({
     text: GATHER_QUESTION,
-    collective: { op, deadline: 60, requestedSchema: SLOT_SCHEMA },
+    collectiveRequest: { op, deadline: 60, requestedSchema: SLOT_SCHEMA },
   });
 }
 
-/** The text a model sends to answer with `slot`. */
-function acceptText(slot: string, operationId: string): string {
+/** The text a model sends to accept the collective request `requestId` names with `slot`. */
+function acceptText(slot: string, requestId: string): string {
   return JSON.stringify({
-    collectiveResponse: { action: "accept", operationId, content: { slot } },
+    collectiveResponse: { action: "accept", requestId, content: { slot } },
   });
 }
 
 /** The kind of an inbound item and its message's kind, address, sender and content. */
-function multicastSummary(
-  item: InboundItem,
-): Readonly<Record<string, unknown>> {
-  assert(item.kind === "multicast");
+function messageSummary(item: InboundItem): Readonly<Record<string, unknown>> {
+  assert(item.kind === "message");
   return {
     kind: item.kind,
     messageKind: item.message.recipients.length === 1 ? "direct" : "group",
@@ -421,26 +429,26 @@ function reported({ agentId, agentName }: AgentAccess["agent"]) {
   return { agentId, agentName };
 }
 
-/** A result with each outcome's member as an endpoint holds its agent. */
-function withReportedMembers(result: ResultItem) {
+/** A result with each outcome's recipient reduced to its agent id and name. */
+function withReportedRecipients(result: ResultItem) {
   return {
     ...result,
-    outcomes: result.outcomes.map(({ member, outcome }) => ({
-      member: reported(member),
+    outcomes: result.outcomes.map(({ recipient, outcome }) => ({
+      recipient: reported(recipient),
       outcome,
     })),
   };
 }
 
 /**
- * A result lists its outcomes in the order of the members' names, which the
+ * A result lists its outcomes in the order of the recipients' names, which the
  * daemon chooses.
  */
-function inMemberNameOrder<
-  Outcome extends { readonly member: AgentAccess["agent"] },
+function inRecipientNameOrder<
+  Outcome extends { readonly recipient: AgentAccess["agent"] },
 >(outcomes: readonly Outcome[]) {
   return outcomes.toSorted((left, right) =>
-    compareCodeUnits(left.member.agentName, right.member.agentName),
+    compareCodeUnits(left.recipient.agentName, right.recipient.agentName),
   );
 }
 

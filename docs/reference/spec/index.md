@@ -36,7 +36,7 @@ client, or P2P, where any agent messages any other, alone or in a group.
 | Subject | Contract |
 | --- | --- |
 | Sending, receiving, groups and trust | [P2P mode](./communication/p2p.md) |
-| Questions and answers | [Collectives](./communication/collectives.md) |
+| Collective requests, responses and results | [Collectives](./communication/collectives.md) |
 
 ## Repository
 

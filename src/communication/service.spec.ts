@@ -1,4 +1,4 @@
-/** @file Messages, groups and questions between agents on one daemon, with and without a rule on who may share a conversation. */
+/** @file Messages, groups and collective requests between agents on one daemon, with and without a rule on who may share a conversation. */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -17,7 +17,7 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { form } from "./__tests__/requests-fixtures.js";
-import { Answer, Message, Request } from "./messages.js";
+import { CollectiveRequest, CollectiveResponse, Message } from "./messages.js";
 import { Communication, type Conversation, type Incoming } from "./service.js";
 
 type Rule = Pick<Parameters<typeof Communication.layer>[0], "permits">;
@@ -191,12 +191,12 @@ it("delivers a group message to every member in one order, between any agents", 
     });
   }));
 
-it("carries a question to its recipient and the answer back as a result, before the answerer's next message", () =>
+it("carries a collective request to its recipient and the response back as a result, before the recipient's next message", () =>
   Effect.gen(function* () {
     const f = yield* peers();
     const bobInbox = yield* f.received(f.bob);
-    const answer = { slot: "tue" };
-    const request = yield* Request.create({
+    const content = { slot: "tue" };
+    const request = yield* CollectiveRequest.create({
       author: f.cards.alice,
       recipients: [f.cards.bob],
       question: "Which day works?",
@@ -206,32 +206,35 @@ it("carries a question to its recipient and the answer back as a result, before 
     });
     yield* f.alice.send(request);
     const asked = yield* Queue.take(bobInbox);
-    if (asked.kind !== "request") {
-      return yield* Effect.dieMessage("Expected Bob to receive the question");
+    if (asked.kind !== "collectiveRequest") {
+      return yield* Effect.dieMessage(
+        "Expected Bob to receive the collective request",
+      );
     }
+    expect(asked.message.msgId).toBe(request.msgId);
     yield* f.bob.send(
-      yield* Answer.create({
+      yield* CollectiveResponse.create({
         author: f.cards.bob,
         request: asked.message,
-        response: { action: "accept", content: answer },
+        response: { requestId: asked.message.msgId, action: "accept", content },
       }),
     );
     const later = yield* Message.create({
       author: f.cards.bob,
       recipients: [f.cards.alice],
-      content: [{ type: "text", text: "sent after the answer" }],
+      content: [{ type: "text", text: "sent after the response" }],
     });
     yield* f.bob.send(later);
     const aliceInbox = yield* f.received(f.alice);
     expect(yield* Queue.take(aliceInbox)).toMatchObject({
-      kind: "result",
+      kind: "collectiveResult",
       result: {
         request,
         closedBy: "settled",
         outcomes: [
           {
-            member: f.cards.bob,
-            outcome: { kind: "answered", content: answer },
+            recipient: f.cards.bob,
+            outcome: { kind: "answered", content },
           },
         ],
       },

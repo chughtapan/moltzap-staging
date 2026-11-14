@@ -19,12 +19,13 @@ import type { AgentCard } from "../identity.js";
 import type { InboxEntry } from "./message-format.js";
 import type { ReadHistoryResult } from "./social-harness.js";
 import {
-  Answer,
+  CollectiveRequest,
+  CollectiveRequestMessage,
+  CollectiveResponse,
   encodeCollectiveContent,
   Message,
   MessageAddressInput,
-  ReceivedRequest,
-  Request,
+  messageWithId,
 } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
@@ -117,27 +118,28 @@ function readInbox(runtime: Runtime) {
   });
 }
 
-/** The result of a question this agent asked and nobody answered. */
+/** The result of a collective request this agent sent and nobody responded to. */
 function unanswered(subject: Fixture, recipient?: AgentCard) {
-  const member = recipient ?? subject.bob;
-  return question(subject, subject.self, [member]).pipe(
+  const asked = recipient ?? subject.bob;
+  return collectiveRequest(subject, subject.self, [asked]).pipe(
     Effect.map(
       ({ request }) =>
         ({
-          kind: "result",
+          kind: "collectiveResult",
           result: {
             request,
             closedAt: request.deadlineAt,
             closedBy: "deadline",
-            outcomes: [{ member, outcome: { kind: "no-answer" } }],
+            outcomes: [{ recipient: asked, outcome: { kind: "no-answer" } }],
           },
-          sources: { answers: [] },
+          sources: { responses: [] },
         }) as const,
     ),
   );
 }
 
-function question(
+/** A collective request as its requester states it, and the message its recipients receive. */
+function collectiveRequest(
   subject: Fixture,
   author?: AgentCard,
   recipients?: readonly [AgentCard, ...AgentCard[]],
@@ -148,7 +150,7 @@ function question(
       author: author ?? subject.bob,
       recipients: recipients ?? [subject.self],
     };
-    const request = yield* Request.create({
+    const request = yield* CollectiveRequest.create({
       ...participants,
       op,
       question: "Which day works?",
@@ -158,22 +160,23 @@ function question(
       },
       deadline: 3600,
     });
-    const message = yield* Message.create({
-      ...participants,
-      content: yield* encodeCollectiveContent(
+    const message = yield* messageWithId(
+      participants.author,
+      participants.recipients,
+      request.msgId,
+      yield* encodeCollectiveContent(
         {
-          kind: "operation",
+          kind: "request",
           op,
-          operationId: request.operationId,
           requestedSchema: request.requestedSchema,
           deadlineAt: request.deadlineAt,
         },
         request.question,
       ),
-    });
+    );
     return {
       request,
-      message: yield* Schema.validate(ReceivedRequest)(message),
+      message: yield* Schema.validate(CollectiveRequestMessage)(message),
     };
   });
 }
@@ -691,7 +694,7 @@ it("lists every conversation once in address order in pages of 50, with one that
     );
   }));
 
-it("uses one captured policy for peer-controlled result text and trusts the local answer", () =>
+it("uses one captured policy for peer-controlled result text and trusts the local response", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const entered = yield* Deferred.make<undefined>();
@@ -715,44 +718,48 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     const runtime = yield* subject.open({
       policy: { ...options, maximumConcurrentChecks: 1 },
     });
-    const original = yield* question(
+    const original = yield* collectiveRequest(
       subject,
       subject.bob,
       [subject.self, subject.carol],
       "all_gather",
     );
-    yield* subject.deliver({ kind: "request", message: original.message });
+    yield* subject.deliver({
+      kind: "collectiveRequest",
+      message: original.message,
+    });
     yield* acknowledgeNext(runtime);
     completing = true;
-    const own = yield* Answer.create({
+    const requestId = original.message.msgId;
+    const own = yield* CollectiveResponse.create({
       author: subject.self,
       request: original.message,
-      response: { action: "accept", content: { day: "Tuesday" } },
+      response: { requestId, action: "accept", content: { day: "Tuesday" } },
     });
-    const remote = yield* Answer.create({
+    const remote = yield* CollectiveResponse.create({
       author: subject.carol,
       request: original.message,
-      response: { action: "accept", content: { day: "Wednesday" } },
+      response: { requestId, action: "accept", content: { day: "Wednesday" } },
     });
     const before = yield* runtime.firewall.readPolicy();
     yield* subject.deliver({
-      kind: "result",
+      kind: "collectiveResult",
       result: {
         request: original.request,
         closedAt: Date.now(),
         closedBy: "settled",
         outcomes: [
           {
-            member: subject.self,
+            recipient: subject.self,
             outcome: { kind: "answered", content: { day: "Tuesday" } },
           },
           {
-            member: subject.carol,
+            recipient: subject.carol,
             outcome: { kind: "answered", content: { day: "Wednesday" } },
           },
         ],
       },
-      sources: { request: original.message, answers: [own, remote] },
+      sources: { request: original.message, responses: [own, remote] },
     });
     yield* Deferred.await(entered);
     yield* runtime.firewall.updatePolicy({ remove: ["privacy"] });
@@ -779,13 +786,16 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     ).toEqual(new Set([before.activeRevision]));
   }));
 
-it("can answer a presented request after acknowledgment and restart", () =>
+it("can respond to a presented collective request after acknowledgment and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
     const runtime = yield* subject.open().pipe(Scope.extend(scope));
-    const original = yield* question(subject);
-    yield* subject.deliver({ kind: "request", message: original.message });
+    const original = yield* collectiveRequest(subject);
+    yield* subject.deliver({
+      kind: "collectiveRequest",
+      message: original.message,
+    });
     yield* acknowledgeNext(runtime);
     expect(subject.submitted).toEqual([]);
     yield* Scope.close(scope, Exit.void);
@@ -793,37 +803,35 @@ it("can answer a presented request after acknowledgment and restart", () =>
     yield* reopened.harness.send({
       to: bobAddress,
       collectiveResponse: {
-        operationId: original.request.operationId,
+        requestId: original.message.msgId,
         action: "accept",
         content: { day: "Tuesday" },
       },
     });
     expect(subject.submitted).toMatchObject([
-      {
-        operation: {
-          kind: "response",
-          operationId: original.request.operationId,
-        },
-      },
+      { collectiveResponse: { requestId: original.message.msgId } },
     ]);
   }));
 
-it("cannot answer a request withheld from the agent", () =>
+it("cannot respond to a collective request withheld from the agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
 
     const runtime = yield* subject.open({
       policy: firewallOptions(violation),
     });
-    const original = yield* question(subject);
-    yield* subject.deliver({ kind: "request", message: original.message });
+    const original = yield* collectiveRequest(subject);
+    yield* subject.deliver({
+      kind: "collectiveRequest",
+      message: original.message,
+    });
     yield* waitForDecisions(runtime);
     expect(
       yield* runtime.harness
         .send({
           to: bobAddress,
           collectiveResponse: {
-            operationId: original.request.operationId,
+            requestId: original.message.msgId,
             action: "decline",
           },
         })
@@ -929,7 +937,7 @@ it("reads a saved conversation's history at its canonical address, reports an un
     );
   }));
 
-it("uses the public invalid-answer reason without exposing the original answer", () =>
+it("uses the public reason of an invalid outcome without exposing the original response", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const seen: DecisionRequest[] = [];
@@ -942,7 +950,9 @@ it("uses the public invalid-answer reason without exposing the original answer",
           }),
       }),
     });
-    const original = yield* question(subject, subject.self, [subject.bob]);
+    const original = yield* collectiveRequest(subject, subject.self, [
+      subject.bob,
+    ]);
     yield* subject.retain(original.message);
     const privateAnswer = "private invalid answer sentinel";
     const invalid = yield* Message.create({
@@ -950,25 +960,25 @@ it("uses the public invalid-answer reason without exposing the original answer",
       recipients: [subject.self],
       content: yield* encodeCollectiveContent({
         kind: "response",
-        operationId: original.request.operationId,
+        requestId: original.message.msgId,
         action: "accept",
         content: { day: [privateAnswer] },
       }),
     });
     yield* subject.deliver({
-      kind: "result",
+      kind: "collectiveResult",
       result: {
         request: original.request,
         closedAt: Date.now(),
         closedBy: "settled",
         outcomes: [
           {
-            member: subject.bob,
+            recipient: subject.bob,
             outcome: { kind: "invalid", reason: "Expected a day" },
           },
         ],
       },
-      sources: { request: original.message, answers: [invalid] },
+      sources: { request: original.message, responses: [invalid] },
     });
     const [entry] = (yield* waitForInbox(runtime)).items;
     expect(entry?.item).toMatchObject({

@@ -31,14 +31,14 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   [host contract](../../docs/reference/spec/host/adapters.md#openclaw-session-and-output-contract).
 - Direct input identifies the sender and `agent:` address. Group input
   identifies `kind: group`, the canonical group address and the sender. A
-  group message or question lists its members from the message's author and
-  recipients; a result lists none.
+  group message or collective request lists its members from the message's
+  author and recipients; a collective result lists none.
 - The stock reply-delivery callback withholds final text and sends nothing, in
   shared and in private evaluation mode. Every outbound callback names an
   explicit `agent:` or `group:` target through the `message` tool. The model's
   `send` and `reply` reach the plugin's actions, which add no tool parameter;
   `message.send.text` serves OpenClaw's core-forced sends. Every path sends
-  text that is a JSON object with `collective` or `collectiveResponse` as
+  text that is a JSON object with `collectiveRequest` or `collectiveResponse` as
   those `send_message` arguments, and any other text as a plain message. The
   daemon validates the arguments and enforces experiment switches on every
   send; the channel surfaces its refusal unchanged. The host decides which tools invoke those callbacks.

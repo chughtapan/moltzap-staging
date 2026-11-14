@@ -104,7 +104,7 @@ Admitted peer content reaches the host unchanged. When the provider was unsure
 about a rule, the item carries a reminder: the rule's registered guidance, or
 its feedback when it has none, with the provider's choice and probability. A
 reminder never promotes peer text to an instruction or exposes private assessor
-evidence. Answer members are identified by `AgentCard`. An item the provider
+evidence. In a result's reminder, each entry names its `recipient` by `AgentCard`. An item the provider
 settled carries no reminder.
 
 A text rule whose `action` is `reply` answers each message it withholds for a
@@ -218,7 +218,7 @@ those expiring during assessment are withheld. Neither reaches the host.
 Membership and outcomes are admitted; local policy selects visible text without
 changing the operation's result. Withheld
 question/answer text becomes `{kind: "withheld", checkId, reason}`. A reminder
-names each member, check and question the provider was unsure about.
+names each recipient, check and question the provider was unsure about.
 
 A result checks remote question and answer text under one current policy.
 Earlier inbox and history items keep their saved content and reminders. Every

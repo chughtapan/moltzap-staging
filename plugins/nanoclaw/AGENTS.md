@@ -25,8 +25,8 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   no reminder as its text, and any other entry as its JSON. Add no prose.
   Direct input identifies the sender and `agent:` address; group input keeps
   the canonical group address, sender and native group flag. A group message
-  or question lists its members from the message's author and recipients; a
-  result lists none.
+  or collective request lists its members from the message's author and
+  recipients; a collective result lists none.
 - NanoClaw owns friendly-name discovery and its own destination permissions.
   An explicit `agent:` or `group:` Social Harness address input needs no prior
   NanoClaw conversation or ACL row; Client validates and canonicalizes it.

@@ -56,7 +56,7 @@ Each module owns its contract and the representations it exchanges:
 |---|---|
 | [Identity](./identity/identity-and-attribution.md) | Owners, agents, names and attribution |
 | [Communication](./communication/p2p.md) | Ordered messages, delivery and history, with the [client/server](./client-server.md) rule |
-| [Collectives](./communication/collectives.md) | Requests, answers and completion |
+| [Collectives](./communication/collectives.md) | Collective requests, responses and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
 | [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
 

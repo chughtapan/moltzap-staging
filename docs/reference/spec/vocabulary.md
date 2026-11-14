@@ -38,10 +38,9 @@ of thing.
 | **requester** | The author of a collective request. |
 
 A collective request, response and close are messages and are identified as
-messages are. The collective layer keeps one identifier of its own to tie a
-request's copies, its responses and its result together. That identifier is
-private to the layer: no tool, no other module and no message content carries
-it.
+messages are. A `gather` to several recipients sends each a private copy with
+its own message id. The send returns the id of the first copy, the result
+carries that id as its `requestId`, and a response may name any copy.
 
 ## Inbox
 

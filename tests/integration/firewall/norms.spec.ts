@@ -26,7 +26,7 @@ const NORMS_TEST_TIMEOUT_MS = 120_000;
 
 /** The text of a delivered message, or nothing for any other item. */
 function textOf(item: PermittedItem) {
-  return item.kind === "multicast"
+  return item.kind === "message"
     ? item.message.content
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("")

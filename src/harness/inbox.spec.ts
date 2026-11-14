@@ -39,7 +39,7 @@ it("retains the same peer message independently and rejects foreign event and ac
     };
     const decision = {
       kind: "allowed",
-      item: { kind: "multicast", message },
+      item: { kind: "message", message },
       visibility: [{ message: reference, visibleToAgent: true }],
       save: Effect.void,
     } as const;

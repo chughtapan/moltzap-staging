@@ -92,7 +92,7 @@ const qualifyInbox = (keys: readonly string[]) =>
       }
       yield* inbox.publish(pending, {
         kind: "allowed",
-        item: { kind: "multicast", message },
+        item: { kind: "message", message },
         save: Effect.void,
         visibility: [],
       });

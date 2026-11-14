@@ -63,10 +63,14 @@ const parameterName = /^[a-z][a-z0-9-]{0,63}$/u;
 
 /**
  * The text a norm reads in a message: its text parts, in order. A collective
- * request, answer or data part is not read by norms.
+ * request, a collective response or a data part is not read by norms.
  */
 export function messageText(message: Outgoing): string | undefined {
-  if ("kind" in message || message.operation !== undefined) {
+  if (
+    "kind" in message ||
+    message.collectiveRequest !== undefined ||
+    message.collectiveResponse !== undefined
+  ) {
     return undefined;
   }
   const parts = message.content.flatMap((part) =>

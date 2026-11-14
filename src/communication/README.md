@@ -1,13 +1,13 @@
 # Communication
 
-Communication accepts messages and questions, orders them in their
+Communication accepts messages and collective requests, orders them in their
 conversation, and retains the history. The daemon uses this service beneath
 its message policy and host interface.
 
 Callers use [`Communication`](./service.ts) and submit messages and
-questions through `send`; a successful return means the work is saved.
-Receiving code consumes ordered messages, requests and results, and local
-policy decides which content reaches the agent.
+collective requests through `send`; a successful return means the message is
+saved. Receiving code consumes ordered messages, collective requests and
+collective results, and local policy decides which content reaches the agent.
 
 Both modes use the same [service](./service.ts). A send finds each recipient
 among the daemon's agents, gives the message the next position in its
@@ -18,6 +18,6 @@ conversation and saves it for every member in one transaction.
 - [Client/server](../../docs/reference/spec/client-server.md): every
   conversation is the server agent and one client.
 
-Questions and answers are messages that the
-[request worker](./collectives.ts) interprets. See the
+Collective requests and responses are messages that the
+[collective layer](./collectives.ts) interprets. See the
 [collective contract](../../docs/reference/spec/communication/collectives.md).

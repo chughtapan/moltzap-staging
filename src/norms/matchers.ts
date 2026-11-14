@@ -20,8 +20,8 @@
 import { Effect, Option } from "effect";
 import type { Matcher, MatchInput, MatchResult } from "../firewall/index.js";
 import {
-  type AnswerFieldFailures,
-  answerFieldsText,
+  type ResponseFieldFailures,
+  responseFieldsText,
 } from "../communication/index.js";
 import {
   type Act,
@@ -285,7 +285,7 @@ function unreadable(analysis: Analysis):
       readonly reason: string;
       readonly norm?: string;
       readonly error?: string;
-      readonly fields?: AnswerFieldFailures;
+      readonly fields?: ResponseFieldFailures;
     }
   | undefined {
   const { reading, setting, state, verdict } = analysis;
@@ -309,7 +309,7 @@ function unreadable(analysis: Analysis):
     norm: breach.norm,
     ...(breach.fields === undefined
       ? {}
-      : { error: answerFieldsText(breach.fields), fields: breach.fields }),
+      : { error: responseFieldsText(breach.fields), fields: breach.fields }),
   };
 }
 

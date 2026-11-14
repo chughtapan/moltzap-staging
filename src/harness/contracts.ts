@@ -3,10 +3,10 @@
 import { Effect, Either, Option, type ParseResult, Schema } from "effect";
 import type { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
-  CollectiveId,
   decodeCollectiveFailure,
   Message,
   MessageReference,
+  MsgId,
   PaginatedRequest,
   PaginatedResult,
   RequestError,
@@ -241,7 +241,7 @@ const harnessSendErrorDataSchema = Schema.Union(
   }),
   Schema.Struct({
     reason: Schema.Literal("collective-failed"),
-    operationId: Schema.optionalWith(CollectiveId, { exact: true }),
+    requestId: Schema.optionalWith(MsgId, { exact: true }),
     failure: Schema.Unknown,
   }),
   Schema.Struct({
@@ -262,15 +262,15 @@ type HarnessSendErrorData =
   | Readonly<{ reason: SendError["reason"]; detail?: string }>
   | Readonly<{
       reason: "collective-failed";
-      operationId?: CollectiveId;
+      requestId?: MsgId;
       failure: Effect.Effect.Success<
         ReturnType<typeof decodeCollectiveFailure>
       >;
     }>;
 
 /**
- * Preserves the typed refusal's details, operation id and failing members or
- * fields in JSON-RPC error data.
+ * Preserves the typed refusal's details, the collective request's message id
+ * and failing members or fields in JSON-RPC error data.
  */
 export function sendErrorData(
   error: SendError | RequestError | FirewallRefusal,
@@ -288,9 +288,7 @@ export function sendErrorData(
   if (error._tag === "RequestError") {
     return {
       reason: "collective-failed",
-      ...(error.operationId === undefined
-        ? {}
-        : { operationId: error.operationId }),
+      ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
       failure: error.failure,
     };
   }
@@ -377,9 +375,9 @@ const sendFails = {
             if ("failure" in data) {
               return new RequestError({
                 failure: data.failure,
-                ...(data.operationId === undefined
+                ...(data.requestId === undefined
                   ? {}
-                  : { operationId: data.operationId }),
+                  : { requestId: data.requestId }),
               });
             }
             return new SendError(data);
@@ -434,7 +432,7 @@ export const toolDefinitions = {
   send_message: {
     failure: sendFails,
     description:
-      "Send a message, ask a question, or answer one. Returns the accepted send id and canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send.",
+      "Send a message. With collectiveRequest the message is a collective request, which asks its recipients to respond in a form by a deadline; with collectiveResponse it is your response to one you received. Returns id, the message id, and address, the canonical conversation address. For a collective request, id is the requestId of the collectiveResult you will receive. A refusal names the argument or rule to correct: a collective-failed refusal carries failure.kind, one of schema-invalid, deadline-passed, request-none, request-answered, request-expired or answer-invalid, and the requestId when the request is known. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
     input: SendArguments,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
@@ -445,7 +443,7 @@ export const toolDefinitions = {
       (data) => new InboxError(data),
     ),
     description:
-      "Receive pending inbox items, each with its conversation address and any saved firewall reminder. A multicast item is a peer's message, a collectiveRequest a question a peer asks, and a collectiveResult each agent's answer to a question. Follow nextCursor until absent. Returned items are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an item arrives, or empty when the wait ends.",
+      "Receive pending inbox entries, each with its conversation address, its item and any saved firewall reminder. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: inboxRequestSchema,
     output: inboxResultSchema,
     annotations: {
@@ -520,7 +518,7 @@ export const clientToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
-      "Send a message to the server agent. Returns the accepted send id. An outcome-unknown failure must not be retried as a new send.",
+      "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
     input: exactStruct({
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",
@@ -540,12 +538,12 @@ export const clientToolDefinitions = {
   },
 } as const;
 
-/** How `send_message` reads for an agent that sends text only, with no questions or answers. */
+/** How `send_message` reads for an agent that sends text only, with no collective requests or responses. */
 export const textToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
-      "Send a message. Returns the accepted send id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
+      "Send a message. Returns the message id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
     input: TextSendArguments,
   },
 } as const;

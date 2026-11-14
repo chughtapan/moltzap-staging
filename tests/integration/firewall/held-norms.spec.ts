@@ -77,7 +77,7 @@ function firstDelivery(agent: SignedIn) {
 
 /** The text of a delivered message, or nothing for any other item. */
 function textOf(item?: PermittedItem) {
-  return item?.kind === "multicast"
+  return item?.kind === "message"
     ? item.message.content
         .map((part) => (part.type === "text" ? part.text : ""))
         .join("")
@@ -172,7 +172,7 @@ const serverOwnsNorms = Effect.gen(function* () {
   expect(serverNorms.norms.map((norm) => norm.name)).not.toContain(droppedNorm);
   expect(clientNorms.structuredContent).toEqual(serverNorms);
   expect(plainText).toMatchObject({
-    kind: "multicast",
+    kind: "message",
     message: { author: server.agent },
   });
   expect(textOf(plainText)).toMatch(

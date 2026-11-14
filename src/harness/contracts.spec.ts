@@ -2,8 +2,7 @@
 
 import { Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { testAgentCard } from "../__tests__/agents.js";
-import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
+import { digest } from "../__tests__/agents.js";
 import { toolDefinitions } from "./contracts.js";
 
 describe("message operation contracts", () => {
@@ -14,14 +13,12 @@ describe("message operation contracts", () => {
       );
 
     it.each([{ kind: "request-expired" }, { kind: "request-answered" }])(
-      "keeps a question's closed refusal %j",
+      "keeps a collective request's closed refusal %j",
       (failure) => {
-        const operationId = collectiveOperationId(
-          testAgentCard("alice").agentId,
-        );
+        const requestId = digest("msg_", 1);
         expect(
-          read({ reason: "collective-failed", operationId, failure }),
-        ).toMatchObject({ _tag: "RequestError", operationId, failure });
+          read({ reason: "collective-failed", requestId, failure }),
+        ).toMatchObject({ _tag: "RequestError", requestId, failure });
       },
     );
 

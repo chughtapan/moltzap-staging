@@ -19,16 +19,16 @@ import { createHash } from "node:crypto";
 import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   AgentAddress,
-  Answer,
+  CollectiveRequest,
+  CollectiveResponse,
   CommunicationError,
   GroupAddress,
   Message,
   type MessageAddressInput,
-  messageFromParticipants,
+  messageWithId,
   MsgId,
   type PaginatedRequest,
   type PaginatedResult,
-  Request,
   RequestError,
   SendError,
 } from "../communication/index.js";
@@ -85,9 +85,10 @@ type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, saved inbox and history operations for one agent. */
 interface SocialHarnessService {
   /**
-   * Checks policy and saves permitted work for delivery. The receipt identifies
-   * accepted work and its canonical conversation, without confirming peer receipt.
-   * Each call creates fresh work. Retrying an uncertain send can duplicate it.
+   * Checks policy and saves the permitted message for delivery. The result
+   * carries its message id and canonical conversation, without confirming
+   * peer receipt. Each call creates a new message. Retrying an uncertain send
+   * can duplicate it.
    */
   readonly send: (
     request: SendRequest,
@@ -100,7 +101,7 @@ interface SocialHarnessService {
   readonly listInbox: (
     request?: PaginatedRequest & { readonly wait?: Duration.Duration },
   ) => Effect.Effect<InboxPage, InboxError>;
-  /** Repeating an acknowledgment is harmless and does not answer a request. */
+  /** Repeating an acknowledgment is harmless and does not respond to a collective request. */
   readonly acknowledgeDelivery: (
     token: DeliveryToken,
   ) => Effect.Effect<void, DeliveryAcknowledgeError>;
@@ -237,7 +238,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             if ("collectiveResponse" in request) {
               if (
                 !(yield* inbox.isRequestVisible(
-                  request.collectiveResponse.operationId,
+                  request.collectiveResponse.requestId,
                 ))
               ) {
                 return yield* new RequestError({
@@ -245,7 +246,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                 });
               }
               const original = yield* communication
-                .getRequest(request.collectiveResponse.operationId)
+                .getCollectiveRequest(request.collectiveResponse.requestId)
                 .pipe(
                   Effect.catchTag("CommunicationError", (error) =>
                     Effect.fail(sendFailure(error)),
@@ -267,7 +268,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               ) {
                 return yield* new SendError({ reason: "invalid-address" });
               }
-              value = yield* Answer.create({
+              value = yield* CollectiveResponse.create({
                 author: card,
                 request: original,
                 response: request.collectiveResponse,
@@ -308,13 +309,12 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                 return yield* new SendError({ reason: "membership-invalid" });
               }
               value =
-                request.collective?.op === "gather" ||
-                request.collective?.op === "all_gather"
-                  ? yield* Request.create({
+                "collectiveRequest" in request
+                  ? yield* CollectiveRequest.create({
                       author: card,
                       recipients: [first, ...rest],
                       question: request.text,
-                      ...request.collective,
+                      ...request.collectiveRequest,
                     }).pipe(
                       Effect.catchTag("CommunicationError", (error) =>
                         Effect.fail(sendFailure(error)),
@@ -354,10 +354,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                   Effect.fail(sendFailure(error)),
                 ),
               );
-            return {
-              id: "kind" in value ? value.operationId : value.msgId,
-              address: destination.address,
-            };
+            return { id: value.msgId, address: destination.address };
           }).pipe(
             Effect.catchTag("InboxError", () =>
               Effect.fail(new SendError({ reason: "persistence-failed" })),
@@ -572,13 +569,14 @@ function checkIncoming(
   return Effect.gen(function* () {
     const value = entry.incoming;
     if (
-      value.kind === "request" &&
-      (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt
+      value.kind === "collectiveRequest" &&
+      (yield* Clock.currentTimeMillis) >=
+        value.message.collectiveRequest.deadlineAt
     ) {
       return yield* inbox.retire(entry.token);
     }
     let evidence: FirewallEvidence | ResultEvidence | undefined;
-    if (value.kind === "message" || value.kind === "request") {
+    if (value.kind === "message" || value.kind === "collectiveRequest") {
       evidence = yield* evidenceFor(
         inbox,
         communication,
@@ -586,13 +584,13 @@ function checkIncoming(
         limit,
         value.message,
       );
-    } else if (value.kind === "result") {
+    } else if (value.kind === "collectiveResult") {
       const question =
         value.sources.request?.author.agentId === card.agentId
           ? undefined
           : value.sources.request;
       const answers = yield* Effect.forEach(
-        value.sources.answers.filter(
+        value.sources.responses.filter(
           (message) => message.author.agentId !== card.agentId,
         ),
         (message) =>
@@ -631,8 +629,9 @@ function checkIncoming(
     const decision = yield* firewall.checkIncoming(value, evidence);
     const reply = yield* replyTo(value, decision, card, withheldReply);
     const expired =
-      value.kind === "request" &&
-      (yield* Clock.currentTimeMillis) >= value.message.operation.deadlineAt;
+      value.kind === "collectiveRequest" &&
+      (yield* Clock.currentTimeMillis) >=
+        value.message.collectiveRequest.deadlineAt;
     yield* transaction(
       decision.save.pipe(
         Effect.zipRight(inbox.publish(entry, decision, expired)),
@@ -685,12 +684,13 @@ function replyTo(
       .digest("base64url")}`,
   ).pipe(
     Effect.flatMap((msgId) =>
-      messageFromParticipants(
+      messageWithId(
         self,
         [withheld.author, ...withheld.recipients].filter(
           (member) => member.agentId !== self.agentId,
         ),
-        { msgId, content: [{ type: "text", text }] },
+        msgId,
+        [{ type: "text", text }],
       ),
     ),
     Effect.orElseSucceed(() => undefined),
@@ -797,9 +797,9 @@ function conversation(
 function incomingParticipants(incoming: Incoming): readonly AgentCard[] {
   switch (incoming.kind) {
     case "message":
-    case "request":
+    case "collectiveRequest":
       return [incoming.message.author, ...incoming.message.recipients];
-    case "result":
+    case "collectiveResult":
       return [
         incoming.result.request.author,
         ...incoming.result.request.recipients,

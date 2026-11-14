@@ -1,4 +1,4 @@
-/** @file Questions, their answers and the results they complete, for one agent. */
+/** @file One agent's collectives: the collective requests it sends and receives, their responses and the results they complete. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import {
@@ -10,99 +10,114 @@ import {
   Schedule,
   Schema,
 } from "effect";
-import {
-  afterCommit,
-  transaction as openTransaction,
-} from "../database/index.js";
+import { afterCommit, transaction } from "../database/index.js";
 import { encodeJson, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { AgentCard } from "../identity.js";
 import { CommunicationError } from "./errors.js";
 import {
+  type CollectiveClose,
   type collectiveClosure,
-  type CollectiveId,
-  collectiveRequesterOf,
-  type CollectiveValue,
+  type CollectivePart,
+  collectivePartOf,
+  type CollectiveRequest,
+  collectiveRequestContent,
+  type CollectiveRequestMessage,
+  type CollectiveResponse,
+  type CollectiveResult,
+  CollectiveResultSources,
   encodeCollectiveContent,
-  isReceivedRequest,
+  isCollectiveRequestMessage,
   Message,
-  messageInterpretation,
   messageMembers,
   type MessageReference,
+  messageWithId,
+  type MsgId,
   outcomeOfResponse,
-  type ReceivedRequest,
-  type Request,
-  type RequestedSchema,
   RequestError,
-  type ResponseValue,
-  type ResultDelivery,
-  ResultSources,
-  validateAnswer,
+  validateResponseContent,
 } from "./messages.js";
 import {
+  discardCollective,
   EndpointStoreError,
-  putCollectiveOperation,
-  readCollectingQuestionIds,
-  readCollectiveAnswers,
-  readCollectiveOperation,
+  markCollectiveResultConsumed,
+  readCollectingRequestIds,
+  readCollective,
+  readCollectiveOfCopy,
+  readCollectiveResponses,
   readNextCollectiveResult,
-  recordCollectiveAnswer,
-  retireCollectiveOperation,
-  retireCollectiveResult,
+  recordCollectiveCopy,
+  recordCollectiveResponse,
+  saveCollective,
   saveCollectiveResult,
-  type StoredCollectiveOperation,
+  type StoredCollective,
 } from "./store.js";
 
-type IncomingItem =
+/** What the host should see of a message this agent received. */
+type ReceivedMessage =
   | { readonly kind: "message"; readonly message: Message }
-  | { readonly kind: "request"; readonly message: ReceivedRequest };
+  | {
+      readonly kind: "collectiveRequest";
+      readonly message: CollectiveRequestMessage;
+    };
+
+/** A collective result with the messages its peer-controlled text came from. */
+interface CompletedCollective {
+  readonly result: CollectiveResult;
+  readonly sources: CollectiveResultSources;
+}
 
 /**
- * One agent's questions and answers. `send` orders and saves a message inside
- * the caller's transaction.
+ * One agent's collectives. `send` orders and saves a message inside the
+ * caller's transaction.
  */
-export const makeRequests = Effect.fn("Communication.requests")(function* (
-  agentKey: string,
-  input: {
-    readonly self: AgentCard;
-    readonly send: (
-      message: Message,
-    ) => Effect.Effect<void, CommunicationError>;
-    /** Runs once a result is saved for this agent to consume. */
-    readonly completed: Effect.Effect<void>;
-  },
-) {
-  const environment: Environment = {
-    agentKey,
-    ...input,
-    sql: yield* SqlClient,
-    asked: yield* Effect.makeLatch(),
-  };
-  yield* runWorker(environment).pipe(
-    Effect.provideService(SqlClient, environment.sql),
-    restarting(agentKey, "deadline worker"),
-    Effect.interruptible,
-    Effect.forkScoped,
-  );
-  const capture = <A, E, R>(
-    effect: Effect.Effect<A, E | EndpointStoreError, R>,
-  ) =>
-    effect.pipe(
-      Effect.catchTag(
-        "EndpointStoreError",
-        () => new CommunicationError({ reason: "persistence-failed" }),
-      ),
+export const makeCollectives = Effect.fn("Communication.collectives")(
+  function* (
+    agentKey: string,
+    input: {
+      readonly card: AgentCard;
+      readonly send: (
+        message: Message,
+      ) => Effect.Effect<void, CommunicationError>;
+      /** Runs once a result is saved for this agent to consume. */
+      readonly completed: Effect.Effect<void>;
+    },
+  ) {
+    const agent: CollectiveAgent = {
+      agentKey,
+      ...input,
+      sql: yield* SqlClient,
+      requested: yield* Effect.makeLatch(),
+    };
+    yield* completeDueRequests(agent).pipe(
+      Effect.provideService(SqlClient, agent.sql),
+      restarting(agentKey, "deadline worker"),
+      Effect.interruptible,
+      Effect.forkScoped,
     );
-  return {
-    accept: (request: Request) => capture(ask(environment, request)),
-    answer: (message: Message) => capture(answer(environment, message)),
-    getRequest: (operationId: CollectiveId) =>
-      capture(getRequest(environment, operationId)),
-    receive: (message: Message) => capture(receive(environment, message)),
-    deliverNextResult: <E, R>(
-      handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
-    ) => deliverNextResult(agentKey, handle),
-  };
-});
+    const storeFailureAsUnavailable = <A, E, R>(
+      effect: Effect.Effect<A, E | EndpointStoreError, R>,
+    ) =>
+      effect.pipe(
+        Effect.catchTag(
+          "EndpointStoreError",
+          () => new CommunicationError({ reason: "persistence-failed" }),
+        ),
+      );
+    return {
+      sendRequest: (request: CollectiveRequest) =>
+        storeFailureAsUnavailable(sendRequest(agent, request)),
+      sendResponse: (message: Message, response: CollectiveResponse) =>
+        storeFailureAsUnavailable(sendResponse(agent, message, response)),
+      getRequest: (requestId: MsgId) =>
+        storeFailureAsUnavailable(getRequest(agent, requestId)),
+      receive: (message: Message) =>
+        storeFailureAsUnavailable(receive(agent, message)),
+      deliverNextResult: <E, R>(
+        handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
+      ) => deliverNextResult(agentKey, handle),
+    };
+  },
+);
 
 /**
  * Keeps a background loop of one agent running. A failure is logged and the
@@ -130,65 +145,54 @@ export function restarting(agentKey: string, loop: string) {
     );
 }
 
-/** What one agent's question handling works with for the life of its service. */
-interface Environment {
+/** The agent whose collectives these are, and what handling them uses for the life of its service. */
+interface CollectiveAgent {
   readonly agentKey: string;
   readonly sql: SqlClient;
-  readonly self: AgentCard;
+  readonly card: AgentCard;
   readonly send: (message: Message) => Effect.Effect<void, CommunicationError>;
   readonly completed: Effect.Effect<void>;
-  /** Opened when this agent asks a question, which gives the worker a deadline to wait for. */
-  readonly asked: Effect.Latch;
+  /** Opened when this agent sends a collective request, which gives the worker a deadline to wait for. */
+  readonly requested: Effect.Latch;
 }
 
 type Closure = typeof collectiveClosure.Type;
 
 /**
- * Saves the question and sends it to every audience in one transaction. A
- * gather's audiences are its recipients in name order, so two questions lock
- * the conversations they share in the same order.
+ * Saves the collective and sends its request in one transaction: one group
+ * message for an all_gather, one private copy per recipient for a gather. The
+ * first copy takes the request's own message id, and every copy's id is
+ * recorded against the collective. Copies go out in recipient-name order, so
+ * two requests lock the conversations they share in the same order.
  */
-function ask(environment: Environment, request: Request) {
-  const agentKey = environment.agentKey;
+function sendRequest(agent: CollectiveAgent, request: CollectiveRequest) {
+  const { agentKey } = agent;
 
   return Effect.gen(function* () {
     if (
-      !Schema.equivalence(AgentCard)(request.author, environment.self) ||
-      collectiveRequesterOf(request.operationId) !== environment.self.agentId ||
+      !Schema.equivalence(AgentCard)(request.author, agent.card) ||
       (request.op === "all_gather" && request.recipients.length < 2)
     ) {
       return yield* new CommunicationError({ reason: "membership-invalid" });
     }
-    yield* transaction(
+    yield* storeTransaction(
       Effect.gen(function* () {
-        const existing = yield* readCollectiveOperation(
-          agentKey,
-          request.operationId,
-        );
+        const existing = yield* readCollective(agentKey, request.msgId);
         if (
           existing === undefined &&
           request.deadlineAt <= (yield* Clock.currentTimeMillis)
         ) {
           return yield* new RequestError({
-            operationId: request.operationId,
+            requestId: request.msgId,
             failure: { kind: "deadline-passed" },
           });
         }
-        yield* putCollectiveOperation(agentKey, { origin: "local", request });
+        yield* saveCollective(agentKey, { role: "requester", request });
         if (existing !== undefined) {
           return;
         }
-        yield* afterCommit(environment.asked.open);
-        const content = yield* encodeCollectiveContent(
-          {
-            kind: "operation",
-            op: request.op,
-            operationId: request.operationId,
-            deadlineAt: request.deadlineAt,
-            requestedSchema: request.requestedSchema,
-          },
-          request.question,
-        ).pipe(
+        yield* afterCommit(agent.requested.open);
+        const content = yield* collectiveRequestContent(request).pipe(
           Effect.catchTag(
             "CollectiveContentError",
             () => new CommunicationError({ reason: "content-invalid" }),
@@ -200,338 +204,307 @@ function ask(environment: Environment, request: Request) {
                 recipient,
               ])
             : [request.recipients];
-        for (const recipients of audiences) {
-          const message = yield* Message.create({
-            author: request.author,
-            recipients,
-            content,
-          });
-          yield* environment.send(message);
+        for (const [index, recipients] of audiences.entries()) {
+          const copy = yield* index === 0
+            ? messageWithId(
+                request.author,
+                recipients,
+                request.msgId,
+                content,
+              ).pipe(
+                Effect.catchTag(
+                  "ParseError",
+                  () => new CommunicationError({ reason: "content-invalid" }),
+                ),
+              )
+            : Message.create({ author: request.author, recipients, content });
+          yield* recordCollectiveCopy(agentKey, request.msgId, copy.msgId);
+          yield* agent.send(copy);
         }
       }),
     );
-  }).pipe(Effect.withSpan("Requests.accept"));
+  }).pipe(Effect.withSpan("Collectives.sendRequest"));
 }
 
-/** Looking up a request reserves nothing and reports its current answer eligibility. */
-function getRequest(environment: Environment, operationId: CollectiveId) {
+/** The collective request this agent may still respond to. Looking it up reserves nothing. */
+function getRequest(agent: CollectiveAgent, requestId: MsgId) {
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(
-      environment.agentKey,
-      operationId,
-    );
-    if (operation === undefined || operation.origin !== "remote") {
-      return yield* new RequestError({
-        operationId,
-        failure: { kind: "request-none" },
-      });
+    const stored = yield* readCollective(agent.agentKey, requestId);
+    if (stored === undefined || stored.role !== "recipient") {
+      return yield* refused(requestId, "request-none");
     }
-    if ((yield* ownAnswer(environment, operationId)) !== undefined) {
-      return yield* new RequestError({
-        operationId,
-        failure: { kind: "request-answered" },
-      });
+    if ((yield* ownResponse(agent, requestId)) !== undefined) {
+      return yield* refused(requestId, "request-answered");
     }
-    if (operation.phase !== "collecting") {
-      return yield* new RequestError({
-        operationId,
-        failure: { kind: "request-none" },
-      });
+    if (stored.phase !== "collecting") {
+      return yield* refused(requestId, "request-none");
     }
-    if ((yield* Clock.currentTimeMillis) >= operation.deadlineAt) {
-      return yield* new RequestError({
-        operationId,
-        failure: { kind: "request-expired" },
-      });
+    if ((yield* Clock.currentTimeMillis) >= stored.deadlineAt) {
+      return yield* refused(requestId, "request-expired");
     }
-    return yield* receivedRequest(operation.request.message);
-  }).pipe(Effect.withSpan("Requests.getRequest"));
+    return stored.request;
+  }).pipe(Effect.withSpan("Collectives.getRequest"));
 }
 
-/** The answer this agent has given to a question it received. */
-function ownAnswer(environment: Environment, operationId: CollectiveId) {
-  return readCollectiveAnswers(environment.agentKey, operationId).pipe(
-    Effect.map((answers) =>
-      answers.find(
-        (answer) => answer.author.agentId === environment.self.agentId,
+function refused(
+  requestId: MsgId,
+  kind: "request-none" | "request-answered" | "request-expired",
+) {
+  return new RequestError({ requestId, failure: { kind } });
+}
+
+/** The response this agent has sent to a collective request it received. */
+function ownResponse(agent: CollectiveAgent, requestId: MsgId) {
+  return readCollectiveResponses(agent.agentKey, requestId).pipe(
+    Effect.map((responses) =>
+      responses.find(
+        (response) => response.author.agentId === agent.card.agentId,
       ),
     ),
   );
 }
 
 /**
- * Sends this agent's answer and saves it as given, in one transaction.
- * Repeating the same answer changes nothing; a different one is refused.
+ * Sends this agent's response and saves it as sent, in one transaction.
+ * Repeating the same response changes nothing; a different one is refused.
  */
-function answer(environment: Environment, message: Message) {
-  const agentKey = environment.agentKey;
+function sendResponse(
+  agent: CollectiveAgent,
+  message: Message,
+  response: CollectiveResponse,
+) {
+  const { agentKey } = agent;
+  const { requestId } = response;
 
   return Effect.gen(function* () {
-    const response = message.operation;
-    if (
-      response?.kind !== "response" ||
-      !Schema.equivalence(AgentCard)(message.author, environment.self)
-    ) {
+    if (!Schema.equivalence(AgentCard)(message.author, agent.card)) {
       return yield* new CommunicationError({ reason: "content-invalid" });
     }
-    yield* transaction(
+    yield* storeTransaction(
       Effect.gen(function* () {
-        const operation = yield* readCollectiveOperation(
-          agentKey,
-          response.operationId,
-        );
-        if (operation === undefined || operation.origin !== "remote") {
-          return yield* new RequestError({
-            operationId: response.operationId,
-            failure: { kind: "request-none" },
-          });
+        const stored = yield* readCollective(agentKey, requestId);
+        if (stored === undefined || stored.role !== "recipient") {
+          return yield* refused(requestId, "request-none");
         }
-        const source = yield* receivedRequest(operation.request.message);
-        if (!sameParticipants(source, message)) {
+        if (!sameMembers(stored.request, message)) {
           return yield* new CommunicationError({
             reason: "membership-invalid",
           });
         }
         if (response.action === "accept") {
-          const fields = yield* validateAnswer(
-            source.operation.requestedSchema,
+          const fields = yield* validateResponseContent(
+            stored.request.collectiveRequest.requestedSchema,
             response.content,
           ).pipe(Effect.flip, Effect.option);
           if (Option.isSome(fields)) {
             return yield* new RequestError({
-              operationId: response.operationId,
+              requestId,
               failure: { kind: "answer-invalid", fields: fields.value },
             });
           }
         }
-        const prior = yield* ownAnswer(environment, response.operationId);
+        const prior = yield* ownResponse(agent, requestId);
         if (prior !== undefined) {
           return prior.msgId === message.msgId
-            ? yield* environment.send(message)
-            : yield* new RequestError({
-                operationId: response.operationId,
-                failure: { kind: "request-answered" },
-              });
+            ? yield* agent.send(message)
+            : yield* refused(requestId, "request-answered");
         }
-        if (operation.phase !== "collecting") {
-          return yield* new RequestError({
-            operationId: response.operationId,
-            failure: { kind: "request-none" },
-          });
+        if (stored.phase !== "collecting") {
+          return yield* refused(requestId, "request-none");
         }
         const now = yield* Clock.currentTimeMillis;
-        if (now >= operation.deadlineAt) {
-          return yield* new RequestError({
-            operationId: response.operationId,
-            failure: { kind: "request-expired" },
-          });
+        if (now >= stored.deadlineAt) {
+          return yield* refused(requestId, "request-expired");
         }
-        yield* environment.send(message);
-        yield* recordCollectiveAnswer(
-          agentKey,
-          response.operationId,
-          message,
-          now,
-        );
+        yield* agent.send(message);
+        yield* recordCollectiveResponse(agentKey, requestId, message, now);
       }),
     );
-  }).pipe(Effect.withSpan("Requests.acceptAnswer"));
+  }).pipe(Effect.withSpan("Collectives.sendResponse"));
 }
 
 /**
- * What the host should see of a message this agent received. A question
- * yields the request, an ordinary message yields itself, and an answer, a
- * close or malformed question content yields nothing.
+ * What the host should see of a message this agent received. A collective
+ * request yields itself as a request, a message with no collective part
+ * yields itself, and a response, a close or an unreadable collective part
+ * yields nothing.
  */
-function receive(environment: Environment, message: Message) {
-  return messageInterpretation(message).pipe(
+function receive(agent: CollectiveAgent, message: Message) {
+  return collectivePartOf(message).pipe(
     Effect.matchEffect({
-      onFailure: () => Effect.succeed(Option.none<IncomingItem>()),
+      onFailure: () => Effect.succeed(Option.none<ReceivedMessage>()),
       onSuccess: (decoded) =>
         Option.match(decoded, {
           onNone: () =>
             Effect.succeed(
-              Option.some<IncomingItem>({ kind: "message", message }),
+              Option.some<ReceivedMessage>({ kind: "message", message }),
             ),
-          onSome: (value) =>
-            transaction(receivePart(environment, message, value)),
+          onSome: (part) =>
+            storeTransaction(receiveCollectivePart(agent, message, part)),
         }),
     }),
     Effect.withSpan("receive"),
   );
 }
 
-function receivePart(
-  environment: Environment,
+function receiveCollectivePart(
+  agent: CollectiveAgent,
   message: Message,
-  value: CollectiveValue,
+  part: CollectivePart,
 ): Effect.Effect<
-  Option.Option<IncomingItem>,
+  Option.Option<ReceivedMessage>,
   EndpointStoreError | RequestError | CommunicationError,
   SqlClient
 > {
-  switch (value.kind) {
-    case "operation":
-      return receiveRequest(environment, message, value);
+  switch (part.kind) {
+    case "request":
+      return receiveRequest(agent, message);
     case "response":
-      return receiveAnswer(environment, message, value).pipe(
+      return receiveResponse(agent, message, part).pipe(
         Effect.as(Option.none()),
       );
     case "close":
-      return receiveClose(environment, message, value).pipe(
-        Effect.as(Option.none()),
-      );
+      return receiveClose(agent, message, part).pipe(Effect.as(Option.none()));
     default: {
-      const exhaustive: never = value;
+      const exhaustive: never = part;
       return exhaustive;
     }
   }
 }
 
-function receiveRequest(
-  environment: Environment,
-  message: Message,
-  value: Extract<CollectiveValue, { readonly kind: "operation" }>,
-) {
-  const agentKey = environment.agentKey;
+/**
+ * Saves a collective request this agent received under the request's message
+ * id and yields it for the host. A request that is not addressed as its `op`
+ * requires, or whose deadline has passed, yields nothing.
+ */
+function receiveRequest(agent: CollectiveAgent, message: Message) {
+  const { agentKey } = agent;
 
   return Effect.gen(function* () {
     if (
+      !isCollectiveRequestMessage(message) ||
       !requestEligible(
         message,
-        value,
-        environment.self.agentId,
+        agent.card.agentId,
         yield* Clock.currentTimeMillis,
       )
     ) {
-      return Option.none<IncomingItem>();
+      return Option.none<ReceivedMessage>();
     }
-    const existing = yield* readCollectiveOperation(
-      agentKey,
-      value.operationId,
-    );
-    if (existing !== undefined) {
-      if (existing.origin !== "remote") {
-        return Option.none<IncomingItem>();
-      }
-      const saved = existing.request.message;
-      return Schema.equivalence(Message)(saved, message)
-        ? Option.fromNullable(requestItem(message))
-        : Option.none<IncomingItem>();
-    }
-    yield* putCollectiveOperation(agentKey, {
-      origin: "remote",
-      request: message,
-      value,
+    const received = Option.some<ReceivedMessage>({
+      kind: "collectiveRequest",
+      message,
     });
-    return Option.fromNullable(requestItem(message));
+    const existing = yield* readCollective(agentKey, message.msgId);
+    if (existing !== undefined) {
+      return existing.role === "recipient" &&
+        Schema.equivalence(Message)(existing.request, message)
+        ? received
+        : Option.none<ReceivedMessage>();
+    }
+    yield* saveCollective(agentKey, { role: "recipient", request: message });
+    yield* recordCollectiveCopy(agentKey, message.msgId, message.msgId);
+    return received;
   });
 }
 
-/** The recognized question keeps the original message identity and participants. */
-function requestItem(
+/**
+ * Saves a recipient's first response to the collective whose request, or
+ * whose private copy of it, the response names.
+ */
+function receiveResponse(
+  agent: CollectiveAgent,
   message: Message,
-): Extract<IncomingItem, { readonly kind: "request" }> | undefined {
-  return isReceivedRequest(message) ? { kind: "request", message } : undefined;
-}
-
-function receiveAnswer(
-  environment: Environment,
-  message: Message,
-  response: ResponseValue,
+  response: CollectiveResponse,
 ) {
-  const agentKey = environment.agentKey;
+  const { agentKey } = agent;
 
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(
-      agentKey,
-      response.operationId,
-    );
-    if (operation === undefined || operation.phase === "completed") {
+    const stored = yield* readCollectiveOfCopy(agentKey, response.requestId);
+    if (stored === undefined || stored.phase === "completed") {
       return;
     }
-    const participants = operationParticipants(operation);
+    const request = requestOf(stored);
     if (
-      !participants.members.some(
-        (member) => member.agentId === message.author.agentId,
+      !request.recipients.some(
+        (recipient) => recipient.agentId === message.author.agentId,
       )
     ) {
       return;
     }
     if (
-      participants.op === "all_gather"
-        ? !sameParticipants(participants.request, message)
+      request.op === "all_gather"
+        ? !sameMembers(request, message)
         : message.recipients.length !== 1 ||
-          message.recipients[0]?.agentId !== participants.request.author.agentId
+          message.recipients[0]?.agentId !== request.author.agentId
     ) {
       return;
     }
-    const recorded = yield* recordCollectiveAnswer(
+    const recorded = yield* recordCollectiveResponse(
       agentKey,
-      response.operationId,
+      stored.requestId,
       message,
       yield* Clock.currentTimeMillis,
     );
-    if (recorded && operation.origin === "local") {
-      yield* finishLocal(environment, operation.operationId);
+    if (recorded && stored.role === "requester") {
+      yield* completeOwnRequest(agent, stored.requestId);
     }
   });
 }
 
+/**
+ * Completes an all_gather this agent received with the result its
+ * requester's close fixes. A close that names a response this agent does not
+ * hold ends the collective without a result.
+ */
 function receiveClose(
-  environment: Environment,
+  agent: CollectiveAgent,
   message: Message,
-  value: Extract<CollectiveValue, { readonly kind: "close" }>,
+  close: CollectiveClose,
 ) {
-  const agentKey = environment.agentKey;
+  const { agentKey } = agent;
 
   return Effect.gen(function* () {
-    const operation = yield* readCollectiveOperation(
-      agentKey,
-      value.operationId,
-    );
+    const stored = yield* readCollective(agentKey, close.requestId);
     if (
-      operation === undefined ||
-      operation.origin !== "remote" ||
-      operation.phase !== "collecting" ||
-      operation.request.message.author.agentId !== message.author.agentId
+      stored === undefined ||
+      stored.role !== "recipient" ||
+      stored.phase !== "collecting" ||
+      stored.request.author.agentId !== message.author.agentId
     ) {
       return;
     }
-    const request = operation.request.message;
-    const participants = operationParticipants(operation);
     if (
-      participants.op !== "all_gather" ||
-      !sameParticipants(request, message)
+      stored.request.collectiveRequest.op !== "all_gather" ||
+      !sameMembers(stored.request, message)
     ) {
       return;
     }
-    const answers = answersFor(
-      yield* readCollectiveAnswers(agentKey, value.operationId),
-      value.included,
+    const responses = includedResponses(
+      yield* readCollectiveResponses(agentKey, close.requestId),
+      close.included,
     );
     if (
-      answers.length !== value.included.length ||
-      new Set(value.included.map((reference) => reference.authorAgentId))
-        .size !== value.included.length
+      responses.length !== close.included.length ||
+      new Set(close.included.map((reference) => reference.authorAgentId))
+        .size !== close.included.length
     ) {
-      return yield* retireCollectiveOperation(agentKey, value.operationId);
+      return yield* discardCollective(agentKey, close.requestId);
     }
-    const result = yield* makeResult(operation, answers, {
-      closedAt: value.closedAt,
-      closedBy: value.closedBy,
+    const completed = yield* makeResult(stored, responses, {
+      closedAt: close.closedAt,
+      closedBy: close.closedBy,
     });
-    yield* checkResultSize(result);
-    yield* saveCollectiveResult(agentKey, {
-      operationId: value.operationId,
-      item: result.item,
-      answers: value.included,
+    yield* checkResultSize(completed);
+    yield* saveCollectiveResult(agentKey, close.requestId, {
+      result: completed.result,
+      responses: close.included,
     });
   });
 }
 
-/** Fixed identities, names and principals must agree before operation traffic is accepted. */
-function sameParticipants(
+/** Names, agent ids and principals must all agree before a response or a close is accepted. */
+function sameMembers(
   left: Pick<Message, "author" | "recipients">,
   right: Pick<Message, "author" | "recipients">,
 ) {
@@ -542,59 +515,49 @@ function sameParticipants(
 }
 
 function requestEligible(
-  message: Message,
-  value: Extract<CollectiveValue, { readonly kind: "operation" }>,
-  localAgentId: Message["author"]["agentId"],
+  message: CollectiveRequestMessage,
+  localAgentId: AgentCard["agentId"],
   now: number,
 ) {
-  const matchingAuthor =
-    collectiveRequesterOf(value.operationId) === message.author.agentId;
+  const { op, deadlineAt } = message.collectiveRequest;
   const addressedToLocal = message.recipients.some(
     (recipient) => recipient.agentId === localAgentId,
   );
   const audience =
-    value.op === "gather"
+    op === "gather"
       ? message.recipients.length === 1
       : message.recipients.length >= 2;
-  return (
-    matchingAuthor && addressedToLocal && audience && value.deadlineAt > now
-  );
+  return addressedToLocal && audience && deadlineAt > now;
 }
 
 function deliverNextResult<E, R>(
   agentKey: string,
-  handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
+  handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
 ) {
   return Effect.gen(function* () {
-    const operation = yield* readNextCollectiveResult(agentKey);
-    if (operation === undefined) {
+    const stored = yield* readNextCollectiveResult(agentKey);
+    if (stored === undefined) {
       return false;
     }
-    if (operation.result === undefined) {
+    if (stored.completed === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    const answers = answersFor(
-      yield* readCollectiveAnswers(agentKey, operation.operationId),
-      operation.result.answers,
+    const responses = includedResponses(
+      yield* readCollectiveResponses(agentKey, stored.requestId),
+      stored.completed.responses,
     );
-    if (answers.length !== operation.result.answers.length) {
+    if (responses.length !== stored.completed.responses.length) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    const request = yield* sourceRequest(operation);
-    const sources: ResultSources = {
-      answers,
-      ...(request === undefined ? {} : { request }),
+    const completed: CompletedCollective = {
+      result: stored.completed.result,
+      sources: sourcesOf(stored, responses),
     };
-    const result: ResultDelivery = {
-      operationId: operation.operationId,
-      item: operation.result.item,
-      sources,
-    };
-    yield* checkResultSize(result);
-    yield* transaction(
-      handle(result).pipe(
+    yield* checkResultSize(completed);
+    yield* storeTransaction(
+      handle(completed).pipe(
         Effect.zipRight(
-          retireCollectiveResult(agentKey, operation.operationId),
+          markCollectiveResultConsumed(agentKey, stored.requestId),
         ),
       ),
     );
@@ -603,18 +566,17 @@ function deliverNextResult<E, R>(
 }
 
 /**
- * Closes each question this agent asked once its deadline has passed, then
- * waits for the earliest deadline still open or for a new question.
+ * Completes each collective request this agent sent once its deadline has
+ * passed, then waits for the earliest deadline still open or for a new
+ * request.
  */
-function runWorker(environment: Environment) {
+function completeDueRequests(agent: CollectiveAgent) {
   return Effect.gen(function* () {
-    yield* environment.asked.close;
+    yield* agent.requested.close;
     const deadlines: number[] = [];
-    for (const operationId of yield* readCollectingQuestionIds(
-      environment.agentKey,
-    )) {
+    for (const requestId of yield* readCollectingRequestIds(agent.agentKey)) {
       const deadline = yield* Effect.uninterruptible(
-        finishLocal(environment, operationId),
+        completeOwnRequest(agent, requestId),
       );
       if (deadline !== undefined) {
         deadlines.push(deadline);
@@ -622,86 +584,86 @@ function runWorker(environment: Environment) {
     }
     const [first, ...rest] = deadlines;
     if (first === undefined) {
-      return yield* environment.asked.await;
+      return yield* agent.requested.await;
     }
     const remaining =
       Math.min(first, ...rest) - (yield* Clock.currentTimeMillis);
     yield* Effect.raceFirst(
-      environment.asked.await,
+      agent.requested.await,
       Effect.sleep(Duration.millis(Math.max(0, remaining))),
     );
   }).pipe(Effect.forever);
 }
 
-function answersFor(
-  answers: readonly Message[],
+/** The saved responses a result counts, in the order the result lists them. */
+function includedResponses(
+  responses: readonly Message[],
   included: readonly MessageReference[],
 ) {
   return included.flatMap((reference) => {
-    const answer = answers.find(
+    const response = responses.find(
       (message) =>
         message.author.agentId === reference.authorAgentId &&
         message.msgId === reference.msgId,
     );
-    return answer === undefined ? [] : [answer];
+    return response === undefined ? [] : [response];
   });
 }
 
 /**
- * Completes a question this agent asked once every member has answered or the
- * deadline has passed. An all_gather also sends the close that tells the
- * members which answers the result holds. Returns the deadline of a question
- * it leaves open.
+ * Completes a collective request this agent sent once every recipient has
+ * responded or the deadline has passed. An all_gather also sends the close
+ * that tells the group which responses the result counts. Returns the
+ * deadline of a request it leaves open.
  */
-function finishLocal(environment: Environment, operationId: CollectiveId) {
-  const agentKey = environment.agentKey;
+function completeOwnRequest(agent: CollectiveAgent, requestId: MsgId) {
+  const { agentKey } = agent;
 
-  return transaction(
+  return storeTransaction(
     Effect.gen(function* () {
-      const operation = yield* readCollectiveOperation(agentKey, operationId);
+      const stored = yield* readCollective(agentKey, requestId);
       if (
-        operation === undefined ||
-        operation.origin !== "local" ||
-        operation.phase !== "collecting"
+        stored === undefined ||
+        stored.role !== "requester" ||
+        stored.phase !== "collecting"
       ) {
         return undefined;
       }
-      const participants = operationParticipants(operation);
-      const answers = yield* readCollectiveAnswers(agentKey, operationId);
+      const { request } = stored;
+      const responses = yield* readCollectiveResponses(agentKey, requestId);
       const now = yield* Clock.currentTimeMillis;
       if (
-        answers.length < participants.members.length &&
-        now < operation.deadlineAt
+        responses.length < request.recipients.length &&
+        now < stored.deadlineAt
       ) {
-        return operation.deadlineAt;
+        return stored.deadlineAt;
       }
       const closure: Closure = {
         closedAt: now,
         closedBy:
-          answers.length === participants.members.length
+          responses.length === request.recipients.length
             ? "settled"
             : "deadline",
       };
-      const result = yield* makeResult(operation, answers, closure);
-      yield* checkResultSize(result);
-      const included = answers.map((answer) => ({
-        authorAgentId: answer.author.agentId,
-        msgId: answer.msgId,
+      const completed = yield* makeResult(stored, responses, closure);
+      yield* checkResultSize(completed);
+      const included = responses.map((response) => ({
+        authorAgentId: response.author.agentId,
+        msgId: response.msgId,
       }));
-      yield* saveCollectiveResult(agentKey, {
-        operationId,
-        item: result.item,
-        answers: included,
+      yield* saveCollectiveResult(agentKey, requestId, {
+        result: completed.result,
+        responses: included,
       });
-      yield* afterCommit(environment.completed);
-      if (participants.op === "gather") {
+      yield* afterCommit(agent.completed);
+      if (request.op === "gather") {
         return undefined;
       }
       const content = yield* encodeCollectiveContent({
         kind: "close",
-        operationId,
-        ...closure,
+        requestId,
         included,
+        ...closure,
       }).pipe(
         Effect.catchTag(
           "CollectiveContentError",
@@ -709,30 +671,30 @@ function finishLocal(environment: Environment, operationId: CollectiveId) {
         ),
       );
       const close = yield* Message.create({
-        author: operation.request.author,
-        recipients: operation.request.recipients,
+        author: request.author,
+        recipients: request.recipients,
         content,
       });
-      yield* environment.send(close);
+      yield* agent.send(close);
       return undefined;
     }),
-  ).pipe(Effect.withSpan("finishLocal"));
+  ).pipe(Effect.withSpan("completeOwnRequest"));
 }
 
-/** The final item and its assembled sources have independent size budgets. */
-function checkResultSize(result: {
-  readonly item: ResultDelivery["item"];
-  readonly sources: ResultSources;
-}) {
+/** The result and its sources have independent size budgets. */
+function checkResultSize(completed: CompletedCollective) {
   return Effect.gen(function* () {
-    const sources = yield* encodeJson(ResultSources, result.sources).pipe(
+    const sources = yield* encodeJson(
+      CollectiveResultSources,
+      completed.sources,
+    ).pipe(
       Effect.catchTag(
         "ClientRepresentationError",
         () => new EndpointStoreError({ reason: "invalid-input" }),
       ),
     );
     if (
-      Buffer.byteLength(JSON.stringify(result.item)) >
+      Buffer.byteLength(JSON.stringify(completed.result)) >
         MAXIMUM_RUNTIME_ITEM_BYTES ||
       Buffer.byteLength(sources) > MAXIMUM_RUNTIME_ITEM_BYTES
     ) {
@@ -741,145 +703,91 @@ function checkResultSize(result: {
   }).pipe(Effect.withSpan("checkResultSize"));
 }
 
+/** The result of a collective: one outcome for each recipient of its request, read from the counted responses. */
 function makeResult(
-  operation: StoredCollectiveOperation,
-  answers: readonly Message[],
+  stored: StoredCollective,
+  responses: readonly Message[],
   closure: Closure,
 ) {
   return Effect.gen(function* () {
-    const participants = operationParticipants(operation);
+    const request = requestOf(stored);
     const outcomes = yield* Effect.forEach(
-      participants.members,
-      (member) =>
-        memberResult(
-          member,
-          answers,
-          participants.requestedSchema,
-          operation.operationId,
-        ),
+      request.recipients,
+      (recipient) => outcomeOf(recipient, responses, request.requestedSchema),
       { concurrency: 1 },
     );
     const [first, ...rest] = outcomes;
     if (first === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
-    const item: ResultDelivery["item"] = {
-      kind: "result",
-      result: {
-        request: yield* capturedRequest(operation),
-        ...closure,
-        outcomes: [first, ...rest],
-      },
+    const completed: CompletedCollective = {
+      result: { request, ...closure, outcomes: [first, ...rest] },
+      sources: sourcesOf(stored, responses),
     };
-    const request = yield* sourceRequest(operation);
-    return {
-      item,
-      sources: { answers, ...(request === undefined ? {} : { request }) },
-    };
+    return completed;
   });
 }
 
-/** Stored questions are decoded once by their owning reader. */
-function operationParticipants(operation: StoredCollectiveOperation) {
-  if (operation.origin === "local") {
-    const question = operation.request;
-    return {
-      op: question.op,
-      members: question.recipients,
-      question: question.question,
-      requestedSchema: question.requestedSchema,
-      request: question,
-    };
+/**
+ * The same view of a collective request this agent sent or received: the
+ * request as its requester states it, with the recipients this agent knows.
+ */
+function requestOf(stored: StoredCollective): CollectiveRequest {
+  if (stored.role === "requester") {
+    return stored.request;
   }
-  const { message, value } = operation.request;
+  const { msgId, author, recipients, collectiveRequest } = stored.request;
   return {
-    op: value.op,
-    members: message.recipients,
-    question: questionText(message.content),
-    requestedSchema: value.requestedSchema,
-    request: message,
+    kind: "collectiveRequest",
+    msgId,
+    author,
+    recipients,
+    ...collectiveRequest,
   };
 }
 
-function questionText(content: Message["content"]): string {
-  return content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n");
-}
-
-function memberResult(
-  member: AgentCard,
-  answers: readonly Message[],
-  requestedSchema: RequestedSchema,
-  operationId: string,
+function outcomeOf(
+  recipient: AgentCard,
+  responses: readonly Message[],
+  requestedSchema: CollectiveRequest["requestedSchema"],
 ) {
   return Effect.gen(function* () {
-    const message = answers.find(
-      (answer) => answer.author.agentId === member.agentId,
+    const message = responses.find(
+      (response) => response.author.agentId === recipient.agentId,
     );
     if (message === undefined) {
-      return { member, outcome: { kind: "no-answer" as const } };
+      return { recipient: recipient, outcome: { kind: "no-answer" as const } };
     }
-    const value = yield* messageInterpretation(message).pipe(
-      Effect.catchTag(
-        "CollectivePartInvalidError",
-        () => new EndpointStoreError({ reason: "corrupt" }),
-      ),
-    );
-    if (
-      Option.isNone(value) ||
-      value.value.kind !== "response" ||
-      value.value.operationId !== operationId
-    ) {
+    if (message.collectiveResponse === undefined) {
       return yield* new EndpointStoreError({ reason: "corrupt" });
     }
     return {
-      member,
-      outcome: yield* outcomeOfResponse(requestedSchema, value.value),
+      recipient: recipient,
+      outcome: yield* outcomeOfResponse(
+        requestedSchema,
+        message.collectiveResponse,
+      ),
     };
   });
 }
 
-function sourceRequest(
-  operation: StoredCollectiveOperation,
-): Effect.Effect<ReceivedRequest | undefined, EndpointStoreError> {
-  return operation.origin === "local"
-    ? Effect.succeed(undefined)
-    : receivedRequest(operation.request.message);
-}
-
-function receivedRequest(
-  message: Message,
-): Effect.Effect<ReceivedRequest, EndpointStoreError> {
-  return isReceivedRequest(message)
-    ? Effect.succeed(message)
-    : new EndpointStoreError({ reason: "corrupt" });
+/** The messages a result's peer-controlled text came from. A request this agent sent is not among them. */
+function sourcesOf(
+  stored: StoredCollective,
+  responses: readonly Message[],
+): CollectiveResultSources {
+  return {
+    responses,
+    ...(stored.role === "requester" ? {} : { request: stored.request }),
+  };
 }
 
 /** Business refusals and handler failures keep their type when SQL rolls back. */
-function transaction<A, E, R>(work: Effect.Effect<A, E, R>) {
-  return openTransaction(work).pipe(
+function storeTransaction<A, E, R>(work: Effect.Effect<A, E, R>) {
+  return transaction(work).pipe(
     Effect.catchTag(
       "SqlError",
       () => new EndpointStoreError({ reason: "persistence" }),
     ),
   );
-}
-
-function capturedRequest(
-  operation: StoredCollectiveOperation,
-): Effect.Effect<Request, EndpointStoreError> {
-  if (operation.origin === "local") {
-    return Effect.succeed(operation.request);
-  }
-  const message = operation.request.message;
-  const details = message.operation;
-  return details?.kind === "request"
-    ? Effect.succeed({
-        ...details,
-        kind: "request",
-        author: message.author,
-        recipients: message.recipients,
-      })
-    : new EndpointStoreError({ reason: "corrupt" });
 }

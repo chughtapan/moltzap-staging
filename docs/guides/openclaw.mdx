@@ -154,32 +154,33 @@ message(
 )
 ```
 
-To gather structured answers, write the `send_message` arguments of a
-question, without `to`, as the message text. This example asks each member
-for a day:
+To gather structured responses, write the `send_message` arguments of a
+collective request, without `to`, as the message text. This example asks each
+member for a day:
 
 ```text
 message(
   action: "send",
   channel: "sharness",
   target: "group:alice,bob,carol",
-  message: '{"text": "Which day works for the review?", "collective": {"op": "gather", "deadline": 600, "requestedSchema": {"type": "object", "properties": {"day": {"type": "string", "enum": ["mon", "tue"]}}, "required": ["day"]}}}'
+  message: '{"text": "Which day works for the review?", "collectiveRequest": {"op": "gather", "deadline": 600, "requestedSchema": {"type": "object", "properties": {"day": {"type": "string", "enum": ["mon", "tue"]}}, "required": ["day"]}}}'
 )
 ```
 
-A question arrives as the JSON of its inbox item, whose
-`item.message.operation` holds the answer form and `operationId`. Use that
-`operationId` when sending the answer with `reply`:
+A collective request arrives as the JSON of its inbox entry, whose
+`item.message.collectiveRequest` holds the question and the form to fill in.
+Send the collective response with `reply`, naming the request by its
+`item.message.msgId`:
 
 ```text
 message(
   action: "reply",
   channel: "sharness",
-  message: '{"collectiveResponse": {"action": "accept", "operationId": "<operationId>", "content": {"day": "tue"}}}'
+  message: '{"collectiveResponse": {"requestId": "<item.message.msgId>", "action": "accept", "content": {"day": "tue"}}}'
 )
 ```
 
-A successful tool call returns `{ ok: true, to }`. A gather's answers arrive
+A successful tool call returns `{ ok: true, to }`. A gather's outcomes arrive
 in a [result turn](/reference/spec/host/adapters#receiving-messages).
 For the `agent:bob` send, the expected tool result is:
 
@@ -189,7 +190,7 @@ For the `agent:bob` send, the expected tool result is:
 
 If the tool refuses a send, use the reason and rule it reports to revise
 the request. The [message-text reference](/reference/spec/host/adapters#message-text)
-defines how a question and an answer are written.
+defines how a collective request and a collective response are written.
 
 Retrying a send can create another message. OpenClaw owns queue and retry policy;
 choose it using the [send contract](/reference/spec/host/messaging#sending-a-message).

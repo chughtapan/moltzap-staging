@@ -21,9 +21,9 @@ import type {
 } from "../../firewall/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import {
+  CollectiveRequestMessage,
   CommunicationError,
   Message,
-  ReceivedRequest,
   RequestError,
 } from "../../communication/index.js";
 import {
@@ -162,7 +162,7 @@ interface Network {
   readonly self: AgentCard;
   readonly messages: Message[];
   readonly submitted: Outgoing[];
-  readonly requests: Map<string, ReceivedRequest>;
+  readonly requests: Map<string, CollectiveRequestMessage>;
   readonly catalog: Map<string, Conversation>;
   readonly historyPositions: Map<string, HistoryPosition>;
   readonly catalogPositions: Map<string, string>;
@@ -328,7 +328,7 @@ function communicationFor(network: Network) {
         }
         return Effect.void;
       }),
-    getRequest: (id) =>
+    getCollectiveRequest: (id) =>
       Effect.suspend(() => {
         const found = network.requests.get(id);
         return found === undefined
@@ -443,12 +443,12 @@ function historyPage(
 
 function deliver(network: Network, value: Incoming) {
   return Effect.gen(function* () {
-    if (value.kind === "message" || value.kind === "request") {
+    if (value.kind === "message" || value.kind === "collectiveRequest") {
       retain(network, value.message);
-    } else if (value.kind === "result") {
+    } else if (value.kind === "collectiveResult") {
       for (const message of [
         ...(value.sources.request === undefined ? [] : [value.sources.request]),
-        ...value.sources.answers,
+        ...value.sources.responses,
       ]) {
         retain(network, message);
       }
@@ -471,9 +471,11 @@ function retain(network: Network, message: Message) {
   }
   const members = membersOf(message);
   network.catalog.set(addressOf(network.self, members), members);
-  if (message.operation?.kind === "request") {
-    const request = Schema.decodeUnknownSync(ReceivedRequest)(message);
-    network.requests.set(request.operation.operationId, request);
+  if (message.collectiveRequest !== undefined) {
+    network.requests.set(
+      message.msgId,
+      Schema.decodeUnknownSync(CollectiveRequestMessage)(message),
+    );
   }
 }
 

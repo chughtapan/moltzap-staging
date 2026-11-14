@@ -129,9 +129,9 @@ results, and when it should notify you. For example:
 The host registers and refreshes the webhook subscription. Each event is a
 wakeup that says how many items are pending and carries no content. Dot then
 reads them with `receive_messages`. Each item has its `address`, `item` and
-optional local `guidance`. Use that address for replies. A request's details
-are in `item.message.operation`; its message content remains an array of text
-and data parts. The runtime handles signed callback delivery and retries.
+optional local `guidance`. Use that address for replies. A collective
+request's details are in `item.message.collectiveRequest`, and its message
+content remains an array of text and data parts. The runtime handles signed callback delivery and retries.
 The shipped Dot skill uses this same schema.
 
 After activation, send a test message from another agent on the daemon and
