@@ -36,7 +36,7 @@ const peers = Effect.fn("peers")(function* (rule: Rule = {}) {
     Effect.gen(function* () {
       const inbox = yield* Queue.unbounded<Incoming>();
       yield* agent
-        .consume((item) => Queue.offer(inbox, item).pipe(Effect.asVoid))
+        .consume((incoming) => Queue.offer(inbox, incoming).pipe(Effect.asVoid))
         .pipe(Effect.forkScoped);
       return inbox;
     });
@@ -84,7 +84,7 @@ const fixture = Effect.gen(function* () {
   return { ...f, server: f.alice, client: f.bob, members, message };
 });
 
-it("retains a client/server exchange and delivers each message only to its recipient", () =>
+it("retains a client/server exchange and hands each message only to its recipient", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     const request = yield* f.message("hello");
@@ -107,7 +107,7 @@ it("retains a client/server exchange and delivers each message only to its recip
     expect(yield* f.history(reopened, f.members)).toEqual([request, reply]);
   }));
 
-it("rolls back both participant views and serializes concurrent sends", () =>
+it("rolls back both members' views and serializes concurrent sends", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
     const cancelled = yield* f.message("rolled back");
@@ -152,7 +152,7 @@ it("hands a message to the next consumer after one fails", () =>
     ).toEqual({ kind: "message", message });
   }));
 
-it("delivers a group message to every member in one order, between any agents", () =>
+it("carries a group message to every member in one order, between any agents", () =>
   Effect.gen(function* () {
     const f = yield* peers();
     const bobInbox = yield* f.received(f.bob);
@@ -254,21 +254,21 @@ it("appends a message once to the history of each member of its conversation, an
     const f = yield* peers({ permits });
     const people = { ...f.cards, dave: testAgentCard("dave") };
     const names = Record.keys(people);
-    /** A send through `sender`'s service of a message it wrote, or one `author` wrote when that names an agent. */
+    /** A send through `caller`'s service of a message it wrote, or one `author` wrote when that names an agent. */
     const sends = fc
       .record({
-        sender: fc.constantFrom(...Record.keys(f.hosted)),
+        caller: fc.constantFrom(...Record.keys(f.hosted)),
         author: fc.oneof(
           { weight: 3, arbitrary: fc.constant(undefined) },
           { weight: 1, arbitrary: fc.constantFrom(...names) },
         ),
         to: fc.subarray(names).filter(Arr.isNonEmptyArray),
       })
-      .filter(({ sender, author = sender, to }) => !to.includes(author));
+      .filter(({ caller, author = caller, to }) => !to.includes(author));
     const property = fc.asyncProperty(
       fc.subarray(names, { minLength: 2 }),
       sends,
-      (rule, { sender, author = sender, to }) =>
+      (rule, { caller, author = caller, to }) =>
         Effect.gen(function* () {
           apart = rule;
           const message = yield* Message.create({
@@ -278,11 +278,11 @@ it("appends a message once to the history of each member of its conversation, an
           });
           const members: Conversation = [message.author, ...message.recipients];
           const admitted =
-            author === sender &&
+            author === caller &&
             to.every((name) => name in f.hosted) &&
             permits(members);
           const before = yield* f.histories(members);
-          const refusal = yield* f.hosted[sender].send(message).pipe(
+          const refusal = yield* f.hosted[caller].send(message).pipe(
             Effect.as("none"),
             Effect.catchTag("CommunicationError", (refused) =>
               Effect.succeed(refused.reason),
@@ -323,29 +323,29 @@ it("keeps one copy of a message its author sends again, and refuses a different 
         content: [{ type: "text", text }],
       });
     /** An agent and two choices of the other agents to write to. */
-    const sends = fc.constantFrom(...names).chain((sender) => {
+    const sends = fc.constantFrom(...names).chain((author) => {
       const others = fc
-        .subarray(names.filter((name) => name !== sender))
+        .subarray(names.filter((name) => name !== author))
         .filter(Arr.isNonEmptyArray);
       return fc.record({
-        sender: fc.constant(sender),
+        author: fc.constant(author),
         to: others,
         elsewhere: others,
       });
     });
-    const property = fc.asyncProperty(sends, ({ sender, to, elsewhere }) =>
+    const property = fc.asyncProperty(sends, ({ author, to, elsewhere }) =>
       Effect.gen(function* () {
-        const message = yield* write(sender, to, "original");
+        const message = yield* write(author, to, "original");
         const different = yield* Schema.decodeUnknown(Message)({
-          ...(yield* write(sender, elsewhere, "changed")),
+          ...(yield* write(author, elsewhere, "changed")),
           msgId: message.msgId,
         });
         const members: Conversation = [message.author, ...message.recipients];
         const before = yield* f.histories(members);
-        yield* f.hosted[sender].send(message);
-        yield* f.hosted[sender].send(message);
+        yield* f.hosted[author].send(message);
+        yield* f.hosted[author].send(message);
         expect(
-          yield* f.hosted[sender].send(different).pipe(Effect.flip),
+          yield* f.hosted[author].send(different).pipe(Effect.flip),
         ).toMatchObject({ reason: "message-conflict" });
         expect(yield* f.histories(members)).toEqual(
           Record.map(before, (earlier) => [...earlier, message]),

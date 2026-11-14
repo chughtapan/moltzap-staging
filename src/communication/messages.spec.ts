@@ -231,12 +231,12 @@ vitestIt(
 const fieldNames = ["slot", "hours", "note", "constructor", "toString"];
 
 vitestIt(
-  "names exactly the fields an answer is missing, adds or gets wrong",
+  "names exactly the fields a response is missing, adds or gets wrong",
   () => {
     const field = fc.record({
       declared: fc.boolean(),
       required: fc.boolean(),
-      answer: fc.constantFrom("absent", "valid", "invalid"),
+      response: fc.constantFrom("absent", "valid", "invalid"),
     });
     fc.assert(
       fc.property(fc.tuple(field, field, field, field, field), (fields) => {
@@ -259,20 +259,20 @@ vitestIt(
         });
         const content = Object.fromEntries(
           named
-            .filter((state) => state.answer !== "absent")
-            .map(({ name, answer }) => [
+            .filter((state) => state.response !== "absent")
+            .map(({ name, response }) => [
               name,
-              answer === "valid" ? "yes" : "no",
+              response === "valid" ? "yes" : "no",
             ]),
         );
         const reasonOf = (state: (typeof named)[number]) => {
           if (!state.declared) {
-            return state.answer === "absent" ? [] : ["unexpected"];
+            return state.response === "absent" ? [] : ["unexpected"];
           }
-          if (state.answer === "absent") {
+          if (state.response === "absent") {
             return state.required ? ["missing"] : [];
           }
-          return state.answer === "valid" ? [] : ["invalid"];
+          return state.response === "valid" ? [] : ["invalid"];
         };
         const expected = named.flatMap((state) =>
           reasonOf(state).map((reason) => `${state.name} ${reason}`),

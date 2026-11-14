@@ -33,8 +33,8 @@ import {
   messageMembers,
   type MessageReference,
   type MsgId,
+  type Page,
   type PaginatedRequest,
-  type PaginatedResult,
   RequestError,
 } from "./messages.js";
 import {
@@ -51,7 +51,7 @@ export type Conversation = readonly [AgentCard, AgentCard, ...AgentCard[]];
 /** Omit cursor to begin listing conversations. */
 export interface ConversationQuery extends PaginatedRequest {}
 /** A missing nextCursor ends the listing. */
-interface ConversationPage extends PaginatedResult {
+interface ConversationPage extends Page {
   readonly conversations: readonly Conversation[];
 }
 /** Selects a paged forward traversal or one bounded recent window. */
@@ -67,7 +67,7 @@ export type HistoryQuery =
       readonly beforeMessage?: MessageReference;
     };
 /** Messages retain conversation order and count only their encoded value bytes. */
-export interface HistoryPage extends PaginatedResult {
+export interface HistoryPage extends Page {
   readonly entries: ReadonlyArray<{
     readonly message: Message;
     readonly messageBytes: number;
@@ -105,7 +105,7 @@ export interface CommunicationService {
    * or `CollectiveRequest` again, with its `msgId`, changes nothing.
    */
   readonly send: (
-    value: Outgoing,
+    outgoing: Outgoing,
   ) => Effect.Effect<void, CommunicationError | RequestError>;
   /**
    * The collective request with this message id that this agent received and
@@ -120,8 +120,8 @@ export interface CommunicationService {
   /**
    * Calls the handler for each message, collective request and collective
    * result, and marks it consumed after success. Failed or interrupted
-   * handling leaves it to be handed over again. A handled item can also be
-   * handed over again when marking it fails, so handlers must tolerate
+   * handling leaves it to be handed over again. One that was handled can also
+   * be handed over again when marking it fails, so handlers must tolerate
    * repeats.
    */
   readonly consume: <E, R>(
@@ -232,7 +232,7 @@ function listConversations(agent: HistoryAgent, query: ConversationQuery) {
               }),
             ),
           )(query.cursor).pipe(
-            Effect.map((value) => value.after),
+            Effect.map((cursor) => cursor.after),
             Effect.mapError(() => refused("invalid-cursor")),
           );
     const selected = conversations.filter(
@@ -301,12 +301,12 @@ function retainedConversations(agent: HistoryAgent) {
     );
     const conversations: Conversation[] = [];
     for (const row of rows) {
-      const [entry] = yield* read(agent, {
+      const [stored] = yield* read(agent, {
         conversationId: row.conversationId,
         limit: 1,
       });
-      if (entry !== undefined) {
-        conversations.push(yield* membersOf(entry.message));
+      if (stored !== undefined) {
+        conversations.push(yield* membersOf(stored.message));
       }
     }
     return conversations.sort((a, b) =>
@@ -320,7 +320,7 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
     const conversationId = yield* historyConversation(agent, query.members);
     const [newestStored] = yield* read(agent, {
       conversationId,
-      newest: true,
+      newestFirst: true,
       limit: 1,
     });
     const orderedMembers = [...query.members].sort((a, b) =>
@@ -414,11 +414,11 @@ function ordinalOf(
 function continueWindow(
   agent: HistoryAgent,
   window: HistoryWindow,
-  value: string,
+  encodedCursor: string,
 ) {
   return Effect.gen(function* () {
     const cursor = yield* Schema.decodeUnknown(Schema.parseJson(cursorSchema))(
-      value,
+      encodedCursor,
     ).pipe(Effect.mapError(() => refused("invalid-cursor")));
     const sameRequest =
       cursor.session === agent.session &&
@@ -444,7 +444,7 @@ function scanWindow(agent: HistoryAgent, window: HistoryWindow) {
         conversationId: window.conversationId,
         after,
         through,
-        newest: window.newestFirst,
+        newestFirst: window.newestFirst,
         limit: 50,
       });
       const last = rows.at(-1);
@@ -555,16 +555,16 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
             : refused("persistence-failed"),
         ),
       ),
-    completed: arrived.open,
+    resultSaved: arrived.open,
   });
-  const consumer = yield* Effect.makeSemaphore(1);
+  const oneConsumer = yield* Effect.makeSemaphore(1);
   return {
-    send: (value) =>
-      withSqlAndServiceErrors(agent, send(agent, collectives, value)),
+    send: (outgoing) =>
+      withSqlAndServiceErrors(agent, send(agent, collectives, outgoing)),
     getCollectiveRequest: (requestId) =>
       withSqlAndServiceErrors(agent, collectives.getRequest(requestId)),
     consume: (handle) =>
-      consumer.withPermits(1)(consume(agent, collectives, handle)),
+      oneConsumer.withPermits(1)(consume(agent, collectives, handle)),
     getConversation: (names) =>
       withSqlAndServiceErrors(agent, history.getConversation(names)),
     listConversations: (query = {}) =>
@@ -574,7 +574,7 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
   } satisfies CommunicationService;
 });
 
-/** Delivers messages, completes collective requests and reads ordered history for one agent. */
+/** Carries one agent's messages, completes its collective requests and reads its ordered history. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService
@@ -587,19 +587,23 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
 type Collectives = Effect.Effect.Success<ReturnType<typeof makeCollectives>>;
 
 /** A collective request and a collective response go through the collective layer; any other message is sent as it is. */
-function send(agent: HostedAgent, collectives: Collectives, value: Outgoing) {
-  if ("kind" in value) {
-    return collectives.sendRequest(value);
+function send(
+  agent: HostedAgent,
+  collectives: Collectives,
+  outgoing: Outgoing,
+) {
+  if ("kind" in outgoing) {
+    return collectives.sendRequest(outgoing);
   }
   return Effect.gen(function* () {
-    const part = yield* collectivePartOf(value).pipe(
+    const part = yield* collectivePartOf(outgoing).pipe(
       Effect.catchTag("CollectivePartInvalidError", () =>
         Effect.succeed(Option.none()),
       ),
     );
     return yield* Option.isSome(part) && part.value.kind === "response"
-      ? collectives.sendResponse(value, part.value)
-      : sendMessage(agent, value);
+      ? collectives.sendResponse(outgoing, part.value)
+      : sendMessage(agent, outgoing);
   });
 }
 
@@ -631,9 +635,9 @@ function recipientKey(recipient: AgentCard) {
 
 /**
  * Orders one message and saves it for every member, or changes nothing. A
- * message this agent has already sent takes no new position. The sender locks
+ * message this agent has already sent takes no new position. The author locks
  * its own agent and then the conversation, as every other write of an agent
- * does, so senders cannot deadlock. Each recipient's consumer wakes once the
+ * does, so two sends cannot deadlock. Each recipient's consumer wakes once the
  * message is committed.
  */
 function sendMessage({ settings }: HostedAgent, message: Message) {
@@ -725,24 +729,24 @@ function consume<E, R>(
   handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
 ) {
   const { agentKey, card } = agent.settings;
-  const results = withSqlAndServiceErrors(
+  const consumeCompletedResults = withSqlAndServiceErrors(
     agent,
-    collectives.deliverNextResult((completed) =>
+    collectives.consumeNextResult((completed) =>
       handle({ kind: "collectiveResult", ...completed }),
     ),
-  ).pipe(Effect.repeat({ while: (delivered) => delivered }));
+  ).pipe(Effect.repeat({ while: (consumed) => consumed }));
   return Effect.gen(function* () {
     while (true) {
       yield* agent.arrived.close;
-      yield* results;
-      const rows = yield* withSqlAndServiceErrors(
+      yield* consumeCompletedResults;
+      const unconsumed = yield* withSqlAndServiceErrors(
         agent,
-        readMessages(agentKey, { pendingFor: card.agentId, limit: 50 }),
+        readMessages(agentKey, { unconsumedBy: card.agentId, limit: 50 }),
       );
-      for (const entry of rows) {
+      for (const stored of unconsumed) {
         const received = yield* withSqlAndServiceErrors(
           agent,
-          collectives.receive(entry.message),
+          collectives.receive(stored.message),
         );
         if (Option.isSome(received)) {
           yield* handle(received.value);
@@ -750,13 +754,13 @@ function consume<E, R>(
         yield* withSqlAndServiceErrors(
           agent,
           markMessageConsumed(agentKey, {
-            authorAgentId: entry.message.author.agentId,
-            msgId: entry.message.msgId,
+            authorAgentId: stored.message.author.agentId,
+            msgId: stored.message.msgId,
           }),
         );
-        yield* results;
+        yield* consumeCompletedResults;
       }
-      if (rows.length === 0) {
+      if (unconsumed.length === 0) {
         yield* agent.arrived.await;
       }
     }

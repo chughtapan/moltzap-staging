@@ -104,9 +104,9 @@ it("counts the first response once and retains its original source", () =>
     );
     yield* fixture.service.receive(first);
     yield* fixture.service.receive(later);
-    const result = yield* Queue.take(fixture.results);
-    expect(result.sources.responses).toEqual([first]);
-    expect(result.result).toMatchObject({
+    const completed = yield* Queue.take(fixture.results);
+    expect(completed.sources.responses).toEqual([first]);
+    expect(completed.result).toMatchObject({
       request: { msgId: captured.msgId },
       outcomes: [{ recipient: bob, outcome: { content: { slot: "mon" } } }],
     });
@@ -135,9 +135,9 @@ it("records invalid responses as counted sources while leaving silent recipients
       { byte: 13 },
     );
     yield* fixture.service.receive(invalid);
-    const result = yield* Queue.take(fixture.results);
-    expect(result.sources.responses).toEqual([invalid]);
-    expect(result.result).toMatchObject({
+    const completed = yield* Queue.take(fixture.results);
+    expect(completed.sources.responses).toEqual([invalid]);
+    expect(completed.result).toMatchObject({
       request: { msgId: captured.msgId },
       outcomes: [
         { recipient: bob, outcome: { kind: "invalid" } },
@@ -158,14 +158,14 @@ it("does not count a response received when the deadline has come", () =>
       Effect.zipRight(fixture.service.receive(late)),
       Effect.provide(TestContext.TestContext),
     );
-    const result = yield* Queue.take(fixture.results);
-    expect(result.sources.responses).toEqual([]);
-    expect(result.result).toMatchObject({
+    const completed = yield* Queue.take(fixture.results);
+    expect(completed.sources.responses).toEqual([]);
+    expect(completed.result).toMatchObject({
       outcomes: [{ recipient: bob, outcome: { kind: "no-answer" } }],
     });
   }));
 
-it("publishes the all_gather close with both parts of every selected message identity", () =>
+it("publishes the all_gather close with both parts of every selected message reference", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives();
     const captured = aliceAsks(
@@ -193,13 +193,13 @@ it("publishes the all_gather close with both parts of every selected message ide
         }),
       ),
     );
-    const result = yield* Queue.take(fixture.results).pipe(
+    const completed = yield* Queue.take(fixture.results).pipe(
       Effect.raceFirst(Fiber.join(consuming)),
     );
-    expect(result.sources.responses).toEqual([one, two]);
+    expect(completed.sources.responses).toEqual([one, two]);
   }));
 
-it("delivers a closed all_gather result after a restart without a response that came later", () =>
+it("hands over a closed all_gather result after a restart without a response that came later", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives();
     const captured = aliceAsks(
@@ -229,9 +229,9 @@ it("delivers a closed all_gather result after a restart without a response that 
     yield* fixture.close;
     const restarted = yield* openCollectives({ database: fixture.database });
     yield* restarted.collect();
-    const result = yield* Queue.take(restarted.results);
-    expect(result.sources.responses).toEqual([selected]);
-    expect(result.result).toMatchObject({
+    const completed = yield* Queue.take(restarted.results);
+    expect(completed.sources.responses).toEqual([selected]);
+    expect(completed.result).toMatchObject({
       outcomes: [
         { recipient: bob, outcome: { kind: "declined" } },
         { recipient: carol, outcome: { kind: "no-answer" } },
@@ -297,7 +297,7 @@ it("accepts its own response again after a restart and refuses a different one",
     expect(
       yield* restarted.service.getRequest(requestId).pipe(Effect.flip),
     ).toMatchObject({
-      failure: { kind: "request-answered" },
+      failure: { kind: "request-responded" },
     });
     const replacement = yield* declineMessage(bob, [alice], requestId, 18);
     expect(
@@ -311,8 +311,8 @@ it("hands over a result again when its handler failed before the result was mark
     const captured = aliceAsks((yield* Clock.currentTimeMillis) + 200);
     const attempted = yield* Deferred.make<CompletedCollective>();
     const consuming = yield* fixture.service
-      .consumeResults((result) =>
-        Deferred.succeed(attempted, result).pipe(
+      .consumeResults((completed) =>
+        Deferred.succeed(attempted, completed).pipe(
           Effect.zipRight(Effect.fail(new HandlerUnavailable())),
         ),
       )
@@ -406,9 +406,9 @@ it("presents the result of a close that counts its own response", () =>
       "settled",
     );
     yield* fixture.service.receive(close);
-    const result = yield* Queue.take(fixture.results);
-    expect(result.sources.request).toEqual(request);
-    expect(result.sources.responses).toEqual([own, peer]);
+    const completed = yield* Queue.take(fixture.results);
+    expect(completed.sources.request).toEqual(request);
+    expect(completed.sources.responses).toEqual([own, peer]);
   }));
 
 it("ends a malformed close with repeated authors without letting the recipient respond afterwards", () =>

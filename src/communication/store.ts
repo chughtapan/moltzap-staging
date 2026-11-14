@@ -152,25 +152,25 @@ export interface StoredMessage {
  */
 export const saveCollective = Effect.fn("saveCollective")(function* (
   agentKey: string,
-  input: CollectiveRole,
+  collective: CollectiveRole,
 ) {
   const db = yield* communicationQueries;
-  const requestId = input.request.msgId;
+  const requestId = collective.request.msgId;
   const deadlineAt =
-    input.role === "requester"
-      ? input.request.deadlineAt
-      : input.request.collectiveRequest.deadlineAt;
-  const request = yield* input.role === "requester"
-    ? encodeJson(CollectiveRequest, input.request)
-    : encodeJson(Message, input.request);
+    collective.role === "requester"
+      ? collective.request.deadlineAt
+      : collective.request.collectiveRequest.deadlineAt;
+  const request = yield* collective.role === "requester"
+    ? encodeJson(CollectiveRequest, collective.request)
+    : encodeJson(Message, collective.request);
   const [existing] = yield* collectiveRows(agentKey, { requestId });
   if (existing === undefined) {
     yield* executeQuery(
       db.insertInto("collectives").values({
         agent_key: agentKey,
         request_id: requestId,
-        requester_agent_id: input.request.author.agentId,
-        role: input.role,
+        requester_agent_id: collective.request.author.agentId,
+        role: collective.role,
         request,
         deadline_at: deadlineAt,
       }),
@@ -179,8 +179,8 @@ export const saveCollective = Effect.fn("saveCollective")(function* (
   }
   if (
     !sameJson(existing.request, request) ||
-    existing.role !== input.role ||
-    existing.requester_agent_id !== input.request.author.agentId ||
+    existing.role !== collective.role ||
+    existing.requester_agent_id !== collective.request.author.agentId ||
     existing.deadline_at !== deadlineAt
   ) {
     return yield* conflict();
@@ -219,7 +219,7 @@ export const readCollectingRequestIds = Effect.fn("readCollectingRequestIds")(
         .where("phase", "=", "collecting")
         .orderBy("sequence"),
     );
-    return yield* decodeValue(Schema.Array(MsgId))(
+    return yield* decodeColumns(Schema.Array(MsgId))(
       rows.map((row) => row.request_id),
     );
   },
@@ -385,7 +385,7 @@ export const hasMessage = Effect.fn("hasMessage")(function* (
 
 /**
  * Adds a message to one agent's history at its position. It takes no lock on
- * the agent, so a sender can save for every member while holding only its own
+ * the agent, so an author can save for every member while holding only its own
  * agent's lock and the conversation's.
  */
 export const saveMessage = Effect.fn("saveMessage")(
@@ -414,13 +414,13 @@ export const saveMessage = Effect.fn("saveMessage")(
 /** A bounded range of one agent's messages, in conversation order or in the order they were saved. */
 export const readMessages = Effect.fn("readMessages")(function* (
   agentKey: string,
-  input: {
+  range: {
     readonly conversationId?: string;
     readonly after?: number;
     readonly through?: number;
-    readonly newest?: boolean;
+    readonly newestFirst?: boolean;
     /** Selects messages this agent has not consumed and did not write. */
-    readonly pendingFor?: AgentId;
+    readonly unconsumedBy?: AgentId;
     readonly limit: number;
   },
 ) {
@@ -436,24 +436,26 @@ export const readMessages = Effect.fn("readMessages")(function* (
       "message",
     ])
     .where("agent_key", "=", agentKey)
-    .limit(input.limit);
-  if (input.conversationId !== undefined) {
-    query = query.where("conversation_id", "=", input.conversationId);
+    .limit(range.limit);
+  if (range.conversationId !== undefined) {
+    query = query.where("conversation_id", "=", range.conversationId);
   }
-  if (input.after !== undefined) {
-    query = query.where("ordinal", ">", input.after);
+  if (range.after !== undefined) {
+    query = query.where("ordinal", ">", range.after);
   }
-  if (input.through !== undefined) {
-    query = query.where("ordinal", "<=", input.through);
+  if (range.through !== undefined) {
+    query = query.where("ordinal", "<=", range.through);
   }
-  if (input.pendingFor !== undefined) {
+  if (range.unconsumedBy !== undefined) {
     query = query
       .where("consumed", "=", 0)
-      .where("author_agent_id", "<>", input.pendingFor);
+      .where("author_agent_id", "<>", range.unconsumedBy);
   }
-  const ascending = input.conversationId === undefined ? "sequence" : "ordinal";
+  const ascending = range.conversationId === undefined ? "sequence" : "ordinal";
   const rows = yield* executeQuery(
-    input.newest ? query.orderBy("ordinal", "desc") : query.orderBy(ascending),
+    range.newestFirst
+      ? query.orderBy("ordinal", "desc")
+      : query.orderBy(ascending),
   );
   return yield* Effect.forEach(
     rows,
@@ -552,7 +554,7 @@ function collectiveRows(agentKey: string, selection: CollectiveSelection) {
       );
     }
     return yield* executeQuery(selected).pipe(
-      Effect.flatMap(decodeValue(Schema.Array(collectiveRow))),
+      Effect.flatMap(decodeColumns(Schema.Array(collectiveRow))),
     );
   });
 }
@@ -615,9 +617,9 @@ function readCompleted(row: typeof collectiveRow.Type) {
   });
 }
 
-function decodeValue<A, I>(schema: Schema.Schema<A, I>) {
-  return (value: unknown) =>
-    Schema.decodeUnknown(schema)(value).pipe(
+function decodeColumns<A, I>(schema: Schema.Schema<A, I>) {
+  return (columns: unknown) =>
+    Schema.decodeUnknown(schema)(columns).pipe(
       Effect.catchTag("ParseError", corrupt),
     );
 }

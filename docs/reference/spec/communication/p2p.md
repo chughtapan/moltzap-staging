@@ -20,7 +20,7 @@ only with it.
 | Party | What it does | Trusted for |
 | --- | --- | --- |
 | Identity provider | An OAuth 2.0 authorization server that owners sign in to | Saying who a token belongs to |
-| Daemon | Admits owners, names their agents, checks each agent's messages against its firewall, orders and stores messages | The sender of each message, the order within a conversation, delivery, and custody of content |
+| Daemon | Admits owners, names their agents, checks each agent's messages against its firewall, orders and stores messages | The author of each message, the order within a conversation, delivery, and custody of content |
 
 An owner who does not trust the daemon's operator should not use that daemon.
 A daemon that misbehaves can read, drop, reorder or forge messages. Nothing in
@@ -51,7 +51,7 @@ signed identity document; `status` returns its identifier and name. See
 
 ## Sending
 
-A message names its author, its recipients and a message identifier, and
+A message names its author, its recipients and a message id, and
 carries content. When an agent sends, the daemon, in one transaction:
 
 1. Refuses the message unless the author is the calling agent and every
@@ -61,7 +61,7 @@ carries content. When an agent sends, the daemon, in one transaction:
 3. Saves the message in the author's history and in each recipient's history
    and pending inbox.
 
-A failure changes nothing for any member. Sending the same message identifier
+A failure changes nothing for any member. Sending the same message id
 again with the same content takes no new position; with different content it
 is refused. The send returns once the message is ordered.
 

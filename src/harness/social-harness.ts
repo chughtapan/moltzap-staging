@@ -27,8 +27,8 @@ import {
   type MessageAddressInput,
   messageWithId,
   MsgId,
+  type Page,
   type PaginatedRequest,
-  type PaginatedResult,
   RequestError,
   SendError,
 } from "../communication/index.js";
@@ -70,7 +70,7 @@ import {
 /** Start a live conversation-list traversal by omitting cursor. */
 interface ListConversationsRequest extends PaginatedRequest {}
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
-interface ConversationsPage extends PaginatedResult {
+interface ConversationsPage extends Page {
   readonly addresses: readonly MessageAddress[];
 }
 /** Keep address unchanged when supplying the next cursor. */
@@ -78,7 +78,7 @@ interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
 }
 /** A missing nextCursor ends this fixed-boundary history traversal. */
-export interface HistoryPage extends PaginatedResult {
+export interface HistoryPage extends Page {
   readonly records: readonly HistoryRecord[];
 }
 type CommunicationService = Context.Tag.Service<typeof Communication>;

@@ -12,7 +12,7 @@ describe("message operation contracts", () => {
         toolDefinitions.send_message.failure.toError({ kind: "refused", data }),
       );
 
-    it.each([{ kind: "request-expired" }, { kind: "request-answered" }])(
+    it.each([{ kind: "request-expired" }, { kind: "request-responded" }])(
       "keeps a collective request's closed refusal %j",
       (failure) => {
         const requestId = digest("msg_", 1);

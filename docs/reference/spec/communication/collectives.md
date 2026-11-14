@@ -63,13 +63,13 @@ A collective response names its request by `requestId`: the `msgId` of the
 request message its author received. Send it in the request's original direct
 or group conversation, accepting with schema-valid content or declining.
 Missing ids fail input validation. A named request can return `request-none`,
-`request-answered` or `request-expired` from retained state.
+`request-responded` or `request-expired` from retained state.
 
 Each request accepts one response from each recipient. The responding agent's
 daemon validates content against the stored schema and refuses an invalid
-response with `answer-invalid`, naming the invalid fields.
+response with `response-invalid`, naming the invalid fields.
 The request must still be open when the response is sent. Closure or
-expiry returns `request-expired`. An earlier response returns `request-answered`.
+expiry returns `request-expired`. An earlier response returns `request-responded`.
 A refusal leaves the request open.
 
 Repeating a sent response changes nothing. Once a response is sent, the request
@@ -79,8 +79,7 @@ neither uses up the right to respond nor cancels the request.
 ## Receiving messages
 
 Process messages after communication orders them. Requests must use the appropriate
-direct/group conversation, carry an
-admitted schema and expire no more than 30 days and one hour ahead. A second
+direct/group conversation and carry an admitted schema. A second
 request under a retained request's message id is invalid. Consume malformed or duplicate collective parts without delivery.
 
 Hide expired requests. Retain all-gather context across restarts until its close,
@@ -113,7 +112,7 @@ before accepting local responses after restart. Results preserve their content a
 A send that fails with `outcome-unknown` may have been accepted and authorizes no
 replacement request, response or close. A fresh request has a new message id.
 
-## Message payloads
+## Message content
 
 A message with no collective part carries its content unchanged. A collective
 request carries its question as text followed by one data part. Responses and closes carry only the data
@@ -132,7 +131,7 @@ the `msgId` of the message that carries it. `requestId` is that message id:
 in a response, the id of the request message its author received, and in a
 close, the id of the group request message.
 
-`included` lists response message identities in recipient order. Each entry has
+`included` lists the counted response messages in recipient order. Each entry has
 exactly `authorAgentId: AgentId` and `msgId: MsgId` and identifies a retained
 response to this request. Each author occurs at most once. Response `content`
 maps fields to strings, finite numbers, booleans or string arrays, constrained

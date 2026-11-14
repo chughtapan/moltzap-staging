@@ -7,8 +7,8 @@ import {
   Message,
   MessageReference,
   MsgId,
+  Page,
   PaginatedRequest,
-  PaginatedResult,
   RequestError,
   SendError,
   sendFailureReasons,
@@ -187,7 +187,7 @@ const listConversationsInput = exactStruct({
 /** At most fifty canonical addresses and an opaque position for the next page. */
 const listConversationsOutput = Schema.Struct({
   addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
-  ...PaginatedResult.fields,
+  ...Page.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
 const readConversationInput = exactStruct({
@@ -197,7 +197,7 @@ const readConversationInput = exactStruct({
 
 const readConversationOutput = Schema.Struct({
   records: Schema.Array(historyRecordSchema).pipe(Schema.maxItems(50)),
-  ...PaginatedResult.fields,
+  ...Page.fields,
 });
 
 /**
@@ -435,7 +435,7 @@ export const toolDefinitions = {
   send_message: {
     failure: sendFails,
     description:
-      "Send a message. With collectiveRequest the message is a collective request, which asks its recipients to respond in a form by a deadline; with collectiveResponse it is your response to one you received. Returns id, the message id, and address, the canonical conversation address. For a collective request, id is the requestId of the collectiveResult you will receive. A refusal names the argument or rule to correct: a collective-failed refusal carries failure.kind, one of schema-invalid, deadline-passed, request-none, request-answered, request-expired or answer-invalid, and the requestId when the request is known. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
+      "Send a message. With collectiveRequest the message is a collective request, which asks its recipients to respond in a form by a deadline; with collectiveResponse it is your response to one you received. Returns id, the message id, and address, the canonical conversation address. For a collective request, id is the requestId of the collectiveResult you will receive. A refusal names the argument or rule to correct: a collective-failed refusal carries failure.kind, one of schema-invalid, deadline-passed, request-none, request-responded, request-expired or response-invalid, and the requestId when the request is known. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
     input: SendArguments,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
