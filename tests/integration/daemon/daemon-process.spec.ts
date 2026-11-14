@@ -26,7 +26,7 @@ const textContent = (text: string) => [{ type: "text", text }];
 
 /** The agent's saved conversation at `address`, which is not paged in these traces. */
 const readConversation = (reader: SignedIn, address: string) =>
-  callTool(reader.connection.client, {
+  callTool(reader.connection.mcp, {
     name: "read_conversation",
     arguments: {
       address: Schema.decodeUnknownSync(
@@ -110,7 +110,7 @@ it(
         aliceHistory.map(historyMessage),
       );
       expect(
-        yield* callTool(alice.connection.client, {
+        yield* callTool(alice.connection.mcp, {
           name: "list_conversations",
           arguments: {},
         }),

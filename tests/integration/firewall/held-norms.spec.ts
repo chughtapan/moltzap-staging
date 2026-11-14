@@ -51,7 +51,7 @@ function normsDaemon(settings: Readonly<Record<string, unknown>> = {}) {
 /** Sends `text` as a client does, naming no recipient, and returns the server agent's answer. */
 function answerTo(client: SignedIn, text: string) {
   return Effect.tryPromise(() =>
-    client.connection.client.callTool({
+    client.connection.mcp.callTool({
       name: "send_message",
       arguments: { text },
     }),
@@ -66,7 +66,7 @@ function answerTo(client: SignedIn, text: string) {
  * answers as soon as the item arrives.
  */
 function firstDelivery(agent: SignedIn) {
-  return call(agent.connection.client, {
+  return call(agent.connection.mcp, {
     name: "receive_messages",
     arguments: { wait: MAXIMUM_WAIT_SECONDS },
   }).pipe(
@@ -95,15 +95,15 @@ const heldNorms = Effect.gen(function* () {
   const alice = yield* daemon.signInAs("alice");
   const bob = yield* daemon.signInAs("bob");
 
-  yield* call(alice.connection.client, {
+  yield* call(alice.connection.mcp, {
     name: policyTool,
     arguments: { remove: [{ norm: droppedNorm }] },
   });
   const [alicePolicy, bobPolicy] = yield* Effect.all([
-    call(alice.connection.client, { name: "read_policy", arguments: {} }),
-    call(bob.connection.client, { name: "read_policy", arguments: {} }),
+    call(alice.connection.mcp, { name: "read_policy", arguments: {} }),
+    call(bob.connection.mcp, { name: "read_policy", arguments: {} }),
   ]);
-  const aliceNorms = yield* call(alice.connection.client, {
+  const aliceNorms = yield* call(alice.connection.mcp, {
     name: "read_norms",
     arguments: {},
   });
@@ -144,19 +144,19 @@ const serverOwnsNorms = Effect.gen(function* () {
   const server = yield* daemon.signIn(daemon.serverAgentBearer);
   const client = yield* daemon.signInAs("client");
 
-  yield* call(server.connection.client, {
+  yield* call(server.connection.mcp, {
     name: policyTool,
     arguments: { remove: [{ norm: droppedNorm }] },
   });
-  const serverNorms = yield* call(server.connection.client, {
+  const serverNorms = yield* call(server.connection.mcp, {
     name: "read_norms",
     arguments: {},
   });
   const clientNorms = yield* Effect.tryPromise(() =>
-    client.connection.client.callTool({ name: "read_norms", arguments: {} }),
+    client.connection.mcp.callTool({ name: "read_norms", arguments: {} }),
   );
   const clientTools = yield* Effect.tryPromise(() =>
-    client.connection.client.listTools(),
+    client.connection.mcp.listTools(),
   );
   const plainText = yield* answerTo(client, "Can we meet today?");
   const extraField = yield* answerTo(

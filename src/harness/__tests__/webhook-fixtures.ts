@@ -1,4 +1,4 @@
-/** @file A scripted webhook callback and an inbox whose entries wake it. */
+/** @file A scripted callback and an inbox whose entries wake it. */
 
 import {
   type HttpBody,
@@ -35,8 +35,8 @@ export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
 /** The callback address of the scripted subscription. */
 const url = "https://callback.example/events";
 
-/** A subscription that wakes the scripted callback when the inbox has pending entries. */
-export const input = {
+/** The request that subscribes the scripted callback to wake-ups for pending inbox entries. */
+export const subscribeRequest = {
   name: INBOX_PENDING_EVENT,
   arguments: {},
   cursor: null,
@@ -66,7 +66,7 @@ export const decodeWakeUp = Schema.decodeUnknownSync(Schema.parseJson(wakeUp));
 
 /**
  * The exact bytes of a callback request, as text.
- * @param body The request body the webhook sent.
+ * @param body The request body the daemon posted.
  * @returns The body's text.
  */
 const requestBody = (body: HttpBody.HttpBody): string =>
@@ -96,7 +96,7 @@ const callbackResponse = (
   );
 
 /**
- * The delivery token the scripted inbox item `byte` carries.
+ * The delivery token the scripted inbox entry `byte` carries.
  * @param byte Distinguishes one fixture token from another.
  * @returns A delivery token that differs for each `byte`.
  */
@@ -115,9 +115,9 @@ const item = Schema.decodeUnknownSync(PermittedItem)({
 });
 
 /**
- * Put the scripted inbox item `byte` into `store`.
- * @param store The store the webhook reads.
- * @param byte Distinguishes the item's token.
+ * Put the scripted inbox entry `byte` into `store`.
+ * @param store The store wake-ups are counted from.
+ * @param byte Distinguishes the entry's token.
  * @returns The store's mutation.
  */
 export const enqueue = (store: InboxFixture, byte: number) =>
@@ -141,7 +141,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
     readonly body: string;
     readonly headers: Readonly<Record<string, string>>;
   }> = [];
-  const client = HttpClient.make((request) =>
+  const callbackHttp = HttpClient.make((request) =>
     Effect.sync(() => {
       const body = requestBody(request.body);
       posts.push({ body, headers: { ...request.headers } });
@@ -166,7 +166,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
       return yield* makeWebhookEvents(agentKey ?? store.directory).pipe(
         Scope.extend(scope),
-        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provideService(HttpClient.HttpClient, callbackHttp),
         Effect.provideService(SocialHarness, store.harness),
         Effect.provideService(SqlClient.SqlClient, store.sql),
       );
@@ -174,7 +174,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   };
 });
 
-/** A SQL-backed service fixture exercises webhook transactions without reading harness-owned tables. */
+/** A SQL-backed service fixture exercises subscription transactions without reading harness-owned tables. */
 export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
   directory: string,
 ) {

@@ -26,12 +26,12 @@ const provider: DecisionProvider = {
 };
 
 const read = (agent: SignedIn) =>
-  callTool(agent.connection.client, { name: "read_policy", arguments: {} });
+  callTool(agent.connection.mcp, { name: "read_policy", arguments: {} });
 
 /** Sends an edit as written, including one the tool's input type does not admit. */
 const update = (agent: SignedIn, edit: Readonly<Record<string, unknown>>) =>
   Effect.tryPromise(() =>
-    agent.connection.client.callTool({
+    agent.connection.mcp.callTool({
       name: "update_policy",
       arguments: { ...edit },
     }),
@@ -148,7 +148,7 @@ const ownPolicyEdits = Effect.gen(function* () {
   yield* start(daemon, markedPolicy({}));
   const { alice, bob } = yield* signIn(daemon);
   const catalog = yield* Effect.tryPromise(() =>
-    alice.connection.client.listTools(),
+    alice.connection.mcp.listTools(),
   );
   expect(catalog.tools).toEqual(
     arrayContaining([

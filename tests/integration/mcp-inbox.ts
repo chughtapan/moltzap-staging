@@ -5,7 +5,7 @@ import { Effect, Stream } from "effect";
 /** Each successful inbox read records delivery before entries reach the test. */
 export function inboxStream(connection: McpConnection) {
   return Stream.repeatEffect(
-    callTool(connection.client, { name: "receive_messages", arguments: {} }),
+    callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
   ).pipe(
     Stream.flatMap((page) =>
       page.entries.length === 0

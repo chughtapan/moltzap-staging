@@ -367,7 +367,7 @@ const signIn = (endpoint: URL, directory: string, bearer: Redacted.Redacted) =>
       { endpoint, credential: bearer },
       { name: "integration-test", version: "test" },
     );
-    const status = yield* callTool(connection.client, {
+    const status = yield* callTool(connection.mcp, {
       name: "status",
       arguments: {},
     });

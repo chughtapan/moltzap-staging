@@ -31,14 +31,14 @@ import {
 import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
 import {
   clientToolDefinitions,
-  eventListInput,
-  eventSubscribeInput,
-  eventUnsubscribeInput,
+  eventListRequest,
+  eventSubscribeRequest,
+  eventUnsubscribeRequest,
   type HarnessWebhookEvents,
   INBOX_PENDING_EVENT,
   inboxPendingCatalogEntry,
   sendErrorData,
-  textToolDefinitions,
+  textOnlyToolDefinitions,
   toolDefinitions,
 } from "./contracts.js";
 import { limitResponseStream } from "./http.js";
@@ -116,7 +116,7 @@ function peerTools(
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
   return [
     settings.hideCollectives
-      ? sendTool(textToolDefinitions.send_message, harness.send)
+      ? sendTool(textOnlyToolDefinitions.send_message, harness.send)
       : sendTool(toolDefinitions.send_message, harness.send),
     receiveTool(harness),
     bind({
@@ -227,7 +227,7 @@ function statusTool(subscription: HarnessWebhookEvents) {
         Effect.map(subscription.status, (status) => ({
           agentId: identity.me.agentId,
           agentName: identity.me.agentName,
-          webhook: status,
+          subscription: status,
         })),
     }),
   );
@@ -417,7 +417,7 @@ function inboxEvents(subscription: HarnessWebhookEvents) {
     );
   return {
     list: (raw: unknown) =>
-      decode(eventListInput, raw).pipe(
+      decode(eventListRequest, raw).pipe(
         Effect.filterOrFail(
           (input) => input.cursor === undefined,
           () => new ProtocolError(-32602, "Invalid event catalog cursor"),
@@ -425,7 +425,7 @@ function inboxEvents(subscription: HarnessWebhookEvents) {
         Effect.as({ events: [inboxPendingCatalogEntry] }),
       ),
     subscribe: (raw: unknown) =>
-      decode(eventSubscribeInput, raw).pipe(
+      decode(eventSubscribeRequest, raw).pipe(
         Effect.flatMap(onlyInboxPending),
         Effect.filterOrFail(
           (input) => input.delivery.mode === "webhook",
@@ -434,7 +434,7 @@ function inboxEvents(subscription: HarnessWebhookEvents) {
         Effect.flatMap(subscription.subscribe),
       ),
     unsubscribe: (raw: unknown) =>
-      decode(eventUnsubscribeInput, raw).pipe(
+      decode(eventUnsubscribeRequest, raw).pipe(
         Effect.flatMap(onlyInboxPending),
         Effect.flatMap(subscription.unsubscribe),
         Effect.as({}),

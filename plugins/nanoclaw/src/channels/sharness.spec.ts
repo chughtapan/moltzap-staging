@@ -177,8 +177,8 @@ function host() {
   };
 }
 function connection() {
-  const client = new Client({ name: "nanoclaw-fixture", version: "1" });
-  const call = vi.spyOn(client, "callTool").mockResolvedValue({
+  const mcp = new Client({ name: "nanoclaw-fixture", version: "1" });
+  const call = vi.spyOn(mcp, "callTool").mockResolvedValue({
     content: [],
     structuredContent: { id: msgId, address } satisfies SendResult,
   });
@@ -189,7 +189,7 @@ function connection() {
       const scope = yield* Scope.Scope;
       yield* Effect.addFinalizer(() => Effect.sync(released));
       return {
-        client,
+        mcp,
         consumeInbox: (accept) =>
           // eslint-disable-next-line agent-code-guard/acquire-release-requires-scope -- The adapter opens and closes this fixture in its activation scope.
           Effect.acquireUseRelease(

@@ -82,7 +82,7 @@ export const nextRequestId = (participant: Participant) =>
 
 /** Sends `input`, decoded as a host's send input, from `sender`. */
 export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
-  callTool(sender.connection.client, {
+  callTool(sender.connection.mcp, {
     name: "send_message",
     arguments: Schema.decodeUnknownSync(SendRequest)(input),
   });

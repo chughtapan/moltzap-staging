@@ -55,7 +55,7 @@ const acquireStrict = (owners: readonly string[]) =>
 
 /** Removes the marked rule from the agent's firewall, which then holds no rule. */
 const withoutRule = (member: Participant) =>
-  callTool(member.connection.client, {
+  callTool(member.connection.mcp, {
     name: "update_policy",
     arguments: { remove: [markedRule.id] },
   }).pipe(Effect.as(member));
@@ -252,7 +252,7 @@ function expectIncomingGatherWithheld({
     yield* accept(open, requester.address, withheld.id, {
       slot: "mon",
     });
-    const strictCopy = (yield* callTool(requester.connection.client, {
+    const strictCopy = (yield* callTool(requester.connection.mcp, {
       name: "read_conversation",
       arguments: { address: strict.address },
     })).records.findLast((record) => record.kind === "sent");

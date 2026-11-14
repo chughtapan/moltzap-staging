@@ -79,7 +79,7 @@ norm agreement, and revocation features remain to be built.
 ## Connect a host plugin
 
 `connectFromEnvironment`, `acquireMcpConnection` and `callTool` connect a
-native host plugin to the daemon with the ordinary MCP client.
+native host plugin to the daemon over an ordinary MCP connection.
 `callToolAsWritten` sends arguments an agent wrote, which the daemon
 validates. Reading the MCP
 inbox records delivery before host callbacks run. Callback failures stop

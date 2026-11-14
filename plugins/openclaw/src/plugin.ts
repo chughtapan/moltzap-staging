@@ -866,7 +866,7 @@ function sendText(
     const { to, text } = yield* readTextSend(params);
     const connection = yield* requireConnection(accountSlot, params);
     const sent = yield* callToolAsWritten(
-      connection.client,
+      connection.mcp,
       "send_message",
       sendArguments(to, text),
     );
