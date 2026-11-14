@@ -9,7 +9,7 @@ import { getOrCreateOwnedAgent } from "./ownership.js";
 
 const owner = { issuer: "https://issuer.example", subject: "owner" };
 
-/** A prepared database no other test shares. */
+/** A prepared database no other test shares. Each property run builds one, so the property bounds its runs. */
 const database = Layer.scoped(
   SqlClient.SqlClient,
   openTestDatabase().pipe(Effect.map(({ sql }) => sql)),
@@ -69,6 +69,7 @@ it.prop(
       }
       expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(distinct);
     }).pipe(Effect.provide(database)),
+  { fastCheck: { numRuns: 25 } },
 );
 
 it("rolls back the owner binding when saving its profile fails", () =>
