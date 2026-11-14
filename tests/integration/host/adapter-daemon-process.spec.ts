@@ -51,10 +51,10 @@ const ALL_GATHER = {
   requestedSchema: SLOT_SCHEMA,
 } as const;
 
-/** The text a model sends to ask its question of a group. */
+/** The text a model sends to make an all_gather request of a group. */
 const ALL_GATHER_TEXT = JSON.stringify({
   text: GATHER_QUESTION,
-  collective: ALL_GATHER,
+  collectiveRequest: ALL_GATHER,
 });
 
 const textContent = (text: string) => [{ type: "text", text }];
@@ -147,14 +147,14 @@ function savedExchange(reader: SignedIn, peer: SignedIn) {
 }
 
 /**
- * A result lists its outcomes in the order of the members' names, which the
+ * A result lists its outcomes in the order of the recipients' names, which the
  * daemon chooses.
  */
-function inMemberNameOrder<
-  Outcome extends { readonly member: SignedIn["agent"] },
+function inRecipientNameOrder<
+  Outcome extends { readonly recipient: SignedIn["agent"] },
 >(outcomes: readonly Outcome[]) {
   return outcomes.toSorted((left, right) =>
-    left.member.agentName < right.member.agentName ? -1 : 1,
+    left.recipient.agentName < right.recipient.agentName ? -1 : 1,
   );
 }
 
@@ -200,7 +200,7 @@ const durableExchange = Effect.gen(function* () {
   );
   expect(final).toEqual({ visibleReplySent: false });
   expect(yield* nextItem(caller)).toMatchObject({
-    kind: "multicast",
+    kind: "message",
     message: {
       author: target.agent,
       recipients: [caller.agent],
@@ -229,7 +229,7 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
     const { address } = yield* send(caller, {
       to: group,
       text: GATHER_QUESTION,
-      collective: ALL_GATHER,
+      collectiveRequest: ALL_GATHER,
     });
     const requestTurn = yield* nextTurn(turns);
     expect(requestTurn.ctxPayload).toMatchObject({
@@ -244,31 +244,31 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
       deliveryToken: requestTurn.raw.id,
       item: peerRequest,
     });
-    const { operationId } = peerRequest.message.operation;
+    const requestId = peerRequest.message.msgId;
     yield* send(peer, {
       to: group,
-      collectiveResponse: { action: "decline", operationId },
+      collectiveResponse: { action: "decline", requestId },
     });
-    const answered = yield* messageTool("reply", {
+    const responded = yield* messageTool("reply", {
       to: group,
       message: JSON.stringify({
         collectiveResponse: {
           action: "accept",
-          operationId,
+          requestId,
           content: { slot: "tue" },
         },
       }),
     });
-    expect(answered.details).toMatchObject({ ok: true });
+    expect(responded.details).toMatchObject({ ok: true });
 
     const callerResult = yield* nextItem(caller);
     expect(callerResult).toMatchObject({
       kind: "collectiveResult",
-      operationId,
-      outcomes: inMemberNameOrder([
-        { member: peer.agent, outcome: { kind: "declined" } },
+      requestId,
+      outcomes: inRecipientNameOrder([
+        { recipient: peer.agent, outcome: { kind: "declined" } },
         {
-          member: target.agent,
+          recipient: target.agent,
           outcome: { kind: "answered", content: { slot: "tue" } },
         },
       ]),
@@ -295,12 +295,12 @@ function sendAllGather(scenario: HostedScenario, group: string) {
       to: group,
       message: JSON.stringify({
         text: GATHER_QUESTION,
-        collective: { ...ALL_GATHER, deadline: "tomorrow" },
+        collectiveRequest: { ...ALL_GATHER, deadline: "tomorrow" },
       }),
     }).pipe(Effect.flip);
     expect(malformed.cause).toHaveProperty(
       "message",
-      expect.stringContaining("collective.deadline"),
+      expect.stringContaining("collectiveRequest.deadline"),
     );
     const started = yield* messageTool("send", {
       to: group,
@@ -317,7 +317,7 @@ function sendAllGather(scenario: HostedScenario, group: string) {
       to: group,
       collectiveResponse: {
         action: "accept",
-        operationId: callerRequest.message.operation.operationId,
+        requestId: callerRequest.message.msgId,
         content: { slot: "mon" },
       },
     });
@@ -325,19 +325,19 @@ function sendAllGather(scenario: HostedScenario, group: string) {
       to: group,
       collectiveResponse: {
         action: "decline",
-        operationId: peerRequest.message.operation.operationId,
+        requestId: peerRequest.message.msgId,
       },
     });
     const memberResult = yield* nextItem(caller);
     expect(memberResult).toMatchObject({
       kind: "collectiveResult",
-      operationId: callerRequest.message.operation.operationId,
-      outcomes: inMemberNameOrder([
+      requestId: callerRequest.message.msgId,
+      outcomes: inRecipientNameOrder([
         {
-          member: caller.agent,
+          recipient: caller.agent,
           outcome: { kind: "answered", content: { slot: "mon" } },
         },
-        { member: peer.agent, outcome: { kind: "declined" } },
+        { recipient: peer.agent, outcome: { kind: "declined" } },
       ]),
     });
     expect(yield* nextItem(peer)).toEqual(memberResult);
@@ -387,7 +387,7 @@ const guardedBoundary = Effect.gen(function* () {
   expect(entryRead(reminded)).toMatchObject({
     address: caller.address,
     item: {
-      kind: "multicast",
+      kind: "message",
       message: { author: caller.agent, content: textContent(text) },
     },
     guidance: { instructions: [{ instruction: markedRule.guidance }] },
@@ -432,7 +432,7 @@ function exerciseOpenClawSends(
       to: caller.address,
       message: JSON.stringify({
         text: "Which day?",
-        collective: {
+        collectiveRequest: {
           op: "gather",
           deadline: 60,
           requestedSchema: SLOT_SCHEMA,
@@ -441,7 +441,7 @@ function exerciseOpenClawSends(
     }).pipe(Effect.flip);
     expect(unoffered.cause).toHaveProperty(
       "message",
-      expect.stringContaining("collective: Unexpected field"),
+      expect.stringContaining("collectiveRequest: Unexpected field"),
     );
     const targets = yield* messageTool("send", {
       to: caller.address,
@@ -468,7 +468,7 @@ function exerciseOpenClawSends(
     });
     expect(accepted.details).toEqual({ ok: true, to: caller.address });
     expect(yield* nextItem(caller)).toMatchObject({
-      kind: "multicast",
+      kind: "message",
       message: { author: target.agent, content: textContent(prose) },
     });
     expect(logLines).toEqual(

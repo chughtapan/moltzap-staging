@@ -1,4 +1,4 @@
-/** @file A requester and two members on one daemon run gather operations. */
+/** @file A requester and two recipients on one daemon run gathers. */
 
 import { RequestError, SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
@@ -9,6 +9,7 @@ import {
   groupRound,
   measuredDeadlineSeconds,
   nextItem,
+  nextRequestId,
   type Participant,
   send,
 } from "../agent-fixture.js";
@@ -29,7 +30,7 @@ const requireThree = (participants: readonly Participant[]) => {
     : Effect.succeed({ requester, first, second });
 };
 
-/** The requester and the two members every gather trace signs in. */
+/** The requester and the two recipients every gather trace signs in. */
 const acquireThree = acquireParticipants(["alice", "bob", "carol"]).pipe(
   Effect.flatMap(requireThree),
 );
@@ -53,18 +54,18 @@ const gather = (
   send(requester, {
     to: groupAddress([requester, ...members]),
     text: question,
-    collective: { op: "gather", deadline, requestedSchema: slotSchema },
+    collectiveRequest: { op: "gather", deadline, requestedSchema: slotSchema },
   });
 
 /**
- * Each trace starts one daemon and signs three owners in. The silent-member
+ * Each trace starts one daemon and signs three owners in. The silent-recipient
  * trace also waits for a deadline measured from real message delivery.
  */
 const GATHER_TEST_TIMEOUT_MS = 240_000;
 
 /**
- * The deadline of a gather every member answers: the test's own limit, so
- * only the answers close it and no deadline races them.
+ * The deadline of a gather every recipient responds to: the test's own limit,
+ * so only the responses complete it and no deadline races them.
  */
 const ANSWERED_DEADLINE_SECONDS = GATHER_TEST_TIMEOUT_MS / 1000;
 
@@ -74,7 +75,7 @@ interface GatherParticipants {
   readonly second: Participant;
 }
 
-/** A refused gather sends nothing, so the following request is each member's first item. */
+/** A refused gather sends nothing, so the following request is each recipient's first item. */
 function expectUnknownGatherMemberRefused({
   requester,
   first,
@@ -83,7 +84,11 @@ function expectUnknownGatherMemberRefused({
     const failure = yield* send(requester, {
       to: `group:${first.agent.agentName},${nobody},${requester.agent.agentName}`,
       text: question,
-      collective: { op: "gather", deadline: 60, requestedSchema: slotSchema },
+      collectiveRequest: {
+        op: "gather",
+        deadline: 60,
+        requestedSchema: slotSchema,
+      },
     }).pipe(Effect.flip);
     expect(failure).toBeInstanceOf(SendError);
     expect(failure).toMatchObject({ reason: "unknown-agent" });
@@ -94,6 +99,11 @@ function expectUnknownGatherMemberRefused({
   });
 }
 
+/**
+ * Each recipient receives a private copy of the request with its own message
+ * id. The copy sent to the first recipient in agent-name order has the id the
+ * send returned.
+ */
 function startGatherAndExpectRequests({
   requester,
   first,
@@ -110,35 +120,45 @@ function startGatherAndExpectRequests({
     expect(firstRequest).toMatchObject({
       kind: "collectiveRequest",
       message: {
-        msgId: anyString,
+        msgId: started.id,
         author: requester.agent,
         recipients: [first.agent],
         content: arrayContaining([{ type: "text", text: question }]),
-        operation: {
+        collectiveRequest: {
           op: "gather",
-          operationId: started.id,
+          question,
           requestedSchema: slotSchema,
           deadlineAt: anyNumber,
         },
       },
     });
     expect(secondRequest).toMatchObject({
-      message: { operation: { operationId: started.id } },
+      kind: "collectiveRequest",
+      message: {
+        msgId: anyString,
+        recipients: [second.agent],
+        collectiveRequest: { op: "gather", question },
+      },
     });
-    return started;
+    if (secondRequest.kind !== "collectiveRequest") {
+      return yield* Effect.dieMessage("expected a collective request");
+    }
+    expect(secondRequest.message.msgId).not.toBe(started.id);
+    return { started, secondRequestId: secondRequest.message.msgId };
   });
 }
 
 const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireThree;
   yield* expectUnknownGatherMemberRefused(participants);
-  const started = yield* startGatherAndExpectRequests(participants);
-  yield* expectInvalidAnswerRefused(
+  const { started, secondRequestId } =
+    yield* startGatherAndExpectRequests(participants);
+  yield* expectInvalidResponseRefused(
     participants.first,
     participants.requester,
     started.id,
   );
-  yield* answerGatherAndExpectResult(participants, started.id, started.address);
+  yield* respondToGatherAndExpectResult(participants, started, secondRequestId);
 }).pipe(Effect.scoped);
 
 /**
@@ -153,12 +173,15 @@ const silentMemberBehavior = Effect.gen(function* () {
   );
 
   const started = yield* gather(requester, [first, second], deadline);
-  yield* Effect.all([nextItem(first), nextItem(second)], { concurrency: 2 });
+  const [firstRequestId, secondRequestId] = yield* Effect.all(
+    [nextRequestId(first), nextRequestId(second)],
+    { concurrency: 2 },
+  );
   yield* send(first, {
     to: requester.address,
     collectiveResponse: {
       action: "accept",
-      operationId: started.id,
+      requestId: firstRequestId,
       content: { slot: "mon" },
     },
   });
@@ -166,40 +189,40 @@ const silentMemberBehavior = Effect.gen(function* () {
   expect(yield* nextItem(requester)).toMatchObject({
     kind: "collectiveResult",
     op: "gather",
-    operationId: started.id,
+    requestId: started.id,
     outcomes: [
       {
-        member: first.agent,
+        recipient: first.agent,
         outcome: { kind: "answered", content: { slot: "mon" } },
       },
-      { member: second.agent, outcome: { kind: "no-answer" } },
+      { recipient: second.agent, outcome: { kind: "no-answer" } },
     ],
   });
   const late = yield* send(second, {
     to: requester.address,
-    collectiveResponse: { action: "decline", operationId: started.id },
+    collectiveResponse: { action: "decline", requestId: secondRequestId },
   }).pipe(Effect.flip);
   expect(late).toMatchObject({ failure: { kind: "request-expired" } });
 }).pipe(Effect.scoped);
 
 it(
-  "gathers every member's answer",
+  "gathers every recipient's response",
   processTrace(allAnsweredBehavior),
   GATHER_TEST_TIMEOUT_MS,
 );
 
 it(
-  "reports a silent member as no-answer at the deadline",
+  "reports a silent recipient as no-answer at the deadline",
   processTrace(silentMemberBehavior),
   GATHER_TEST_TIMEOUT_MS,
 );
 
-/** How many times each agent sends the other a question and a message at once. */
+/** How many times each agent sends the other a collective request and a message at once. */
 const CROSSING_ROUNDS = 8;
 
 /**
- * Two agents on a PostgreSQL daemon each send the other a question and a
- * message at the same moment, repeatedly. Every send completes and every item
+ * Two agents on a PostgreSQL daemon each send the other a collective request
+ * and a message at the same moment, repeatedly. Every send completes and every item
  * arrives, so neither agent waited on the other.
  */
 const crossingSendsBehavior = Effect.gen(function* () {
@@ -213,14 +236,14 @@ const crossingSendsBehavior = Effect.gen(function* () {
     send(from, {
       to: to.address,
       text: question,
-      collective: {
+      collectiveRequest: {
         op: "gather",
         deadline: ANSWERED_DEADLINE_SECONDS,
         requestedSchema: slotSchema,
       },
     });
   const tell = (from: Participant, to: Participant) =>
-    send(from, { to: to.address, text: "a message beside the question" });
+    send(from, { to: to.address, text: "a message beside the request" });
   for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
     yield* Effect.all(
       [ask(alice, bob), ask(bob, alice), tell(alice, bob), tell(bob, alice)],
@@ -236,35 +259,35 @@ const crossingSendsBehavior = Effect.gen(function* () {
     expect(kinds.filter((kind) => kind === "collectiveRequest")).toHaveLength(
       CROSSING_ROUNDS,
     );
-    expect(kinds.filter((kind) => kind === "multicast")).toHaveLength(
+    expect(kinds.filter((kind) => kind === "message")).toHaveLength(
       CROSSING_ROUNDS,
     );
   }
 }).pipe(Effect.scoped);
 
 it(
-  "completes questions and messages two agents send each other at once on PostgreSQL",
+  "completes collective requests and messages two agents send each other at once on PostgreSQL",
   processTrace(crossingSendsBehavior),
   GATHER_TEST_TIMEOUT_MS,
 );
 
-function expectInvalidAnswerRefused(
+function expectInvalidResponseRefused(
   first: Participant,
   requester: Participant,
-  operationId: string,
+  requestId: string,
 ) {
   return Effect.gen(function* () {
     const invalid = yield* send(first, {
       to: requester.address,
       collectiveResponse: {
         action: "accept",
-        operationId,
+        requestId,
         content: { slot: "sun" },
       },
     }).pipe(Effect.flip);
     expect(invalid).toBeInstanceOf(RequestError);
     expect(invalid).toMatchObject({
-      operationId,
+      requestId,
       failure: {
         kind: "answer-invalid",
         fields: [{ field: "slot", reason: "invalid" }],
@@ -273,40 +296,44 @@ function expectInvalidAnswerRefused(
   });
 }
 
-function answerGatherAndExpectResult(
+/**
+ * Each recipient responds naming the message id of its own copy. The result
+ * carries the id the requester's send returned.
+ */
+function respondToGatherAndExpectResult(
   { requester, first, second }: GatherParticipants,
-  operationId: string,
-  address: string,
+  started: { readonly id: string; readonly address: string },
+  secondRequestId: string,
 ) {
   return Effect.gen(function* () {
     yield* send(first, {
       to: requester.address,
       collectiveResponse: {
         action: "accept",
-        operationId,
+        requestId: started.id,
         content: { slot: "tue" },
       },
     });
     yield* send(second, {
       to: requester.address,
-      collectiveResponse: { action: "decline", operationId },
+      collectiveResponse: { action: "decline", requestId: secondRequestId },
     });
     const result = yield* Queue.take(requester.inbox);
-    expect(result.address).toBe(address);
+    expect(result.address).toBe(started.address);
     expect(result.item).toEqual({
       kind: "collectiveResult",
       op: "gather",
-      operationId,
+      requestId: started.id,
       closedAt: anyNumber,
       closedBy: "settled",
       question,
       outcomes: [
         {
-          member: objectContaining(first.agent),
+          recipient: objectContaining(first.agent),
           outcome: { kind: "answered", content: { slot: "tue" } },
         },
         {
-          member: objectContaining(second.agent),
+          recipient: objectContaining(second.agent),
           outcome: { kind: "declined" },
         },
       ],

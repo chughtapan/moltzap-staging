@@ -1,4 +1,4 @@
-/** @file Stores each agent's ordered messages, which of them it has consumed, and its questions, answers and results. */
+/** @file Stores each agent's ordered messages, which of them it has consumed, and its collectives: each request with its copies, responses and result. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
@@ -12,17 +12,16 @@ import {
 import { decodeJson, encodeJson, sameJson } from "../encoding.js";
 import { AgentId } from "../identity.js";
 import {
-  CollectiveId,
-  type CollectiveValue,
+  CollectiveRequest,
+  CollectiveRequestMessage,
+  CollectiveResult,
   maximumMembers,
   Message,
-  messageInterpretation,
   MessageReference,
-  Request,
-  ResultDelivery,
+  MsgId,
 } from "./messages.js";
 
-/** One closed endpoint-store failure. */
+/** One closed store failure. */
 export class EndpointStoreError extends Data.TaggedError("EndpointStoreError")<{
   readonly reason: EndpointStoreFailure;
 }> {}
@@ -44,20 +43,24 @@ type CommunicationTables = Record<
     Record<"sequence" | "consumed", Generated<number>>
 > &
   Record<
-    "collective_operations",
+    "collectives",
     Record<
-      "agent_key" | "operation_id" | "creator_agent_id" | "request",
+      "agent_key" | "request_id" | "requester_agent_id" | "request",
       string
     > &
-      Record<"origin", "local" | "remote"> &
+      Record<"role", "requester" | "recipient"> &
       Record<"phase", Generated<"collecting" | "completed">> &
       Record<"deadline_at", number> &
-      Record<"result" | "answer_refs", string | null> &
-      Record<"sequence" | "delivered", Generated<number>>
+      Record<"result" | "response_refs", string | null> &
+      Record<"sequence" | "consumed", Generated<number>>
   > &
   Record<
-    "collective_answers",
-    Record<"agent_key" | "operation_id" | "member" | "message", string> &
+    "collective_copies",
+    Record<"agent_key" | "copy_id" | "request_id", string>
+  > &
+  Record<
+    "collective_responses",
+    Record<"agent_key" | "request_id" | "recipient" | "message", string> &
       Record<"sequence", Generated<number>>
   > &
   Record<
@@ -69,22 +72,22 @@ type CommunicationTables = Record<
     Record<"agent_key" | "agent_id" | "agent_name" | "principal_id", string>
   >;
 
-/** Builds queries over the tables that hold messages, questions and the agents they name. */
+/** Builds queries over the tables that hold messages, collectives and the agents they name. */
 export const communicationQueries = makeQueries<CommunicationTables>();
 
-/** One question's row. PostgreSQL returns its 64-bit deadline as text. */
-const operationRow = Schema.Struct({
-  operation_id: CollectiveId,
-  creator_agent_id: AgentId,
-  origin: Schema.Literal("local", "remote"),
+/** One collective's row. PostgreSQL returns its 64-bit deadline as text. */
+const collectiveRow = Schema.Struct({
+  request_id: MsgId,
+  requester_agent_id: AgentId,
+  role: Schema.Literal("requester", "recipient"),
   phase: Schema.Literal("collecting", "completed"),
   deadline_at: Schema.Union(Schema.Number, Schema.NumberFromString),
   request: Schema.String,
   result: Schema.NullOr(Schema.String),
-  answer_refs: Schema.NullOr(Schema.String),
+  response_refs: Schema.NullOr(Schema.String),
 });
 
-const answerReferences = Schema.Array(MessageReference).pipe(
+const responseReferences = Schema.Array(MessageReference).pipe(
   Schema.maxItems(maximumMembers - 1),
 );
 
@@ -100,35 +103,37 @@ const decodeStored = <A, I>(
     Effect.catchTag("ClientRepresentationError", corrupt),
   );
 
-type OperationValue = Extract<CollectiveValue, { readonly kind: "operation" }>;
-
-interface OperationState {
-  readonly operationId: CollectiveId;
+/**
+ * A collective request this agent sent (`requester`) or received
+ * (`recipient`), with what has happened to it. `requestId` keys the
+ * collective: the message id the requester's send returned, or the id of the
+ * request message a recipient received.
+ */
+export type StoredCollective = CollectiveRole & {
+  readonly requestId: MsgId;
   readonly deadlineAt: number;
   readonly phase: "collecting" | "completed";
-  readonly result?: {
-    readonly item: ResultDelivery["item"];
-    readonly answers: readonly MessageReference[];
+  readonly completed?: {
+    readonly result: CollectiveResult;
+    /** The responses the result counts. */
+    readonly responses: readonly MessageReference[];
   };
-}
+};
 
-/** A question this agent asked (`local`) or one it received (`remote`). */
-export type StoredCollectiveOperation = OperationState &
-  (
-    | { readonly origin: "local"; readonly request: Request }
-    | {
-        readonly origin: "remote";
-        readonly request: {
-          readonly message: Message;
-          readonly value: OperationValue;
-        };
-      }
-  );
+/** Whether this agent sent the collective's request or received it. */
+type CollectiveRole =
+  | { readonly role: "requester"; readonly request: CollectiveRequest }
+  | { readonly role: "recipient"; readonly request: CollectiveRequestMessage };
+
+/** Which one collective a read selects. */
+type CollectiveSelection =
+  | { readonly requestId: MsgId }
+  | { readonly copyId: MsgId }
+  | "next-result";
 
 /** The oldest completed result this agent has not consumed. */
 export const readNextCollectiveResult = Effect.fn("readNextCollectiveResult")(
-  (agentKey: string) =>
-    readOperations(agentKey).pipe(Effect.map((rows) => rows[0])),
+  (agentKey: string) => readCollectiveRow(agentKey, "next-result"),
 );
 
 /** A message at its position in a conversation, as one agent's history holds it. */
@@ -141,132 +146,153 @@ export interface StoredMessage {
   readonly bytes: number;
 }
 
-/** A repeated operation must preserve its original request and authority. */
-export const putCollectiveOperation = Effect.fn("putCollectiveOperation")(
-  function* (
-    agentKey: string,
-    input:
-      | { readonly origin: "local"; readonly request: Request }
-      | {
-          readonly origin: "remote";
-          readonly request: Message;
-          readonly value: OperationValue;
-        },
+/**
+ * Saves a collective under its request's message id. Saving it again must
+ * give the same request, role and deadline.
+ */
+export const saveCollective = Effect.fn("saveCollective")(function* (
+  agentKey: string,
+  input: CollectiveRole,
+) {
+  const db = yield* communicationQueries;
+  const requestId = input.request.msgId;
+  const deadlineAt =
+    input.role === "requester"
+      ? input.request.deadlineAt
+      : input.request.collectiveRequest.deadlineAt;
+  const request = yield* input.role === "requester"
+    ? encodeJson(CollectiveRequest, input.request)
+    : encodeJson(Message, input.request);
+  const [existing] = yield* collectiveRows(agentKey, { requestId });
+  if (existing === undefined) {
+    yield* executeQuery(
+      db.insertInto("collectives").values({
+        agent_key: agentKey,
+        request_id: requestId,
+        requester_agent_id: input.request.author.agentId,
+        role: input.role,
+        request,
+        deadline_at: deadlineAt,
+      }),
+    );
+    return;
+  }
+  if (
+    !sameJson(existing.request, request) ||
+    existing.role !== input.role ||
+    existing.requester_agent_id !== input.request.author.agentId ||
+    existing.deadline_at !== deadlineAt
   ) {
+    return yield* conflict();
+  }
+}, withAgentLock);
+
+/**
+ * Records the message id of one copy of a collective's request: the one group
+ * message of an all_gather, or one recipient's private copy of a gather. A
+ * response that names the copy then finds the collective.
+ */
+export const recordCollectiveCopy = Effect.fn("recordCollectiveCopy")(
+  function* (agentKey: string, requestId: MsgId, copyId: MsgId) {
     const db = yield* communicationQueries;
-    const { operationId, deadlineAt } =
-      input.origin === "local" ? input.request : input.value;
-    const request = yield* input.origin === "local"
-      ? encodeJson(Request, input.request)
-      : encodeJson(Message, input.request);
-    const [existing] = yield* operationRows(agentKey, operationId);
-    if (existing === undefined) {
-      yield* executeQuery(
-        db.insertInto("collective_operations").values({
-          agent_key: agentKey,
-          operation_id: operationId,
-          creator_agent_id: input.request.author.agentId,
-          origin: input.origin,
-          request,
-          deadline_at: deadlineAt,
-        }),
-      );
-      return;
-    }
-    if (
-      !sameJson(existing.request, request) ||
-      existing.origin !== input.origin ||
-      existing.creator_agent_id !== input.request.author.agentId ||
-      existing.deadline_at !== deadlineAt
-    ) {
-      return yield* conflict();
-    }
+    yield* executeQuery(
+      db.insertInto("collective_copies").values({
+        agent_key: agentKey,
+        copy_id: copyId,
+        request_id: requestId,
+      }),
+    );
   },
-  agentOperation,
+  withAgentLock,
 );
 
-/** The questions this agent asked that are still collecting answers, oldest first. */
-export const readCollectingQuestionIds = Effect.fn("readCollectingQuestionIds")(
+/** The collective requests this agent sent that are still collecting responses, oldest first. */
+export const readCollectingRequestIds = Effect.fn("readCollectingRequestIds")(
   function* (agentKey: string) {
     const db = yield* communicationQueries;
     const rows = yield* executeQuery(
       db
-        .selectFrom("collective_operations")
-        .select("operation_id")
+        .selectFrom("collectives")
+        .select("request_id")
         .where("agent_key", "=", agentKey)
-        .where("origin", "=", "local")
+        .where("role", "=", "requester")
         .where("phase", "=", "collecting")
         .orderBy("sequence"),
     );
-    return yield* decodeValue(Schema.Array(CollectiveId))(
-      rows.map((row) => row.operation_id),
+    return yield* decodeValue(Schema.Array(MsgId))(
+      rows.map((row) => row.request_id),
     );
   },
-  agentOperation,
+  withAgentLock,
 );
 
-/** Stored requests and their identifiers are validated before business operations receive them. */
-export const readCollectiveOperation = Effect.fn("readCollectiveOperation")(
-  (agentKey: string, operationId: CollectiveId) =>
-    readOperations(agentKey, operationId).pipe(Effect.map((rows) => rows[0])),
+/** The collective `requestId` keys, validated against its row. */
+export const readCollective = Effect.fn("readCollective")(
+  (agentKey: string, requestId: MsgId) =>
+    readCollectiveRow(agentKey, { requestId }),
+);
+
+/** The collective one of whose request copies has the message id `copyId`. */
+export const readCollectiveOfCopy = Effect.fn("readCollectiveOfCopy")(
+  (agentKey: string, copyId: MsgId) => readCollectiveRow(agentKey, { copyId }),
 );
 
 /**
- * Saves a member's first answer and reports whether it was saved. A question
- * this agent asked takes answers only while collecting and before its
- * deadline.
+ * Saves a recipient's first response and reports whether it was saved. A
+ * collective request this agent sent takes responses only while collecting
+ * and before its deadline.
  */
-export const recordCollectiveAnswer = Effect.fn("recordCollectiveAnswer")(
+export const recordCollectiveResponse = Effect.fn("recordCollectiveResponse")(
   function* (
     agentKey: string,
-    operationId: CollectiveId,
+    requestId: MsgId,
     message: Message,
     now: number,
   ) {
     const db = yield* communicationQueries;
-    const operation = yield* readCollectiveOperation(agentKey, operationId);
+    const stored = yield* readCollective(agentKey, requestId);
     if (
-      operation === undefined ||
-      operation.phase === "completed" ||
-      (operation.origin === "local" && now >= operation.deadlineAt)
+      stored === undefined ||
+      stored.phase === "completed" ||
+      (stored.role === "requester" && now >= stored.deadlineAt)
     ) {
       return false;
     }
-    const member = message.author.agentId;
+    const recipient = message.author.agentId;
     const prior = yield* executeQuery(
-      storedAnswers(db, agentKey, operationId)
-        .select("member")
-        .where("member", "=", member),
+      storedResponses(db, agentKey, requestId)
+        .select("recipient")
+        .where("recipient", "=", recipient),
     );
     if (prior.length > 0) {
       return false;
     }
     yield* executeQuery(
-      db.insertInto("collective_answers").values({
+      db.insertInto("collective_responses").values({
         agent_key: agentKey,
-        operation_id: operationId,
-        member,
+        request_id: requestId,
+        recipient,
         message: yield* encodeJson(Message, message),
       }),
     );
     return true;
   },
-  agentOperation,
+  withAgentLock,
 );
 
-/** Related domain writes use the driver's connection and transaction context. */
-export function transaction<A, E, R>(
+/** Runs related writes of one agent in the driver's connection and transaction. */
+export function agentTransaction<A, E, R>(
   agentKey: string,
-  operation: Effect.Effect<A, E, R>,
+  work: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, EndpointStoreError, R | SqlClient> {
-  return agentOperation(withAgentTransaction(agentKey, operation), agentKey);
+  return withAgentLock(withAgentTransaction(agentKey, work), agentKey);
 }
 
-/** First-answer messages are decoded once at their persistence boundary. */
-export const readCollectiveAnswers = Effect.fn("readCollectiveAnswers")(
-  function* (agentKey: string, operationId: CollectiveId) {
+/** Each recipient's first response to a collective, in the order saved. */
+export const readCollectiveResponses = Effect.fn("readCollectiveResponses")(
+  function* (agentKey: string, requestId: MsgId) {
     const rows = yield* executeQuery(
-      storedAnswers(yield* communicationQueries, agentKey, operationId)
+      storedResponses(yield* communicationQueries, agentKey, requestId)
         .select("message")
         .orderBy("sequence"),
     );
@@ -276,56 +302,55 @@ export const readCollectiveAnswers = Effect.fn("readCollectiveAnswers")(
       { concurrency: 1 },
     );
   },
-  agentOperation,
+  withAgentLock,
 );
 
-/** Completes an open question with its result and the answers the result selected. */
+/** Completes a collecting collective with its result and the responses the result counts. */
 export const saveCollectiveResult = Effect.fn("saveCollectiveResult")(
   function* (
     agentKey: string,
-    input: {
-      readonly operationId: CollectiveId;
-      readonly item: ResultDelivery["item"];
-      readonly answers: readonly MessageReference[];
-    },
+    requestId: MsgId,
+    completed: NonNullable<StoredCollective["completed"]>,
   ) {
     yield* executeQuery(
-      operationUpdate(yield* communicationQueries, agentKey, input.operationId)
+      collectiveUpdate(yield* communicationQueries, agentKey, requestId)
         .set({
           phase: "completed",
-          result: yield* encodeJson(ResultDelivery.fields.item, input.item),
-          answer_refs: yield* encodeJson(answerReferences, input.answers),
+          result: yield* encodeJson(CollectiveResult, completed.result),
+          response_refs: yield* encodeJson(
+            responseReferences,
+            completed.responses,
+          ),
         })
         .where("phase", "=", "collecting"),
     );
   },
-  agentOperation,
+  withAgentLock,
 );
 
-/** Successful handling retires the same result while keeping its content readable. */
-export const retireCollectiveResult = Effect.fn("retireCollectiveResult")(
-  function* (agentKey: string, operationId: CollectiveId) {
-    yield* executeQuery(
-      operationUpdate(yield* communicationQueries, agentKey, operationId)
-        .set({ delivered: 1 })
-        .where("phase", "=", "completed"),
-    );
-  },
-  agentOperation,
-);
+/** Marks a completed result consumed; its content stays readable. */
+export const markCollectiveResultConsumed = Effect.fn(
+  "markCollectiveResultConsumed",
+)(function* (agentKey: string, requestId: MsgId) {
+  yield* executeQuery(
+    collectiveUpdate(yield* communicationQueries, agentKey, requestId)
+      .set({ consumed: 1 })
+      .where("phase", "=", "completed"),
+  );
+}, withAgentLock);
 
-/** Ends a question without a result, so that it takes no more answers. */
-export const retireCollectiveOperation = Effect.fn("retireCollectiveOperation")(
-  function* (agentKey: string, operationId: CollectiveId) {
-    yield* executeQuery(
-      operationUpdate(yield* communicationQueries, agentKey, operationId).set({
-        phase: "completed",
-        delivered: 1,
-      }),
-    );
-  },
-  agentOperation,
-);
+/** Ends a collective without a result, so that it takes no more responses. */
+export const discardCollective = Effect.fn("discardCollective")(function* (
+  agentKey: string,
+  requestId: MsgId,
+) {
+  yield* executeQuery(
+    collectiveUpdate(yield* communicationQueries, agentKey, requestId).set({
+      phase: "completed",
+      consumed: 1,
+    }),
+  );
+}, withAgentLock);
 
 /**
  * Whether this agent's history holds the message. A saved message with the
@@ -356,7 +381,7 @@ export const hasMessage = Effect.fn("hasMessage")(function* (
     return yield* conflict();
   }
   return true;
-}, agentOperation);
+}, withAgentLock);
 
 /**
  * Adds a message to one agent's history at its position. It takes no lock on
@@ -383,7 +408,7 @@ export const saveMessage = Effect.fn("saveMessage")(
     );
   },
   (work, agentKey) => withAgentTransaction(agentKey, work),
-  storeOperation,
+  asStoreError,
 );
 
 /** A bounded range of one agent's messages, in conversation order or in the order they were saved. */
@@ -452,10 +477,10 @@ export const readMessages = Effect.fn("readMessages")(function* (
       ),
     { concurrency: 1 },
   );
-}, agentOperation);
+}, withAgentLock);
 
-/** A failed or interrupted handler leaves the exact message available for another attempt. */
-export const acknowledgeMessage = Effect.fn("acknowledgeMessage")(function* (
+/** Marks a message consumed, so that it is not handed to the consumer again. */
+export const markMessageConsumed = Effect.fn("markMessageConsumed")(function* (
   agentKey: string,
   reference: MessageReference,
 ) {
@@ -468,127 +493,125 @@ export const acknowledgeMessage = Effect.fn("acknowledgeMessage")(function* (
       .where("author_agent_id", "=", reference.authorAgentId)
       .where("msg_id", "=", reference.msgId),
   );
-}, agentOperation);
+}, withAgentLock);
 
 type Queries = Effect.Effect.Success<typeof communicationQueries>;
 
-function storedAnswers(
-  db: Queries,
-  agentKey: string,
-  operationId: CollectiveId,
-) {
+function storedResponses(db: Queries, agentKey: string, requestId: MsgId) {
   return db
-    .selectFrom("collective_answers")
+    .selectFrom("collective_responses")
     .where("agent_key", "=", agentKey)
-    .where("operation_id", "=", operationId);
+    .where("request_id", "=", requestId);
 }
 
-function operationUpdate(
-  db: Queries,
-  agentKey: string,
-  operationId: CollectiveId,
-) {
+function collectiveUpdate(db: Queries, agentKey: string, requestId: MsgId) {
   return db
-    .updateTable("collective_operations")
+    .updateTable("collectives")
     .where("agent_key", "=", agentKey)
-    .where("operation_id", "=", operationId);
+    .where("request_id", "=", requestId);
 }
 
-function readOperations(agentKey: string, operationId?: CollectiveId) {
-  return agentOperation(
-    operationRows(agentKey, operationId).pipe(
-      Effect.flatMap((rows) =>
-        Effect.forEach(rows, readOperation, { concurrency: 1 }),
+function readCollectiveRow(agentKey: string, selection: CollectiveSelection) {
+  return withAgentLock(
+    collectiveRows(agentKey, selection).pipe(
+      Effect.flatMap(([row]) =>
+        row === undefined ? Effect.succeed(undefined) : storedCollective(row),
       ),
     ),
     agentKey,
   );
 }
 
-/** The row of one question, or without `operationId` of the oldest completed result not yet consumed. */
-function operationRows(agentKey: string, operationId?: CollectiveId) {
+/** The row of the selected collective, if this agent has it. */
+function collectiveRows(agentKey: string, selection: CollectiveSelection) {
   return Effect.gen(function* () {
     const db = yield* communicationQueries;
     const stored = db
-      .selectFrom("collective_operations")
+      .selectFrom("collectives")
       .selectAll()
       .where("agent_key", "=", agentKey)
       .orderBy("sequence")
       .limit(1);
-    return yield* executeQuery(
-      operationId === undefined
-        ? stored
-            .where("phase", "=", "completed")
-            .where("delivered", "=", 0)
-            .where("result", "is not", null)
-        : stored.where("operation_id", "=", operationId),
-    ).pipe(Effect.flatMap(decodeValue(Schema.Array(operationRow))));
+    let selected;
+    if (selection === "next-result") {
+      selected = stored
+        .where("phase", "=", "completed")
+        .where("consumed", "=", 0)
+        .where("result", "is not", null);
+    } else if ("requestId" in selection) {
+      selected = stored.where("request_id", "=", selection.requestId);
+    } else {
+      selected = stored.where(
+        "request_id",
+        "in",
+        db
+          .selectFrom("collective_copies")
+          .select("request_id")
+          .where("agent_key", "=", agentKey)
+          .where("copy_id", "=", selection.copyId),
+      );
+    }
+    return yield* executeQuery(selected).pipe(
+      Effect.flatMap(decodeValue(Schema.Array(collectiveRow))),
+    );
   });
 }
 
-function readOperation(
-  row: typeof operationRow.Type,
-): Effect.Effect<StoredCollectiveOperation, EndpointStoreError> {
+/** Decodes a row and checks each stored JSON value against the row's columns. */
+function storedCollective(
+  row: typeof collectiveRow.Type,
+): Effect.Effect<StoredCollective, EndpointStoreError> {
   return Effect.gen(function* () {
-    const result = yield* readResult(row);
-    const state: OperationState = {
-      operationId: row.operation_id,
+    const completed = yield* readCompleted(row);
+    const state = {
+      requestId: row.request_id,
       phase: row.phase,
       deadlineAt: row.deadline_at,
-      ...(result === undefined ? {} : { result }),
+      ...(completed === undefined ? {} : { completed }),
     };
-    if (row.origin === "local") {
-      const request = yield* decodeStored(Request, row.request);
-      if (
-        request.operationId !== row.operation_id ||
-        request.author.agentId !== row.creator_agent_id ||
-        request.deadlineAt !== row.deadline_at
-      ) {
-        return yield* corrupt();
-      }
-      return { ...state, origin: row.origin, request };
-    }
-    const request = yield* readRequest(row.request);
+    const stored: StoredCollective =
+      row.role === "requester"
+        ? {
+            ...state,
+            role: row.role,
+            request: yield* decodeStored(CollectiveRequest, row.request),
+          }
+        : {
+            ...state,
+            role: row.role,
+            request: yield* decodeStored(CollectiveRequestMessage, row.request),
+          };
+    const deadlineAt =
+      stored.role === "requester"
+        ? stored.request.deadlineAt
+        : stored.request.collectiveRequest.deadlineAt;
     if (
-      request.value.operationId !== row.operation_id ||
-      request.message.author.agentId !== row.creator_agent_id ||
-      request.value.deadlineAt !== row.deadline_at
+      stored.request.msgId !== row.request_id ||
+      stored.request.author.agentId !== row.requester_agent_id ||
+      deadlineAt !== row.deadline_at
     ) {
       return yield* corrupt();
     }
-    return { ...state, origin: row.origin, request };
+    return stored;
   });
 }
 
-function readResult(row: typeof operationRow.Type) {
+function readCompleted(row: typeof collectiveRow.Type) {
   return Effect.gen(function* () {
-    if (row.result === null && row.answer_refs === null) {
+    if (row.result === null && row.response_refs === null) {
       return undefined;
     }
-    if (row.result === null || row.answer_refs === null) {
+    if (row.result === null || row.response_refs === null) {
       return yield* corrupt();
     }
-    const item = yield* decodeStored(ResultDelivery.fields.item, row.result);
-    if (item.result.request.operationId !== row.operation_id) {
+    const result = yield* decodeStored(CollectiveResult, row.result);
+    if (result.request.msgId !== row.request_id) {
       return yield* corrupt();
     }
     return {
-      item,
-      answers: yield* decodeStored(answerReferences, row.answer_refs),
+      result,
+      responses: yield* decodeStored(responseReferences, row.response_refs),
     };
-  });
-}
-
-function readRequest(text: string) {
-  return Effect.gen(function* () {
-    const message = yield* decodeStored(Message, text);
-    const value = yield* messageInterpretation(message).pipe(
-      Effect.catchTag("CollectivePartInvalidError", corrupt),
-    );
-    if (Option.isNone(value) || value.value.kind !== "operation") {
-      return yield* corrupt();
-    }
-    return { message, value: value.value };
   });
 }
 
@@ -605,7 +628,7 @@ function decodeValue<A, I>(schema: Schema.Schema<A, I>) {
  * the lock until the enclosing transaction commits; other agents use their own
  * rows.
  */
-function agentOperation<A, E, R>(
+function withAgentLock<A, E, R>(
   work: Effect.Effect<A, E, R>,
   agentKey: string,
 ) {
@@ -627,14 +650,14 @@ function agentOperation<A, E, R>(
       });
       return yield* work;
     }),
-  ).pipe(storeOperation, Effect.withSpan("agentOperation"));
+  ).pipe(asStoreError, Effect.withSpan("withAgentLock"));
 }
 
 /** SQL failures, defects and row corruption leave through one closed storage error channel. */
-function storeOperation<A, E, R>(
-  operation: Effect.Effect<A, E, R>,
+function asStoreError<A, E, R>(
+  work: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, EndpointStoreError, R> {
-  return operation.pipe(
+  return work.pipe(
     Effect.catchAllCause((cause) => {
       if (Cause.isInterruptedOnly(cause)) {
         return Effect.failCause(Cause.stripFailures(cause));

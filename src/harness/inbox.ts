@@ -1,11 +1,12 @@
 /** @file Retains incoming work, the agent's permitted view and delivery acknowledgments. */
 
 import { SqlClient, SqlSchema } from "@effect/sql";
-import { absurd, Effect, Encoding, Schema } from "effect";
+import { Effect, Encoding, Schema } from "effect";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   Message,
   MessageReference,
+  MsgId,
   PaginatedRequest,
 } from "../communication/index.js";
 import type { IncomingDecision } from "../firewall/service.js";
@@ -76,7 +77,7 @@ export interface PendingItem {
 type InboxTables = Record<
   "harness_items",
   Record<"agent_key" | "identity" | "token" | "address" | "kind", string> &
-    Record<"author" | "message_id" | "operation_id", string | null> &
+    Record<"author" | "message_id", string | null> &
     Record<"incoming" | "view", string | null> &
     Record<"sequence", Generated<number>> &
     Record<"status", "checking" | "withheld" | "pending" | "acknowledged">
@@ -142,26 +143,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   ) {
     const saved = yield* encodeJson(Incoming, incoming);
     const message =
-      incoming.kind === "message" || incoming.kind === "request"
-        ? incoming.message
-        : undefined;
-    let operationId: string | undefined;
-    switch (incoming.kind) {
-      case "result":
-        operationId = incoming.result.request.operationId;
-        break;
-      case "request":
-        operationId = incoming.message.operation.operationId;
-        break;
-      case "message":
-        break;
-      default:
-        absurd(incoming);
-    }
+      incoming.kind === "collectiveResult" ? undefined : incoming.message;
     const identity =
-      message === undefined
-        ? `result:${operationId}`
-        : `message:${message.author.agentId}:${message.msgId}`;
+      incoming.kind === "collectiveResult"
+        ? `result:${incoming.result.request.msgId}`
+        : `message:${incoming.message.author.agentId}:${incoming.message.msgId}`;
     const token = DeliveryToken.make(
       `dlv_${randomBytes(32).toString("base64url")}`,
     );
@@ -176,7 +162,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           kind: incoming.kind,
           author: message?.author.agentId ?? null,
           message_id: message?.msgId ?? null,
-          operation_id: operationId ?? null,
           incoming: saved,
           view: null,
           status: "checking",
@@ -386,12 +371,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("token", "=", token)
           .where("status", "=", "checking"),
       ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
-    isRequestVisible: (operationId: string) =>
+    isRequestVisible: (requestId: MsgId) =>
       run(
         storedItems()
           .select("sequence")
-          .where("kind", "=", "request")
-          .where("operation_id", "=", operationId)
+          .where("kind", "=", "collectiveRequest")
+          .where("message_id", "=", requestId)
           .where("view", "is not", null)
           .limit(1),
       ).pipe(
@@ -440,7 +425,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
           )
           .where("address", "=", address)
-          .where("kind", "=", "result")
+          .where("kind", "=", "collectiveResult")
           .where("view", "is not", null),
       ).pipe(
         Effect.map((rows) => rows[0]?.head ?? 0),
@@ -462,7 +447,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .where("address", "=", address)
               .where("sequence", ">", after)
               .where("sequence", "<=", through)
-              .where("kind", "=", "result")
+              .where("kind", "=", "collectiveResult")
               .where("view", "is not", null)
               .orderBy("sequence")
               .limit(limit + 1),
@@ -490,7 +475,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .select("address")
               .distinct()
               .where("address", ">", after)
-              .where("kind", "=", "result")
+              .where("kind", "=", "collectiveResult")
               .where("view", "is not", null)
               .orderBy("address")
               .limit(51),

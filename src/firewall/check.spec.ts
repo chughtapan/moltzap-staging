@@ -444,10 +444,10 @@ it.prop(
       {
         kind: "request",
         op: "gather",
-        operationId: "col_question",
+        requestId: "msg_question",
         deadlineAt: 2000,
       },
-      { kind: "answer", op: "all_gather", operationId: "col_question" },
+      { kind: "answer", op: "all_gather", requestId: "msg_question" },
     ),
     fc.option(fc.nat(), { nil: undefined }),
     fc.option(fc.boolean(), { nil: undefined }),

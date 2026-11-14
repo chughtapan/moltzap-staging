@@ -10,11 +10,11 @@ import {
   Schema,
 } from "effect";
 import {
-  AnswerOutcome,
-  CollectiveId,
+  CollectiveOp,
+  CollectiveOutcome,
+  CollectiveRequestMessage,
   Message as CommunicationMessage,
-  ReceivedRequest,
-  RequestOperation,
+  MsgId,
 } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
 import { AgentCard } from "../identity.js";
@@ -70,20 +70,21 @@ const probability = Schema.Number.pipe(Schema.between(0, 1));
 const collectingOp = Schema.Literal("gather", "all_gather");
 
 /**
- * Request deadlines use epoch milliseconds. Operation metadata lets policy
- * distinguish questions and answers without interpreting message text.
+ * Request deadlines use epoch milliseconds. This metadata lets policy tell
+ * collective requests and responses apart without interpreting message text.
+ * `requestId` is the request's message id.
  */
 const messageOperation = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("request"),
     op: collectingOp,
-    operationId: identifier,
+    requestId: identifier,
     deadlineAt: Schema.Int.pipe(Schema.positive()),
   }),
   Schema.Struct({
     kind: Schema.Literal("answer"),
     op: collectingOp,
-    operationId: identifier,
+    requestId: identifier,
   }),
 );
 
@@ -1100,7 +1101,7 @@ export type Withheld = typeof Withheld.Type;
 const resultGuidance = exactStruct({
   question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
   answers: Schema.Array(
-    exactStruct({ member: AgentCard, ...checkedGuidanceSchema.fields }),
+    exactStruct({ recipient: AgentCard, ...checkedGuidanceSchema.fields }),
   ),
 });
 
@@ -1113,18 +1114,22 @@ export const LocalGuidance = Schema.Union(
 /** @useDeclaredType */
 export type LocalGuidance = typeof LocalGuidance.Type;
 
-/** A request result after applying local policy to each peer-controlled part. */
+/**
+ * A collective result after applying local policy to each peer-controlled
+ * part. `requestId` is the message id the requester's send returned, which is
+ * also the id of the request message an all_gather's members received.
+ */
 export const CollectiveResult = exactStruct({
   kind: Schema.Literal("collectiveResult"),
-  op: RequestOperation,
-  operationId: CollectiveId,
+  op: CollectiveOp,
+  requestId: MsgId,
   closedAt: Schema.Number,
   closedBy: Schema.Literal("settled", "deadline"),
   question: Schema.Union(Schema.String, Withheld),
   outcomes: Schema.NonEmptyArray(
     exactStruct({
-      member: AgentCard,
-      outcome: Schema.Union(AnswerOutcome, Withheld),
+      recipient: AgentCard,
+      outcome: Schema.Union(CollectiveOutcome, Withheld),
     }),
   ),
 });
@@ -1135,12 +1140,12 @@ export type CollectiveResult = typeof CollectiveResult.Type;
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
 export const PermittedItem = Schema.Union(
   exactStruct({
-    kind: Schema.Literal("multicast"),
+    kind: Schema.Literal("message"),
     message: CommunicationMessage,
   }),
   exactStruct({
     kind: Schema.Literal("collectiveRequest"),
-    message: ReceivedRequest,
+    message: CollectiveRequestMessage,
   }),
   CollectiveResult,
 );

@@ -19,10 +19,10 @@
 import { Effect, Either, Option, Struct } from "effect";
 import type { Act, ActValue } from "./acts.js";
 import {
-  type AnswerContent,
-  type AnswerFieldFailures,
   type RequestedSchema,
-  validateAnswer,
+  type ResponseContent,
+  type ResponseFieldFailures,
+  validateResponseContent,
 } from "../communication/index.js";
 import { type Norm, readNorm, standsAlone } from "./documents.js";
 import { allowedActs, ended, type Instance, openingActs } from "./protocols.js";
@@ -60,7 +60,7 @@ interface Breach {
     | "unknown-instance"
     | "invalid-content";
   readonly norm: string;
-  readonly fields?: AnswerFieldFailures;
+  readonly fields?: ResponseFieldFailures;
 }
 
 /** An act's verdict, and the state after an act that conforms. */
@@ -439,7 +439,7 @@ function checkContent(
     type: "object",
     properties: {},
   };
-  return validateAnswer(schema, answerOf(schema, act.fields)).pipe(
+  return validateResponseContent(schema, answerOf(schema, act.fields)).pipe(
     Effect.as(undefined),
     Effect.catchAll((fields) =>
       Effect.succeed<Verdict>({
@@ -458,7 +458,7 @@ function checkContent(
 function answerOf(
   schema: RequestedSchema,
   fields: Readonly<Record<string, ActValue>>,
-): AnswerContent {
+): ResponseContent {
   return Object.fromEntries(
     Object.entries(fields).map(([field, value]) => {
       const flag = value === "true" || value === "false";

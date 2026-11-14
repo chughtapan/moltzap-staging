@@ -17,8 +17,9 @@ const agentTables = [
   "firewall_policy",
   "firewall_activations",
   "message_log",
-  "collective_operations",
-  "collective_answers",
+  "collectives",
+  "collective_copies",
+  "collective_responses",
 ];
 
 /** Owners and the agents the daemon has created for them. */
@@ -51,7 +52,6 @@ const hostSchema = (sequence: string) =>
     kind TEXT NOT NULL,
     author TEXT,
     message_id TEXT,
-    operation_id TEXT,
     incoming TEXT,
     view TEXT,
     status TEXT NOT NULL CHECK(status IN ('checking','withheld','pending','acknowledged')),
@@ -61,7 +61,6 @@ const hostSchema = (sequence: string) =>
     yield* sql`CREATE INDEX harness_pending ON harness_items(agent_key,status,sequence)`;
     yield* sql`CREATE INDEX harness_conversation ON harness_items(agent_key,address,sequence)`;
     yield* sql`CREATE INDEX harness_message ON harness_items(agent_key,author,message_id)`;
-    yield* sql`CREATE INDEX harness_request ON harness_items(agent_key,operation_id)`;
     yield* sql`CREATE TABLE harness_visibility (
     agent_key TEXT NOT NULL, author TEXT NOT NULL, message_id TEXT NOT NULL,
     visible INTEGER NOT NULL, PRIMARY KEY(agent_key, author, message_id)
@@ -108,30 +107,37 @@ const messageSchema = (sequence: string) =>
     UNIQUE(agent_key,author_agent_id,msg_id), UNIQUE(agent_key,conversation_id,ordinal)
   )`);
     yield* sql`CREATE INDEX message_log_delivery ON message_log(agent_key,consumed,sequence)`;
-    yield* sql.unsafe(`CREATE TABLE collective_operations (
+    yield* sql.unsafe(`CREATE TABLE collectives (
     agent_key TEXT NOT NULL,
     sequence ${sequence},
-    operation_id TEXT NOT NULL,
-    creator_agent_id TEXT NOT NULL,
-    origin TEXT NOT NULL CHECK(origin IN ('local','remote')),
+    request_id TEXT NOT NULL,
+    requester_agent_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('requester','recipient')),
     request TEXT NOT NULL,
     deadline_at BIGINT NOT NULL,
     phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN ('collecting','completed')),
     result TEXT,
-    answer_refs TEXT,
-    delivered INTEGER NOT NULL DEFAULT 0 CHECK(delivered IN (0,1)),
-    UNIQUE (agent_key, operation_id)
+    response_refs TEXT,
+    consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0,1)),
+    UNIQUE (agent_key, request_id)
   )`);
-    yield* sql.unsafe(`CREATE TABLE collective_answers (
+    yield* sql`CREATE TABLE collective_copies (
+    agent_key TEXT NOT NULL,
+    copy_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    FOREIGN KEY (agent_key,request_id) REFERENCES collectives(agent_key,request_id),
+    UNIQUE (agent_key, copy_id)
+  )`;
+    yield* sql.unsafe(`CREATE TABLE collective_responses (
     agent_key TEXT NOT NULL,
     sequence ${sequence},
-    operation_id TEXT NOT NULL,
-    member TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    recipient TEXT NOT NULL,
     message TEXT NOT NULL,
-    FOREIGN KEY (agent_key,operation_id) REFERENCES collective_operations(agent_key,operation_id),
-    UNIQUE (agent_key, operation_id,member)
+    FOREIGN KEY (agent_key,request_id) REFERENCES collectives(agent_key,request_id),
+    UNIQUE (agent_key, request_id,recipient)
   )`);
-    yield* sql`CREATE INDEX collective_pending_results ON collective_operations(agent_key,delivered) WHERE phase='completed' AND delivered=0`;
+    yield* sql`CREATE INDEX collective_pending_results ON collectives(agent_key,consumed) WHERE phase='completed' AND consumed=0`;
   });
 
 /** Every table the daemon uses, created in one step. */

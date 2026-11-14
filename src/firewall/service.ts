@@ -13,11 +13,11 @@ import {
 } from "effect";
 import { createHash, randomBytes } from "node:crypto";
 import type {
-  AnswerOutcome,
+  CollectiveOutcome,
+  CollectiveRequest,
+  CollectiveResultSources,
   Message,
   MessageReference,
-  Request,
-  ResultSources,
 } from "../communication/index.js";
 import type { Incoming, Outgoing } from "../communication/service.js";
 import {
@@ -115,7 +115,7 @@ export interface FirewallOptions {
 
 type Policy = Effect.Effect.Success<ReturnType<typeof initialPolicy>>;
 
-type ReplyResult = Extract<Incoming, { readonly kind: "result" }>;
+type ReplyResult = Extract<Incoming, { readonly kind: "collectiveResult" }>;
 type Direction = "incoming" | "outgoing";
 type RefusalReason = typeof firewallRefusalReasonSchema.Type;
 
@@ -314,16 +314,13 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           checkIncoming: (value, evidence) =>
             Effect.gen(function* () {
               const agent = localAgent;
-              if (value.kind === "result") {
+              if (value.kind === "collectiveResult") {
                 return yield* checkResult(installed, agent, value, evidence);
               }
               if (evidence === undefined || "answers" in evidence) {
                 return yield* new CheckInputError({ reason: "context" });
               }
-              const item: PermittedItem =
-                value.kind === "request"
-                  ? { kind: "collectiveRequest", message: value.message }
-                  : { kind: "multicast", message: value.message };
+              const item: PermittedItem = value;
               const [decision] = yield* decide(
                 installed,
                 [{ value: value.message, evidence }],
@@ -444,7 +441,7 @@ function checkResult(
 ) {
   return Effect.gen(function* () {
     const { result, sources } = incoming;
-    const peers = sources.answers.filter(
+    const peers = sources.responses.filter(
       (message) => message.author.agentId !== self.agentId,
     );
     const question =
@@ -476,7 +473,7 @@ function checkResult(
         }
         found.add(key);
         const outcome = result.outcomes.find(
-          (entry) => entry.member.agentId === message.author.agentId,
+          (entry) => entry.recipient.agentId === message.author.agentId,
         );
         if (outcome === undefined) {
           return yield* new CheckInputError({ reason: "message" });
@@ -522,17 +519,17 @@ function checkResult(
       const check = checked.find(
         (entry) =>
           entry.source.part === "answer" &&
-          entry.source.message.author.agentId === outcome.member.agentId,
+          entry.source.message.author.agentId === outcome.recipient.agentId,
       )?.check;
       return check?.kind === "refused"
-        ? { member: outcome.member, outcome: withheld(check) }
+        ? { recipient: outcome.recipient, outcome: withheld(check) }
         : outcome;
     };
     const [first, ...rest] = result.outcomes;
     const item: CollectiveResult = {
       kind: "collectiveResult",
       op: result.request.op,
-      operationId: result.request.operationId,
+      requestId: result.request.msgId,
       closedAt: result.closedAt,
       closedBy: result.closedBy,
       question:
@@ -545,7 +542,7 @@ function checkResult(
       source.part === "answer" &&
       check?.kind === "admitted" &&
       check.guidance !== undefined
-        ? [{ member: source.message.author, ...check.guidance }]
+        ? [{ recipient: source.message.author, ...check.guidance }]
         : [],
     );
     const questionGuidance =
@@ -831,47 +828,40 @@ function assessmentText(value: Outgoing): AssessmentText {
     sender: value.author.agentId,
     recipients: [first.agentId, ...rest.map((card) => card.agentId)],
   };
-  if ("kind" in value) {
-    return {
-      id: referenceId(`${value.author.agentId}:${value.operationId}`),
-      ...participants,
-      text: questionText(value),
-      operation: {
-        kind: "request",
-        op: value.op,
-        operationId: value.operationId,
-        deadlineAt: value.deadlineAt,
-      },
-    };
-  }
   const base = {
     id: referenceId(`${value.author.agentId}:${value.msgId}`),
     ...participants,
   };
-  const operation = value.operation;
-  if (operation?.kind === "request") {
-    return {
-      ...base,
-      text: questionText({ ...value, ...operation }),
-      operation: {
-        kind: "request",
-        op: operation.op,
-        operationId: operation.operationId,
-        deadlineAt: operation.deadlineAt,
-      },
-    };
+  const requestText = (
+    request: Parameters<typeof questionText>[0],
+  ): AssessmentText => ({
+    ...base,
+    text: questionText(request),
+    operation: {
+      kind: "request",
+      op: request.op,
+      requestId: value.msgId,
+      deadlineAt: request.deadlineAt,
+    },
+  });
+  if ("kind" in value) {
+    return requestText(value);
   }
-  if (operation?.kind === "response") {
+  if (value.collectiveRequest !== undefined) {
+    return requestText({ ...value, ...value.collectiveRequest });
+  }
+  const response = value.collectiveResponse;
+  if (response !== undefined) {
     return {
       ...base,
       text:
-        operation.action === "accept"
-          ? `answered ${JSON.stringify(operation.content)}`
+        response.action === "accept"
+          ? `answered ${JSON.stringify(response.content)}`
           : "declined",
       operation: {
         kind: "answer",
         op: value.recipients.length === 1 ? "gather" : "all_gather",
-        operationId: operation.operationId,
+        requestId: response.requestId,
       },
     };
   }
@@ -887,7 +877,7 @@ function assessmentText(value: Outgoing): AssessmentText {
 
 function questionText(
   value: Pick<
-    Request,
+    CollectiveRequest,
     | "author"
     | "recipients"
     | "question"
@@ -905,14 +895,14 @@ function questionText(
 
 function resultVisibility(
   item: CollectiveResult,
-  sources: ResultSources,
+  sources: CollectiveResultSources,
 ): IncomingDecision["visibility"] {
   return [
-    ...sources.answers.map((message) => ({
+    ...sources.responses.map((message) => ({
       message: messageReference(message),
       visibleToAgent: item.outcomes.some(
         (entry) =>
-          entry.member.agentId === message.author.agentId &&
+          entry.recipient.agentId === message.author.agentId &&
           (entry.outcome.kind === "answered" ||
             entry.outcome.kind === "declined"),
       ),
@@ -928,7 +918,7 @@ function resultVisibility(
   ];
 }
 
-function outcomeText(outcome: typeof AnswerOutcome.Type): string {
+function outcomeText(outcome: typeof CollectiveOutcome.Type): string {
   switch (outcome.kind) {
     case "answered":
       return `answered ${JSON.stringify(outcome.content)}`;

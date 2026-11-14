@@ -1,18 +1,16 @@
-/** @file Messages, questions and answers as values, and their failures. The service that delivers them is `service.ts`. */
+/** @file Messages, collective requests and collective responses as values, and their failures. The service that delivers them is `service.ts`. */
 
-/** Messages, addresses, questions, answers and results as validated values. */
+/** Messages, addresses, collective requests, responses and results as validated values. */
 export {
-  AcceptResponse,
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  Answer,
-  type AnswerContent,
-  type AnswerFieldFailures,
-  answerFieldsText,
-  AnswerOutcome,
-  CollectiveId,
+  CollectiveOp,
+  CollectiveOutcome,
+  CollectiveRequest,
+  CollectiveRequestMessage,
+  CollectiveResponse,
+  type CollectiveResultSources,
   DeadlineSeconds,
-  DeclineResponse,
   decodeCollectiveFailure,
   encodeCollectiveContent,
   GROUP_ADDRESS_PREFIX,
@@ -20,21 +18,20 @@ export {
   maximumMembers,
   Message,
   MessageAddressInput,
-  messageFromParticipants,
   MessageReference,
+  messageWithId,
   MsgId,
   PaginatedRequest,
   PaginatedResult,
-  ReceivedRequest,
-  Request,
   RequestedSchema,
   RequestError,
-  RequestOperation,
-  type ResultSources,
-  validateAnswer,
+  type ResponseContent,
+  type ResponseFieldFailures,
+  responseFieldsText,
+  validateResponseContent,
   wellFormedString,
 } from "./messages.js";
-/** Why a send, a read or a question was refused. */
+/** Why a send, a read, a collective request or a collective response was refused. */
 export {
   CommunicationError,
   issuesText,

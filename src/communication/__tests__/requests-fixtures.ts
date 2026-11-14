@@ -1,22 +1,28 @@
-/** @file Question handling over real SQL, with sends recorded in place of delivery. */
+/** @file Collective handling over real SQL, with sends recorded in place of delivery. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity.js";
 import type { CommunicationError } from "../errors.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
-import { makeRequests } from "../collectives.js";
+import { makeCollectives } from "../collectives.js";
 import {
-  type CollectiveValue,
+  type CollectivePart,
+  CollectiveRequest,
+  type CollectiveResult,
+  type CollectiveResultSources,
   encodeCollectiveContent,
   type Message,
-  messageFromParticipants,
+  messageWithId,
   MsgId,
-  Request,
-  type ResultDelivery,
 } from "../messages.js";
-import { collectiveOperationId } from "./request-ids.js";
 import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
+
+/** A collective result as the consumer is handed it. */
+export interface CompletedCollective {
+  readonly result: CollectiveResult;
+  readonly sources: CollectiveResultSources;
+}
 
 interface FixtureInput {
   readonly database?: TestDatabase;
@@ -41,18 +47,18 @@ export const form = {
   required: ["slot"],
 } as const;
 
-/** A question service for one agent. Reopening on the same database stands for a restart. */
+/** One agent's collectives. Reopening on the same database stands for a restart. */
 export const openCollectives = Effect.fn("openCollectives")(function* (
   input: FixtureInput = {},
 ) {
   const database = input.database ?? (yield* openTestDatabase());
   const agent = input.agent ?? alice;
   const sent = yield* Queue.unbounded<Message>();
-  const results = yield* Queue.unbounded<ResultDelivery>();
+  const results = yield* Queue.unbounded<CompletedCollective>();
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-  const requests = yield* makeRequests(database.agentKey, {
-    self: agent,
+  const collectives = yield* makeCollectives(database.agentKey, {
+    card: agent,
     send: (message) =>
       (input.send?.(message) ?? Effect.void).pipe(
         Effect.zipRight(Queue.offer(sent, message)),
@@ -61,9 +67,9 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
     completed: Effect.void,
   }).pipe(Effect.provideService(SqlClient, database.sql), Scope.extend(scope));
   const consumeResults = <E, R>(
-    handle: (result: ResultDelivery) => Effect.Effect<void, E, R>,
+    handle: (completed: CompletedCollective) => Effect.Effect<void, E, R>,
   ) =>
-    requests
+    collectives
       .deliverNextResult(handle)
       .pipe(
         Effect.zipRight(Effect.sleep("10 millis")),
@@ -71,11 +77,17 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
         Effect.provideService(SqlClient, database.sql),
       );
   const service = {
-    accept: (request: Request) => database.run(requests.accept(request)),
-    answer: (message: Message) => database.run(requests.answer(message)),
-    getRequest: (operationId: Request["operationId"]) =>
-      database.run(requests.getRequest(operationId)),
-    receive: (message: Message) => database.run(requests.receive(message)),
+    sendRequest: (request: CollectiveRequest) =>
+      database.run(collectives.sendRequest(request)),
+    sendResponse: (message: Message) =>
+      message.collectiveResponse === undefined
+        ? Effect.dieMessage("The message is not a collective response")
+        : database.run(
+            collectives.sendResponse(message, message.collectiveResponse),
+          ),
+    getRequest: (requestId: MsgId) =>
+      database.run(collectives.getRequest(requestId)),
+    receive: (message: Message) => database.run(collectives.receive(message)),
     consumeResults,
   };
   return {
@@ -93,36 +105,36 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
   };
 });
 
-/** Original wire messages are constructed once with a caller-selected author-scoped id. */
+/** A message carrying a collective part, with a caller-selected message id. */
 export const wireMessage = Effect.fn("wireMessage")(function* (
   author: AgentCard,
   recipients: readonly AgentCard[],
-  value: CollectiveValue,
+  part: CollectivePart,
   options: { readonly byte: number; readonly text?: string },
 ) {
-  const content = yield* encodeCollectiveContent(value, options.text);
-  return yield* messageFromParticipants(author, recipients, {
-    msgId: Schema.decodeUnknownSync(MsgId)(digest("msg_", options.byte)),
+  const content = yield* encodeCollectiveContent(part, options.text);
+  return yield* messageWithId(
+    author,
+    recipients,
+    testMsgId(options.byte),
     content,
-  });
+  );
 }, Effect.orDie);
 
-/** Alice's original request can be captured before the service accepts it. */
+/** A collective request from Alice as a recipient receives it. Its message id is `testMsgId(1)`. */
 export function aliceRequest(
   deadlineAt: number,
   options: {
     readonly op?: "gather" | "all_gather";
     readonly recipients?: readonly AgentCard[];
-    readonly operationId?: Request["operationId"];
   } = {},
 ) {
   return wireMessage(
     alice,
     options.recipients ?? [bob],
     {
-      kind: "operation",
+      kind: "request",
       op: options.op ?? "gather",
-      operationId: options.operationId ?? collectiveOperationId(alice.agentId),
       deadlineAt,
       requestedSchema: form,
     },
@@ -132,7 +144,7 @@ export function aliceRequest(
 
 /** A requester close selects complete author-scoped message identities. */
 export function aliceClose(
-  operationId: Request["operationId"],
+  requestId: MsgId,
   included: ReadonlyArray<{
     readonly authorAgentId: AgentCard["agentId"];
     readonly msgId: Message["msgId"];
@@ -144,42 +156,48 @@ export function aliceClose(
       wireMessage(
         alice,
         [bob, carol],
-        { kind: "close", operationId, closedAt, closedBy, included },
+        { kind: "close", requestId, included, closedAt, closedBy },
         { byte: 2 },
       ),
     ),
   );
 }
 
-/** Declines retain their message identity even though they carry no answer content. */
+/** A declining response to the request, or to the private copy of it, that `requestId` names. */
 export function declineMessage(
   author: AgentCard,
   recipients: readonly AgentCard[],
-  operationId: Request["operationId"],
+  requestId: MsgId,
   byte: number,
 ) {
   return wireMessage(
     author,
     recipients,
-    { kind: "response", operationId, action: "decline" },
+    { kind: "response", requestId, action: "decline" },
     { byte },
   );
 }
 
-/** The question deadline belongs to the caller's captured command. */
-export function question(
+/** A collective request Alice sends, with the message id `testMsgId(byte)`. */
+export function aliceAsks(
   deadlineAt: number,
   recipients: readonly [AgentCard, ...AgentCard[]] = [bob],
   op: "gather" | "all_gather" = "gather",
+  byte = 0,
 ) {
-  return Schema.decodeUnknownSync(Request)({
-    kind: "request",
+  return Schema.decodeUnknownSync(CollectiveRequest)({
+    kind: "collectiveRequest",
+    msgId: testMsgId(byte),
     author: alice,
     recipients,
     op,
-    operationId: collectiveOperationId(alice.agentId),
     question: "Which day works?",
     requestedSchema: form,
     deadlineAt,
   });
+}
+
+/** The message id whose random bytes all equal `byte`. */
+export function testMsgId(byte: number): MsgId {
+  return Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
 }

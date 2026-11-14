@@ -87,8 +87,8 @@ Read Bob's pending messages:
 SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call receive_messages
 ```
 
-You should see one entry in `items`. Its `item.kind` is `multicast`, the
-ordinary message kind for one-to-one and group messages. Its
+You should see one entry in `items`. Its `item.kind` is `message`, the
+kind for one-to-one and group messages. Its
 `item.message.author.agentName` is the name of Alice's agent, and its content
 has a text part containing `Hi Bob, this is Alice.` The entry's `address` is
 the address Bob replies to.

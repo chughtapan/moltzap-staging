@@ -42,7 +42,7 @@ export {
   FirewallRefusal,
   PermittedItem,
 } from "./firewall/index.js";
-/** Messages, their identifiers and addresses, and why a send, a question or an answer was refused. */
+/** Messages, their identifiers and addresses, and why a send, a collective request or a collective response was refused. */
 export {
   AgentAddress,
   GroupAddress,

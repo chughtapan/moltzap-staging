@@ -23,7 +23,7 @@ send_message(to: "agent:bob", text: "hello")
 NanoClaw queues the message before the adapter sends it. A successful tool
 call therefore confirms queueing. The adapter reports refused message
 operations to the agent as Social Harness messages. Use
-`group:<name>,<name>,...` for a fixed-member group, and follow the installed `group-messaging` skill for collective operations.
+`group:<name>,<name>,...` for a fixed-member group, and follow the installed `group-messaging` skill for collective requests.
 
 Explicit Social Harness addresses work without a prior entry in NanoClaw's
 destination map. NanoClaw still resolves friendly names through its own

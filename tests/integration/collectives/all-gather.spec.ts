@@ -1,4 +1,4 @@
-/** @file A requester and three members on one daemon run all_gather operations. */
+/** @file A requester and three recipients on one daemon run all_gathers. */
 
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
@@ -14,14 +14,13 @@ import {
 import { processTrace } from "../scenario-fixture.js";
 import {
   anyNumber,
-  anyString,
   arrayContaining,
   objectContaining,
 } from "../test-matchers.js";
 import { inNameOrder } from "./name-order.js";
 
 /**
- * The requester and the three members every all_gather trace signs in, and
+ * The requester and the three recipients every all_gather trace signs in, and
  * the address of their group: every member in name order.
  */
 const acquireFour = Effect.gen(function* () {
@@ -50,30 +49,35 @@ const allGather = (requester: Participant, to: string, deadline: number) =>
   send(requester, {
     to,
     text: question,
-    collective: { op: "all_gather", deadline, requestedSchema: slotSchema },
+    collectiveRequest: {
+      op: "all_gather",
+      deadline,
+      requestedSchema: slotSchema,
+    },
   });
 
 /**
- * Each trace starts one daemon and signs four owners in. The silent-member
+ * Each trace starts one daemon and signs four owners in. The silent-recipient
  * trace also waits for a deadline measured from real message delivery.
  */
 const ALL_GATHER_TEST_TIMEOUT_MS = 300_000;
 
 /**
- * The deadline of an all_gather every member answers: the test's own limit,
- * so only the answers close it and no deadline races them.
+ * The deadline of an all_gather every recipient responds to: the test's own
+ * limit, so only the responses complete it and no deadline races them.
  */
 const ANSWERED_DEADLINE_SECONDS = ALL_GATHER_TEST_TIMEOUT_MS / 1000;
 
-const answer = (
-  member: Participant,
+/** An accepting response to the group request whose message id is `requestId`. */
+const accept = (
+  recipient: Participant,
   group: string,
-  operationId: string,
+  requestId: string,
   slot: string,
 ) =>
-  send(member, {
+  send(recipient, {
     to: group,
-    collectiveResponse: { action: "accept", operationId, content: { slot } },
+    collectiveResponse: { action: "accept", requestId, content: { slot } },
   });
 
 interface AllGatherParticipants {
@@ -100,13 +104,13 @@ function startAllGatherAndExpectRequests({
     const request = {
       kind: "collectiveRequest",
       message: {
-        msgId: anyString,
+        msgId: started.id,
         author: requester.agent,
         recipients: [first.agent, second.agent, third.agent],
         content: arrayContaining([{ type: "text", text: question }]),
-        operation: {
+        collectiveRequest: {
           op: "all_gather",
-          operationId: started.id,
+          question,
           requestedSchema: slotSchema,
           deadlineAt: anyNumber,
         },
@@ -122,13 +126,13 @@ function startAllGatherAndExpectRequests({
 const allAnsweredBehavior = Effect.gen(function* () {
   const participants = yield* acquireFour;
   const started = yield* startAllGatherAndExpectRequests(participants);
-  yield* answerAllGatherAndExpectSharedResult(participants, started.id);
+  yield* respondToAllGatherAndExpectSharedResult(participants, started.id);
 }).pipe(Effect.scoped);
 
 /**
- * Two members answer and the third stays silent, so the all_gather closes at
- * its measured deadline. The members take the request together and the two
- * answer together.
+ * Two recipients respond and the third stays silent, so the all_gather
+ * completes at its measured deadline. The recipients take the request
+ * together and the two respond together.
  */
 const silentMemberBehavior = Effect.gen(function* () {
   const { requester, first, second, third, group } = yield* acquireFour;
@@ -142,8 +146,8 @@ const silentMemberBehavior = Effect.gen(function* () {
   });
   yield* Effect.all(
     [
-      answer(first, group, started.id, "mon"),
-      answer(second, group, started.id, "mon"),
+      accept(first, group, started.id, "mon"),
+      accept(second, group, started.id, "mon"),
     ],
     { concurrency: 2 },
   );
@@ -152,11 +156,11 @@ const silentMemberBehavior = Effect.gen(function* () {
   expect(requesterResult).toMatchObject({
     kind: "collectiveResult",
     op: "all_gather",
-    operationId: started.id,
+    requestId: started.id,
     outcomes: [
-      { member: first.agent, outcome: { kind: "answered" } },
-      { member: second.agent, outcome: { kind: "answered" } },
-      { member: third.agent, outcome: { kind: "no-answer" } },
+      { recipient: first.agent, outcome: { kind: "answered" } },
+      { recipient: second.agent, outcome: { kind: "answered" } },
+      { recipient: third.agent, outcome: { kind: "no-answer" } },
     ],
   });
   expect(yield* nextItem(first)).toEqual(requesterResult);
@@ -165,27 +169,27 @@ const silentMemberBehavior = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 it(
-  "gives the requester and every member the same all_gather result",
+  "gives the requester and every recipient the same all_gather result",
   processTrace(allAnsweredBehavior),
   ALL_GATHER_TEST_TIMEOUT_MS,
 );
 
 it(
-  "closes an all_gather at the deadline without the silent member",
+  "completes an all_gather at the deadline without the silent recipient",
   processTrace(silentMemberBehavior),
   ALL_GATHER_TEST_TIMEOUT_MS,
 );
 
-function answerAllGatherAndExpectSharedResult(
+function respondToAllGatherAndExpectSharedResult(
   { requester, first, second, third, group }: AllGatherParticipants,
-  operationId: string,
+  requestId: string,
 ) {
   return Effect.gen(function* () {
-    yield* answer(first, group, operationId, "tue");
-    yield* answer(second, group, operationId, "mon");
+    yield* accept(first, group, requestId, "tue");
+    yield* accept(second, group, requestId, "mon");
     yield* send(third, {
       to: group,
-      collectiveResponse: { action: "decline", operationId },
+      collectiveResponse: { action: "decline", requestId },
     });
     const delivery = yield* Queue.take(requester.inbox);
     expect(delivery.address).toBe(group);
@@ -193,21 +197,21 @@ function answerAllGatherAndExpectSharedResult(
     expect(requesterResult).toEqual({
       kind: "collectiveResult",
       op: "all_gather",
-      operationId,
+      requestId,
       closedAt: anyNumber,
       closedBy: "settled",
       question,
       outcomes: [
         {
-          member: objectContaining(first.agent),
+          recipient: objectContaining(first.agent),
           outcome: { kind: "answered", content: { slot: "tue" } },
         },
         {
-          member: objectContaining(second.agent),
+          recipient: objectContaining(second.agent),
           outcome: { kind: "answered", content: { slot: "mon" } },
         },
         {
-          member: objectContaining(third.agent),
+          recipient: objectContaining(third.agent),
           outcome: { kind: "declined" },
         },
       ],

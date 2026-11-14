@@ -117,9 +117,9 @@ Agent workers survive MCP disconnection. Startup restores known agents from
 SQL, and authenticated requests acquire the same retained context.
 
 An agent waits for its work: a send wakes the recipient's agent once the
-message is committed, and an agent with open questions sleeps until the
-earliest deadline. The loop that receives an agent's messages and the loop
-that closes its questions each start again after a failure, following a pause
+message is committed, and an agent with open collective requests sleeps until
+the earliest deadline. The loop that receives an agent's messages and the loop
+that completes its collective requests each start again after a failure, following a pause
 that doubles from one second up to thirty, and each failure is logged.
 
 An agent that cannot start, or whose worker stops in any other way, receives
@@ -143,7 +143,7 @@ request expiring during checking stays withheld with its judgment retained.
 
 ## Persistence
 
-SQLite and PostgreSQL retain the same logical state. Messages, questions,
+SQLite and PostgreSQL retain the same logical state. Messages, collectives,
 inbox acknowledgments, firewall decisions and editable policy belong to an
 agent. Every operation uses its selected agent, and PostgreSQL also enforces
 row policies on scoped transactions. The record of owners and agents and the
@@ -173,7 +173,7 @@ does not establish human confirmation.
 ### History and diagnostics
 
 Use `list_conversations` and `read_conversation` to retrieve the authenticated
-agent's retained messages, permitted incoming views and local collective
+agent's retained messages, permitted incoming views and its collective
 results. History remains available after inbox delivery and daemon restart.
 Failed send invocations return their existing tool errors and emit structured
 daemon logs with agent attribution. They do not add messages to conversation

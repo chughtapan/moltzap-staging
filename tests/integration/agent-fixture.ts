@@ -65,6 +65,21 @@ export const nextItem = (participant: Participant) =>
     Effect.map((delivery): PermittedItem => delivery.item),
   );
 
+/**
+ * Takes the participant's next received item, which must be a collective
+ * request, and gives its message id: the `requestId` a response names.
+ */
+export const nextRequestId = (participant: Participant) =>
+  nextItem(participant).pipe(
+    Effect.flatMap((item) =>
+      item.kind === "collectiveRequest"
+        ? Effect.succeed(item.message.msgId)
+        : Effect.dieMessage(
+            `expected a collective request, received ${item.kind}`,
+          ),
+    ),
+  );
+
 /** Sends `input`, decoded as a host's send input, from `sender`. */
 export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
   callTool(sender.connection.client, {
@@ -93,11 +108,11 @@ export const groupRound = (
   );
 
 /**
- * How many measured rounds a silent-member trace's collecting operation waits
- * before its deadline. Before it, the question reaches the members and their
- * answers return, which is several message rounds. The remaining rounds
- * absorb load that changes between the measurement and the operation, and
- * every round lengthens the test.
+ * How many measured rounds a silent-member trace's collective request waits
+ * before its deadline. Before it, the request reaches its recipients and
+ * their responses return, which is several message rounds. The remaining
+ * rounds absorb load that changes between the measurement and the request,
+ * and every round lengthens the test.
  */
 const MEASURED_DEADLINE_ROUNDS = 4;
 
@@ -109,7 +124,7 @@ const MEASURED_DEADLINE_ROUNDS = 4;
 const MINIMUM_DEADLINE_SECONDS = 15;
 
 /**
- * A collecting operation's deadline, in whole seconds: `MEASURED_DEADLINE_ROUNDS`
+ * A collective request's deadline, in whole seconds: `MEASURED_DEADLINE_ROUNDS`
  * runs of `round` on this host as loaded now, and at least
  * `MINIMUM_DEADLINE_SECONDS`. It scales with the host's load, as the work
  * before the deadline does.

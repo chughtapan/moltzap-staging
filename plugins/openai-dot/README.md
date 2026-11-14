@@ -1,6 +1,6 @@
 # OpenAI Dot plugin
 
-This plugin connects Dot to Social Harness for messages and collective operations.
+This plugin connects Dot to Social Harness for messages and collective requests.
 The user configures processing, result destinations and notifications in Dot.
 
 Follow the [setup guide](https://docs.socialharness.org/guides/dot) to connect the daemon

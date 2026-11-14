@@ -47,7 +47,7 @@ import { SocialHarness } from "./social-harness.js";
 
 interface AgentServerSettings {
   readonly webhook: HarnessWebhookEvents;
-  /** Leaves questions and answers out of send_message, which then sends text only. */
+  /** Leaves collective requests and responses out of send_message, which then sends text only. */
   readonly hideCollectives: boolean;
   /**
    * Set when this agent is a client in client/server mode: the address of the

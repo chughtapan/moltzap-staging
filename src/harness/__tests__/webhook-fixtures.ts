@@ -101,7 +101,7 @@ const token = (byte: number) =>
 
 /** A message from Alice to Bob, as the inbox holds it. */
 const item = Schema.decodeUnknownSync(PermittedItem)({
-  kind: "multicast",
+  kind: "message",
   message: {
     author: testAgentCard("agent:alice"),
     recipients: [testAgentCard("agent:bob")],

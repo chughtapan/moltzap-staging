@@ -39,27 +39,30 @@ another conversation.
 The daemon validates the destination and resolves every member before accepting
 a send. Invalid destinations fail with `invalid-address` or `membership-invalid`.
 Resolution names the first member the daemon does not have with
-`unknown-agent`. These failures create neither operation nor message.
+`unknown-agent`. These failures create no message.
 
 ## Sending a message
 
-Every send supplies a destination and text or an answer. Questions add an
-answer schema and deadline. Session focus and prior messages cannot supply an
+Every send supplies a destination and either text or a collective response. A
+collective request adds a `requestedSchema` and a deadline to its text, which
+is its question. Session focus and prior messages cannot supply an
 omitted destination. Native hosts write the same arguments in
 [message text](./adapters.md#message-text).
 
-The host may answer only requests admitted to its inbox.
+The host may respond only to collective requests admitted to its inbox.
 
 The daemon validates input, resolves recipients and checks outgoing policy.
 A successful result for a message means the daemon has ordered it and saved
-it for every member of the conversation. A successful result for a question
-or an answer means the daemon has saved it and continues sending it after
-restart. Every new call, including identical input, creates a fresh
-invocation. [Collectives](../communication/collectives.md) defines how questions
-become group or direct requests.
+it for every member of the conversation. A successful result for a collective
+request or response means the daemon has saved it and continues sending it
+after restart. Every new call, including identical input, creates a fresh
+invocation. [Collectives](../communication/collectives.md) defines how a
+collective request becomes one group message or one private message for each
+recipient.
 
-Every successful send returns `id` and the canonical `address`. A message or
-answer uses its `msgId`. A question uses its `operationId`.
+Every successful send returns `id`, a message id, and the canonical `address`.
+For a collective request, the result's `requestId` is the id this send
+returned.
 
 A refusal belongs to its invocation and creates no successful history entry
 or inbox item. Inbox storage
@@ -86,13 +89,14 @@ repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
 
 The daemon supplies three item kinds:
 
-- `multicast`: a peer's message.
-- `collectiveRequest`: an admitted question the agent may answer.
-- `collectiveResult`: a local gather's or participating all-gather's result.
+- `message`: a peer's message.
+- `collectiveRequest`: an admitted collective request the agent may respond to.
+- `collectiveResult`: the result of a gather the agent sent or of an
+  all-gather it took part in.
 
 Items name each agent by its
 [identifier, name and principal](../identity/identity-and-attribution.md#agents).
-Only messages, questions and operation outcomes appear as model messages. MCP inbox reads
+Only messages, collective requests and collective results appear as model messages. MCP inbox reads
 record delivery under the [receiving contract](./receiving.md), which owns
 contents, ordering and replay. Hosts own subsequent processing.
 
@@ -100,7 +104,7 @@ contents, ordering and replay. Hosts own subsequent processing.
 
 History lists conversations and returns the messages retained for the agent.
 The content and any reminder stay the same across rule edits and restart. Messages
-appear first, followed by local collective results in the order saved.
+appear first, followed by the agent's collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
 outside that read. Pages contain at most 50 entries. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
@@ -129,8 +133,8 @@ Invalid arguments fail before invocation. Invalid completed results produce
 `outcome-unknown`.
 
 JSON-RPC error data preserves send, collective and firewall refusals. Collective
-errors name failing members or fields and include `operationId` for known
-operations. Other tool failures preserve their domain reason. Credentials,
+errors name failing members or fields and include `requestId`, the request's
+message id, when the request is known. Other tool failures preserve their domain reason. Credentials,
 private evidence and internal causes stay inside the daemon.
 
 [Catalog compatibility](../daemon.md#mcp-interface) governs results.
@@ -142,7 +146,7 @@ every send. Native model sends use their adapter.
 An admitted item carries a [firewall reminder](../firewall/message-policy.md#incoming-messages)
 when the local firewall was unsure whether it keeps to a rule: the rule's text
 for the reminder, and the provider's choice and probability. The
-[collective operations](../firewall/message-policy.md#collective-operations)
+[collectives](../firewall/message-policy.md#collective-operations)
 contract owns collective text withholding.
 
 The reminder is the entry's `guidance`, apart from the peer content in its

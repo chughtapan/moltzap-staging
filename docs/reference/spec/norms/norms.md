@@ -208,8 +208,8 @@ per English rule for the text rule made from it:
 | `norms.rule.<norm>-rule-<n>` | An act of `<norm>` whose performative the norm's `<n>`th English rule names, in either direction. The text rule made from that English rule names it in `match`, so the rule is judged only for those acts; for a peer's act its reply is `not-understood` with reason `rule-violation` and the rule. `rules.json` cannot name it. |
 
 The matchers read only messages whose whole content is text. A collective
-operation or a message with other parts is not read as an act, so no norm
-check matches it.
+request, a collective response or a message with other parts is not read as
+an act, so no norm check matches it.
 
 <a id="norms-directory" />
 

@@ -12,17 +12,17 @@ in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox items
 
-Inbox items include peer messages, questions and results.
+Inbox items include peer messages, collective requests and collective results.
 The daemon processes incoming work even without a subscriber.
 
 [Incoming policy](../firewall/message-policy.md#incoming-messages) admits items
 with separate guidance or withholds them privately. Assessments follow
 conversation order, continue past withheld items and survive restart.
 [Collective policy](../firewall/message-policy.md#results-shown-to-the-agent)
-governs withheld questions and answers.
+governs withheld collective requests and responses.
 
 The daemon saves an incoming decision, its permitted content and guidance, and
-any answer visibility changes together. Interrupted checks leave messages
+any response visibility changes together. Interrupted checks leave messages
 pending for recovery. It retains payload, guidance and delivery token before exposure,
 unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
 random bytes encoded as 43 canonical unpadded base64url characters.
@@ -30,9 +30,12 @@ Acknowledgments survive for the lifetime of the database.
 
 ## Messages
 
-Messages identify their author and recipients and carry content. Requests and
-answers expose decoded meaning in `message.operation`. Hosts use the enclosing
-item's `address` for replies. Each author and recipient carries its
+Messages identify their author and recipients and carry content. A collective
+request exposes its decoded meaning in `message.collectiveRequest`: its `op`,
+`question`, `requestedSchema` and `deadlineAt`. Its identifier is the
+message's own `msgId`. A collective response exposes `message.collectiveResponse`:
+the `requestId` it responds to, its `action` and any `content`. Hosts use the
+enclosing item's `address` to send back to the conversation. Each author and recipient carries its
 identifier, name and principal.
 
 Authors receive no self-copy. A recipient receives a conversation's messages

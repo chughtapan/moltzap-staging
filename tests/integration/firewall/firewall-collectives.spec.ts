@@ -1,16 +1,16 @@
 /**
  * @file Gather and all_gather run end to end between agents of one daemon
- * whose firewalls hold a rule, beside an open member whose firewall holds
+ * whose firewalls hold a rule, beside an open recipient whose firewall holds
  * none.
  *
  * The daemon runs `firewall-daemon.ts`, and each of its agents starts with the
- * marked rule among the rules it can edit; the open member removes it. Under
+ * marked rule among the rules it can edit; the open recipient removes it. Under
  * that rule a firewall withholds an incoming text carrying `[in]`, refuses an
  * outgoing text carrying `[out]`, and is unsure about a text carrying
  * `[unsure]`: it refuses such a text outgoing and admits it incoming with a
  * reminder. Each agent checks with its own firewall: a requester checks the
- * question it sends and the answers it receives, a member checks the question
- * it is asked.
+ * collective request it sends and the responses it receives, a recipient
+ * checks the request it receives.
  */
 
 import { callTool, FirewallRefusal } from "@social-harness/social-harness";
@@ -22,6 +22,7 @@ import {
   joinParticipants,
   measuredDeadlineSeconds,
   nextItem,
+  nextRequestId,
   type Participant,
   send,
 } from "../agent-fixture.js";
@@ -52,7 +53,7 @@ const acquireStrict = (owners: readonly string[]) =>
     return inNameOrder(yield* joinParticipants(daemon, owners));
   });
 
-/** Removes the marked rule from the member's firewall, which then holds no rule. */
+/** Removes the marked rule from the agent's firewall, which then holds no rule. */
 const withoutRule = (member: Participant) =>
   callTool(member.connection.client, {
     name: "update_policy",
@@ -77,7 +78,11 @@ const collecting = (
   send(requester, {
     to: groupAddress([requester, ...members]),
     text: options.question,
-    collective: { op, deadline: options.deadline, requestedSchema: formSchema },
+    collectiveRequest: {
+      op,
+      deadline: options.deadline,
+      requestedSchema: formSchema,
+    },
   });
 
 interface GatherScenario {
@@ -98,8 +103,9 @@ interface AllGatherScenario {
 }
 
 /**
- * The open member is first in name order, so it is first among the members of
- * the requester's gathers and of the strict member's.
+ * The open recipient is first in name order, so it is first among the
+ * recipients of the requester's gathers and of the strict agent's. Its
+ * private copy of a gather's request therefore has the id the send returned.
  */
 const acquireGatherScenario = Effect.gen(function* () {
   const [open, requester, strict] = yield* acquireStrict([
@@ -114,7 +120,7 @@ const acquireGatherScenario = Effect.gen(function* () {
   return { requester, open, strict, members };
 });
 
-/** The requester is last in name order, and its members come before it in theirs. */
+/** The requester is last in name order, and its recipients come before it in theirs. */
 const acquireAllGatherScenario = Effect.gen(function* () {
   const [open, strictA, strictB, requester] = yield* acquireStrict([
     "alice",
@@ -145,65 +151,66 @@ const acquireAllGatherScenario = Effect.gen(function* () {
  */
 const FIREWALL_TEST_TIMEOUT_MS = 300_000;
 
-/** The deadline of an operation every asked member answers, so no deadline races the answers. */
+/** The deadline of a collective request every recipient responds to, so no deadline races the responses. */
 const ANSWERED_DEADLINE_SECONDS = FIREWALL_TEST_TIMEOUT_MS / 1000;
 
+/** An accepting response to the collective request whose message id is `requestId`. */
 const accept = (
-  member: Participant,
+  recipient: Participant,
   to: string,
-  operationId: string,
+  requestId: string,
   content: object,
 ) =>
-  send(member, {
+  send(recipient, {
     to,
-    collectiveResponse: { action: "accept", operationId, content },
+    collectiveResponse: { action: "accept", requestId, content },
   });
 
 /**
- * A requester and a member whose firewalls hold the rule, and one open member. A refused
- * question sends nothing; a question the strict member's firewall withholds
- * never reaches it, and the requester records it as no-answer at the
- * deadline; an answer the requester's firewall withholds is marked withheld
- * in its result; and a strict requester sees every answer it admits with the
- * advice each check gave.
+ * A requester and a recipient whose firewalls hold the rule, and one open
+ * recipient. A refused collective request sends nothing; a request the strict
+ * recipient's firewall withholds never reaches it, and the requester records
+ * it as no-answer at the deadline; a response the requester's firewall
+ * withholds is marked withheld in its result; and a strict requester sees
+ * every response it admits with the advice each check gave.
  */
 const gatherBehavior = Effect.gen(function* () {
   const scenario = yield* acquireGatherScenario;
   yield* expectOutgoingGatherRefused(scenario.requester, scenario.members);
   yield* expectIncomingGatherWithheld(scenario);
-  yield* expectGatherAnswerWithheld(scenario);
-  yield* expectUnsureAnswerReminder(scenario);
-  yield* expectUnsureQuestionRefused(scenario.requester, scenario.members);
+  yield* expectGatherResponseWithheld(scenario);
+  yield* expectUnsureResponseReminder(scenario);
+  yield* expectUnsureRequestRefused(scenario.requester, scenario.members);
 }).pipe(Effect.scoped);
 
 /**
- * A requester and two members whose firewalls hold the rule, and one open
- * member. A question the strict members' firewalls withhold never reaches
- * them, yet each still applies the close and receives the result with the
- * question withheld. An answer those firewalls withhold is marked withheld in
- * their agents' results and nowhere else. Every agent's result has the same
- * members and the same outcome for every answer it shows.
+ * A requester and two recipients whose firewalls hold the rule, and one open
+ * recipient. A request the strict recipients' firewalls withhold never
+ * reaches them, yet each still applies the close and receives the result with
+ * the question withheld. A response those firewalls withhold is marked
+ * withheld in their agents' results and nowhere else. Every agent's result
+ * has the same members and the same outcome for every response it shows.
  */
 const allGatherBehavior = Effect.gen(function* () {
   const scenario = yield* acquireAllGatherScenario;
-  yield* expectAllGatherQuestionWithheld(scenario);
-  const operationId = yield* answerAllGatherWithPrivateContent(scenario);
-  yield* expectAllGatherAnswerVisibility(scenario, operationId);
+  yield* expectAllGatherRequestWithheld(scenario);
+  const requestId = yield* respondToAllGatherWithPrivateContent(scenario);
+  yield* expectAllGatherResponseVisibility(scenario, requestId);
 }).pipe(Effect.scoped);
 
 it(
-  "checks a gather's question at each agent and its answers at the requester",
+  "checks a gather's request at each agent and its responses at the requester",
   processTrace(gatherBehavior),
   FIREWALL_TEST_TIMEOUT_MS,
 );
 
 it(
-  "gives every all_gather member the result while each firewall withholds what it holds",
+  "gives every all_gather recipient the result while each firewall withholds what it holds",
   processTrace(allGatherBehavior),
   FIREWALL_TEST_TIMEOUT_MS,
 );
 
-/** A refused question sends nothing; the next incoming request must belong to the subsequent operation. */
+/** A refused collective request sends nothing; the next incoming request must be the one sent after it. */
 function expectOutgoingGatherRefused(
   requester: Participant,
   members: readonly Participant[],
@@ -218,7 +225,12 @@ function expectOutgoingGatherRefused(
   });
 }
 
-/** The strict member never receives the withheld request, so it has no response context and times out as no-answer. */
+/**
+ * The strict recipient never receives its withheld copy of the request, so it
+ * has no request to respond to and its outcome is no-answer at the deadline.
+ * Its copy's message id is read from the requester's history of the
+ * conversation, where the copy is the last message the requester sent.
+ */
 function expectIncomingGatherWithheld({
   requester,
   open,
@@ -235,29 +247,39 @@ function expectIncomingGatherWithheld({
     });
     expect(yield* nextItem(open)).toMatchObject({
       kind: "collectiveRequest",
-      message: { operation: { operationId: withheld.id } },
+      message: { msgId: withheld.id },
     });
     yield* accept(open, requester.address, withheld.id, {
       slot: "mon",
     });
+    const strictCopy = (yield* callTool(requester.connection.client, {
+      name: "read_conversation",
+      arguments: { address: strict.address },
+    })).records.findLast((record) => record.kind === "sent");
+    if (strictCopy?.kind !== "sent") {
+      return yield* Effect.dieMessage(
+        "The requester's history holds no copy sent to the strict recipient",
+      );
+    }
+    expect(strictCopy.message.msgId).not.toBe(withheld.id);
     expect(
-      yield* accept(strict, requester.address, withheld.id, {
+      yield* accept(strict, requester.address, strictCopy.message.msgId, {
         slot: "tue",
       }).pipe(Effect.flip),
     ).toMatchObject({ failure: { kind: "request-none" } });
     const result = yield* nextItem(requester);
     expect(result, JSON.stringify(result)).toMatchObject({
       kind: "collectiveResult",
-      operationId: withheld.id,
+      requestId: withheld.id,
       outcomes: [
-        { member: open.agent, outcome: { kind: "answered" } },
-        { member: strict.agent, outcome: { kind: "no-answer" } },
+        { recipient: open.agent, outcome: { kind: "answered" } },
+        { recipient: strict.agent, outcome: { kind: "no-answer" } },
       ],
     });
   });
 }
 
-function expectGatherAnswerWithheld({
+function expectGatherResponseWithheld({
   requester,
   open,
   strict,
@@ -268,30 +290,28 @@ function expectGatherAnswerWithheld({
       question: "Which day works for the review?",
       deadline: ANSWERED_DEADLINE_SECONDS,
     });
-    expect(yield* nextItem(strict)).toMatchObject({
-      kind: "collectiveRequest",
-      message: { operation: { operationId: answered.id } },
-    });
+    const strictRequestId = yield* nextRequestId(strict);
     expect(yield* nextItem(open)).toMatchObject({
-      message: { operation: { operationId: answered.id } },
+      kind: "collectiveRequest",
+      message: { msgId: answered.id },
     });
     yield* accept(open, requester.address, answered.id, {
       slot: "mon",
       note: "[in] my calendar is private",
     });
-    yield* accept(strict, requester.address, answered.id, {
+    yield* accept(strict, requester.address, strictRequestId, {
       slot: "tue",
     });
     expect(yield* nextItem(requester)).toMatchObject({
       kind: "collectiveResult",
-      operationId: answered.id,
+      requestId: answered.id,
       outcomes: [
         {
-          member: open.agent,
+          recipient: open.agent,
           outcome: { kind: "withheld", reason: "rule-violation" },
         },
         {
-          member: strict.agent,
+          recipient: strict.agent,
           outcome: { kind: "answered", content: { slot: "tue" } },
         },
       ],
@@ -305,8 +325,8 @@ const uncertainAdvice = {
   instruction: "The marked message may break the rule.",
 };
 
-/** A strict requester admits an answer its firewall is unsure about, with a reminder naming the rule. */
-function expectUnsureAnswerReminder({
+/** A strict requester admits a response its firewall is unsure about, with a reminder naming the rule. */
+function expectUnsureResponseReminder({
   requester,
   open,
   strict,
@@ -317,45 +337,46 @@ function expectUnsureAnswerReminder({
       deadline: ANSWERED_DEADLINE_SECONDS,
     });
     expect(yield* nextItem(open)).toMatchObject({
-      message: { operation: { operationId: asked.id } },
+      kind: "collectiveRequest",
+      message: { msgId: asked.id },
     });
-    expect(yield* nextItem(requester)).toMatchObject({
-      message: { operation: { operationId: asked.id } },
-    });
+    const requesterRequestId = yield* nextRequestId(requester);
     yield* accept(open, strict.address, asked.id, {
       slot: "tue",
       note: "[unsure] maybe",
     });
-    yield* accept(requester, strict.address, asked.id, { slot: "mon" });
+    yield* accept(requester, strict.address, requesterRequestId, {
+      slot: "mon",
+    });
     const result = yield* Queue.take(strict.inbox);
 
     expect(result.item).toMatchObject({
       kind: "collectiveResult",
-      operationId: asked.id,
+      requestId: asked.id,
       outcomes: [
         {
-          member: open.agent,
+          recipient: open.agent,
           outcome: { kind: "answered", content: { note: "[unsure] maybe" } },
         },
-        { member: requester.agent, outcome: { kind: "answered" } },
+        { recipient: requester.agent, outcome: { kind: "answered" } },
       ],
     });
     const guidance = result.guidance;
     if (guidance === undefined || !("answers" in guidance)) {
       return yield* Effect.dieMessage(
-        "expected a reminder for collective answers",
+        "expected a reminder for collective responses",
       );
     }
     expect(
       guidance.answers.find(
-        ({ member }) => member.agentId === open.agent.agentId,
+        ({ recipient }) => recipient.agentId === open.agent.agentId,
       ),
-    ).toMatchObject({ member: open.agent, instructions: [uncertainAdvice] });
+    ).toMatchObject({ recipient: open.agent, instructions: [uncertainAdvice] });
   });
 }
 
-/** A question the requester's firewall is unsure about is refused, so the agent can revise it. */
-function expectUnsureQuestionRefused(
+/** A collective request the requester's firewall is unsure about is refused, so the agent can revise it. */
+function expectUnsureRequestRefused(
   requester: Participant,
   members: readonly Participant[],
 ) {
@@ -372,8 +393,8 @@ function expectUnsureQuestionRefused(
   });
 }
 
-/** Withheld questions never reach the strict members, yet those members still receive the close with the question hidden. */
-function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
+/** A withheld request never reaches the strict recipients, yet they still receive the result, with the question hidden. */
+function expectAllGatherRequestWithheld(scenario: AllGatherScenario) {
   const { requester, open, members, group, deadline } = scenario;
   return Effect.gen(function* () {
     const withheld = yield* collecting(requester, "all_gather", members, {
@@ -382,7 +403,7 @@ function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
     });
     expect(yield* nextItem(open)).toMatchObject({
       kind: "collectiveRequest",
-      message: { operation: { operationId: withheld.id } },
+      message: { msgId: withheld.id },
     });
     yield* accept(open, group, withheld.id, { slot: "mon" });
     expect(
@@ -392,22 +413,22 @@ function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
     ).toMatchObject({ failure: { kind: "request-none" } });
     const outcomes = [
       {
-        member: objectContaining(open.agent),
+        recipient: objectContaining(open.agent),
         outcome: { kind: "answered", content: { slot: "mon" } },
       },
       {
-        member: objectContaining(scenario.strictA.agent),
+        recipient: objectContaining(scenario.strictA.agent),
         outcome: { kind: "no-answer" },
       },
       {
-        member: objectContaining(scenario.strictB.agent),
+        recipient: objectContaining(scenario.strictB.agent),
         outcome: { kind: "no-answer" },
       },
     ];
     const shown = {
       kind: "collectiveResult",
       op: "all_gather",
-      operationId: withheld.id,
+      requestId: withheld.id,
       closedAt: anyNumber,
       closedBy: "deadline",
       question: "[in] Which day works?",
@@ -430,7 +451,7 @@ function expectAllGatherQuestionWithheld(scenario: AllGatherScenario) {
   });
 }
 
-function answerAllGatherWithPrivateContent({
+function respondToAllGatherWithPrivateContent({
   requester,
   open,
   strictA,
@@ -446,7 +467,7 @@ function answerAllGatherWithPrivateContent({
     for (const member of members) {
       expect(yield* nextItem(member)).toMatchObject({
         kind: "collectiveRequest",
-        message: { operation: { operationId: answered.id } },
+        message: { msgId: answered.id },
       });
     }
     yield* accept(open, group, answered.id, {
@@ -456,29 +477,26 @@ function answerAllGatherWithPrivateContent({
     yield* accept(strictA, group, answered.id, { slot: "tue" });
     yield* send(strictB, {
       to: group,
-      collectiveResponse: {
-        action: "decline",
-        operationId: answered.id,
-      },
+      collectiveResponse: { action: "decline", requestId: answered.id },
     });
     return answered.id;
   });
 }
 
-function expectAllGatherAnswerVisibility(
+function expectAllGatherResponseVisibility(
   { requester, open, strictA, strictB, group }: AllGatherScenario,
-  operationId: string,
+  requestId: string,
 ) {
   return Effect.gen(function* () {
-    const openAnswer = {
-      member: objectContaining(open.agent),
+    const openOutcome = {
+      recipient: objectContaining(open.agent),
       outcome: {
         kind: "answered",
         content: { slot: "mon", note: "[in] private" },
       },
     };
-    const withheldAnswer = {
-      member: objectContaining(open.agent),
+    const withheldOutcome = {
+      recipient: objectContaining(open.agent),
       outcome: {
         kind: "withheld",
         checkId: anyString,
@@ -487,18 +505,18 @@ function expectAllGatherAnswerVisibility(
     };
     const others = [
       {
-        member: objectContaining(strictA.agent),
+        recipient: objectContaining(strictA.agent),
         outcome: { kind: "answered", content: { slot: "tue" } },
       },
       {
-        member: objectContaining(strictB.agent),
+        recipient: objectContaining(strictB.agent),
         outcome: { kind: "declined" },
       },
     ];
     const result = {
       kind: "collectiveResult",
       op: "all_gather",
-      operationId,
+      requestId,
       closedAt: anyNumber,
       closedBy: "settled",
       question: "Which day works for the review?",
@@ -507,19 +525,19 @@ function expectAllGatherAnswerVisibility(
     expect(delivery.address).toBe(group);
     expect(delivery.item).toEqual({
       ...result,
-      outcomes: [withheldAnswer, ...others],
+      outcomes: [withheldOutcome, ...others],
     });
     expect(yield* nextItem(open)).toEqual({
       ...result,
-      outcomes: [openAnswer, ...others],
+      outcomes: [openOutcome, ...others],
     });
     expect(yield* nextItem(strictA)).toEqual({
       ...result,
-      outcomes: [withheldAnswer, ...others],
+      outcomes: [withheldOutcome, ...others],
     });
     expect(yield* nextItem(strictB)).toEqual({
       ...result,
-      outcomes: [withheldAnswer, ...others],
+      outcomes: [withheldOutcome, ...others],
     });
   });
 }

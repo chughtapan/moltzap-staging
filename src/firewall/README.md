@@ -19,8 +19,8 @@ flowchart LR
 The rule chain runs first: each rule names a matcher that another module
 registers, such as the norms checks, and the first rule whose matcher matches
 decides the message. A message no chain rule decides goes on to the text rules.
-One call keeps the same policy for every message, including the question and
-answers in a collective result. Advice selects registered instructions and
+One call keeps the same policy for every message, including the request and
+responses behind a collective result. Advice selects registered instructions and
 references the host may see.
 
 The daemon supplies the participants and permitted conversation history.

@@ -9,12 +9,11 @@ import {
   SchemaAST,
 } from "effect";
 import {
-  AcceptResponse,
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  CollectiveId,
+  CollectiveOp,
+  CollectiveResponse,
   DeadlineSeconds,
-  DeclineResponse,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
@@ -102,37 +101,32 @@ export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowl
   },
 ) {}
 
-const multicast = exactStruct({
-  op: Schema.optionalWith(Schema.Literal("multicast"), { exact: true }),
-});
-const question = exactStruct({
-  op: Schema.Literal("gather", "all_gather"),
+const collectiveRequest = exactStruct({
+  op: CollectiveOp,
   deadline: DeadlineSeconds,
   requestedSchema: RequestedSchema,
 });
-const response = Schema.Union(AcceptResponse, DeclineResponse);
 
-const MessageSendRequest = exactStruct({
+const MessageSend = exactStruct({
   to: MessageAddressInput,
   text: wellFormedString,
-  collective: Schema.optionalWith(multicast, { exact: true }),
 });
-const QuestionSendRequest = exactStruct({
+const CollectiveRequestSend = exactStruct({
   to: MessageAddressInput,
   text: wellFormedString,
-  collective: question,
+  collectiveRequest,
 });
-const AnswerSendRequest = exactStruct({
+const CollectiveResponseSend = exactStruct({
   to: MessageAddressInput,
-  collectiveResponse: response,
+  collectiveResponse: CollectiveResponse,
 });
 /** Host addresses are resolved by SocialHarness before communication preparation. */
 export const SendRequest = Schema.Union(
-  MessageSendRequest,
-  QuestionSendRequest,
-  AnswerSendRequest,
+  MessageSend,
+  CollectiveRequestSend,
+  CollectiveResponseSend,
 ).annotations({ identifier: "SendRequest" });
-/** Question deadlines include policy assessment time.
+/** A collective request's deadline includes policy assessment time.
  * @useDeclaredType
  */
 export type SendRequest = typeof SendRequest.Type;
@@ -150,21 +144,21 @@ export const SendArguments = exactStruct({
     description:
       "The message text. Required unless collectiveResponse is given.",
   }),
-  collective: Schema.optionalWith(Schema.Union(multicast, question), {
+  collectiveRequest: Schema.optionalWith(collectiveRequest, {
     exact: true,
   }).annotations({
     description:
-      "With text: asks the text as a question. gather asks each agent the address names privately and returns one result to you. all_gather asks a group and returns the same result to every member. deadline is seconds from now, and requestedSchema is the form each answer fills in. The result arrives as a collectiveResult inbox item.",
+      "With text: makes the message a collective request, and text its question. gather asks each agent the address names in a private message and returns one result to you. all_gather asks a group in one message and returns the same result to every member. deadline is seconds from now, and requestedSchema is the form each response fills in. The result arrives as a collectiveResult inbox entry whose requestId is the id this send returned.",
   }),
-  collectiveResponse: Schema.optionalWith(response, {
+  collectiveResponse: Schema.optionalWith(CollectiveResponse, {
     exact: true,
   }).annotations({
     description:
-      "In place of text: your one answer to a question, which arrives as a collectiveRequest inbox item. Send it to that item's address with the operationId in item.message.operation. accept takes content that fits that operation's requestedSchema. decline takes none.",
+      "In place of text: your one response to a collective request, which arrives as a collectiveRequest inbox entry. Send it to that entry's address. requestId is that entry's item.message.msgId. accept takes content that fits item.message.collectiveRequest.requestedSchema. decline takes none.",
   }),
 }).pipe(Schema.compose(Schema.typeSchema(SendRequest), { strict: false }));
 
-/** The arguments of a send when collectives are turned off: text to a recipient. */
+/** The arguments of a send when collective requests are turned off: text to a recipient. */
 export const TextSendArguments = exactStruct({
   to: Schema.propertySignature(MessageAddressInput).annotations({
     description: "The recipient: agent:<name>, or group:<members>.",
@@ -174,9 +168,13 @@ export const TextSendArguments = exactStruct({
   }),
 });
 
-/** Accepted ordinary messages, replies and questions share one receipt shape. */
+/**
+ * What a send returns: the message id and the conversation's canonical
+ * address. For a gather to several recipients the id is that of the private
+ * copy sent to the first recipient in agent-name order.
+ */
 export const SendResultSchema = Schema.Struct({
-  id: Schema.Union(MsgId, CollectiveId),
+  id: MsgId,
   address: MessageAddress,
 }).annotations({ identifier: "SendResult" });
 

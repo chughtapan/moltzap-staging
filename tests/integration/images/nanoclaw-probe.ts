@@ -33,7 +33,7 @@ const REPORT_PREFIX = "nanoclaw probe report: ";
  * The agent runner's script that queues each destination in order: one
  * marked `final` through the agent's final output, and any other as
  * `send_message` tool arguments `to` and `text`, whose text may be the
- * JSON of a question or an answer.
+ * JSON of a collective request or a collective response.
  */
 const OUTBOUND_SOURCE = `
   import '${RUNNER_ROOT}/modules/index.ts';
@@ -68,14 +68,14 @@ type ModuleRecord = Readonly<Record<string, unknown>>;
 
 /**
  * The item the probe waits for in the native inbox: its conversation,
- * sender, and either a plain message's exact text or the `operationId` of
- * the question whose inbox entry the text holds as JSON.
+ * sender, and either a plain message's exact text or the message id of the
+ * collective request whose inbox entry the text holds as JSON.
  */
 interface ExpectedInbound {
   readonly platformId: string;
   readonly sender: string;
   readonly text?: string;
-  readonly operationId?: string;
+  readonly requestId?: string;
 }
 
 /** The NanoClaw host modules the probe drives. */
@@ -140,12 +140,12 @@ function decodeDestinations(value: unknown): readonly unknown[] {
 }
 
 function decodeInbound(value: unknown): ExpectedInbound {
-  const { platformId, sender, text, operationId } = asRecord(value);
+  const { platformId, sender, text, requestId } = asRecord(value);
   if (
     typeof platformId !== "string" ||
     typeof sender !== "string" ||
     !optionalString(text) ||
-    !optionalString(operationId)
+    !optionalString(requestId)
   ) {
     throw new Error("NANOCLAW_INBOUND_JSON must name a platformId and sender");
   }
@@ -153,7 +153,7 @@ function decodeInbound(value: unknown): ExpectedInbound {
     platformId,
     sender,
     ...(text === undefined ? {} : { text }),
-    ...(operationId === undefined ? {} : { operationId }),
+    ...(requestId === undefined ? {} : { requestId }),
   };
 }
 
@@ -330,9 +330,9 @@ function matchesInbound(value: unknown, expected: ExpectedInbound): boolean {
     return false;
   }
   const textMatches =
-    expected.operationId === undefined
+    expected.requestId === undefined
       ? text === expected.text
-      : questionId(text, expected.platformId) === expected.operationId;
+      : requestIdIn(text, expected.platformId) === expected.requestId;
   return (
     textMatches &&
     address === expected.platformId &&
@@ -342,17 +342,17 @@ function matchesInbound(value: unknown, expected: ExpectedInbound): boolean {
 }
 
 /**
- * The `operationId` of the question whose inbox entry `text` holds as JSON,
- * when that entry is in the conversation `address`.
+ * The message id of the collective request whose inbox entry `text` holds as
+ * JSON, when that entry is in the conversation `address`.
  */
-function questionId(text: string, address: string): unknown {
+function requestIdIn(text: string, address: string): unknown {
   if (!text.startsWith("{")) {
     return undefined;
   }
   const entry = asRecord(JSON.parse(text));
   const item = asRecord(entry.item);
   return entry.address === address && item.kind === "collectiveRequest"
-    ? asRecord(asRecord(item.message).operation).operationId
+    ? asRecord(item.message).msgId
     : undefined;
 }
 

@@ -52,7 +52,7 @@ const receivedOrder = (participant: Participant, count: number) =>
     () =>
       nextItem(participant).pipe(
         Effect.map((item) =>
-          item.kind === "multicast" ? item.message.msgId : item.kind,
+          item.kind === "message" ? item.message.msgId : item.kind,
         ),
       ),
     { concurrency: 1 },
@@ -78,7 +78,7 @@ it(
       const sent = yield* send(alice, { to: bob.address, text: greeting });
       expect(sent).toMatchObject({ address: bob.address });
       expect(yield* nextItem(bob)).toMatchObject({
-        kind: "multicast",
+        kind: "message",
         message: {
           msgId: sent.id,
           author: alice.agent,
@@ -88,7 +88,7 @@ it(
       });
       yield* send(bob, { to: alice.address, text: reply });
       expect(yield* nextItem(alice)).toMatchObject({
-        kind: "multicast",
+        kind: "message",
         message: {
           author: bob.agent,
           recipients: [alice.agent],

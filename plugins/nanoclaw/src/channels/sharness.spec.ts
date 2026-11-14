@@ -58,7 +58,7 @@ const group = Schema.decodeUnknownSync(GroupAddress)("group:alice,bob,carol");
 /** Reads an entry as `receive_messages` returns it. */
 const entry = Schema.decodeUnknownSync(Schema.typeSchema(InboxEntry));
 const message = {
-  kind: "multicast",
+  kind: "message",
   message: {
     msgId,
     author: alice,
@@ -67,27 +67,30 @@ const message = {
   },
 };
 const plainEntry = entry({ deliveryToken, address, item: message });
-const operationId = `col_${Buffer.concat([Buffer.alloc(16, 1), Buffer.alloc(32)]).toString("base64url")}`;
 const slotForm = {
   type: "object",
   properties: { slot: { type: "string", enum: ["mon", "tue"] } },
   required: ["slot"],
 };
-/** The `send_message` arguments of a question, without their destination. */
-const question = {
+/** The `send_message` arguments of a collective request, without their destination. */
+const request = {
   text: "Which day works?",
-  collective: { op: "all_gather", deadline: 60, requestedSchema: slotForm },
+  collectiveRequest: {
+    op: "all_gather",
+    deadline: 60,
+    requestedSchema: slotForm,
+  },
 };
-/** The `send_message` arguments of an answer, without their destination. */
-const answer = {
+/** The `send_message` arguments of a collective response, without their destination. */
+const response = {
   collectiveResponse: {
+    requestId: msgId,
     action: "accept",
-    operationId,
     content: { slot: "tue" },
   },
 };
-/** Alice's question to the group, in Bob's inbox. */
-const questionEntry = entry({
+/** Alice's collective request to the group, in Bob's inbox. */
+const requestEntry = entry({
   deliveryToken,
   address: group,
   item: {
@@ -96,12 +99,10 @@ const questionEntry = entry({
       msgId,
       author: alice,
       recipients: [bob, carol],
-      content: [{ type: "text", text: question.text }],
-      operation: {
-        kind: "request",
+      content: [{ type: "text", text: request.text }],
+      collectiveRequest: {
         op: "all_gather",
-        operationId,
-        question: question.text,
+        question: request.text,
         requestedSchema: slotForm,
         deadlineAt: 1_800_000_000_000,
       },
@@ -116,14 +117,14 @@ const destinations = fc.oneof(
     .uniqueArray(agentName, { minLength: 2, maxLength: 4 })
     .map((names) => `group:${names.join(",")}`),
 );
-/** Fields a model may write beside a question or an answer, a destination among them. */
+/** Fields a model may write beside a collective request or response, a destination among them. */
 const besides = fc.dictionary(
   fc.constantFrom("text", "to", "note"),
   fc.string(),
 );
-/** A question or an answer as a model writes it: a JSON object with a `collective` or `collectiveResponse` property. */
-const operations = fc
-  .tuple(besides, fc.constantFrom(question, answer))
+/** A collective request or response as a model writes it: a JSON object with a `collectiveRequest` or `collectiveResponse` property. */
+const collectiveSends = fc
+  .tuple(besides, fc.constantFrom(request, response))
   .map(([beside, named]) => ({ ...beside, ...named }));
 /** Text that is no such object: prose, or a JSON object with neither property. */
 const plainTexts = fc.oneof(
@@ -267,8 +268,8 @@ describe("NanoClaw incoming items", () => {
       senderId: address,
     });
   });
-  it("hands a question to the host as its inbox entry, in its group", async () => {
-    const { metadata, isGroup, content } = await received(questionEntry);
+  it("hands a collective request to the host as its inbox entry, in its group", async () => {
+    const { metadata, isGroup, content } = await received(requestEntry);
     expect(metadata).toEqual([group, group, true]);
     expect(isGroup).toBe(true);
     expect(content).toMatchObject({
@@ -276,7 +277,7 @@ describe("NanoClaw incoming items", () => {
       sender: "agent:alice",
       members: ["agent:alice", "agent:bob", "agent:carol"],
     });
-    expect(entryInText(content)).toEqual(questionEntry);
+    expect(entryInText(content)).toEqual(requestEntry);
   });
   it("disconnects when the native inbound callback fails", async () => {
     const fake = connection();
@@ -292,7 +293,7 @@ describe("NanoClaw incoming items", () => {
 });
 
 describe("NanoClaw sends", () => {
-  it("sends text that is not a question or an answer as one plain message to its address", async () => {
+  it("sends text that is not a collective request or response as one message to its address", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
@@ -306,12 +307,12 @@ describe("NanoClaw sends", () => {
       }),
     );
   });
-  it("sends a JSON object that names a question or an answer as those send_message arguments, to the row's address", async () => {
+  it("sends a JSON object that names a collective request or response as those send_message arguments, to the row's address", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
     await fc.assert(
-      fc.asyncProperty(destinations, operations, async (to, written) => {
+      fc.asyncProperty(destinations, collectiveSends, async (to, written) => {
         fake.call.mockClear();
         await current.deliver(to, null, {
           kind: "chat",
@@ -337,7 +338,7 @@ describe("NanoClaw sends", () => {
     );
   });
   const issues = [
-    { path: ["collective", "deadline"], message: "Expected a number" },
+    { path: ["collectiveRequest", "deadline"], message: "Expected a number" },
   ];
   it.each([
     {

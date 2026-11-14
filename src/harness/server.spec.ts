@@ -25,8 +25,7 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
-import { digest, testAgentCard } from "../__tests__/agents.js";
-import { collectiveOperationId } from "../communication/__tests__/request-ids.js";
+import { digest } from "../__tests__/agents.js";
 import {
   MessageAddressInput,
   SendError,
@@ -215,7 +214,7 @@ const slotForm = {
   required: ["slot"],
 };
 const filledForm = fc.constant({ slot: "mon" });
-const operationId = collectiveOperationId(testAgentCard("agent:bob").agentId);
+const requestId = digest("msg_", 1);
 const thirtyDays = 30 * 24 * 60 * 60;
 /** Seconds above `min`, up to `max`. */
 const seconds = (min: number, max: number) =>
@@ -253,16 +252,16 @@ const wait: Argument = {
   ),
 };
 /**
- * What makes a message a question. Its deadline is whole seconds, from 1 to
+ * What makes a message a collective request. Its deadline is whole seconds, from 1 to
  * thirty days: the refused ones are the nearest whole numbers outside that
  * range and a fraction inside it.
  */
-const question: Arguments = {
-  "collective.op": {
+const collectiveRequest: Arguments = {
+  "collectiveRequest.op": {
     accepts: fc.constantFrom("gather", "all_gather"),
     refuses: unacceptable,
   },
-  "collective.deadline": {
+  "collectiveRequest.deadline": {
     accepts: fc.integer({ min: 1, max: thirtyDays }),
     refuses: fc.oneof(
       absent,
@@ -271,21 +270,21 @@ const question: Arguments = {
       fc.integer({ min: 1, max: thirtyDays - 1 }).map((whole) => whole + 0.5),
     ),
   },
-  "collective.requestedSchema": {
+  "collectiveRequest.requestedSchema": {
     accepts: fc.constant(slotForm),
     refuses: absentOrUnacceptable,
   },
 };
-/** An answer to a question takes no text. `content` says whether its action carries a filled form. */
-const answer = (action: string, content: Argument): Arguments => ({
+/** A collective response takes no text. `content` says whether its action carries a filled form. */
+const collectiveResponse = (action: string, content: Argument): Arguments => ({
   to: recipient,
   text: { accepts: absent, refuses: fc.string() },
   "collectiveResponse.action": {
     accepts: fc.constant(action),
     refuses: unacceptable,
   },
-  "collectiveResponse.operationId": {
-    accepts: fc.constant(operationId),
+  "collectiveResponse.requestId": {
+    accepts: fc.constant(requestId),
     refuses: absentOrUnacceptable,
   },
   "collectiveResponse.content": content,
@@ -295,14 +294,23 @@ const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
   { name: "read_conversation", takes: { address: recipient } },
   { name: "receive_messages", takes: { wait } },
   { name: "send_message", takes: { to: recipient, text } },
-  { name: "send_message", takes: { to: recipient, text, ...question } },
   {
     name: "send_message",
-    takes: answer("accept", { accepts: filledForm, refuses: absent }),
+    takes: { to: recipient, text, ...collectiveRequest },
   },
   {
     name: "send_message",
-    takes: answer("decline", { accepts: absent, refuses: filledForm }),
+    takes: collectiveResponse("accept", {
+      accepts: filledForm,
+      refuses: absent,
+    }),
+  },
+  {
+    name: "send_message",
+    takes: collectiveResponse("decline", {
+      accepts: absent,
+      refuses: filledForm,
+    }),
   },
 ];
 /** A call of any kind, with one value each of its arguments accepts and one value each refuses. */
@@ -615,7 +623,7 @@ const clientTools = [
 ];
 const sendTool = "send_message";
 const missingField = "text";
-const collectiveField = "collective";
+const collectiveField = "collectiveRequest";
 const textFields = ["to", missingField];
 
 describe("send_message arguments", () => {
@@ -634,7 +642,11 @@ describe("send_message arguments", () => {
         fixture.fetch(
           mcpRequest("tools/call", {
             name: sendTool,
-            arguments: { to: "agent:bob", text: "hello", collective: {} },
+            arguments: {
+              to: "agent:bob",
+              text: "hello",
+              collectiveRequest: {},
+            },
           }),
         ),
       );

@@ -35,7 +35,7 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
         deliveryToken: `dlv_${"A".repeat(43)}`,
         address: "agent:bob",
         item: {
-          kind: "multicast",
+          kind: "message",
           message: {
             author: {
               agentId: `agt_${"A".repeat(22)}`,
@@ -305,10 +305,10 @@ describe("send outcomes", () => {
 });
 
 describe("a send the daemon's tool does not take", () => {
-  const question = {
+  const request = {
     to: "agent:bob",
     text: "Which day?",
-    collective: {
+    collectiveRequest: {
       op: "gather",
       deadline: 60,
       requestedSchema: {
@@ -326,33 +326,36 @@ describe("a send the daemon's tool does not take", () => {
       ),
     );
 
-  it("fails naming the refused argument when the daemon hides questions", () =>
+  it("fails naming the refused argument when the daemon hides collective requests", () =>
     Effect.gen(function* () {
       const client = yield* connected({ hideCollectives: true });
       const failure = yield* callTool(client, {
         name: "send_message",
         arguments: Schema.decodeUnknownSync(toolDefinitions.send_message.input)(
-          question,
+          request,
         ),
       }).pipe(Effect.flip);
       expect(failure).toMatchObject({
         _tag: "SendError",
         reason: "content-invalid",
-        issues: [{ path: ["collective"] }],
+        issues: [{ path: ["collectiveRequest"] }],
       });
     }).pipe(Effect.scoped, Effect.runPromise));
 
-  it("fails naming the malformed argument of a question an agent wrote", () =>
+  it("fails naming the malformed argument of a collective request an agent wrote", () =>
     Effect.gen(function* () {
       const client = yield* connected({});
       const failure = yield* callToolAsWritten(client, "send_message", {
-        ...question,
-        collective: { ...question.collective, deadline: "tomorrow" },
+        ...request,
+        collectiveRequest: {
+          ...request.collectiveRequest,
+          deadline: "tomorrow",
+        },
       }).pipe(Effect.flip);
       expect(failure).toMatchObject({
         _tag: "SendError",
         reason: "content-invalid",
-        issues: [{ path: ["collective", "deadline"] }],
+        issues: [{ path: ["collectiveRequest", "deadline"] }],
       });
     }).pipe(Effect.scoped, Effect.runPromise));
 });
