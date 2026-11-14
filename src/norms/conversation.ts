@@ -10,8 +10,7 @@
  * instance, so acts carry no conversation id. At most one agreement or norm
  * instance is in flight. A unanimous `norm-agreement` registers its norm for
  * the next instance, which any member starts with one of its opening acts and
- * which ends when its protocol or its own turns complete, or a member cancels
- * it. Norm
+ * which ends when its protocol completes or a member cancels it. Norm
  * discovery and feedback run beside that instance; a discovery answer names
  * its query with `:in-reply-to`. Chat needs no state.
  */
@@ -27,22 +26,27 @@ import {
 import { type Norm, readNorm, standsAlone } from "./documents.js";
 import { allowedActs, ended, type Instance, openingActs } from "./protocols.js";
 
-/** The norms built into every daemon's handling of acts. */
-export const builtIns = {
+/** The names of the norms the daemon's handling of acts refers to. */
+export const normNames = {
   agreement: "norm-agreement",
   discovery: "norm-discovery",
   feedback: "feedback",
   chat: "chat",
 } as const;
 
-const builtInNames: ReadonlySet<string> = new Set(Object.values(builtIns));
+const codeNamedNormNames: ReadonlySet<string> = new Set(
+  Object.values(normNames),
+);
 
 /** One conversation's progress under its norms. */
-export interface State {
-  /** An open `norm-agreement` proposal and the norm it proposes. */
-  readonly agreement?: { readonly norm: string; readonly instance: Instance };
-  /** The norm every member agreed to, waiting for its instance to start. */
-  readonly agreed?: string;
+export interface ConversationNorms {
+  /** An open `norm-agreement` proposal and the name of the norm it proposes. */
+  readonly agreement?: {
+    readonly normName: string;
+    readonly instance: Instance;
+  };
+  /** The name of the norm every member agreed to, waiting for its instance to start. */
+  readonly agreedNormName?: string;
   /** The norm instance in flight. */
   readonly instance?: Instance;
   /** Open norm-discovery queries, by the id of the message that asked. */
@@ -65,7 +69,7 @@ interface Breach {
 
 /** An act's verdict, and the state after an act that conforms. */
 export type Verdict =
-  | { readonly kind: "conforms"; readonly state: State }
+  | { readonly kind: "conforms"; readonly state: ConversationNorms }
   | { readonly kind: "breaks"; readonly breach: Breach };
 
 /** One judgment's inputs: the norms this agent holds and the conversation's members. */
@@ -74,15 +78,18 @@ export interface Setting {
   readonly members: readonly string[];
 }
 
-/** An act, the member that sent it, and the id of the message that carried it. */
+/** An act, the author of the message that carried it, and that message's id. */
 export interface SentAct {
   readonly act: Act;
-  readonly sender: string;
+  readonly author: string;
   readonly msgId: string;
 }
 
 /** A conversation with no acts. */
-const emptyState: State = { queries: new Map(), fetched: new Map() };
+const emptyState: ConversationNorms = {
+  queries: new Map(),
+  fetched: new Map(),
+};
 
 /**
  * Folds acts in history order, skipping acts of unknown norms, acts that break
@@ -91,7 +98,7 @@ const emptyState: State = { queries: new Map(), fetched: new Map() };
 export function foldActs(
   setting: Setting,
   acts: readonly SentAct[],
-): Effect.Effect<State> {
+): Effect.Effect<ConversationNorms> {
   const answered = notUnderstoodActs(acts);
   return Effect.reduce(acts, emptyState, (state, sent) =>
     answered.has(sent.msgId) ||
@@ -112,7 +119,7 @@ export function foldActs(
  */
 export function judge(
   setting: Setting,
-  state: State,
+  state: ConversationNorms,
   sent: SentAct,
 ): Effect.Effect<Verdict> {
   const norm = normOf(setting, state, sent.act.ontology);
@@ -120,24 +127,24 @@ export function judge(
     return Effect.succeed(breaks("no-agreement", sent.act));
   }
   switch (norm.name) {
-    case builtIns.agreement:
+    case normNames.agreement:
       return agreementAct(setting, state, norm, sent);
-    case builtIns.discovery:
+    case normNames.discovery:
       return discoveryAct(setting, state, norm, sent);
     default:
       return normAct(setting, state, norm, sent);
   }
 }
 
-/** An act a member may send: its performative, its norm and, for a proposal or a document query, the norm it names. */
+/** An act a member may send: its performative, its norm and, for a proposal or a document query, the name of the norm it names. */
 export interface SendableAct {
   readonly performative: string;
   readonly ontology: string;
-  readonly norm?: string;
+  readonly namedNormName?: string;
 }
 
 /**
- * The acts `sender` may send now: the next acts of the agreement or norm
+ * The acts `member` may send now: the next acts of the agreement or norm
  * instance in flight, the agreed norm's opening acts or, with nothing in
  * flight, a proposal of each norm held here that has turns and a query for
  * that norm's document. None while another member's turn is next. `cancel`,
@@ -145,64 +152,72 @@ export interface SendableAct {
  */
 export function sendableActs(
   setting: Setting,
-  state: State,
-  sender: string,
+  state: ConversationNorms,
+  member: string,
 ): readonly SendableAct[] {
-  const { agreement, instance, agreed } = state;
+  const { agreement, instance, agreedNormName } = state;
   if (agreement !== undefined) {
-    return allowedActs(agreement.instance, sender).map((performative) => ({
+    return allowedActs(agreement.instance, member).map((performative) => ({
       performative,
-      ontology: builtIns.agreement,
+      ontology: normNames.agreement,
     }));
   }
   if (instance !== undefined) {
-    return allowedActs(instance, sender).map((performative) => ({
+    return allowedActs(instance, member).map((performative) => ({
       performative,
-      ontology: instance.norm,
+      ontology: instance.normName,
     }));
   }
-  if (agreed !== undefined) {
-    const norm = normOf(setting, state, agreed);
-    const protocol = norm?.protocol ?? norm?.turns;
+  if (agreedNormName !== undefined) {
+    const norm = normOf(setting, state, agreedNormName);
+    const protocol = norm?.protocolName ?? norm?.turns;
     return protocol === undefined
       ? []
       : openingActs(protocol).map((performative) => ({
           performative,
-          ontology: agreed,
+          ontology: agreedNormName,
         }));
   }
   return [...setting.held.values()]
-    .filter((norm) => !builtInNames.has(norm.name) && !standsAlone(norm))
+    .filter((norm) => !codeNamedNormNames.has(norm.name) && !standsAlone(norm))
     .flatMap(({ name }) => [
-      { performative: "propose", ontology: builtIns.agreement, norm: name },
-      { performative: "query-ref", ontology: builtIns.discovery, norm: name },
+      {
+        performative: "propose",
+        ontology: normNames.agreement,
+        namedNormName: name,
+      },
+      {
+        performative: "query-ref",
+        ontology: normNames.discovery,
+        namedNormName: name,
+      },
     ]);
 }
 
 /** The norm an act names, if this member holds it or a member sent it. */
 export function normOf(
   setting: Setting,
-  state: State,
-  name: string,
+  state: ConversationNorms,
+  normName: string,
 ): Norm | undefined {
-  return setting.held.get(name) ?? state.fetched.get(name);
+  return setting.held.get(normName) ?? state.fetched.get(normName);
 }
 
-/** The ids of acts a member other than their sender answered with `not-understood`. */
+/** The ids of the messages whose acts a member other than their author answered with `not-understood`. */
 function notUnderstoodActs(acts: readonly SentAct[]): ReadonlySet<string> {
-  const senders = new Map(acts.map(({ msgId, sender }) => [msgId, sender]));
+  const authors = new Map(acts.map(({ msgId, author }) => [msgId, author]));
   return new Set(
-    acts.flatMap(({ act, sender }) => {
+    acts.flatMap(({ act, author }) => {
       const answered =
-        act.ontology === builtIns.feedback &&
+        act.ontology === normNames.feedback &&
         act.performative === "not-understood"
           ? act.inReplyTo
           : undefined;
-      const answeredSender =
-        answered === undefined ? undefined : senders.get(answered);
+      const answeredAuthor =
+        answered === undefined ? undefined : authors.get(answered);
       return answered !== undefined &&
-        answeredSender !== undefined &&
-        answeredSender !== sender
+        answeredAuthor !== undefined &&
+        answeredAuthor !== author
         ? [answered]
         : [];
     }),
@@ -216,33 +231,33 @@ function notUnderstoodActs(acts: readonly SentAct[]): ReadonlySet<string> {
  */
 function agreementAct(
   setting: Setting,
-  state: State,
+  state: ConversationNorms,
   agreementNorm: Norm,
-  { act, sender }: SentAct,
+  { act, author }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
-    const failure = yield* checkContent(setting, state, act);
+    const failure = yield* checkFields(setting, state, act);
     if (failure !== undefined) {
       return failure;
     }
-    const protocol = agreementNorm.protocol;
+    const protocol = agreementNorm.protocolName;
     if (protocol === undefined) {
       return breaks("invalid-content", act);
     }
-    const proposed = act.fields.norm;
+    const proposedNormName = act.fields.norm;
     if (act.performative === "propose") {
       if (state.agreement !== undefined || state.instance !== undefined) {
         return breaks("in-flight", act);
       }
-      if (typeof proposed !== "string") {
+      if (typeof proposedNormName !== "string") {
         return breaks("invalid-content", act);
       }
-      const rest = Struct.omit(state, "agreed");
+      const rest = Struct.omit(state, "agreedNormName");
       return conforms({
         ...rest,
         agreement: {
-          norm: proposed,
-          instance: open(setting, act, sender, protocol),
+          normName: proposedNormName,
+          instance: open(setting, act, author, protocol),
         },
       });
     }
@@ -250,7 +265,7 @@ function agreementAct(
     if (agreement === undefined) {
       return breaks("unknown-instance", act);
     }
-    const advanced = advance(agreement.instance, act, sender);
+    const advanced = advance(agreement.instance, act, author);
     if (advanced === undefined) {
       return breaks("out-of-turn", act);
     }
@@ -266,10 +281,12 @@ function agreementAct(
     }
     const unanimous = advanced.acts.every(
       (sent) =>
-        sent.sender === advanced.initiator ||
+        sent.author === advanced.initiator ||
         sent.performative === "accept-proposal",
     );
-    return conforms(unanimous ? { ...rest, agreed: agreement.norm } : rest);
+    return conforms(
+      unanimous ? { ...rest, agreedNormName: agreement.normName } : rest,
+    );
   });
 }
 
@@ -282,16 +299,16 @@ function agreementAct(
  */
 function discoveryAct(
   setting: Setting,
-  state: State,
+  state: ConversationNorms,
   discoveryNorm: Norm,
-  { act, sender, msgId }: SentAct,
+  { act, author, msgId }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
-    const failure = yield* checkContent(setting, state, act);
+    const failure = yield* checkFields(setting, state, act);
     if (failure !== undefined) {
       return failure;
     }
-    const protocol = discoveryNorm.protocol;
+    const protocol = discoveryNorm.protocolName;
     if (protocol === undefined) {
       return breaks("invalid-content", act);
     }
@@ -300,24 +317,25 @@ function discoveryAct(
         ...state,
         queries: new Map([
           ...state.queries,
-          [msgId, open(setting, act, sender, protocol)],
+          [msgId, open(setting, act, author, protocol)],
         ]),
       });
     }
-    const asked = act.inReplyTo;
-    const query = asked === undefined ? undefined : state.queries.get(asked);
-    if (asked === undefined || query === undefined) {
+    const queryMsgId = act.inReplyTo;
+    const query =
+      queryMsgId === undefined ? undefined : state.queries.get(queryMsgId);
+    if (queryMsgId === undefined || query === undefined) {
       return breaks("unknown-instance", act);
     }
-    const advanced = advance(query, act, sender);
+    const advanced = advance(query, act, author);
     if (advanced === undefined) {
       return breaks("out-of-turn", act);
     }
     const queries = new Map(state.queries);
     if (ended(advanced) || act.performative === "cancel") {
-      queries.delete(asked);
+      queries.delete(queryMsgId);
     } else {
-      queries.set(asked, advanced);
+      queries.set(queryMsgId, advanced);
     }
     return conforms({
       ...state,
@@ -329,22 +347,22 @@ function discoveryAct(
 
 /**
  * Acts of an agreed norm: the opening act starts its instance, and the norm's
- * protocol or its own turns order the rest.
+ * protocol orders the rest.
  */
 function normAct(
   setting: Setting,
-  state: State,
+  state: ConversationNorms,
   norm: Norm,
-  { act, sender }: SentAct,
+  { act, author }: SentAct,
 ): Effect.Effect<Verdict> {
   return Effect.gen(function* () {
-    const failure = yield* checkContent(setting, state, act);
+    const failure = yield* checkFields(setting, state, act);
     if (failure !== undefined) {
       return failure;
     }
-    const protocol = norm.protocol ?? norm.turns;
+    const protocol = norm.protocolName ?? norm.turns;
     if (protocol === undefined) {
-      return Object.hasOwn(norm.contents, act.performative)
+      return Object.hasOwn(norm.forms, act.performative)
         ? conforms(state)
         : breaks("out-of-turn", act);
     }
@@ -353,17 +371,17 @@ function normAct(
       if (!openingActs(protocol).includes(act.performative)) {
         return breaks("out-of-turn", act);
       }
-      if (state.agreed !== norm.name) {
+      if (state.agreedNormName !== norm.name) {
         return breaks("no-agreement", act);
       }
-      const rest = Struct.omit(state, "agreed");
-      const opened = open(setting, act, sender, protocol);
+      const rest = Struct.omit(state, "agreedNormName");
+      const opened = open(setting, act, author, protocol);
       return conforms(ended(opened) ? rest : { ...rest, instance: opened });
     }
-    if (current.norm !== norm.name) {
+    if (current.normName !== norm.name) {
       return breaks("in-flight", act);
     }
-    const advanced = advance(current, act, sender);
+    const advanced = advance(current, act, author);
     if (advanced === undefined) {
       return breaks("out-of-turn", act);
     }
@@ -380,15 +398,15 @@ function normAct(
 function advance(
   instance: Instance,
   act: Act,
-  sender: string,
+  author: string,
 ): Instance | undefined {
   const allowed =
     act.performative === "cancel" ||
-    allowedActs(instance, sender).includes(act.performative);
+    allowedActs(instance, author).includes(act.performative);
   return allowed
     ? {
         ...instance,
-        acts: [...instance.acts, { sender, performative: act.performative }],
+        acts: [...instance.acts, { author, performative: act.performative }],
       }
     : undefined;
 }
@@ -396,15 +414,15 @@ function advance(
 function open(
   setting: Setting,
   act: Act,
-  sender: string,
+  author: string,
   protocol: Instance["protocol"],
 ): Instance {
   return {
-    norm: act.ontology,
+    normName: act.ontology,
     protocol,
-    initiator: sender,
-    participants: setting.members.filter((member) => member !== sender),
-    acts: [{ sender, performative: act.performative }],
+    initiator: author,
+    participants: setting.members.filter((member) => member !== author),
+    acts: [{ author, performative: act.performative }],
   };
 }
 
@@ -429,17 +447,17 @@ function received(
  * Checks an act's fields against the form its norm gives its performative; a
  * performative with no form takes no fields.
  */
-function checkContent(
+function checkFields(
   setting: Setting,
-  state: State,
+  state: ConversationNorms,
   act: Act,
 ): Effect.Effect<Verdict | undefined> {
   const norm = normOf(setting, state, act.ontology);
-  const schema: RequestedSchema = norm?.contents[act.performative] ?? {
+  const form: RequestedSchema = norm?.forms[act.performative] ?? {
     type: "object",
     properties: {},
   };
-  return validateResponseContent(schema, answerOf(schema, act.fields)).pipe(
+  return validateResponseContent(form, answerOf(form, act.fields)).pipe(
     Effect.as(undefined),
     Effect.catchAll((fields) =>
       Effect.succeed<Verdict>({
@@ -456,7 +474,7 @@ function checkContent(
 
 /** Reads `true` and `false` as booleans where the form asks for one. */
 function answerOf(
-  schema: RequestedSchema,
+  form: RequestedSchema,
   fields: Readonly<Record<string, ActValue>>,
 ): ResponseContent {
   return Object.fromEntries(
@@ -464,7 +482,7 @@ function answerOf(
       const flag = value === "true" || value === "false";
       return [
         field,
-        flag && schema.properties[field]?.type === "boolean"
+        flag && form.properties[field]?.type === "boolean"
           ? value === "true"
           : value,
       ];
@@ -472,7 +490,7 @@ function answerOf(
   );
 }
 
-function conforms(state: State): Verdict {
+function conforms(state: ConversationNorms): Verdict {
   return { kind: "conforms", state };
 }
 

@@ -43,7 +43,7 @@ export type ActValue = string | number | readonly string[];
  * One act. `ontology` names the norm it follows and `inReplyTo` the message it
  * answers. The conversation the act is sent in identifies its agreement or
  * norm instance, so an act carries no conversation id. Every other parameter
- * is a content field, which the norm's form for this performative checks.
+ * is a field, which the norm's form for this performative checks.
  */
 export interface Act {
   readonly performative: string;
@@ -153,7 +153,7 @@ function actOf(form: Expression): Either.Either<Act, string> {
   return envelope(head.value, parameters);
 }
 
-/** Separates the FIPA envelope parameters from the content fields. */
+/** Separates the FIPA envelope parameters from the fields. */
 function envelope(
   performative: string,
   parameters: ReadonlyMap<string, ActValue>,

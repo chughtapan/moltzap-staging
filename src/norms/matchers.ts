@@ -31,14 +31,14 @@ import {
   readText,
 } from "./acts.js";
 import {
-  builtIns,
+  type ConversationNorms,
   foldActs,
   judge,
+  normNames,
   normOf,
   type SendableAct,
   sendableActs,
   type Setting,
-  type State,
   type Verdict,
 } from "./conversation.js";
 import { type Norm, type NormRule, standsAlone } from "./documents.js";
@@ -46,10 +46,10 @@ import { type Norm, type NormRule, standsAlone } from "./documents.js";
 /** What one matcher call reads, computed once for every matcher the chain asks. */
 interface Analysis {
   readonly reading: Reading;
-  readonly sender: string;
+  readonly author: string;
   readonly setting: Setting;
-  readonly state: State;
-  readonly complete: boolean;
+  readonly state: ConversationNorms;
+  readonly historyComplete: boolean;
   readonly verdict?: Verdict;
 }
 
@@ -77,7 +77,7 @@ export function normMatchers(
       return computed;
     }).pipe(Effect.withSpan("normMatchers"));
   const match =
-    (decide: (input: MatchInput, analysis: Analysis) => Matched) =>
+    (decide: (input: MatchInput, analysis: Analysis) => MatchResult) =>
     (input: MatchInput) =>
       analysis(input).pipe(
         Effect.map(
@@ -96,14 +96,7 @@ export function normMatchers(
       norms.flatMap((norm) =>
         norm.rules.map((rule, index) => [
           ruleMatcher(norm.name, index + 1),
-          {
-            match: match((input, found) =>
-              governed(normRuleId(norm.name, index + 1), norm.name, rule, {
-                input,
-                analysis: found,
-              }),
-            ),
-          },
+          { match: match(governedBy(norm.name, index + 1, rule)) },
         ]),
       ),
     ),
@@ -111,44 +104,40 @@ export function normMatchers(
 }
 
 /** The name of the matcher for the acts a norm's `index`th rule governs, counted from 1. */
-export function ruleMatcher(norm: string, index: number): string {
-  return `norms.rule.${normRuleId(norm, index)}`;
+export function ruleMatcher(normName: string, index: number): string {
+  return `norms.rule.${normRuleId(normName, index)}`;
 }
 
 /** The id of a norm's `index`th English rule as a firewall text rule, counted from 1. */
-export function normRuleId(norm: string, index: number): string {
-  return `${norm}-rule-${index}`;
+export function normRuleId(normName: string, index: number): string {
+  return `${normName}-rule-${index}`;
 }
 
 /**
- * An act of `norm` whose performative the rule governs, in either direction.
- * For a peer's act the reply is `not-understood` naming the rule, which
- * voids the act for every member when the rule withholds it.
+ * Matches an act of the norm `normName` whose performative its
+ * `ruleNumber`th rule, counted from 1, governs, in either direction. For a
+ * peer's act the reply is `not-understood` naming the rule, which voids the
+ * act for every member when the rule withholds it.
  */
-function governed(
-  ruleId: string,
-  norm: string,
-  rule: NormRule,
-  { input, analysis }: { input: MatchInput; analysis: Analysis },
-): Matched {
-  const { reading } = analysis;
-  if (
-    reading.kind !== "act" ||
-    reading.act.ontology !== norm ||
-    !rule.acts.includes(reading.act.performative)
-  ) {
-    return unmatched;
-  }
-  const reply = notUnderstood(
-    input,
-    analysis,
-    "rule-violation",
-    `${ruleId}: ${rule.text}`,
-  );
-  return { matched: true, ...(reply === undefined ? {} : { reply }) };
+function governedBy(normName: string, ruleNumber: number, rule: NormRule) {
+  return (input: MatchInput, analysis: Analysis): MatchResult => {
+    const { reading } = analysis;
+    if (
+      reading.kind !== "act" ||
+      reading.act.ontology !== normName ||
+      !rule.acts.includes(reading.act.performative)
+    ) {
+      return unmatched;
+    }
+    const reply = notUnderstood(
+      input,
+      analysis,
+      "rule-violation",
+      `${normRuleId(normName, ruleNumber)}: ${rule.text}`,
+    );
+    return { matched: true, ...(reply === undefined ? {} : { reply }) };
+  };
 }
-
-type Matched = MatchResult;
 
 /** Reads the message and folds the acts in the history before it. */
 function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
@@ -165,13 +154,14 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
       ],
     };
     const acts = input.evidence.history.flatMap(({ message }) => {
-      const body = messageText(message);
-      const reading = body === undefined ? undefined : readText(body);
+      const earlierText = messageText(message);
+      const reading =
+        earlierText === undefined ? undefined : readText(earlierText);
       return reading?.kind === "act"
         ? [
             {
               act: reading.act,
-              sender: message.author.agentId,
+              author: message.author.agentId,
               msgId: message.msgId,
             },
           ]
@@ -184,16 +174,16 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
       normOf(setting, state, reading.act.ontology) !== undefined
         ? yield* judge(setting, state, {
             act: reading.act,
-            sender: author.agentId,
+            author: author.agentId,
             msgId: msgIdOf(input),
           })
         : undefined;
     return Option.some<Analysis>({
       reading,
-      sender: author.agentId,
+      author: author.agentId,
       setting,
       state,
-      complete:
+      historyComplete:
         !input.evidence.earlierHistoryOmitted &&
         input.evidence.gaps.length === 0,
       ...(verdict === undefined ? {} : { verdict }),
@@ -206,7 +196,7 @@ function analyze(held: ReadonlyMap<string, Norm>, input: MatchInput) {
  * whose fields its form refuses. A peer hears `not-understood` with what failed,
  * unless it sent one.
  */
-function unparsed(input: MatchInput, analysis: Analysis): Matched {
+function unparsed(input: MatchInput, analysis: Analysis): MatchResult {
   const failure = unreadable(analysis);
   if (failure === undefined) {
     return unmatched;
@@ -222,12 +212,12 @@ function unparsed(input: MatchInput, analysis: Analysis): Matched {
 
 /**
  * A readable act that breaks its norm's turns or agreement. The detail names
- * the reason and the acts the sender may send now, and in a direct
+ * the reason and the acts its author may send now, and in a direct
  * conversation the peer hears the same in `not-understood`; in a group every
  * other member's daemon would send the same answer, so none does. Without the full history before it, an act that
  * depends on that history cannot be judged and is held for missing evidence.
  */
-function nonconforming(input: MatchInput, analysis: Analysis): Matched {
+function nonconforming(input: MatchInput, analysis: Analysis): MatchResult {
   const { reading, verdict, state, setting } = analysis;
   if (
     reading.kind !== "act" ||
@@ -238,7 +228,10 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
   }
   const { act } = reading;
   const actNorm = normOf(setting, state, act.ontology);
-  if (!analysis.complete && (actNorm === undefined || !standsAlone(actNorm))) {
+  if (
+    !analysis.historyComplete &&
+    (actNorm === undefined || !standsAlone(actNorm))
+  ) {
     return {
       matched: true,
       refusal: "unresolved-evidence",
@@ -246,30 +239,30 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
     };
   }
   if (verdict.kind === "breaks") {
-    const next = actsNow(analysis);
+    const hint = sendableActsHint(analysis);
     const reply =
       setting.members.length === 2
-        ? notUnderstood(input, analysis, verdict.breach.reason, next.error)
+        ? notUnderstood(input, analysis, verdict.breach.reason, hint.error)
         : undefined;
     return {
       matched: true,
-      detail: { ...verdict.breach, ...next },
+      detail: { ...verdict.breach, ...hint },
       ...(reply === undefined ? {} : { reply }),
     };
   }
   const accepting =
     input.direction === "outgoing"
-      ? actUnder(analysis, builtIns.agreement, ["accept-proposal"])
+      ? actUnder(analysis, normNames.agreement, ["accept-proposal"])
       : undefined;
-  const proposed = state.agreement?.norm;
+  const proposedNormName = state.agreement?.normName;
   if (
     accepting !== undefined &&
-    proposed !== undefined &&
-    normOf(setting, state, proposed) === undefined
+    proposedNormName !== undefined &&
+    normOf(setting, state, proposedNormName) === undefined
   ) {
     return {
       matched: true,
-      detail: { reason: "norm-unknown", norm: proposed },
+      detail: { reason: "norm-unknown", norm: proposedNormName },
     };
   }
   return unmatched;
@@ -277,8 +270,8 @@ function nonconforming(input: MatchInput, analysis: Analysis): Matched {
 
 /**
  * Why a message cannot be read as an act of a norm held here, if it cannot.
- * Plain text and an act of an unknown norm also carry the acts the sender may
- * send now, so its agent can continue in a norm this member reads.
+ * Plain text and an act of an unknown norm also carry the acts the author may
+ * send now, so that agent can continue in a norm this member reads.
  */
 function unreadable(analysis: Analysis):
   | {
@@ -293,12 +286,12 @@ function unreadable(analysis: Analysis):
     return { reason: "unparsed", error: reading.error };
   }
   if (reading.kind === "text") {
-    return setting.held.has(builtIns.chat)
+    return setting.held.has(normNames.chat)
       ? undefined
-      : { reason: "plain-text", ...actsNow(analysis) };
+      : { reason: "plain-text", ...sendableActsHint(analysis) };
   }
   if (normOf(setting, state, reading.act.ontology) === undefined) {
-    return { reason: "unknown-norm", ...actsNow(analysis) };
+    return { reason: "unknown-norm", ...sendableActsHint(analysis) };
   }
   const breach = verdict?.kind === "breaks" ? verdict.breach : undefined;
   if (breach?.reason !== "invalid-content") {
@@ -313,20 +306,25 @@ function unreadable(analysis: Analysis):
   };
 }
 
-/** The acts the sender may send now, as `:error` text, when there are any. */
-function actsNow({ sender, setting, state }: Analysis): {
+/** The acts the message's author may send now, as `:error` text, when there are any. */
+function sendableActsHint({ author, setting, state }: Analysis): {
   readonly error?: string;
 } {
-  const acts = sendableActs(setting, state, sender).map((act) => skeleton(act));
+  const acts = sendableActs(setting, state, author).map((act) => skeleton(act));
   return acts.length === 0
     ? {}
     : { error: `acts you may send now: ${acts.join(", ")}` };
 }
 
-/** An act's performative, norm and named norm, written as the act's opening. */
-function skeleton({ performative, ontology, norm }: SendableAct): string {
-  const named = norm === undefined ? "" : ` :norm ${norm}`;
-  return `(${performative} :ontology ${ontology}${named})`;
+/** An act's performative, its norm and the norm it names, written as the act's opening. */
+function skeleton({
+  performative,
+  ontology,
+  namedNormName,
+}: SendableAct): string {
+  const normParameter =
+    namedNormName === undefined ? "" : ` :norm ${namedNormName}`;
+  return `(${performative} :ontology ${ontology}${normParameter})`;
 }
 
 /**
@@ -341,12 +339,12 @@ function notUnderstood(
 ): string | undefined {
   const answerable =
     input.direction === "incoming" &&
-    setting.held.has(builtIns.feedback) &&
+    setting.held.has(normNames.feedback) &&
     !(reading.kind === "act" && reading.act.performative === "not-understood");
   return answerable
     ? formatAct({
         performative: "not-understood",
-        ontology: builtIns.feedback,
+        ontology: normNames.feedback,
         inReplyTo: msgIdOf(input),
         fields: {
           reason,
@@ -361,7 +359,7 @@ function notUnderstood(
 
 /** The longest `:error` the held feedback norm's `not-understood` form accepts. */
 function errorLimit(setting: Setting): number {
-  const field = setting.held.get(builtIns.feedback)?.contents["not-understood"]
+  const field = setting.held.get(normNames.feedback)?.forms["not-understood"]
     ?.properties.error;
   return field !== undefined &&
     "maxLength" in field &&
@@ -375,46 +373,46 @@ function errorLimit(setting: Setting): number {
  * any query; in a group, a query for the norm this agent proposed. The answer
  * names the norms held here, or carries the requested norm's document.
  */
-function answerQuery(input: MatchInput, analysis: Analysis): Matched {
+function answerQuery(input: MatchInput, analysis: Analysis): MatchResult {
   const { verdict, setting, state } = analysis;
   const act =
     input.direction === "incoming"
-      ? actUnder(analysis, builtIns.discovery, ["query-ref"])
+      ? actUnder(analysis, normNames.discovery, ["query-ref"])
       : undefined;
   if (act === undefined || verdict?.kind !== "conforms") {
     return unmatched;
   }
-  const requested = act.fields.norm;
+  const requestedNormName = act.fields.norm;
   const direct = setting.members.length === 2;
   const proposer =
     state.agreement?.instance.initiator === input.self.agentId &&
-    state.agreement.norm === requested;
+    state.agreement.normName === requestedNormName;
   if (!direct && !proposer) {
     return unmatched;
   }
-  if (typeof requested !== "string") {
+  if (typeof requestedNormName !== "string") {
     return direct
       ? answer(msgIdOf(input), { norms: [...setting.held.keys()].join(" ") })
       : unmatched;
   }
-  const norm = setting.held.get(requested);
+  const norm = setting.held.get(requestedNormName);
   return norm === undefined
     ? unmatched
-    : answer(msgIdOf(input), { norm: requested }, norm.source);
+    : answer(msgIdOf(input), { norm: requestedNormName }, norm.document);
 }
 
-/** An `inform` that answers the query message `query`. */
+/** An `inform` that answers the query message whose id is `queryMsgId`. */
 function answer(
-  query: string,
+  queryMsgId: string,
   fields: Readonly<Record<string, string>>,
   content?: string,
-): Matched {
+): MatchResult {
   return {
     matched: true,
     reply: formatAct({
       performative: "inform",
-      ontology: builtIns.discovery,
-      inReplyTo: query,
+      ontology: normNames.discovery,
+      inReplyTo: queryMsgId,
       ...(content === undefined ? {} : { content }),
       fields,
     }),
@@ -422,10 +420,10 @@ function answer(
 }
 
 /** This agent proposing or accepting a norm, which its owner approves. */
-function consent(input: MatchInput, analysis: Analysis): Matched {
+function consent(input: MatchInput, analysis: Analysis): MatchResult {
   const act =
     input.direction === "outgoing"
-      ? actUnder(analysis, builtIns.agreement, ["propose", "accept-proposal"])
+      ? actUnder(analysis, normNames.agreement, ["propose", "accept-proposal"])
       : undefined;
   return act !== undefined && analysis.verdict?.kind === "conforms"
     ? { matched: true }

@@ -39,10 +39,10 @@ describe("readNorm", () => {
     );
     expect(norm).toMatchObject({
       name: "swap",
-      protocol: "fipa-request",
+      protocolName: "fipa-request",
       roles: { initiator: "Asker", participant: "Owner" },
       description: "Swap a shift.",
-      contents: {
+      forms: {
         request: {
           type: "object",
           properties: {
@@ -61,49 +61,50 @@ describe("readNorm", () => {
   });
 
   it.each([
-    { what: "no norm form", source: "(content inform)" },
+    { what: "no norm form", document: "(content inform)" },
     {
       what: "two norm forms",
-      source: '(norm a :description "A.") (norm b :description "B.")',
+      document: '(norm a :description "A.") (norm b :description "B.")',
     },
     {
       what: "an unknown protocol",
-      source:
+      document:
         '(norm a :protocol fipa-auction :initiator A :participant B :description "A.")',
     },
     {
       what: "a protocol without roles",
-      source: '(norm a :protocol fipa-request :description "A.")',
+      document: '(norm a :protocol fipa-request :description "A.")',
     },
     {
       what: "an unknown field type",
-      source:
+      document:
         '(norm a :description "A.") (content inform (field x :type date))',
     },
     {
       what: "a select without choices",
-      source:
+      document:
         '(norm a :description "A.") (content inform (field x :type select))',
     },
     {
       what: "a repeated content form",
-      source: '(norm a :description "A.") (content inform) (content inform)',
+      document: '(norm a :description "A.") (content inform) (content inform)',
     },
     {
       what: "an unknown form",
-      source: '(norm a :description "A.") (permit inform)',
+      document: '(norm a :description "A.") (permit inform)',
     },
     {
       what: "a rule tied to no act",
-      source: '(norm a :description "A.") (content inform) (rule "Be brief.")',
+      document:
+        '(norm a :description "A.") (content inform) (rule "Be brief.")',
     },
     {
       what: "a rule governing an act without a form",
-      source:
+      document:
         '(norm a :description "A.") (content inform) (rule :act request "Be brief.")',
     },
-  ])("refuses a document with $what", ({ source }) => {
-    expect(Either.getOrThrow(Either.flip(readNorm(source)))).toBeInstanceOf(
+  ])("refuses a document with $what", ({ document }) => {
+    expect(Either.getOrThrow(Either.flip(readNorm(document)))).toBeInstanceOf(
       NormDocumentError,
     );
   });
@@ -148,58 +149,58 @@ describe("readNorm with a norm's own turns", () => {
           terminates: ["open", "offered"],
         },
       },
-      contents: { propose: { properties: { shift: { type: "string" } } } },
+      forms: { propose: { properties: { shift: { type: "string" } } } },
     });
   });
 
   it.each([
     {
       what: "turns and a protocol",
-      source:
+      document:
         '(norm a :protocol fipa-request :initiator A :participant B :description "A.") (content request :by A :initiates x)',
     },
     {
       what: "roles but neither a protocol nor turns",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request)',
     },
     {
       what: "a turn by an unknown role",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by C :initiates x)',
     },
     {
       what: "an unknown turn keyword",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by A :after agree :initiates x)',
     },
     {
       what: "a fact that is not a name",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates ("Open"))',
     },
     {
       what: "a fact no act initiates",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content agree :by B :when opened :terminates open)',
     },
     {
       what: "no act the initiator can open an instance with",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by B :initiates open) (content agree :by A :when open :terminates open)',
     },
     {
       what: "an act without a turn among turns",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content agree)',
     },
     {
       what: "turn keywords on cancel",
-      source:
+      document:
         '(norm a :initiator A :participant B :description "A.") (content request :by A :initiates open) (content cancel :by A)',
     },
-  ])("refuses a document with $what", ({ source }) => {
-    expect(Either.getOrThrow(Either.flip(readNorm(source)))).toBeInstanceOf(
+  ])("refuses a document with $what", ({ document }) => {
+    expect(Either.getOrThrow(Either.flip(readNorm(document)))).toBeInstanceOf(
       NormDocumentError,
     );
   });

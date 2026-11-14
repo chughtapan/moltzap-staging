@@ -243,8 +243,10 @@ function normsTool(
           norms: held.map((norm) => ({
             name: norm.name,
             description: norm.description,
-            ...(norm.protocol === undefined ? {} : { protocol: norm.protocol }),
-            document: norm.source,
+            ...(norm.protocolName === undefined
+              ? {}
+              : { protocol: norm.protocolName }),
+            document: norm.document,
           })),
         })),
       ),

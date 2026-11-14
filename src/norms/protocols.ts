@@ -1,6 +1,6 @@
 /**
- * @file Turn rules: which performatives start an instance, which act each party
- * may send next, and when the instance ends, for the FIPA interaction
+ * @file Protocols: which performatives start an instance, which act each
+ * member may send next, and when the instance ends, for the FIPA interaction
  * protocols and for a norm's own turns. Under a norm's own turns each act
  * starts and ends facts, the facts that hold decide which acts may follow,
  * and the instance ends when no fact holds. Any member may also `cancel` an
@@ -9,17 +9,17 @@
 
 import type { ProtocolName, Turn, Turns } from "./documents.js";
 
-/** The turns an instance follows: a FIPA protocol, or the norm's own. */
+/** A norm's turn rules, which an instance follows: a FIPA protocol, or the norm's own turns. */
 export type Protocol = ProtocolName | Turns;
 
-/** One protocol instance: who started it, who takes part, and the acts each has sent. */
+/** One instance of a norm's protocol: who started it, who takes part, and the acts each has sent. */
 export interface Instance {
-  readonly norm: string;
+  readonly normName: string;
   readonly protocol: Protocol;
   readonly initiator: string;
   readonly participants: readonly string[];
   readonly acts: ReadonlyArray<{
-    readonly sender: string;
+    readonly author: string;
     readonly performative: string;
   }>;
 }
@@ -38,8 +38,8 @@ const fipaOpeningActs: Readonly<Record<ProtocolName, readonly string[]>> = {
 };
 
 /**
- * The performatives that start an instance: a protocol's, or a norm's acts
- * that its initiator sends with no `:when` facts.
+ * The performatives that start an instance: a FIPA protocol's, or under a
+ * norm's own turns the acts that its initiator sends with no `:when` facts.
  */
 export function openingActs(protocol: Protocol): readonly string[] {
   return typeof protocol === "string"
@@ -50,23 +50,23 @@ export function openingActs(protocol: Protocol): readonly string[] {
 }
 
 /**
- * What `sender` may send next. Under a norm's own turns, an act is allowed
- * when its side is the sender's, its `when` facts hold, its `unless` facts do
+ * What `member` may send next. Under a norm's own turns, an act is allowed
+ * when its role is the member's, its `when` facts hold, its `unless` facts do
  * not, and it has not reached its `max`. The initiator of a Contract Net
  * decides once every participant has proposed or refused; in a Query or
  * Request, one final answer serves every member.
  */
 export function allowedActs(
   instance: Instance,
-  sender: string,
+  member: string,
 ): readonly string[] {
-  const own = said(instance, sender);
-  const isInitiator = sender === instance.initiator;
+  const own = said(instance, member);
+  const isInitiator = member === instance.initiator;
   if (typeof instance.protocol !== "string") {
     const facts = holding(instance.protocol, instance.acts);
-    const side = isInitiator ? "initiator" : "participant";
+    const role = isInitiator ? "initiator" : "participant";
     return Object.entries(instance.protocol).flatMap(([performative, turn]) =>
-      turn.by === side &&
+      turn.by === role &&
       enabled(turn, facts) &&
       belowMax(instance, performative, turn.max)
         ? [performative]
@@ -85,7 +85,7 @@ export function allowedActs(
     case "fipa-contract-net":
       if (isInitiator) {
         return everyParticipantAnswered(instance) &&
-          said(instance, sender).length === 1
+          said(instance, member).length === 1
           ? ["accept-proposal", "reject-proposal"]
           : [];
       }
@@ -163,7 +163,7 @@ function finalAnswerSent(
 ): boolean {
   return instance.acts.some(
     (act) =>
-      act.sender !== instance.initiator && finals.includes(act.performative),
+      act.author !== instance.initiator && finals.includes(act.performative),
   );
 }
 
@@ -186,8 +186,8 @@ function belowMax(
   );
 }
 
-function said(instance: Instance, sender: string): readonly string[] {
+function said(instance: Instance, author: string): readonly string[] {
   return instance.acts.flatMap((act) =>
-    act.sender === sender ? [act.performative] : [],
+    act.author === author ? [act.performative] : [],
   );
 }

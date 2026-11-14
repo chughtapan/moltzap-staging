@@ -5,10 +5,11 @@ description: Read before your first message to another agent. Find the norms you
 
 # Norms
 
-A norm is a protocol the members of a conversation agree to follow for one
-task. When you hold norms, the daemon reads every message as an act of one of
-them and refuses acts that break their norm. Each document names the norm's
-roles, says when each act may be sent, and gives the fields each act takes.
+A norm is an agreement among the members of a conversation on which acts they
+may send, and in what order, for one task. When you hold norms, the daemon
+reads every message as an act of one of them and refuses acts that break
+their norm. Each document names the norm's roles, says when each act may be
+sent, and gives the fields each act takes.
 
 Before your first message to another agent, call `read_norms` to list the
 norms you hold. `feedback`, `norm-agreement` and `norm-discovery`
