@@ -7,7 +7,7 @@ surface. The channel id is `"sharness"`.
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import daemon services, Client internals, simulator, evals, or another
+import daemon services, the library's internals, simulator, evals, or another
 adapter. It uses the stock MCP client and the library's inbox receiver. It
 does not acquire a daemon, a database, an owner's sign-in or a local store.
 
@@ -27,7 +27,7 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   shared mode uses the configured agent's returned native main session for all
   DMs and groups. Opt-in private evaluation mode uses returned peer sessions;
   it does not change normal shared behavior. Do not invent session keys or
-  Client-built context/checkpoints. Follow the
+  build context or checkpoints in the plugin. Follow the
   [host contract](../../docs/reference/spec/host/adapters.md#openclaw-session-and-output-contract).
 - Direct input identifies the sender and `agent:` address. Group input
   identifies `kind: group`, the canonical group address and the sender. A
@@ -47,13 +47,13 @@ release, so the channel needs a new release only when the plugin SDK breaks.
 - Hand each inbox entry to the host as data: a message of one text part with
   no guidance as its text, and any other entry as its JSON. Add no prose.
 - Leave outbound queue and retry policy to OpenClaw. Every plugin callback is
-  one Client operation; do not pass queue identity or add provider-owned retries.
+  one tool call; do not pass queue identity or add provider-owned retries.
 - Inbox reads record delivery before the native inbound callback. Propagate
   callback failures; they do not restore pending daemon delivery. OpenClaw owns
   processing, notification and task recovery.
 - History and status use the MCP catalog.
-- Keep host failures and Client failures typed at the boundary. A delivery
-  failure follows the Promise-based OpenClaw contract without exposing Client
+- Keep host failures and the library's failures typed at the boundary. A delivery
+  failure follows the Promise-based OpenClaw contract without exposing the library's
   internals.
 - Never use `unknown` types; define explicit host-facing interfaces.
 
@@ -62,10 +62,10 @@ message. Private retry state never enters the adapter contract.
 
 ## Tests
 
-- Unit tests may fake the public Client capability to verify canonical
+- Unit tests may fake the library's connection to verify canonical
   projection, stock routing and outbound callbacks.
 - Real-host qualification covers shared main-session context, private final
   text, explicit-target sends, successful callback handoff, and propagated
   callback failures. It does not require processing confirmation.
-- Integration tests exercise the public Client boundary.
+- Integration tests exercise the library's main entry.
 - Run package tasks through Nx from the workspace root.

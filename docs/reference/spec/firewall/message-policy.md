@@ -187,7 +187,7 @@ policies identical.
 
 | Action | What is checked |
 | --- | --- |
-| Multicast | Message and recipients. |
+| Message | Message and recipients. |
 | Gather | Whole question and members, once before sending any request. |
 | All-gather | Group question. |
 | Collective response | Response to the previously selected open request. |

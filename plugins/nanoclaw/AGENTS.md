@@ -5,7 +5,7 @@ NanoClaw channel adapter and integration canary. Publication follows `docs/refer
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import daemon services, Client internals, simulator, evals, or another
+import daemon services, the library's internals, simulator, evals, or another
 adapter. NanoClaw creates it through NanoClaw's native channel list,
 and it connects the stock MCP client to the configured MCP URL. It
 does not acquire a daemon, a database, an owner's sign-in or a local store.
@@ -15,7 +15,7 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
 - Keep NanoClaw's `ChannelAdapter` entry point and host-relative stub modules
   aligned with the stock NanoClaw API. The pinned source overlay may only let
   outbound `send_message` and `<message to>` destinations recognize a
-  syntactically valid Client `MessageAddressInput` before friendly aliases and
+  syntactically valid `MessageAddressInput` before friendly aliases and
   let that validated route reach this channel, with an accurate capability line
   in the existing destination prompt. The image, not the overlay, copies the
   skills `@social-harness/social-harness` ships into NanoClaw's shared container skills
@@ -29,9 +29,9 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   recipients; a collective result lists none.
 - NanoClaw owns friendly-name discovery and its own destination permissions.
   An explicit `agent:` or `group:` Social Harness address input needs no prior
-  NanoClaw conversation or ACL row; Client validates and canonicalizes it.
+  NanoClaw conversation or ACL row; the daemon validates and canonicalizes it.
 - Leave outbound queue and retry policy to NanoClaw. Every adapter call is one
-  Client operation, taken from the `messages_out` content's text; do not pass `messages_out.id` or
+  tool call, taken from the `messages_out` content's text; do not pass `messages_out.id` or
   add adapter deduplication. `send_message` has returned before the adapter
   sends, so the adapter presents a collective refusal through the native inbound
   callback and completes NanoClaw's outbound queue item after that callback
@@ -46,7 +46,7 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   beyond the explicit-address capability and route, inbox replay, scheduling,
   and runtime isolation.
 - History and status use the MCP catalog.
-- Keep host-shape failures distinct from closed Client failures without
+- Keep host-shape failures distinct from the library's typed failures without
   exposing private action evidence, credentials, or protocol state.
 
 Send returns no receipt; completion means the daemon durably accepted the
@@ -56,6 +56,6 @@ message. Private retry state never enters the adapter contract.
 
 - Integration tests enter through NanoClaw's generic `send_message`, cross its
   native outbound queue and host delivery loop, and observe the receiving
-  Client. They must not call the concrete adapter or inject a connection.
-- The packaged image connects through the public Client boundary.
+  agent. They must not call the concrete adapter or inject a connection.
+- The packaged image connects through the library's main entry.
 - Run package tasks through Nx from the workspace root.
