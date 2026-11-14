@@ -7,9 +7,9 @@ import { toolDefinitions } from "./contracts.js";
 
 describe("message operation contracts", () => {
   describe("a refused send", () => {
-    const read = (data: unknown) =>
+    const toError = (data: unknown) =>
       Option.getOrThrow(
-        toolDefinitions.send_message.failure.read({ kind: "refused", data }),
+        toolDefinitions.send_message.failure.toError({ kind: "refused", data }),
       );
 
     it.each([{ kind: "request-expired" }, { kind: "request-answered" }])(
@@ -17,7 +17,7 @@ describe("message operation contracts", () => {
       (failure) => {
         const requestId = digest("msg_", 1);
         expect(
-          read({ reason: "collective-failed", requestId, failure }),
+          toError({ reason: "collective-failed", requestId, failure }),
         ).toMatchObject({ _tag: "RequestError", requestId, failure });
       },
     );
@@ -26,14 +26,14 @@ describe("message operation contracts", () => {
       { reason: "firewall-refused", checkId: "incomplete" },
       { reason: "collective-failed" },
     ])("treats an incomplete refusal as an unknown outcome: %j", (value) => {
-      expect(read(value)).toMatchObject({
+      expect(toError(value)).toMatchObject({
         _tag: "SendError",
         reason: "outcome-unknown",
       });
     });
     it("reads a plain failure without keeping fields it does not know", () => {
       const unknownField = "private transport";
-      const failure = read({
+      const failure = toError({
         reason: "network-unavailable",
         addedLater: unknownField,
       });
@@ -46,7 +46,7 @@ describe("message operation contracts", () => {
     it("is unavailable when the request cannot have reached the daemon", () => {
       expect(
         Option.getOrThrow(
-          toolDefinitions.send_message.failure.read({
+          toolDefinitions.send_message.failure.toError({
             kind: "unanswered",
             sent: false,
           }),
@@ -60,7 +60,9 @@ describe("message operation contracts", () => {
       "has an unknown outcome when it may have been received: $kind",
       (failure) => {
         expect(
-          Option.getOrThrow(toolDefinitions.send_message.failure.read(failure)),
+          Option.getOrThrow(
+            toolDefinitions.send_message.failure.toError(failure),
+          ),
         ).toMatchObject({ reason: "outcome-unknown" });
       },
     );

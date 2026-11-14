@@ -2,20 +2,20 @@
  * @file Wakes a subscribed callback when the inbox has something to read.
  *
  * A host subscribes a callback URL through the MCP Events calls. While the
- * subscription is active and the inbox holds pending items, the daemon posts
- * a signed {@link INBOX_PENDING_EVENT} to that URL. The event carries only a
- * count; the host reads the items with the inbox tool, exactly as a host that
- * polls does.
+ * subscription is active and the inbox holds pending entries, the daemon
+ * posts a signed {@link INBOX_PENDING_EVENT} to that URL. The event carries
+ * only a count; the host reads the entries with the inbox tool, exactly as a
+ * host that polls does.
  *
- * One wake-up is posted each time the inbox gains an item, and again after a
- * restart if items are still pending. A failed post is retried with growing
+ * One wake-up is posted each time the inbox gains an entry, and again after a
+ * restart if entries are still pending. A failed post is retried with growing
  * delays. After 100 failures over at least an hour, or a response that says
  * the callback is gone, the subscription stalls and nothing more is posted
  * until the host subscribes again.
  *
- * Each post is signed as MCP Events requires and goes through an HTTP client
- * that applies the callback policy: which addresses it may reach, how long it
- * may take and how much it may answer.
+ * Each post is signed as MCP Events requires and is sent under the callback
+ * policy: which addresses it may reach, how long it may take and how much it
+ * may answer.
  */
 
 import {
@@ -54,11 +54,11 @@ import {
 import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   callbackReasons,
-  type EventSubscribeInput,
+  type EventSubscribeRequest,
   type HarnessWebhookEvents,
   INBOX_PENDING_EVENT,
   maximumEventBytes,
-  type WebhookStatus,
+  type SubscriptionStatus,
 } from "./contracts.js";
 import { SocialHarness } from "./social-harness.js";
 
@@ -134,7 +134,7 @@ export const isPublicWebhookAddress = (address: string): boolean => {
 
 /**
  * Returns a canonical HTTPS URL without userinfo or fragments, or `undefined`
- * when invalid. Verification and delivery validate URLs before connecting.
+ * when invalid. Verification and wake-ups validate URLs before connecting.
  */
 const webhookUrl = (value: string): URL | undefined => {
   if (!URL.canParse(value)) {
@@ -258,8 +258,8 @@ const executeWebhook = (
 > =>
   Effect.gen(function* () {
     const url = yield* validatePost(post);
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* HttpClient.withScope(client)
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* HttpClient.withScope(http)
       .execute(
         HttpClientRequest.post(url).pipe(
           HttpClientRequest.bodyText(post.body, "application/json"),
@@ -306,7 +306,7 @@ const readWebhookChallenge = Effect.fn("readWebhookChallenge")(
 );
 
 /**
- * Accepts transport delivery at 2xx headers and closes the response.
+ * Counts a post as received at 2xx headers and closes the response.
  * Response bodies cannot change that receipt.
  */
 export const sendWebhook = Effect.fn("sendWebhook")((post: WebhookPost) =>
@@ -316,7 +316,7 @@ export const sendWebhook = Effect.fn("sendWebhook")((post: WebhookPost) =>
 const maximumRetryDelay = 5 * 60_000;
 const maximumLease = 24 * 60 * 60_000;
 const verificationLifetime = 10 * 60_000;
-const registrationSchema = Schema.Struct({
+const subscriptionSchema = Schema.Struct({
   id: Schema.String,
   url: Schema.String,
   secret: Schema.String,
@@ -324,17 +324,18 @@ const registrationSchema = Schema.Struct({
   stalled: Schema.NullOr(Schema.Literal("callback", "terminal")),
   lastError: Schema.NullOr(Schema.Literal(...callbackReasons)),
 });
-const stateSchema = Schema.Struct({
-  registration: Schema.NullOr(registrationSchema),
+/** What `mcp_webhook_state` holds for one agent. */
+const savedSubscriptionSchema = Schema.Struct({
+  subscription: Schema.NullOr(subscriptionSchema),
 });
 const challengeSchema = Schema.parseJson(
   Schema.Struct({ challenge: Schema.String }),
 );
-type Registration = typeof registrationSchema.Type;
-type State = typeof stateSchema.Type;
+type Subscription = typeof subscriptionSchema.Type;
+type SavedSubscription = typeof savedSubscriptionSchema.Type;
 
 /** One wake-up being posted: the same event on every attempt. */
-interface Wake {
+interface WakeUp {
   readonly id: string;
   readonly body: string;
   readonly attempts: number;
@@ -356,93 +357,97 @@ type WebhookTables = Record<
   Record<"agent_key" | "state", string>
 >;
 
-interface WebhookRuntime {
+/** One agent's subscription and the wake-up being posted for it. */
+interface AgentWebhook {
   readonly agentKey: string;
   readonly sql: SqlClient.SqlClient;
   readonly harness: SocialHarness["Type"];
-  readonly client: HttpClient.HttpClient;
+  readonly http: HttpClient.HttpClient;
   readonly clock: Clock.Clock;
-  /** Guards the registration. */
-  readonly gate: Effect.Semaphore;
+  /** Guards the subscription. */
+  readonly subscriptionLock: Effect.Semaphore;
   /** Allows one post at a time. */
-  readonly deliveryGate: Effect.Semaphore;
+  readonly postLock: Effect.Semaphore;
   verified?: {
     readonly id: string;
     readonly secretDigest: string;
     readonly until: number;
   };
   generation: number;
-  state: State;
-  /** The inbox may hold items the callback has not been told about. */
-  unannounced: boolean;
-  /** The pending items the last wake-up counted. */
-  announced: ReadonlySet<string>;
-  wake: Wake | null;
+  saved: SavedSubscription;
+  /** The inbox may hold entries the callback has not been told about. */
+  inboxChangedSinceLastWakeUp: boolean;
+  /** The delivery tokens of the pending entries the last wake-up counted. */
+  tokensInLastWakeUp: ReadonlySet<string>;
+  wakeUp: WakeUp | null;
   /** Receives a value whenever there may be a wake-up to post. */
-  readonly changed: Queue.Queue<undefined>;
+  readonly wakeUpSignal: Queue.Queue<undefined>;
 }
-const now = (runtime: WebhookRuntime) =>
-  runtime.clock.unsafeCurrentTimeMillis();
-const active = (runtime: WebhookRuntime) =>
-  runtime.state.registration !== null &&
-  runtime.state.registration.expiresAt > now(runtime);
+const now = (webhook: AgentWebhook) => webhook.clock.unsafeCurrentTimeMillis();
+const active = (webhook: AgentWebhook) =>
+  webhook.saved.subscription !== null &&
+  webhook.saved.subscription.expiresAt > now(webhook);
 
-const save = (runtime: WebhookRuntime, registration: Registration | null) =>
-  writeState(runtime, { registration }).pipe(
+const save = (webhook: AgentWebhook, subscription: Subscription | null) =>
+  writeSavedSubscription(webhook, { subscription }).pipe(
     Effect.mapError(persistenceFailure),
     Effect.zipRight(
       Effect.sync(() => {
-        runtime.state = { registration };
+        webhook.saved = { subscription };
       }),
     ),
     Effect.uninterruptible,
   );
 
-/** Notes that the inbox may have items the callback has not been told about. */
-const announce = (runtime: WebhookRuntime) =>
+/** Notes that the inbox may have entries the callback has not been told about. */
+const noteInboxChanged = (webhook: AgentWebhook) =>
   Effect.suspend(() => {
-    runtime.unannounced = true;
-    return Queue.offer(runtime.changed, undefined);
+    webhook.inboxChangedSinceLastWakeUp = true;
+    return Queue.offer(webhook.wakeUpSignal, undefined);
   });
 
 /** Forgets the wake-up in flight, so the next one starts from the inbox as it is then. */
-const restartWakes = (runtime: WebhookRuntime) =>
+const restartWakeUps = (webhook: AgentWebhook) =>
   Effect.suspend(() => {
-    runtime.generation += 1;
-    runtime.wake = null;
-    runtime.announced = new Set();
-    return announce(runtime);
+    webhook.generation += 1;
+    webhook.wakeUp = null;
+    webhook.tokensInLastWakeUp = new Set();
+    return noteInboxChanged(webhook);
   });
-const retire = (runtime: WebhookRuntime) =>
-  save(runtime, null).pipe(
-    Effect.zipRight(restartWakes(runtime)),
+const clearSubscription = (webhook: AgentWebhook) =>
+  save(webhook, null).pipe(
+    Effect.zipRight(restartWakeUps(webhook)),
     Effect.uninterruptible,
   );
 
 const verify = (
-  runtime: WebhookRuntime,
-  input: { readonly id: string; readonly url: string; readonly secret: string },
+  webhook: AgentWebhook,
+  callback: {
+    readonly id: string;
+    readonly url: string;
+    readonly secret: string;
+  },
 ) =>
   Effect.gen(function* () {
     const secretDigest = createHash("sha256")
-      .update(input.secret)
+      .update(callback.secret)
       .digest("hex");
     if (
-      runtime.verified?.id === input.id &&
-      runtime.verified.secretDigest === secretDigest &&
-      runtime.verified.until > now(runtime)
+      webhook.verified?.id === callback.id &&
+      webhook.verified.secretDigest === secretDigest &&
+      webhook.verified.until > now(webhook)
     ) {
       return;
     }
     const challenge = randomUUID();
     const response = yield* readWebhookChallenge({
-      ...input,
-      subscriptionId: input.id,
+      ...callback,
+      subscriptionId: callback.id,
       messageId: `msg_verification_${randomUUID()}`,
       body: JSON.stringify({ type: "verification", challenge }),
-      timestamp: now(runtime),
+      timestamp: now(webhook),
     }).pipe(
-      Effect.provideService(HttpClient.HttpClient, runtime.client),
+      Effect.provideService(HttpClient.HttpClient, webhook.http),
       Effect.mapError((error) => verificationFailure(error.reason)),
     );
     const decoded = yield* Schema.decodeUnknown(challengeSchema)(response).pipe(
@@ -456,24 +461,17 @@ const verify = (
     ) {
       return yield* Effect.fail(verificationFailure("challenge_failed"));
     }
-    runtime.verified = {
-      id: input.id,
+    webhook.verified = {
+      id: callback.id,
       secretDigest,
-      until: now(runtime) + verificationLifetime,
+      until: now(webhook) + verificationLifetime,
     };
   });
 
-const initialRegistration = (input: {
-  readonly id: string;
-  readonly url: string;
-  readonly secret: string;
-  readonly expiresAt: number;
-}): Registration => ({ ...input, stalled: null, lastError: null });
-
-const checkRegistration = (runtime: WebhookRuntime, id: string) =>
+const refuseSecondSubscription = (webhook: AgentWebhook, id: string) =>
   Effect.suspend(() => {
-    return runtime.state.registration !== null &&
-      runtime.state.registration.id !== id
+    return webhook.saved.subscription !== null &&
+      webhook.saved.subscription.id !== id
       ? Effect.fail(
           new ProtocolError(
             -32013,
@@ -484,26 +482,33 @@ const checkRegistration = (runtime: WebhookRuntime, id: string) =>
       : Effect.void;
   });
 
-const activateRegistration = (
-  runtime: WebhookRuntime,
-  input: EventSubscribeInput,
+const saveVerifiedSubscription = (
+  webhook: AgentWebhook,
+  request: EventSubscribeRequest,
   generation: number,
 ) =>
-  runtime.gate.withPermits(1)(
+  webhook.subscriptionLock.withPermits(1)(
     Effect.gen(function* () {
-      const { url, secret } = input.delivery;
+      const { url, secret } = request.delivery;
       const id = subscriptionId(url);
-      yield* checkRegistration(runtime, id);
-      if (generation !== runtime.generation) {
+      yield* refuseSecondSubscription(webhook, id);
+      if (generation !== webhook.generation) {
         return yield* Effect.fail(
           new ProtocolError(-32012, "Subscription changed during verification"),
         );
       }
       const expiresAt =
-        now(runtime) +
-        Math.max(60_000, Math.min(input.ttlMs ?? maximumLease, maximumLease));
-      yield* save(runtime, initialRegistration({ id, url, secret, expiresAt }));
-      yield* restartWakes(runtime);
+        now(webhook) +
+        Math.max(60_000, Math.min(request.ttlMs ?? maximumLease, maximumLease));
+      yield* save(webhook, {
+        id,
+        url,
+        secret,
+        expiresAt,
+        stalled: null,
+        lastError: null,
+      });
+      yield* restartWakeUps(webhook);
       return {
         id,
         refreshBefore: new Date(expiresAt).toISOString(),
@@ -513,23 +518,25 @@ const activateRegistration = (
     }).pipe(Effect.uninterruptible),
   );
 
-const subscribe = (runtime: WebhookRuntime, input: EventSubscribeInput) =>
+const subscribe = (webhook: AgentWebhook, request: EventSubscribeRequest) =>
   Effect.gen(function* () {
-    const { url, secret } = input.delivery;
+    const { url, secret } = request.delivery;
     if (webhookUrl(url) === undefined || !validWebhookSecret(secret)) {
       return yield* Effect.fail(
-        new ProtocolError(-32602, "Invalid webhook URL or secret"),
+        new ProtocolError(-32602, "Invalid callback URL or secret"),
       );
     }
     const id = subscriptionId(url);
-    const generation = yield* runtime.gate.withPermits(1)(
-      checkRegistration(runtime, id).pipe(Effect.map(() => runtime.generation)),
+    const generation = yield* webhook.subscriptionLock.withPermits(1)(
+      refuseSecondSubscription(webhook, id).pipe(
+        Effect.map(() => webhook.generation),
+      ),
     );
-    yield* verify(runtime, { id, url, secret });
-    return yield* activateRegistration(runtime, input, generation);
+    yield* verify(webhook, { id, url, secret });
+    return yield* saveVerifiedSubscription(webhook, request, generation);
   });
 
-/** The delivery tokens of the items waiting in the inbox. */
+/** The delivery tokens of the pending inbox entries. */
 const pendingInbox = (harness: SocialHarness["Type"]) =>
   Effect.gen(function* () {
     const tokens: string[] = [];
@@ -544,7 +551,7 @@ const pendingInbox = (harness: SocialHarness["Type"]) =>
     return tokens;
   }).pipe(Effect.withSpan("pendingInbox"));
 
-/** The event that tells a host how many inbox items are waiting. */
+/** The event that tells a host how many inbox entries are pending. */
 const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
   ({
     eventId: `wake_${randomUUID()}`,
@@ -555,41 +562,41 @@ const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
   }) as const;
 
 /**
- * The wake-up to post now, if the inbox has an item the last wake-up did not
- * count. A change can be signalled while the inbox is being read, for an item
- * that read already returned; such a signal adds nothing to announce.
+ * The wake-up to post now, if the inbox has an entry the last wake-up did not
+ * count. A change can be signalled while the inbox is being read, for an entry
+ * that read already returned; such a signal adds nothing to wake the host for.
  */
-const nextWake = (runtime: WebhookRuntime) =>
+const prepareWakeUp = (webhook: AgentWebhook) =>
   Effect.gen(function* () {
-    if (runtime.wake !== null || !runtime.unannounced) {
-      return runtime.wake;
+    if (webhook.wakeUp !== null || !webhook.inboxChangedSinceLastWakeUp) {
+      return webhook.wakeUp;
     }
-    runtime.unannounced = false;
-    const pending = yield* pendingInbox(runtime.harness).pipe(
+    webhook.inboxChangedSinceLastWakeUp = false;
+    const pending = yield* pendingInbox(webhook.harness).pipe(
       Effect.mapError(persistenceFailure),
     );
-    const announced = runtime.announced;
-    runtime.announced = new Set(pending);
-    if (pending.every((token) => announced.has(token))) {
+    const tokensInLastWakeUp = webhook.tokensInLastWakeUp;
+    webhook.tokensInLastWakeUp = new Set(pending);
+    if (pending.every((token) => tokensInLastWakeUp.has(token))) {
       return null;
     }
-    const timestamp = now(runtime);
+    const timestamp = now(webhook);
     const event = inboxPendingEvent(pending.length, timestamp);
-    runtime.wake = {
+    webhook.wakeUp = {
       id: event.eventId,
       body: JSON.stringify(event),
       attempts: 0,
       firstAttemptAt: timestamp,
       nextAttemptAt: timestamp,
     };
-    return runtime.wake;
+    return webhook.wakeUp;
   });
 
 /** Whether a failed post ends the wake-ups: the callback is gone, or has failed for too long. */
 const stallAfter = (
   error: WebhookCallbackError,
   exhausted: boolean,
-): Registration["stalled"] => {
+): Subscription["stalled"] => {
   if (error.terminal === true) {
     return "terminal";
   }
@@ -598,153 +605,160 @@ const stallAfter = (
 
 /** Records how a post ended, unless the subscription changed while it was in flight. */
 const settle = (
-  runtime: WebhookRuntime,
-  posted: { readonly generation: number; readonly wake: Wake },
+  webhook: AgentWebhook,
+  posted: { readonly generation: number; readonly wakeUp: WakeUp },
   error?: WebhookCallbackError,
 ) =>
-  runtime.gate.withPermits(1)(
+  webhook.subscriptionLock.withPermits(1)(
     Effect.suspend(() => {
-      const registration = runtime.state.registration;
-      if (registration === null || posted.generation !== runtime.generation) {
+      const subscription = webhook.saved.subscription;
+      if (subscription === null || posted.generation !== webhook.generation) {
         return Effect.void;
       }
       if (error === undefined) {
-        runtime.wake = null;
-        return registration.lastError === null
+        webhook.wakeUp = null;
+        return subscription.lastError === null
           ? Effect.void
-          : save(runtime, { ...registration, lastError: null });
+          : save(webhook, { ...subscription, lastError: null });
       }
-      const attempts = posted.wake.attempts + 1;
-      const timestamp = now(runtime);
+      const attempts = posted.wakeUp.attempts + 1;
+      const timestamp = now(webhook);
       const exhausted =
         attempts >= 100 &&
-        timestamp - posted.wake.firstAttemptAt >= 60 * 60_000;
+        timestamp - posted.wakeUp.firstAttemptAt >= 60 * 60_000;
       const stalled = stallAfter(error, exhausted);
-      runtime.wake =
+      webhook.wakeUp =
         stalled === null
           ? {
-              ...posted.wake,
+              ...posted.wakeUp,
               attempts,
               nextAttemptAt:
                 timestamp +
                 Math.min(maximumRetryDelay, 1000 * 2 ** Math.min(attempts, 9)),
             }
           : null;
-      runtime.unannounced = runtime.unannounced || stalled !== null;
-      return registration.lastError === error.reason && stalled === null
+      webhook.inboxChangedSinceLastWakeUp =
+        webhook.inboxChangedSinceLastWakeUp || stalled !== null;
+      return subscription.lastError === error.reason && stalled === null
         ? Effect.void
-        : save(runtime, { ...registration, lastError: error.reason, stalled });
+        : save(webhook, { ...subscription, lastError: error.reason, stalled });
     }),
   );
 
 /** Posts the wake-up that is due, if there is one. */
-const deliver = (runtime: WebhookRuntime) =>
-  runtime.deliveryGate.withPermits(1)(
+const postDueWakeUp = (webhook: AgentWebhook) =>
+  webhook.postLock.withPermits(1)(
     Effect.gen(function* () {
-      const due = yield* runtime.gate.withPermits(1)(
+      const due = yield* webhook.subscriptionLock.withPermits(1)(
         Effect.gen(function* () {
-          const registration = runtime.state.registration;
+          const subscription = webhook.saved.subscription;
           if (
-            registration === null ||
-            !active(runtime) ||
-            registration.stalled !== null
+            subscription === null ||
+            !active(webhook) ||
+            subscription.stalled !== null
           ) {
             return null;
           }
-          const wake = yield* nextWake(runtime);
-          return wake === null || wake.nextAttemptAt > now(runtime)
+          const wakeUp = yield* prepareWakeUp(webhook);
+          return wakeUp === null || wakeUp.nextAttemptAt > now(webhook)
             ? null
-            : { registration, wake, generation: runtime.generation };
+            : { subscription, wakeUp, generation: webhook.generation };
         }),
       );
       if (due === null) {
         return;
       }
       yield* sendWebhook({
-        url: due.registration.url,
-        secret: due.registration.secret,
-        subscriptionId: due.registration.id,
-        messageId: due.wake.id,
-        body: due.wake.body,
-        timestamp: now(runtime),
+        url: due.subscription.url,
+        secret: due.subscription.secret,
+        subscriptionId: due.subscription.id,
+        messageId: due.wakeUp.id,
+        body: due.wakeUp.body,
+        timestamp: now(webhook),
       }).pipe(
-        Effect.provideService(HttpClient.HttpClient, runtime.client),
+        Effect.provideService(HttpClient.HttpClient, webhook.http),
         Effect.matchEffect({
-          onSuccess: () => settle(runtime, due),
-          onFailure: (error) => settle(runtime, due, error),
+          onSuccess: () => settle(webhook, due),
+          onFailure: (error) => settle(webhook, due, error),
         }),
       );
     }),
   );
 
 /** Waits for a change, or for the time a failed wake-up is due again. */
-const untilNextAttempt = (runtime: WebhookRuntime) =>
+const untilNextAttempt = (webhook: AgentWebhook) =>
   Effect.suspend(() => {
-    const changed = Queue.take(runtime.changed);
-    return runtime.wake === null
-      ? changed
+    const signalled = Queue.take(webhook.wakeUpSignal);
+    return webhook.wakeUp === null
+      ? signalled
       : Effect.raceFirst(
-          changed,
+          signalled,
           Effect.sleep(
             Duration.millis(
-              Math.max(1000, runtime.wake.nextAttemptAt - now(runtime)),
+              Math.max(1000, webhook.wakeUp.nextAttemptAt - now(webhook)),
             ),
           ),
         );
   });
 
-const status = (runtime: WebhookRuntime): WebhookStatus => {
-  const registration = runtime.state.registration;
-  if (registration === null) {
+const status = (webhook: AgentWebhook): SubscriptionStatus => {
+  const subscription = webhook.saved.subscription;
+  if (subscription === null) {
     return { mode: "none" };
   }
   return {
     mode: "webhook",
-    id: registration.id,
-    refreshBefore: new Date(registration.expiresAt).toISOString(),
-    stalled: registration.stalled,
-    lastError: registration.lastError,
+    id: subscription.id,
+    refreshBefore: new Date(subscription.expiresAt).toISOString(),
+    stalled: subscription.stalled,
+    lastError: subscription.lastError,
   };
 };
-const unsubscribe = (runtime: WebhookRuntime, url: string) =>
+const unsubscribe = (webhook: AgentWebhook, url: string) =>
   Effect.suspend(() => {
-    const registration = runtime.state.registration;
-    if (registration === null || registration.id !== subscriptionId(url)) {
+    const subscription = webhook.saved.subscription;
+    if (subscription === null || subscription.id !== subscriptionId(url)) {
       return Effect.fail(
         new ProtocolError(-32011, "Subscription not found", {
           kind: "subscription",
         }),
       );
     }
-    return retire(runtime);
+    return clearSubscription(webhook);
   });
 
-const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
-  subscribe: (input) => subscribe(runtime, input),
-  unsubscribe: (input) =>
-    runtime.gate.withPermits(1)(unsubscribe(runtime, input.delivery.url)),
-  status: runtime.gate.withPermits(1)(Effect.sync(() => status(runtime))),
+const webhookOperations = (webhook: AgentWebhook): HarnessWebhookEvents => ({
+  subscribe: (request) => subscribe(webhook, request),
+  unsubscribe: (request) =>
+    webhook.subscriptionLock.withPermits(1)(
+      unsubscribe(webhook, request.delivery.url),
+    ),
+  status: webhook.subscriptionLock.withPermits(1)(
+    Effect.sync(() => status(webhook)),
+  ),
 });
 
-function writeState(
-  runtime: Pick<WebhookRuntime, "sql" | "agentKey">,
-  state: State,
+function writeSavedSubscription(
+  webhook: Pick<AgentWebhook, "sql" | "agentKey">,
+  saved: SavedSubscription,
 ) {
   return Effect.gen(function* () {
-    const saved = yield* Schema.encode(Schema.parseJson(stateSchema))(state);
+    const json = yield* Schema.encode(
+      Schema.parseJson(savedSubscriptionSchema),
+    )(saved);
     const queries = yield* makeQueries<WebhookTables>();
     yield* withAgentTransaction(
-      runtime.agentKey,
+      webhook.agentKey,
       executeQuery(
         queries
           .insertInto("mcp_webhook_state")
-          .values({ agent_key: runtime.agentKey, state: saved })
+          .values({ agent_key: webhook.agentKey, state: json })
           .onConflict((conflict) =>
-            conflict.column("agent_key").doUpdateSet({ state: saved }),
+            conflict.column("agent_key").doUpdateSet({ state: json }),
           ),
       ),
     );
-  }).pipe(Effect.provideService(SqlClient.SqlClient, runtime.sql));
+  }).pipe(Effect.provideService(SqlClient.SqlClient, webhook.sql));
 }
 
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
@@ -753,7 +767,7 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
 ) {
   const sql = yield* SqlClient.SqlClient;
   const harness = yield* SocialHarness;
-  const client = (yield* HttpClient.HttpClient).pipe(
+  const http = (yield* HttpClient.HttpClient).pipe(
     HttpClient.withTracerDisabledWhen(() => true),
   );
   const queries = yield* makeQueries<WebhookTables>();
@@ -767,34 +781,36 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     ),
   );
   const row = rows[0];
-  const state =
+  const saved =
     row === undefined
-      ? { registration: null }
-      : yield* Schema.decodeUnknown(Schema.parseJson(stateSchema))(row.state);
-  const runtime: WebhookRuntime = {
+      ? { subscription: null }
+      : yield* Schema.decodeUnknown(Schema.parseJson(savedSubscriptionSchema))(
+          row.state,
+        );
+  const webhook: AgentWebhook = {
     agentKey,
     sql,
     harness,
-    client,
+    http,
     clock: yield* Effect.clock,
-    state,
-    gate: yield* Effect.makeSemaphore(1),
-    deliveryGate: yield* Effect.makeSemaphore(1),
+    saved,
+    subscriptionLock: yield* Effect.makeSemaphore(1),
+    postLock: yield* Effect.makeSemaphore(1),
     generation: 0,
-    unannounced: true,
-    announced: new Set(),
-    wake: null,
-    changed: yield* Queue.sliding<undefined>(1),
+    inboxChangedSinceLastWakeUp: true,
+    tokensInLastWakeUp: new Set(),
+    wakeUp: null,
+    wakeUpSignal: yield* Queue.sliding<undefined>(1),
   };
   yield* harness.inboxChanged.pipe(
-    Stream.runForEach(() => announce(runtime)),
+    Stream.runForEach(() => noteInboxChanged(webhook)),
     Effect.forkScoped,
   );
-  yield* deliver(runtime).pipe(
+  yield* postDueWakeUp(webhook).pipe(
     Effect.catchAll(() => Effect.logWarning("Webhook wake-up deferred")),
-    Effect.zipRight(untilNextAttempt(runtime)),
+    Effect.zipRight(untilNextAttempt(webhook)),
     Effect.forever,
     Effect.forkScoped,
   );
-  return webhookOperations(runtime);
+  return webhookOperations(webhook);
 }, Effect.mapError(persistenceFailure));

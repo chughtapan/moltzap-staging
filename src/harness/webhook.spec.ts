@@ -21,10 +21,10 @@ import { describe, expect } from "vitest";
 import {
   decodeWakeUp,
   enqueue,
-  input,
   openCallbackInbox,
   scriptedWebhook,
   secret,
+  subscribeRequest,
 } from "./__tests__/webhook-fixtures.js";
 import { INBOX_PENDING_EVENT } from "./contracts.js";
 import {
@@ -51,8 +51,11 @@ const callbackFailing = "callback";
 const notSubscribed = "none";
 const subscribed = "webhook";
 const otherCallback = {
-  ...input,
-  delivery: { ...input.delivery, url: "https://other.example/events" },
+  ...subscribeRequest,
+  delivery: {
+    ...subscribeRequest.delivery,
+    url: "https://other.example/events",
+  },
 };
 
 /** The wake-ups the callback has received, leaving out verification challenges. */
@@ -82,9 +85,9 @@ const awaitWakeUps = (callback: Callback, count: number) =>
     ),
   );
 
-/** Runs a test body with a new inbox, a scripted callback and its webhook. */
+/** Runs a test body with a new inbox, a scripted callback and its webhook events. */
 const scenario = <A, E>(
-  body: (context: {
+  body: (fixture: {
     readonly store: Store;
     readonly callback: Callback;
     readonly events: Events;
@@ -100,7 +103,7 @@ const scenario = <A, E>(
     return yield* body({ store, callback, events });
   }).pipe(Effect.scoped, Effect.provide(NodeContext.layer));
 
-/** With `count` items pending, the first wake-up reports exactly `count`. */
+/** With `count` entries pending, the first wake-up reports exactly `count`. */
 const reportsPendingCount = (count: number) =>
   scenario(({ store, callback, events }) =>
     Effect.gen(function* () {
@@ -109,7 +112,7 @@ const reportsPendingCount = (count: number) =>
         (byte) => enqueue(store, byte),
         { concurrency: 1 },
       );
-      yield* events.subscribe(input);
+      yield* events.subscribe(subscribeRequest);
       yield* awaitWakeUps(callback, 1);
       expect(decodeWakeUp(wakeUps(callback)[0]?.body).data).toEqual({
         pendingCount: count,
@@ -121,7 +124,7 @@ describe("a subscribed callback", () => {
   it.effect("is not posted to while the inbox is empty", () =>
     scenario(({ callback, events }) =>
       Effect.gen(function* () {
-        yield* events.subscribe(input);
+        yield* events.subscribe(subscribeRequest);
         yield* advance();
         yield* advance();
         expect(wakeUps(callback)).toEqual([]);
@@ -130,11 +133,11 @@ describe("a subscribed callback", () => {
   );
 
   it.effect(
-    "receives one signed wake-up when an item arrives, and the item stays in the inbox",
+    "receives one signed wake-up when an entry arrives, and the entry stays in the inbox",
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          yield* events.subscribe(input);
+          yield* events.subscribe(subscribeRequest);
           yield* enqueue(store, 1);
           yield* awaitWakeUps(callback, 1);
           const [post] = wakeUps(callback);
@@ -156,7 +159,7 @@ describe("a subscribed callback", () => {
   );
 
   it.effect(
-    "receives one wake-up for an item whose arrival is signalled again while the inbox is being read",
+    "receives one wake-up for an entry whose arrival is signalled again while the inbox is being read",
     () =>
       Effect.gen(function* () {
         const files = yield* FileSystem.FileSystem;
@@ -192,7 +195,7 @@ describe("a subscribed callback", () => {
           },
         });
         const events = yield* callback.acquire;
-        yield* events.subscribe(input);
+        yield* events.subscribe(subscribeRequest);
         yield* enqueue(store, 1);
         yield* awaitWakeUps(callback, 1);
         yield* advance();
@@ -201,7 +204,7 @@ describe("a subscribed callback", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)),
   );
 
-  it.live("is told how many items are pending, for any number of them", () =>
+  it.live("is told how many entries are pending, for any number of them", () =>
     Effect.tryPromise(() =>
       fc.assert(
         fc.asyncProperty(fc.integer({ min: 1, max: 60 }), reportsPendingCount),
@@ -210,10 +213,10 @@ describe("a subscribed callback", () => {
     ),
   );
 
-  it.effect("is woken again when a later item arrives", () =>
+  it.effect("is woken again when a later entry arrives", () =>
     scenario(({ store, callback, events }) =>
       Effect.gen(function* () {
-        yield* events.subscribe(input);
+        yield* events.subscribe(subscribeRequest);
         yield* enqueue(store, 1);
         yield* awaitWakeUps(callback, 1);
         yield* enqueue(store, 2);
@@ -234,7 +237,7 @@ describe("a callback that fails", () => {
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          yield* events.subscribe(input);
+          yield* events.subscribe(subscribeRequest);
           callback.status(unavailable);
           yield* enqueue(store, 1);
           yield* awaitWakeUps(callback, 1);
@@ -258,7 +261,7 @@ describe("a callback that fails", () => {
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          yield* events.subscribe(input);
+          yield* events.subscribe(subscribeRequest);
           callback.status(gone);
           yield* enqueue(store, 1);
           yield* awaitWakeUps(callback, 1);
@@ -268,7 +271,7 @@ describe("a callback that fails", () => {
           const restarted = yield* callback.acquire;
           expect((yield* restarted.status).stalled).toBe(callbackGone);
           callback.status(accepted);
-          yield* restarted.subscribe(input);
+          yield* restarted.subscribe(subscribeRequest);
           expect((yield* restarted.status).stalled).toBeNull();
           yield* awaitWakeUps(callback, 2);
         }),
@@ -280,7 +283,7 @@ describe("a callback that fails", () => {
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          yield* events.subscribe(input);
+          yield* events.subscribe(subscribeRequest);
           callback.status(unavailable);
           yield* enqueue(store, 1);
           yield* TestClock.adjust("5 minutes").pipe(
@@ -295,7 +298,7 @@ describe("a callback that fails", () => {
           yield* advance("10 minutes");
           expect(wakeUps(callback)).toHaveLength(stalledAt);
           callback.status(accepted);
-          yield* events.subscribe(input);
+          yield* events.subscribe(subscribeRequest);
           yield* awaitWakeUps(callback, stalledAt + 1);
         }),
       ),
@@ -304,11 +307,11 @@ describe("a callback that fails", () => {
 
 describe("a callback across restarts and leases", () => {
   it.effect(
-    "is woken after a restart while items are still pending, with its subscription kept",
+    "is woken after a restart while entries are still pending, with its subscription kept",
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          const granted = yield* events.subscribe(input);
+          const granted = yield* events.subscribe(subscribeRequest);
           yield* enqueue(store, 1);
           yield* awaitWakeUps(callback, 1);
           const restarted = yield* callback.acquire;
@@ -323,17 +326,18 @@ describe("a callback across restarts and leases", () => {
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {
-          yield* events.subscribe(input);
-          yield* events.unsubscribe(input);
+          yield* events.subscribe(subscribeRequest);
+          yield* events.unsubscribe(subscribeRequest);
           yield* enqueue(store, 1);
           yield* advance();
           expect(wakeUps(callback)).toEqual([]);
           expect((yield* events.status).mode).toBe(notSubscribed);
           expect(
-            (yield* events.unsubscribe(input).pipe(Effect.flip)).code,
+            (yield* events.unsubscribe(subscribeRequest).pipe(Effect.flip))
+              .code,
           ).toBe(subscriptionNotFound);
 
-          yield* events.subscribe({ ...input, ttlMs: 60_000 });
+          yield* events.subscribe({ ...subscribeRequest, ttlMs: 60_000 });
           yield* awaitWakeUps(callback, 1);
           yield* advance("2 minutes");
           yield* enqueue(store, 2);
@@ -352,14 +356,14 @@ describe("subscribing", () => {
       scenario(({ callback, events }) =>
         Effect.gen(function* () {
           callback.challenge(false);
-          expect((yield* events.subscribe(input).pipe(Effect.flip)).code).toBe(
-            callbackVerificationFailed,
-          );
+          expect(
+            (yield* events.subscribe(subscribeRequest).pipe(Effect.flip)).code,
+          ).toBe(callbackVerificationFailed);
           callback.challenge(true);
           callback.status(redirected);
-          expect((yield* events.subscribe(input).pipe(Effect.flip)).code).toBe(
-            callbackVerificationFailed,
-          );
+          expect(
+            (yield* events.subscribe(subscribeRequest).pipe(Effect.flip)).code,
+          ).toBe(callbackVerificationFailed);
           expect((yield* events.status).mode).toBe(notSubscribed);
         }),
       ),
@@ -368,11 +372,11 @@ describe("subscribing", () => {
   it.effect("a second callback is refused until the first unsubscribes", () =>
     scenario(({ events }) =>
       Effect.gen(function* () {
-        yield* events.subscribe(input);
+        yield* events.subscribe(subscribeRequest);
         expect(
           (yield* events.subscribe(otherCallback).pipe(Effect.flip)).code,
         ).toBe(anotherCallbackSubscribed);
-        yield* events.unsubscribe(input);
+        yield* events.unsubscribe(subscribeRequest);
         yield* events.subscribe(otherCallback);
         expect((yield* events.status).mode).toBe(subscribed);
       }),
@@ -386,10 +390,10 @@ describe("subscribing", () => {
         const second = yield* scriptedWebhook(store, "second");
         const firstEvents = yield* first.acquire;
         const secondEvents = yield* second.acquire;
-        yield* firstEvents.subscribe(input);
+        yield* firstEvents.subscribe(subscribeRequest);
         expect((yield* secondEvents.status).mode).toBe(notSubscribed);
-        yield* secondEvents.subscribe(input);
-        yield* firstEvents.unsubscribe(input);
+        yield* secondEvents.subscribe(subscribeRequest);
+        yield* firstEvents.unsubscribe(subscribeRequest);
         expect((yield* (yield* first.acquire).status).mode).toBe(notSubscribed);
         expect((yield* (yield* second.acquire).status).mode).toBe(subscribed);
       }),
@@ -414,7 +418,7 @@ const privateIpv4 = fc
 /** 127.0.0.1 written as the last two groups of an IPv6 address. */
 const loopbackAsHex = "7f00:1";
 
-describe("the callback client", () => {
+describe("the callback policy", () => {
   it("treats every private, loopback and link-local IPv4 address as not public", () => {
     fc.assert(
       fc.property(privateIpv4, (address) => {

@@ -7,13 +7,13 @@ read_when:
 ---
 
 Reading the inbox marks returned entries delivered before responding. This applies
-to every MCP client and native channel. The daemon retains the entries and their
+to every host, native channels included. The daemon retains the entries and their
 guidance in history. Hosts own subsequent processing, scheduling and replies.
 
 ## Inbox entries
 
 An inbox entry holds a peer message, a collective request or a collective result.
-The daemon processes incoming work even without a subscriber.
+The daemon processes incoming work even without a subscription.
 
 [Incoming policy](../firewall/message-policy.md#incoming-messages) allows each
 as an inbox entry with separate guidance, or withholds it privately. Checks
@@ -55,9 +55,9 @@ separate acknowledgment call.
 The daemon advertises `capabilities.events: {}` on MCP `2026-07-28` under the
 [pinned Events draft](https://github.com/modelcontextprotocol/experimental-ext-triggers-events/blob/6682596d65eec778fe0b8b1f43b4e89d2fe2c546/docs/design-sketch-proposal.md).
 Its one event, `org.social-harness/inbox.pending`, contains only
-`{pendingCount}` and is delivered to a [webhook](#webhook-consumer). Its cursor
-is `null`, and a `wake_` plus a random UUID identifies only the notification.
-Inbox reads recover lost notifications.
+`{pendingCount}` and is posted to a [subscribed callback](#subscriptions). Its cursor
+is `null`, and a `wake_` plus a random UUID identifies only the wake-up.
+Inbox reads recover lost wake-ups.
 
 `receive_messages` takes an optional `cursor` and returns `entries` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
@@ -75,12 +75,12 @@ The caller chooses the wait; the daemon sets no default. Without `wait`, a
 read returns at once.
 
 Polling repeats `receive_messages`, following `nextCursor` until absent. A
-webhook wakes the same reads, and a host without one can wait in the read
-instead.
+wake-up prompts the same reads, and a host without a subscription can wait in
+the read instead.
 Invalid cursors return `invalid-cursor`. Start a new traversal after
 reconnecting.
 
-## Webhook consumer
+## Subscriptions
 
 Authenticated `events/subscribe` and `events/unsubscribe` use
 `org.social-harness/inbox.pending`.
@@ -94,19 +94,19 @@ New secrets require verification. Connections validate DNS destinations,
 preserve original TLS identity and refuse redirects. Callbacks may read the
 inbox before answering without blocking themselves.
 
-A callback is a wakeup, not a delivery. Each post carries
+A post to the callback is a wake-up, not a delivery. Each post carries
 `data: {pendingCount}` and no message content. The consumer reads the entries
-with `receive_messages`, and only that read marks them delivered. One wakeup is
+with `receive_messages`, and only that read marks them delivered. One wake-up is
 posted when the inbox gains a pending entry, and again after a daemon restart
 while entries are pending.
 
-Valid HTTP 2xx ends that wakeup. Failures retry the same id and body with
+Valid HTTP 2xx ends that wake-up. Failures retry the same id and body with
 fresh signature timestamps and capped backoff. Suspension follows at least 100
 attempts spanning an hour. HTTP 410 or 413 causes immediate suspension.
 Subscribing again clears either suspension. Pending entries stay in the inbox
 throughout.
 
-Expired registrations cannot be posted to. Changing the URL requires
+An expired subscription is not posted to. Changing the URL requires
 `events/unsubscribe` for the current one first. The `status` tool reports
-whether a callback is subscribed, when its lease ends, whether it is suspended
+in `subscription` whether a callback is subscribed, when its lease ends, whether it is suspended
 and its last failure, without the URL or secret.

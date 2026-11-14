@@ -69,7 +69,6 @@ export async function openDaemon(
 }
 
 function agentAccess(daemon: Daemon, signedIn: SignedIn): AgentAccess {
-  const { client } = signedIn.connection;
   return {
     agent: signedIn.agent,
     address: signedIn.address,
@@ -79,7 +78,7 @@ function agentAccess(daemon: Daemon, signedIn: SignedIn): AgentAccess {
     next: (count) => Effect.runPromise(nextItems(signedIn, count)),
     history: (address) =>
       Effect.runPromise(
-        callTool(client, {
+        callTool(signedIn.connection.mcp, {
           name: "read_conversation",
           arguments: {
             address: Schema.decodeUnknownSync(

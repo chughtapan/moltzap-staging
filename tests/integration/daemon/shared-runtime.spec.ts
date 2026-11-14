@@ -47,7 +47,7 @@ function callAsClient<A, I>(
   output: Schema.Schema<A, I>,
 ) {
   return Effect.tryPromise(() =>
-    agent.connection.client.callTool({ name, arguments: { ...input } }),
+    agent.connection.mcp.callTool({ name, arguments: { ...input } }),
   ).pipe(
     Effect.filterOrFail((result) => result.isError !== true),
     Effect.flatMap((result) =>
@@ -68,7 +68,7 @@ type ReadConversation = (
 const conversationWith =
   (peer: SignedIn): ReadConversation =>
   (agent) =>
-    callTool(agent.connection.client, {
+    callTool(agent.connection.mcp, {
       name: "read_conversation",
       arguments: { address: peer.address },
     });
@@ -104,14 +104,14 @@ function awaitMessages(agent: SignedIn, read: ReadConversation, count: number) {
 
 /** The agent's pending inbox entries, waiting for one to arrive. A read marks what it returns delivered. */
 const awaitInbox = (agent: SignedIn) =>
-  callTool(agent.connection.client, {
+  callTool(agent.connection.mcp, {
     name: "receive_messages",
     arguments: { wait: MAXIMUM_WAIT_SECONDS },
   }).pipe(Effect.map((page) => page.entries));
 
 function expectEmptyInbox(agent: SignedIn) {
   return Effect.gen(function* () {
-    const page = yield* callTool(agent.connection.client, {
+    const page = yield* callTool(agent.connection.mcp, {
       name: "receive_messages",
       arguments: {},
     });

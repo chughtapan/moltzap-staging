@@ -1,6 +1,6 @@
-/** @file What a host needs to talk to the daemon: the MCP tool contracts, a typed client, and the values and failures a tool call carries. */
+/** @file What a host needs to talk to the daemon: the MCP tool contracts, a typed MCP connection, and the values and failures a tool call carries. */
 
-/** The tools, the types derived from their schemas, the longest wait a read accepts and the notification that the inbox has something to read. */
+/** The tools, the types derived from their schemas, the longest wait a read accepts and the name of the event a wake-up carries. */
 export {
   INBOX_PENDING_EVENT,
   MAXIMUM_WAIT_SECONDS,

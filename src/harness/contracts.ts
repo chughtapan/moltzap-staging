@@ -53,7 +53,7 @@ export const callbackReasons = [
   "challenge_failed",
 ] as const;
 /** Owner-visible diagnostics omit callback addresses and signing authority. */
-const webhookStatusSchema = Schema.Struct({
+const subscriptionStatusSchema = Schema.Struct({
   mode: Schema.Literal("none", "webhook"),
   id: Schema.optional(Schema.String),
   refreshBefore: Schema.optional(Schema.String),
@@ -63,8 +63,8 @@ const webhookStatusSchema = Schema.Struct({
   lastError: Schema.optional(Schema.NullOr(Schema.Literal(...callbackReasons))),
 });
 
-/** The callback subscription as the status tool reports it, without its address or secret. */
-export type WebhookStatus = typeof webhookStatusSchema.Type;
+/** A subscription as the `status` tool reports it, without its callback URL or secret. */
+export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
 
 const emptyArguments = Schema.Record({
   key: Schema.String,
@@ -72,12 +72,12 @@ const emptyArguments = Schema.Record({
 });
 /** Catalog cursors are independent of event replay positions. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventListInput = Schema.Struct({
+export const eventListRequest = Schema.Struct({
   cursor: Schema.optionalWith(Schema.String, { exact: true }),
 });
 /** Validates subscription shape before authorization and callback URL checks. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventSubscribeInput = Schema.Struct({
+export const eventSubscribeRequest = Schema.Struct({
   name: Schema.String,
   arguments: emptyArguments,
   /** Omitting the cursor requests the draft's explicit null position. */
@@ -92,17 +92,17 @@ export const eventSubscribeInput = Schema.Struct({
     exact: true,
   }),
 });
-/** Cleanup identifies the registration without disclosing its signing secret. */
+/** Unsubscribing identifies the subscription without disclosing its signing secret. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventUnsubscribeInput = Schema.Struct({
+export const eventUnsubscribeRequest = Schema.Struct({
   name: Schema.String,
   arguments: emptyArguments,
   delivery: Schema.Struct({ url: Schema.String }),
 });
 
-/** Validated webhook subscription parameters before authorization and URL checks. */
-export type EventSubscribeInput = typeof eventSubscribeInput.Type;
-type EventUnsubscribeInput = typeof eventUnsubscribeInput.Type;
+/** A decoded `events/subscribe` request, before authorization and callback URL checks. */
+export type EventSubscribeRequest = typeof eventSubscribeRequest.Type;
+type EventUnsubscribeRequest = typeof eventUnsubscribeRequest.Type;
 interface EventSubscriptionGrant {
   readonly id: string;
   readonly refreshBefore: string;
@@ -113,21 +113,21 @@ interface EventSubscriptionGrant {
 /** One agent's callback subscription for inbox wake-ups. */
 export interface HarnessWebhookEvents {
   readonly subscribe: (
-    input: EventSubscribeInput,
+    request: EventSubscribeRequest,
   ) => Effect.Effect<EventSubscriptionGrant, ProtocolError>;
   readonly unsubscribe: (
-    input: EventUnsubscribeInput,
+    request: EventUnsubscribeRequest,
   ) => Effect.Effect<void, ProtocolError>;
-  readonly status: Effect.Effect<WebhookStatus>;
+  readonly status: Effect.Effect<SubscriptionStatus>;
 }
 
-/** A content-free wakeup to read the pending inbox. */
+/** A wake-up to read the pending inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
 /** How the event catalogue lists the wake-up. */
 export const inboxPendingCatalogEntry = {
   name: INBOX_PENDING_EVENT,
-  description: "A wakeup to read the pending inbox.",
+  description: "A wake-up to read the pending inbox.",
   delivery: ["webhook"],
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   payloadSchema: {
@@ -151,7 +151,7 @@ const firewallRefusalSchema = exactStruct({
 
 const savedItemSchema = Schema.typeSchema(PermittedItem);
 
-const historyRecord = Schema.Union(
+const historyRecordSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
     message: Schema.typeSchema(Message),
@@ -173,30 +173,30 @@ const historyRecord = Schema.Union(
 );
 
 /** This agent's identifier and name, readable while communication is still starting. */
-const managementStatusResultSchema = Schema.Struct({
+const statusOutput = Schema.Struct({
   agentId: AgentId,
   agentName: AgentName,
-  webhook: webhookStatusSchema,
+  subscription: subscriptionStatusSchema,
 });
 
 /** Canonically ordered local-conversation page selector. */
-const managementListConversationsRequestSchema = exactStruct({
+const listConversationsInput = exactStruct({
   ...PaginatedRequest.fields,
 });
 
 /** At most fifty canonical addresses and an opaque position for the next page. */
-const managementListConversationsResultSchema = Schema.Struct({
+const listConversationsOutput = Schema.Struct({
   addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
-const managementReadConversationRequestSchema = exactStruct({
+const readConversationInput = exactStruct({
   address: MessageAddress,
   ...PaginatedRequest.fields,
 });
 
-const managementReadConversationResultSchema = Schema.Struct({
-  records: Schema.Array(historyRecord).pipe(Schema.maxItems(50)),
+const readConversationOutput = Schema.Struct({
+  records: Schema.Array(historyRecordSchema).pipe(Schema.maxItems(50)),
   ...PaginatedResult.fields,
 });
 
@@ -206,7 +206,7 @@ const managementReadConversationResultSchema = Schema.Struct({
  */
 export const MAXIMUM_WAIT_SECONDS = 50;
 
-const inboxRequestSchema = exactStruct({
+const receiveMessagesInput = exactStruct({
   ...PaginatedRequest.fields,
   wait: Schema.optional(
     Schema.Number.pipe(
@@ -217,7 +217,7 @@ const inboxRequestSchema = exactStruct({
     }),
   ),
 });
-const inboxResultSchema = Schema.typeSchema(InboxPage);
+const receiveMessagesOutput = Schema.typeSchema(InboxPage);
 /** What the daemon answers when a call's arguments are not what the tool takes. */
 const invalidArgumentsSchema = Schema.Struct({
   issues: Schema.Array(
@@ -233,7 +233,7 @@ const invalidArgumentsSchema = Schema.Struct({
  * requests. New fields are ignored. Missing firewall or collective fields cannot
  * decode as a plain send reason.
  */
-const harnessSendErrorDataSchema = Schema.Union(
+const sendErrorDataSchema = Schema.Union(
   invalidArgumentsSchema,
   Schema.Struct({
     reason: Schema.Literal("firewall-refused"),
@@ -254,7 +254,7 @@ const harnessSendErrorDataSchema = Schema.Union(
  * Decoded error data of one refused `send_message` call.
  * @inline
  */
-type HarnessSendErrorData =
+type SendErrorData =
   | typeof invalidArgumentsSchema.Type
   | (typeof firewallRefusalSchema.Type & {
       readonly reason: "firewall-refused";
@@ -274,7 +274,7 @@ type HarnessSendErrorData =
  */
 export function sendErrorData(
   error: SendError | RequestError | FirewallRefusal,
-): HarnessSendErrorData {
+): SendErrorData {
   if (error._tag === "FirewallRefusal") {
     return {
       reason: "firewall-refused",
@@ -301,10 +301,10 @@ export function sendErrorData(
 /** Decodes JSON-RPC refusal data while preserving send and collective details. */
 function decodeSendErrorData(
   value: unknown,
-): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> {
-  return Schema.decodeUnknown(harnessSendErrorDataSchema)(value).pipe(
+): Effect.Effect<SendErrorData, ParseResult.ParseError> {
+  return Schema.decodeUnknown(sendErrorDataSchema)(value).pipe(
     Effect.flatMap(
-      (data): Effect.Effect<HarnessSendErrorData, ParseResult.ParseError> =>
+      (data): Effect.Effect<SendErrorData, ParseResult.ParseError> =>
         "failure" in data
           ? decodeCollectiveFailure(data.failure).pipe(
               Effect.map((failure) => ({ ...data, failure })),
@@ -328,8 +328,8 @@ export type ToolCallFailure =
 /** A tool whose refusals carry `data`, which `make` turns into its typed failure. */
 const failsWith = <A, I, E>(data: Schema.Schema<A, I>, make: (data: A) => E) =>
   ({
-    total: false,
-    read: (failure: ToolCallFailure): Option.Option<E> =>
+    readsEveryFailure: false,
+    toError: (failure: ToolCallFailure): Option.Option<E> =>
       failure.kind === "refused"
         ? Option.map(Schema.decodeUnknownOption(data)(failure.data), make)
         : Option.none(),
@@ -337,8 +337,8 @@ const failsWith = <A, I, E>(data: Schema.Schema<A, I>, make: (data: A) => E) =>
 
 /** A tool with no typed failure of its own. */
 const failsUntyped = {
-  total: false,
-  read: (): Option.Option<never> => Option.none(),
+  readsEveryFailure: false,
+  toError: (): Option.Option<never> => Option.none(),
 } as const;
 
 /**
@@ -346,8 +346,8 @@ const failsUntyped = {
  * readable answer has an unknown outcome, so its caller must not send again.
  */
 const sendFails = {
-  total: true,
-  read: (
+  readsEveryFailure: true,
+  toError: (
     failure: ToolCallFailure,
   ): Option.Option<SendError | RequestError | FirewallRefusal> => {
     if (failure.kind === "unanswered" && !failure.sent) {
@@ -395,16 +395,19 @@ const policyFailure = Schema.Struct({
   problem: FirewallPolicyError.fields.problem,
 });
 
-const empty = Schema.Record({
+const noArguments = Schema.Record({
   key: Schema.String,
   value: Schema.Never,
 }).annotations({
   jsonSchema: { type: "object", properties: {}, additionalProperties: false },
 });
-const read = { readOnlyHint: true, openWorldHint: false } as const;
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  openWorldHint: false,
+} as const;
 
 /** Each held norm's name, description and protocol, and the document that states its acts. */
-const readNormsResultSchema = exactStruct({
+const readNormsOutput = exactStruct({
   norms: Schema.Array(
     exactStruct({
       name: Schema.String,
@@ -426,7 +429,7 @@ const policyFails = failsWith(
 
 /**
  * Each tool's contract: its description, argument and result schemas, and how
- * its failures read. Discovery, the server and callers all derive from it.
+ * its failures read. Discovery, the MCP app and callers all derive from it.
  */
 export const toolDefinitions = {
   send_message: {
@@ -444,8 +447,8 @@ export const toolDefinitions = {
     ),
     description:
       "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
-    input: inboxRequestSchema,
-    output: inboxResultSchema,
+    input: receiveMessagesInput,
+    output: receiveMessagesOutput,
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
@@ -455,34 +458,34 @@ export const toolDefinitions = {
   status: {
     failure: failsUntyped,
     description:
-      "Read this agent's identifier and name, and the state of the inbox wake-up callback if one is subscribed. Other agents address this agent as agent:<agentName>.",
-    input: empty,
-    output: managementStatusResultSchema,
-    annotations: read,
+      "Read this agent's identifier and name. subscription reports whether a callback is subscribed for inbox wake-ups, when the subscription must be refreshed, whether it is stalled and its last error. Other agents address this agent as agent:<agentName>.",
+    input: noArguments,
+    output: statusOutput,
+    annotations: readOnlyAnnotations,
   },
   list_conversations: {
     failure: historyFails,
     description:
       "List canonical conversation addresses with completed messages or collective results. Follow nextCursor until absent. Use read_conversation to read one address.",
-    input: managementListConversationsRequestSchema,
-    output: managementListConversationsResultSchema,
-    annotations: read,
+    input: listConversationsInput,
+    output: listConversationsOutput,
+    annotations: readOnlyAnnotations,
   },
   read_conversation: {
     failure: historyFails,
     description:
       "Read one conversation's records: the messages you sent, the inbox entries of the messages you received, and your collective results. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
-    input: managementReadConversationRequestSchema,
-    output: managementReadConversationResultSchema,
-    annotations: read,
+    input: readConversationInput,
+    output: readConversationOutput,
+    annotations: readOnlyAnnotations,
   },
   read_policy: {
     failure: policyFails,
     description:
       "Read active editable rules, fixed rules, the names of the norms this agent holds, and the policy revision. Fixed rules include the English rules of held norms.",
-    input: empty,
+    input: noArguments,
     output: policyReadSchema,
-    annotations: read,
+    annotations: readOnlyAnnotations,
   },
   update_policy: {
     failure: policyFails,
@@ -498,20 +501,20 @@ export const toolDefinitions = {
       "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the check's judgment (allow, reject or hold), the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
-    annotations: read,
+    annotations: readOnlyAnnotations,
   },
   read_norms: {
     failure: failsUntyped,
     description:
       "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
-    input: empty,
-    output: readNormsResultSchema,
-    annotations: read,
+    input: noArguments,
+    output: readNormsOutput,
+    annotations: readOnlyAnnotations,
   },
 } as const;
 
 /**
- * How two tools read for a client in client/server mode. A client talks only
+ * How three tools read for a client in client/server mode. A client talks only
  * to the server agent, so it names no recipient and no conversation.
  */
 export const clientToolDefinitions = {
@@ -539,7 +542,7 @@ export const clientToolDefinitions = {
 } as const;
 
 /** How `send_message` reads for an agent that sends text only, with no collective requests or responses. */
-export const textToolDefinitions = {
+export const textOnlyToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
@@ -551,7 +554,7 @@ export const textToolDefinitions = {
 /** Names the tools published by the daemon's MCP catalog. */
 export type ToolName = keyof typeof toolDefinitions;
 
-/** Arguments are derived from the server's owning Effect schema. */
+/** Arguments are derived from the daemon's owning Effect schema. */
 export type ToolRequest<Name extends ToolName = ToolName> = {
   readonly [Tool in Name]: {
     readonly name: Tool;
@@ -561,7 +564,7 @@ export type ToolRequest<Name extends ToolName = ToolName> = {
   };
 }[Name];
 
-/** Results are derived from the schema the server publishes for this tool. */
+/** Results are derived from the schema the daemon publishes for this tool. */
 export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
   (typeof toolDefinitions)[Name]["output"]
 >;

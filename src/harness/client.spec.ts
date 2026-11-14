@@ -260,13 +260,18 @@ describe("send outcomes", () => {
     new Error("transport closed"),
     new ProtocolError(-32603, "private failure"),
   ])("does not retry an uncertain send", (error) => {
-    const client = new Client(implementation);
-    const called = vi.spyOn(client, "callTool").mockRejectedValue(error);
-    const input = Schema.decodeUnknownSync(toolDefinitions.send_message.input)({
+    const mcp = new Client(implementation);
+    const called = vi.spyOn(mcp, "callTool").mockRejectedValue(error);
+    const sendArguments = Schema.decodeUnknownSync(
+      toolDefinitions.send_message.input,
+    )({
       to: "agent:bob",
       text: "hello",
     });
-    return callTool(client, { name: "send_message", arguments: input }).pipe(
+    return callTool(mcp, {
+      name: "send_message",
+      arguments: sendArguments,
+    }).pipe(
       Effect.flip,
       Effect.tap((failure) =>
         Effect.sync(() => {
@@ -282,16 +287,21 @@ describe("send outcomes", () => {
     );
   });
   it("treats a malformed completed send result as uncertain", () => {
-    const client = new Client(implementation);
-    vi.spyOn(client, "callTool").mockResolvedValue({
+    const mcp = new Client(implementation);
+    vi.spyOn(mcp, "callTool").mockResolvedValue({
       content: [],
       structuredContent: { private: "invalid-result" },
     });
-    const input = Schema.decodeUnknownSync(toolDefinitions.send_message.input)({
+    const sendArguments = Schema.decodeUnknownSync(
+      toolDefinitions.send_message.input,
+    )({
       to: "agent:bob",
       text: "hello",
     });
-    return callTool(client, { name: "send_message", arguments: input }).pipe(
+    return callTool(mcp, {
+      name: "send_message",
+      arguments: sendArguments,
+    }).pipe(
       Effect.flip,
       Effect.tap((failure) =>
         Effect.sync(() => {
@@ -328,8 +338,8 @@ describe("a send the daemon's tool does not take", () => {
 
   it("fails naming the refused argument when the daemon hides collective requests", () =>
     Effect.gen(function* () {
-      const client = yield* connected({ hideCollectives: true });
-      const failure = yield* callTool(client, {
+      const mcp = yield* connected({ hideCollectives: true });
+      const failure = yield* callTool(mcp, {
         name: "send_message",
         arguments: Schema.decodeUnknownSync(toolDefinitions.send_message.input)(
           request,
@@ -344,8 +354,8 @@ describe("a send the daemon's tool does not take", () => {
 
   it("fails naming the malformed argument of a collective request an agent wrote", () =>
     Effect.gen(function* () {
-      const client = yield* connected({});
-      const failure = yield* callToolAsWritten(client, "send_message", {
+      const mcp = yield* connected({});
+      const failure = yield* callToolAsWritten(mcp, "send_message", {
         ...request,
         collectiveRequest: {
           ...request.collectiveRequest,
@@ -381,11 +391,11 @@ describe("management failures", () => {
   it.each(failures)(
     "reconstructs $tag from the owning wire schema",
     ({ request, data, tag }) => {
-      const client = new Client(implementation);
-      vi.spyOn(client, "callTool").mockRejectedValue(
+      const mcp = new Client(implementation);
+      vi.spyOn(mcp, "callTool").mockRejectedValue(
         new ProtocolError(-32603, transportDetail, data),
       );
-      return callTool(client, request).pipe(
+      return callTool(mcp, request).pipe(
         Effect.flip,
         Effect.tap((failure) =>
           Effect.sync(() => {

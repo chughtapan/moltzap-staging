@@ -75,7 +75,7 @@ function agree(student: Participant, professor: Participant) {
 const agreedNorm = Effect.gen(function* () {
   const { student, professor } = yield* officeHours;
   expect(
-    yield* callTool(professor.connection.client, {
+    yield* callTool(professor.connection.mcp, {
       name: "read_norms",
       arguments: {},
     }),
@@ -207,7 +207,7 @@ const peerBreach = Effect.gen(function* () {
 const discovery = Effect.gen(function* () {
   const { student, professor } = yield* officeHours;
   const query = "(query-ref :ontology norm-discovery :norm office-hours)";
-  yield* callTool(professor.connection.client, {
+  yield* callTool(professor.connection.mcp, {
     name: "update_policy",
     arguments: { remove: [{ norm: "office-hours" }] },
   });

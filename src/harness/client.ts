@@ -47,7 +47,7 @@ export class McpSettingsError extends Data.TaggedError("McpSettingsError")<{
   readonly message: string;
 }> {}
 
-/** Non-send tool failures never include unvalidated server or transport details. */
+/** Non-send tool failures never include unvalidated daemon or transport details. */
 export class McpToolError extends Data.TaggedError("McpToolError")<{
   readonly tool: ToolName;
   readonly reason: "tool-failed" | "transport-failed" | "decode-failed";
@@ -62,8 +62,10 @@ type FailureContract<Name extends ToolName> =
  * not read every failure.
  */
 export type ToolFailure<Name extends ToolName> =
-  | Option.Option.Value<ReturnType<FailureContract<Name>["read"]>>
-  | (FailureContract<Name>["total"] extends true ? never : McpToolError);
+  | Option.Option.Value<ReturnType<FailureContract<Name>["toError"]>>
+  | (FailureContract<Name>["readsEveryFailure"] extends true
+      ? never
+      : McpToolError);
 
 /** Native channels connect with the daemon credential supplied by their host. */
 export interface McpConnectionSettings {
@@ -74,11 +76,13 @@ export interface McpConnectionSettings {
 }
 
 /**
- * Allows one inbox consumer at a time. Reading marks items delivered before the
- * callback runs. Callback failure stops reception; saved history retains the item.
+ * Allows one inbox consumer at a time. Reading marks entries delivered before
+ * the callback runs. Callback failure stops reception; saved history retains
+ * the entry.
  */
 export interface McpConnection {
-  readonly client: Client;
+  /** The MCP SDK's connected `Client`, which {@link callTool} calls tools on. */
+  readonly mcp: Client;
   readonly consumeInbox: <E, R>(
     accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<void, E | McpReceiveError, R>;
@@ -86,7 +90,7 @@ export interface McpConnection {
 
 /**
  * Returns after MCP negotiation succeeds. Closing the caller's scope interrupts
- * active reception and closes the client.
+ * active reception and closes the connection.
  */
 export function acquireMcpConnection(
   settings: McpConnectionSettings,
@@ -105,18 +109,18 @@ export function acquireMcpConnection(
     if (!safeCredentialEndpoint(endpoint, settings.allowHttp)) {
       return yield* new McpConnectError({ reason: "transport-failed" });
     }
-    const client = new Client(
+    const mcp = new Client(
       { ...implementation },
       {
         capabilities: {},
         versionNegotiation: { mode: { pin: "2026-07-28" } },
       },
     );
-    const close = Effect.tryPromise(() => client.close()).pipe(Effect.ignore);
+    const close = Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore);
     yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: (signal) =>
-          client.connect(
+          mcp.connect(
             new StreamableHTTPClientTransport(endpoint, transportOptions),
             { signal },
           ),
@@ -134,10 +138,10 @@ export function acquireMcpConnection(
     const receiving = yield* Ref.make(false);
     const scope = yield* Scope.Scope;
     return {
-      client,
+      mcp,
       consumeInbox: (accept) =>
         Effect.acquireUseRelease(
-          receiveInbox({ client, receiving }, accept).pipe(
+          receiveInbox(mcp, receiving, accept).pipe(
             Effect.interruptible,
             Effect.forkIn(scope),
           ),
@@ -191,7 +195,7 @@ export const connectFromEnvironment = Effect.fn("Mcp.connectFromEnvironment")(
 );
 
 /** What a caller is told when a tool's definition does not read a failure. */
-const reasons = {
+const toolErrorReasonByKind = {
   refused: "tool-failed",
   unanswered: "transport-failed",
   unreadable: "decode-failed",
@@ -202,16 +206,16 @@ const reasons = {
  * decodes its result and reads its failures.
  */
 export function callTool<Name extends ToolName>(
-  client: Pick<Client, "callTool">,
+  mcp: Pick<Client, "callTool">,
   request: ToolRequest & { readonly name: Name },
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>> {
-  return callToolAsWritten(client, request.name, request.arguments);
+  return callToolAsWritten(mcp, request.name, request.arguments);
 }
 
 export function callToolAsWritten<Name extends ToolName>(
-  client: Pick<Client, "callTool">,
+  mcp: Pick<Client, "callTool">,
   name: Name,
-  written: Readonly<Record<string, unknown>>,
+  writtenArguments: Readonly<Record<string, unknown>>,
 ): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
 /**
  * Calls a tool as {@link callTool} does, with arguments as an agent wrote
@@ -219,32 +223,36 @@ export function callToolAsWritten<Name extends ToolName>(
  * does not take.
  */
 export function callToolAsWritten(
-  client: Pick<Client, "callTool">,
+  mcp: Pick<Client, "callTool">,
   name: ToolName,
-  written: Readonly<Record<string, unknown>>,
+  writtenArguments: Readonly<Record<string, unknown>>,
 ): Effect.Effect<unknown, unknown> {
   const definition: ToolContract = toolDefinitions[name];
-  const fail = (failure: ToolCallFailure) =>
+  const toToolFailure = (failure: ToolCallFailure) =>
     Option.getOrElse(
-      definition.failure.read(failure),
-      () => new McpToolError({ tool: name, reason: reasons[failure.kind] }),
+      definition.failure.toError(failure),
+      () =>
+        new McpToolError({
+          tool: name,
+          reason: toolErrorReasonByKind[failure.kind],
+        }),
     );
   return Effect.tryPromise({
     try: (signal) =>
-      client.callTool(
-        { name, arguments: written },
+      mcp.callTool(
+        { name, arguments: writtenArguments },
         { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
       ),
-    catch: (cause) => fail(observed(cause)),
+    catch: (cause) => toToolFailure(classifyRejection(cause)),
   }).pipe(
     Effect.flatMap((response) =>
       response.isError === true
-        ? Effect.fail(fail({ kind: "refused", data: undefined }))
+        ? Effect.fail(toToolFailure({ kind: "refused", data: undefined }))
         : Schema.decodeUnknown(definition.output)(
             response.structuredContent,
           ).pipe(
             Effect.map((result): unknown => result),
-            Effect.mapError(() => fail({ kind: "unreadable" })),
+            Effect.mapError(() => toToolFailure({ kind: "unreadable" })),
           ),
     ),
   );
@@ -254,12 +262,12 @@ export function callToolAsWritten(
 interface ToolContract {
   readonly output: Schema.Schema.AnyNoContext;
   readonly failure: {
-    readonly read: (failure: ToolCallFailure) => Option.Option<unknown>;
+    readonly toError: (failure: ToolCallFailure) => Option.Option<unknown>;
   };
 }
 
 /** What a rejected call says about whether the daemon received the request. */
-function observed(cause: unknown): ToolCallFailure {
+function classifyRejection(cause: unknown): ToolCallFailure {
   if (ProtocolError.isInstance(cause)) {
     return { kind: "refused", data: cause.data };
   }
@@ -277,13 +285,13 @@ function observed(cause: unknown): ToolCallFailure {
  * inbox is empty, so calling this in a loop neither spins nor misses one.
  */
 function readPending<E, R>(
-  client: Pick<Client, "callTool">,
+  mcp: Pick<Client, "callTool">,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ): Effect.Effect<void, E | McpReceiveError, R> {
   return Effect.gen(function* () {
     let cursor: string | undefined;
     do {
-      const page = yield* callTool(client, {
+      const page = yield* callTool(mcp, {
         name: "receive_messages",
         arguments:
           cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
@@ -312,36 +320,34 @@ function connectionRefused(cause: unknown): boolean {
 
 /** Reads the inbox until interrupted or a read fails. A connection has one reader at a time. */
 function receiveInbox<E, R>(
-  owner: {
-    readonly client: Pick<Client, "callTool">;
-    readonly receiving: Ref.Ref<boolean>;
-  },
+  mcp: Pick<Client, "callTool">,
+  receiving: Ref.Ref<boolean>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
       yield* Effect.acquireRelease(
-        Ref.getAndSet(owner.receiving, true).pipe(
+        Ref.getAndSet(receiving, true).pipe(
           Effect.filterOrFail(
             (active) => !active,
             () => new McpReceiveError({ reason: "already-listening" }),
           ),
         ),
-        () => Ref.set(owner.receiving, false),
+        () => Ref.set(receiving, false),
       );
-      return yield* Effect.forever(readPending(owner.client, accept));
+      return yield* Effect.forever(readPending(mcp, accept));
     }),
   );
 }
 
 /** TLS, literal loopback or host-approved HTTP can carry the private bearer. */
 function safeCredentialEndpoint(endpoint: URL, allowHttp = false): boolean {
-  const privateAuthority =
+  const noUserinfoOrFragment =
     !endpoint.username && !endpoint.password && !endpoint.hash;
   const local =
     endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
   const secure =
     endpoint.protocol === "https:" ||
     (endpoint.protocol === "http:" && (local || allowHttp));
-  return privateAuthority && secure;
+  return noUserinfoOrFragment && secure;
 }

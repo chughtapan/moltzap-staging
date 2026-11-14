@@ -422,7 +422,7 @@ class HarnessChannelAdapter {
     return decodeOutboundText(address, message).pipe(
       Effect.flatMap((outbound) =>
         callToolAsWritten(
-          activation.connection.client,
+          activation.connection.mcp,
           "send_message",
           sendArguments(outbound),
         ).pipe(

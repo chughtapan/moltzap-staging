@@ -133,11 +133,11 @@ function stopGateway({ abortController, runningGateway }: Gateway) {
  */
 function savedExchange(reader: SignedIn, peer: SignedIn) {
   return Effect.gen(function* () {
-    const { client } = reader.connection;
+    const { mcp } = reader.connection;
     expect(
-      yield* callTool(client, { name: "list_conversations", arguments: {} }),
+      yield* callTool(mcp, { name: "list_conversations", arguments: {} }),
     ).toEqual({ addresses: [peer.address] });
-    const history = yield* callTool(client, {
+    const history = yield* callTool(mcp, {
       name: "read_conversation",
       arguments: { address: peer.address },
     });
@@ -161,7 +161,7 @@ function inRecipientNameOrder<
 /** A client's send in client/server mode, which names no recipient. */
 function sendAsClient(client: Participant, text: string) {
   return Effect.tryPromise(() =>
-    client.connection.client.callTool({
+    client.connection.mcp.callTool({
       name: "send_message",
       arguments: { text },
     }),
@@ -521,7 +521,7 @@ const failedHandoff = Effect.gen(function* () {
     `agent:primary:sharness:direct:${caller.agent.agentName}`,
   );
   expect(
-    (yield* callTool(target.connection.client, {
+    (yield* callTool(target.connection.mcp, {
       name: "receive_messages",
       arguments: {},
     })).entries,
