@@ -7,7 +7,7 @@ import { Effect, Option } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect } from "vitest";
-import { loadNorms, serviceNorms } from "./index.js";
+import { daemonNorms, loadNorms } from "./index.js";
 import { ruleMatcher } from "./matchers.js";
 
 const shipped = fileURLToPath(new URL("../../config/norms/", import.meta.url));
@@ -50,24 +50,25 @@ const rules = JSON.stringify({
 describe("loadNorms", () => {
   it("loads the shipped directory: a new agent holds only the built-ins, and its chain's matchers compile", () =>
     Effect.gen(function* () {
-      const service = yield* serviceNorms(yield* loadNorms(shipped));
-      const { documents } = service;
+      const daemon = yield* daemonNorms(yield* loadNorms(shipped));
+      const { normDocuments } = daemon;
 
-      expect(service.builtIn.map((norm) => norm.name)).toEqual([
+      expect(daemon.builtIn.map((norm) => norm.name)).toEqual([
         "feedback",
         "norm-agreement",
         "norm-discovery",
       ]);
-      expect(documents.initial).toEqual([]);
-      expect(service.chain.rules.map((rule) => rule.id)).toContain(
+      expect(normDocuments.initial).toEqual([]);
+      expect(daemon.chain.rules.map((rule) => rule.id)).toContain(
         "not-understood",
       );
       expect(
         Object.keys(
-          Option.getOrThrow(documents.compile(documents.initial)).matchers,
+          Option.getOrThrow(normDocuments.compile(normDocuments.initial))
+            .matchers,
         ),
       ).toEqual(
-        expect.arrayContaining(service.chain.rules.map((rule) => rule.match)),
+        expect.arrayContaining(daemon.chain.rules.map((rule) => rule.match)),
       );
     }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)));
 
@@ -130,36 +131,36 @@ describe("loadNorms", () => {
 describe("the norm documents an agent holds", () => {
   /** The shipped directory's norms, as an agent's firewall names and compiles them. */
   const held = loadNorms(shipped).pipe(
-    Effect.flatMap(serviceNorms),
-    Effect.map((service) => service.documents),
+    Effect.flatMap(daemonNorms),
+    Effect.map((daemon) => daemon.normDocuments),
     Effect.provide(NodeContext.layer),
   );
 
   it("names a document an agent can hold, and none that does not parse or names a built-in norm", () =>
     Effect.gen(function* () {
-      const documents = yield* held;
+      const normDocuments = yield* held;
 
-      expect(documents.name(swap)).toEqual(Option.some("swap"));
-      expect(documents.name("(norm")).toEqual(Option.none());
-      expect(documents.name('(norm feedback :description "Mine.")')).toEqual(
-        Option.none(),
-      );
+      expect(normDocuments.name(swap)).toEqual(Option.some("swap"));
+      expect(normDocuments.name("(norm")).toEqual(Option.none());
+      expect(
+        normDocuments.name('(norm feedback :description "Mine.")'),
+      ).toEqual(Option.none());
     }));
 
   it("compiles held norms with the built-ins, but not two documents for one norm", () =>
     Effect.gen(function* () {
-      const documents = yield* held;
+      const normDocuments = yield* held;
 
-      expect(Option.isSome(documents.compile([swap]))).toBe(true);
-      expect(documents.compile([swap, swap])).toEqual(Option.none());
+      expect(Option.isSome(normDocuments.compile([swap]))).toBe(true);
+      expect(normDocuments.compile([swap, swap])).toEqual(Option.none());
     }));
 
   it("turns each English rule into a fixed rule scoped to the acts it governs, which replies to a peer's breach", () =>
     Effect.gen(function* () {
-      const documents = yield* held;
+      const normDocuments = yield* held;
 
       const [first, second] = Option.getOrThrow(
-        documents.compile([swap]),
+        normDocuments.compile([swap]),
       ).fixedRules;
 
       expect([first, second].map((rule) => rule?.id)).toEqual([

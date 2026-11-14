@@ -37,13 +37,13 @@ const builtInDirectory = fileURLToPath(
   new URL("../../config/norms/built-in/", import.meta.url),
 );
 
-/** The settings' copy of a norms directory: the documents each new agent holds, and the rule file. */
+/** The settings' copy of a norms directory: the norm documents each new agent holds, and the rule file. */
 export const installedNorms = exactStruct({
   initial: Schema.Array(Schema.String),
-  chain: chainRuleFileSchema,
+  ruleFile: chainRuleFileSchema,
 });
 
-/** The norms a new agent holds and the rule file every agent applies. */
+/** The norm documents a new agent holds and the rule file every agent applies. */
 export type InstalledNorms = typeof installedNorms.Type;
 
 /**
@@ -51,9 +51,9 @@ export type InstalledNorms = typeof installedNorms.Type;
  * agent's firewall names and compiles the norm documents it holds, and the
  * built-in norms every agent holds besides them.
  */
-export interface ServiceNorms {
+export interface DaemonNorms {
   readonly chain: Chain;
-  readonly documents: NormDocuments;
+  readonly normDocuments: NormDocuments;
   readonly builtIn: readonly Norm[];
 }
 
@@ -63,7 +63,7 @@ export class HeldNorms extends Context.Tag("SocialHarness/HeldNorms")<
   { readonly read: () => Effect.Effect<readonly Norm[], FirewallPolicyError> }
 >() {
   /** Reads the agent's held norms from its firewall's active revision. */
-  static readonly layer = (service: ServiceNorms) =>
+  static readonly layer = (daemon: DaemonNorms) =>
     Layer.effect(
       HeldNorms,
       Effect.map(Firewall, (firewall) =>
@@ -73,7 +73,7 @@ export class HeldNorms extends Context.Tag("SocialHarness/HeldNorms")<
               .readNorms()
               .pipe(
                 Effect.map((documents) => [
-                  ...service.builtIn,
+                  ...daemon.builtIn,
                   ...savedNorms(documents),
                 ]),
               ),
@@ -92,9 +92,9 @@ export class NormsConfigurationError extends Data.TaggedError(
 }
 
 /**
- * Reads every `.lisp` document directly in `directory`, which each new agent
- * holds, and the directory's `rules.json`. Norm names are unique, no document
- * names a built-in norm, and every rule names a norm matcher.
+ * Reads every `.lisp` norm document directly in `directory`, which each new
+ * agent holds, and the directory's `rules.json`. Norm names are unique, no
+ * document names a built-in norm, and every rule names a norm matcher.
  */
 export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
   const failed = (reason: string) => new NormsConfigurationError({ reason });
@@ -107,8 +107,7 @@ export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
       `${shadowing.file} names the built-in norm ${shadowing.norm.name}`,
     );
   }
-  const documents = [...builtIn, ...configured];
-  const names = documents.map(({ norm }) => norm.name);
+  const names = [...builtIn, ...configured].map(({ norm }) => norm.name);
   if (new Set(names).size !== names.length) {
     return yield* failed("two documents name the same norm");
   }
@@ -116,7 +115,7 @@ export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
   const text = yield* fs
     .readFileString(join(directory, "rules.json"))
     .pipe(Effect.mapError(() => failed("rules.json cannot be read")));
-  const chain = yield* Schema.decodeUnknown(
+  const ruleFile = yield* Schema.decodeUnknown(
     Schema.parseJson(chainRuleFileSchema),
   )(text).pipe(
     Effect.mapError((error) =>
@@ -124,15 +123,17 @@ export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
     ),
   );
   const known = normMatchers([]);
-  const unknown = chain.rules.find((rule) => !Object.hasOwn(known, rule.match));
+  const unknown = ruleFile.rules.find(
+    (rule) => !Object.hasOwn(known, rule.match),
+  );
   if (unknown !== undefined) {
     return yield* failed(
       `rule ${unknown.id} names ${unknown.match}, which is not a norm matcher`,
     );
   }
   return {
-    initial: configured.map(({ source }) => source),
-    chain,
+    initial: configured.map(({ norm }) => norm.document),
+    ruleFile,
   } satisfies InstalledNorms;
 });
 
@@ -141,24 +142,24 @@ export const loadNorms = Effect.fn("loadNorms")(function* (directory: string) {
  * the package's built-in norms and the rule chain, whose matchers each agent's
  * firewall compiles from the norms it holds.
  */
-export const serviceNorms = Effect.fn("serviceNorms")(
+export const daemonNorms = Effect.fn("daemonNorms")(
   (installed: InstalledNorms) =>
     lispDocuments(builtInDirectory).pipe(
-      Effect.map((documents) => {
-        const builtIn = documents.map(({ norm }) => norm);
+      Effect.map((builtInFiles) => {
+        const builtIn = builtInFiles.map(({ norm }) => norm);
         return {
-          chain: { rules: installed.chain.rules, matchers: {} },
-          documents: normDocuments(builtIn, installed.initial),
+          chain: { rules: installed.ruleFile.rules, matchers: {} },
+          normDocuments: normDocuments(builtIn, installed.initial),
           builtIn,
-        } satisfies ServiceNorms;
+        } satisfies DaemonNorms;
       }),
     ),
 );
 
 /** Whether the norms each new agent holds have English rules, which need a decision provider. */
 export function initialNormsHaveRules(installed: InstalledNorms): boolean {
-  return installed.initial.some((source) =>
-    Either.match(readNorm(source), {
+  return installed.initial.some((document) =>
+    Either.match(readNorm(document), {
       onLeft: () => false,
       onRight: (norm) => norm.rules.length > 0,
     }),
@@ -244,7 +245,7 @@ function normTextRules(norms: readonly Norm[]): readonly TextRule[] {
   );
 }
 
-/** Every `.lisp` document directly in `directory`, read and parsed, in name order. */
+/** The norm of every `.lisp` norm document directly in `directory`, with its file's name, in name order. */
 function lispDocuments(directory: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -259,21 +260,21 @@ function lispDocuments(directory: string) {
       (file) =>
         fs.readFileString(join(directory, file)).pipe(
           Effect.mapError(() => failed(`${file} cannot be read`)),
-          Effect.flatMap((source) => documentOf(file, source)),
-          Effect.map((document) => ({ ...document, file })),
+          Effect.flatMap((document) => normOfFile(file, document)),
+          Effect.map((norm) => ({ norm, file })),
         ),
       { concurrency: 1 },
     );
   });
 }
 
-/** One document's text and the norm it describes, or why `file` holds none. */
-function documentOf(file: string, source: string) {
-  return Either.match(readNorm(source), {
+/** The norm that `file`'s norm document describes, or why it describes none. */
+function normOfFile(file: string, document: string) {
+  return Either.match(readNorm(document), {
     onLeft: (error) =>
       Effect.fail(
         new NormsConfigurationError({ reason: `${file}: ${error.reason}` }),
       ),
-    onRight: (norm) => Effect.succeed({ norm, source }),
+    onRight: (norm) => Effect.succeed(norm),
   });
 }

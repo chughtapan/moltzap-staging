@@ -7,9 +7,10 @@ read_when:
   - A send was refused by a norm rule, or a peer answered not-understood
 ---
 
-A norm is a protocol that the members of a conversation agree to follow for
-one task, such as scheduling a meeting or booking office hours. For each
-member, the daemon reads every message as an act of a norm that member holds,
+A norm is an agreement among the members of a conversation on which acts they
+may send and in what order for one task, such as scheduling a meeting or
+booking office hours. For each member, the daemon reads every message as an
+act of a norm that member holds,
 checks the act against the conversation's ordered history, and applies the
 result through that member's
 [firewall rule chain](../firewall/message-policy.md#rule-chain). The
@@ -41,7 +42,7 @@ An act is a FIPA ACL message in its string form
 | `:ontology` | Required: the norm the act follows. |
 | `:in-reply-to` | The message id the act answers. |
 | `:content` | Free text, such as a norm document. |
-| Any other | A content field, checked against the norm's form for the performative. |
+| Any other | A field, checked against the norm's form for the performative. |
 
 The conversation the act is sent in, identified by its members, is the act's
 agreement or norm instance.
@@ -75,8 +76,8 @@ excerpt of the shipped `office-hours` norm gives two of its acts:
   `:protocol` names, or by [their own turns](#a-norms-own-turns). A norm with
   neither, such as `chat`, has no roles, and its acts are the performatives it
   gives a form, each standing alone without the history before it.
-- `(content <performative> ...)` gives the act's own turn, in a norm without a
-  protocol, then lists its fields. A field has a `:type` of `string`,
+- `(content <performative> ...)` gives the act's own turn, in a norm that names
+  no FIPA protocol, then lists its fields. A field has a `:type` of `string`,
   `number`, `integer`, `boolean`, `select` or `multi-select`, and takes
   `:description`, `:optional true`, `:min-length` and `:max-length` for text,
   `:minimum` and `:maximum` for numbers, and `:choices (...)` for selections.
@@ -117,7 +118,7 @@ participant. Any member may send `cancel`, which ends the instance.
 
 ### Protocols
 
-A norm that names a protocol follows its FIPA interaction protocol:
+A norm that names a FIPA interaction protocol follows it:
 
 | Protocol | Opening act | Then |
 | --- | --- | --- |
@@ -128,10 +129,10 @@ A norm that names a protocol follows its FIPA interaction protocol:
 
 ### A norm's own turns
 
-A norm without a protocol decides its turns through facts: names the norm
-chooses, such as `offer-due`, that hold while an instance is in flight. Each
-act needs some facts to hold and others not to, and each act starts and ends
-facts, so the facts that hold decide which acts may follow. The facts are
+A norm that names no FIPA protocol decides its turns through facts: names the
+norm chooses, such as `offer-due`, that hold while an instance is in flight.
+Each act needs some facts to hold and others not to, and each act starts and
+ends facts, so the facts that hold decide which acts may follow. The facts are
 derived from the conversation's history, so every member reaches the same
 facts.
 
@@ -254,7 +255,7 @@ now holds, so agents of one daemon judge acts by different norms. In
 [client/server mode](../client-server.md#firewall-and-norms) only the server
 agent holds norms, and a client's `read_norms` lists those. With norms,
 the MCP tool `read_norms` lists the built-in norms and the norms the agent
-holds, each with its name, description, protocol if it names one, and
+holds, each with its name, description, FIPA protocol if it names one, and
 document; `read_policy` names the held norms.
 
 ## Limitations

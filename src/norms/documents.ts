@@ -1,12 +1,13 @@
 /**
- * @file Norm documents. A document names the norm and the roles of the member
- * who starts an instance and the others. Its acts follow either a FIPA
- * interaction protocol the document names, or turns the document gives each
- * act: who sends it, the facts that must and must not hold for it, the facts
- * it starts and ends, and how often it may occur. It gives each performative
- * a form, in the MCP form-mode grammar the collective layer uses, and states
- * English rules, each tied to the acts it governs. Documents use the act
- * syntax and parser, with `;` comments.
+ * @file Norm documents. A document names the norm and gives its own names to
+ * the two roles: the initiator, who starts an instance, and the participants.
+ * The norm's protocol is either a FIPA interaction protocol the document
+ * names, or turns the document gives each act: who sends it, the facts that
+ * must and must not hold for it, the facts it starts and ends, and how often
+ * it may occur. It gives each performative a form, in the MCP form-mode
+ * grammar the collective layer uses, and states English rules, each tied to
+ * the acts it governs. Documents use the act syntax and parser, with `;`
+ * comments.
  */
 
 import type { ASTNode, Expression } from "@thi.ng/sexpr/api";
@@ -31,7 +32,7 @@ export type ProtocolName = (typeof protocolNames)[number];
  * ends its `terminates` facts, then starts its `initiates` facts.
  */
 export interface Turn {
-  /** The side that sends it: the member who started the instance, or another. */
+  /** The role that sends it: the initiator, who started the instance, or a participant. */
   readonly by: "initiator" | "participant";
   /** Facts that must hold for it to be sent. */
   readonly when: readonly string[];
@@ -43,7 +44,7 @@ export interface Turn {
   readonly max?: number;
 }
 
-/** A content form's turn keywords as written, before its `:by` role names a side. */
+/** A content form's turn keywords as written, where `:by` gives the norm's own name for a role. */
 interface WrittenTurn extends Omit<Turn, "by"> {
   readonly by?: string;
 }
@@ -54,19 +55,21 @@ const turnKeywords = ["by", "when", "unless", "initiates", "terminates", "max"];
 export type Turns = Readonly<Record<string, Turn>>;
 
 /**
- * One parsed norm. A norm with neither a protocol nor its own turns, such as
- * `chat`, has acts that stand alone. `source` is the document as written,
- * which norm discovery sends to peers.
+ * One parsed norm. Its protocol is the FIPA protocol `protocolName` names or
+ * its own `turns`; a norm with neither, such as `chat`, has acts that stand
+ * alone. `roles` gives the norm's own name for each role, `forms` the form of
+ * each performative, and `document` the norm document as written, which norm
+ * discovery sends to peers.
  */
 export interface Norm {
   readonly name: string;
-  readonly protocol?: ProtocolName;
+  readonly protocolName?: ProtocolName;
   readonly turns?: Turns;
   readonly roles?: { readonly initiator: string; readonly participant: string };
   readonly description: string;
-  readonly contents: Readonly<Record<string, RequestedSchema>>;
+  readonly forms: Readonly<Record<string, RequestedSchema>>;
   readonly rules: readonly NormRule[];
-  readonly source: string;
+  readonly document: string;
 }
 
 /** One English rule and the performatives of the acts it governs. */
@@ -76,15 +79,15 @@ export interface NormRule {
 }
 
 /**
- * Whether each act of `norm` stands alone: the norm names no protocol and
+ * Whether each act of `norm` stands alone: the norm names no FIPA protocol and
  * gives its acts no turns, so an act needs no history, and only the
  * performatives the document gives a form are its acts.
  */
 export function standsAlone(norm: Norm): boolean {
-  return norm.protocol === undefined && norm.turns === undefined;
+  return norm.protocolName === undefined && norm.turns === undefined;
 }
 
-/** A document that does not describe a norm, and where. */
+/** A norm document that does not describe a norm, and where. */
 export class NormDocumentError extends Data.TaggedError("NormDocumentError")<{
   readonly reason: string;
 }> {
@@ -93,10 +96,10 @@ export class NormDocumentError extends Data.TaggedError("NormDocumentError")<{
   }
 }
 
-const name = /^[a-z][a-z0-9-]{0,63}$/u;
+const namePattern = /^[a-z][a-z0-9-]{0,63}$/u;
 
 /** A keyword's value in a document form: text, a number, or a list of items. */
-type OptionValue = string | number | readonly string[];
+type KeywordValue = string | number | readonly string[];
 
 const fieldTypes = new Set([
   "string",
@@ -112,43 +115,47 @@ const fieldTypes = new Set([
  * each performative that carries fields, and any `(rule ...)` forms.
  */
 export function readNorm(
-  source: string,
+  document: string,
 ): Either.Either<Norm, NormDocumentError> {
   return Either.try({
-    try: () => parse(source).children,
+    try: () => parse(document).children,
     catch: (error) =>
       error instanceof Error ? error.message : "the document does not parse",
   }).pipe(
-    Either.flatMap((forms) => normOf(forms, source)),
+    Either.flatMap((forms) => normFromForms(forms, document)),
     Either.mapLeft((reason) => new NormDocumentError({ reason })),
   );
 }
 
-function normOf(
+function normFromForms(
   forms: readonly ASTNode[],
-  source: string,
+  document: string,
 ): Either.Either<Norm, string> {
-  const named = forms.map((form) => ({ form, head: headOf(form) }));
-  const of = (head: string) =>
-    named.flatMap((entry) =>
-      entry.head === head && entry.form.type === "expr" ? [entry.form] : [],
+  const headed = forms.map((form) => ({ form, head: headOf(form) }));
+  const formsHeaded = (head: string) =>
+    headed.flatMap((each) =>
+      each.head === head && each.form.type === "expr" ? [each.form] : [],
     );
-  const [declaration, ...extra] = of("norm");
+  const [declaration, ...extra] = formsHeaded("norm");
   if (declaration === undefined || extra.length !== 0) {
     return Either.left("a document has exactly one (norm ...) form");
   }
   if (
-    named.some(({ head }) => !["norm", "content", "rule"].includes(head ?? ""))
+    headed.some(({ head }) => !["norm", "content", "rule"].includes(head ?? ""))
   ) {
     return Either.left("each form is (norm ...), (content ...) or (rule ...)");
   }
   return Either.all({
     header: headerOf(declaration),
-    contents: Either.all(of("content").map((form) => contentOf(form))),
-    rules: Either.all(of("rule").map((form) => ruleOf(form))),
+    contentForms: Either.all(
+      formsHeaded("content").map((form) => contentOf(form)),
+    ),
+    rules: Either.all(formsHeaded("rule").map((form) => ruleOf(form))),
   }).pipe(
-    Either.flatMap(({ header, contents, rules }) => {
-      const performatives = contents.map(({ performative }) => performative);
+    Either.flatMap(({ header, contentForms, rules }) => {
+      const performatives = contentForms.map(
+        ({ performative }) => performative,
+      );
       if (new Set(performatives).size !== performatives.length) {
         return Either.left(
           "each performative has at most one (content ...) form",
@@ -162,78 +169,83 @@ function normOf(
           `a rule governs ${ungoverned}, which has no (content ...) form`,
         );
       }
-      return turnsOf(header, contents).pipe(
+      return turnsOf(header, contentForms).pipe(
         Either.map((turns) => ({
           ...header,
           ...(turns === undefined ? {} : { turns }),
-          contents: Object.fromEntries(
-            contents.map(({ performative, schema }) => [performative, schema]),
+          forms: Object.fromEntries(
+            contentForms.map(({ performative, form }) => [performative, form]),
           ),
           rules,
-          source,
+          document,
         })),
       );
     }),
   );
 }
 
-/** One `(content ...)` form: its performative, its form, and its turn if it gives one. */
-interface Content {
+/** One `(content ...)` form: its performative, the form it gives that performative, and its turn if it gives one. */
+interface ContentForm {
   readonly performative: string;
-  readonly schema: RequestedSchema;
+  readonly form: RequestedSchema;
   readonly turn?: WrittenTurn;
 }
 
 /**
  * The norm's own turns, from the keywords its content forms give. A norm that
- * gives turns names no protocol and has both roles. Every act but `cancel`,
- * which any member may send to end the instance, gives `:by` one of those
- * roles. An act the initiator sends with no `:when` facts can start an
+ * gives turns names no FIPA protocol and has both roles. Every act but
+ * `cancel`, which any member may send to end the instance, gives `:by` one of
+ * those roles. An act the initiator sends with no `:when` facts can start an
  * instance, and there is at least one. Every fact an act names is one that
  * some act initiates.
  */
 function turnsOf(
-  header: Omit<Norm, "contents" | "rules" | "source">,
-  contents: readonly Content[],
+  header: Omit<Norm, "forms" | "rules" | "document">,
+  contentForms: readonly ContentForm[],
 ): Either.Either<Turns | undefined, string> {
   const subject = `norm ${header.name}`;
-  if (contents.every(({ turn }) => turn === undefined)) {
-    return header.protocol === undefined && header.roles !== undefined
+  if (contentForms.every(({ turn }) => turn === undefined)) {
+    return header.protocolName === undefined && header.roles !== undefined
       ? Either.left(
           `${subject} names roles, so it names a protocol or gives its acts :by`,
         )
       : Either.right(undefined);
   }
   const { roles } = header;
-  if (header.protocol !== undefined || roles === undefined) {
+  if (header.protocolName !== undefined || roles === undefined) {
     return Either.left(
       `${subject} gives its acts turns, so it names :initiator and :participant and no :protocol`,
     );
   }
-  const cancel = contents.find(({ performative }) => performative === "cancel");
+  const cancel = contentForms.find(
+    ({ performative }) => performative === "cancel",
+  );
   if (cancel?.turn !== undefined) {
     return Either.left(
       "content cancel takes no turn keywords, since any member may cancel an instance",
     );
   }
   return Either.all(
-    contents.flatMap(({ performative, turn }) =>
+    contentForms.flatMap(({ performative, turn }) =>
       performative === "cancel" ? [] : [turnOf(performative, roles, turn)],
     ),
-  ).pipe(Either.flatMap((entries) => connected(subject, roles, entries)));
+  ).pipe(
+    Either.flatMap((entries) => requireConnectedTurns(subject, roles, entries)),
+  );
 }
 
-/** One act's turn, with its `:by` role read as the side that sends it. */
+/** One act's turn, with the name its `:by` gives read as the role that sends it. */
 function turnOf(
   performative: string,
   roles: NonNullable<Norm["roles"]>,
   written?: WrittenTurn,
 ): Either.Either<readonly [string, Turn], string> {
-  const sides = new Map<string, Turn["by"]>([
+  const rolesByName = new Map<string, Turn["by"]>([
     [roles.initiator, "initiator"],
     [roles.participant, "participant"],
   ]);
-  const by = written?.by === undefined ? undefined : sides.get(written.by);
+  const by =
+    written?.by === undefined ? undefined : rolesByName.get(written.by);
   if (written === undefined || by === undefined) {
     return Either.left(
       `content ${performative} gives :by ${roles.initiator} or :by ${roles.participant}`,
@@ -244,7 +256,7 @@ function turnOf(
 }
 
 /** The turns, once some act starts an instance and every fact an act names is initiated. */
-function connected(
+function requireConnectedTurns(
   subject: string,
   roles: NonNullable<Norm["roles"]>,
   entries: ReadonlyArray<readonly [string, Turn]>,
@@ -282,13 +294,13 @@ function headOf(form: ASTNode): string | undefined {
  */
 function headerOf(
   form: Expression,
-): Either.Either<Omit<Norm, "contents" | "rules" | "source">, string> {
+): Either.Either<Omit<Norm, "forms" | "rules" | "document">, string> {
   const [, label, ...pairs] = form.children;
   const normName = nameOf(label);
   if (normName === undefined) {
     return Either.left("(norm ...) starts with the norm's lowercase name");
   }
-  return options(pairs, `norm ${normName}`).pipe(
+  return keywordArguments(pairs, `norm ${normName}`).pipe(
     Either.flatMap((given) => {
       const description = given.get("description");
       const protocol = given.get("protocol");
@@ -323,8 +335,8 @@ function headerOf(
           ...(roles === undefined ? {} : { roles }),
         });
       }
-      const named = protocolNames.find((known) => known === protocol);
-      if (named === undefined || roles === undefined) {
+      const protocolName = protocolNames.find((known) => known === protocol);
+      if (protocolName === undefined || roles === undefined) {
         return Either.left(
           `norm ${normName} names a FIPA protocol (${protocolNames.join(", ")}) with :initiator and :participant roles`,
         );
@@ -332,7 +344,7 @@ function headerOf(
       return Either.right({
         name: normName,
         description,
-        protocol: named,
+        protocolName,
         roles,
       });
     }),
@@ -343,7 +355,7 @@ function headerOf(
  * Reads a `(content ...)` form: a performative, then its turn keywords for a
  * norm that gives its acts turns, then one `(field ...)` form per field.
  */
-function contentOf(form: Expression): Either.Either<Content, string> {
+function contentOf(form: Expression): Either.Either<ContentForm, string> {
   const [, label, ...rest] = form.children;
   const performative = nameOf(label);
   if (performative === undefined) {
@@ -352,9 +364,10 @@ function contentOf(form: Expression): Either.Either<Content, string> {
   const split = keywordCount(rest);
   const fields = rest.slice(split);
   return Either.all({
-    turn: options(rest.slice(0, split), `content ${performative}`).pipe(
-      Either.flatMap((given) => contentTurn(performative, given)),
-    ),
+    turn: keywordArguments(
+      rest.slice(0, split),
+      `content ${performative}`,
+    ).pipe(Either.flatMap((given) => contentTurn(performative, given))),
     entries: Either.all(fields.map((field) => fieldOf(field, performative))),
   }).pipe(
     Either.flatMap(({ turn, entries }) =>
@@ -371,9 +384,9 @@ function contentOf(form: Expression): Either.Either<Content, string> {
           (error) =>
             `content ${performative}: ${ParseResult.TreeFormatter.formatErrorSync(error)}`,
         ),
-        Either.map((schema) => ({
+        Either.map((requested) => ({
           performative,
-          schema,
+          form: requested,
           ...(turn === undefined ? {} : { turn }),
         })),
       ),
@@ -394,7 +407,7 @@ function ruleOf(form: Expression): Either.Either<NormRule, string> {
   if (text?.type !== "str" || text.value.trim() === "" || rest.length !== 0) {
     return Either.left(usage);
   }
-  return options(parts.slice(0, split), "rule").pipe(
+  return keywordArguments(parts.slice(0, split), "rule").pipe(
     Either.flatMap((given) =>
       given.size === 1
         ? Either.fromOption(namesOf(given.get("act")), () => usage)
@@ -424,7 +437,7 @@ function keywordCount(nodes: readonly ASTNode[]): number {
  */
 function contentTurn(
   performative: string,
-  given: ReadonlyMap<string, OptionValue>,
+  given: ReadonlyMap<string, KeywordValue>,
 ): Either.Either<WrittenTurn | undefined, string> {
   const usage = `content ${performative} takes :by <role>, :when, :unless, :initiates and :terminates (<fact> ...), and :max <count>`;
   const by = given.get("by");
@@ -458,12 +471,12 @@ function contentTurn(
  * A keyword's value, one name or a list of names, as a list: the facts of a
  * turn keyword or the performatives a rule governs.
  */
-function namesOf(value?: OptionValue): Option.Option<readonly string[]> {
+function namesOf(value?: KeywordValue): Option.Option<readonly string[]> {
   if (typeof value === "number") {
     return Option.none();
   }
   const names = typeof value === "string" ? [value] : (value ?? []);
-  return names.every((each) => name.test(each))
+  return names.every((each) => namePattern.test(each))
     ? Option.some(names)
     : Option.none();
 }
@@ -482,7 +495,7 @@ function fieldOf(node: ASTNode, performative: string) {
       `content ${performative} lists (field <name> :type <type>) forms`,
     );
   }
-  return options(pairs, `field ${field}`).pipe(
+  return keywordArguments(pairs, `field ${field}`).pipe(
     Either.flatMap((given) => {
       const type = given.get("type");
       if (typeof type !== "string" || !fieldTypes.has(type)) {
@@ -522,25 +535,29 @@ function selectProperty(
   choices: unknown,
   keywords: Record<string, unknown>,
 ) {
-  const options = Array.isArray(choices) ? choices : [];
+  const choiceList = Array.isArray(choices) ? choices : [];
   return type === "select"
-    ? { type: "string", enum: options, ...keywords }
-    : { type: "array", items: { type: "string", enum: options }, ...keywords };
+    ? { type: "string", enum: choiceList, ...keywords }
+    : {
+        type: "array",
+        items: { type: "string", enum: choiceList },
+        ...keywords,
+      };
 }
 
 /** The keyword arguments of one form, by name without its colon. */
-function options(
+function keywordArguments(
   pairs: readonly ASTNode[],
   subject: string,
-): Either.Either<ReadonlyMap<string, OptionValue>, string> {
-  const given = new Map<string, OptionValue>();
+): Either.Either<ReadonlyMap<string, KeywordValue>, string> {
+  const given = new Map<string, KeywordValue>();
   for (let index = 0; index < pairs.length; index += 2) {
     const key = pairs[index];
     const keyword =
       key?.type === "sym" && key.value.startsWith(":")
         ? key.value.slice(1)
         : undefined;
-    const parsed = optionValue(pairs[index + 1]);
+    const parsed = keywordValue(pairs[index + 1]);
     if (keyword === undefined || parsed === undefined || given.has(keyword)) {
       return Either.left(`${subject} takes distinct :keyword value pairs`);
     }
@@ -550,7 +567,7 @@ function options(
 }
 
 /** A string, a number, or a list of them, which reads as strings. */
-function optionValue(node?: ASTNode): OptionValue | undefined {
+function keywordValue(node?: ASTNode): KeywordValue | undefined {
   if (node === undefined) {
     return undefined;
   }
@@ -570,7 +587,9 @@ function nameOf(node?: ASTNode): string | undefined {
     return undefined;
   }
   const value = atom(node);
-  return typeof value === "string" && name.test(value) ? value : undefined;
+  return typeof value === "string" && namePattern.test(value)
+    ? value
+    : undefined;
 }
 
 function atom(node: ASTNode): string | number | undefined {

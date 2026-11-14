@@ -27,7 +27,7 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
-import { HeldNorms, type ServiceNorms, serviceNorms } from "../norms/index.js";
+import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import {
   DaemonConfigurationError,
@@ -75,7 +75,7 @@ function runDaemon() {
       const norms =
         settings.norms === undefined
           ? undefined
-          : yield* serviceNorms(settings.norms);
+          : yield* daemonNorms(settings.norms);
       if (settings.serverAgentName !== undefined) {
         yield* getOrCreateOwnedAgent(
           serverAgentOwner,
@@ -166,7 +166,7 @@ function serverAndOne(serverAgentName: AgentName) {
 /** What every agent of the daemon is built from. */
 interface DaemonResources {
   readonly settings: DaemonSettings;
-  readonly norms?: ServiceNorms;
+  readonly norms?: DaemonNorms;
   /** The norms the server agent holds, once it has started; clients read them. */
   readonly serverNorms: Ref.Ref<
     Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -234,7 +234,7 @@ function checksOf(
     agentKey,
     settings.messagePolicy,
     norms?.chain,
-    norms?.documents,
+    norms?.normDocuments,
   );
   return norms === undefined
     ? firewall
