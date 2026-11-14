@@ -22,7 +22,7 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   unchanged. Do not extend the host ABI, inbound
   router, inbox, session model, persistence, retry policy, or runtime driver.
 - Hand each inbox entry to the host as data: a message of one text part with
-  no reminder as its text, and any other entry as its JSON. Add no prose.
+  no guidance as its text, and any other entry as its JSON. Add no prose.
   Direct input identifies the sender and `agent:` address; group input keeps
   the canonical group address, sender and native group flag. A group message
   or collective request lists its members from the message's author and
@@ -56,6 +56,6 @@ message. Private retry state never enters the adapter contract.
 
 - Integration tests enter through NanoClaw's generic `send_message`, cross its
   native outbound queue and host delivery loop, and observe the receiving
-  Client. They must not call the concrete adapter or inject an endpoint.
+  Client. They must not call the concrete adapter or inject a connection.
 - The packaged image connects through the public Client boundary.
 - Run package tasks through Nx from the workspace root.

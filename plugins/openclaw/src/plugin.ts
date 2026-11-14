@@ -17,7 +17,6 @@ import {
   type InboxEntry,
   type McpConnection,
   MessageAddressInput,
-  type MessageAddressInput as MessageAddressInputValue,
   packageVersion,
   type SendResult,
 } from "@social-harness/social-harness";
@@ -40,8 +39,8 @@ import {
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
 
-/** The sender OpenClaw records for a turn the endpoint itself emitted. */
-const ENDPOINT_SENDER_NAME = "Social Harness";
+/** The sender OpenClaw records for an entry no agent authored: a collective result. */
+const HARNESS_SENDER_NAME = "Social Harness";
 
 const CHANNEL_ID = "sharness";
 const TARGET_HINT =
@@ -59,11 +58,12 @@ type OpenClawTargetKind = "user" | "group";
 type OpenClawOutboundFailure =
   | "account-not-connected"
   | "invalid-address"
-  | "invalid-operation"
+  | "targets-unsupported"
+  | "text-missing"
   | "unsupported-action";
 type OpenClawInboundFailure = "turn-failed";
 
-interface OpenClawAccountRuntime {
+interface ChannelServices {
   readonly inbound: Pick<
     PluginRuntime["channel"]["inbound"],
     "buildContext" | "run"
@@ -80,7 +80,7 @@ const accountSchema = Schema.Struct({
   mode: Schema.optional(Schema.Literal("shared", "private")),
 });
 
-/** One OpenClaw account bound to its configured MCP endpoint. */
+/** One OpenClaw account as the operator lists it under `channels.sharness.accounts`. */
 type Account = Schema.Schema.Type<typeof accountSchema>;
 
 const channelConfigSchema = Schema.Struct({
@@ -93,46 +93,52 @@ const openClawConfigSchema = Schema.Struct({
 });
 
 interface ResolvedMessageTarget {
-  readonly to: MessageAddressInputValue;
+  readonly to: MessageAddressInput;
   readonly kind: OpenClawTargetKind;
   readonly display: string;
 }
 
-/** Keeps outbound logs on the account's gateway sink even outside its inbound task. */
+/**
+ * The account whose connection sends go out on. `log` is the account's gateway
+ * sink, which keeps outbound logs on it outside the account task.
+ */
 interface ConnectedAccount {
   readonly accountId: string;
-  readonly endpoint: McpConnection;
+  readonly connection: McpConnection;
   readonly log?: ChannelLogSink;
 }
 
-interface ConnectedAccountState {
+/** Holds the one connected account, or nothing while none is connected. */
+interface ConnectedAccountSlot {
   current?: ConnectedAccount;
 }
 
-/** Who a turn is from, as OpenClaw records the sender. */
-interface TurnSender {
+/** Who an entry is from, as OpenClaw records the sender. */
+interface EntrySender {
   readonly id: string;
   readonly name: string;
 }
 
 /**
- * One retained delivery becomes one host turn under its stable event id.
- * `address` selects the conversation for replies. `members` lists a group
- * message's author and recipients. `body` is what the model reads.
+ * What OpenClaw receives for one inbox entry, which it runs as one turn. `id`
+ * is the entry's delivery token. `address` is the conversation replies go to.
+ * `members` lists a group message's author and recipients. `text` is what the
+ * model reads.
  */
-interface HostTurn {
+interface ProjectedEntry {
   readonly id: string;
   readonly kind: "direct" | "group";
-  readonly address: MessageAddressInputValue;
-  readonly sender: TurnSender;
+  readonly address: MessageAddressInput;
+  readonly sender: EntrySender;
   readonly members?: readonly string[];
-  readonly body: string;
+  readonly text: string;
 }
 
-interface InboundTurnInput {
-  readonly ctx: ChannelGatewayContext<Account>;
-  readonly runtime: OpenClawAccountRuntime;
-  readonly turn: HostTurn;
+/** What one OpenClaw turn is built from. */
+interface InboundTurn {
+  readonly task: ChannelGatewayContext<Account>;
+  readonly services: ChannelServices;
+  readonly projected: ProjectedEntry;
 }
 
 /** One host send as the host supplies it, each field unchecked. */
@@ -157,7 +163,9 @@ class OpenClawInboundError extends Data.TaggedError("OpenClawInboundError")<{
 const outboundFailureText: Readonly<Record<OpenClawOutboundFailure, string>> = {
   "account-not-connected": "this agent is not connected to Social Harness",
   "invalid-address": "the address is not a valid agent: or group: address",
-  "invalid-operation": "the message has no text",
+  "targets-unsupported":
+    "targets is not supported; a send goes to one target address",
+  "text-missing": "the message has no text",
   "unsupported-action": "Social Harness supports only send and reply",
 };
 
@@ -166,19 +174,6 @@ class OpenClawOutboundError extends Data.TaggedError("OpenClawOutboundError")<{
 }> {
   override get message(): string {
     return `send failed: ${outboundFailureText[this.reason]}`;
-  }
-}
-
-/**
- * A message tool send carrying OpenClaw's plural `targets`. A Social Harness send
- * goes to exactly one address, so the send fails rather than reach only
- * `target`.
- */
-class OpenClawTargetsUnsupportedError extends Data.TaggedError(
-  "OpenClawTargetsUnsupportedError",
-) {
-  override get message(): string {
-    return "send failed: targets is not supported; a send goes to one target address";
   }
 }
 
@@ -213,27 +208,28 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 );
 
 /**
- * Each account retains its own runtime and MCP connection until reception ends
- * or OpenClaw aborts it. Inbox reads record delivery before the host's turn.
- * OpenClaw owns processing and retries. Final assistant text stays private.
+ * Each account retains its own channel services and daemon connection until
+ * reception ends or OpenClaw aborts it. Inbox reads record delivery before the
+ * host's turn. OpenClaw owns processing and retries. Final assistant text stays
+ * private.
  *
  * @internal
  */
 export function createChannelPlugin(): ChannelPlugin<Account> {
-  const connectedAccount: ConnectedAccountState = {};
+  const accountSlot: ConnectedAccountSlot = {};
   return {
     ...createChannelPluginBase<Account>({
       id: CHANNEL_ID,
       meta: createPluginMeta(),
     }),
     capabilities: { chatTypes: ["direct", "group"] },
-    config: createConfigSection(),
-    messaging: createMessagingSection(),
+    config: createAccountConfig(),
+    messaging: createTargetResolution(),
     gateway: {
-      startAccount: (ctx) => startAccountConnection(ctx, connectedAccount),
+      startAccount: (task) => startAccountConnection(task, accountSlot),
     },
-    actions: createMessageActions(connectedAccount),
-    message: createMessageSection(connectedAccount),
+    actions: createMessageToolActions(accountSlot),
+    message: createCoreTextSend(accountSlot),
   };
 }
 
@@ -251,7 +247,7 @@ function createPluginMeta() {
   };
 }
 
-function createMessagingSection() {
+function createTargetResolution() {
   return {
     normalizeTarget(raw: string): string | undefined {
       return normalizeMessageTarget(raw)?.to;
@@ -300,7 +296,7 @@ function resolveOutboundSessionRoute(
   });
 }
 
-function createConfigSection() {
+function createAccountConfig() {
   return {
     listAccountIds(cfg: OpenClawConfig): string[] {
       return resolveAccountList(cfg)
@@ -324,19 +320,19 @@ function createConfigSection() {
  * Sends the `message` tool's send and reply actions. OpenClaw supplies the
  * current conversation for reply. Core sends use message.send.text.
  */
-function createMessageActions(
-  connectedAccount: ConnectedAccountState,
+function createMessageToolActions(
+  accountSlot: ConnectedAccountSlot,
 ): ChannelMessageActionAdapter {
   return {
     describeMessageTool: () => ({ actions: [...MESSAGE_ACTIONS] }),
     supportsAction: ({ action }) => isMessageAction(action),
     handleAction: (ctx) =>
-      Effect.runPromise(handleMessageAction(connectedAccount, ctx)),
+      Effect.runPromise(handleMessageAction(accountSlot, ctx)),
   };
 }
 
 function handleMessageAction(
-  connectedAccount: ConnectedAccountState,
+  accountSlot: ConnectedAccountSlot,
   ctx: ChannelMessageActionContext,
 ) {
   const action = ctx.action;
@@ -347,7 +343,7 @@ function handleMessageAction(
   }
   return refuseTargets(ctx).pipe(
     Effect.andThen(() =>
-      sendText(connectedAccount, `message-action:${action}`, {
+      sendText(accountSlot, `message-action:${action}`, {
         accountId: ctx.accountId,
         to: ctx.params.to,
         text: ctx.params.message,
@@ -361,19 +357,24 @@ function isMessageAction(action: string): action is MessageAction {
   return MESSAGE_ACTIONS.some((supported) => supported === action);
 }
 
+/**
+ * Refuses a message tool send carrying OpenClaw's plural `targets`. A Social
+ * Harness send goes to exactly one address, so the send fails rather than
+ * reach only `target`.
+ */
 function refuseTargets(
   ctx: ChannelMessageActionContext,
-): Effect.Effect<void, OpenClawTargetsUnsupportedError> {
+): Effect.Effect<void, OpenClawOutboundError> {
   return carriesTargets(ctx.params.targets)
-    ? Effect.fail(new OpenClawTargetsUnsupportedError())
+    ? Effect.fail(new OpenClawOutboundError({ reason: "targets-unsupported" }))
     : Effect.void;
 }
 
-function createMessageSection(connectedAccount: ConnectedAccountState) {
+function createCoreTextSend(accountSlot: ConnectedAccountSlot) {
   return defineChannelMessageAdapter({
     id: CHANNEL_ID,
     send: {
-      text: (ctx) => Effect.runPromise(sendOpenClawText(connectedAccount, ctx)),
+      text: (ctx) => Effect.runPromise(sendCoreText(accountSlot, ctx)),
     },
   });
 }
@@ -418,18 +419,18 @@ function normalizeMessageTarget(raw: string): ResolvedMessageTarget | null {
 }
 
 function startAccountConnection(
-  ctx: ChannelGatewayContext<Account>,
-  connectedAccount: ConnectedAccountState,
+  task: ChannelGatewayContext<Account>,
+  accountSlot: ConnectedAccountSlot,
 ) {
-  if (ctx.abortSignal.aborted) {
+  if (task.abortSignal.aborted) {
     return Promise.resolve();
   }
   return Effect.runPromise(
-    requireOpenClawAccountRuntime(ctx).pipe(
-      Effect.flatMap((runtime) =>
-        acquireAccountEndpoint().pipe(
-          Effect.flatMap((endpoint) =>
-            runAccountConnection(ctx, runtime, endpoint, connectedAccount),
+    requireChannelServices(task).pipe(
+      Effect.flatMap((services) =>
+        connectToDaemon().pipe(
+          Effect.flatMap((connection) =>
+            runAccountConnection(task, services, connection, accountSlot),
           ),
         ),
       ),
@@ -439,31 +440,31 @@ function startAccountConnection(
 }
 
 /**
- * Reads the runtime from this account task so another account's runtime
- * cannot be retained by the shared plugin.
+ * Reads the channel services from this account task so the shared plugin
+ * cannot retain another account's.
  */
-function requireOpenClawAccountRuntime(
-  ctx: ChannelGatewayContext<Account>,
-): Effect.Effect<OpenClawAccountRuntime, OpenClawRuntimeError> {
+function requireChannelServices(
+  task: ChannelGatewayContext<Account>,
+): Effect.Effect<ChannelServices, OpenClawRuntimeError> {
   if (
-    ctx.channelRuntime !== undefined &&
-    isOpenClawAccountRuntime(ctx.channelRuntime)
+    task.channelRuntime !== undefined &&
+    hasChannelServices(task.channelRuntime)
   ) {
-    return Effect.succeed(ctx.channelRuntime);
+    return Effect.succeed(task.channelRuntime);
   }
   return Effect.fail(
     new OpenClawRuntimeError({
       reason: "channel-runtime-unavailable",
-      accountId: ctx.accountId,
+      accountId: task.accountId,
       detail: "the account task did not receive OpenClaw channel services",
     }),
   );
 }
 
-function isOpenClawAccountRuntime(
-  runtime: ChannelRuntimeSurface,
-): runtime is ChannelRuntimeSurface & OpenClawAccountRuntime {
-  const { inbound, routing } = runtime;
+function hasChannelServices(
+  channelRuntime: ChannelRuntimeSurface,
+): channelRuntime is ChannelRuntimeSurface & ChannelServices {
+  const { inbound, routing } = channelRuntime;
   if (typeof inbound !== "object" || inbound === null) {
     return false;
   }
@@ -484,7 +485,7 @@ function isOpenClawAccountRuntime(
   );
 }
 
-function acquireAccountEndpoint() {
+function connectToDaemon() {
   return connectFromEnvironment({
     name: "sharness-openclaw",
     version: packageVersion,
@@ -496,28 +497,28 @@ function acquireAccountEndpoint() {
 }
 
 function runAccountConnection(
-  ctx: ChannelGatewayContext<Account>,
-  runtime: OpenClawAccountRuntime,
-  endpoint: McpConnection,
-  connectedAccount: ConnectedAccountState,
+  task: ChannelGatewayContext<Account>,
+  services: ChannelServices,
+  connection: McpConnection,
+  accountSlot: ConnectedAccountSlot,
 ) {
   return Effect.sync(() => {
-    connectedAccount.current = {
-      accountId: ctx.accountId,
-      endpoint,
-      ...(ctx.log === undefined ? {} : { log: ctx.log }),
+    accountSlot.current = {
+      accountId: task.accountId,
+      connection,
+      ...(task.log === undefined ? {} : { log: task.log }),
     };
   }).pipe(
-    Effect.zipRight(reportConnected(ctx)),
-    Effect.zipRight(consumeInboundMessages(ctx, runtime, endpoint)),
+    Effect.zipRight(reportConnected(task)),
+    Effect.zipRight(handleInboxEntries(task, services, connection)),
     Effect.ensuring(
-      removeConnectedEndpoint(connectedAccount, ctx.accountId, endpoint),
+      clearConnectedAccount(accountSlot, task.accountId, connection),
     ),
     Effect.ensuring(
       Effect.sync(() => {
-        ctx.setStatus({
-          ...ctx.getStatus(),
-          accountId: ctx.accountId,
+        task.setStatus({
+          ...task.getStatus(),
+          accountId: task.accountId,
           connected: false,
           running: false,
         });
@@ -525,8 +526,8 @@ function runAccountConnection(
     ),
     Effect.tapError((cause) =>
       Effect.sync(() => {
-        ctx.log?.error?.(
-          `Social Harness: connection failed for ${ctx.accountId}: ${String(cause)}`,
+        task.log?.error?.(
+          `Social Harness: connection failed for ${task.accountId}: ${String(cause)}`,
         );
       }),
     ),
@@ -537,21 +538,19 @@ function runAccountConnection(
  * Ends when reception finishes or OpenClaw aborts the account. Either path
  * returns through the connection's cleanup.
  */
-function consumeInboundMessages(
-  ctx: ChannelGatewayContext<Account>,
-  runtime: OpenClawAccountRuntime,
-  endpoint: McpConnection,
+function handleInboxEntries(
+  task: ChannelGatewayContext<Account>,
+  services: ChannelServices,
+  connection: McpConnection,
 ) {
   return Effect.raceFirst(
-    endpoint.consumeInbox((delivery) =>
-      handleInboxEntry(ctx, runtime, delivery),
-    ),
+    connection.consumeInbox((entry) => handleInboxEntry(task, services, entry)),
     Effect.tryPromise({
-      try: () => waitUntilAbort(ctx.abortSignal),
+      try: () => waitUntilAbort(task.abortSignal),
       catch: (cause) =>
         new OpenClawRuntimeError({
           reason: "abort-wait-failed",
-          accountId: ctx.accountId,
+          accountId: task.accountId,
           detail: String(cause),
         }),
     }),
@@ -559,13 +558,13 @@ function consumeInboundMessages(
 }
 
 function reportConnected(
-  ctx: ChannelGatewayContext<Account>,
+  task: ChannelGatewayContext<Account>,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
-    ctx.log?.info?.(`Social Harness: connected for account ${ctx.accountId}`);
-    ctx.setStatus({
-      ...ctx.getStatus(),
-      accountId: ctx.accountId,
+    task.log?.info?.(`Social Harness: connected for account ${task.accountId}`);
+    task.setStatus({
+      ...task.getStatus(),
+      accountId: task.accountId,
       connected: true,
       running: true,
       lastConnectedAt: Date.now(),
@@ -574,26 +573,26 @@ function reportConnected(
 }
 
 function handleInboxEntry(
-  ctx: ChannelGatewayContext<Account>,
-  runtime: OpenClawAccountRuntime,
+  task: ChannelGatewayContext<Account>,
+  services: ChannelServices,
   entry: InboxEntry,
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
-  const turn: HostTurn = {
+  const projected: ProjectedEntry = {
     id: entry.deliveryToken,
     kind,
     address: entry.address,
-    ...turnParticipants(entry, kind),
-    body: entryText(entry),
+    ...entryParticipants(entry, kind),
+    text: entryText(entry),
   };
-  return logInbound(ctx, turn).pipe(
-    Effect.zipRight(runOpenClawTurn(ctx, runtime, turn)),
+  return logInbound(task, projected).pipe(
+    Effect.zipRight(runOpenClawTurn(task, services, projected)),
   );
 }
 
 /**
  * What the model reads for an entry. A message of one text part with no
- * firewall reminder is that text. Any other entry is its JSON, as
+ * guidance is that text. Any other entry is its JSON, as
  * `receive_messages` returns it.
  */
 function entryText(entry: InboxEntry): string {
@@ -607,14 +606,14 @@ function entryText(entry: InboxEntry): string {
 }
 
 /**
- * Who a turn is from and, for a group message or collective request, who is in
- * the group. A collective result is from Social Harness and names only the
- * request's recipients, so its turn lists no members.
+ * Who an entry is from and, for a group message or collective request, who is
+ * in the group. A collective result is from Social Harness and names only the
+ * request's recipients, so it lists no members.
  */
-function turnParticipants(
+function entryParticipants(
   entry: InboxEntry,
-  kind: HostTurn["kind"],
-): Pick<HostTurn, "sender" | "members"> {
+  kind: ProjectedEntry["kind"],
+): Pick<ProjectedEntry, "sender" | "members"> {
   const { item } = entry;
   switch (item.kind) {
     case "message":
@@ -629,7 +628,7 @@ function turnParticipants(
       return {
         sender: {
           id: `sharness:${entry.deliveryToken}`,
-          name: ENDPOINT_SENDER_NAME,
+          name: HARNESS_SENDER_NAME,
         },
       };
     default:
@@ -637,7 +636,7 @@ function turnParticipants(
   }
 }
 
-function agentSender(agent: AgentCard): TurnSender {
+function agentSender(agent: AgentCard): EntrySender {
   return { id: agentAddress(agent), name: agent.agentName };
 }
 
@@ -646,16 +645,16 @@ function agentAddress(agent: AgentCard): string {
 }
 
 function logInbound(
-  ctx: ChannelGatewayContext<Account>,
-  turn: HostTurn,
+  task: ChannelGatewayContext<Account>,
+  projected: ProjectedEntry,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
-    ctx.log?.info?.(
-      `Social Harness: inbound from ${turn.sender.id}: ${turn.body.slice(0, LOG_PREVIEW_CHARS)}`,
+    task.log?.info?.(
+      `Social Harness: inbound from ${projected.sender.id}: ${projected.text.slice(0, LOG_PREVIEW_CHARS)}`,
     );
-    ctx.setStatus({
-      ...ctx.getStatus(),
-      accountId: ctx.accountId,
+    task.setStatus({
+      ...task.getStatus(),
+      accountId: task.accountId,
       lastInboundAt: Date.now(),
       lastEventAt: Date.now(),
     });
@@ -663,105 +662,105 @@ function logInbound(
 }
 
 function runOpenClawTurn(
-  ctx: ChannelGatewayContext<Account>,
-  runtime: OpenClawAccountRuntime,
-  turn: HostTurn,
+  task: ChannelGatewayContext<Account>,
+  services: ChannelServices,
+  projected: ProjectedEntry,
 ): Effect.Effect<void, OpenClawInboundError> {
   return Effect.tryPromise({
     try: () =>
-      runtime.inbound.run({
+      services.inbound.run({
         channel: CHANNEL_ID,
-        accountId: ctx.accountId,
-        raw: { turn },
+        accountId: task.accountId,
+        raw: { turn: projected },
         adapter: {
           ingest: () => ({
-            id: turn.id,
-            rawText: turn.body,
-            textForAgent: turn.body,
-            textForCommands: turn.body,
-            raw: turn,
+            id: projected.id,
+            rawText: projected.text,
+            textForAgent: projected.text,
+            textForCommands: projected.text,
+            raw: projected,
           }),
-          resolveTurn: () => buildRoutedTurnPlan({ ctx, runtime, turn }),
+          resolveTurn: () => buildRoutedTurnPlan({ task, services, projected }),
         },
       }),
     catch: (cause) =>
       new OpenClawInboundError({
         reason: "turn-failed",
-        accountId: ctx.accountId,
-        turnId: turn.id,
+        accountId: task.accountId,
+        turnId: projected.id,
         detail: String(cause),
       }),
   });
 }
 
-function buildRoutedTurnPlan(input: InboundTurnInput): ChannelInboundTurnPlan {
-  const { ctx, turn, runtime } = input;
-  const peer = inboundRoutePeer(turn);
-  const route = runtime.routing.resolveAgentRoute({
-    cfg: ctx.cfg,
+function buildRoutedTurnPlan(turn: InboundTurn): ChannelInboundTurnPlan {
+  const { task, services, projected } = turn;
+  const peer = inboundRoutePeer(projected);
+  const route = services.routing.resolveAgentRoute({
+    cfg: task.cfg,
     channel: CHANNEL_ID,
-    accountId: ctx.accountId,
+    accountId: task.accountId,
     peer,
   });
   const sessionKey =
-    (ctx.account.mode ?? "shared") === "shared"
+    (task.account.mode ?? "shared") === "shared"
       ? route.mainSessionKey
       : route.sessionKey;
-  const ctxPayload = buildInboundContext(input, route, sessionKey);
+  const ctxPayload = buildInboundContext(turn, route, sessionKey);
   return {
-    cfg: ctx.cfg,
+    cfg: task.cfg,
     channel: CHANNEL_ID,
-    accountId: ctx.accountId,
+    accountId: task.accountId,
     route: {
       agentId: route.agentId,
       sessionKey,
       ...(route.dmScope === undefined ? {} : { dmScope: route.dmScope }),
     },
     ctxPayload,
-    delivery: { deliver: (payload) => withholdFinalText(ctx, payload) },
+    delivery: { deliver: (payload) => withholdFinalText(task, payload) },
     record: {
       updateLastRoute: {
         sessionKey,
         channel: CHANNEL_ID,
-        to: turn.address,
-        accountId: ctx.accountId,
+        to: projected.address,
+        accountId: task.accountId,
       },
     },
-    messageId: turn.id,
+    messageId: projected.id,
   };
 }
 
 function buildInboundContext(
-  input: InboundTurnInput,
-  route: ReturnType<OpenClawAccountRuntime["routing"]["resolveAgentRoute"]>,
+  turn: InboundTurn,
+  route: ReturnType<ChannelServices["routing"]["resolveAgentRoute"]>,
   sessionKey: string,
 ) {
-  const { ctx, turn, runtime } = input;
-  return runtime.inbound.buildContext({
+  const { task, services, projected } = turn;
+  return services.inbound.buildContext({
     channel: CHANNEL_ID,
-    accountId: ctx.accountId,
+    accountId: task.accountId,
     provider: CHANNEL_ID,
     surface: CHANNEL_ID,
-    messageId: turn.id,
-    from: turn.sender.id,
-    sender: inboundSenderFacts(turn),
-    conversation: inboundConversationFacts(turn),
+    messageId: projected.id,
+    from: projected.sender.id,
+    sender: inboundSenderFacts(projected),
+    conversation: inboundConversationFacts(projected),
     route: {
       agentId: route.agentId,
-      accountId: ctx.accountId,
+      accountId: task.accountId,
       routeSessionKey: sessionKey,
       dispatchSessionKey: sessionKey,
       persistedSessionKey: sessionKey,
       mainSessionKey: route.mainSessionKey,
     },
-    reply: inboundReplyFacts(turn),
+    reply: inboundReplyFacts(projected),
     message: {
-      body: turn.body,
-      rawBody: turn.body,
-      bodyForAgent: turn.body,
-      commandBody: turn.body,
+      body: projected.text,
+      rawBody: projected.text,
+      bodyForAgent: projected.text,
+      commandBody: projected.text,
     },
-    extra: inboundGroupFacts(turn),
+    extra: inboundGroupFacts(projected),
   });
 }
 
@@ -769,43 +768,43 @@ function buildInboundContext(
  * Marks peers and Social Harness as bot senders in host metadata. This does
  * not grant their text authority or change routing and reply behavior.
  */
-function inboundSenderFacts(turn: HostTurn) {
-  return { ...turn.sender, isBot: true };
+function inboundSenderFacts(projected: ProjectedEntry) {
+  return { ...projected.sender, isBot: true };
 }
 
-function inboundConversationFacts(turn: HostTurn) {
-  const routePeer = inboundRoutePeer(turn);
+function inboundConversationFacts(projected: ProjectedEntry) {
+  const routePeer = inboundRoutePeer(projected);
   return {
-    kind: turn.kind,
-    id: turn.address,
-    label: turn.address,
+    kind: projected.kind,
+    id: projected.address,
+    label: projected.address,
     routePeer,
   };
 }
 
-function inboundRoutePeer(turn: HostTurn) {
-  return routePeer(turn.kind, turn.address);
+function inboundRoutePeer(projected: ProjectedEntry) {
+  return routePeer(projected.kind, projected.address);
 }
 
 /** The peer one conversation's turns and sends both route by. */
-function routePeer(kind: HostTurn["kind"], address: string) {
+function routePeer(kind: ProjectedEntry["kind"], address: string) {
   const prefix = kind === "group" ? "group:" : "agent:";
   return { kind, id: address.slice(prefix.length) };
 }
 
-function inboundReplyFacts(turn: HostTurn) {
+function inboundReplyFacts(projected: ProjectedEntry) {
   return {
-    to: turn.address,
-    originatingTo: turn.address,
-    replyTarget: turn.address,
-    deliveryTarget: turn.address,
+    to: projected.address,
+    originatingTo: projected.address,
+    replyTarget: projected.address,
+    deliveryTarget: projected.address,
   };
 }
 
-function inboundGroupFacts(turn: HostTurn) {
-  return turn.members === undefined
+function inboundGroupFacts(projected: ProjectedEntry) {
+  return projected.members === undefined
     ? undefined
-    : { GroupMembers: turn.members.join(",") };
+    : { GroupMembers: projected.members.join(",") };
 }
 
 /**
@@ -814,41 +813,41 @@ function inboundGroupFacts(turn: HostTurn) {
  * missing message tool or a model reply that bypassed it.
  */
 function withholdFinalText(
-  ctx: ChannelGatewayContext<Account>,
+  task: ChannelGatewayContext<Account>,
   payload: ReplyPayload,
 ) {
   if (payload.text !== undefined && payload.text.length > 0) {
-    ctx.log?.warn?.(
+    task.log?.warn?.(
       `Social Harness: withheld ${payload.text.length} chars of final text; visible replies use the message tool`,
     );
   }
   return Promise.resolve({ visibleReplySent: false as const });
 }
 
-function removeConnectedEndpoint(
-  connectedAccount: ConnectedAccountState,
+function clearConnectedAccount(
+  accountSlot: ConnectedAccountSlot,
   accountId: string,
-  active: McpConnection,
+  connection: McpConnection,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
     if (
-      connectedAccount.current?.accountId === accountId &&
-      connectedAccount.current.endpoint === active
+      accountSlot.current?.accountId === accountId &&
+      accountSlot.current.connection === connection
     ) {
-      connectedAccount.current = undefined;
+      accountSlot.current = undefined;
     }
   });
 }
 
-function sendOpenClawText(
-  connectedAccount: ConnectedAccountState,
+function sendCoreText(
+  accountSlot: ConnectedAccountSlot,
   ctx: ChannelMessageSendTextContext,
 ) {
-  return sendText(connectedAccount, "send.text", {
+  return sendText(accountSlot, "send.text", {
     accountId: ctx.accountId,
     text: ctx.text,
     to: ctx.to,
-  }).pipe(Effect.map(({ result }) => makeMessageSendResult(result)));
+  }).pipe(Effect.map(({ sent }) => makeMessageSendResult(sent)));
 }
 
 /**
@@ -856,7 +855,7 @@ function sendOpenClawText(
  * tool errors. Each attempt logs its origin.
  */
 function sendText(
-  connectedAccount: ConnectedAccountState,
+  accountSlot: ConnectedAccountSlot,
   origin: OutboundOrigin,
   params: TextSend,
 ) {
@@ -865,21 +864,19 @@ function sendText(
   }`;
   return Effect.gen(function* () {
     const { to, text } = yield* readTextSend(params);
-    const connection = yield* requireEndpoint(connectedAccount, params);
-    const result = yield* callToolAsWritten(
+    const connection = yield* requireConnection(accountSlot, params);
+    const sent = yield* callToolAsWritten(
       connection.client,
       "send_message",
       sendArguments(to, text),
     );
     yield* logOutbound(
-      connectedAccount,
-      `${prefix} id=${result.id} chars=${text.length}: ${text.slice(0, LOG_PREVIEW_CHARS)}`,
+      accountSlot,
+      `${prefix} id=${sent.id} chars=${text.length}: ${text.slice(0, LOG_PREVIEW_CHARS)}`,
     );
-    return { to, result };
+    return { to, sent };
   }).pipe(
-    Effect.tapError((error) =>
-      logOutboundFailure(connectedAccount, prefix, error),
-    ),
+    Effect.tapError((error) => logOutboundFailure(accountSlot, prefix, error)),
   );
 }
 
@@ -890,7 +887,7 @@ function sendText(
  * validates. Any other text is a message's text.
  */
 function sendArguments(
-  to: MessageAddressInputValue,
+  to: MessageAddressInput,
   text: string,
 ): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
@@ -902,42 +899,42 @@ function sendArguments(
 }
 
 function logOutboundFailure(
-  connectedAccount: ConnectedAccountState,
+  accountSlot: ConnectedAccountSlot,
   prefix: string,
   error: Error,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
-    connectedAccount.current?.log?.warn?.(`${prefix} failed: ${error.message}`);
+    accountSlot.current?.log?.warn?.(`${prefix} failed: ${error.message}`);
   });
 }
 
 /** Uses the connected account's gateway log. Disconnected sends have no log sink. */
 function logOutbound(
-  connectedAccount: ConnectedAccountState,
+  accountSlot: ConnectedAccountSlot,
   line: string,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
-    connectedAccount.current?.log?.info?.(line);
+    accountSlot.current?.log?.info?.(line);
   });
 }
 
-function requireEndpoint(
-  connectedAccount: ConnectedAccountState,
+function requireConnection(
+  accountSlot: ConnectedAccountSlot,
   params: TextSend,
 ): Effect.Effect<McpConnection, OpenClawOutboundError> {
-  const endpoint = connectedEndpoint(connectedAccount, params.accountId);
-  return endpoint === undefined
+  const connection = connectionFor(accountSlot, params.accountId);
+  return connection === undefined
     ? Effect.fail(
         new OpenClawOutboundError({ reason: "account-not-connected" }),
       )
-    : Effect.succeed(endpoint);
+    : Effect.succeed(connection);
 }
 
 function readTextSend({
   to,
   text,
 }: TextSend): Effect.Effect<
-  { readonly to: MessageAddressInputValue; readonly text: string },
+  { readonly to: MessageAddressInput; readonly text: string },
   OpenClawOutboundError
 > {
   if (!isMessageAddressInput(to)) {
@@ -946,19 +943,17 @@ function readTextSend({
     );
   }
   if (typeof text !== "string") {
-    return Effect.fail(
-      new OpenClawOutboundError({ reason: "invalid-operation" }),
-    );
+    return Effect.fail(new OpenClawOutboundError({ reason: "text-missing" }));
   }
   return Effect.succeed({ to, text });
 }
 
 /**
- * Host send results use the message id the send returned, independently of an
- * incoming turn's retained event identity.
+ * The host's send result carries the message id the send returned, never the
+ * delivery token of an inbox entry.
  */
-function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {
-  const messageId = result.id;
+function makeMessageSendResult(sent: SendResult): ChannelMessageSendResult {
+  const messageId = sent.id;
   return {
     ...(messageId === undefined ? {} : { messageId }),
     receipt: createMessageReceiptFromOutboundResults({
@@ -966,9 +961,9 @@ function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {
         {
           channel: CHANNEL_ID,
           ...(messageId === undefined ? {} : { messageId }),
-          ...(result.address === undefined
+          ...(sent.address === undefined
             ? {}
-            : { conversationId: result.address }),
+            : { conversationId: sent.address }),
         },
       ],
       kind: "text",
@@ -976,23 +971,23 @@ function makeMessageSendResult(result: SendResult): ChannelMessageSendResult {
   };
 }
 
-function connectedEndpoint(
-  connectedAccount: ConnectedAccountState,
+function connectionFor(
+  accountSlot: ConnectedAccountSlot,
   accountId?: string | null,
 ): McpConnection | undefined {
-  const active = connectedAccount.current;
-  if (active === undefined) {
+  const account = accountSlot.current;
+  if (account === undefined) {
     return undefined;
   }
   const requested = accountId?.trim();
   if (
     requested !== undefined &&
     requested.length > 0 &&
-    requested !== active.accountId
+    requested !== account.accountId
   ) {
     return undefined;
   }
-  return active.endpoint;
+  return account.connection;
 }
 
 const plugin: OpenClawPluginDefinition &

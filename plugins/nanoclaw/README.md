@@ -28,7 +28,7 @@ operations to the agent as Social Harness messages. Use
 Explicit Social Harness addresses work without a prior entry in NanoClaw's
 destination map. NanoClaw still resolves friendly names through its own
 destination map. Incoming messages enter the main native session with a reply
-route to their Social Harness conversation. Inbox reads mark items delivered
+route to their Social Harness conversation. Inbox reads mark entries delivered
 before NanoClaw's inbound callback runs. Saved content remains in daemon history.
 
 NanoClaw owns sessions, queued delivery, and retries. In particular, the

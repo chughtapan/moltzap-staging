@@ -56,7 +56,7 @@ const bob = agent("bob", 2);
 const carol = agent("carol", 3);
 const group = Schema.decodeUnknownSync(GroupAddress)("group:alice,bob,carol");
 /** Reads an entry as `receive_messages` returns it. */
-const entry = Schema.decodeUnknownSync(Schema.typeSchema(InboxEntry));
+const readEntry = Schema.decodeUnknownSync(Schema.typeSchema(InboxEntry));
 const message = {
   kind: "message",
   message: {
@@ -66,22 +66,22 @@ const message = {
     content: [{ type: "text", text: messageText }],
   },
 };
-const plainEntry = entry({ deliveryToken, address, item: message });
-const slotForm = {
+const plainEntry = readEntry({ deliveryToken, address, item: message });
+const slotSchema = {
   type: "object",
   properties: { slot: { type: "string", enum: ["mon", "tue"] } },
   required: ["slot"],
 };
-/** The `send_message` arguments of a collective request, without their destination. */
+/** The `send_message` arguments of a collective request, without their address. */
 const request = {
   text: "Which day works?",
   collectiveRequest: {
     op: "all_gather",
     deadline: 60,
-    requestedSchema: slotForm,
+    requestedSchema: slotSchema,
   },
 };
-/** The `send_message` arguments of a collective response, without their destination. */
+/** The `send_message` arguments of a collective response, without their address. */
 const response = {
   collectiveResponse: {
     requestId: msgId,
@@ -90,7 +90,7 @@ const response = {
   },
 };
 /** Alice's collective request to the group, in Bob's inbox. */
-const requestEntry = entry({
+const requestEntry = readEntry({
   deliveryToken,
   address: group,
   item: {
@@ -103,21 +103,21 @@ const requestEntry = entry({
       collectiveRequest: {
         op: "all_gather",
         question: request.text,
-        requestedSchema: slotForm,
+        requestedSchema: slotSchema,
         deadlineAt: 1_800_000_000_000,
       },
     },
   },
 });
 const agentName = fc.stringMatching(/^[a-z0-9]{3,8}$/);
-/** An explicit destination: one agent, or a group's members in any order. */
-const destinations = fc.oneof(
+/** An explicit address: one agent, or a group's members in any order. */
+const addresses = fc.oneof(
   agentName.map((name) => `agent:${name}`),
   fc
     .uniqueArray(agentName, { minLength: 2, maxLength: 4 })
     .map((names) => `group:${names.join(",")}`),
 );
-/** Fields a model may write beside a collective request or response, a destination among them. */
+/** Fields a model may write beside a collective request or response, an address among them. */
 const besides = fc.dictionary(
   fc.constantFrom("text", "to", "note"),
   fc.string(),
@@ -142,13 +142,13 @@ const jsonObject = Schema.decodeUnknownSync(
   ),
 );
 
-/** Hands `delivered` to a connected channel and returns what its host receives. */
-async function received(delivered: InboxEntry) {
+/** Hands `entry` to a connected channel and returns what its host receives. */
+async function received(entry: InboxEntry) {
   const fake = connection();
   const current = await channel();
   const callbacks = host();
   await current.setup(callbacks);
-  Effect.runSync(Queue.offer(fake.inbox, delivered));
+  Effect.runSync(Queue.offer(fake.inbox, entry));
   await vi.waitFor(() => {
     expect(callbacks.onInboundEvent).toHaveBeenCalledTimes(1);
   });
@@ -221,11 +221,11 @@ beforeEach(async () => {
   boundary.acquire.mockReset();
   vi.stubEnv("SHARNESS_MCP_URL", "http://127.0.0.1:8321/mcp");
   await import("./sharness.js");
-  const entry = boundary.register.mock.calls[0];
-  if (entry === undefined) {
+  const registered = boundary.register.mock.calls[0];
+  if (registered === undefined) {
     throw new Error("Channel did not register");
   }
-  registration = entry[1];
+  registration = registered[1];
 });
 afterEach(async () => {
   const active = adapter;
@@ -255,7 +255,7 @@ describe("NanoClaw lifecycle", () => {
   });
 });
 
-describe("NanoClaw incoming items", () => {
+describe("NanoClaw inbox entries", () => {
   it("hands a plain message to the host as its text, with its native reply route", async () => {
     const { metadata, replyTo, isGroup, content } = await received(plainEntry);
     expect(metadata).toEqual([address, address, false]);
@@ -298,7 +298,7 @@ describe("NanoClaw sends", () => {
     const current = await channel();
     await current.setup(host());
     await fc.assert(
-      fc.asyncProperty(destinations, plainTexts, async (to, text) => {
+      fc.asyncProperty(addresses, plainTexts, async (to, text) => {
         fake.call.mockClear();
         await current.deliver(to, null, { kind: "chat", content: text });
         expect(fake.call.mock.calls.map(([called]) => called)).toEqual([
@@ -312,7 +312,7 @@ describe("NanoClaw sends", () => {
     const current = await channel();
     await current.setup(host());
     await fc.assert(
-      fc.asyncProperty(destinations, collectiveSends, async (to, written) => {
+      fc.asyncProperty(addresses, collectiveSends, async (to, written) => {
         fake.call.mockClear();
         await current.deliver(to, null, {
           kind: "chat",

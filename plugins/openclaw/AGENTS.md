@@ -45,7 +45,7 @@ release, so the channel needs a new release only when the plugin SDK breaks.
 - Install the skills `@social-harness/social-harness` ships unchanged; the build copies them
   into `dist/skills`.
 - Hand each inbox entry to the host as data: a message of one text part with
-  no reminder as its text, and any other entry as its JSON. Add no prose.
+  no guidance as its text, and any other entry as its JSON. Add no prose.
 - Leave outbound queue and retry policy to OpenClaw. Every plugin callback is
   one Client operation; do not pass queue identity or add provider-owned retries.
 - Inbox reads record delivery before the native inbound callback. Propagate

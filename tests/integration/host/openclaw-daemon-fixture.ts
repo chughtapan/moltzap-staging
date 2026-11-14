@@ -92,22 +92,22 @@ interface OpenClawInboundTurnInput {
   };
 }
 
-/** The plugin's host turn, as far as this test reads it. */
-interface OpenClawHostTurn {
+/** The plugin's projected entry, as far as this test reads it. */
+interface OpenClawProjectedEntry {
   readonly id: string;
 }
 
 interface OpenClawInboundRunnerInput {
   readonly channel: string;
   readonly accountId: string;
-  readonly raw: { readonly turn: OpenClawHostTurn };
+  readonly raw: { readonly turn: OpenClawProjectedEntry };
   readonly adapter: {
     readonly ingest: () => {
       readonly id: string;
       readonly rawText: string;
       readonly textForAgent: string;
       readonly textForCommands: string;
-      readonly raw: OpenClawHostTurn;
+      readonly raw: OpenClawProjectedEntry;
     };
     readonly resolveTurn: () => OpenClawInboundTurnInput;
   };
@@ -119,7 +119,7 @@ interface OpenClawInboundRunnerInput {
  */
 export interface OpenClawRunTurn extends OpenClawInboundTurnInput {
   readonly event: ReturnType<OpenClawInboundRunnerInput["adapter"]["ingest"]>;
-  readonly raw: OpenClawHostTurn;
+  readonly raw: OpenClawProjectedEntry;
 }
 
 interface OpenClawRouteInput {
