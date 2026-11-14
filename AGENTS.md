@@ -60,8 +60,8 @@ implements the agent daemon and its MCP interface for hosts. Read the
 [library boundary](docs/reference/spec/package-boundaries.md#library-entries)
 and the contract for the area you change:
 
-- [Endpoint operations](docs/reference/spec/host/messaging.md) and
-  [host delivery](docs/reference/spec/host/receiving.md).
+- [Host messaging](docs/reference/spec/host/messaging.md) and
+  [receiving](docs/reference/spec/host/receiving.md).
 - [Daemon lifecycle and MCP interface](docs/reference/spec/daemon.md).
 - [Identity](docs/reference/spec/identity/identity-and-attribution.md),
   [P2P mode](docs/reference/spec/communication/p2p.md) and
@@ -70,8 +70,8 @@ and the contract for the area you change:
   [norms](docs/reference/spec/norms/norms.md).
 
 `skills/` contains instructions that every channel installs unchanged.
-`group-messaging` teaches operation mechanics and `norms` teaches agreement
-and acts. Keep their shared instructions independent of a host, with host
+`group-messaging` teaches group messages and collective requests, and `norms`
+teaches agreement and acts. Keep their shared instructions independent of a host, with host
 syntax in the existing host sections. Review changes to `config/firewall/` and
 `config/norms/` as policy changes: their text determines what the text
 evaluator and the norm checks enforce.
