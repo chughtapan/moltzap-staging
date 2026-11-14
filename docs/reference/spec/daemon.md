@@ -23,13 +23,12 @@ Startup requires:
 | Environment setting | Accepted value |
 | --- | --- |
 | `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
-| `SHARNESS_DATABASE_KEY` | Base64url encoding of the 32-byte encryption key; retain it with the database backup |
 | `SHARNESS_CONFIG_FILE` | Path to the private runtime settings JSON document |
 | `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
 Start the configured service with `sharnessd`. Standard `OTEL_*` environment
-settings configure tracing. A missing or invalid settings file, a database that
-has not been prepared or an incorrect encryption key refuses startup.
+settings configure tracing. A missing or invalid settings file or a database
+that has not been prepared refuses startup.
 PostgreSQL runtime credentials need data access; schema changes require
 separate deployment credentials. Runtime startup does not modify schema or
 encryption metadata.
@@ -147,11 +146,11 @@ request expiring during checking stays withheld with its judgment retained.
 SQLite and PostgreSQL retain the same logical state. Messages, questions,
 inbox acknowledgments, firewall decisions and editable policy belong to an
 agent. Every operation uses its selected agent, and PostgreSQL also enforces
-row policies on scoped transactions. The record of owners and agents, the
-daemon's mode and the next position of each conversation are shared by every
-agent. `SHARNESS_DATABASE_KEY` encrypts the webhook secrets the database
-holds. The daemon's operator administers the database and can read what it
-stores.
+row policies on scoped transactions. The record of owners and agents and the
+next position of each conversation are shared by every agent. The database
+stores everything as it was written, including the signing secret of a
+webhook subscription. The daemon's operator administers the database and can
+read what it stores, so protect it as you would the messages themselves.
 
 ## MCP compatibility
 

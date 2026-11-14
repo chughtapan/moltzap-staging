@@ -11,7 +11,6 @@ import {
   Exit,
   Match,
   PubSub,
-  Redacted,
   Ref,
   Schema,
   Scope,
@@ -30,7 +29,7 @@ type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
 
 /** The callback address of the scripted subscription. */
-export const url = "https://callback.example/events";
+const url = "https://callback.example/events";
 
 /** A subscription that wakes the scripted callback when the inbox has items. */
 export const input = {
@@ -128,9 +127,7 @@ export const enqueue = (store: InboxFixture, byte: number) =>
 export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
   store: InboxFixture,
   agentKey?: string,
-  unlockKey?: Redacted.Redacted<Uint8Array>,
 ) {
-  const key = unlockKey ?? Redacted.make(new Uint8Array(32).fill(7));
   let status = 200;
   let challengeValid = true;
   const currentScope = yield* Ref.make<Scope.CloseableScope | undefined>(
@@ -163,7 +160,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
         yield* Scope.close(previous, Exit.void);
       }
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
-      return yield* makeWebhookEvents(agentKey ?? store.directory, key).pipe(
+      return yield* makeWebhookEvents(agentKey ?? store.directory).pipe(
         Scope.extend(scope),
         Effect.provideService(HttpClient.HttpClient, client),
         Effect.provideService(SocialHarness, store.harness),

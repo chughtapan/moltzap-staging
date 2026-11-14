@@ -1,4 +1,4 @@
-/** @file Deployment prepares a SQLite database's schema and unlock-key verifier without touching what it cannot adopt, and the runtime check changes nothing. */
+/** @file Deployment prepares a SQLite database's schema without touching what it cannot adopt, and the runtime check changes nothing. */
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { Migrator, SqlClient } from "@effect/sql";
@@ -10,13 +10,10 @@ import {
   Exit,
   FastCheck as fc,
   Layer,
-  Redacted,
 } from "effect";
-import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
-import { createTestAgent } from "../__tests__/agents.js";
 import { checkDatabase, migrateDaemon, prepareDatabase } from "./migrations.js";
 import { databaseAccess, databaseConnection } from "./sql.js";
 
@@ -26,7 +23,7 @@ const privateFileMode = 0o600;
 
 /**
  * A SQLite file nothing has prepared, in a directory of its own, with a
- * connection to it and the environment that names it and its unlock key.
+ * connection to it and the environment that names it.
  * Each property run builds one, so the properties below bound their runs.
  */
 const fixture = Effect.gen(function* () {
@@ -38,14 +35,8 @@ const fixture = Effect.gen(function* () {
     /^file:/u,
     "sqlite:",
   );
-  const key = randomBytes(32).toString("base64url");
-  const providerFor = (database: string, unlockKey = key) =>
-    ConfigProvider.fromMap(
-      new Map([
-        ["SHARNESS_DATABASE_URL", database],
-        ["SHARNESS_DATABASE_KEY", unlockKey],
-      ]),
-    );
+  const providerFor = (database: string) =>
+    ConfigProvider.fromMap(new Map([["SHARNESS_DATABASE_URL", database]]));
   const provider = providerFor(locator);
   const access = yield* databaseAccess.pipe(
     Effect.withConfigProvider(provider),
@@ -58,10 +49,10 @@ const fixture = Effect.gen(function* () {
   return { filesystem, directory, access, prepare, providerFor, sql };
 });
 
-it("checks an unprepared database without creating schema or key metadata", () =>
+it("checks an unprepared database without creating its schema", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const check = checkDatabase(test.access.unlockKey).pipe(
+    const check = checkDatabase.pipe(
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
     expect(yield* check.pipe(Effect.flip)).toMatchObject({
@@ -72,53 +63,6 @@ it("checks an unprepared database without creating schema or key metadata", () =
     ).toEqual([]);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("deployment initializes a schema-only database while runtime refuses its missing verifier", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* migrateDaemon.pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-    const check = checkDatabase(test.access.unlockKey).pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-    expect(yield* check.pipe(Effect.flip)).toMatchObject({ reason: "key" });
-    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
-    yield* test.prepare;
-    yield* check;
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it("deployment refuses missing verifier metadata when an orphaned profile remains", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.prepare;
-    yield* createTestAgent("owner").pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-    yield* test.sql.unsafe("PRAGMA foreign_keys = OFF");
-    yield* test.sql`DELETE FROM owner_bindings`;
-    yield* test.sql`DELETE FROM database_encryption`;
-    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
-      reason: "key",
-    });
-    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
-    expect(yield* test.sql`SELECT * FROM agent_profiles`).toHaveLength(1);
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it("deployment refuses to adopt missing verifier metadata for existing owners", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    yield* test.prepare;
-    yield* createTestAgent("owner").pipe(
-      Effect.provideService(SqlClient.SqlClient, test.sql),
-    );
-    yield* test.sql`DELETE FROM database_encryption`;
-    expect(yield* test.prepare.pipe(Effect.flip)).toMatchObject({
-      reason: "key",
-    });
-    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(0);
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(1);
-  }).pipe(Effect.provide(NodeContext.layer)));
-
 it("prepares a fresh database whose migration ledger already exists but is empty", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
@@ -126,10 +70,10 @@ it("prepares a fresh database whose migration ledger already exists but is empty
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
     yield* test.prepare;
-    yield* checkDatabase(test.access.unlockKey).pipe(
+    yield* checkDatabase.pipe(
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
-    expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(1);
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("rejects a SQLite database that holds other tables without changing their records", () =>
@@ -182,46 +126,6 @@ it("creates private encoded database paths only during deployment preparation", 
       privateFileMode,
     );
   }).pipe(Effect.provide(NodeContext.layer)));
-
-it.prop(
-  "refuses any other unlock key, at the runtime check and at preparation, and leaves the verifier and the owners as they were",
-  [fc.uint8Array({ minLength: 32, maxLength: 32 }), fc.boolean()],
-  ([other, owned]) =>
-    Effect.gen(function* () {
-      const test = yield* fixture;
-      yield* test.prepare;
-      if (owned) {
-        yield* createTestAgent("owner").pipe(
-          Effect.provideService(SqlClient.SqlClient, test.sql),
-        );
-      }
-      const saved = Effect.all([
-        test.sql`SELECT * FROM database_encryption`,
-        test.sql`SELECT * FROM owner_bindings`,
-      ]);
-      const before = yield* saved;
-
-      const checked = yield* checkDatabase(
-        Redacted.make(Buffer.from(other)),
-      ).pipe(Effect.provideService(SqlClient.SqlClient, test.sql), Effect.flip);
-      const prepared = yield* prepareDatabase.pipe(
-        Effect.withConfigProvider(
-          test.providerFor(
-            Redacted.value(test.access.locator),
-            Buffer.from(other).toString("base64url"),
-          ),
-        ),
-        Effect.flip,
-      );
-
-      expect([checked, prepared]).toMatchObject([
-        { reason: "key" },
-        { reason: "key" },
-      ]);
-      expect(yield* saved).toEqual(before);
-    }).pipe(Effect.provide(NodeContext.layer)),
-  { fastCheck: { numRuns: 20 } },
-);
 
 it.prop(
   "refuses a SQLite locator that carries a query or a fragment, creating nothing and repeating none of it",

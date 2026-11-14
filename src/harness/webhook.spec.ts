@@ -8,7 +8,6 @@ import {
   type Duration,
   Effect,
   PubSub,
-  Redacted,
   Ref,
   type Scope,
   Stream,
@@ -26,7 +25,6 @@ import {
   openCallbackInbox,
   scriptedWebhook,
   secret,
-  url,
 } from "./__tests__/webhook-fixtures.js";
 import { INBOX_PENDING_EVENT } from "./contracts.js";
 import {
@@ -381,38 +379,21 @@ describe("subscribing", () => {
     ),
   );
 
-  it.effect(
-    "keeps each agent's subscription separate and sealed in one database",
-    () =>
-      scenario(({ store }) =>
-        Effect.gen(function* () {
-          const first = yield* scriptedWebhook(store, "first");
-          const second = yield* scriptedWebhook(store, "second");
-          const firstEvents = yield* first.acquire;
-          const secondEvents = yield* second.acquire;
-          yield* firstEvents.subscribe(input);
-          expect((yield* secondEvents.status).mode).toBe(notSubscribed);
-          yield* secondEvents.subscribe(input);
-          yield* firstEvents.unsubscribe(input);
-          expect((yield* (yield* first.acquire).status).mode).toBe(
-            notSubscribed,
-          );
-          expect((yield* (yield* second.acquire).status).mode).toBe(subscribed);
-          const saved = JSON.stringify(
-            yield* store.sql<
-              Record<"state", string>
-            >`SELECT state FROM mcp_webhook_state`,
-          );
-          expect(saved).not.toContain(secret);
-          expect(saved).not.toContain(url);
-          const wrongKey = yield* scriptedWebhook(
-            store,
-            "second",
-            Redacted.make(new Uint8Array(32).fill(9)),
-          );
-          expect(yield* wrongKey.acquire.pipe(Effect.isFailure)).toBe(true);
-        }),
-      ),
+  it.effect("keeps each agent's subscription separate in one database", () =>
+    scenario(({ store }) =>
+      Effect.gen(function* () {
+        const first = yield* scriptedWebhook(store, "first");
+        const second = yield* scriptedWebhook(store, "second");
+        const firstEvents = yield* first.acquire;
+        const secondEvents = yield* second.acquire;
+        yield* firstEvents.subscribe(input);
+        expect((yield* secondEvents.status).mode).toBe(notSubscribed);
+        yield* secondEvents.subscribe(input);
+        yield* firstEvents.unsubscribe(input);
+        expect((yield* (yield* first.acquire).status).mode).toBe(notSubscribed);
+        expect((yield* (yield* second.acquire).status).mode).toBe(subscribed);
+      }),
+    ),
   );
 });
 

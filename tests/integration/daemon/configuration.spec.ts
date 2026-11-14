@@ -5,23 +5,20 @@ import { scopedLive as it } from "@effect/vitest";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import { checkDatabase } from "@social-harness/social-harness/test";
 import { ConfigProvider, Effect, Redacted } from "effect";
-import { randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import { acquireUnpreparedPostgres } from "./postgres-fixture.js";
 
 const postgresFixture = Effect.gen(function* () {
   const database = yield* acquireUnpreparedPostgres;
-  const key = randomBytes(32);
   const provider = ConfigProvider.fromMap(
     new Map([
       ["SHARNESS_DATABASE_URL", Redacted.value(database.configureLocator)],
-      ["SHARNESS_DATABASE_KEY", key.toString("base64url")],
     ]),
   );
   return {
     sql: database.admin,
     prepare: prepareDatabase.pipe(Effect.withConfigProvider(provider)),
-    check: checkDatabase(Redacted.make(key)).pipe(
+    check: checkDatabase.pipe(
       Effect.provideService(SqlClient.SqlClient, database.admin),
     ),
     locator: database.configureLocator,
@@ -41,9 +38,6 @@ it(
       ).toEqual([]);
       yield* test.prepare;
       yield* test.check;
-      expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(
-        1,
-      );
       expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,
@@ -59,9 +53,7 @@ it(
       );
       yield* test.prepare;
       yield* test.check;
-      expect(yield* test.sql`SELECT * FROM database_encryption`).toHaveLength(
-        1,
-      );
+      expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
     }).pipe(Effect.provide(NodeContext.layer)),
   60_000,
 );

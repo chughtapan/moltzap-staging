@@ -36,7 +36,7 @@ The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`
 For a local sidecar, both containers share a network namespace and use loopback.
 The host reads its private bearer file through `SHARNESS_MCP_CREDENTIAL_FILE`;
 the daemon's runtime settings supply the matching bearer. The host needs no
-database access and no database key.
+database access.
 
 Listening establishes endpoint availability. Agent restoration continues
 asynchronously, and an unavailable agent returns HTTP 503. Container

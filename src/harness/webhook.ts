@@ -34,7 +34,6 @@ import {
   Layer,
   Option,
   Queue,
-  Redacted,
   Schema,
   type Scope,
   Stream,
@@ -50,8 +49,6 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import {
   executeQuery,
   makeQueries,
-  openCredential,
-  sealCredential,
   withAgentTransaction,
 } from "../database/index.js";
 import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
@@ -361,7 +358,6 @@ type WebhookTables = Record<
 
 interface WebhookRuntime {
   readonly agentKey: string;
-  readonly unlockKey: Redacted.Redacted<Uint8Array>;
   readonly sql: SqlClient.SqlClient;
   readonly harness: SocialHarness["Type"];
   readonly client: HttpClient.HttpClient;
@@ -731,25 +727,20 @@ const webhookOperations = (runtime: WebhookRuntime): HarnessWebhookEvents => ({
 });
 
 function writeState(
-  runtime: Pick<WebhookRuntime, "sql" | "agentKey" | "unlockKey">,
+  runtime: Pick<WebhookRuntime, "sql" | "agentKey">,
   state: State,
 ) {
   return Effect.gen(function* () {
-    const bytes = yield* Schema.encode(Schema.parseJson(stateSchema))(state);
-    const sealed = yield* sealCredential(
-      Redacted.make(bytes),
-      `webhook/${runtime.agentKey}`,
-      runtime.unlockKey,
-    );
+    const saved = yield* Schema.encode(Schema.parseJson(stateSchema))(state);
     const queries = yield* makeQueries<WebhookTables>();
     yield* withAgentTransaction(
       runtime.agentKey,
       executeQuery(
         queries
           .insertInto("mcp_webhook_state")
-          .values({ agent_key: runtime.agentKey, state: sealed })
+          .values({ agent_key: runtime.agentKey, state: saved })
           .onConflict((conflict) =>
-            conflict.column("agent_key").doUpdateSet({ state: sealed }),
+            conflict.column("agent_key").doUpdateSet({ state: saved }),
           ),
       ),
     );
@@ -759,7 +750,6 @@ function writeState(
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
 export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
   agentKey: string,
-  unlockKey: Redacted.Redacted<Uint8Array>,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const harness = yield* SocialHarness;
@@ -780,16 +770,9 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
   const state =
     row === undefined
       ? { registration: null }
-      : yield* openCredential(row.state, `webhook/${agentKey}`, unlockKey).pipe(
-          Effect.flatMap((value) =>
-            Schema.decodeUnknown(Schema.parseJson(stateSchema))(
-              Redacted.value(value),
-            ),
-          ),
-        );
+      : yield* Schema.decodeUnknown(Schema.parseJson(stateSchema))(row.state);
   const runtime: WebhookRuntime = {
     agentKey,
-    unlockKey,
     sql,
     harness,
     client,

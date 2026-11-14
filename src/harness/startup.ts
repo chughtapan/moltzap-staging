@@ -14,7 +14,6 @@ import {
   FiberSet,
   Layer,
   Option,
-  type Redacted,
   Ref,
   ScopedCache,
 } from "effect";
@@ -63,7 +62,7 @@ function runDaemon() {
     const { settings, agentName, serverAgentCredential } =
       yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
-      yield* checkDatabase(access.unlockKey);
+      yield* checkDatabase;
       if (settings.authentication.kind === "local") {
         yield* getOrCreateOwnedAgent(localOwner, agentName).pipe(
           Effect.catchTag("OwnershipError", () =>
@@ -91,7 +90,6 @@ function runDaemon() {
       }
       const selectApp = yield* makeAgentSelector({
         settings,
-        unlockKey: access.unlockKey,
         norms,
         serverNorms: yield* Ref.make(
           Option.none<Context.Tag.Service<typeof HeldNorms>>(),
@@ -168,8 +166,6 @@ function serverAndOne(serverAgentName: AgentName) {
 /** What every agent of the daemon is built from. */
 interface DaemonResources {
   readonly settings: DaemonSettings;
-  /** Opens the webhook secrets sealed in the database. */
-  readonly unlockKey: Redacted.Redacted<Uint8Array>;
   readonly norms?: ServiceNorms;
   /** The norms the server agent holds, once it has started; clients read them. */
   readonly serverNorms: Ref.Ref<
@@ -270,7 +266,7 @@ function readsNormsOf(
 
 /** One agent's retained services and MCP app. */
 function makeAgentApp(daemon: DaemonResources, agentKey: string) {
-  const { settings, unlockKey, norms, serverNorms } = daemon;
+  const { settings, norms, serverNorms } = daemon;
   return Effect.gen(function* () {
     const identity = yield* Layer.build(Identity.layer(agentKey));
     const card = Context.get(identity, Identity).me;
@@ -311,7 +307,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
       yield* Ref.set(serverNorms, Context.getOption(services, HeldNorms));
     }
     const callbackClient = yield* Layer.build(webhookHttpClientLayer);
-    const webhook = yield* makeWebhookEvents(agentKey, unlockKey).pipe(
+    const webhook = yield* makeWebhookEvents(agentKey).pipe(
       Effect.provide(services),
       Effect.provideService(
         HttpClient.HttpClient,

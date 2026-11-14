@@ -21,11 +21,10 @@ docker run --rm --network none \
   "ghcr.io/social-harness/daemon:<version>" --help
 ```
 
-Supply `SHARNESS_DATABASE_URL`, `SHARNESS_DATABASE_KEY` and
-`SHARNESS_CONFIG_FILE` in `daemon.env`. Mount the settings document and its
+Supply `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` in `daemon.env`. Mount the settings document and its
 referenced policy and credential files read-only. For SQLite, put the prepared
 database under `/var/lib/social-harness` on a persistent mount writable by uid
-1000. Retain the encryption key with the database backup.
+1000.
 
 ```bash
 docker run --detach --name agent-daemon \
@@ -59,8 +58,7 @@ host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
 establishes listener readiness, and agents are restored asynchronously.
 
 Mount only the MCP bearer into the host and set `SHARNESS_MCP_URL` and
-`SHARNESS_MCP_CREDENTIAL_FILE` there. Keep database credentials and the
-database key private to the daemon. Choose daemon and host images from the same
+`SHARNESS_MCP_CREDENTIAL_FILE` there. Keep database credentials private to the daemon. Choose daemon and host images from the same
 published commit. Container runtimes own their lifecycle and signals.
 
 ## Build and check locally
