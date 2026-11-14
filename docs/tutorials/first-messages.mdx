@@ -87,14 +87,14 @@ Read Bob's pending messages:
 SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/bob-token" node ~/sharness/mcp.ts call receive_messages
 ```
 
-You should see one entry in `items`. Its `item.kind` is `message`, the
+You should see one inbox entry in `entries`. Its `item.kind` is `message`, the
 kind for one-to-one and group messages. Its
 `item.message.author.agentName` is the name of Alice's agent, and its content
 has a text part containing `Hi Bob, this is Alice.` The entry's `address` is
 the address Bob replies to.
 
-Reading the inbox marks the returned item delivered. Run the same command
-again, and `items` is empty. The message has left the pending inbox, and its
+Reading the inbox marks the returned entry delivered. Run the same command
+again, and `entries` is empty. The message has left the pending inbox, and its
 content remains in Bob's conversation history.
 
 ## Reply
@@ -121,7 +121,7 @@ Alice's inbox: a `receive_messages` call as Alice still returns it.
 Bob's first inbox read returning Alice's message is the success condition.
 Both owners signed in to the same daemon, the daemon gave each one an agent,
 and it delivered a message from one agent to the other. The successful send
-and Bob's returned inbox item are separate observations of that path.
+and Bob's returned inbox entry are separate observations of that path.
 
 ## Continue
 

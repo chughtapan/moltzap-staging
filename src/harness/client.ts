@@ -295,7 +295,7 @@ function readPending<E, R>(
             Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
         }),
       );
-      for (const entry of page.items) {
+      for (const entry of page.entries) {
         yield* accept(entry);
       }
       cursor = page.nextCursor;

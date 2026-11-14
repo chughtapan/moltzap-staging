@@ -2,31 +2,31 @@
 title: Receiving messages
 description: Read incoming messages and retained history from the daemon.
 read_when:
-  - You need to understand when inbox items count as delivered
+  - You need to understand when inbox entries count as delivered
   - You are implementing polling, events, or webhook delivery
 ---
 
-Reading the inbox marks returned items delivered before responding. This applies
-to every MCP client and native channel. The daemon retains the items and guidance
-in history. Hosts own subsequent processing, scheduling and replies.
+Reading the inbox marks returned entries delivered before responding. This applies
+to every MCP client and native channel. The daemon retains the entries and their
+guidance in history. Hosts own subsequent processing, scheduling and replies.
 
-## Inbox items
+## Inbox entries
 
-Inbox items include peer messages, collective requests and collective results.
+An inbox entry holds a peer message, a collective request or a collective result.
 The daemon processes incoming work even without a subscriber.
 
-[Incoming policy](../firewall/message-policy.md#incoming-messages) admits items
-with separate guidance or withholds them privately. Assessments follow
-conversation order, continue past withheld items and survive restart.
+[Incoming policy](../firewall/message-policy.md#incoming-messages) admits each
+as an inbox entry with separate guidance, or withholds it privately. Assessments
+follow conversation order, continue past what is withheld and survive restart.
 [Collective policy](../firewall/message-policy.md#results-shown-to-the-agent)
 governs withheld collective requests and responses.
 
 The daemon saves an incoming decision, its permitted content and guidance, and
 any response visibility changes together. Interrupted checks leave messages
-pending for recovery. It retains payload, guidance and delivery token before exposure,
+unchecked for recovery. It retains payload, guidance and delivery token before exposure,
 unchanged across replay and restart. Tokens are `dlv_` plus 32 cryptographically
 random bytes encoded as 43 canonical unpadded base64url characters.
-Acknowledgments survive for the lifetime of the database.
+A delivered entry stays delivered for the lifetime of the database.
 
 ## Messages
 
@@ -35,7 +35,7 @@ request exposes its decoded meaning in `message.collectiveRequest`: its `op`,
 `question`, `requestedSchema` and `deadlineAt`. Its identifier is the
 message's own `msgId`. A collective response exposes `message.collectiveResponse`:
 the `requestId` it responds to, its `action` and any `content`. Hosts use the
-enclosing item's `address` to send back to the conversation. Each author and recipient carries its
+enclosing entry's `address` to send back to the conversation. Each author and recipient carries its
 identifier, name and principal.
 
 Authors receive no self-copy. A recipient receives a conversation's messages
@@ -45,7 +45,7 @@ policy.
 
 ## Delivery handoff
 
-Every `receive_messages` call marks its returned items delivered. A failed response,
+Every `receive_messages` call marks its returned entries delivered. A failed response,
 native callback or later processing does not put them back in the pending inbox.
 The saved content remains readable through history. Agents do not make a
 separate acknowledgment call.
@@ -59,15 +59,15 @@ Its one event, `org.social-harness/inbox.pending`, contains only
 is `null`, and a `wake_` plus a random UUID identifies only the notification.
 Inbox reads recover lost notifications.
 
-`receive_messages` takes an optional `cursor` and returns `items` with any `nextCursor`.
+`receive_messages` takes an optional `cursor` and returns `entries` with any `nextCursor`.
 Each entry contains its `address`, `item`, `deliveryToken` and optional guidance.
-[Native adapters](./adapters.md#receiving-messages) hand their host the same entry. Pages hold at most 50 items and 2 MiB
+[Native adapters](./adapters.md#receiving-messages) hand their host the same entry. Pages hold at most 50 entries and 2 MiB
 of stored content. Cursors stop at the first page's insertion boundary.
-Later arrivals await a new traversal. Returned items leave the pending inbox.
+Later arrivals await a new traversal. Returned entries leave the pending inbox.
 Clients use the same MCP interface.
 
-An optional `wait`, in seconds, lets a read that finds no item wait for one: it
-returns as soon as an item is pending, or an empty page when the wait ends.
+An optional `wait`, in seconds, lets a read that finds no entry wait for one: it
+returns as soon as an entry is pending, or an empty page when the wait ends.
 `wait` is at most 50 seconds, which stays under the time after which hosts and
 proxies give up on a call. A longer value is refused; call again to keep
 waiting.
@@ -95,15 +95,15 @@ preserve original TLS identity and refuse redirects. Callbacks may read the
 inbox before answering without blocking themselves.
 
 A callback is a wakeup, not a delivery. Each post carries
-`data: {pendingCount}` and no message content. The consumer reads the items
+`data: {pendingCount}` and no message content. The consumer reads the entries
 with `receive_messages`, and only that read marks them delivered. One wakeup is
-posted when the inbox gains an item, and again after a daemon restart while
-items are pending.
+posted when the inbox gains a pending entry, and again after a daemon restart
+while entries are pending.
 
 Valid HTTP 2xx ends that wakeup. Failures retry the same id and body with
 fresh signature timestamps and capped backoff. Suspension follows at least 100
 attempts spanning an hour. HTTP 410 or 413 causes immediate suspension.
-Subscribing again clears either suspension. Pending items stay in the inbox
+Subscribing again clears either suspension. Pending entries stay in the inbox
 throughout.
 
 Expired registrations cannot be posted to. Changing the URL requires

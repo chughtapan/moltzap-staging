@@ -1,4 +1,4 @@
-/** @file A scripted webhook callback and an inbox whose items wake it. */
+/** @file A scripted webhook callback and an inbox whose entries wake it. */
 
 import {
   type HttpBody,
@@ -20,7 +20,11 @@ import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { PermittedItem } from "../../firewall/index.js";
 import { INBOX_PENDING_EVENT } from "../contracts.js";
-import { DeliveryToken, InboxError, InboxEvent } from "../message-format.js";
+import {
+  DeliveryToken,
+  InboxError,
+  StoredInboxEntry,
+} from "../message-format.js";
 import { SocialHarness } from "../social-harness.js";
 import { makeWebhookEvents } from "../webhook.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
@@ -31,7 +35,7 @@ export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
 /** The callback address of the scripted subscription. */
 const url = "https://callback.example/events";
 
-/** A subscription that wakes the scripted callback when the inbox has items. */
+/** A subscription that wakes the scripted callback when the inbox has pending entries. */
 export const input = {
   name: INBOX_PENDING_EVENT,
   arguments: {},
@@ -177,16 +181,18 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
   const database = yield* openTestDatabase(directory);
   const sql = database.sql;
   yield* sql.unsafe(
-    "CREATE TABLE IF NOT EXISTS callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)",
   );
-  const payload = Schema.parseJson(Schema.typeSchema(InboxEvent));
+  const payload = Schema.parseJson(Schema.typeSchema(StoredInboxEntry));
   const changes = yield* PubSub.unbounded<undefined>();
   const save = (
     deliveryToken: DeliveryToken,
     item: typeof PermittedItem.Type,
   ) =>
     Schema.encode(payload)({
-      address: Schema.decodeUnknownSync(InboxEvent.fields.address)("agent:bob"),
+      address: Schema.decodeUnknownSync(StoredInboxEntry.fields.address)(
+        "agent:bob",
+      ),
       item,
     }).pipe(
       Effect.flatMap(
@@ -197,7 +203,7 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
       Effect.asVoid,
     );
   const acknowledgeDelivery = (deliveryToken: DeliveryToken) =>
-    sql`UPDATE callback_fixture SET acknowledged=1 WHERE token=${deliveryToken}`.pipe(
+    sql`UPDATE callback_fixture SET delivered=1 WHERE token=${deliveryToken}`.pipe(
       Effect.asVoid,
       Effect.orDie,
     );
@@ -206,8 +212,8 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
     readonly payload: string;
   }) =>
     Schema.decodeUnknown(payload)(row.payload).pipe(
-      Effect.map((event) => ({
-        ...event,
+      Effect.map((stored) => ({
+        ...stored,
         deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(row.token),
       })),
     );
@@ -217,14 +223,14 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
       sql<{
         readonly token: string;
         readonly payload: string;
-      }>`SELECT token,payload FROM callback_fixture WHERE acknowledged=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
+      }>`SELECT token,payload FROM callback_fixture WHERE delivered=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
         Effect.flatMap((rows) =>
           Effect.forEach(rows.slice(0, 50), decodeRow, { concurrency: 1 }),
         ),
-        Effect.map((items) => ({
-          items,
-          ...(items.length === 50
-            ? { nextCursor: items.at(-1)?.deliveryToken }
+        Effect.map((entries) => ({
+          entries,
+          ...(entries.length === 50
+            ? { nextCursor: entries.at(-1)?.deliveryToken }
             : {}),
         })),
         Effect.catchTags({
@@ -241,7 +247,7 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
   });
   const pending = sql<{
     readonly total: number;
-  }>`SELECT COUNT(*) AS total FROM callback_fixture WHERE acknowledged=0`.pipe(
+  }>`SELECT COUNT(*) AS total FROM callback_fixture WHERE delivered=0`.pipe(
     Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
   );
   return { ...database, harness, save, pending };

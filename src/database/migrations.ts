@@ -54,7 +54,7 @@ const hostSchema = (sequence: string) =>
     message_id TEXT,
     incoming TEXT,
     view TEXT,
-    status TEXT NOT NULL CHECK(status IN ('checking','withheld','pending','acknowledged')),
+    status TEXT NOT NULL CHECK(status IN ('unchecked','withheld','pending','delivered')),
     UNIQUE(agent_key, identity),
     UNIQUE(agent_key, token)
   )`);

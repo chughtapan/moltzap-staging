@@ -36,25 +36,25 @@ export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
 /** @useDeclaredType */
 export type MessageAddress = typeof MessageAddress.Type;
 
-/** Stable lookup and acknowledgment identity for one saved incoming item. */
+/** Identifies one inbox entry: what a host names to mark that entry delivered. */
 export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
 /** @useDeclaredType */
 export type DeliveryToken = typeof DeliveryToken.Type;
 
-/** Canonical host conversation containing this permitted item. */
+/** An inbox entry as the inbox stores it: everything but its delivery token. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const InboxEvent = Schema.Struct({
+export const StoredInboxEntry = Schema.Struct({
   address: MessageAddress,
   item: PermittedItem,
   guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
 });
 /** @useDeclaredType */
-export type InboxEvent = typeof InboxEvent.Type;
+export type StoredInboxEntry = typeof StoredInboxEntry.Type;
 
-/** Pending deliveries retain their token after acknowledgment. */
+/** One message or collective result as the host reads it. It keeps its delivery token once delivered. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
-  ...InboxEvent.fields,
+  ...StoredInboxEntry.fields,
   deliveryToken: DeliveryToken,
 });
 /** @useDeclaredType */
@@ -64,7 +64,7 @@ export type InboxEntry = typeof InboxEntry.Type;
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxPage = Schema.Struct({
   ...PaginatedResult.fields,
-  items: Schema.Array(InboxEntry),
+  entries: Schema.Array(InboxEntry),
 });
 /** @useDeclaredType */
 export type InboxPage = typeof InboxPage.Type;
@@ -72,32 +72,23 @@ export type InboxPage = typeof InboxPage.Type;
 const inboxFailureText = {
   "invalid-cursor":
     "the cursor is not one this inbox returned; call again without a cursor",
-  "invalid-event": "a saved inbox item could not be read",
   "persistence-failed": "the inbox could not be read; try again",
 } as const;
 
-/** Inbox reads reject unusable cursors and unavailable retained items. */
+/** An inbox read rejects a cursor it did not return. */
 export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
-  reason: Schema.Literal(
-    "invalid-cursor",
-    "invalid-event",
-    "persistence-failed",
-  ),
+  reason: Schema.Literal("invalid-cursor", "persistence-failed"),
 }) {
   override get message(): string {
     return `receiving failed: ${inboxFailureText[this.reason]}`;
   }
 }
 
-/** Acknowledgment changes pending delivery, not the saved content. */
+/** Acknowledging a delivery moves a pending inbox entry to delivered and leaves its content as stored. */
 export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowledgeError>()(
   "DeliveryAcknowledgeError",
   {
-    reason: Schema.Literal(
-      "unknown-delivery",
-      "delivery-conflict",
-      "persistence-failed",
-    ),
+    reason: Schema.Literal("unknown-delivery", "persistence-failed"),
   },
 ) {}
 
@@ -181,6 +172,9 @@ export const SendResultSchema = Schema.Struct({
 /** Accepted work continues independently of the caller's lifetime. */
 export type SendResult = typeof SendResultSchema.Type;
 
+/** The most inbox entries, history records or conversation addresses one page holds. */
+export const PAGE_SIZE = 50;
+
 /** A destination in canonical form, before its names are resolved. */
 type CanonicalMessageAddress =
   | {
@@ -231,8 +225,8 @@ function invalidMembership(detail: string): SendError {
   return new SendError({ reason: "membership-invalid", detail });
 }
 
-function decodeAgentName(value: string): Effect.Effect<AgentName, SendError> {
-  return Schema.decodeUnknown(AgentName)(value).pipe(
+function decodeAgentName(name: string): Effect.Effect<AgentName, SendError> {
+  return Schema.decodeUnknown(AgentName)(name).pipe(
     Effect.mapError(invalidAddress),
   );
 }
@@ -504,7 +498,11 @@ function expectedSchemaMessage(ast: SchemaAST.AST): string {
   )}`;
 }
 
-/** History preserves sent messages and the saved view of received content. */
+/**
+ * One record of a conversation's history: a message this agent sent, the
+ * stored inbox entry of a message it received, or the stored inbox entry of a
+ * collective result.
+ */
 export type HistoryRecord =
   | { readonly kind: "sent"; readonly message: Message }
   | ({
@@ -513,11 +511,11 @@ export type HistoryRecord =
         readonly authorAgentId: Message["author"]["agentId"];
         readonly msgId: Message["msgId"];
       };
-    } & InboxEvent)
+    } & StoredInboxEntry)
   | ({
-      readonly kind: "result";
+      readonly kind: "collectiveResult";
       readonly deliveryToken: DeliveryToken;
-    } & InboxEvent);
+    } & StoredInboxEntry);
 
 const historyFailureText = {
   "invalid-address": "the address is not a valid agent: or group: address",

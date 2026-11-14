@@ -8,9 +8,9 @@ export function inboxStream(connection: McpConnection) {
     callTool(connection.client, { name: "receive_messages", arguments: {} }),
   ).pipe(
     Stream.flatMap((page) =>
-      page.items.length === 0
+      page.entries.length === 0
         ? Stream.fromEffect(Effect.sleep("50 millis")).pipe(Stream.drain)
-        : Stream.fromIterable(page.items),
+        : Stream.fromIterable(page.entries),
     ),
   );
 }

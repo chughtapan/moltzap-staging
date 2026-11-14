@@ -188,7 +188,7 @@ function sendTool<A, I, B, J>(
   });
 }
 
-/** Hands over pending inbox items and marks them delivered. */
+/** Hands over pending inbox entries and marks them delivered. */
 function receiveTool(harness: Harness) {
   return bind({
     name: "receive_messages",
@@ -198,9 +198,9 @@ function receiveTool(harness: Harness) {
         ...request,
         ...(wait === undefined ? {} : { wait: Duration.seconds(wait) }),
       });
-      for (const item of page.items) {
+      for (const entry of page.entries) {
         yield* harness
-          .acknowledgeDelivery(item.deliveryToken)
+          .acknowledgeDelivery(entry.deliveryToken)
           .pipe(
             Effect.catchTag("DeliveryAcknowledgeError", () =>
               Effect.fail(new InboxError({ reason: "persistence-failed" })),

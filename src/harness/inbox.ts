@@ -1,4 +1,4 @@
-/** @file Retains incoming work, the agent's permitted view and delivery acknowledgments. */
+/** @file Stores one agent's unchecked messages and collective results, its inbox entries and which of them are delivered. */
 
 import { SqlClient, SqlSchema } from "@effect/sql";
 import { Effect, Encoding, Schema } from "effect";
@@ -28,18 +28,19 @@ import {
   DeliveryToken,
   type InboxEntry,
   InboxError,
-  InboxEvent,
   type InboxPage,
   MessageAddress,
+  PAGE_SIZE,
+  StoredInboxEntry,
 } from "./message-format.js";
 
-const queuedRow = Schema.Struct({
+const uncheckedRow = Schema.Struct({
   sequence: Schema.Number,
   token: DeliveryToken,
   address: MessageAddress,
   incoming: Schema.String,
 });
-const savedRow = Schema.Struct({
+const entryRow = Schema.Struct({
   sequence: Schema.Number,
   token: DeliveryToken,
   address: MessageAddress,
@@ -53,21 +54,24 @@ const inboxCursor = Schema.Struct({
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The harness composes page positions with this private owner's cursor grammar.
 const historyCursor = Schema.Struct({
   operation: Schema.Literal("history"),
-  phase: Schema.Literal("messages", "results"),
+  phase: Schema.Literal("messages", "collectiveResults"),
   address: MessageAddress,
-  communication: Schema.optional(Schema.String),
+  communicationCursor: Schema.optional(Schema.String),
   after: Schema.NonNegativeInt,
   through: Schema.NonNegativeInt,
 });
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The harness composes page positions with this private owner's cursor grammar.
-const catalogCursor = Schema.Struct({
+const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
   address: MessageAddress,
-  communication: Schema.optional(Schema.String),
+  communicationCursor: Schema.optional(Schema.String),
 });
 
-/** Private intake data keeps one immutable value until its check finishes. */
-export interface PendingItem {
+/**
+ * A received message or collective result the firewall has not yet decided,
+ * with the address and delivery token its inbox entry takes.
+ */
+export interface Unchecked {
   readonly sequence: number;
   readonly token: DeliveryToken;
   readonly address: MessageAddress;
@@ -80,7 +84,7 @@ type InboxTables = Record<
     Record<"author" | "message_id", string | null> &
     Record<"incoming" | "view", string | null> &
     Record<"sequence", Generated<number>> &
-    Record<"status", "checking" | "withheld" | "pending" | "acknowledged">
+    Record<"status", "unchecked" | "withheld" | "pending" | "delivered">
 > &
   Record<
     "harness_visibility",
@@ -98,53 +102,55 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     withAgentTransaction(agentKey, executeQuery(query)).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
-  const storedItems = () =>
+  const inboxRows = () =>
     queries.selectFrom("harness_items").where("agent_key", "=", agentKey);
   const cursorKey = randomBytes(32);
-  const encodePage = <A, I>(schema: Schema.Schema<A, I>, value: NoInfer<A>) =>
-    encodeCursor(schema, value, cursorKey);
-  const decodePage = <A, I>(schema: Schema.Schema<A, I>, value: string) =>
-    decodeCursor(schema, value, cursorKey);
-  const pendingRows = SqlSchema.findAll({
+  const encodePage = <A, I>(
+    schema: Schema.Schema<A, I>,
+    position: NoInfer<A>,
+  ) => encodeCursor(schema, position, cursorKey);
+  const decodePage = <A, I>(schema: Schema.Schema<A, I>, cursor: string) =>
+    decodeCursor(schema, cursor, cursorKey);
+  const uncheckedRows = SqlSchema.findAll({
     Request: Schema.Number,
-    Result: queuedRow,
+    Result: uncheckedRow,
     execute: (limit) =>
       run(
         queries
-          .selectFrom("harness_items as item")
+          .selectFrom("harness_items as candidate")
           .select([
-            "item.sequence",
-            "item.token",
-            "item.address",
-            "item.incoming",
+            "candidate.sequence",
+            "candidate.token",
+            "candidate.address",
+            "candidate.incoming",
           ])
-          .where("item.agent_key", "=", agentKey)
-          .where("item.status", "=", "checking")
+          .where("candidate.agent_key", "=", agentKey)
+          .where("candidate.status", "=", "unchecked")
           .where((eb) =>
             eb.not(
               eb.exists(
                 eb
-                  .selectFrom("harness_items as previous")
-                  .select("previous.sequence")
-                  .whereRef("previous.agent_key", "=", "item.agent_key")
-                  .whereRef("previous.address", "=", "item.address")
-                  .where("previous.status", "=", "checking")
-                  .whereRef("previous.sequence", "<", "item.sequence"),
+                  .selectFrom("harness_items as earlier")
+                  .select("earlier.sequence")
+                  .whereRef("earlier.agent_key", "=", "candidate.agent_key")
+                  .whereRef("earlier.address", "=", "candidate.address")
+                  .where("earlier.status", "=", "unchecked")
+                  .whereRef("earlier.sequence", "<", "candidate.sequence"),
               ),
             ),
           )
-          .orderBy("item.sequence")
+          .orderBy("candidate.sequence")
           .limit(limit),
       ),
   });
-  const queueIncoming = Effect.fn(function* (
+  const storeUnchecked = Effect.fn(function* (
     address: MessageAddress,
     incoming: Incoming,
   ) {
-    const saved = yield* encodeJson(Incoming, incoming);
+    const encodedIncoming = yield* encodeJson(Incoming, incoming);
     const message =
       incoming.kind === "collectiveResult" ? undefined : incoming.message;
-    const identity =
+    const dedupeKey =
       incoming.kind === "collectiveResult"
         ? `result:${incoming.result.request.msgId}`
         : `message:${incoming.message.author.agentId}:${incoming.message.msgId}`;
@@ -156,15 +162,15 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         .insertInto("harness_items")
         .values({
           agent_key: agentKey,
-          identity,
+          identity: dedupeKey,
           token,
           address,
           kind: incoming.kind,
           author: message?.author.agentId ?? null,
           message_id: message?.msgId ?? null,
-          incoming: saved,
+          incoming: encodedIncoming,
           view: null,
-          status: "checking",
+          status: "unchecked",
         })
         .onConflict((conflict) =>
           conflict.columns(["agent_key", "identity"]).doNothing(),
@@ -180,34 +186,34 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         : yield* decodePage(inboxCursor, request.cursor);
     const rows = yield* SqlSchema.findAll({
       Request: Schema.Void,
-      Result: savedRow,
+      Result: entryRow,
       execute: () =>
         run(
-          storedItems()
+          inboxRows()
             .select(["sequence", "token", "address", "view"])
             .where("status", "=", "pending")
             .where("sequence", ">", position.after)
             .where("sequence", "<=", position.through)
             .orderBy("sequence")
-            .limit(51),
+            .limit(PAGE_SIZE + 1),
         ),
     })(undefined);
-    const items: InboxEntry[] = [];
+    const entries: InboxEntry[] = [];
     let bytes = 0;
     let after = position.after;
-    for (const row of rows.slice(0, 50)) {
+    for (const row of rows.slice(0, PAGE_SIZE)) {
       const size = Buffer.byteLength(row.view);
       if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }
-      const event = yield* decodeJson(InboxEvent, row.view);
-      items.push({ ...event, deliveryToken: row.token });
+      const stored = yield* decodeJson(StoredInboxEntry, row.view);
+      entries.push({ ...stored, deliveryToken: row.token });
       bytes += size;
       after = row.sequence;
     }
     return {
-      items,
-      ...(rows.length > items.length
+      entries,
+      ...(rows.length > entries.length
         ? {
             nextCursor: yield* encodePage(inboxCursor, {
               operation: "inbox",
@@ -218,32 +224,31 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         : {}),
     } satisfies InboxPage;
   });
-  const publish = Effect.fn(function* (
-    item: PendingItem,
+  const recordDecision = Effect.fn(function* (
+    unchecked: Unchecked,
     decision: IncomingDecision,
-    expired: boolean,
+    { expired }: { readonly expired: boolean },
   ) {
-    let view: string | undefined;
-    let event: InboxEvent | undefined;
+    let encodedEntry: string | undefined;
     if (decision.kind === "allowed" && !expired) {
-      event = {
-        address: item.address,
+      encodedEntry = yield* encodeJson(StoredInboxEntry, {
+        address: unchecked.address,
         item: decision.item,
         ...(decision.guidance === undefined
           ? {}
           : { guidance: decision.guidance }),
-      };
-      view = yield* encodeJson(InboxEvent, event);
+      });
       if (
-        Buffer.byteLength(view) > MAXIMUM_RUNTIME_ITEM_BYTES &&
+        Buffer.byteLength(encodedEntry) > MAXIMUM_RUNTIME_ITEM_BYTES &&
         decision.item.kind === "collectiveResult"
       ) {
-        event = { address: item.address, item: decision.item };
-        view = yield* encodeJson(InboxEvent, event);
+        encodedEntry = yield* encodeJson(StoredInboxEntry, {
+          address: unchecked.address,
+          item: decision.item,
+        });
       }
-      if (Buffer.byteLength(view) > MAXIMUM_RUNTIME_ITEM_BYTES) {
-        view = undefined;
-        event = undefined;
+      if (Buffer.byteLength(encodedEntry) > MAXIMUM_RUNTIME_ITEM_BYTES) {
+        encodedEntry = undefined;
       }
     }
     yield* run(
@@ -251,16 +256,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         .updateTable("harness_items")
         .set({
           incoming: null,
-          view: view ?? null,
-          status: view === undefined ? "withheld" : "pending",
+          view: encodedEntry ?? null,
+          status: encodedEntry === undefined ? "withheld" : "pending",
         })
         .where("agent_key", "=", agentKey)
-        .where("token", "=", item.token)
-        .where("status", "=", "checking"),
+        .where("token", "=", unchecked.token)
+        .where("status", "=", "unchecked"),
     );
     for (const permission of decision.visibility) {
       const visible =
-        !expired && view !== undefined && permission.visibleToAgent;
+        !expired && encodedEntry !== undefined && permission.visibleToAgent;
       yield* run(
         queries
           .insertInto("harness_visibility")
@@ -289,11 +294,10 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ),
       );
     }
-    return event;
   });
   const acknowledgeDelivery = Effect.fn(function* (token: DeliveryToken) {
     const rows = yield* run(
-      storedItems()
+      inboxRows()
         .select("status")
         .where("token", "=", token)
         .where("view", "is not", null),
@@ -306,7 +310,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     yield* run(
       queries
         .updateTable("harness_items")
-        .set({ status: "acknowledged" })
+        .set({ status: "delivered" })
         .where("agent_key", "=", agentKey)
         .where("token", "=", token)
         .where("status", "=", "pending"),
@@ -314,7 +318,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   });
   function head() {
     return run(
-      storedItems().select((eb) =>
+      inboxRows().select((eb) =>
         eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
       ),
     ).pipe(Effect.map((rows) => rows[0]?.head ?? 0));
@@ -322,8 +326,8 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   return {
     encodeCursor: encodePage,
     decodeCursor: decodePage,
-    queueIncoming: (address: MessageAddress, incoming: Incoming) =>
-      queueIncoming(address, incoming).pipe(
+    storeUnchecked: (address: MessageAddress, incoming: Incoming) =>
+      storeUnchecked(address, incoming).pipe(
         Effect.mapError(persistenceFailure),
       ),
     listInbox: (request?: typeof PaginatedRequest.Type) =>
@@ -344,36 +348,40 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               ),
         ),
       ),
-    pending: (limit: number) =>
-      pendingRows(limit).pipe(
+    unchecked: (limit: number) =>
+      uncheckedRows(limit).pipe(
         Effect.flatMap((rows) =>
           Effect.forEach(
             rows,
             (row) =>
               decodeJson(Incoming, row.incoming).pipe(
-                Effect.map((incoming): PendingItem => ({ ...row, incoming })),
+                Effect.map((incoming): Unchecked => ({ ...row, incoming })),
               ),
             { concurrency: 1 },
           ),
         ),
         Effect.mapError(persistenceFailure),
       ),
-    publish: (item: PendingItem, decision: IncomingDecision, expired = false) =>
-      publish(item, decision, expired).pipe(
+    recordDecision: (
+      unchecked: Unchecked,
+      decision: IncomingDecision,
+      { expired = false }: { readonly expired?: boolean } = {},
+    ) =>
+      recordDecision(unchecked, decision, { expired }).pipe(
         Effect.mapError(persistenceFailure),
       ),
-    retire: (token: DeliveryToken) =>
+    withholdExpired: (token: DeliveryToken) =>
       run(
         queries
           .updateTable("harness_items")
           .set({ incoming: null, status: "withheld" })
           .where("agent_key", "=", agentKey)
           .where("token", "=", token)
-          .where("status", "=", "checking"),
+          .where("status", "=", "unchecked"),
       ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
-    isRequestVisible: (requestId: MsgId) =>
+    isCollectiveRequestVisible: (requestId: MsgId) =>
       run(
-        storedItems()
+        inboxRows()
           .select("sequence")
           .where("kind", "=", "collectiveRequest")
           .where("message_id", "=", requestId)
@@ -402,9 +410,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ),
         { concurrency: 1 },
       ).pipe(Effect.mapError(persistenceFailure)),
-    historyView: (reference: MessageReference) =>
+    storedEntry: (reference: MessageReference) =>
       run(
-        storedItems()
+        inboxRows()
           .select("view")
           .where("author", "=", reference.authorAgentId)
           .where("message_id", "=", reference.msgId)
@@ -414,13 +422,13 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         Effect.flatMap((rows) =>
           rows[0]?.view == null
             ? Effect.succeed(undefined)
-            : decodeJson(InboxEvent, rows[0].view),
+            : decodeJson(StoredInboxEntry, rows[0].view),
         ),
         Effect.mapError(persistenceFailure),
       ),
-    resultHead: (address: string) =>
+    collectiveResultHead: (address: string) =>
       run(
-        storedItems()
+        inboxRows()
           .select((eb) =>
             eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
           )
@@ -431,7 +439,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         Effect.map((rows) => rows[0]?.head ?? 0),
         Effect.mapError(persistenceFailure),
       ),
-    resultPage: (
+    collectiveResultPage: (
       address: string,
       after: number,
       through: number,
@@ -439,10 +447,10 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     ) =>
       SqlSchema.findAll({
         Request: Schema.Void,
-        Result: savedRow,
+        Result: entryRow,
         execute: () =>
           run(
-            storedItems()
+            inboxRows()
               .select(["sequence", "token", "address", "view"])
               .where("address", "=", address)
               .where("sequence", ">", after)
@@ -457,28 +465,28 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           Effect.forEach(
             rows,
             (row) =>
-              decodeJson(InboxEvent, row.view).pipe(
-                Effect.map((event) => ({ ...row, event })),
+              decodeJson(StoredInboxEntry, row.view).pipe(
+                Effect.map((entry) => ({ ...row, entry })),
               ),
             { concurrency: 1 },
           ),
         ),
         Effect.mapError(persistenceFailure),
       ),
-    resultAddresses: (after = "") =>
+    collectiveResultAddresses: (after = "") =>
       SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ address: MessageAddress }),
         execute: () =>
           run(
-            storedItems()
+            inboxRows()
               .select("address")
               .distinct()
               .where("address", ">", after)
               .where("kind", "=", "collectiveResult")
               .where("view", "is not", null)
               .orderBy("address")
-              .limit(51),
+              .limit(PAGE_SIZE + 1),
           ),
       })(undefined).pipe(
         Effect.map((rows) => rows.map((row) => row.address)),
@@ -494,10 +502,10 @@ function persistenceFailure() {
 /** Binds cursor integrity and lifetime to this inbox independently of access control. */
 function encodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
-  value: A,
+  position: A,
   key: Uint8Array,
 ) {
-  return encodeJson(schema, value).pipe(
+  return encodeJson(schema, position).pipe(
     Effect.map((text) => {
       const payload = Encoding.encodeBase64Url(text);
       const signature = createHmac("sha256", key)
@@ -539,5 +547,5 @@ function decodeCursor<A, I>(
   );
 }
 
-/** History and catalog positions remain private to their owning process. */
-export { catalogCursor, historyCursor };
+/** History and conversation-list positions remain private to their owning process. */
+export { conversationsCursor, historyCursor };

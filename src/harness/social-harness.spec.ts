@@ -1,4 +1,4 @@
-/** @file SocialHarness sends, policy checks, the saved inbox and history, including across restarts. */
+/** @file SocialHarness sends, policy checks, the inbox and history, including across restarts. */
 
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -17,7 +17,7 @@ import {
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { InboxEntry } from "./message-format.js";
-import type { ReadHistoryResult } from "./social-harness.js";
+import type { HistoryPage } from "./social-harness.js";
 import {
   CollectiveRequest,
   CollectiveRequestMessage,
@@ -82,22 +82,22 @@ function receive(subject: Fixture, text: string, author?: AgentCard) {
   );
 }
 
-/** Waits for a delivery, then acknowledges every pending one. */
+/** Waits for a pending inbox entry, then acknowledges every pending one. */
 function acknowledgeNext(runtime: Runtime) {
-  return Effect.flatMap(waitForInbox(runtime), ({ items }) =>
+  return Effect.flatMap(waitForInbox(runtime), ({ entries }) =>
     Effect.forEach(
-      items,
+      entries,
       (entry) => runtime.harness.acknowledgeDelivery(entry.deliveryToken),
       { concurrency: 1 },
     ),
   );
 }
 
-/** Waits until the inbox holds `count` pending items across all its pages. */
+/** Waits until the inbox holds `count` pending entries across all its pages. */
 function waitForPending(runtime: Runtime, count: number) {
   return readInbox(runtime).pipe(
     Effect.repeat({
-      until: (items) => items.length === count,
+      until: (entries) => entries.length === count,
       schedule: Schedule.spaced("5 millis"),
     }),
     Effect.raceFirst(runtime.failed),
@@ -107,14 +107,14 @@ function waitForPending(runtime: Runtime, count: number) {
 
 function readInbox(runtime: Runtime) {
   return Effect.gen(function* () {
-    const items: InboxEntry[] = [];
+    const entries: InboxEntry[] = [];
     let page = yield* runtime.harness.listInbox();
-    items.push(...page.items);
+    entries.push(...page.entries);
     while (page.nextCursor !== undefined) {
       page = yield* runtime.harness.listInbox({ cursor: page.nextCursor });
-      items.push(...page.items);
+      entries.push(...page.entries);
     }
-    return items;
+    return entries;
   });
 }
 
@@ -183,10 +183,14 @@ function collectiveRequest(
 
 /**
  * Gives alice a conversation with a new peer `name` and returns its address.
- * A `live` conversation is one communication lists; a `result` conversation
- * holds only a saved result.
+ * A `live` conversation is one communication lists; a `collectiveResult`
+ * conversation holds only a collective result.
  */
-function hold(subject: Fixture, name: string, holding: "live" | "result") {
+function hold(
+  subject: Fixture,
+  name: string,
+  holding: "live" | "collectiveResult",
+) {
   return Effect.gen(function* () {
     const peer = yield* subject.addPeer(name);
     yield* holding === "live"
@@ -326,18 +330,18 @@ it("checks each conversation in order while another conversation progresses", ()
     yield* Deferred.await(entered);
     yield* receive(subject, "Second");
     yield* receive(subject, "Independent", subject.carol);
-    expect((yield* waitForInbox(runtime)).items).toMatchObject([
+    expect((yield* waitForInbox(runtime)).entries).toMatchObject([
       { address: carolAddress },
     ]);
     expect(assessed).toEqual(["First", "Independent"]);
     yield* Deferred.succeed(release, undefined);
     expect(
-      (yield* waitForInbox(runtime, 3)).items.map((item) => item.address),
+      (yield* waitForInbox(runtime, 3)).entries.map((entry) => entry.address),
     ).toEqual(["agent:bob", "agent:bob", "agent:carol"]);
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
-it("recovers an interrupted check and retains its published view after edits, acknowledgment and restart", () =>
+it("recovers an interrupted check and keeps its inbox entry after edits, delivery and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -365,33 +369,33 @@ it("recovers an interrupted check and retains its published view after edits, ac
         }),
       })
       .pipe(Scope.extend(resumedScope));
-    const [delivery] = (yield* waitForInbox(resumed)).items;
+    const [delivery] = (yield* waitForInbox(resumed)).entries;
     if (delivery === undefined) {
       return yield* Effect.dieMessage("Expected recovered delivery");
     }
-    const saved = {
+    const stored = {
       address: delivery.address,
       item: delivery.item,
       guidance: delivery.guidance,
     };
-    expect(saved.guidance).toBeDefined();
+    expect(stored.guidance).toBeDefined();
     yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
     yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
-    expect((yield* resumed.harness.listInbox()).items).toEqual([]);
+    expect((yield* resumed.harness.listInbox()).entries).toEqual([]);
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "received", ...saved }]);
+    ).toMatchObject([{ kind: "received", ...stored }]);
     yield* Scope.close(resumedScope, Exit.void);
     const reopened = yield* subject.open();
     expect(
       (yield* reopened.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "received", ...saved }]);
+    ).toMatchObject([{ kind: "received", ...stored }]);
     yield* subject.deliver({ kind: "message", message });
-    expect((yield* reopened.harness.listInbox()).items).toEqual([]);
+    expect((yield* reopened.harness.listInbox()).entries).toEqual([]);
   }));
 
-it("keeps an inbox page boundary while arrivals and acknowledgments change pending work", () =>
+it("keeps an inbox page boundary while arrivals and deliveries change what is pending", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -400,26 +404,26 @@ it("keeps an inbox page boundary while arrivals and acknowledgments change pendi
     }
     yield* waitForPending(runtime, 57);
     const first = yield* runtime.harness.listInbox();
-    expect(first.items).toHaveLength(50);
+    expect(first.entries).toHaveLength(50);
     if (first.nextCursor === undefined) {
       return yield* Effect.dieMessage("Expected inbox cursor");
     }
     const preview = yield* runtime.harness.listInbox({
       cursor: first.nextCursor,
     });
-    const acknowledged = preview.items[0];
-    if (acknowledged === undefined) {
+    const delivered = preview.entries[0];
+    if (delivered === undefined) {
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
-    yield* runtime.harness.acknowledgeDelivery(acknowledged.deliveryToken);
+    yield* runtime.harness.acknowledgeDelivery(delivered.deliveryToken);
     const later = yield* unanswered(subject);
     yield* subject.deliver(later);
     yield* waitForPending(runtime, 57);
     const remainder = yield* runtime.harness.listInbox({
       cursor: first.nextCursor,
     });
-    expect(remainder.items.map((item) => item.deliveryToken)).toEqual(
-      preview.items.slice(1).map((item) => item.deliveryToken),
+    expect(remainder.entries.map((entry) => entry.deliveryToken)).toEqual(
+      preview.entries.slice(1).map((entry) => entry.deliveryToken),
     );
     expect(remainder.nextCursor).toBeUndefined();
     expect(
@@ -439,7 +443,7 @@ it("withholds peer content from both the inbox and history", () =>
     expect((yield* waitForDecisions(runtime)).decisions).toMatchObject([
       { reason: "rule-violation", disposition: "withheld" },
     ]);
-    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toEqual([]);
@@ -459,7 +463,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
     expect(subject.submitted).toMatchObject([
       { content: [{ type: "text", text: withheldReply }] },
     ]);
-    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
   }));
 
 it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>
@@ -479,10 +483,10 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
         content: [{ type: "text", text: "Keep private information private." }],
       },
     ]);
-    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
   }));
 
-it("returns a waiting read at once when an item is already pending", () =>
+it("returns a waiting read at once when an entry is already pending", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -493,10 +497,10 @@ it("returns a waiting read at once when an item is already pending", () =>
       .listInbox({ wait: Duration.minutes(5) })
       .pipe(Effect.timeout("2 seconds"));
 
-    expect(page.items).toHaveLength(1);
+    expect(page.entries).toHaveLength(1);
   }));
 
-it("ends a waiting read as soon as an item arrives", () =>
+it("ends a waiting read as soon as an entry arrives", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -507,7 +511,7 @@ it("ends a waiting read as soon as an item arrives", () =>
     yield* receive(subject, "Arrived while waiting");
     const page = yield* Fiber.join(reading).pipe(Effect.timeout("10 seconds"));
 
-    expect(page.items).toMatchObject([
+    expect(page.entries).toMatchObject([
       {
         item: {
           message: {
@@ -527,10 +531,10 @@ it("returns an empty page when the wait ends with nothing pending", () =>
       wait: Duration.millis(50),
     });
 
-    expect(page.items).toEqual([]);
+    expect(page.entries).toEqual([]);
   }));
 
-it("rolls back policy decisions when publication fails and recovers both on restart", () =>
+it("rolls back a policy decision when it cannot be saved with its inbox entry and recovers both on restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -542,8 +546,8 @@ it("rolls back policy decisions when publication fails and recovers both on rest
         policy,
         decorateFirewall: (firewall) => ({
           ...firewall,
-          checkIncoming: (value, evidence) =>
-            firewall.checkIncoming(value, evidence).pipe(
+          checkIncoming: (incoming, evidence) =>
+            firewall.checkIncoming(incoming, evidence).pipe(
               Effect.map((decision) => ({
                 ...decision,
                 save: decision.save.pipe(
@@ -561,10 +565,10 @@ it("rolls back policy decisions when publication fails and recovers both on rest
     yield* receive(subject, "Publish atomically");
     expect((yield* runtime.failed.pipe(Effect.either))._tag).toBe("Left");
     expect((yield* runtime.firewall.readDecisions({})).decisions).toEqual([]);
-    expect((yield* runtime.harness.listInbox()).items).toEqual([]);
+    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
     yield* Scope.close(scope, Exit.void);
     const reopened = yield* subject.open({ policy });
-    expect((yield* waitForInbox(reopened)).items).toHaveLength(1);
+    expect((yield* waitForInbox(reopened)).entries).toHaveLength(1);
     expect((yield* reopened.firewall.readDecisions({})).decisions).toHaveLength(
       1,
     );
@@ -600,7 +604,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     });
   }));
 
-it("continues history through a fixed message and local-result boundary", () =>
+it("continues history through a fixed message and collective-result boundary", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -627,7 +631,7 @@ it("continues history through a fixed message and local-result boundary", () =>
     });
     expect(remaining.records.map((record) => record.kind)).toEqual([
       "sent",
-      "result",
+      "collectiveResult",
     ]);
     expect(remaining.nextCursor).toBeUndefined();
     expect(
@@ -640,7 +644,7 @@ it("continues history through a fixed message and local-result boundary", () =>
         .readHistory({ address: carolAddress, cursor: first.nextCursor })
         .pipe(Effect.flip)).reason,
     ).toBe("invalid-cursor");
-    const records: Array<ReadHistoryResult["records"][number]> = [];
+    const records: Array<HistoryPage["records"][number]> = [];
     let page = yield* runtime.harness.readHistory({ address: bobAddress });
     records.push(...page.records);
     while (page.nextCursor !== undefined) {
@@ -651,9 +655,9 @@ it("continues history through a fixed message and local-result boundary", () =>
       records.push(...page.records);
     }
     expect(records.filter((record) => record.kind === "sent")).toHaveLength(52);
-    expect(records.filter((record) => record.kind === "result")).toHaveLength(
-      2,
-    );
+    expect(
+      records.filter((record) => record.kind === "collectiveResult"),
+    ).toHaveLength(2);
   }));
 
 it("lists every conversation once in address order in pages of 50, with one that starts mid-way only when it sorts after the pages already read", () =>
@@ -663,7 +667,7 @@ it("lists every conversation once in address order in pages of 50, with one that
     const peer = fc.nat({ max: 199 }).map((index) => `peer-${index}`);
     const held = new Set<string>();
     for (let index = 0; index < 200; index += 7) {
-      held.add(yield* hold(subject, `peer-${index}`, "result"));
+      held.add(yield* hold(subject, `peer-${index}`, "collectiveResult"));
     }
     yield* waitForInbox(runtime, held.size);
     yield* forAll(
@@ -764,7 +768,7 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     yield* Deferred.await(entered);
     yield* runtime.firewall.updatePolicy({ remove: ["privacy"] });
     yield* Deferred.succeed(release, undefined);
-    const [entry] = (yield* waitForInbox(runtime)).items;
+    const [entry] = (yield* waitForInbox(runtime)).entries;
     expect(entry?.item).toMatchObject({
       kind: "collectiveResult",
       question: { kind: "withheld", reason: "rule-violation" },
@@ -786,7 +790,7 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     ).toEqual(new Set([before.activeRevision]));
   }));
 
-it("can respond to a presented collective request after acknowledgment and restart", () =>
+it("can respond to a presented collective request after delivery and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -914,7 +918,7 @@ it("reads a saved conversation's history at its canonical address, reports an un
     yield* acknowledgeNext(runtime);
     const saved: Record<string, readonly string[]> = {
       "agent:bob": ["sent"],
-      "agent:carol": ["result"],
+      "agent:carol": ["collectiveResult"],
       "group:alice,bob,carol": ["sent"],
     };
     const read = (address: MessageAddressInput) =>
@@ -980,7 +984,7 @@ it("uses the public reason of an invalid outcome without exposing the original r
       },
       sources: { request: original.message, responses: [invalid] },
     });
-    const [entry] = (yield* waitForInbox(runtime)).items;
+    const [entry] = (yield* waitForInbox(runtime)).entries;
     expect(entry?.item).toMatchObject({
       kind: "collectiveResult",
       outcomes: [{ outcome: { kind: "invalid", reason: "Expected a day" } }],

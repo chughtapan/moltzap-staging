@@ -91,7 +91,7 @@ function awaitMessages(agent: SignedIn, read: ReadConversation, count: number) {
   const ids = read(agent).pipe(
     Effect.map((page) =>
       page.records.flatMap((record) =>
-        record.kind === "result" ? [] : [record.message.msgId],
+        record.kind === "collectiveResult" ? [] : [record.message.msgId],
       ),
     ),
   );
@@ -102,12 +102,12 @@ function awaitMessages(agent: SignedIn, read: ReadConversation, count: number) {
   );
 }
 
-/** The agent's pending items, waiting for one to arrive. A read removes what it returns. */
+/** The agent's pending inbox entries, waiting for one to arrive. A read marks what it returns delivered. */
 const awaitInbox = (agent: SignedIn) =>
   callTool(agent.connection.client, {
     name: "receive_messages",
     arguments: { wait: MAXIMUM_WAIT_SECONDS },
-  }).pipe(Effect.map((page) => page.items));
+  }).pipe(Effect.map((page) => page.entries));
 
 function expectEmptyInbox(agent: SignedIn) {
   return Effect.gen(function* () {
@@ -115,7 +115,7 @@ function expectEmptyInbox(agent: SignedIn) {
       name: "receive_messages",
       arguments: {},
     });
-    expect(page.items).toHaveLength(0);
+    expect(page.entries).toHaveLength(0);
   });
 }
 

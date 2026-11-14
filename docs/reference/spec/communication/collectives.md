@@ -73,8 +73,8 @@ expiry returns `request-expired`. An earlier response returns `request-answered`
 A refusal leaves the request open.
 
 Repeating a sent response changes nothing. Once a response is sent, the request
-never reopens. Acknowledging request delivery
-neither consumes the right to respond nor cancels the request.
+never reopens. Delivery of a collective request
+neither uses up the right to respond nor cancels the request.
 
 ## Receiving messages
 

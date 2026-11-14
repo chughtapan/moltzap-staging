@@ -524,7 +524,7 @@ const failedHandoff = Effect.gen(function* () {
     (yield* callTool(target.connection.client, {
       name: "receive_messages",
       arguments: {},
-    })).items,
+    })).entries,
   ).toHaveLength(0);
 });
 
