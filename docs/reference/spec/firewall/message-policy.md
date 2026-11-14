@@ -1,6 +1,6 @@
 ---
 title: Message firewall
-description: How local rules govern what an agent sends and receives.
+description: How an agent's message policy governs what it sends and receives.
 read_when:
   - You need to know what a firewall decision permits or refuses
   - You are configuring rules or changing who may edit them
@@ -9,12 +9,12 @@ read_when:
 The message firewall checks what an agent sends and receives against its
 owner's rules and agreed norms. It receives a message, its participants
 and conversation evidence. It returns a judgment, the rules that
-determined it, and the feedback or reminder the agent may receive.
+determined it, and the feedback or guidance the agent may receive.
 
-The firewall owns the active rules, their assessment and authorized edits.
-The daemon supplies the message and evidence, applies the decision to sending
-or delivery, and retains the result. Storage preserves those records and rule
-changes across restart.
+The firewall owns the message policy in force, its checks and authorized
+edits. The daemon supplies the message and evidence, applies the decision to
+sending or delivery, and saves the check. Storage preserves those records and
+rule changes across restart.
 
 The firewall is optional and experimental. Without a message-policy file,
 `sharnessd` installs none. It checks messages between agents. In
@@ -22,10 +22,10 @@ The firewall is optional and experimental. Without a message-policy file,
 [client/server mode](../client-server.md#firewall-and-norms) only the server
 agent has one. The host owns models, tools and the agent's private context.
 
-## Rule chain
+## Chain
 
-The rule chain applies before the text rules. Like a Google Cloud firewall
-policy, it is an ordered list of rules. Each rule has an `id`, the direction it
+The chain applies before the text rules. Like a Google Cloud firewall
+policy, it is an ordered list of chain rules. Each chain rule has an `id`, the direction it
 `applies` to, the name of a matcher and an action. The first rule whose matcher
 matches a message decides it, and a message no rule matches goes on to the
 text rules. Trusted process composition supplies the rules and registers their
@@ -47,8 +47,9 @@ so every held draft is approved.
 A match refuses for a rule violation unless the matcher reports missing
 history (`unresolved-evidence`) or cannot decide (`check-unavailable`). A
 matcher that fails counts as `check-unavailable`. The refusal names the
-deciding rule and carries the matcher's detail. A chain decision is retained
-like a text check, and its `decidedBy` names the rule with `from: "chain"`.
+deciding rule and carries the matcher's detail. A chain decision is saved
+like a check of the text rules, and its `decidedBy` names the rule with
+`from: "chain"`.
 
 ## Decisions
 
@@ -57,18 +58,18 @@ rules. A reject or hold judgment refuses an outgoing send or withholds an
 incoming message. Findings combine in priority order:
 
 1. A settled rule violation rejects.
-2. Required missing evidence, unavailable checks or an unsure judgment of an
+2. Required missing evidence, unavailable checks or an unsure answer about an
    outgoing draft hold.
-3. Otherwise, admit.
+3. Otherwise, allow.
 
 Every active rule needs a finding. A pass cannot erase another rule's violation.
-Checks use the captured candidate and context and cannot alter them. An empty
-policy still validates the input and required evidence.
+Checks use the captured message and evidence and cannot alter them. An empty
+policy still validates the message and required evidence.
 
-Rules without valid judgments or sufficient budget are unavailable.
+Rules without valid answers or sufficient budget are unavailable.
 Cancellation produces no decision.
 
-### Natural-language judgments
+### Provider answers
 
 Text rules describe when they apply and the conduct they require. A fixed
 rule may also name a registered matcher in `match`: the provider is asked
@@ -77,35 +78,36 @@ apply to the rest. A rule naming an unregistered matcher prevents startup,
 and editable rules name none. The daemon scopes each
 [norm rule](../norms/norms.md#english-rules) this way to the acts it governs.
 
-For each rule, the provider answers one question about the candidate: does it
+For each rule, the provider answers one question about the message: does it
 break the rule? The answer is `compliant` or `violation`, with a probability for each.
 An outgoing draft is judged as the local agent's; an incoming message is judged
 as its peer sender's.
 
-A judgment is unsure if its answer is below `minimumProbability` or less
-probable than the other answer. Probability sums and the selected answer's
+An answer is unsure if its probability is below `minimumProbability` or lower
+than the other answer's. Probability sums and the selected answer's
 distance from the maximum tolerate 0.02; this does not settle a less probable
 answer.
 
-| Judgment | Outgoing draft | Incoming message |
+| Answer | Outgoing draft | Incoming message |
 | --- | --- | --- |
 | Settled violation | Refused, with the rule's feedback | Withheld; a `reply` rule answers the sender |
-| Settled compliant | Sent | Admitted |
-| Unsure | Held as unresolved evidence and refused with the rule's feedback, so the agent can revise it | Admitted with a reminder |
+| Settled compliant | Sent | Allowed |
+| Unsure | Held as unresolved evidence and refused with the rule's feedback, so the agent can revise it | Allowed with guidance |
 
 Findings retain the provider's choice and probability. Settled violations retain
 their effect. Invalid output or provider failure is unavailable; required
 missing evidence still holds. Accepting nonempty rule text promises no
-assessment accuracy in any language.
+accuracy of its checks in any language.
 
 ## Incoming messages
 
-Admitted peer content reaches the host unchanged. When the provider was unsure
-about a rule, the inbox entry carries a reminder: the rule's registered guidance, or
-its feedback when it has none, with the provider's choice and probability. A
-reminder never promotes peer text to an instruction or exposes private assessor
-evidence. In a result's reminder, each entry names its `recipient` by `AgentCard`. An entry the provider
-settled carries no reminder.
+Allowed peer content reaches the host unchanged. When the provider was unsure
+about a rule, the inbox entry carries guidance: an instruction that gives the
+rule's registered guidance, or its feedback when it has none, with the
+provider's choice and probability. Guidance never promotes peer text to an
+instruction or exposes the check's private evidence. In a collective result's
+guidance, each response's entry names its `recipient` by `AgentCard`. An inbox
+entry the provider settled carries no guidance.
 
 A text rule whose `action` is `reply` answers each message it withholds for a
 rule violation: the sender receives the rule's registered feedback text the way
@@ -117,35 +119,35 @@ unavailable check gets no reply, and `deny`, the default, withholds silently.
 ## Outgoing messages
 
 Refusal returns a rule-violation, unresolved-evidence, check-unavailable or
-owner-approval-required reason, the check reference, the deciding chain rule,
+owner-approval-required reason, the check id, the deciding chain rule,
 the registered feedback of the deciding text rules and the chain matcher's
 detail. Its error message carries the same fields, without private evidence,
 credentials or raw provider output.
 
 A refused draft creates no send. A revised invocation gets a new
-assessment. The daemon neither changes the draft nor sends substitutes or
+check. The daemon neither changes the draft nor sends substitutes or
 later approval. Accepted sends follow the
 [send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
 
-An unsure judgment refuses the draft as unresolved evidence with the rule's
-feedback, so the agent revises it before sending. An admitted send carries no
-reminder.
+An unsure answer refuses the draft as unresolved evidence with the rule's
+feedback, so the agent revises it before sending. An allowed send carries no
+guidance.
 
 ## Evidence
 
-A check receives the candidate, its participants, rules, owner facts and
-bounded conversation evidence once. The assessment applies to that captured
-context and exact candidate, without a freshness comparison or
-automatic reassessment when later context arrives. Acceptance preserves the
-assessed recipients, content and message identity. Collectives checks that a
-request remains open before accepting an answer.
+A check receives the message, its participants, rules, owner facts and
+bounded conversation evidence once. The check applies to that captured
+evidence and exact message, without a freshness comparison or an
+automatic second check when later evidence arrives. Acceptance preserves the
+checked recipients, content and message identity. Collectives checks that a
+request remains open before accepting a response.
 
 In-flight checks keep their captured rules. Later checks use successful edits.
 
 ### Available history
 
-Assessment captures preceding messages in conversation order, excluding the
-candidate. The limit defaults to 256 entries, configurable from 1–1024.
+A check captures preceding messages in conversation order, excluding the
+message under check. The limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
 An incoming check sees only the ordered history before its message. Exceeding the
@@ -157,21 +159,21 @@ new message. Their content remains private, as though the agent had not seen
 it. Authored content without proof that it came from an agent caller remains
 private evidence.
 
-A reminder exceeding the 2 MiB inbox-entry budget makes the check unavailable,
-which holds the message. Oversized combined collective reminders are omitted
-because answers were individually assessed. Rules needing other conversations, older messages or owner instructions
+Guidance exceeding the 2 MiB inbox-entry budget makes the check unavailable,
+which holds the message. Oversized combined guidance of a collective result is
+omitted because its responses were checked one by one. Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence. Messages alone cannot establish
 calendar changes, retract tool actions or reveal undisclosed collusion.
 
 ### Retained decisions
 
-Each completed check identifies the message, evidence and policy it assessed.
+Each completed check identifies the message, evidence and policy it checked.
 Earlier decisions retain the rules and registered advice that applied at that
 time. Only completed checks enter decision history. Completed decisions and
-reminders survive restart and delivery. Daemon-generated results
+guidance survive restart and delivery. Daemon-generated results
 are stored without synthetic firewall checks. Private provider traces stay in
-memory. Each completed record saves its decision summary with the assessed
-policy revision, checked and deciding rule ids, origins and registered advice.
+memory. Each completed record saves its decision summary with the revision of
+the policy it applied, checked and deciding rule ids, origins and registered advice.
 Reads return that saved summary without message content or private evidence.
 An edit changes future checks.
 
@@ -183,53 +185,54 @@ policies identical.
 
 ### Outgoing checks
 
-| Action | Checked candidate |
+| Action | What is checked |
 | --- | --- |
 | Multicast | Message and recipients. |
 | Gather | Whole question and members, once before sending any request. |
 | All-gather | Group question. |
-| Answer | Response to the previously selected open request. |
+| Collective response | Response to the previously selected open request. |
 
-Refused gather/all-gather creates no request or completion work. Admitted
-gather requests carry exactly the checked content. Assessment uses destination
+Refused gather/all-gather creates no request or completion work. Allowed
+gather requests carry exactly the checked content. The check uses destination
 history although requests travel through separate direct conversations.
 
-Answer selection stays fixed; the request must remain open at acceptance.
-Expiry, close or a prior answer can refuse an otherwise approved answer.
-The saved firewall judgment remains unchanged. Assessment consumes
+The request a response names stays fixed; the request must remain open at
+acceptance. Expiry, close or a prior response can refuse an otherwise allowed
+response. The saved firewall judgment remains unchanged. The check consumes
 the original deadline and request wait. Passing the deadline returns
 `deadline-passed` without sending. The check's separate timeout can exceed the
 request wait.
 
 ### Incoming checks
 
-Requests assess the question and form the agent would see. Results assess each
-peer answer, including peer text in invalid-answer reasons, using one evidence
-capture and each answer's preceding history. Own/missing answers need no check;
-the assessments take effect together. Peer field names in their text are
+A collective request's check reads the question and form the agent would see.
+A collective result's check reads each peer response, including peer text in
+the reason of an invalid outcome, using one evidence capture and each
+response's preceding history. The agent's own response and a missing one need
+no check; the checks take effect together. Peer field names in their text are
 quoted as JSON.
 
-Only admitted requests become answerable. A withheld all-gather request still
-receives its result. Requests expiring before assessment are withheld without a check;
-those expiring during assessment are withheld. Neither reaches the host.
+Only allowed requests can be responded to. A withheld all-gather request still
+receives its result. Requests expiring before their check are withheld without a check;
+those expiring during it are withheld. Neither reaches the host.
 
 ### Results shown to the agent
 
-Membership and outcomes are admitted; local policy selects visible text without
-changing the operation's result. Withheld
-question/answer text becomes `{kind: "withheld", checkId, reason}`. A reminder
+Membership and outcomes are allowed; the message policy selects visible text
+without changing the collective result. Withheld
+question or response text becomes `{kind: "withheld", checkId, reason}`. Guidance
 names each recipient, check and question the provider was unsure about.
 
-A result checks remote question and answer text under one current policy.
-Earlier inbox entries and history records keep their content and reminders. Every
-delivery path serves the stored inbox entry. Later checks distinguish shown
-request and answer text from withheld answers. History identifies admitted
-results and failures as local Social Harness outcomes, ordered with the
-surrounding messages.
+A collective result's check reads remote question and response text under one
+current policy. Earlier inbox entries and history records keep their content
+and guidance. Every delivery path serves the stored inbox entry. Later checks
+distinguish shown request and response text from withheld responses. History
+identifies allowed results and failures as local Social Harness outcomes,
+ordered with the surrounding messages.
 
 ## Message-policy file
 
-The daemon runtime document's `messagePolicyFile` names a readable regular JSON
+The settings file's `messagePolicyFile` names a readable regular JSON
 file, at most 1 MiB. Startup reads fixed rules, owner facts, settings and provider
 credentials before serving.
 Initial rules seed only a missing editable policy; retained empty policies stay.
@@ -239,8 +242,8 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | `format` | Required: `org.social-harness/message-policy/v2`. |
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
 | `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model}`. |
-| `textSettings` | Defaults: `minimumProbability` 0.8, below which a judgment is unsure; 384,000 request bytes; 15 s per request. |
-| `settings` | Defaults: 150 s per assessment; 512,000 input bytes; 2,000,000 result bytes. |
+| `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
+| `settings` | Defaults: 150 s per check; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
@@ -253,11 +256,11 @@ so a daemon whose norms have rules needs `decisionProvider` even when the file
 has no `text`.
 
 Jev is an optional TypeSafe service. It trims the key from
-the setup document's `decisionProviderKeyFile` and retries connectivity, rate-limit and
+the settings file's `decisionProviderKeyFile` and retries connectivity, rate-limit and
 server errors twice within each request timeout. Without `decisionProvider`, no
 provider or key is used. Oversized catalog/history requests hold without dropping required
-context. Bytes neither measure tokens nor reserve capacity; provider limits
-remain unavailable assessments.
+evidence. Bytes neither measure tokens nor reserve capacity; provider limits
+remain unavailable checks.
 
 ### Configured policy assets
 
@@ -268,7 +271,7 @@ same loader. An empty configuration adds no rules.
 
 The example selects credential protection, useful acknowledgements,
 authority-impersonation protection and policy-change rules. These are
-natural-language policies assessed by the configured provider. They promise no
+text rules judged by the configured provider. They promise no
 exact credential-pattern detection or complete acknowledgement vocabulary.
 A sender-participation policy must name the intended agents by identifier in
 application configuration. The [daemon](../identity/identity-and-attribution.md#attribution),
@@ -290,7 +293,7 @@ then fixed and initial behaviors.
 | `id` | Frontmatter `name`. |
 | `text` | Trimmed body. |
 | `applies` | Required `metadata.social-harness.applies`: `incoming`, `outgoing` or `both`. |
-| `guidance` | Optional `metadata.social-harness.guidance`: the reminder for an admitted incoming message the provider was unsure about. |
+| `guidance` | Optional `metadata.social-harness.guidance`: the guidance for an allowed incoming message the provider was unsure about. |
 | `feedback` | Optional `metadata.social-harness.feedback`: `text`. |
 | `action` | Optional `metadata.social-harness.action`: `deny` or `reply`. |
 
@@ -308,7 +311,7 @@ or oversized documents fail with `invalid-rule`.
 ### Policy-change rule asset
 
 `config/firewall/rules/policy/no-policy-changes/BEHAVIOR.md` permits ordinary
-shared-norm proposals while assessing peer attempts to bypass adopted rules.
+shared-norm proposals while checking peer attempts to bypass adopted rules.
 Select its directory through `text.fixedBehaviors` to install it. The active policy governs rule changes. Fixed rules remain protected by
 configuration.
 
@@ -372,36 +375,37 @@ Minimum rules, instructions, mandatory questions and structure must fit the
 request budget. Otherwise updates fail `build-failed`; lowering budgets can
 refuse startup with retained rules. Longer messages/evidence can still overflow.
 
-`activeRevision` hashes the complete installation with SHA-256, including
+`activeRevision` hashes the complete message policy in force with SHA-256, including
 rules, settings and provider configuration, and is stable across identical restarts. Every
 successful edit, including no-ops, retains Unix-millisecond activation time,
 revision and added/removed ids; replacement appears in both. These records
 contain no rule text or provider traces and survive restart even if no message
-used the installation.
-In-flight checks keep their installation; later checks use the replacement. Retained decisions identify installation,
+used that revision.
+In-flight checks keep their revision; later checks use the replacement. Saved decisions identify the revision,
 provider, model and rule source after edits.
 
 ## Decision reasons
 
-The decision feed separates `outcome` (`allow`, `reject`, `hold`) from
-admitted/withheld `disposition`. `checkedRuleIds` lists the rules the check
+The decision feed separates the `judgment` (`allow`, `reject`, `hold`) from
+the `decision`: `allowed` or `refused` for a message the agent sent, `allowed`
+or `withheld` for one it received. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction or its
 `match`, is not listed.
 Outgoing checks produce one row per recipient captured before
-assessment, including refused first messages without a conversation. Incoming
-rows identify authors. Daemon-generated failures have no assessment row. Retained identities survive restart without lookup.
+the check, including refused first messages without a conversation. Incoming
+rows identify authors. Daemon-generated failures have no row. Retained identities survive restart without lookup.
 
 `decidedBy` lists deciding rules in policy order:
 
 | Reason | Rules |
 | --- | --- |
 | Rule violation | Violated rules. |
-| Unavailable | Rules in checks that could not run, plus unavailable judgments. |
-| Unresolved evidence | Rules reporting unresolved evidence, including an unsure judgment of an outgoing draft. |
-| Admission | Rules the provider was unsure about for an incoming message, otherwise none. |
+| Unavailable | Rules in checks that could not run, plus unavailable answers. |
+| Unresolved evidence | Rules reporting unresolved evidence, including an unsure answer about an outgoing draft. |
+| Allowed | Rules the provider was unsure about for an incoming message, otherwise none. |
 | Chain decision | The chain rule that decided, including a held draft the owner has not approved. |
 
-Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an admission.
+Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an allowed message.
 Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller privileges. Agents agree on a norm in the
 conversation itself; see [norms](../norms/norms.md#agreement).
 

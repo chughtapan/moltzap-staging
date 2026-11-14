@@ -18,7 +18,7 @@ import {
 import { dirname, resolve } from "node:path";
 import { exactStruct } from "../encoding.js";
 import {
-  installedMessagePolicy,
+  loadedMessagePolicySchema,
   loadMessagePolicy,
   readPolicyCredential,
 } from "../firewall/index.js";
@@ -133,7 +133,7 @@ const commonFields = {
 
 const daemonSettings = exactStruct({
   ...commonFields,
-  messagePolicy: Schema.optional(installedMessagePolicy),
+  messagePolicy: Schema.optional(loadedMessagePolicySchema),
   norms: Schema.optional(installedNorms),
 }).pipe(
   Schema.filter(

@@ -13,7 +13,7 @@ booking office hours. For each member, the daemon reads every message as an
 act of a norm that member holds,
 checks the act against the conversation's ordered history, and applies the
 result through that member's
-[firewall rule chain](../firewall/message-policy.md#rule-chain). The
+[firewall chain](../firewall/message-policy.md#chain). The
 firewall knows each check only by its matcher's name, and the norms module
 supplies those matchers.
 
@@ -103,7 +103,7 @@ not asked about other messages. Each party judges with its own owner's facts.
 | Judgment | The agent's own act | A peer's act |
 | --- | --- | --- |
 | Breaks the rule | Refused, quoting the rule | Withheld; the peer receives `not-understood` with reason `rule-violation` and the rule, and the act changes nothing |
-| Unsure | Refused, quoting the rule, so the agent revises it | Admitted with the rule as a reminder |
+| Unsure | Refused, quoting the rule, so the agent revises it | Allowed with the rule as guidance |
 
 An agent can hold a norm with rules only under a message policy with a
 `decisionProvider`. Rules of a norm a member received through norm discovery

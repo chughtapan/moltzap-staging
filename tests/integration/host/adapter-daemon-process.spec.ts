@@ -368,8 +368,8 @@ it(
 
 /**
  * The host's agent is the server agent, the only one whose firewall checks
- * messages, so a client can send it a text that its firewall admits with a
- * reminder.
+ * messages, so a client can send it a text that its firewall allows with
+ * guidance.
  */
 const guardedBoundary = Effect.gen(function* () {
   const logLines: string[] = [];
@@ -529,7 +529,7 @@ const failedHandoff = Effect.gen(function* () {
 });
 
 it(
-  "preserves a firewall reminder, retained event identity and refusals through the real OpenClaw connection",
+  "preserves firewall guidance, retained event identity and refusals through the real OpenClaw connection",
   processTrace(guardedBoundary),
   300_000,
 );

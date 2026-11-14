@@ -34,9 +34,9 @@ import {
   FirewallPolicyError,
 } from "../firewall/index.js";
 import {
+  composedPolicy,
   decisionResponse,
   decisionState,
-  firewallOptions,
   makeHarnessFixture,
   waitForInbox,
 } from "./__tests__/service-fixtures.js";
@@ -313,7 +313,7 @@ it("checks each conversation in order while another conversation progresses", ()
     const assessed: string[] = [];
     const runtime = yield* subject.open({
       maximumConcurrentChecks: 2,
-      policy: firewallOptions({
+      policy: composedPolicy({
         decide: (request) =>
           Effect.gen(function* () {
             const text = decisionState(request.state).candidate.text;
@@ -348,7 +348,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     const entered = yield* Deferred.make<undefined>();
     yield* subject
       .open({
-        policy: firewallOptions({
+        policy: composedPolicy({
           decide: () =>
             Deferred.succeed(entered, undefined).pipe(
               Effect.zipRight(Effect.never),
@@ -363,7 +363,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     const resumedScope = yield* Scope.make();
     const resumed = yield* subject
       .open({
-        policy: firewallOptions({
+        policy: composedPolicy({
           decide: (request) =>
             Effect.succeed(decisionResponse(request, "compliant", 0.6)),
         }),
@@ -437,11 +437,11 @@ it("withholds peer content from both the inbox and history", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
-      policy: firewallOptions(violation),
+      policy: composedPolicy(violation),
     });
     yield* receive(subject, "Private peer content");
     expect((yield* waitForDecisions(runtime)).decisions).toMatchObject([
-      { reason: "rule-violation", disposition: "withheld" },
+      { reason: "rule-violation", decision: "withheld" },
     ]);
     expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
     expect(
@@ -456,7 +456,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
       withheldReply,
-      policy: firewallOptions(violation),
+      policy: composedPolicy(violation),
     });
     yield* receive(subject, "Private peer content");
     yield* waitForDecisions(runtime);
@@ -470,7 +470,7 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
-      policy: firewallOptions(violation, "reply"),
+      policy: composedPolicy(violation, "reply"),
     });
 
     yield* receive(subject, "Private peer content");
@@ -538,7 +538,7 @@ it("rolls back a policy decision when it cannot be saved with its inbox entry an
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
-    const policy = firewallOptions({
+    const policy = composedPolicy({
       decide: (request) => Effect.succeed(decisionResponse(request)),
     });
     const runtime = yield* subject
@@ -583,7 +583,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     const seen: DecisionRequest[] = [];
     const runtime = yield* subject.open({
       maximumHistoryRecords: 2,
-      policy: firewallOptions({
+      policy: composedPolicy({
         decide: (request) =>
           Effect.sync(() => {
             seen.push(request);
@@ -705,7 +705,7 @@ it("uses one captured policy for peer-controlled result text and trusts the loca
     const release = yield* Deferred.make<undefined>();
     const assessed: string[] = [];
     let completing = false;
-    const options = firewallOptions({
+    const options = composedPolicy({
       decide: (request) =>
         Effect.gen(function* () {
           if (completing) {
@@ -822,7 +822,7 @@ it("cannot respond to a collective request withheld from the agent", () =>
     const subject = yield* makeHarnessFixture;
 
     const runtime = yield* subject.open({
-      policy: firewallOptions(violation),
+      policy: composedPolicy(violation),
     });
     const original = yield* collectiveRequest(subject);
     yield* subject.deliver({
@@ -850,7 +850,7 @@ it("cancels an unaccepted draft and releases assessment capacity", () =>
     yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     let first = true;
-    const policy = firewallOptions({
+    const policy = composedPolicy({
       decide: (request) =>
         Effect.suspend(() => {
           if (first) {
@@ -883,7 +883,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
     const runtime = yield* subject.open({
-      policy: firewallOptions({
+      policy: composedPolicy({
         decide: (request) =>
           Deferred.succeed(entered, undefined).pipe(
             Effect.zipRight(Deferred.await(release)),
@@ -946,7 +946,7 @@ it("uses the public reason of an invalid outcome without exposing the original r
     const subject = yield* makeHarnessFixture;
     const seen: DecisionRequest[] = [];
     const runtime = yield* subject.open({
-      policy: firewallOptions({
+      policy: composedPolicy({
         decide: (request) =>
           Effect.sync(() => {
             seen.push(request);

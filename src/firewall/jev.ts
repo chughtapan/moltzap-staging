@@ -14,8 +14,8 @@ import {
   DecisionResponse,
 } from "./check.js";
 
-const origin = "https://api.typesafe.ai/v1/systemone";
-const providerName = "typesafe";
+const jevEndpoint = "https://api.typesafe.ai/v1/systemone";
+const jevVendorName = "typesafe";
 const maximumChoices = 255;
 /** Bounds response bodies retained in audits. */
 const maximumResponseBytes = 1_048_576;
@@ -41,16 +41,16 @@ const wireResponse = Schema.Struct({
 
 const prepareJevRequest = Effect.fn("MessagePolicy.Jev.prepareRequest")(
   function* (
-    input: DecisionRequest,
+    request: DecisionRequest,
     options: { readonly apiKey: Redacted.Redacted; readonly model: string },
   ) {
-    return yield* HttpClientRequest.post(origin).pipe(
+    return yield* HttpClientRequest.post(jevEndpoint).pipe(
       HttpClientRequest.bearerToken(options.apiKey),
       HttpClientRequest.bodyJson({
         model: options.model,
-        state: input.state,
+        state: request.state,
         questions: Object.fromEntries(
-          Object.entries(input.questions).map(([id, question]) => [
+          Object.entries(request.questions).map(([id, question]) => [
             id,
             {
               type: "choice",
@@ -106,7 +106,7 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
         response: raw,
       });
     }
-    const value = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
+    const wire = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
       onExcessProperty: "error",
     })(raw).pipe(
       Effect.catchTag("ParseError", () =>
@@ -119,10 +119,10 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
       ),
     );
     return new DecisionResponse({
-      provider: providerName,
-      model: value.model,
+      provider: jevVendorName,
+      model: wire.model,
       answers: Object.fromEntries(
-        Object.entries(value.answers).map(([id, answer]) => [
+        Object.entries(wire.answers).map(([id, answer]) => [
           id,
           {
             choice: answer.choice,
@@ -130,14 +130,14 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
           },
         ]),
       ),
-      usage: value.usage,
+      usage: wire.usage,
       raw,
     });
   },
 );
 
 const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
-  input: DecisionRequest,
+  request: DecisionRequest,
   options: {
     readonly apiKey: Redacted.Redacted;
     readonly model: string;
@@ -151,15 +151,15 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
     return yield* new DecisionProviderError({ reason: "configuration" });
   }
   if (
-    Object.values(input.questions).some(
+    Object.values(request.questions).some(
       (question) => Object.keys(question.criteria).length > maximumChoices,
     )
   ) {
     return yield* new DecisionProviderError({ reason: "budget" });
   }
   const client = yield* HttpClient.HttpClient;
-  const request = yield* prepareJevRequest(input, options);
-  const response = yield* client.execute(request).pipe(
+  const httpRequest = yield* prepareJevRequest(request, options);
+  const response = yield* client.execute(httpRequest).pipe(
     Effect.catchTags({
       RequestError: () =>
         Effect.fail(new DecisionProviderError({ reason: "transport" })),
@@ -181,7 +181,7 @@ export function makeJevDecisionProvider(options: {
 }): DecisionProvider {
   const configuration = Object.freeze({ ...options });
   return {
-    provider: providerName,
+    provider: jevVendorName,
     model: configuration.model,
     decide: (request) =>
       requestJev(request, configuration).pipe(

@@ -7,8 +7,8 @@ import {
   StoredInboxEntry,
 } from "@social-harness/social-harness";
 import {
+  type ComposedMessagePolicy,
   Firewall,
-  type FirewallOptions,
   Identity,
 } from "@social-harness/social-harness/service";
 import {
@@ -126,9 +126,9 @@ const evidence = { history: [], earlierHistoryOmitted: false, gaps: [] };
 
 const qualifyFirewall = (keys: readonly string[]) =>
   Effect.gen(function* () {
-    const options: FirewallOptions = {
+    const composed: ComposedMessagePolicy = {
       facts: [],
-      settings: {
+      limits: {
         timeoutMilliseconds: 5000,
         maximumInputBytes: 100000,
         maximumResultBytes: 100000,
@@ -139,7 +139,7 @@ const qualifyFirewall = (keys: readonly string[]) =>
           decide: () =>
             Effect.fail(new DecisionProviderError({ reason: "transport" })),
         },
-        settings: {
+        providerSettings: {
           minimumProbability: 0.5,
           maximumRequestBytes: 60000,
           timeoutMilliseconds: 5000,
@@ -164,7 +164,7 @@ const qualifyFirewall = (keys: readonly string[]) =>
         return yield* Effect.dieMessage("Expected an agent policy");
       }
       const identity = Identity.layer(key);
-      const configured = Firewall.layer(key, options).pipe(
+      const configured = Firewall.layer(key, composed).pipe(
         Layer.provide(identity),
       );
       const message = yield* Message.create({
@@ -200,7 +200,7 @@ const qualifyFirewall = (keys: readonly string[]) =>
         expect(yield* firewall.readDecisions({})).toEqual(saved);
       }).pipe(
         Effect.provide(
-          Firewall.layer(key, options).pipe(Layer.provide(identity)),
+          Firewall.layer(key, composed).pipe(Layer.provide(identity)),
         ),
       );
     }

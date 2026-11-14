@@ -7,7 +7,7 @@ import { scopedLive as it } from "@effect/vitest";
 import { Duration, Effect, Either, FastCheck as fc } from "effect";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import type { Chain, Matcher, MatchInput } from "./chain.js";
+import type { Chain, Matcher, MessageToMatch } from "./chain.js";
 import {
   always,
   evidence,
@@ -21,7 +21,7 @@ import {
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
 import { FirewallPolicyError, type TextRule } from "./rules.js";
-import { Firewall, type FirewallOptions } from "./service.js";
+import { type ComposedMessagePolicy, Firewall } from "./service.js";
 
 const initial = {
   id: "brief",
@@ -43,7 +43,7 @@ const edits = fc.record({
     { maxLength: 3 },
   ),
 });
-/** A chain's rules, each naming the matcher that matches every message or the one that matches none. */
+/** A chain's chain rules, each naming the matcher that matches every message or the one that matches none. */
 const chainRules = fc
   .array(
     fc.record({
@@ -67,7 +67,7 @@ const chainRules = fc
 /** What a matcher reports with a match: a detail, and its reason when that is not a rule violation. */
 const matchReport = fc.record(
   {
-    refusal: fc.constantFrom<"unresolved-evidence" | "check-unavailable">(
+    reason: fc.constantFrom<"unresolved-evidence" | "check-unavailable">(
       "unresolved-evidence",
       "check-unavailable",
     ),
@@ -163,7 +163,7 @@ describe("Firewall.readDecisions", () => {
       expect(saved).toMatchObject([
         {
           reason: "rule-violation",
-          disposition: "withheld",
+          decision: "refused",
           peer: peer("bob", 2),
           decidedBy: [
             {
@@ -287,7 +287,7 @@ describe("Firewall.checkOutgoing", () => {
 describe("Firewall.updatePolicy", () => {
   it("preserves the policy when the host refuses an update", () =>
     Effect.gen(function* () {
-      const configuration: FirewallOptions = {
+      const configuration: ComposedMessagePolicy = {
         ...policy([initial], [privacy]),
         approvePolicyUpdate: () =>
           Effect.fail(new FirewallPolicyError({ reason: "approval-refused" })),
@@ -453,12 +453,12 @@ describe("Firewall.layer", () => {
   );
 });
 
-describe("Firewall rule chain actions", () => {
+describe("Firewall chain actions", () => {
   it.prop(
     "decides a message by the first rule for its direction whose matcher matches, and leaves a message no rule matches to the text rules",
     [
       chainRules,
-      fc.constantFrom<MatchInput["direction"]>("incoming", "outgoing"),
+      fc.constantFrom<MessageToMatch["direction"]>("incoming", "outgoing"),
     ],
     ([rules, direction]) =>
       withFirewall(
@@ -513,7 +513,7 @@ describe("Firewall rule chain actions", () => {
               decision.kind === "refused" ? decision.refusal : undefined;
 
             expect(refusal).toMatchObject({
-              refusal: report.refusal ?? "rule-violation",
+              refusal: report.reason ?? "rule-violation",
               rule: "refuse-reported",
               feedback: [],
             });
@@ -568,7 +568,7 @@ describe("Firewall rule chain actions", () => {
     }));
 });
 
-describe("Firewall rule chain replies and holds", () => {
+describe("Firewall chain replies and holds", () => {
   it.prop(
     "sends its matcher's reply to the sender of a message a reply rule withholds, and nothing for a deny rule",
     [replyCase],

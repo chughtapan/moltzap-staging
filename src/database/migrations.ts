@@ -75,7 +75,7 @@ const hostSchema = (sequence: string) =>
     input TEXT NOT NULL,
     result TEXT NOT NULL,
     decided_at BIGINT NOT NULL,
-    disposition TEXT NOT NULL CHECK(disposition IN ('admitted','withheld')),
+    disposition TEXT NOT NULL CHECK(disposition IN ('allowed','refused','withheld')),
     UNIQUE(agent_key, check_id)
   )`);
     yield* sql`CREATE TABLE firewall_policy (

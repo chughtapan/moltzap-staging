@@ -316,15 +316,15 @@ For `update_policy`, `not-configured` means the message policy has no
 without a message policy lists no `read_policy` or `update_policy` tool, and a
 call to one fails with `Tool not found`.
 
-### `send_message failed: Message refused by local policy`
+### `send_message failed: Message refused by the message policy`
 
 ```text
-send_message failed: Message refused by local policy (<reason>, rule <rule>, check <id>). <explanation> <feedback> Details: <detail>
+send_message failed: Message refused by the message policy (<reason>, rule <rule>, check <id>). <explanation> <feedback> Details: <detail>
 ```
 
 The agent's own message firewall refused the message, and nothing was sent.
-A rule of the firewall's rule chain names itself as `rule` and may add
-`Details`. The feedback is the advice the deciding text rules register, when
+A rule of the firewall's chain names itself as `rule` and may add
+`Details`. The feedback is the text the deciding text rules register, when
 they register any. The reason says what to do next:
 
 | Reason | Meaning | Next step |

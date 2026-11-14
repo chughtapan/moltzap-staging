@@ -25,7 +25,7 @@ import {
   LocalGuidance,
   PermittedItem,
   policyReadSchema,
-  policyUpdateResultSchema,
+  policyRevisionSchema,
   policyUpdateSchema,
 } from "../firewall/index.js";
 import { AgentId, AgentName } from "../identity.js";
@@ -489,13 +489,13 @@ export const toolDefinitions = {
     description:
       "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
-    output: policyUpdateResultSchema,
+    output: policyRevisionSchema,
     annotations: { readOnlyHint: false, openWorldHint: false },
   },
   read_firewall_decisions: {
     failure: policyFails,
     description:
-      "Read completed firewall decision summaries since inclusive Unix milliseconds. Summaries include the reason and registered advice without message content or private model evidence.",
+      "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the check's judgment (allow, reject or hold), the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
     annotations: read,
