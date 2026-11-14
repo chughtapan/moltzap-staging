@@ -5,7 +5,7 @@ import { scopedLive as it } from "@effect/vitest";
 import { Identity } from "@social-harness/social-harness/service";
 import {
   databaseConnection,
-  getOrCreateOwnedAgent,
+  getOrCreateOwnedAgentKey,
 } from "@social-harness/social-harness/test";
 import { Context, Effect, Exit, Layer } from "effect";
 import { expect } from "vitest";
@@ -28,7 +28,7 @@ it(
         yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
         SqlClient.SqlClient,
       );
-      const provision = getOrCreateOwnedAgent(owner).pipe(
+      const provision = getOrCreateOwnedAgentKey(owner).pipe(
         Effect.provideService(SqlClient.SqlClient, runtime),
       );
       const agentKeys = yield* Effect.all(
@@ -61,7 +61,7 @@ it(
         yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
         SqlClient.SqlClient,
       );
-      const provision = getOrCreateOwnedAgent(owner).pipe(
+      const provision = getOrCreateOwnedAgentKey(owner).pipe(
         Effect.provideService(SqlClient.SqlClient, runtime),
       );
       expect(Exit.isFailure(yield* provision.pipe(Effect.exit))).toBeTruthy();

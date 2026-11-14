@@ -1,7 +1,7 @@
 /**
  * @file A daemon process composed exactly as `sharnessd`, whose text rules
  * the marked provider judges. Its message policy and norms come from the
- * settings document the fixture wrote; every `SHARNESS_*` setting is read as
+ * settings file the fixture wrote; every `SHARNESS_*` setting is read as
  * `sharnessd` reads it.
  */
 

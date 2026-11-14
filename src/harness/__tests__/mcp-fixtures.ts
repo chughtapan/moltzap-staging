@@ -77,7 +77,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const callbackClient = yield* Layer.build(webhookHttpClientLayer);
-  const webhook = yield* makeWebhookEvents(database.directory).pipe(
+  const subscription = yield* makeWebhookEvents(database.directory).pipe(
     Effect.provideService(
       HttpClient.HttpClient,
       Context.get(callbackClient, HttpClient.HttpClient),
@@ -87,10 +87,10 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   const stopped = yield* Deferred.make<undefined>();
   const agentApp = yield* makeAgentMcpApp({
-    webhook,
+    subscription,
     stopped,
     hideCollectives: options.hideCollectives ?? false,
-    serverAgent: Option.fromNullable(options.serverAgent),
+    serverAgentAddress: Option.fromNullable(options.serverAgent),
     implementation: { name: "mcp-contract-test", version: "1" },
   }).pipe(
     Effect.provideService(SocialHarness, harness),

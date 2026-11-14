@@ -1,7 +1,7 @@
 # Daemon image
 
 Run the image's installed `sharnessd` with a prepared SQL database, its encryption
-key and a private runtime settings file. One daemon serves every owner's agent
+key and a private settings file. One daemon serves every owner's agent
 through one MCP endpoint, on SQLite or PostgreSQL. PostgreSQL adds row-level
 security between agents. Deployment prepares schema before startup and owns
 manual image upgrades.
@@ -21,7 +21,7 @@ docker run --rm --network none \
   "ghcr.io/social-harness/daemon:<version>" --help
 ```
 
-Supply `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` in `daemon.env`. Mount the settings document and its
+Supply `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` in `daemon.env`. Mount the settings file and its
 referenced policy and credential files read-only. For SQLite, put the prepared
 database under `/var/lib/social-harness` on a persistent mount writable by uid
 1000.
@@ -49,7 +49,7 @@ state when replacing it.
 
 A local agent Pod can run the daemon as a native sidecar (`restartPolicy:
 Always` under `initContainers`). Mount the prepared database on its persistent
-volume and private runtime settings from a Secret. Set the same three daemon
+volume and the private settings file from a Secret. Set the same three daemon
 environment variables as above. PostgreSQL runtime credentials need data access;
 separate deployment credentials prepare schema before the daemon starts.
 

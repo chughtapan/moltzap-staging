@@ -1,6 +1,6 @@
 ---
 title: Daemon service
-description: Runtime settings, process ownership and container setup for the agent daemon.
+description: Settings, process ownership and container setup for the agent daemon.
 read_when:
   - You are configuring or starting an agent daemon
   - You are setting up its container
@@ -18,8 +18,8 @@ shows, and deployment owns schema changes and manual release upgrades. See the
 
 One daemon process retains each agent's firewall and communication
 resources. An authenticated request borrows the MCP app of its owner's agent.
-Disconnecting a client does not stop incoming checks, collective work or
-webhook retries. A process restart restores agents from SQL.
+Disconnecting a host does not stop incoming checks, collective work or
+wake-up retries. A daemon restart restores agents from SQL.
 
 Run one replica. Durable SQL state preserves recovery across restarts; it does
 not coordinate multiple daemon replicas.
@@ -28,14 +28,14 @@ not coordinate multiple daemon replicas.
 
 Generic OpenClaw and NanoClaw images install their channels from the same
 workspace commit as the daemon image. Each image runs its installed code.
-The daemon runs in its own container and mounts its private runtime settings,
+The daemon runs in its own container and mounts its private settings file,
 database access and persistent state. OpenClaw loads its bundled channel from
 `/opt/social-harness/node_modules/@social-harness/openclaw-channel`.
 
 The host starts after the daemon listens and connects through `SHARNESS_MCP_URL`.
 For a local sidecar, both containers share a network namespace and use loopback.
 The host reads its private bearer file through `SHARNESS_MCP_CREDENTIAL_FILE`;
-the daemon's runtime settings supply the matching bearer. The host needs no
+the daemon's settings supply the matching bearer. The host needs no
 database access.
 
 Listening establishes endpoint availability. Agent restoration continues

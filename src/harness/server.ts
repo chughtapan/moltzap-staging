@@ -45,15 +45,15 @@ import { limitResponseStream } from "./http.js";
 import { InboxError, validationIssues } from "./message-format.js";
 import { SocialHarness } from "./social-harness.js";
 
-interface AgentServerSettings {
-  readonly webhook: HarnessWebhookEvents;
+interface AgentMcpAppSettings {
+  readonly subscription: HarnessWebhookEvents;
   /** Leaves collective requests and responses out of send_message, which then sends text only. */
   readonly hideCollectives: boolean;
   /**
    * Set when this agent is a client in client/server mode: the address of the
    * server agent, the only agent it exchanges messages with.
    */
-  readonly serverAgent: Option.Option<MessageAddressInput>;
+  readonly serverAgentAddress: Option.Option<MessageAddressInput>;
   readonly stopped: Deferred.Deferred<undefined>;
   readonly implementation: { readonly name: string; readonly version: string };
 }
@@ -65,28 +65,30 @@ type Harness = Context.Tag.Service<typeof SocialHarness>;
  * which every request, and every stream still open, gets 503.
  */
 export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
-  settings: AgentServerSettings,
+  settings: AgentMcpAppSettings,
 ) {
   const harness = yield* SocialHarness;
   const firewall = yield* Firewall;
-  const server = yield* McpServer.make;
-  server.events.current = inboxEvents(settings.webhook);
+  const mcp = yield* McpServer.make;
+  mcp.events.current = inboxEvents(settings.subscription);
   yield* Effect.forEach(
     [
-      yield* statusTool(settings.webhook),
-      ...Option.match(settings.serverAgent, {
+      yield* statusTool(settings.subscription),
+      ...Option.match(settings.serverAgentAddress, {
         onNone: () => peerTools(harness, firewall, settings),
-        onSome: (serverAgent) => clientTools(harness, serverAgent),
+        onSome: (serverAgentAddress) =>
+          clientTools(harness, serverAgentAddress),
       }),
-      ...Option.toArray(yield* Effect.serviceOption(HeldNorms)).map((norms) =>
-        normsTool(norms, Option.isSome(settings.serverAgent)),
+      ...Option.toArray(yield* Effect.serviceOption(HeldNorms)).map(
+        (heldNorms) =>
+          normsTool(heldNorms, Option.isSome(settings.serverAgentAddress)),
       ),
     ],
-    server.addTool,
+    mcp.addTool,
     { concurrency: 1, discard: true },
   );
   const app = yield* makeHttpApp(settings.implementation).pipe(
-    Effect.provideService(McpServer, server),
+    Effect.provideService(McpServer, mcp),
   );
   const stopped = Deferred.await(settings.stopped);
   const unavailable = stopped.pipe(
@@ -103,11 +105,11 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   );
 });
 
-/** The tools of a peer: it addresses any agent and owns its message policy. */
+/** The tools of a peer and of the server agent: each addresses any agent and owns its message policy. */
 function peerTools(
   harness: Harness,
   firewall: Context.Tag.Service<typeof Firewall>,
-  settings: Pick<AgentServerSettings, "hideCollectives">,
+  settings: Pick<AgentMcpAppSettings, "hideCollectives">,
 ) {
   const policyConfigured = firewall
     .readPolicy()
@@ -156,16 +158,20 @@ function peerTools(
  * The tools of a client in client/server mode. It sends to and reads its
  * conversation with the server agent, and names neither.
  */
-function clientTools(harness: Harness, serverAgent: MessageAddressInput) {
+function clientTools(
+  harness: Harness,
+  serverAgentAddress: MessageAddressInput,
+) {
   return [
     sendTool(clientToolDefinitions.send_message, ({ text }) =>
-      harness.send({ to: serverAgent, text }),
+      harness.send({ to: serverAgentAddress, text }),
     ),
     receiveTool(harness),
     bind({
       name: "read_conversation",
       definition: clientToolDefinitions.read_conversation,
-      execute: (page) => harness.readHistory({ ...page, address: serverAgent }),
+      execute: (page) =>
+        harness.readHistory({ ...page, address: serverAgentAddress }),
     }),
   ];
 }
@@ -212,13 +218,13 @@ function receiveTool(harness: Harness) {
   });
 }
 
-function statusTool(webhook: HarnessWebhookEvents) {
+function statusTool(subscription: HarnessWebhookEvents) {
   return Effect.map(Identity, (identity) =>
     bind({
       name: "status",
       definition: toolDefinitions.status,
       execute: () =>
-        Effect.map(webhook.status, (status) => ({
+        Effect.map(subscription.status, (status) => ({
           agentId: identity.me.agentId,
           agentName: identity.me.agentName,
           webhook: status,
@@ -229,7 +235,7 @@ function statusTool(webhook: HarnessWebhookEvents) {
 
 /** `read_norms` lists the norms held: this agent's, or for a client the server agent's. */
 function normsTool(
-  norms: Context.Tag.Service<typeof HeldNorms>,
+  heldNorms: Context.Tag.Service<typeof HeldNorms>,
   forClient: boolean,
 ) {
   return bind({
@@ -238,7 +244,7 @@ function normsTool(
       ? clientToolDefinitions.read_norms
       : toolDefinitions.read_norms,
     execute: () =>
-      norms.read().pipe(
+      heldNorms.read().pipe(
         Effect.map((held) => ({
           norms: held.map((norm) => ({
             name: norm.name,
@@ -293,13 +299,13 @@ function bind<A, I, B, J>(
  * encoded with its output, and a failure is worded by `failure`.
  */
 function bindWith<A, I, B, J, E>(
-  options: Binding<A, I, B, J, E> & {
+  binding: Binding<A, I, B, J, E> & {
     readonly failure: (error: E) => ProtocolError;
   },
 ) {
-  const { name, definition, execute, failure, visible } = options;
+  const { name, definition, execute, failure, visible } = binding;
   const unexpected =
-    options.unexpected ??
+    binding.unexpected ??
     new ProtocolError(
       -32603,
       "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
@@ -364,7 +370,7 @@ function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
   };
 }
 
-/** Equivalent single-item tuple notation also supports native clients using draft-07 validators. */
+/** Equivalent single-item tuple notation also supports hosts whose validators use draft-07. */
 function openObjects(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(openObjects);
@@ -398,11 +404,11 @@ function openObjects(value: unknown): unknown {
 }
 
 /**
- * The one event a host can follow: a wake-up saying how many inbox items
- * wait. A host subscribes a webhook for it, and reads the items themselves
- * with `receive_messages`.
+ * The one event a host can follow: a wake-up saying how many inbox entries
+ * are pending. A host subscribes a callback URL for it, and reads the entries
+ * themselves with `receive_messages`.
  */
-function inboxEvents(webhook: HarnessWebhookEvents) {
+function inboxEvents(subscription: HarnessWebhookEvents) {
   const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
     Schema.decodeUnknown(schema)(input).pipe(
       Effect.catchTag("ParseError", () =>
@@ -425,12 +431,12 @@ function inboxEvents(webhook: HarnessWebhookEvents) {
           (input) => input.delivery.mode === "webhook",
           () => new ProtocolError(-32602, "Unsupported delivery mode"),
         ),
-        Effect.flatMap(webhook.subscribe),
+        Effect.flatMap(subscription.subscribe),
       ),
     unsubscribe: (raw: unknown) =>
       decode(eventUnsubscribeInput, raw).pipe(
         Effect.flatMap(onlyInboxPending),
-        Effect.flatMap(webhook.unsubscribe),
+        Effect.flatMap(subscription.unsubscribe),
         Effect.as({}),
       ),
   };

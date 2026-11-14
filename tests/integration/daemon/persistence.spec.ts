@@ -14,7 +14,7 @@ import {
 import {
   databaseConnection,
   DecisionProviderError,
-  getOrCreateOwnedAgent,
+  getOrCreateOwnedAgentKey,
   makeInbox,
   withAgentTransaction,
 } from "@social-harness/social-harness/test";
@@ -41,8 +41,11 @@ const cardOf = (agentKey: string) =>
 const qualifyTenants = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const owner = { issuer: "https://issuer.example", subject: "first" };
-  const first = yield* getOrCreateOwnedAgent(owner);
-  const second = yield* getOrCreateOwnedAgent({ ...owner, subject: "second" });
+  const first = yield* getOrCreateOwnedAgentKey(owner);
+  const second = yield* getOrCreateOwnedAgentKey({
+    ...owner,
+    subject: "second",
+  });
   const role = yield* sql<{
     readonly rolsuper: boolean;
     readonly rolbypassrls: boolean;
@@ -58,7 +61,7 @@ const qualifyTenants = Effect.gen(function* () {
     ),
   ).pipe(Effect.exit);
   expect(Exit.isFailure(interrupted)).toBeTruthy();
-  expect(yield* getOrCreateOwnedAgent(owner)).toEqual(first);
+  expect(yield* getOrCreateOwnedAgentKey(owner)).toEqual(first);
   expect(yield* cardOf(first)).toEqual(before);
   return [first, second];
 });

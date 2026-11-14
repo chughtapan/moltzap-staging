@@ -89,7 +89,7 @@ export SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/daemon/mcp-credential"
 Expected result: the command prints nothing and exports both values for
 processes started from this shell.
 
-The URL's port must match `port` in the daemon's settings document, which has
+The URL's port must match `port` in the daemon's settings file, which has
 no default. For a daemon on another machine, use its HTTPS MCP URL. The file
 holds the bearer the plugin presents on every request, and the daemon chooses
 the agent from it. The plugin reads the file once and does not renew an OAuth

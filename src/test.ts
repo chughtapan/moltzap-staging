@@ -18,4 +18,4 @@ export { withAgentTransaction } from "./database/index.js";
 /** Process qualification persists deliveries through the daemon inbox. */
 export { makeInbox } from "./harness/inbox.js";
 /** Creates agents for owners the way the daemon does. */
-export { getOrCreateOwnedAgent } from "./harness/ownership.js";
+export { getOrCreateOwnedAgentKey } from "./harness/ownership.js";

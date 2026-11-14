@@ -15,25 +15,25 @@ conversations, inbox and firewall policy in SQLite or PostgreSQL.
 
 Installation prepares the database schema and encryption metadata before the
 daemon starts. `sharnessd` validates the existing schema and key, reads its
-runtime settings file, then serves MCP. It does not install releases or migrate
+settings file, then serves MCP. It does not install releases or migrate
 the database. Deployment owns database preparation and manual upgrades.
 
 Startup requires:
 
-| Environment setting | Accepted value |
+| Environment variable | Accepted value |
 | --- | --- |
 | `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
-| `SHARNESS_CONFIG_FILE` | Path to the private runtime settings JSON document |
+| `SHARNESS_CONFIG_FILE` | Path to the private settings file |
 | `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
-Start the configured service with `sharnessd`. Standard `OTEL_*` environment
-settings configure tracing. A missing or invalid settings file or a database
+Start the daemon with `sharnessd`. Standard `OTEL_*` environment
+variables configure tracing. A missing or invalid settings file or a database
 that has not been prepared refuses startup.
-PostgreSQL runtime credentials need data access; schema changes require
-separate deployment credentials. Runtime startup does not modify schema or
+The daemon's PostgreSQL credentials need data access; schema changes require
+separate deployment credentials. Startup does not modify schema or
 encryption metadata.
 
-The runtime JSON document takes these properties. Unknown properties are refused.
+The settings file is a JSON document that takes these properties. Unknown properties are refused.
 
 | Property | Requirement/default |
 | --- | --- |
@@ -42,13 +42,13 @@ The runtime JSON document takes these properties. Unknown properties are refused
 | `authentication` | Required local bearer or OAuth configuration, below |
 | `serverAgentName` | Optional name of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
 | `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one. Refused with OAuth authentication |
-| `messagePolicyFile` | Optional policy file, resolved relative to the runtime document |
+| `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
-| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the runtime document. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
+| `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
-are read at startup. Keep the runtime document and its referenced files
+are read at startup. Keep the settings file and the files it names
 available and private. Restart to activate changes. Each agent retains its own
 editable rules in SQL. A saved agent keeps its name; changing `agentName`
 afterwards refuses startup.
@@ -108,7 +108,7 @@ admitted MCP request creates that owner's
 select the same one. OAuth setup itself creates no owner or agent. A host
 that runs unattended presents a token the identity provider issued to it, and
 the daemon treats it like any other.
-An admitted stream closes when its token expires; clients renew their
+An admitted stream closes when its token expires; hosts renew their
 authorization before reconnecting.
 
 ### Recovery
@@ -149,13 +149,13 @@ agent. Every operation uses its selected agent, and PostgreSQL also enforces
 row policies on scoped transactions. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
 stores everything as it was written, including the signing secret of a
-webhook subscription. The daemon's operator administers the database and can
+subscription. The daemon's operator administers the database and can
 read what it stores, so protect it as you would the messages themselves.
 
 ## MCP compatibility
 
 Serve MCP `2026-07-28` over Streamable HTTP, also negotiating older revisions
-supported by the server. Tool discovery publishes input and output schemas
+supported by the daemon. Tool discovery publishes input and output schemas
 using JSON Schema 2020-12.
 
 ## MCP interface
