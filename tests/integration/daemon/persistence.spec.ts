@@ -16,7 +16,7 @@ import {
   DecisionProviderError,
   getOrCreateOwnedAgentKey,
   makeInbox,
-  withAgentTransaction,
+  withAgentRows,
 } from "@social-harness/social-harness/test";
 import { Context, Effect, Exit, Layer, Schema } from "effect";
 import { randomBytes } from "node:crypto";
@@ -54,9 +54,9 @@ const qualifyTenants = Effect.gen(function* () {
   expect(role[0]?.rolsuper).toBeFalsy();
   expect(role[0]?.rolbypassrls).toBeFalsy();
   const before = yield* cardOf(first);
-  const interrupted = yield* withAgentTransaction(
+  const interrupted = yield* withAgentRows(
     first,
-    sql`UPDATE agent_profiles SET agent_name='rolled-back' WHERE agent_key=${first}`.pipe(
+    sql`UPDATE agent_cards SET agent_name='rolled-back' WHERE agent_key=${first}`.pipe(
       Effect.zipRight(Effect.fail("rollback")),
     ),
   ).pipe(Effect.exit);
@@ -70,9 +70,9 @@ const qualifyTenants = Effect.gen(function* () {
 const readsOnlyOwnRows = (key: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const rows = yield* withAgentTransaction(
+    const rows = yield* withAgentRows(
       key,
-      sql<Record<"agent_key", string>>`SELECT agent_key FROM harness_items`,
+      sql<Record<"agent_key", string>>`SELECT agent_key FROM inbox_entries`,
     );
     expect(rows.map((row) => row.agent_key)).toEqual([key]);
   });
@@ -117,7 +117,7 @@ const qualifyInbox = (keys: readonly string[]) =>
         .map(readsOnlyOwnRows),
       { concurrency: 8 },
     );
-    expect(yield* sql`SELECT * FROM harness_items`).toHaveLength(0);
+    expect(yield* sql`SELECT * FROM inbox_entries`).toHaveLength(0);
     return keys;
   });
 
@@ -222,7 +222,7 @@ it(
       );
       const retained = yield* database.admin<
         Record<"agent_key", string>
-      >`SELECT agent_key FROM agent_profiles`;
+      >`SELECT agent_key FROM agent_cards`;
       expect(new Set(retained.map((row) => row.agent_key))).toEqual(
         new Set(keys),
       );

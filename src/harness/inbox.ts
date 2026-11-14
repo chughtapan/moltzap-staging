@@ -16,7 +16,7 @@ import {
   executeQuery,
   type Generated,
   makeQueries,
-  withAgentTransaction,
+  withAgentRows,
 } from "../database/index.js";
 import {
   decodeJson,
@@ -36,15 +36,15 @@ import {
 
 const uncheckedRow = Schema.Struct({
   sequence: Schema.Number,
-  token: DeliveryToken,
+  delivery_token: DeliveryToken,
   address: MessageAddress,
-  incoming: Schema.String,
+  unchecked: Schema.String,
 });
 const entryRow = Schema.Struct({
   sequence: Schema.Number,
-  token: DeliveryToken,
+  delivery_token: DeliveryToken,
   address: MessageAddress,
-  view: Schema.String,
+  entry: Schema.String,
 });
 const inboxCursor = Schema.Struct({
   operation: Schema.Literal("inbox"),
@@ -79,15 +79,18 @@ export interface Unchecked {
 }
 
 type InboxTables = Record<
-  "harness_items",
-  Record<"agent_key" | "identity" | "token" | "address" | "kind", string> &
+  "inbox_entries",
+  Record<
+    "agent_key" | "dedupe_key" | "delivery_token" | "address" | "kind",
+    string
+  > &
     Record<"author" | "message_id", string | null> &
-    Record<"incoming" | "view", string | null> &
+    Record<"unchecked" | "entry", string | null> &
     Record<"sequence", Generated<number>> &
     Record<"status", "unchecked" | "withheld" | "pending" | "delivered">
 > &
   Record<
-    "harness_visibility",
+    "inbox_visibility",
     Record<"agent_key" | "author" | "message_id", string> &
       Record<"visible", number>
   >;
@@ -99,11 +102,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   const sql = yield* SqlClient.SqlClient;
   const queries = yield* makeQueries<InboxTables>();
   const run = <Row extends object>(query: Compilable<Row>) =>
-    withAgentTransaction(agentKey, executeQuery(query)).pipe(
+    withAgentRows(agentKey, executeQuery(query)).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
   const inboxRows = () =>
-    queries.selectFrom("harness_items").where("agent_key", "=", agentKey);
+    queries.selectFrom("inbox_entries").where("agent_key", "=", agentKey);
   const cursorKey = randomBytes(32);
   const encodePage = <A, I>(
     schema: Schema.Schema<A, I>,
@@ -117,12 +120,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     execute: (limit) =>
       run(
         queries
-          .selectFrom("harness_items as candidate")
+          .selectFrom("inbox_entries as candidate")
           .select([
             "candidate.sequence",
-            "candidate.token",
+            "candidate.delivery_token",
             "candidate.address",
-            "candidate.incoming",
+            "candidate.unchecked",
           ])
           .where("candidate.agent_key", "=", agentKey)
           .where("candidate.status", "=", "unchecked")
@@ -130,7 +133,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             eb.not(
               eb.exists(
                 eb
-                  .selectFrom("harness_items as earlier")
+                  .selectFrom("inbox_entries as earlier")
                   .select("earlier.sequence")
                   .whereRef("earlier.agent_key", "=", "candidate.agent_key")
                   .whereRef("earlier.address", "=", "candidate.address")
@@ -159,21 +162,21 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     );
     yield* run(
       queries
-        .insertInto("harness_items")
+        .insertInto("inbox_entries")
         .values({
           agent_key: agentKey,
-          identity: dedupeKey,
-          token,
+          dedupe_key: dedupeKey,
+          delivery_token: token,
           address,
           kind: incoming.kind,
           author: message?.author.agentId ?? null,
           message_id: message?.msgId ?? null,
-          incoming: encodedIncoming,
-          view: null,
+          unchecked: encodedIncoming,
+          entry: null,
           status: "unchecked",
         })
         .onConflict((conflict) =>
-          conflict.columns(["agent_key", "identity"]).doNothing(),
+          conflict.columns(["agent_key", "dedupe_key"]).doNothing(),
         ),
     );
   });
@@ -190,7 +193,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       execute: () =>
         run(
           inboxRows()
-            .select(["sequence", "token", "address", "view"])
+            .select(["sequence", "delivery_token", "address", "entry"])
             .where("status", "=", "pending")
             .where("sequence", ">", position.after)
             .where("sequence", "<=", position.through)
@@ -202,12 +205,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     let bytes = 0;
     let after = position.after;
     for (const row of rows.slice(0, PAGE_SIZE)) {
-      const size = Buffer.byteLength(row.view);
+      const size = Buffer.byteLength(row.entry);
       if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
         break;
       }
-      const stored = yield* decodeJson(StoredInboxEntry, row.view);
-      entries.push({ ...stored, deliveryToken: row.token });
+      const stored = yield* decodeJson(StoredInboxEntry, row.entry);
+      entries.push({ ...stored, deliveryToken: row.delivery_token });
       bytes += size;
       after = row.sequence;
     }
@@ -253,14 +256,14 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     }
     yield* run(
       queries
-        .updateTable("harness_items")
+        .updateTable("inbox_entries")
         .set({
-          incoming: null,
-          view: encodedEntry ?? null,
+          unchecked: null,
+          entry: encodedEntry ?? null,
           status: encodedEntry === undefined ? "withheld" : "pending",
         })
         .where("agent_key", "=", agentKey)
-        .where("token", "=", unchecked.token)
+        .where("delivery_token", "=", unchecked.token)
         .where("status", "=", "unchecked"),
     );
     for (const permission of decision.visibility) {
@@ -268,7 +271,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         !expired && encodedEntry !== undefined && permission.visibleToAgent;
       yield* run(
         queries
-          .insertInto("harness_visibility")
+          .insertInto("inbox_visibility")
           .values({
             agent_key: agentKey,
             author: permission.message.authorAgentId,
@@ -285,10 +288,10 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
                   .when(
                     "excluded.visible",
                     ">",
-                    eb.ref("harness_visibility.visible"),
+                    eb.ref("inbox_visibility.visible"),
                   )
                   .then(eb.ref("excluded.visible"))
-                  .else(eb.ref("harness_visibility.visible"))
+                  .else(eb.ref("inbox_visibility.visible"))
                   .end(),
               })),
           ),
@@ -299,8 +302,8 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     const rows = yield* run(
       inboxRows()
         .select("status")
-        .where("token", "=", token)
-        .where("view", "is not", null),
+        .where("delivery_token", "=", token)
+        .where("entry", "is not", null),
     );
     if (rows[0] === undefined) {
       return yield* new DeliveryAcknowledgeError({
@@ -309,10 +312,10 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     }
     yield* run(
       queries
-        .updateTable("harness_items")
+        .updateTable("inbox_entries")
         .set({ status: "delivered" })
         .where("agent_key", "=", agentKey)
-        .where("token", "=", token)
+        .where("delivery_token", "=", token)
         .where("status", "=", "pending"),
     );
   });
@@ -354,8 +357,15 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           Effect.forEach(
             rows,
             (row) =>
-              decodeJson(Incoming, row.incoming).pipe(
-                Effect.map((incoming): Unchecked => ({ ...row, incoming })),
+              decodeJson(Incoming, row.unchecked).pipe(
+                Effect.map(
+                  (incoming): Unchecked => ({
+                    sequence: row.sequence,
+                    token: row.delivery_token,
+                    address: row.address,
+                    incoming,
+                  }),
+                ),
               ),
             { concurrency: 1 },
           ),
@@ -373,10 +383,10 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     withholdExpired: (token: DeliveryToken) =>
       run(
         queries
-          .updateTable("harness_items")
-          .set({ incoming: null, status: "withheld" })
+          .updateTable("inbox_entries")
+          .set({ unchecked: null, status: "withheld" })
           .where("agent_key", "=", agentKey)
-          .where("token", "=", token)
+          .where("delivery_token", "=", token)
           .where("status", "=", "unchecked"),
       ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
     isCollectiveRequestVisible: (requestId: MsgId) =>
@@ -385,7 +395,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .select("sequence")
           .where("kind", "=", "collectiveRequest")
           .where("message_id", "=", requestId)
-          .where("view", "is not", null)
+          .where("entry", "is not", null)
           .limit(1),
       ).pipe(
         Effect.map((rows) => rows.length !== 0),
@@ -397,7 +407,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         (message) =>
           run(
             queries
-              .selectFrom("harness_visibility")
+              .selectFrom("inbox_visibility")
               .select("visible")
               .where("agent_key", "=", agentKey)
               .where("author", "=", message.author.agentId)
@@ -413,16 +423,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     storedEntry: (reference: MessageReference) =>
       run(
         inboxRows()
-          .select("view")
+          .select("entry")
           .where("author", "=", reference.authorAgentId)
           .where("message_id", "=", reference.msgId)
-          .where("view", "is not", null)
+          .where("entry", "is not", null)
           .limit(1),
       ).pipe(
         Effect.flatMap((rows) =>
-          rows[0]?.view == null
+          rows[0]?.entry == null
             ? Effect.succeed(undefined)
-            : decodeJson(StoredInboxEntry, rows[0].view),
+            : decodeJson(StoredInboxEntry, rows[0].entry),
         ),
         Effect.mapError(persistenceFailure),
       ),
@@ -434,7 +444,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           )
           .where("address", "=", address)
           .where("kind", "=", "collectiveResult")
-          .where("view", "is not", null),
+          .where("entry", "is not", null),
       ).pipe(
         Effect.map((rows) => rows[0]?.head ?? 0),
         Effect.mapError(persistenceFailure),
@@ -451,12 +461,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         execute: () =>
           run(
             inboxRows()
-              .select(["sequence", "token", "address", "view"])
+              .select(["sequence", "delivery_token", "address", "entry"])
               .where("address", "=", address)
               .where("sequence", ">", after)
               .where("sequence", "<=", through)
               .where("kind", "=", "collectiveResult")
-              .where("view", "is not", null)
+              .where("entry", "is not", null)
               .orderBy("sequence")
               .limit(limit + 1),
           ),
@@ -465,8 +475,12 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           Effect.forEach(
             rows,
             (row) =>
-              decodeJson(StoredInboxEntry, row.view).pipe(
-                Effect.map((entry) => ({ ...row, entry })),
+              decodeJson(StoredInboxEntry, row.entry).pipe(
+                Effect.map((entry) => ({
+                  sequence: row.sequence,
+                  token: row.delivery_token,
+                  entry,
+                })),
               ),
             { concurrency: 1 },
           ),
@@ -484,7 +498,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .distinct()
               .where("address", ">", after)
               .where("kind", "=", "collectiveResult")
-              .where("view", "is not", null)
+              .where("entry", "is not", null)
               .orderBy("address")
               .limit(PAGE_SIZE + 1),
           ),

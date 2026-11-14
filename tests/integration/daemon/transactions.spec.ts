@@ -3,7 +3,7 @@ import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
   databaseConnection,
-  withAgentTransaction,
+  withAgentRows,
 } from "@social-harness/social-harness/test";
 import { Context, Deferred, Effect, Fiber, Layer } from "effect";
 import { expect } from "vitest";
@@ -26,17 +26,15 @@ it(
         }>`SELECT current_setting('social_harness.agent_key',true) AS value`,
         (rows) => rows[0]?.value,
       );
-      yield* withAgentTransaction(
+      yield* withAgentRows(
         sender,
         Effect.gen(function* () {
-          yield* withAgentTransaction(recipient, sql`SELECT 1/0`).pipe(
-            Effect.either,
-          );
+          yield* withAgentRows(recipient, sql`SELECT 1/0`).pipe(Effect.either);
           expect(yield* key).toBe(sender);
-          expect(yield* withAgentTransaction(recipient, key)).toBe(recipient);
+          expect(yield* withAgentRows(recipient, key)).toBe(recipient);
           expect(yield* key).toBe(sender);
           const entered = yield* Deferred.make<undefined>();
-          const fiber = yield* withAgentTransaction(
+          const fiber = yield* withAgentRows(
             recipient,
             Deferred.succeed(entered, undefined).pipe(
               Effect.zipRight(Effect.never),
@@ -51,10 +49,9 @@ it(
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
       expect(yield* sql`SELECT * FROM message_log`).toHaveLength(0);
       expect(
-        yield* withAgentTransaction(
-          sender,
-          sql`SELECT * FROM message_log`,
-        ).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+        yield* withAgentRows(sender, sql`SELECT * FROM message_log`).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        ),
       ).toHaveLength(1);
     }),
   60_000,

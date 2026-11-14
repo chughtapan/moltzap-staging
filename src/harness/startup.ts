@@ -21,8 +21,8 @@ import { MessageAddressInput } from "../communication/index.js";
 import { Communication } from "../communication/service.js";
 import {
   checkDatabase,
-  databaseAccess,
   databaseConnection,
+  databaseUrl,
 } from "../database/index.js";
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
@@ -54,7 +54,7 @@ export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
 
 function runDaemon() {
   return Effect.gen(function* () {
-    const access = yield* databaseAccess;
+    const url = yield* databaseUrl;
     const { settings, agentName, serverAgentCredential } =
       yield* loadDaemonSettings();
     return yield* Effect.gen(function* () {
@@ -118,7 +118,7 @@ function runDaemon() {
         `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
       );
       return yield* Effect.never;
-    }).pipe(Effect.scoped, Effect.provide(databaseConnection(access.locator)));
+    }).pipe(Effect.scoped, Effect.provide(databaseConnection(url)));
   }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
 }
 

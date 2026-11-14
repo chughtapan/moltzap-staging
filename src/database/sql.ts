@@ -62,79 +62,75 @@ export const executeQuery = <Row extends object>(query: Compilable<Row>) =>
   });
 
 /**
- * The rejected locator remains private because PostgreSQL URLs can contain credentials.
+ * The rejected database URL remains private because PostgreSQL URLs can contain credentials.
  * Exported so dependent declarations can name the inferred Effect failure.
  * @public
  */
-export class DatabaseLocatorError extends Data.TaggedError(
-  "DatabaseLocatorError",
-) {}
+export class DatabaseUrlError extends Data.TaggedError("DatabaseUrlError") {}
 
 /**
- * Database environment failures never include the supplied locator.
+ * The environment names no database URL.
  * Exported so the daemon layer's inferred failure can be named.
  * @public
  */
-export class DatabaseAccessError extends Data.TaggedError(
-  "DatabaseAccessError",
+export class DatabaseUrlMissingError extends Data.TaggedError(
+  "DatabaseUrlMissingError",
 ) {
   override get message(): string {
     return "Set SHARNESS_DATABASE_URL to the database the daemon uses";
   }
 }
 
-/** The database locator that preparation and the runtime share. */
-export const databaseAccess = Config.all({
-  locator: Config.redacted("SHARNESS_DATABASE_URL"),
-}).pipe(
-  Effect.catchTag("ConfigError", () => new DatabaseAccessError()),
-  Effect.withSpan("databaseAccess"),
+/** The database URL that preparation and the daemon share. */
+export const databaseUrl = Config.redacted("SHARNESS_DATABASE_URL").pipe(
+  Effect.catchTag("ConfigError", () => new DatabaseUrlMissingError()),
+  Effect.withSpan("databaseUrl"),
 );
 
-const databaseLocation = Effect.fn("databaseLocation")(function* (
-  locator: Redacted.Redacted,
+const parseDatabaseUrl = Effect.fn("parseDatabaseUrl")(function* (
+  url: Redacted.Redacted,
 ) {
-  const url = yield* Effect.try({
-    try: () => new URL(Redacted.value(locator)),
-    catch: () => new DatabaseLocatorError(),
+  const parsed = yield* Effect.try({
+    try: () => new URL(Redacted.value(url)),
+    catch: () => new DatabaseUrlError(),
   });
-  if (url.protocol === "postgres:" || url.protocol === "postgresql:") {
-    return { kind: "postgres" as const, locator };
+  if (parsed.protocol === "postgres:" || parsed.protocol === "postgresql:") {
+    return { kind: "postgres" as const, url };
   }
   if (
-    url.protocol !== "sqlite:" ||
-    url.host !== "" ||
-    url.search !== "" ||
-    url.hash !== ""
+    parsed.protocol !== "sqlite:" ||
+    parsed.host !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
   ) {
-    return yield* new DatabaseLocatorError();
+    return yield* new DatabaseUrlError();
   }
   const filename = yield* Effect.try({
     try: () =>
-      url.pathname === ":memory:"
+      parsed.pathname === ":memory:"
         ? ":memory:"
-        : fileURLToPath(new URL(url.href.replace(/^sqlite:/u, "file:"))),
-    catch: () => new DatabaseLocatorError(),
+        : fileURLToPath(new URL(parsed.href.replace(/^sqlite:/u, "file:"))),
+    catch: () => new DatabaseUrlError(),
   });
   return { kind: "sqlite" as const, filename };
 });
 
 /** SQLite and PostgreSQL expose the same SqlClient to all domain stores. */
-export const databaseConnection = (locator: Redacted.Redacted) =>
+export const databaseConnection = (url: Redacted.Redacted) =>
   Layer.unwrapEffect(
-    databaseLocation(locator).pipe(
-      Effect.map((location) => {
+    parseDatabaseUrl(url).pipe(
+      Effect.map((database) => {
         const layer: Layer.Layer<
           SqlClient.SqlClient,
           SqlError | ConfigError.ConfigError
         > =
-          location.kind === "postgres"
-            ? PgClient.layer({ url: location.locator })
+          database.kind === "postgres"
+            ? PgClient.layer({ url: database.url })
             : SqliteClient.layer({
-                filename: location.filename,
+                filename: database.filename,
                 disableWAL: true,
               });
-        return Layer.effectDiscard(connectionSettings()).pipe(
+        return Layer.effectDiscard(connectionPragmas()).pipe(
           Layer.provideMerge(layer),
         );
       }),
@@ -142,8 +138,8 @@ export const databaseConnection = (locator: Redacted.Redacted) =>
     ),
   );
 
-/** Connection pragmas precede transactions so preparation and runtime share SQLite durability. */
-function connectionSettings() {
+/** Connection pragmas precede transactions so preparation and the daemon share SQLite durability. */
+function connectionPragmas() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql.onDialectOrElse({
@@ -160,24 +156,24 @@ function connectionSettings() {
 
 /** Setup creates private SQLite paths without truncating existing data; PostgreSQL and memory need no filesystem. */
 export const prepareDatabaseDirectory = Effect.fn("prepareDatabaseDirectory")(
-  function* (locator: Redacted.Redacted) {
-    const location = yield* databaseLocation(locator);
-    if (location.kind === "postgres" || location.filename === ":memory:") {
+  function* (url: Redacted.Redacted) {
+    const database = yield* parseDatabaseUrl(url);
+    if (database.kind === "postgres" || database.filename === ":memory:") {
       return;
     }
     const filesystem = yield* FileSystem.FileSystem;
-    yield* filesystem.makeDirectory(dirname(location.filename), {
+    yield* filesystem.makeDirectory(dirname(database.filename), {
       recursive: true,
       mode: 0o700,
     });
-    yield* filesystem.open(location.filename, { flag: "a", mode: 0o600 });
-    yield* filesystem.chmod(location.filename, 0o600);
+    yield* filesystem.open(database.filename, { flag: "a", mode: 0o600 });
+    yield* filesystem.chmod(database.filename, 0o600);
   },
 );
 
 /** The work to run once the transaction a fiber is in commits. */
-class Committed extends Context.Tag("SocialHarness/Committed")<
-  Committed,
+class AfterCommitWork extends Context.Tag("SocialHarness/AfterCommitWork")<
+  AfterCommitWork,
   Array<Effect.Effect<void>>
 >() {}
 
@@ -190,17 +186,17 @@ export const transaction = Effect.fn("transaction")(function* <A, E, R>(
   work: Effect.Effect<A, E, R>,
 ) {
   const sql = yield* SqlClient.SqlClient;
-  if (Option.isSome(yield* Effect.serviceOption(Committed))) {
+  if (Option.isSome(yield* Effect.serviceOption(AfterCommitWork))) {
     return yield* sql.withTransaction(work);
   }
-  const committed: Array<Effect.Effect<void>> = [];
+  const afterCommitWork: Array<Effect.Effect<void>> = [];
   return yield* Effect.uninterruptibleMask((restore) =>
     sql
       .withTransaction(restore(work))
       .pipe(
-        Effect.provideService(Committed, committed),
+        Effect.provideService(AfterCommitWork, afterCommitWork),
         Effect.zipLeft(
-          Effect.suspend(() => Effect.all(committed, { discard: true })),
+          Effect.suspend(() => Effect.all(afterCommitWork, { discard: true })),
         ),
       ),
   );
@@ -208,31 +204,37 @@ export const transaction = Effect.fn("transaction")(function* <A, E, R>(
 
 /** Runs `work` once the open transaction commits, or at once when none is open. */
 export const afterCommit = (work: Effect.Effect<void>) =>
-  Effect.serviceOption(Committed).pipe(
+  Effect.serviceOption(AfterCommitWork).pipe(
     Effect.flatMap(
       Option.match({
         onNone: () => work,
-        onSome: (committed) => Effect.sync(() => committed.push(work)),
+        onSome: (afterCommitWork) =>
+          Effect.sync(() => afterCommitWork.push(work)),
       }),
     ),
     Effect.asVoid,
   );
 
-/** A nested tenant operation restores its caller after its savepoint has closed. */
-export const withAgentTransaction = Effect.fn("withAgentTransaction")(
+/**
+ * Runs `work` in a transaction that reads and writes only the rows stored
+ * under `agentKey`. On PostgreSQL it sets `social_harness.agent_key`, which
+ * every row-level policy compares; a nested call restores its caller's agent
+ * key after its savepoint has closed.
+ */
+export const withAgentRows = Effect.fn("withAgentRows")(
   <A, E, R>(agentKey: string, work: Effect.Effect<A, E, R>) =>
     Effect.flatMap(SqlClient.SqlClient, (sql) =>
       sql.withTransaction(
         sql.onDialectOrElse({
-          pg: () => postgresAgentTransaction(sql, agentKey, work),
+          pg: () => postgresAgentRows(sql, agentKey, work),
           orElse: () => work,
         }),
       ),
     ),
 );
 
-/** The inner savepoint rolls back a failed query before restoring the outer transaction's tenant. */
-function postgresAgentTransaction<A, E, R>(
+/** The inner savepoint rolls back a failed query before restoring the outer transaction's agent key. */
+function postgresAgentRows<A, E, R>(
   sql: SqlClient.SqlClient,
   agentKey: string,
   work: Effect.Effect<A, E, R>,

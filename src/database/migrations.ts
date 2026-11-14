@@ -1,18 +1,18 @@
-/** @file Prepares daemon storage for deployment and checks that the runtime can open it. */
+/** @file Prepares the daemon's database for deployment and checks that the daemon can open it. */
 
 import { Migrator, SqlClient } from "@effect/sql";
 import { Data, Effect } from "effect";
 import {
-  databaseAccess,
   databaseConnection,
+  databaseUrl,
   prepareDatabaseDirectory,
 } from "./sql.js";
 
 /** Rows of these tables are visible only to the agent whose key they carry. */
-const agentTables = [
-  "harness_items",
-  "harness_visibility",
-  "mcp_webhook_state",
+const rowSecuredTables = [
+  "inbox_entries",
+  "inbox_visibility",
+  "subscriptions",
   "firewall_checks",
   "firewall_policy",
   "firewall_activations",
@@ -22,8 +22,8 @@ const agentTables = [
   "collective_responses",
 ];
 
-/** Owners and the agents the daemon has created for them. */
-const agentSchema = Effect.gen(function* () {
+/** Owners and the cards of the agents the daemon has created for them. */
+const identitySchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE owner_bindings (
     agent_key TEXT PRIMARY KEY,
@@ -31,7 +31,7 @@ const agentSchema = Effect.gen(function* () {
     subject TEXT NOT NULL,
     UNIQUE(issuer, subject)
   )`;
-  yield* sql`CREATE TABLE agent_profiles (
+  yield* sql`CREATE TABLE agent_cards (
     agent_key TEXT PRIMARY KEY REFERENCES owner_bindings(agent_key),
     agent_id TEXT NOT NULL UNIQUE,
     agent_name TEXT NOT NULL UNIQUE,
@@ -39,43 +39,43 @@ const agentSchema = Effect.gen(function* () {
   )`;
 });
 
-/** Each agent's inbox, webhook subscription and firewall. */
-const hostSchema = (sequence: string) =>
+/** Each agent's inbox, subscription and firewall. */
+const inboxAndFirewallSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql.unsafe(`CREATE TABLE harness_items (
+    yield* sql.unsafe(`CREATE TABLE inbox_entries (
     agent_key TEXT NOT NULL,
     sequence ${sequence},
-    identity TEXT NOT NULL,
-    token TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    delivery_token TEXT NOT NULL,
     address TEXT NOT NULL,
     kind TEXT NOT NULL,
     author TEXT,
     message_id TEXT,
-    incoming TEXT,
-    view TEXT,
+    unchecked TEXT,
+    entry TEXT,
     status TEXT NOT NULL CHECK(status IN ('unchecked','withheld','pending','delivered')),
-    UNIQUE(agent_key, identity),
-    UNIQUE(agent_key, token)
+    UNIQUE(agent_key, dedupe_key),
+    UNIQUE(agent_key, delivery_token)
   )`);
-    yield* sql`CREATE INDEX harness_pending ON harness_items(agent_key,status,sequence)`;
-    yield* sql`CREATE INDEX harness_conversation ON harness_items(agent_key,address,sequence)`;
-    yield* sql`CREATE INDEX harness_message ON harness_items(agent_key,author,message_id)`;
-    yield* sql`CREATE TABLE harness_visibility (
+    yield* sql`CREATE INDEX inbox_entries_status ON inbox_entries(agent_key,status,sequence)`;
+    yield* sql`CREATE INDEX inbox_entries_address ON inbox_entries(agent_key,address,sequence)`;
+    yield* sql`CREATE INDEX inbox_entries_message ON inbox_entries(agent_key,author,message_id)`;
+    yield* sql`CREATE TABLE inbox_visibility (
     agent_key TEXT NOT NULL, author TEXT NOT NULL, message_id TEXT NOT NULL,
     visible INTEGER NOT NULL, PRIMARY KEY(agent_key, author, message_id)
   )`;
-    yield* sql`CREATE TABLE mcp_webhook_state (agent_key TEXT PRIMARY KEY, state TEXT NOT NULL)`;
+    yield* sql`CREATE TABLE subscriptions (agent_key TEXT PRIMARY KEY, subscription TEXT NOT NULL)`;
     yield* sql.unsafe(`CREATE TABLE firewall_checks (
     agent_key TEXT NOT NULL,
     sequence ${sequence},
     check_id TEXT NOT NULL,
     direction TEXT NOT NULL CHECK(direction IN ('incoming','outgoing')),
-    candidate TEXT NOT NULL,
+    message TEXT NOT NULL,
     input TEXT NOT NULL,
     result TEXT NOT NULL,
     decided_at BIGINT NOT NULL,
-    disposition TEXT NOT NULL CHECK(disposition IN ('allowed','refused','withheld')),
+    decision TEXT NOT NULL CHECK(decision IN ('allowed','refused','withheld')),
     UNIQUE(agent_key, check_id)
   )`);
     yield* sql`CREATE TABLE firewall_policy (
@@ -86,15 +86,15 @@ const hostSchema = (sequence: string) =>
     agent_key TEXT NOT NULL,
     sequence ${sequence},
     activated_at BIGINT NOT NULL,
-    active_revision TEXT NOT NULL,
+    revision TEXT NOT NULL,
     added_rule_ids TEXT NOT NULL,
     removed_rule_ids TEXT NOT NULL
   )`);
     yield* sql`CREATE INDEX firewall_activations_time ON firewall_activations(agent_key,activated_at,sequence)`;
-    yield* sql`CREATE INDEX firewall_decisions_time ON firewall_checks(agent_key,decided_at,sequence)`;
+    yield* sql`CREATE INDEX firewall_checks_time ON firewall_checks(agent_key,decided_at,sequence)`;
   });
 
-/** Each conversation's next position, each agent's messages, and the collectives built on them. */
+/** Each conversation's next position, each agent's messages, and the collective requests and collective responses built on them. */
 const messageSchema = (sequence: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -147,13 +147,13 @@ const daemonSchema = Effect.gen(function* () {
     pg: () => "INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY",
     orElse: () => "INTEGER PRIMARY KEY AUTOINCREMENT",
   });
-  yield* agentSchema;
-  yield* hostSchema(sequence);
+  yield* identitySchema;
+  yield* inboxAndFirewallSchema(sequence);
   yield* messageSchema(sequence);
   yield* sql.onDialectOrElse({
     pg: () =>
       Effect.forEach(
-        agentTables,
+        rowSecuredTables,
         (table) =>
           Effect.gen(function* () {
             yield* sql`ALTER TABLE ${sql(table)} ENABLE ROW LEVEL SECURITY`;
@@ -226,27 +226,23 @@ export const checkDatabase = Effect.gen(function* () {
  * Failed first PostgreSQL preparation can retain an empty Migrator bookkeeping table.
  */
 export const prepareDatabase = Effect.gen(function* () {
-  const access = yield* databaseAccess;
-  yield* prepareDatabaseDirectory(access.locator);
+  const url = yield* databaseUrl;
+  yield* prepareDatabaseDirectory(url);
   yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* compatibleDatabase();
+    yield* requireEmptyOrPreparedDatabase();
     yield* sql.onDialectOrElse({
       pg: () => initializeMigrationLedger,
       orElse: () => Effect.void,
     });
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        yield* migrateDaemon;
-      }),
-    );
-  }).pipe(Effect.provide(databaseConnection(access.locator)));
+    yield* sql.withTransaction(migrateDaemon);
+  }).pipe(Effect.provide(databaseConnection(url)));
 }).pipe(
   Effect.scoped,
   Effect.catchTags({
-    DatabaseAccessError: () =>
+    DatabaseUrlMissingError: () =>
       new DatabasePreparationError({ reason: "preparation" }),
-    DatabaseLocatorError: () =>
+    DatabaseUrlError: () =>
       new DatabasePreparationError({ reason: "preparation" }),
     ConfigError: () => new DatabasePreparationError({ reason: "preparation" }),
     BadArgument: () => new DatabasePreparationError({ reason: "preparation" }),
@@ -268,7 +264,7 @@ export const prepareDatabase = Effect.gen(function* () {
  * Only an empty database or one that already holds the daemon's tables can be
  * prepared. An empty database may hold the migration ledger table with no rows.
  */
-function compatibleDatabase() {
+function requireEmptyOrPreparedDatabase() {
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const tables = yield* sql.onDialectOrElse({

@@ -50,13 +50,13 @@ it(
 );
 
 it(
-  "rolls back a PostgreSQL owner binding when its profile cannot be stored",
+  "rolls back a PostgreSQL owner binding when its card cannot be stored",
   () =>
     Effect.gen(function* () {
       const postgres = yield* acquirePostgres;
       const sql = postgres.admin;
-      yield* sql`CREATE FUNCTION reject_profile() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'profile unavailable'; END $$`;
-      yield* sql`CREATE TRIGGER reject_profile BEFORE INSERT ON agent_profiles FOR EACH ROW EXECUTE FUNCTION reject_profile()`;
+      yield* sql`CREATE FUNCTION reject_card() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'card unavailable'; END $$`;
+      yield* sql`CREATE TRIGGER reject_card BEFORE INSERT ON agent_cards FOR EACH ROW EXECUTE FUNCTION reject_card()`;
       const runtime = Context.get(
         yield* Layer.build(databaseConnection(postgres.runtimeLocator)),
         SqlClient.SqlClient,
@@ -66,7 +66,7 @@ it(
       );
       expect(Exit.isFailure(yield* provision.pipe(Effect.exit))).toBeTruthy();
       expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-      yield* sql`DROP TRIGGER reject_profile ON agent_profiles`;
+      yield* sql`DROP TRIGGER reject_card ON agent_cards`;
       const recovered = yield* provision;
       expect(
         (yield* cardOf(recovered).pipe(

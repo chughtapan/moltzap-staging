@@ -7,7 +7,7 @@ import {
   executeQuery,
   type Generated,
   makeQueries,
-  withAgentTransaction,
+  withAgentRows,
 } from "../database/index.js";
 import { decodeJson, encodeJson, sameJson } from "../encoding.js";
 import { AgentId } from "../identity.js";
@@ -68,7 +68,7 @@ type CommunicationTables = Record<
     Record<"conversation_id", string> & Record<"next_ordinal", number>
   > &
   Record<
-    "agent_profiles",
+    "agent_cards",
     Record<"agent_key" | "agent_id" | "agent_name" | "principal_id", string>
   >;
 
@@ -100,7 +100,7 @@ const decodeStored = <A, I>(
   text: string,
 ): Effect.Effect<A, EndpointStoreError> =>
   decodeJson(schema, text).pipe(
-    Effect.catchTag("ClientRepresentationError", corrupt),
+    Effect.catchTag("JsonRepresentationError", corrupt),
   );
 
 /**
@@ -285,7 +285,7 @@ export function agentTransaction<A, E, R>(
   agentKey: string,
   work: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, EndpointStoreError, R | SqlClient> {
-  return withAgentLock(withAgentTransaction(agentKey, work), agentKey);
+  return withAgentLock(withAgentRows(agentKey, work), agentKey);
 }
 
 /** Each recipient's first response to a collective, in the order saved. */
@@ -407,7 +407,7 @@ export const saveMessage = Effect.fn("saveMessage")(
       }),
     );
   },
-  (work, agentKey) => withAgentTransaction(agentKey, work),
+  (work, agentKey) => withAgentRows(agentKey, work),
   asStoreError,
 );
 
@@ -634,7 +634,7 @@ function withAgentLock<A, E, R>(
   work: Effect.Effect<A, E, R>,
   agentKey: string,
 ) {
-  return withAgentTransaction(
+  return withAgentRows(
     agentKey,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
@@ -643,7 +643,7 @@ function withAgentLock<A, E, R>(
         pg: () =>
           executeQuery(
             db
-              .selectFrom("agent_profiles")
+              .selectFrom("agent_cards")
               .select("agent_key")
               .where("agent_key", "=", agentKey)
               .forUpdate(),

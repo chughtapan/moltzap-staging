@@ -8,8 +8,8 @@ import {
   toolDefinitions,
 } from "@social-harness/social-harness";
 import {
-  databaseAccess,
   databaseConnection,
+  databaseUrl,
 } from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
@@ -122,13 +122,13 @@ function expectEmptyInbox(agent: SignedIn) {
 /** The daemon's database, opened as the daemon opens it. */
 function openDatabase(daemon: Daemon) {
   return Effect.gen(function* () {
-    const access = yield* databaseAccess.pipe(
+    const url = yield* databaseUrl.pipe(
       Effect.withConfigProvider(
         ConfigProvider.fromMap(new Map(Object.entries(daemon.environment))),
       ),
     );
     return Context.get(
-      yield* Layer.build(databaseConnection(access.locator)),
+      yield* Layer.build(databaseConnection(url)),
       SqlClient.SqlClient,
     );
   });
@@ -286,7 +286,7 @@ const scenario = (
       yield* expectClientServerExchange(daemon, alice, bob, earlier);
     }
 
-    yield* sql`DELETE FROM agent_profiles WHERE agent_name = ${bob.agent.agentName}`;
+    yield* sql`DELETE FROM agent_cards WHERE agent_name = ${bob.agent.agentName}`;
     yield* stopProcess(restarted);
     const serving = yield* daemon.start();
     expect((yield* daemon.signIn(aliceBearer)).agent).toEqual(sent.alice);
