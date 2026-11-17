@@ -1,7 +1,6 @@
 /** @file The tool contract: the values a host sends and receives, the address grammar, and the MCP tools, Events and wire errors built from them. */
 
 import { Effect, Either, Option, type ParseResult, Schema } from "effect";
-import type { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
@@ -289,9 +288,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
   }
 }
 
-/** Maximum complete UTF-8 callback body accepted by the event transport. */
-export const maximumEventBytes = 256 * 1024;
-
 /** Callback failures expose no upstream response or destination details. */
 export const callbackReasons = [
   "connection_refused",
@@ -315,76 +311,8 @@ const subscriptionStatusSchema = Schema.Struct({
 /** A subscription as the `status` tool reports it, without its callback URL or secret. */
 export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
 
-const emptyArguments = Schema.Record({
-  key: Schema.String,
-  value: Schema.Never,
-});
-/** Catalog cursors are independent of event replay positions. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventListRequest = Schema.Struct({
-  cursor: Schema.optionalWith(Schema.String, { exact: true }),
-});
-/** Validates subscription shape before authorization and callback URL checks. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventSubscribeRequest = Schema.Struct({
-  name: Schema.String,
-  arguments: emptyArguments,
-  /** Omitting the cursor requests the draft's explicit null position. */
-  cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
-  maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
-  delivery: Schema.Struct({
-    mode: Schema.String,
-    url: Schema.String,
-    secret: Schema.String,
-  }),
-  ttlMs: Schema.optionalWith(Schema.NullOr(Schema.NonNegativeInt), {
-    exact: true,
-  }),
-});
-/** Unsubscribing identifies the subscription without disclosing its signing secret. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- MCP handlers consume the owning event schema.
-export const eventUnsubscribeRequest = Schema.Struct({
-  name: Schema.String,
-  arguments: emptyArguments,
-  delivery: Schema.Struct({ url: Schema.String }),
-});
-
-/** A decoded `events/subscribe` request, before authorization and callback URL checks. */
-export type EventSubscribeRequest = typeof eventSubscribeRequest.Type;
-type EventUnsubscribeRequest = typeof eventUnsubscribeRequest.Type;
-interface EventSubscriptionGrant {
-  readonly id: string;
-  readonly refreshBefore: string;
-  readonly cursor: null;
-  readonly truncated: boolean;
-}
-
-/** One agent's callback subscription for inbox wake-ups. */
-export interface HarnessWebhookEvents {
-  readonly subscribe: (
-    request: EventSubscribeRequest,
-  ) => Effect.Effect<EventSubscriptionGrant, ProtocolError>;
-  readonly unsubscribe: (
-    request: EventUnsubscribeRequest,
-  ) => Effect.Effect<void, ProtocolError>;
-  readonly status: Effect.Effect<SubscriptionStatus>;
-}
-
 /** A wake-up to read the pending inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
-
-/** How the event catalogue lists the wake-up. */
-export const inboxPendingCatalogEntry = {
-  name: INBOX_PENDING_EVENT,
-  description: "A wake-up to read the pending inbox.",
-  delivery: ["webhook"],
-  inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  payloadSchema: {
-    type: "object",
-    properties: { pendingCount: { type: "integer", minimum: 0 } },
-    required: ["pendingCount"],
-  },
-};
 
 /**
  * Refusals disclose the check, the deciding chain rule, registered feedback and

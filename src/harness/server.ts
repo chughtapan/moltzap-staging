@@ -16,6 +16,7 @@ import {
   Stream,
 } from "effect";
 import type { FirewallRefusal } from "../firewall/index.js";
+import type { HarnessWebhookEvents } from "./webhook.js";
 import {
   issuesText,
   type MessageAddressInput,
@@ -35,13 +36,7 @@ import {
 import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
 import {
   clientToolDefinitions,
-  eventListRequest,
-  eventSubscribeRequest,
-  eventUnsubscribeRequest,
-  type HarnessWebhookEvents,
-  INBOX_PENDING_EVENT,
   InboxError,
-  inboxPendingCatalogEntry,
   sendErrorData,
   textOnlyToolDefinitions,
   toolDefinitions,
@@ -74,7 +69,7 @@ export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
   const harness = yield* SocialHarness;
   const firewall = yield* Firewall;
   const mcp = yield* McpServer.make;
-  mcp.events.current = inboxEvents(settings.subscription);
+  mcp.events.current = settings.subscription;
   yield* Effect.forEach(
     [
       yield* statusTool(settings.subscription),
@@ -625,65 +620,4 @@ function openObjects(value: unknown): unknown {
     }),
     ...(singleTuple ? [["maxItems", 1]] : []),
   ]);
-}
-
-/**
- * The one event a host can follow: a wake-up saying how many inbox entries
- * are pending. A host subscribes a callback URL for it, and reads the entries
- * themselves with `receive_messages`.
- */
-function inboxEvents(subscription: HarnessWebhookEvents) {
-  const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
-    Schema.decodeUnknown(schema)(input).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
-      ),
-    );
-  return {
-    list: (raw: unknown) =>
-      decode(eventListRequest, raw).pipe(
-        Effect.filterOrFail(
-          (input) => input.cursor === undefined,
-          () => new ProtocolError(-32602, "Invalid event catalog cursor"),
-        ),
-        Effect.as({ events: [inboxPendingCatalogEntry] }),
-      ),
-    subscribe: (raw: unknown) =>
-      decode(eventSubscribeRequest, raw).pipe(
-        Effect.flatMap(onlyInboxPending),
-        Effect.filterOrFail(
-          (input) => input.delivery.mode === "webhook",
-          () => new ProtocolError(-32602, "Unsupported delivery mode"),
-        ),
-        Effect.flatMap(subscription.subscribe),
-      ),
-    unsubscribe: (raw: unknown) =>
-      decode(eventUnsubscribeRequest, raw).pipe(
-        Effect.flatMap(onlyInboxPending),
-        Effect.flatMap(subscription.unsubscribe),
-        Effect.as({}),
-      ),
-  };
-}
-
-/** Refuses any event but the inbox wake-up, and any request to replay it. */
-function onlyInboxPending<
-  A extends { readonly name: string; readonly cursor?: string | null },
->(input: A) {
-  if (input.name !== INBOX_PENDING_EVENT) {
-    return Effect.fail(
-      new ProtocolError(-32011, "Event not found", { kind: "event" }),
-    );
-  }
-  return input.cursor == null
-    ? Effect.succeed(input)
-    : Effect.fail(
-        new ProtocolError(
-          -32014,
-          "Event replay is unavailable; read the inbox",
-          {
-            feature: "cursor",
-          },
-        ),
-      );
 }
