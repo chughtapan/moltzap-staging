@@ -4,7 +4,7 @@ import {
   absurd,
   Clock,
   Context,
-  type Duration,
+  Duration,
   Effect,
   FiberSet,
   Layer,
@@ -49,8 +49,6 @@ import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
   addressOf,
   canonicalMessageAddress,
-  type DeliveryAcknowledgeError,
-  type DeliveryToken,
   HistoryError,
   type HistoryRecord,
   InboxError,
@@ -95,21 +93,19 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
-  /**
-   * Reads pending inbox entries without marking them delivered. With `wait`,
-   * a read that finds nothing waits up to that long, and returns as soon as
-   * an entry is pending or empty when the wait ends.
-   */
+  /** Reads pending inbox entries without marking them delivered. */
   readonly listInbox: (
-    request?: PaginatedRequest & { readonly wait?: Duration.Duration },
+    request?: PaginatedRequest,
   ) => Effect.Effect<InboxPage, InboxError>;
   /**
-   * Marks a pending inbox entry delivered. Repeating it is harmless, and it
-   * does not respond to a collective request.
+   * Hands over a page of pending inbox entries and marks each delivered, which
+   * does not respond to a collective request. With `wait`, a read that finds
+   * nothing waits up to that many seconds, and returns as soon as an entry is
+   * pending or empty when the wait ends.
    */
-  readonly acknowledgeDelivery: (
-    token: DeliveryToken,
-  ) => Effect.Effect<void, DeliveryAcknowledgeError>;
+  readonly receive: (
+    request: PaginatedRequest & { readonly wait?: number },
+  ) => Effect.Effect<InboxPage, InboxError>;
   /**
    * Lists live canonical addresses, direct conversations before groups.
    * Follow `nextCursor` until absent. New conversations before the cursor require
@@ -374,11 +370,22 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
             ),
           );
         }),
-      listInbox: ({ wait, ...page } = {}) =>
-        wait === undefined
-          ? inbox.listInbox(page)
-          : waitForInbox(inbox, changes, page, wait),
-      acknowledgeDelivery: inbox.acknowledgeDelivery,
+      listInbox: inbox.listInbox,
+      receive: Effect.fn(function* ({ wait, ...request }) {
+        const page = yield* wait === undefined
+          ? inbox.listInbox(request)
+          : waitForInbox(inbox, changes, request, Duration.seconds(wait));
+        for (const entry of page.entries) {
+          yield* inbox
+            .acknowledgeDelivery(entry.deliveryToken)
+            .pipe(
+              Effect.catchTag("DeliveryAcknowledgeError", () =>
+                Effect.fail(new InboxError({ reason: "persistence-failed" })),
+              ),
+            );
+        }
+        return page;
+      }),
       listConversations: (request = {}) =>
         Effect.gen(function* () {
           const position =

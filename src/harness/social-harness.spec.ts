@@ -4,7 +4,6 @@ import { scopedLive as it } from "@effect/vitest";
 import {
   Array as Arr,
   Deferred,
-  Duration,
   Effect,
   Exit,
   FastCheck as fc,
@@ -82,15 +81,9 @@ function receive(subject: Fixture, text: string, author?: AgentCard) {
   );
 }
 
-/** Waits for a pending inbox entry, then acknowledges every pending one. */
+/** Waits for a pending inbox entry, then receives the pending ones. */
 function acknowledgeNext(runtime: Runtime) {
-  return Effect.flatMap(waitForInbox(runtime), ({ entries }) =>
-    Effect.forEach(
-      entries,
-      (entry) => runtime.harness.acknowledgeDelivery(entry.deliveryToken),
-      { concurrency: 1 },
-    ),
-  );
+  return Effect.zipRight(waitForInbox(runtime), runtime.harness.receive({}));
 }
 
 /** Waits until the inbox holds `count` pending entries across all its pages. */
@@ -380,8 +373,8 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     };
     expect(stored.guidance).toBeDefined();
     yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
-    yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
-    yield* resumed.harness.acknowledgeDelivery(delivery.deliveryToken);
+    yield* resumed.inbox.acknowledgeDelivery(delivery.deliveryToken);
+    yield* resumed.inbox.acknowledgeDelivery(delivery.deliveryToken);
     expect((yield* resumed.harness.listInbox()).entries).toEqual([]);
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
@@ -415,7 +408,7 @@ it("keeps an inbox page boundary while arrivals and deliveries change what is pe
     if (delivered === undefined) {
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
-    yield* runtime.harness.acknowledgeDelivery(delivered.deliveryToken);
+    yield* runtime.inbox.acknowledgeDelivery(delivered.deliveryToken);
     const later = yield* unanswered(subject);
     yield* subject.deliver(later);
     yield* waitForPending(runtime, 57);
@@ -494,7 +487,7 @@ it("returns a waiting read at once when an entry is already pending", () =>
     yield* waitForInbox(runtime);
 
     const page = yield* runtime.harness
-      .listInbox({ wait: Duration.minutes(5) })
+      .receive({ wait: 300 })
       .pipe(Effect.timeout("2 seconds"));
 
     expect(page.entries).toHaveLength(1);
@@ -505,7 +498,7 @@ it("ends a waiting read as soon as an entry arrives", () =>
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     const reading = yield* runtime.harness
-      .listInbox({ wait: Duration.minutes(5) })
+      .receive({ wait: 300 })
       .pipe(Effect.fork);
 
     yield* receive(subject, "Arrived while waiting");
@@ -527,9 +520,7 @@ it("returns an empty page when the wait ends with nothing pending", () =>
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
 
-    const page = yield* runtime.harness.listInbox({
-      wait: Duration.millis(50),
-    });
+    const page = yield* runtime.harness.receive({ wait: 0.05 });
 
     expect(page.entries).toEqual([]);
   }));

@@ -217,30 +217,38 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
         deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(row.token),
       })),
     );
+  const listInbox = (request: { readonly cursor?: string } = {}) =>
+    sql<{
+      readonly token: string;
+      readonly payload: string;
+    }>`SELECT token,payload FROM callback_fixture WHERE delivered=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows.slice(0, 50), decodeRow, { concurrency: 1 }),
+      ),
+      Effect.map((entries) => ({
+        entries,
+        ...(entries.length === 50
+          ? { nextCursor: entries.at(-1)?.deliveryToken }
+          : {}),
+      })),
+      Effect.catchTags({
+        SqlError: () =>
+          Effect.fail(new InboxError({ reason: "persistence-failed" })),
+        ParseError: () =>
+          Effect.fail(new InboxError({ reason: "persistence-failed" })),
+      }),
+    );
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
-    listInbox: (request = {}) =>
-      sql<{
-        readonly token: string;
-        readonly payload: string;
-      }>`SELECT token,payload FROM callback_fixture WHERE delivered=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
-        Effect.flatMap((rows) =>
-          Effect.forEach(rows.slice(0, 50), decodeRow, { concurrency: 1 }),
-        ),
-        Effect.map((entries) => ({
+    listInbox,
+    receive: (request) =>
+      Effect.tap(listInbox(request), ({ entries }) =>
+        Effect.forEach(
           entries,
-          ...(entries.length === 50
-            ? { nextCursor: entries.at(-1)?.deliveryToken }
-            : {}),
-        })),
-        Effect.catchTags({
-          SqlError: () =>
-            Effect.fail(new InboxError({ reason: "persistence-failed" })),
-          ParseError: () =>
-            Effect.fail(new InboxError({ reason: "persistence-failed" })),
-        }),
+          (entry) => acknowledgeDelivery(entry.deliveryToken),
+          { concurrency: 1 },
+        ),
       ),
-    acknowledgeDelivery,
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
     inboxChanged: Stream.fromPubSub(changes),
