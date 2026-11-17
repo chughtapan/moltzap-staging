@@ -84,7 +84,6 @@
         "src/harness/startup.ts",
         "src/harness/social-harness.ts",
         "src/harness/inbox.ts",
-        "src/harness/message-format.ts",
         "src/harness/contracts.ts"
       ],
       "reason": "Agent service composition and MCP host interface"

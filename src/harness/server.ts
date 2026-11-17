@@ -2,6 +2,7 @@
 
 import { HttpServerResponse } from "@effect/platform";
 import {
+  Array as Arr,
   Cause,
   type Context,
   Deferred,
@@ -9,7 +10,9 @@ import {
   Effect,
   JSONSchema,
   Option,
+  type ParseResult,
   Schema,
+  SchemaAST,
   Stream,
 } from "effect";
 import type { FirewallRefusal } from "../firewall/index.js";
@@ -18,6 +21,7 @@ import {
   type MessageAddressInput,
   type RequestError,
   SendError,
+  type ValidationIssue,
 } from "../communication/index.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
@@ -36,13 +40,13 @@ import {
   eventUnsubscribeRequest,
   type HarnessWebhookEvents,
   INBOX_PENDING_EVENT,
+  InboxError,
   inboxPendingCatalogEntry,
   sendErrorData,
   textOnlyToolDefinitions,
   toolDefinitions,
 } from "./contracts.js";
 import { limitResponseStream } from "./http.js";
-import { InboxError, validationIssues } from "./message-format.js";
 import { SocialHarness } from "./social-harness.js";
 
 interface AgentMcpAppSettings {
@@ -355,6 +359,226 @@ function invalidArguments(error: Parameters<typeof validationIssues>[0]) {
     `Invalid tool arguments: ${issuesText(issues)}`,
     { issues },
   );
+}
+
+const MAXIMUM_VALIDATION_ISSUES = 20;
+
+/**
+ * Returns at most 20 distinct schema expectations and field paths. Submitted
+ * values and custom decoder messages stay private. Union errors describe the
+ * arms selected by the input. Named values report their full constraint.
+ */
+function validationIssues(error: ParseResult.ParseError) {
+  const issues: ValidationIssue[] = [];
+  appendIssues(error.issue, [], issues);
+  return issues;
+}
+
+function appendIssues(
+  issue: ParseResult.ParseIssue,
+  path: ReadonlyArray<string | number>,
+  issues: ValidationIssue[],
+): void {
+  if (issues.length >= MAXIMUM_VALIDATION_ISSUES) {
+    return;
+  }
+  if (issue._tag === "Pointer") {
+    appendIssues(
+      issue.issue,
+      [...path, ...Arr.ensure(issue.path).map(pathSegment)],
+      issues,
+    );
+    return;
+  }
+  if (issue._tag === "Composite" && issue.ast._tag === "Union") {
+    appendUnion(issue, path, issues);
+    return;
+  }
+  if (issue._tag === "Composite") {
+    appendChildren(Arr.ensure(issue.issues), path, issues);
+    return;
+  }
+  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
+    appendRefined(issue, path, issues);
+    return;
+  }
+  addIssue(issues, { path, message: expectedMessage(issue) });
+}
+
+/** Named values report their full constraint. Other refinements report the inner failure. */
+function appendRefined(
+  issue: ParseResult.Refinement | ParseResult.Transformation,
+  path: ReadonlyArray<string | number>,
+  issues: ValidationIssue[],
+): void {
+  if (issue._tag === "Refinement" && namedValue(issue)) {
+    addIssue(issues, { path, message: expectedSchemaMessage(issue.ast) });
+    return;
+  }
+  appendIssues(issue.issue, path, issues);
+}
+
+/**
+ * Reports selected union arms once when they reject the whole value, or reports
+ * their failing fields when they match its structure.
+ */
+function appendUnion(
+  issue: ParseResult.Composite,
+  path: ReadonlyArray<string | number>,
+  issues: ValidationIssue[],
+): void {
+  const arms = selectedArms(Arr.ensure(issue.issues), issue.actual);
+  const inside = arms.filter((arm) => !leafFailure(arm));
+  if (inside.length === 0 && arms.length > 1) {
+    addIssue(issues, { path, message: expectedSchemaMessage(issue.ast) });
+    return;
+  }
+  appendChildren(inside.length === 0 ? arms : inside, path, issues);
+}
+
+function appendChildren(
+  children: readonly ParseResult.ParseIssue[],
+  path: ReadonlyArray<string | number>,
+  issues: ValidationIssue[],
+): void {
+  for (const child of children) {
+    appendIssues(child, path, issues);
+    if (issues.length >= MAXIMUM_VALIDATION_ISSUES) {
+      break;
+    }
+  }
+}
+
+/**
+ * Selects arms by matching literal fields, then required and forbidden fields.
+ * An absent-value arm cannot explain a present value. If none match, all report.
+ */
+function selectedArms(
+  arms: readonly ParseResult.ParseIssue[],
+  actual: unknown,
+): readonly ParseResult.ParseIssue[] {
+  const present = arms.filter(
+    (arm) => !(arm._tag === "Type" && arm.ast._tag === "UndefinedKeyword"),
+  );
+  const candidates = present.length === 0 ? arms : present;
+  const chosen = candidates.filter((arm) => literalsMatch(arm, actual));
+  if (chosen.length > 0) {
+    return chosen;
+  }
+  const fitting = candidates.filter((arm) => !fieldsMismatch(arm));
+  return fitting.length > 0 ? fitting : candidates;
+}
+
+function literalsMatch(
+  issue: ParseResult.ParseIssue,
+  actual: unknown,
+): boolean {
+  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
+    return literalsMatch(issue.issue, actual);
+  }
+  if (issue._tag !== "Composite") {
+    return false;
+  }
+  if (issue.ast._tag === "Union") {
+    return Arr.ensure(issue.issues).some((arm) => literalsMatch(arm, actual));
+  }
+  if (issue.ast._tag !== "TypeLiteral" || !isRecord(actual)) {
+    return false;
+  }
+  const literals = issue.ast.propertySignatures.flatMap((signature) =>
+    signature.type._tag === "Literal"
+      ? [{ name: signature.name, literal: signature.type.literal }]
+      : [],
+  );
+  return (
+    literals.length > 0 &&
+    literals.every(({ name, literal }) => actual[name] === literal)
+  );
+}
+
+function fieldsMismatch(issue: ParseResult.ParseIssue): boolean {
+  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
+    return fieldsMismatch(issue.issue);
+  }
+  if (issue._tag !== "Composite") {
+    return false;
+  }
+  const children = Arr.ensure(issue.issues);
+  if (issue.ast._tag === "Union") {
+    return children.every(fieldsMismatch);
+  }
+  return children.some(
+    (child) =>
+      child._tag === "Pointer" &&
+      (child.issue._tag === "Missing" || child.issue._tag === "Unexpected"),
+  );
+}
+
+function namedValue(issue: ParseResult.Refinement): boolean {
+  return (
+    Option.isSome(SchemaAST.getIdentifierAnnotation(issue.ast)) &&
+    Option.isSome(SchemaAST.getDescriptionAnnotation(issue.ast)) &&
+    leafFailure(issue)
+  );
+}
+
+function leafFailure(issue: ParseResult.ParseIssue): boolean {
+  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
+    return leafFailure(issue.issue);
+  }
+  return issue._tag !== "Composite" && issue._tag !== "Pointer";
+}
+
+function addIssue(issues: ValidationIssue[], issue: ValidationIssue): void {
+  const repeated = issues.some(
+    (other) =>
+      other.message === issue.message &&
+      other.path.join("\0") === issue.path.join("\0"),
+  );
+  if (!repeated) {
+    issues.push(issue);
+  }
+}
+
+function isRecord(
+  value: unknown,
+): value is Readonly<Record<PropertyKey, unknown>> {
+  return typeof value === "object" && value !== null;
+}
+
+function pathSegment(key: PropertyKey): string | number {
+  return typeof key === "number" ? key : String(key);
+}
+
+function expectedMessage(
+  issue:
+    | ParseResult.Type
+    | ParseResult.Forbidden
+    | ParseResult.Missing
+    | ParseResult.Unexpected,
+): string {
+  switch (issue._tag) {
+    case "Unexpected":
+      return "Unexpected field";
+    case "Missing":
+      return "Required field is missing";
+    case "Type":
+      if (issue.ast._tag === "NeverKeyword") {
+        return "Unexpected field";
+      }
+      return expectedSchemaMessage(issue.ast);
+    case "Forbidden":
+      return expectedSchemaMessage(issue.ast);
+    default:
+      return issue satisfies never;
+  }
+}
+
+function expectedSchemaMessage(ast: SchemaAST.AST): string {
+  return `Expected ${Option.getOrElse(
+    SchemaAST.getDescriptionAnnotation(ast),
+    () => String(ast),
+  )}`;
 }
 
 function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {

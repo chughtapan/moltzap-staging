@@ -18,11 +18,10 @@ import {
 import { createHash } from "node:crypto";
 import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
-  AgentAddress,
   CollectiveRequest,
   CollectiveResponse,
   CommunicationError,
-  GroupAddress,
+  GROUP_ADDRESS_PREFIX,
   Message,
   type MessageAddressInput,
   messageWithId,
@@ -48,12 +47,7 @@ import {
 } from "../firewall/service.js";
 import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
-  conversationsCursor,
-  historyCursor,
-  makeInbox,
-  type Unchecked,
-} from "./inbox.js";
-import {
+  addressOf,
   canonicalMessageAddress,
   type DeliveryAcknowledgeError,
   type DeliveryToken,
@@ -62,10 +56,17 @@ import {
   InboxError,
   type InboxPage,
   type MessageAddress,
+  otherMemberNames,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
-} from "./message-format.js";
+} from "./contracts.js";
+import {
+  conversationsCursor,
+  historyCursor,
+  makeInbox,
+  type Unchecked,
+} from "./inbox.js";
 
 /** Start a live conversation-list traversal by omitting cursor. */
 interface ListConversationsRequest extends PaginatedRequest {}
@@ -228,7 +229,10 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
         Effect.suspend(() => {
           const request = structuredClone(input);
           return Effect.gen(function* () {
-            if (settings.hideGroups && request.to.startsWith("group:")) {
+            if (
+              settings.hideGroups &&
+              request.to.startsWith(GROUP_ADDRESS_PREFIX)
+            ) {
               return yield* new SendError({
                 reason: "invalid-address",
                 detail:
@@ -264,12 +268,10 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
                 .filter((member) => member.agentId !== self.agentId)
                 .map((member) => member.agentName)
                 .sort(compareAscii);
-              const selectedNames =
-                destination.kind === "direct"
-                  ? [destination.remoteName]
-                  : destination.memberNames.filter(
-                      (name) => name !== self.agentName,
-                    );
+              const selectedNames = otherMemberNames(
+                destination,
+                self.agentName,
+              );
               if (
                 expected.join(",") !==
                 [...selectedNames].sort(compareAscii).join(",")
@@ -287,13 +289,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               );
             } else {
               const recipients = yield* identity
-                .resolve(
-                  destination.kind === "direct"
-                    ? [destination.remoteName]
-                    : destination.memberNames.filter(
-                        (name) => name !== self.agentName,
-                      ),
-                )
+                .resolve(otherMemberNames(destination, self.agentName))
                 .pipe(
                   Effect.catchTag("IdentityError", (error) =>
                     Effect.fail(
@@ -465,12 +461,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
           if (position.address !== request.address) {
             return yield* new HistoryError({ reason: "invalid-cursor" });
           }
-          const names =
-            destination.kind === "direct"
-              ? [destination.remoteName]
-              : destination.memberNames.filter(
-                  (name) => name !== self.agentName,
-                );
+          const names = otherMemberNames(destination, self.agentName);
           const records: HistoryRecord[] = [];
           const members =
             position.phase === "messages"
@@ -821,21 +812,6 @@ function incomingMembers(incoming: Incoming): readonly AgentCard[] {
     default:
       return absurd(incoming);
   }
-}
-
-function addressOf(
-  members: readonly AgentCard[],
-  localAgentId: AgentCard["agentId"],
-): MessageAddress {
-  const others = members.filter((member) => member.agentId !== localAgentId);
-  return others.length === 1
-    ? AgentAddress.make(`agent:${others[0]?.agentName}`)
-    : GroupAddress.make(
-        `group:${members
-          .map((member) => member.agentName)
-          .sort(compareAscii)
-          .join(",")}`,
-      );
 }
 
 function sendFailure(error: CommunicationError): SendError {

@@ -37,9 +37,12 @@ import {
   mcpRequest,
   mcpTestCredential,
 } from "./__tests__/mcp-fixtures.js";
-import { MAXIMUM_WAIT_SECONDS, toolDefinitions } from "./contracts.js";
+import {
+  HistoryError,
+  MAXIMUM_WAIT_SECONDS,
+  toolDefinitions,
+} from "./contracts.js";
 import { serveMcp } from "./http.js";
-import { HistoryError } from "./message-format.js";
 import { localOwner, serverAgentOwner } from "./ownership.js";
 
 const response = Schema.parseJson(
