@@ -47,6 +47,7 @@ import {
   Identity,
   IdentityError,
 } from "../../identity.js";
+import { makeInbox } from "../inbox.js";
 import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
 type Harness = Context.Tag.Service<typeof SocialHarness>;
@@ -284,6 +285,9 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
     const harness = Context.get(context, SocialHarness);
     return {
       harness,
+      inbox: yield* makeInbox(environment.filename).pipe(
+        Effect.provide(services),
+      ),
       firewall,
       failed: FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
     };

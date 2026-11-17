@@ -6,7 +6,6 @@ import {
   Cause,
   type Context,
   Deferred,
-  Duration,
   Effect,
   JSONSchema,
   Option,
@@ -33,7 +32,6 @@ import {
 import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
 import {
   clientToolDefinitions,
-  InboxError,
   textOnlyToolDefinitions,
   toolDefinitions,
 } from "./contracts.js";
@@ -169,27 +167,11 @@ function clientTools(
   ];
 }
 
-/** Hands over pending inbox entries and marks them delivered. */
 function receiveTool(harness: Harness) {
   return bind({
     name: "receive_messages",
     definition: toolDefinitions.receive_messages,
-    execute: Effect.fn(function* ({ wait, ...request }) {
-      const page = yield* harness.listInbox({
-        ...request,
-        ...(wait === undefined ? {} : { wait: Duration.seconds(wait) }),
-      });
-      for (const entry of page.entries) {
-        yield* harness
-          .acknowledgeDelivery(entry.deliveryToken)
-          .pipe(
-            Effect.catchTag("DeliveryAcknowledgeError", () =>
-              Effect.fail(new InboxError({ reason: "persistence-failed" })),
-            ),
-          );
-      }
-      return page;
-    }),
+    execute: harness.receive,
   });
 }
 

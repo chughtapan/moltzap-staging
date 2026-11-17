@@ -70,16 +70,16 @@ const inboxFixture = Effect.gen(function* () {
   const receipt = yield* Deferred.make<undefined>();
   const fixture = yield* mcpFixture({
     harness: {
-      listInbox: () =>
+      receive: () =>
         Ref.get(acknowledged).pipe(
           Effect.flatMap((count) =>
-            count === 0 ? Effect.succeed({ entries: [entry] }) : Effect.never,
+            count === 0
+              ? Ref.set(acknowledged, 1).pipe(
+                  Effect.zipRight(Deferred.succeed(receipt, undefined)),
+                  Effect.as({ entries: [entry] }),
+                )
+              : Effect.never,
           ),
-        ),
-      acknowledgeDelivery: () =>
-        Ref.update(acknowledged, (count) => count + 1).pipe(
-          Effect.zipRight(Deferred.succeed(receipt, undefined)),
-          Effect.asVoid,
         ),
     },
   });
