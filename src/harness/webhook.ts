@@ -50,22 +50,13 @@ import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
 import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   callbackReasons,
-  type EventSubscribeRequest,
-  type HarnessWebhookEvents,
   INBOX_PENDING_EVENT,
-  maximumEventBytes,
   type SubscriptionStatus,
 } from "./contracts.js";
 import { SocialHarness } from "./social-harness.js";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
-export type WebhookFailureReason =
-  | "connection_refused"
-  | "timeout"
-  | "tls_error"
-  | "http_4xx"
-  | "http_5xx"
-  | "challenge_failed";
+export type WebhookFailureReason = (typeof callbackReasons)[number];
 
 /** Expected callback failure safe to report in the Events protocol. */
 export class WebhookCallbackError extends Data.TaggedError(
@@ -84,6 +75,9 @@ export interface WebhookPost {
   readonly body: string;
   readonly timestamp: number;
 }
+
+/** Maximum complete UTF-8 callback body accepted by the event transport. */
+const maximumEventBytes = 256 * 1024;
 
 /* eslint-disable sonarjs/no-hardcoded-ip -- These are excluded address ranges for callback SSRF defense, never configured endpoints. */
 const blockedV4 = new BlockList();
@@ -418,11 +412,7 @@ const clearSubscription = (webhook: AgentWebhook) =>
 
 const verify = (
   webhook: AgentWebhook,
-  callback: {
-    readonly id: string;
-    readonly url: string;
-    readonly secret: string;
-  },
+  callback: Pick<Subscription, "id" | "url" | "secret">,
 ) =>
   Effect.gen(function* () {
     const secretDigest = createHash("sha256")
@@ -480,14 +470,13 @@ const refuseSecondSubscription = (webhook: AgentWebhook, id: string) =>
 
 const saveVerifiedSubscription = (
   webhook: AgentWebhook,
-  request: EventSubscribeRequest,
+  callback: Pick<Subscription, "id" | "url" | "secret">,
   generation: number,
+  ttlMs?: number | null,
 ) =>
   webhook.subscriptionLock.withPermits(1)(
     Effect.gen(function* () {
-      const { url, secret } = request.delivery;
-      const id = subscriptionId(url);
-      yield* refuseSecondSubscription(webhook, id);
+      yield* refuseSecondSubscription(webhook, callback.id);
       if (generation !== webhook.generation) {
         return yield* Effect.fail(
           new ProtocolError(-32012, "Subscription changed during verification"),
@@ -495,18 +484,16 @@ const saveVerifiedSubscription = (
       }
       const expiresAt =
         now(webhook) +
-        Math.max(60_000, Math.min(request.ttlMs ?? maximumLease, maximumLease));
+        Math.max(60_000, Math.min(ttlMs ?? maximumLease, maximumLease));
       yield* save(webhook, {
-        id,
-        url,
-        secret,
+        ...callback,
         expiresAt,
         stalled: null,
         lastError: null,
       });
       yield* restartWakeUps(webhook);
       return {
-        id,
+        id: callback.id,
         refreshBefore: new Date(expiresAt).toISOString(),
         cursor: null,
         truncated: false,
@@ -514,22 +501,30 @@ const saveVerifiedSubscription = (
     }).pipe(Effect.uninterruptible),
   );
 
-const subscribe = (webhook: AgentWebhook, request: EventSubscribeRequest) =>
+const subscribe = (
+  webhook: AgentWebhook,
+  { url, secret }: Pick<Subscription, "url" | "secret">,
+  ttlMs?: number | null,
+) =>
   Effect.gen(function* () {
-    const { url, secret } = request.delivery;
     if (webhookUrl(url) === undefined || !validWebhookSecret(secret)) {
       return yield* Effect.fail(
         new ProtocolError(-32602, "Invalid callback URL or secret"),
       );
     }
-    const id = subscriptionId(url);
+    const callback = { id: subscriptionId(url), url, secret };
     const generation = yield* webhook.subscriptionLock.withPermits(1)(
-      refuseSecondSubscription(webhook, id).pipe(
+      refuseSecondSubscription(webhook, callback.id).pipe(
         Effect.map(() => webhook.generation),
       ),
     );
-    yield* verify(webhook, { id, url, secret });
-    return yield* saveVerifiedSubscription(webhook, request, generation);
+    yield* verify(webhook, callback);
+    return yield* saveVerifiedSubscription(
+      webhook,
+      callback,
+      generation,
+      ttlMs,
+    );
   });
 
 /** The delivery tokens of the pending inbox entries. */
@@ -723,16 +718,119 @@ const unsubscribe = (webhook: AgentWebhook, url: string) =>
     return clearSubscription(webhook);
   });
 
-const webhookOperations = (webhook: AgentWebhook): HarnessWebhookEvents => ({
-  subscribe: (request) => subscribe(webhook, request),
-  unsubscribe: (request) =>
-    webhook.subscriptionLock.withPermits(1)(
-      unsubscribe(webhook, request.delivery.url),
-    ),
-  status: webhook.subscriptionLock.withPermits(1)(
-    Effect.sync(() => status(webhook)),
-  ),
+const emptyArguments = Schema.Record({
+  key: Schema.String,
+  value: Schema.Never,
 });
+/** Catalog cursors are independent of event replay positions. */
+const eventListRequest = Schema.Struct({
+  cursor: Schema.optionalWith(Schema.String, { exact: true }),
+});
+/** Validates subscription shape before authorization and callback URL checks. */
+const eventSubscribeRequest = Schema.Struct({
+  name: Schema.String,
+  arguments: emptyArguments,
+  /** Omitting the cursor requests the draft's explicit null position. */
+  cursor: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
+  maxAgeMs: Schema.optionalWith(Schema.NonNegativeInt, { exact: true }),
+  delivery: Schema.Struct({
+    mode: Schema.String,
+    url: Schema.String,
+    secret: Schema.String,
+  }),
+  ttlMs: Schema.optionalWith(Schema.NullOr(Schema.NonNegativeInt), {
+    exact: true,
+  }),
+});
+/** Unsubscribing identifies the subscription without disclosing its signing secret. */
+const eventUnsubscribeRequest = Schema.Struct({
+  name: Schema.String,
+  arguments: emptyArguments,
+  delivery: Schema.Struct({ url: Schema.String }),
+});
+
+/** How the event catalogue lists the wake-up. */
+const inboxPendingCatalogEntry = {
+  name: INBOX_PENDING_EVENT,
+  description: "A wake-up to read the pending inbox.",
+  delivery: ["webhook"],
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  payloadSchema: {
+    type: "object",
+    properties: { pendingCount: { type: "integer", minimum: 0 } },
+    required: ["pendingCount"],
+  },
+};
+
+/**
+ * The one event a host can follow: a wake-up saying how many inbox entries
+ * are pending. A host subscribes a callback URL for it, and reads the entries
+ * themselves with `receive_messages`.
+ */
+function inboxEvents(webhook: AgentWebhook) {
+  const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+    Schema.decodeUnknown(schema)(input).pipe(
+      Effect.catchTag("ParseError", () =>
+        Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
+      ),
+    );
+  return {
+    list: (raw: unknown) =>
+      decode(eventListRequest, raw).pipe(
+        Effect.filterOrFail(
+          (input) => input.cursor === undefined,
+          () => new ProtocolError(-32602, "Invalid event catalog cursor"),
+        ),
+        Effect.as({ events: [inboxPendingCatalogEntry] }),
+      ),
+    subscribe: (raw: unknown) =>
+      decode(eventSubscribeRequest, raw).pipe(
+        Effect.flatMap(onlyInboxPending),
+        Effect.filterOrFail(
+          (input) => input.delivery.mode === "webhook",
+          () => new ProtocolError(-32602, "Unsupported delivery mode"),
+        ),
+        Effect.flatMap((input) =>
+          subscribe(webhook, input.delivery, input.ttlMs),
+        ),
+      ),
+    unsubscribe: (raw: unknown) =>
+      decode(eventUnsubscribeRequest, raw).pipe(
+        Effect.flatMap(onlyInboxPending),
+        Effect.flatMap((input) =>
+          webhook.subscriptionLock.withPermits(1)(
+            unsubscribe(webhook, input.delivery.url),
+          ),
+        ),
+        Effect.as({}),
+      ),
+    status: webhook.subscriptionLock.withPermits(1)(
+      Effect.sync(() => status(webhook)),
+    ),
+  };
+}
+
+/** Refuses any event but the inbox wake-up, and any request to replay it. */
+function onlyInboxPending<
+  A extends { readonly name: string; readonly cursor?: string | null },
+>(input: A) {
+  if (input.name !== INBOX_PENDING_EVENT) {
+    return Effect.fail(
+      new ProtocolError(-32011, "Event not found", { kind: "event" }),
+    );
+  }
+  return input.cursor == null
+    ? Effect.succeed(input)
+    : Effect.fail(
+        new ProtocolError(
+          -32014,
+          "Event replay is unavailable; read the inbox",
+          {
+            feature: "cursor",
+          },
+        ),
+      );
+}
 
 function writeSavedSubscription(
   webhook: Pick<AgentWebhook, "sql" | "agentKey">,
@@ -756,6 +854,12 @@ function writeSavedSubscription(
     );
   }).pipe(Effect.provideService(SqlClient.SqlClient, webhook.sql));
 }
+
+/**
+ * One agent's callback subscription for inbox wake-ups: the MCP Events calls,
+ * each taking a request as it arrived, and what the `status` tool reports.
+ */
+export type HarnessWebhookEvents = ReturnType<typeof inboxEvents>;
 
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
 export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
@@ -808,5 +912,5 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     Effect.forever,
     Effect.forkScoped,
   );
-  return webhookOperations(webhook);
+  return inboxEvents(webhook);
 }, Effect.mapError(persistenceFailure));
