@@ -19,12 +19,12 @@ import {
 import { digest, testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { PermittedItem } from "../../firewall/index.js";
-import { INBOX_PENDING_EVENT } from "../contracts.js";
 import {
   DeliveryToken,
+  INBOX_PENDING_EVENT,
   InboxError,
   StoredInboxEntry,
-} from "../message-format.js";
+} from "../contracts.js";
 import { SocialHarness } from "../social-harness.js";
 import { makeWebhookEvents } from "../webhook.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;

@@ -32,7 +32,7 @@ import {
   MessageAddress,
   PAGE_SIZE,
   StoredInboxEntry,
-} from "./message-format.js";
+} from "./contracts.js";
 
 const uncheckedRow = Schema.Struct({
   sequence: Schema.Number,

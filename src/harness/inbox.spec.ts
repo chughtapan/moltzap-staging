@@ -5,8 +5,8 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
 import { databaseConnection, migrateDaemon } from "../database/index.js";
+import { MessageAddress } from "./contracts.js";
 import { makeInbox } from "./inbox.js";
-import { MessageAddress } from "./message-format.js";
 
 it("stores the same peer message for each agent and refuses another agent's delivery token", () =>
   Effect.gen(function* () {

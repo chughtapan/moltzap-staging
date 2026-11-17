@@ -35,7 +35,7 @@ export {
   SendRequest,
   type SendResult,
   StoredInboxEntry,
-} from "./harness/message-format.js";
+} from "./harness/contracts.js";
 /** The content policy permits an agent to read, and why policy refused a send or an edit. */
 export {
   FirewallPolicyError,
