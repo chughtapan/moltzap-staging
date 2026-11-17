@@ -15,13 +15,10 @@ import {
   SchemaAST,
   Stream,
 } from "effect";
-import type { FirewallRefusal } from "../firewall/index.js";
 import type { HarnessWebhookEvents } from "./webhook.js";
 import {
   issuesText,
   type MessageAddressInput,
-  type RequestError,
-  SendError,
   type ValidationIssue,
 } from "../communication/index.js";
 import { Firewall } from "../firewall/service.js";
@@ -37,7 +34,6 @@ import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
 import {
   clientToolDefinitions,
   InboxError,
-  sendErrorData,
   textOnlyToolDefinitions,
   toolDefinitions,
 } from "./contracts.js";
@@ -113,10 +109,11 @@ function peerTools(
   const policyConfigured = firewall
     .readPolicy()
     .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+  const send = { name: "send_message", execute: harness.send };
   return [
     settings.hideCollectives
-      ? sendTool(textOnlyToolDefinitions.send_message, harness.send)
-      : sendTool(toolDefinitions.send_message, harness.send),
+      ? bind({ ...send, definition: textOnlyToolDefinitions.send_message })
+      : bind({ ...send, definition: toolDefinitions.send_message }),
     receiveTool(harness),
     bind({
       name: "list_conversations",
@@ -134,15 +131,10 @@ function peerTools(
       execute: () => firewall.readPolicy(),
       visible: policyConfigured,
     }),
-    bindWith({
+    bind({
       name: "update_policy",
       definition: toolDefinitions.update_policy,
       execute: firewall.updatePolicy,
-      failure: (error) =>
-        new ProtocolError(-32603, error.message, {
-          reason: error.reason,
-          ...error.data,
-        }),
       visible: policyConfigured,
     }),
     bind({
@@ -162,9 +154,11 @@ function clientTools(
   serverAgentAddress: MessageAddressInput,
 ) {
   return [
-    sendTool(clientToolDefinitions.send_message, ({ text }) =>
-      harness.send({ to: serverAgentAddress, text }),
-    ),
+    bind({
+      name: "send_message",
+      definition: clientToolDefinitions.send_message,
+      execute: ({ text }) => harness.send({ to: serverAgentAddress, text }),
+    }),
     receiveTool(harness),
     bind({
       name: "read_conversation",
@@ -173,24 +167,6 @@ function clientTools(
         harness.readHistory({ ...page, address: serverAgentAddress }),
     }),
   ];
-}
-
-/** A send that ended without a declared result may or may not have been accepted. */
-function sendTool<A, I, B, J>(
-  definition: Definition<A, I, B, J>,
-  execute: (
-    input: A,
-  ) => Effect.Effect<B, SendError | RequestError | FirewallRefusal>,
-) {
-  const failure = (error: SendError | RequestError | FirewallRefusal) =>
-    new ProtocolError(-32603, error.message, sendErrorData(error));
-  return bindWith({
-    name: "send_message",
-    definition,
-    execute,
-    failure,
-    unexpected: failure(new SendError({ reason: "outcome-unknown" })),
-  });
 }
 
 /** Hands over pending inbox entries and marks them delivered. */
@@ -259,7 +235,7 @@ function normsTool(
 }
 
 /** What a tool definition says about a tool before any operation is attached. */
-interface Definition<A, I, B, J> {
+interface Definition<A, I, B, J, E> {
   readonly description: string;
   readonly input: Schema.Schema<A, I>;
   readonly output: Schema.Schema<B, J>;
@@ -269,46 +245,36 @@ interface Definition<A, I, B, J> {
     readonly destructiveHint?: boolean;
     readonly idempotentHint?: boolean;
   };
-}
-
-interface Binding<A, I, B, J, E> {
-  readonly name: string;
-  readonly definition: Definition<A, I, B, J>;
-  readonly execute: (input: A) => Effect.Effect<B, E>;
-  /** What to answer when the tool ends in a way it does not declare. */
-  readonly unexpected?: ProtocolError;
-  /** Checked on every listing and call. A tool without it is always offered. */
-  readonly visible?: Effect.Effect<boolean>;
-}
-
-/** Binds a tool whose failures carry a reason and a message, which is how they reach the caller. */
-function bind<A, I, B, J>(
-  binding: Binding<A, I, B, J, { readonly reason: string; message: string }>,
-) {
-  return bindWith({
-    ...binding,
-    failure: (error) =>
-      new ProtocolError(-32603, error.message, { reason: error.reason }),
-  });
+  readonly failure: {
+    readonly toData: (error: E) => unknown;
+    /** The failure to answer when the tool ends in a way it does not declare. */
+    readonly unexpected?: E;
+  };
 }
 
 /**
  * Turns a tool definition and the operation behind it into a registered
  * tool: arguments are decoded with the definition's input, the result is
- * encoded with its output, and a failure is worded by `failure`.
+ * encoded with its output, and a failure is answered with its message and
+ * the data the definition writes for it.
  */
-function bindWith<A, I, B, J, E>(
-  binding: Binding<A, I, B, J, E> & {
-    readonly failure: (error: E) => ProtocolError;
-  },
-) {
-  const { name, definition, execute, failure, visible } = binding;
+function bind<A, I, B, J, E extends { readonly message: string }>(binding: {
+  readonly name: string;
+  readonly definition: Definition<A, I, B, J, E>;
+  readonly execute: (input: A) => Effect.Effect<B, E>;
+  /** Checked on every listing and call. A tool without it is always offered. */
+  readonly visible?: Effect.Effect<boolean>;
+}) {
+  const { name, definition, execute, visible } = binding;
+  const refusal = (error: E) =>
+    new ProtocolError(-32603, error.message, definition.failure.toData(error));
   const unexpected =
-    binding.unexpected ??
-    new ProtocolError(
-      -32603,
-      "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-    );
+    definition.failure.unexpected === undefined
+      ? new ProtocolError(
+          -32603,
+          "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+        )
+      : refusal(definition.failure.unexpected);
   return {
     tool: new Tool({
       name,
@@ -328,7 +294,7 @@ function bindWith<A, I, B, J, E>(
           onExcessProperty: "error",
           errors: "all",
         })(input).pipe(Effect.mapError(invalidArguments));
-        const output = yield* execute(decoded).pipe(Effect.mapError(failure));
+        const output = yield* execute(decoded).pipe(Effect.mapError(refusal));
         const encoded = yield* Schema.encode(definition.output)(output, {
           onExcessProperty: "error",
         }).pipe(Effect.mapError(() => unexpected));
