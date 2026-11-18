@@ -49,7 +49,13 @@ const response = Schema.parseJson(
   Schema.Struct({
     id: Schema.Unknown,
     result: Schema.optional(
-      Schema.Struct({ structuredContent: Schema.optional(Schema.Unknown) }),
+      Schema.Struct({
+        isError: Schema.optional(Schema.Boolean),
+        content: Schema.optional(
+          Schema.Array(Schema.Struct({ text: Schema.String })),
+        ),
+        structuredContent: Schema.optional(Schema.Unknown),
+      }),
     ),
     error: Schema.optional(
       Schema.Struct({
@@ -369,8 +375,8 @@ it("runs a call when every argument holds a value its tool accepts, and refuses 
             name,
             arguments: nested({ ...accepted, [wrong]: refused[wrong] }),
           });
-          expect(refusal.error?.code).toBe(-32602);
-          expect(refusal.error?.message).toContain(`${wrong}: `);
+          expect(refusal.result?.isError).toBe(true);
+          expect(refusal.result?.content?.[0]?.text).toContain(`${wrong}: `);
           expect(yield* Ref.getAndSet(returned, [])).toEqual([]);
           expect(JSON.stringify(refusal)).not.toContain("PRIVATE");
         }
@@ -414,8 +420,14 @@ it("refuses a call with a field its tool does not take, naming the field without
           ...call,
           arguments: { ...call.arguments, [name]: value },
         });
-        expect(reply.error?.data).toEqual({
-          issues: [{ path: [name], message: "Unexpected field" }],
+        expect(reply.result).toEqual({
+          isError: true,
+          content: [
+            { text: `Invalid tool arguments: ${name}: Unexpected field` },
+          ],
+          structuredContent: {
+            issues: [{ path: [name], message: "Unexpected field" }],
+          },
         });
         expect(JSON.stringify(reply)).not.toContain("PRIVATE");
       }),
@@ -449,10 +461,10 @@ describe("MCP tool contracts", () => {
         [sendEndings],
         Effect.fnUntraced(function* ({ data, ending }) {
           yield* Ref.set(sending, ending);
-          expect((yield* toolCall(fixture, send)).error).toEqual({
-            code: -32603,
-            message: new SendError(data).message,
-            data,
+          expect((yield* toolCall(fixture, send)).result).toEqual({
+            isError: true,
+            content: [{ text: new SendError(data).message }],
+            structuredContent: data,
           });
         }),
       );
@@ -471,10 +483,10 @@ describe("MCP tool contracts", () => {
         Effect.fnUntraced(function* (reason) {
           const failure = new HistoryError({ reason });
           yield* Ref.set(reading, failure);
-          expect((yield* toolCall(fixture, read)).error).toEqual({
-            code: -32603,
-            message: failure.message,
-            data: { reason },
+          expect((yield* toolCall(fixture, read)).result).toEqual({
+            isError: true,
+            content: [{ text: failure.message }],
+            structuredContent: { reason },
           });
         }),
       );
@@ -653,9 +665,9 @@ describe("send_message arguments", () => {
           }),
         ),
       );
-      expect(JSON.stringify((yield* json(reply)).error?.data)).toContain(
-        collectiveField,
-      );
+      expect(
+        JSON.stringify((yield* json(reply)).result?.structuredContent),
+      ).toContain(collectiveField);
     }));
 
   it("gives a client in client/server mode tools that name no recipient", () =>

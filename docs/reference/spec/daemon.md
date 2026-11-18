@@ -172,8 +172,10 @@ The daemon answers `tools/list`, `tools/call`, `subscriptions/listen` and the
 [Events](./host/receiving.md#mcp-events-and-inbox) calls `events/list`,
 `events/subscribe` and `events/unsubscribe`, and `ping` on the older
 revisions. Any other method is answered `-32601`, with HTTP 404 on
-`2026-07-28`. A tool or Events call that fails is answered as a JSON-RPC
-error whose `code`, `message` and `data` are the ones its contract gives. A
+`2026-07-28`. A tool call that fails returns
+[a result marked as an error](./host/messaging.md#mcp-projection). An Events
+call that fails is answered as a JSON-RPC error whose `code`, `message` and
+`data` are the ones its contract gives. A
 host cancels a call by closing its request. `notifications/cancelled` is
 acknowledged and interrupts nothing.
 

@@ -247,7 +247,12 @@ export function callToolAsWritten(
   }).pipe(
     Effect.flatMap((response) =>
       response.isError === true
-        ? Effect.fail(toToolFailure({ kind: "refused", data: undefined }))
+        ? Effect.fail(
+            toToolFailure({
+              kind: "refused",
+              data: response.structuredContent,
+            }),
+          )
         : Schema.decodeUnknown(definition.output)(
             response.structuredContent,
           ).pipe(

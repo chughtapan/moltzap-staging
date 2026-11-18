@@ -428,8 +428,8 @@ const sendErrorDataSchema = Schema.Union(
 );
 
 /**
- * Preserves the typed refusal's details, the collective request's message id
- * and failing members or fields in JSON-RPC error data.
+ * Writes the typed refusal's details, the collective request's message id and
+ * failing members or fields as the structured content of a failed send.
  */
 function sendErrorData(
   error: SendError | RequestError | FirewallRefusal,
@@ -457,7 +457,7 @@ function sendErrorData(
   return { reason: error.reason, detail: error.detail };
 }
 
-/** Reads a refused send's JSON-RPC error data back as the typed failure, with its send and collective details. */
+/** Reads a failed send's structured content back as the typed failure, with its send and collective details. */
 function sendErrorFromData(value: unknown) {
   return Effect.gen(function* () {
     const data = yield* Schema.decodeUnknown(sendErrorDataSchema)(value);
@@ -482,24 +482,26 @@ function sendErrorFromData(value: unknown) {
 }
 
 /**
- * How a tool call ended without a result, as its caller saw it. `refused`
- * carries the error data the daemon answered with. `unanswered` says whether
- * the request can have reached the daemon. `unreadable` is an answer that is
- * not the tool's result.
+ * How a tool call ended without the tool's result, as its caller saw it.
+ * `refused` carries the structured content of the failed result the daemon
+ * answered with, or the data of its protocol error. `unanswered` says whether
+ * the request can have reached the daemon. `unreadable` is a successful answer
+ * that is not the tool's result.
  */
 export type ToolCallFailure =
   | { readonly kind: "refused"; readonly data: unknown }
   | { readonly kind: "unanswered"; readonly sent: boolean }
   | { readonly kind: "unreadable" };
 
-/** The error data of a failure that tells its caller only a reason. */
+/** The structured content of a failure that tells its caller only a reason. */
 const reasonData = <Reason>(error: { readonly reason: Reason }) => ({
   reason: error.reason,
 });
 
 /**
- * A tool whose refusals carry `data`: `toData` writes a typed failure as that
- * data, and `make` turns the data a caller receives back into the failure.
+ * A tool whose failed results carry `data` as structured content: `toData`
+ * writes a typed failure as that data, and `make` turns the data a caller
+ * receives back into the failure.
  */
 const failsWith = <A, I, E>(
   data: Schema.Schema<A, I>,

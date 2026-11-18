@@ -84,8 +84,9 @@ startup order and loopback access.
 
 ## Error boundaries
 
-Each boundary returns its owner's closed typed failures. MCP preserves domain
-failures in error data.
+Each boundary returns its owner's closed typed failures. MCP returns a failed
+tool call as a result marked as an error, with the failure's fields as its
+structured content.
 Decoder and infrastructure causes remain private.
 
 ## Releases
