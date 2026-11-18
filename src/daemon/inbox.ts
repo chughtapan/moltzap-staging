@@ -24,7 +24,6 @@ import {
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
 import {
-  DeliveryAcknowledgeError,
   DeliveryToken,
   type InboxEntry,
   InboxError,
@@ -319,34 +318,18 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         error instanceof InboxError ? error : persistenceFailure(),
       ),
     ),
-    acknowledgeDelivery: Effect.fn(
-      function* (token: DeliveryToken) {
-        const rows = yield* run(
-          inboxRows()
-            .select("status")
-            .where("delivery_token", "=", token)
-            .where("entry", "is not", null),
-        );
-        if (rows[0] === undefined) {
-          return yield* new DeliveryAcknowledgeError({
-            reason: "unknown-delivery",
-          });
-        }
-        yield* run(
-          queries
-            .updateTable("inbox_entries")
-            .set({ status: "delivered" })
-            .where("agent_key", "=", agentKey)
-            .where("delivery_token", "=", token)
-            .where("status", "=", "pending"),
-        );
-      },
-      Effect.mapError((error) =>
-        error instanceof DeliveryAcknowledgeError
-          ? error
-          : new DeliveryAcknowledgeError({ reason: "persistence-failed" }),
-      ),
-    ),
+    /** Marks the pending entries carrying these delivery tokens delivered, all or none. */
+    markDelivered: (tokens: readonly DeliveryToken[]) =>
+      tokens.length === 0
+        ? Effect.void
+        : run(
+            queries
+              .updateTable("inbox_entries")
+              .set({ status: "delivered" })
+              .where("agent_key", "=", agentKey)
+              .where("delivery_token", "in", tokens)
+              .where("status", "=", "pending"),
+          ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
     storedEntry: (reference: MessageReference) =>
       run(
         inboxRows()

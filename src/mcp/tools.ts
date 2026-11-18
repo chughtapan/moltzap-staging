@@ -149,14 +149,6 @@ export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
   }
 }
 
-/** Acknowledging a delivery moves a pending inbox entry to delivered and leaves its content as stored. */
-export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowledgeError>()(
-  "DeliveryAcknowledgeError",
-  {
-    reason: Schema.Literal("unknown-delivery", "persistence-failed"),
-  },
-) {}
-
 const collectiveRequest = exactStruct({
   op: CollectiveOp,
   deadline: DeadlineSeconds,

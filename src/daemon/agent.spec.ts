@@ -373,8 +373,8 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     };
     expect(stored.guidance).toBeDefined();
     yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
-    yield* resumed.inbox.acknowledgeDelivery(delivery.deliveryToken);
-    yield* resumed.inbox.acknowledgeDelivery(delivery.deliveryToken);
+    yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
+    yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
     expect((yield* resumed.harness.listInbox()).entries).toEqual([]);
     expect(
       (yield* resumed.harness.readHistory({ address: bobAddress })).records,
@@ -408,7 +408,7 @@ it("keeps an inbox page boundary while arrivals and deliveries change what is pe
     if (delivered === undefined) {
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
-    yield* runtime.inbox.acknowledgeDelivery(delivered.deliveryToken);
+    yield* runtime.inbox.markDelivered([delivered.deliveryToken]);
     const later = yield* unanswered(subject);
     yield* subject.deliver(later);
     yield* waitForPending(runtime, 57);

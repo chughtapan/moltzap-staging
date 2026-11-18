@@ -395,15 +395,9 @@ function receive(
     const page = yield* wait === undefined
       ? agent.inbox.listInbox(request)
       : waitForInbox(agent, request, Duration.seconds(wait));
-    for (const entry of page.entries) {
-      yield* agent.inbox
-        .acknowledgeDelivery(entry.deliveryToken)
-        .pipe(
-          Effect.catchTag("DeliveryAcknowledgeError", () =>
-            Effect.fail(new InboxError({ reason: "persistence-failed" })),
-          ),
-        );
-    }
+    yield* agent.inbox.markDelivered(
+      page.entries.map((entry) => entry.deliveryToken),
+    );
     return page;
   });
 }
