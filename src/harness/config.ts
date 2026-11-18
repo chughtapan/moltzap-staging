@@ -163,17 +163,6 @@ const settingsFile = exactStruct({
   ),
 );
 
-/** What `sharnessd --help` prints: the variables the daemon reads at every start. */
-export const daemonHelp = [
-  "Usage: sharnessd [--help]",
-  "",
-  "SHARNESS_CONFIG_FILE: JSON daemon settings file",
-  "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
-  "SHARNESS_SERVER_AGENT_CREDENTIAL: when the settings name a server agent, the secret it signs in with",
-  "Deployment prepares the database schema before startup.",
-  "Standard OTEL_* variables configure telemetry.",
-].join("\n");
-
 /**
  * The paths the settings file names resolve against its own directory,
  * whatever the daemon's working directory.

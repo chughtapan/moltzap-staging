@@ -6,12 +6,12 @@
  */
 
 import { NodeRuntime } from "@effect/platform-node";
-import { daemonLayer } from "@social-harness/social-harness/service";
+import { runDaemon } from "@social-harness/social-harness/service";
 import { DecisionProviderOverride } from "@social-harness/social-harness/test";
-import { ConfigProvider, Effect, Layer } from "effect";
+import { ConfigProvider, Effect } from "effect";
 import { markedProvider } from "./policy-fixture.js";
 
-Layer.launch(daemonLayer).pipe(
+runDaemon.pipe(
   Effect.provideService(DecisionProviderOverride, markedProvider),
   Effect.withConfigProvider(ConfigProvider.fromEnv()),
   NodeRuntime.runMain,

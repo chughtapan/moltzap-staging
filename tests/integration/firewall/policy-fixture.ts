@@ -8,13 +8,13 @@
  */
 
 import { FileSystem } from "@effect/platform";
-import { daemonLayer } from "@social-harness/social-harness/service";
+import { runDaemon } from "@social-harness/social-harness/service";
 import {
   type DecisionProvider,
   DecisionProviderOverride,
   type DecisionRequest,
 } from "@social-harness/social-harness/test";
-import { ConfigProvider, Effect, Layer, Schema } from "effect";
+import { ConfigProvider, Effect, Schema } from "effect";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -125,7 +125,7 @@ export const writeNorms = Effect.fn("writeNorms")(function* (
  */
 export const launchDaemon = Effect.fn("launchDaemon")(
   (environment: Readonly<Record<string, string>>, provider: DecisionProvider) =>
-    Layer.launch(daemonLayer).pipe(
+    runDaemon.pipe(
       Effect.provideService(DecisionProviderOverride, provider),
       Effect.withConfigProvider(
         ConfigProvider.fromMap(new Map(Object.entries(environment))),

@@ -107,9 +107,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
         headers: { allow: "POST" },
       });
     }
-    return yield* admit(
-      new Request(trusted.resource, { headers: request.headers }),
-    ).pipe(
+    return yield* admit(request.headers.authorization ?? "").pipe(
       Effect.matchEffect({
         onFailure: () =>
           Effect.succeed(
@@ -214,15 +212,13 @@ function failureKind(error: unknown): Record<string, string> {
 }
 
 /**
- * The Host and Origin headers a request may carry, and the resource its
- * bearer is checked against. A local bearer daemon is reached only through
+ * The Host and Origin headers a request may carry. A local bearer daemon is reached only through
  * loopback. An OAuth daemon is reached at its resource and from its allowed
  * origins.
  */
 function trustedCallers(authentication: McpAuthentication) {
   if (authentication.kind === "oauth") {
     return {
-      resource: authentication.resource.href,
       host: (host: string) =>
         host.toLowerCase() === authentication.resource.host.toLowerCase(),
       origin: (origin: string) =>
@@ -230,7 +226,6 @@ function trustedCallers(authentication: McpAuthentication) {
     };
   }
   return {
-    resource: "http://127.0.0.1/mcp",
     host: (host: string) => isLoopbackUrl(`http://${host}`),
     origin: isLoopbackUrl,
   };
@@ -271,7 +266,7 @@ function protectedResourceResponse(oauth: OAuthSettings): Response {
 
 /** Decides whether a request is admitted, and as which owner. */
 type Admit = (
-  request: Request,
+  authorization: string,
 ) => Effect.Effect<AdmittedCaller, AuthenticationRefused>;
 
 /**
@@ -291,8 +286,10 @@ function makeRequestAdmission(
       serverAgentCredential.value,
       serverAgentOwner,
     );
-    return (request: Request) =>
-      Effect.orElse(admitServerAgent(request), () => admit(request));
+    return (authorization: string) =>
+      Effect.orElse(admitServerAgent(authorization), () =>
+        admit(authorization),
+      );
   });
 }
 
@@ -320,10 +317,10 @@ function configuredAdmission(
   const oauth = authentication;
   return discoverKeys(oauth).pipe(
     Effect.map(
-      (keys) => (request: Request) =>
+      (keys) => (authorization: string) =>
         Effect.tryPromise({
           try: () =>
-            jwtVerify(bearer(request), keys, {
+            jwtVerify(bearer(authorization), keys, {
               issuer: oauth.issuer,
               audience: oauth.resource.href,
               algorithms: ["RS256"],
@@ -353,17 +350,21 @@ function configuredAdmission(
 const digest = (value: string): Uint8Array =>
   createHash("sha256").update(value).digest();
 
-function bearer(request: Request): string {
-  const value = request.headers.get("authorization") ?? "";
-  return /^Bearer +/iu.test(value) ? value.replace(/^Bearer +/iu, "") : "";
+function bearer(authorization: string): string {
+  return /^Bearer +/iu.test(authorization)
+    ? authorization.replace(/^Bearer +/iu, "")
+    : "";
 }
 
 /** Admits a request whose bearer is `credential`, as `owner`. */
 function bearerAdmission(credential: Redacted.Redacted, owner: Owner) {
   return (
-    request: Request,
+    authorization: string,
   ): Effect.Effect<AdmittedCaller, AuthenticationRefused> =>
-    timingSafeEqual(digest(bearer(request)), digest(Redacted.value(credential)))
+    timingSafeEqual(
+      digest(bearer(authorization)),
+      digest(Redacted.value(credential)),
+    )
       ? Effect.succeed({ owner })
       : Effect.fail(new AuthenticationRefused());
 }
