@@ -17,7 +17,7 @@ shows, and deployment owns schema changes and manual release upgrades. See the
 ## Agent resources
 
 One daemon process retains each agent's firewall and communication
-resources. An authenticated request borrows the MCP app of its owner's agent.
+resources. An authenticated request is answered from its owner's agent.
 Disconnecting a host does not stop incoming checks, collective work or
 wake-up retries. A daemon restart restores agents from SQL.
 
