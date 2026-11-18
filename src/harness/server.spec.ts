@@ -25,7 +25,7 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
-import { digest } from "../__tests__/agents.js";
+import { digest, testAgentCard } from "../__tests__/agents.js";
 import {
   MessageAddressInput,
   SendError,
@@ -663,7 +663,7 @@ describe("send_message arguments", () => {
       const sent: unknown[] = [];
       const read: unknown[] = [];
       const fixture = yield* mcpFixture({
-        serverAgent,
+        serverAgentName: testAgentCard("bob").agentName,
         harness: {
           send: (request) =>
             Effect.sync(() => {
