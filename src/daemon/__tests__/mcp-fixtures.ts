@@ -21,7 +21,7 @@ import {
 import { createServer } from "node:http";
 import type { HeldNorms } from "../../norms/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
+import { openTestDatabase } from "../../database/testing.js";
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
@@ -78,7 +78,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readDecisions: unused,
   });
   const callbackClient = yield* Layer.build(webhookHttpClientLayer);
-  const subscription = yield* makeWebhookEvents(database.directory).pipe(
+  const subscription = yield* makeWebhookEvents(card.agentName).pipe(
     Effect.provideService(
       HttpClient.HttpClient,
       Context.get(callbackClient, HttpClient.HttpClient),
@@ -98,7 +98,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),
       ),
     },
-    database.directory,
+    card.agentName,
     card.agentName,
   );
   const agent = {

@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+# The test and integration jobs give each test a schema on their postgres service.
+env:
+  SHARNESS_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/postgres
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -46,6 +50,18 @@ jobs:
     timeout-minutes: 20
     environment: *nx-cache-environment
     env: *nx-cache
+    services: &postgres
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       # Full history lets nx-set-shas find the pull request's comparison base.
       # Each test target builds its dependencies through Nx.
@@ -69,6 +85,7 @@ jobs:
     timeout-minutes: 20
     environment: *nx-cache-environment
     env: *nx-cache
+    services: *postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

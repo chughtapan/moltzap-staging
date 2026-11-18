@@ -5,6 +5,7 @@ import { Clock, Effect, Exit, Queue, Schema, Scope } from "effect";
 import type { AgentCard } from "../../identity.js";
 import type { CommunicationError } from "../errors.js";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
+import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { makeCollectives } from "../collectives.js";
 import {
   type CollectivePart,
@@ -16,7 +17,6 @@ import {
   messageWithId,
   MsgId,
 } from "../messages.js";
-import { openTestDatabase, type TestDatabase } from "./store-fixtures.js";
 
 /** A collective result as the consumer is handed it. */
 export interface CompletedCollective {
@@ -30,6 +30,9 @@ interface Overrides {
   /** Runs for each message the collectives send, before it is recorded. */
   readonly send?: (message: Message) => Effect.Effect<void, CommunicationError>;
 }
+
+/** Every collective a fixture opens stores its rows under this key. */
+export const agentKey = "collectives";
 
 /** Fixed cards let tests distinguish member selection from address parsing. */
 export const alice = testAgentCard("agent:alice");
@@ -57,7 +60,7 @@ export const openCollectives = Effect.fn("openCollectives")(function* (
   const results = yield* Queue.unbounded<CompletedCollective>();
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-  const collectives = yield* makeCollectives(database.agentKey, {
+  const collectives = yield* makeCollectives(agentKey, {
     card: agent,
     send: (message) =>
       (overrides.send?.(message) ?? Effect.void).pipe(

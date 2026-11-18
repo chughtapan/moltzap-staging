@@ -3,7 +3,7 @@ import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import { Context, Effect, Exit, FastCheck as fc, Layer } from "effect";
 import { expect } from "vitest";
-import { openTestDatabase } from "../communication/__tests__/store-fixtures.js";
+import { openTestDatabase } from "../database/testing.js";
 import { AgentName, Identity } from "../identity.js";
 import { getOrCreateOwnedAgentKey } from "./owners.js";
 
@@ -75,13 +75,12 @@ it.prop(
 it("rolls back the owner binding when saving its card fails", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TRIGGER reject_card BEFORE INSERT ON agent_cards BEGIN
-      SELECT RAISE(ABORT, 'card unavailable'); END`;
+    yield* sql`ALTER TABLE agent_cards ADD CONSTRAINT reject_card CHECK (false) NOT VALID`;
     expect(
       Exit.isFailure(yield* getOrCreateOwnedAgentKey(owner).pipe(Effect.exit)),
     ).toBeTruthy();
     expect(yield* sql`SELECT * FROM owner_bindings`).toHaveLength(0);
-    yield* sql`DROP TRIGGER reject_card`;
+    yield* sql`ALTER TABLE agent_cards DROP CONSTRAINT reject_card`;
     const recovered = yield* getOrCreateOwnedAgentKey(owner);
     expect((yield* cardOf(recovered)).agentName).toMatch(/^agent-/u);
   }).pipe(Effect.provide(database)));

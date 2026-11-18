@@ -16,11 +16,6 @@
     "node": ">=22.19.0"
   },
   "packageManager": "pnpm@10.6.2",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
-  },
   "files": [
     "dist",
     "!dist/tsconfig.tsbuildinfo",
@@ -110,7 +105,10 @@
           "^production",
           "{workspaceRoot}/vitest.config.ts",
           "{workspaceRoot}/scripts/docs/**/*.ts",
-          "{workspaceRoot}/scripts/docs/mermaid-puppeteer.json"
+          "{workspaceRoot}/scripts/docs/mermaid-puppeteer.json",
+          {
+            "env": "SHARNESS_PG_TEST_URL"
+          }
         ]
       },
       "typecheck": {
@@ -203,7 +201,6 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@effect/sql-sqlite-node": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
     "@opentelemetry/api": "catalog:",

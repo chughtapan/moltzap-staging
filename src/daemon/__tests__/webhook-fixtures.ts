@@ -17,7 +17,7 @@ import {
   Stream,
 } from "effect";
 import { digest, testAgentCard } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
+import { openTestDatabase } from "../../database/testing.js";
 import { PermittedItem } from "../../firewall/index.js";
 import {
   DeliveryToken,
@@ -164,7 +164,7 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
         yield* Scope.close(previous, Exit.void);
       }
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
-      return yield* makeWebhookEvents(agentKey ?? store.directory).pipe(
+      return yield* makeWebhookEvents(agentKey ?? "alice").pipe(
         Scope.extend(scope),
         Effect.provideService(HttpClient.HttpClient, callbackHttp),
         Effect.provideService(SocialHarness, store.harness),
@@ -175,13 +175,11 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
 });
 
 /** A SQL-backed service fixture exercises subscription transactions without reading harness-owned tables. */
-export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
-  directory: string,
-) {
-  const database = yield* openTestDatabase(directory);
+export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* () {
+  const database = yield* openTestDatabase();
   const sql = database.sql;
   yield* sql.unsafe(
-    "CREATE TABLE IF NOT EXISTS callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)",
   );
   const payload = Schema.parseJson(Schema.typeSchema(StoredInboxEntry));
   const changes = yield* PubSub.unbounded<undefined>();
@@ -255,7 +253,7 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* (
   });
   const pending = sql<{
     readonly total: number;
-  }>`SELECT COUNT(*) AS total FROM callback_fixture WHERE delivered=0`.pipe(
+  }>`SELECT COUNT(*)::int AS total FROM callback_fixture WHERE delivered=0`.pipe(
     Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
   );
   return { ...database, harness, save, pending };

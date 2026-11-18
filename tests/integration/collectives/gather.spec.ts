@@ -13,7 +13,6 @@ import {
   type Participant,
   send,
 } from "../agent-fixture.js";
-import { acquirePostgres } from "../daemon/postgres-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import {
   anyNumber,
@@ -221,14 +220,12 @@ it(
 const CROSSING_ROUNDS = 8;
 
 /**
- * Two agents on a PostgreSQL daemon each send the other a collective request
+ * Two agents on a daemon each send the other a collective request
  * and a message at the same moment, repeatedly. Every send completes and every item
  * arrives, so neither agent waited on the other.
  */
 const crossingSendsBehavior = Effect.gen(function* () {
-  const [alice, bob] = yield* acquireParticipants(["alice", "bob"], {
-    database: yield* acquirePostgres,
-  });
+  const [alice, bob] = yield* acquireParticipants(["alice", "bob"]);
   if (alice === undefined || bob === undefined) {
     return yield* Effect.dieMessage("expected two participants");
   }
@@ -266,7 +263,7 @@ const crossingSendsBehavior = Effect.gen(function* () {
 }).pipe(Effect.scoped);
 
 it(
-  "completes collective requests and messages two agents send each other at once on PostgreSQL",
+  "completes collective requests and messages two agents send each other at once",
   processTrace(crossingSendsBehavior),
   GATHER_TEST_TIMEOUT_MS,
 );

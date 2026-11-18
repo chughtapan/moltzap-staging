@@ -7,7 +7,12 @@ export default defineConfig({
       {
         resolve: { conditions: ["sharness-test"] },
         ssr: { resolve: { conditions: ["sharness-test"] } },
-        test: { name: "social-harness", include: ["src/**/*.spec.ts"] },
+        test: {
+          name: "social-harness",
+          include: ["src/**/*.spec.ts"],
+          // A property that builds a database on each run creates a PostgreSQL schema each time, on a server other suites share.
+          testTimeout: 30_000,
+        },
       },
       {
         test: {

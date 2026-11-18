@@ -1,15 +1,13 @@
 /** @file An agent's editable policy holds norm documents: seeded, edited under approval, compiled at each activation and kept across restarts. */
 
-import { FileSystem } from "@effect/platform";
-import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, FastCheck as fc, Option, Schema } from "effect";
-import { join } from "node:path";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { Chain, Matcher } from "./chain.js";
 import type { NormDocuments } from "./editable-policy.js";
 import { Message } from "../communication/index.js";
+import { openTestDatabase } from "../database/testing.js";
 import {
   evidence,
   peer,
@@ -109,14 +107,10 @@ function draft(self: AgentCard, text: string) {
 
 it("seeds a new agent with the initial norms, and keeps an edit across a restart", () =>
   Effect.gen(function* () {
-    const filesystem = yield* FileSystem.FileSystem;
-    const directory = yield* filesystem.makeTempDirectoryScoped({
-      prefix: "sharness-norms-",
-    });
-    const filename = join(directory, "harness.sqlite3");
+    const database = yield* openTestDatabase();
 
     const seeded = yield* withFirewall(
-      filename,
+      { database },
       (firewall) =>
         Effect.gen(function* () {
           const before = (yield* firewall.readPolicy()).norms;
@@ -129,19 +123,19 @@ it("seeds a new agent with the initial norms, and keeps an edit across a restart
       holding,
     );
     const restored = yield* withFirewall(
-      filename,
+      { database },
       (firewall) => firewall.readPolicy(),
       holding,
     );
 
     expect(seeded).toEqual(["chat"]);
     expect(restored.norms).toEqual(["swap"]);
-  }).pipe(Effect.provide(NodeContext.layer)));
+  }));
 
 it("installs an added norm's matchers and English rules, and removes them with it", () =>
   Effect.gen(function* () {
     yield* withFirewall(
-      ":memory:",
+      {},
       (firewall, self) =>
         Effect.gen(function* () {
           const ask = yield* draft(self, "swap");
@@ -175,7 +169,7 @@ it("replaces a norm that an update removes and adds", () =>
     const replacement = document("chat", "Keep chat brief.");
 
     const documents = yield* withFirewall(
-      ":memory:",
+      {},
       (firewall) =>
         firewall
           .updatePolicy({
@@ -203,7 +197,7 @@ it.prop(
       const accepted = Option.isSome(name) && name.value !== "chat";
 
       const documents = yield* withFirewall(
-        ":memory:",
+        {},
         (firewall) =>
           firewall
             .updatePolicy({ add: [{ norm: text }] })
@@ -275,7 +269,7 @@ it.each(refusedEdits)(
   ({ edit, refusal }) =>
     Effect.gen(function* () {
       const result = yield* withFirewall(
-        ":memory:",
+        {},
         (firewall) =>
           Effect.gen(function* () {
             const before = yield* firewall.readPolicy();
@@ -293,7 +287,7 @@ it.each(refusedEdits)(
 it("refuses a norm on a firewall without norm documents", () =>
   Effect.gen(function* () {
     const error = yield* withFirewall(
-      ":memory:",
+      {},
       (firewall) =>
         firewall.updatePolicy({ add: [{ norm: swap }] }).pipe(Effect.flip),
       (agentKey) => Firewall.layer(agentKey, policy()),

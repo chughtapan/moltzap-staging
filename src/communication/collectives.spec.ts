@@ -17,6 +17,7 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import {
+  agentKey,
   alice,
   aliceAsks,
   aliceClose,
@@ -115,7 +116,7 @@ it("counts the first response once and retains its original source", () =>
 it("records invalid responses as counted sources while leaving silent recipients with no outcome but no-answer", () =>
   Effect.gen(function* () {
     const fixture = yield* openCollectives();
-    const captured = aliceAsks((yield* Clock.currentTimeMillis) + 300, [
+    const captured = aliceAsks((yield* Clock.currentTimeMillis) + 1000, [
       bob,
       carol,
     ]);
@@ -203,7 +204,7 @@ it("hands over a closed all_gather result after a restart without a response tha
   Effect.gen(function* () {
     const fixture = yield* openCollectives();
     const captured = aliceAsks(
-      (yield* Clock.currentTimeMillis) + 250,
+      (yield* Clock.currentTimeMillis) + 1000,
       [bob, carol],
       "all_gather",
     );
@@ -482,10 +483,7 @@ it("publishes independent results while incoming handlers share SQL transactions
       responses,
       (message) =>
         fixture.database.run(
-          agentTransaction(
-            fixture.database.agentKey,
-            fixture.service.receive(message),
-          ),
+          agentTransaction(agentKey, fixture.service.receive(message)),
         ),
       { concurrency: 2 },
     );

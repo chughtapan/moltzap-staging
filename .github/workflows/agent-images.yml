@@ -20,6 +20,19 @@ jobs:
       OPENCLAW_INTEGRATION_IMAGE: social-harness-openclaw:local
       DAEMON_INTEGRATION_IMAGE: social-harness-daemon:local
       NANOCLAW_INTEGRATION_IMAGE: social-harness-nanoclaw:local
+      SHARNESS_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

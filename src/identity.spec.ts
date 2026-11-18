@@ -6,7 +6,7 @@ import { Context, Effect, Either, Layer, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it as vitestIt } from "vitest";
 import { createTestAgent } from "./__tests__/agents.js";
-import { openTestDatabase } from "./communication/__tests__/store-fixtures.js";
+import { openTestDatabase } from "./database/testing.js";
 import { AgentId, AgentName, Identity, PrincipalId } from "./identity.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;

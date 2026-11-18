@@ -1,6 +1,6 @@
 /** @file Stores each agent's ordered messages, which of them it has consumed, and its collectives: each request with its copies, responses and result. */
 
-import { SqlClient } from "@effect/sql/SqlClient";
+import type { SqlClient } from "@effect/sql/SqlClient";
 import { Cause, Data, Effect, Option, Schema } from "effect";
 
 import {
@@ -625,10 +625,10 @@ function decodeColumns<A, I>(schema: Schema.Schema<A, I>) {
 }
 
 /**
- * Locking the agent's own row serializes one agent's transactions on
- * PostgreSQL, matching SQLite's connection serialization. Nested calls retain
- * the lock until the enclosing transaction commits; other agents use their own
- * rows.
+ * Locking the agent's own row serializes one agent's transactions, so a
+ * transaction that reads before it writes sees every earlier write of the same
+ * agent. Nested calls retain the lock until the enclosing transaction commits;
+ * other agents use their own rows.
  */
 function withAgentLock<A, E, R>(
   work: Effect.Effect<A, E, R>,
@@ -637,19 +637,14 @@ function withAgentLock<A, E, R>(
   return withAgentRows(
     agentKey,
     Effect.gen(function* () {
-      const sql = yield* SqlClient;
       const db = yield* communicationQueries;
-      yield* sql.onDialectOrElse({
-        pg: () =>
-          executeQuery(
-            db
-              .selectFrom("agent_cards")
-              .select("agent_key")
-              .where("agent_key", "=", agentKey)
-              .forUpdate(),
-          ).pipe(Effect.asVoid),
-        orElse: () => Effect.void,
-      });
+      yield* executeQuery(
+        db
+          .selectFrom("agent_cards")
+          .select("agent_key")
+          .where("agent_key", "=", agentKey)
+          .forUpdate(),
+      );
       return yield* work;
     }),
   ).pipe(asStoreError, Effect.withSpan("withAgentLock"));

@@ -5,8 +5,8 @@
  * issuer and returns it without starting it:
  *
  * - `endpoint`, `directory`, `environment`: where the daemon listens, the
- *   directory holding its settings file, SQLite database and credential
- *   files, and the environment its process reads.
+ *   directory holding its settings file and credential files, and the
+ *   environment its process reads.
  * - `start(environment?)`: runs the process until its scope closes or
  *   `stopProcess` stops it. Starting again serves the same database.
  * - `startupFailure(environment?)`: runs a process that must exit before it
@@ -18,8 +18,7 @@
  *   `status` reports for it.
  *
  * The options are settings that replace the fixture's, such as the mode, the
- * firewall variant of the daemon, and a PostgreSQL database in place of the
- * SQLite file. `managedProcess`, `awaitReady` and `daemonListening` start and
+ * firewall variant of the daemon. `managedProcess`, `awaitReady` and `daemonListening` start and
  * await a daemon that runs some other way, such as in a container.
  */
 
@@ -50,12 +49,13 @@ import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   markedPolicy,
   writeMessagePolicy,
 } from "../firewall/policy-fixture.js";
 import { issuerFixture, requiredScope } from "./oauth-fixture.js";
+import { acquirePostgres } from "./postgres-fixture.js";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -81,11 +81,6 @@ export interface DaemonOptions {
    * judges, with the marked message policy unless the settings name another.
    */
   readonly firewall?: true;
-  /** A PostgreSQL schema from `acquirePostgres`, in place of a SQLite file. */
-  readonly database?: {
-    readonly configureLocator: Redacted.Redacted;
-    readonly runtimeLocator: Redacted.Redacted;
-  };
 }
 
 /** A signed-in owner: its agent and an MCP connection as that agent. */
@@ -417,15 +412,11 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   const serverAgentBearer = Redacted.make(
     randomBytes(32).toString("base64url"),
   );
-  const sqlite = pathToFileURL(
-    join(directory, "sharnessd.sqlite3"),
-  ).href.replace(/^file:/u, "sqlite:");
+  const database = yield* acquirePostgres;
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
     SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
-    SHARNESS_DATABASE_URL: Redacted.value(
-      options.database?.runtimeLocator ?? Redacted.make(sqlite),
-    ),
+    SHARNESS_DATABASE_URL: Redacted.value(database.runtimeLocator),
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
     port,
@@ -446,9 +437,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   });
   yield* prepare({
     ...environment,
-    SHARNESS_DATABASE_URL: Redacted.value(
-      options.database?.configureLocator ?? Redacted.make(sqlite),
-    ),
+    SHARNESS_DATABASE_URL: Redacted.value(database.configureLocator),
   });
   const spawned = (changes: Readonly<Record<string, string>>) =>
     managedProcess(

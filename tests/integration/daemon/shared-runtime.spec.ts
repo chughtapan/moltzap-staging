@@ -28,7 +28,6 @@ import {
   type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
-import { acquirePostgres } from "./postgres-fixture.js";
 
 /** In client/server mode Alice is the server agent, which signs in with the daemon's own credential. */
 const SERVER_AGENT_NAME = "alice-server";
@@ -202,19 +201,11 @@ function expectClientServerExchange(
  * one owner's agent record is lost. In client/server mode the first owner is
  * the server agent, which exists from startup.
  */
-const scenario = (
-  clientServer: boolean,
-  database?: Effect.Effect.Success<typeof acquirePostgres>,
-) =>
+const scenario = (clientServer: boolean) =>
   Effect.gen(function* () {
-    const daemon = yield* sharedDaemon({
-      ...(database === undefined ? {} : { database }),
-      ...(clientServer
-        ? {
-            settings: { serverAgentName: SERVER_AGENT_NAME },
-          }
-        : {}),
-    });
+    const daemon = yield* sharedDaemon(
+      clientServer ? { settings: { serverAgentName: SERVER_AGENT_NAME } } : {},
+    );
     const sql = yield* openDatabase(daemon);
     const owners = sql`SELECT * FROM owner_bindings`;
     expect(yield* owners).toHaveLength(0);
@@ -302,15 +293,5 @@ describe.each([
     "creates no agent before sign-in, keeps each owner's agent, inbox and history across a restart, and serves one owner when another's record is lost",
     processTrace(scenario(clientServer)),
     180_000,
-  );
-
-  it(
-    "does so on PostgreSQL with a restricted login",
-    processTrace(
-      acquirePostgres.pipe(
-        Effect.flatMap((database) => scenario(clientServer, database)),
-      ),
-    ),
-    240_000,
   );
 });

@@ -1,9 +1,9 @@
 # Daemon image
 
-Run the image's installed `sharnessd` with a prepared SQL database, its encryption
+Run the image's installed `sharnessd` with a prepared PostgreSQL database, its encryption
 key and a private settings file. One daemon serves every owner's agent
-through one MCP endpoint, on SQLite or PostgreSQL. PostgreSQL adds row-level
-security between agents. Deployment prepares schema before startup and owns
+through one MCP endpoint. PostgreSQL enforces row-level security between
+agents. Deployment prepares schema before startup and owns
 manual image upgrades.
 
 The [daemon configuration](../../docs/reference/spec/daemon.md#process-and-configuration)
@@ -22,15 +22,12 @@ docker run --rm --network none \
 ```
 
 Supply `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` in `daemon.env`. Mount the settings file and its
-referenced policy and credential files read-only. For SQLite, put the prepared
-database under `/var/lib/social-harness` on a persistent mount writable by uid
-1000.
+referenced policy and credential files read-only.
 
 ```bash
 docker run --detach --name agent-daemon \
   --env-file daemon.env \
   --mount type=bind,src="$PWD/daemon-settings",dst=/run/social-harness,readonly \
-  --mount type=bind,src="$PWD/daemon-state",dst=/var/lib/social-harness \
   "ghcr.io/social-harness/daemon:<version>"
 ```
 
@@ -42,16 +39,16 @@ Its loopback MCP URL stays inside that shared namespace. See the
 
 For hosted OAuth access, configure the canonical HTTPS MCP resource and bind
 the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. The daemon must
-reach the OAuth issuer when it starts. Keep one daemon replica and retain SQL
-state when replacing it.
+reach the OAuth issuer when it starts. Keep one daemon replica and retain the
+database when replacing it.
 
 ## Kubernetes
 
 A local agent Pod can run the daemon as a native sidecar (`restartPolicy:
-Always` under `initContainers`). Mount the prepared database on its persistent
-volume and the private settings file from a Secret. Set the same three daemon
-environment variables as above. PostgreSQL runtime credentials need data access;
-separate deployment credentials prepare schema before the daemon starts.
+Always` under `initContainers`). Mount the private settings file from a Secret
+and set the same daemon environment variables as above. The daemon's PostgreSQL
+credentials need data access; separate deployment credentials prepare schema
+before the daemon starts.
 
 Use an exec startup probe that connects to `127.0.0.1:4319` before starting the
 host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
