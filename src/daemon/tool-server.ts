@@ -337,7 +337,7 @@ function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
   };
 }
 
-/** Equivalent single-item tuple notation also supports hosts whose validators use draft-07. */
+/** The schema without `additionalProperties: false`, so a host accepts fields a result gains. */
 function openObjects(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(openObjects);
@@ -345,27 +345,11 @@ function openObjects(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  const entries = Object.entries(value);
-  const prefixItems: unknown = entries.find(
-    ([key]) => key === "prefixItems",
-  )?.[1];
-  const singleTuple =
-    Array.isArray(prefixItems) &&
-    prefixItems.length === 1 &&
-    entries.some(([key, nested]) => key === "items" && nested === false);
-  return Object.fromEntries([
-    ...entries.flatMap(([key, nested]) => {
-      if (key === "additionalProperties" && nested === false) {
-        return [];
-      }
-      if (singleTuple && (key === "items" || key === "maxItems")) {
-        return [];
-      }
-      if (singleTuple && key === "prefixItems") {
-        return [["items", openObjects(prefixItems[0])]];
-      }
-      return [[key, openObjects(nested)]];
-    }),
-    ...(singleTuple ? [["maxItems", 1]] : []),
-  ]);
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([key, nested]) => key !== "additionalProperties" || nested !== false,
+      )
+      .map(([key, nested]) => [key, openObjects(nested)]),
+  );
 }
