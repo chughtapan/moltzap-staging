@@ -1,7 +1,5 @@
 /** @file Inbox wake-ups posted to a subscribed callback. */
 
-import { FileSystem } from "@effect/platform";
-import { NodeContext } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import {
   Array,
@@ -94,14 +92,11 @@ const scenario = <A, E>(
   }) => Effect.Effect<A, E, Scope.Scope>,
 ) =>
   Effect.gen(function* () {
-    const files = yield* FileSystem.FileSystem;
-    const store = yield* openCallbackInbox(
-      yield* files.makeTempDirectoryScoped(),
-    );
+    const store = yield* openCallbackInbox();
     const callback = yield* scriptedWebhook(store);
     const events = yield* callback.acquire;
     return yield* body({ store, callback, events });
-  }).pipe(Effect.scoped, Effect.provide(NodeContext.layer));
+  }).pipe(Effect.scoped);
 
 /** With `count` entries pending, the first wake-up reports exactly `count`. */
 const reportsPendingCount = (count: number) =>
@@ -162,10 +157,7 @@ describe("a subscribed callback", () => {
     "receives one wake-up for an entry whose arrival is signalled again while the inbox is being read",
     () =>
       Effect.gen(function* () {
-        const files = yield* FileSystem.FileSystem;
-        const store = yield* openCallbackInbox(
-          yield* files.makeTempDirectoryScoped(),
-        );
+        const store = yield* openCallbackInbox();
         const repeated = yield* PubSub.unbounded<undefined>();
         const signalled = yield* Ref.make(false);
         const callback = yield* scriptedWebhook({
@@ -201,7 +193,7 @@ describe("a subscribed callback", () => {
         yield* advance();
         yield* advance();
         expect(wakeUps(callback)).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(NodeContext.layer)),
+      }).pipe(Effect.scoped),
   );
 
   it.live("is told how many entries are pending, for any number of them", () =>

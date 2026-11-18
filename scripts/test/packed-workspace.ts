@@ -402,7 +402,6 @@ function writeConsumerProject(
     version: "0.0.0",
     private: true,
     type: "module",
-    pnpm: { onlyBuiltDependencies: ["better-sqlite3"] },
     dependencies: { ...localPackages, ...input.dependencies },
     ...(Object.keys(devDependencies).length === 0 ? {} : { devDependencies }),
   };

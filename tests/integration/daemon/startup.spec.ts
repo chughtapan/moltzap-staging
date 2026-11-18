@@ -59,7 +59,7 @@ it(
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain(`Usage: ${processName} [--help]`);
       expect(result.stdout).toContain(
-        `${requiredVariable}: sqlite file URL or PostgreSQL connection URL`,
+        `${requiredVariable}: PostgreSQL connection URL`,
       );
       expect(result.stdout).toContain(settingsEntry);
       expect(result.stdout).not.toContain(secret);

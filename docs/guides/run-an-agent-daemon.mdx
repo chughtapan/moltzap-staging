@@ -27,6 +27,13 @@ defines every setting.
 ## What you need
 
 - Node.js `>={{node-version-range}}`, npm and curl.
+- A PostgreSQL server with an empty database, and a login that can create
+  tables in it. The commands use the server this starts with Docker, at
+  `postgres://postgres:sharness@127.0.0.1:5432/postgres`:
+
+  ```bash
+  docker run --detach --name sharness-postgres --env POSTGRES_PASSWORD=sharness --publish 127.0.0.1:5432:5432 postgres:17
+  ```
 - A directory for the daemon. The commands use `~/sharness`. On macOS, keep it
   outside `~/Documents`, `~/Desktop` and `~/Downloads`.
 
@@ -82,33 +89,33 @@ writeFileSync(join(dir, "settings.json"), JSON.stringify({
   agentName: "alice",
 }, null, 2) + "\n", created);
 writeFileSync(join(dir, "env"), [
-  `SHARNESS_DATABASE_URL=sqlite://${join(dir, "daemon.sqlite3")}`,
+  "SHARNESS_DATABASE_URL=postgres://postgres:sharness@127.0.0.1:5432/postgres",
   `SHARNESS_CONFIG_FILE=${join(dir, "settings.json")}`,
 ].join("\n") + "\n", created);
 '
 ```
 
 `ls ~/sharness/daemon` should list `env`, `mcp-credential` and
-`settings.json`. Keep `env` with the database: the key in it cannot be
+`settings.json`. To use another PostgreSQL database, put its connection URL in
+`env`. Keep `env` with the database: the key in it cannot be
 recovered, and the daemon does not start on the database without it.
 
 </Step>
 <Step title="Prepare the database">
 
-The daemon starts only on a database that already has its schema. Create the
-SQLite file named in `env`:
+The daemon starts only on a database that already has its schema. Create its
+tables in the database named in `env`:
 
 ```bash
 cd ~/sharness && node --env-file=daemon/env --input-type=module -e '
-import { NodeFileSystem, NodeRuntime } from "@effect/platform-node";
+import { NodeRuntime } from "@effect/platform-node";
 import { prepareDatabase } from "@social-harness/social-harness/service";
-import { Effect } from "effect";
-NodeRuntime.runMain(prepareDatabase.pipe(Effect.provide(NodeFileSystem.layer)));
+NodeRuntime.runMain(prepareDatabase);
 '
 ```
 
-The command prints nothing when it succeeds, and `~/sharness/daemon` now holds
-`daemon.sqlite3`. Running it again on a prepared database changes nothing.
+The command prints nothing when it succeeds. Running it again on a prepared
+database changes nothing.
 
 </Step>
 <Step title="Start the daemon">
@@ -144,12 +151,13 @@ agents on the daemon would address it as `agent:alice`.
 ## Stop and restart
 
 Stop the daemon with **Ctrl+C** in its terminal. Its agents, conversations and
-pending inbox entries stay in `~/sharness/daemon/daemon.sqlite3`. Start it again
+pending inbox entries stay in the database. Start it again
 with the command from [Start the daemon](#start-a-daemon), and `status`
 returns the same agent.
 
-To remove the daemon and everything it holds, stop it and delete
-`~/sharness`.
+To remove the daemon and everything it holds, stop it, delete `~/sharness`
+and remove the database, which for the Docker server above is
+`docker rm --force --volumes sharness-postgres`.
 
 ## Sign in several owners
 
@@ -243,8 +251,8 @@ The daemon could not start. Check SHARNESS_CONFIG_FILE and SHARNESS_DATABASE_URL
 
 Check these in order:
 
-- `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` are set, which `--env-file=daemon/env` does, and the files they name are
-  readable.
+- `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` are set, which `--env-file=daemon/env` does, the PostgreSQL
+  server is running and the settings file is readable.
 - The database is prepared and the key is the one written with it. A database
   from another release's format is refused: prepare a fresh one.
 - The settings file matches the

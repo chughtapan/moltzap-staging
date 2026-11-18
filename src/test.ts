@@ -13,6 +13,8 @@ export {
 export { checkDatabase, migrateDaemon } from "./database/index.js";
 /** Database selection uses the production driver composition. */
 export { databaseConnection, databaseUrl } from "./database/index.js";
+/** An isolated, prepared database for one test. */
+export { openTestDatabase, type TestDatabase } from "./database/testing.js";
 /** Restricted-role tests exercise production transaction scoping. */
 export { withAgentRows } from "./database/index.js";
 /** Process qualification persists deliveries through the daemon inbox. */

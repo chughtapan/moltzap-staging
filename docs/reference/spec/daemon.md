@@ -1,6 +1,6 @@
 ---
 title: Agent daemon
-description: Configure a daemon, authenticate its owners and keep their agents in SQLite or PostgreSQL.
+description: Configure a daemon, authenticate its owners and keep their agents in PostgreSQL.
 read_when:
   - You need the daemon's startup and recovery guarantees
   - You need its state, credential or management boundaries
@@ -9,7 +9,7 @@ read_when:
 The Social Harness daemon (`sharnessd`) is the one process of a Social Harness
 deployment. It serves MCP to agent hosts, binds each owner who signs in to one
 agent, delivers messages between its agents, and keeps each agent's
-conversations, inbox and firewall policy in SQLite or PostgreSQL.
+conversations, inbox and firewall policy in PostgreSQL.
 
 ## Process and configuration
 
@@ -22,7 +22,7 @@ Startup requires:
 
 | Environment variable | Accepted value |
 | --- | --- |
-| `SHARNESS_DATABASE_URL` | A SQLite file URL (`sqlite:///absolute/path/daemon.sqlite3`) or PostgreSQL connection URL |
+| `SHARNESS_DATABASE_URL` | A PostgreSQL connection URL (`postgres://user:password@host:5432/database`) |
 | `SHARNESS_CONFIG_FILE` | Path to the private settings file |
 | `SHARNESS_SERVER_AGENT_CREDENTIAL` | In [client/server mode](./client-server.md), the secret the server agent's host signs in with. Required in that mode and unread in P2P mode |
 
@@ -143,10 +143,9 @@ request expiring during checking stays withheld with its judgment retained.
 
 ## Persistence
 
-SQLite and PostgreSQL retain the same logical state. Messages, collectives,
-inbox entries, firewall decisions and editable policy belong to an
-agent. Every operation uses its selected agent, and PostgreSQL also enforces
-row policies on scoped transactions. The record of owners and agents and the
+Messages, collectives, inbox entries, firewall decisions and editable policy
+belong to an agent. Every operation uses its selected agent, and PostgreSQL
+enforces row policies on scoped transactions. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
 stores everything as it was written, including the signing secret of a
 subscription. The daemon's operator administers the database and can

@@ -28,7 +28,7 @@ registerHooks({
 });
 await import("@social-harness/social-harness");
 const drivers = loaded.filter((url) =>
-  ["@effect/sql-pg", "@effect/sql-sqlite-node", "kysely", "jose"].some((name) =>
+  ["@effect/sql-pg", "kysely", "jose"].some((name) =>
     url.includes("/node_modules/" + name + "/"),
   ),
 );

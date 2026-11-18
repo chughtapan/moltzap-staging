@@ -14,7 +14,7 @@ const HELP_MESSAGE = [
   "Usage: sharnessd [--help]",
   "",
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
-  "SHARNESS_DATABASE_URL: sqlite file URL or PostgreSQL connection URL",
+  "SHARNESS_DATABASE_URL: PostgreSQL connection URL",
   "SHARNESS_SERVER_AGENT_CREDENTIAL: when the settings name a server agent, the secret it signs in with",
   "Deployment prepares the database schema before startup.",
   "Standard OTEL_* variables configure telemetry.",

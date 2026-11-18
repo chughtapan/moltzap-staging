@@ -1,12 +1,12 @@
 /** @file Shared fixtures for firewall service tests: an agent's firewall, messages, rules and a test provider. */
 
-import { SqliteClient } from "@effect/sql-sqlite-node";
+import { SqlClient } from "@effect/sql";
 import { type Context, Effect, Encoding, Layer } from "effect";
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
 import type { TextRule } from "../rules.js";
 import { Message } from "../../communication/index.js";
-import { migrateDaemon } from "../../database/index.js";
+import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import {
   AgentCard,
   AgentId,
@@ -58,17 +58,19 @@ const certainProvider: DecisionProvider = {
     }),
 };
 
-/** Runs `use` with Alice's firewall built by `configure`, over the given SQLite storage. */
+/**
+ * Runs `use` with Alice's firewall built by `configure`, over `database` or a
+ * new one, with its rows stored under `agentKey`. A property that builds a
+ * database on each run bounds its runs.
+ */
 export function withFirewall<A, E, R>(
-  storage: string | { readonly filename: string; readonly agentKey: string },
+  storage: { readonly database?: TestDatabase; readonly agentKey?: string },
   use: (
     firewall: Context.Tag.Service<typeof Firewall>,
     self: AgentCard,
   ) => Effect.Effect<A, E, R>,
   configure: (agentKey: string) => ReturnType<typeof Firewall.layer>,
 ) {
-  const filename = typeof storage === "string" ? storage : storage.filename;
-  const agentKey = typeof storage === "string" ? storage : storage.agentKey;
   const self = peer("alice", 1);
   const identity = Layer.succeed(
     Identity,
@@ -77,12 +79,14 @@ export function withFirewall<A, E, R>(
       resolve: () => Effect.dieMessage("Unexpected name resolution"),
     }),
   );
-  const layer = configure(agentKey);
-  const services = layer.pipe(
+  const services = configure(storage.agentKey ?? "alice").pipe(
     Layer.provideMerge(identity),
     Layer.provideMerge(
-      Layer.effectDiscard(migrateDaemon).pipe(
-        Layer.provideMerge(SqliteClient.layer({ filename })),
+      Layer.effect(
+        SqlClient.SqlClient,
+        storage.database === undefined
+          ? Effect.map(openTestDatabase(), ({ sql }) => sql)
+          : Effect.succeed(storage.database.sql),
       ),
     ),
   );

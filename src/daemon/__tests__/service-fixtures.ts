@@ -1,8 +1,6 @@
-/** @file SocialHarness fixtures combine real policy and SQLite with controllable identity and communication. */
+/** @file SocialHarness fixtures combine real policy and a real database with controllable identity and communication. */
 
-import { FileSystem } from "@effect/platform";
-import { NodeFileSystem } from "@effect/platform-node";
-import { SqliteClient } from "@effect/sql-sqlite-node";
+import { SqlClient } from "@effect/sql";
 import {
   Context,
   Deferred,
@@ -13,7 +11,6 @@ import {
   Schedule,
   Schema,
 } from "effect";
-import { join } from "node:path";
 import type {
   DecisionProvider,
   DecisionRequest,
@@ -35,7 +32,7 @@ import {
   type Incoming,
   type Outgoing,
 } from "../../communication/service.js";
-import { migrateDaemon } from "../../database/index.js";
+import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { compareAscii } from "../../encoding.js";
 import {
   type ComposedMessagePolicy,
@@ -178,21 +175,20 @@ interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly policy?: ComposedMessagePolicy;
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
+/** Every harness a fixture opens stores its rows under this key. */
+const agentKey = "alice";
+
 interface FixtureEnvironment {
-  readonly filename: string;
+  readonly database: TestDatabase;
   /** The agents `resolve` finds by name. */
   readonly cards: Map<AgentName, AgentCard>;
   readonly network: Network;
   readonly communication: Context.Tag.Service<typeof Communication>;
 }
 
-/** Each opened harness shares the fixture's communication history; SQLite keeps the harness's own inbox and decisions. */
+/** Each opened harness shares the fixture's communication history; the database keeps the harness's own inbox and decisions. */
 export const makeHarnessFixture = Effect.gen(function* () {
   const self = testAgentCard("agent:alice");
-  const directory = yield* Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.makeTempDirectoryScoped({ prefix: "sharness-main-" });
-  }).pipe(Effect.provide(NodeFileSystem.layer));
   const network: Network = {
     self,
     messages: [],
@@ -206,7 +202,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
   };
   const environment: FixtureEnvironment = {
     network,
-    filename: join(directory, "harness.sqlite3"),
+    database: yield* openTestDatabase(),
     communication: communicationFor(network),
     cards: new Map([[self.agentName, self]]),
   };
@@ -248,15 +244,11 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
     const workers = yield* FiberSet.make();
     const identity = Layer.succeed(Identity, identityFor(environment)).pipe(
       Layer.provideMerge(
-        Layer.effectDiscard(migrateDaemon).pipe(
-          Layer.provideMerge(
-            SqliteClient.layer({ filename: environment.filename }),
-          ),
-        ),
+        Layer.succeed(SqlClient.SqlClient, environment.database.sql),
       ),
     );
     const services = yield* Layer.build(
-      Firewall.layer(environment.filename, options.policy).pipe(
+      Firewall.layer(agentKey, options.policy).pipe(
         Layer.provideMerge(identity),
       ),
     );
@@ -268,7 +260,7 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
     const context = yield* Layer.build(
       SocialHarness.layer(
         {
-          agentKey: environment.filename,
+          agentKey,
           maximumHistoryRecords: options.maximumHistoryRecords,
           maximumConcurrentChecks: options.maximumConcurrentChecks,
           hideGroups: options.hideGroups,
@@ -285,9 +277,7 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
     const harness = Context.get(context, SocialHarness);
     return {
       harness,
-      inbox: yield* makeInbox(environment.filename).pipe(
-        Effect.provide(services),
-      ),
+      inbox: yield* makeInbox(agentKey).pipe(Effect.provide(services)),
       firewall,
       failed: FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
     };

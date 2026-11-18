@@ -24,8 +24,7 @@ flowchart LR
   D --> E[Serve authenticated requests]
 ```
 
-The daemon provides one `SqlClient` layer, for SQLite or PostgreSQL, for its
-lifetime. Every agent's communication, firewall and delivery operations share
+The daemon provides one PostgreSQL `SqlClient` layer for its lifetime. Every agent's communication, firewall and delivery operations share
 it. Closing the daemon's scope closes the database. An owner's first request
 creates that owner's agent, and each agent loads its firewall rules when it
 starts.

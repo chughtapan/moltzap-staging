@@ -2,7 +2,7 @@
 
 import { Effect } from "effect";
 import { createTestAgent } from "../../__tests__/agents.js";
-import { openTestDatabase } from "./store-fixtures.js";
+import { openTestDatabase } from "../../database/testing.js";
 
 /**
  * Alice, Bob and Carol, each with its key, its card and the consumer latches

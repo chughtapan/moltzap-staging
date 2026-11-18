@@ -1,16 +1,15 @@
 /** @file Unchecked messages, inbox entries and delivery tokens stay scoped to their agent. */
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Exit, Redacted, Schema } from "effect";
+import { Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
-import { databaseConnection, migrateDaemon } from "../database/index.js";
+import { openTestDatabase } from "../database/testing.js";
 import { MessageAddress } from "../mcp/tools.js";
 import { makeInbox } from "./inbox.js";
 
 it("stores the same peer message for each agent and refuses another agent's delivery token", () =>
   Effect.gen(function* () {
-    yield* migrateDaemon;
     const first = yield* makeInbox("first");
     const second = yield* makeInbox("second");
     const address = yield* Schema.decodeUnknown(MessageAddress)("agent:alice");
@@ -62,6 +61,6 @@ it("stores the same peer message for each agent and refuses another agent's deli
       secondUnchecked.token,
     ]);
     expect((yield* first.listInbox()).entries).toHaveLength(0);
-  }).pipe(
-    Effect.provide(databaseConnection(Redacted.make("sqlite::memory:"))),
+  }).pipe((test) =>
+    Effect.flatMap(openTestDatabase(), (database) => database.run(test)),
   ));
