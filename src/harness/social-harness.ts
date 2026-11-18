@@ -52,22 +52,28 @@ import {
   type HistoryRecord,
   InboxError,
   type InboxPage,
-  type MessageAddress,
+  MessageAddress,
   otherMemberNames,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
 } from "./contracts.js";
-import {
-  conversationsCursor,
-  historyCursor,
-  type Inbox,
-  makeInbox,
-  type Unchecked,
-} from "./inbox.js";
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 
-/** Start a live conversation-list traversal by omitting cursor. */
-interface ListConversationsRequest extends PaginatedRequest {}
+const historyCursor = Schema.Struct({
+  operation: Schema.Literal("history"),
+  phase: Schema.Literal("messages", "collectiveResults"),
+  address: MessageAddress,
+  communicationCursor: Schema.optional(Schema.String),
+  after: Schema.NonNegativeInt,
+  through: Schema.NonNegativeInt,
+});
+const conversationsCursor = Schema.Struct({
+  operation: Schema.Literal("conversations"),
+  address: MessageAddress,
+  communicationCursor: Schema.optional(Schema.String),
+});
+
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
 interface ConversationsPage extends Page {
   readonly addresses: readonly MessageAddress[];
@@ -106,11 +112,11 @@ interface SocialHarnessService {
   ) => Effect.Effect<InboxPage, InboxError>;
   /**
    * Lists live canonical addresses, direct conversations before groups.
-   * Follow `nextCursor` until absent. New conversations before the cursor require
-   * a fresh traversal.
+   * Omitting the cursor starts a live traversal. Follow `nextCursor` until
+   * absent. New conversations before the cursor require a fresh traversal.
    */
   readonly listConversations: (
-    request?: ListConversationsRequest,
+    request?: PaginatedRequest,
   ) => Effect.Effect<ConversationsPage, HistoryError>;
   /**
    * Pages include only history available at the first read. Rule edits leave
@@ -167,7 +173,6 @@ interface Agent {
   readonly changes: PubSub.PubSub<undefined>;
   readonly settings: HarnessSettings;
   readonly historyLimit: number;
-  readonly withheldReply: Option.Option<string>;
 }
 
 function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
@@ -190,7 +195,6 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
       changes,
       settings,
       historyLimit: settings.maximumHistoryRecords ?? 256,
-      withheldReply: Option.fromNullable(settings.withheldReply),
     };
     yield* supervise(
       workers,
@@ -285,15 +289,12 @@ function send(agent: Agent, input: SendRequest) {
       if (decision.kind === "refused") {
         return yield* decision.refusal;
       }
-      yield* agent.communication
-        .send(outgoing)
-        .pipe(
-          Effect.catchTag("CommunicationError", (error) =>
-            Effect.fail(sendFailure(error)),
-          ),
-        );
+      yield* agent.communication.send(outgoing);
       return { id: outgoing.msgId, address: destination.address };
     }).pipe(
+      Effect.catchTag("CommunicationError", (error) =>
+        Effect.fail(sendFailure(error)),
+      ),
       Effect.catchTag("InboxError", () =>
         Effect.fail(new SendError({ reason: "persistence-failed" })),
       ),
@@ -329,13 +330,9 @@ function outgoingFor(
       ) {
         return yield* new RequestError({ failure: { kind: "request-none" } });
       }
-      const collectiveRequest = yield* agent.communication
-        .getCollectiveRequest(request.collectiveResponse.requestId)
-        .pipe(
-          Effect.catchTag("CommunicationError", (error) =>
-            Effect.fail(sendFailure(error)),
-          ),
-        );
+      const collectiveRequest = yield* agent.communication.getCollectiveRequest(
+        request.collectiveResponse.requestId,
+      );
       const expected = [
         collectiveRequest.author,
         ...collectiveRequest.recipients,
@@ -350,11 +347,7 @@ function outgoingFor(
         author: agent.card,
         request: collectiveRequest,
         response: request.collectiveResponse,
-      }).pipe(
-        Effect.catchTag("CommunicationError", (error) =>
-          Effect.fail(sendFailure(error)),
-        ),
-      );
+      });
     }
     const recipients = yield* agent.identity.resolve(names).pipe(
       Effect.catchTag("IdentityError", (error) =>
@@ -384,16 +377,12 @@ function outgoingFor(
           recipients: [first, ...rest],
           question: request.text,
           ...request.collectiveRequest,
-        }).pipe(
-          Effect.catchTag("CommunicationError", (error) =>
-            Effect.fail(sendFailure(error)),
-          ),
-        )
+        })
       : yield* Message.create({
           author: agent.card,
           recipients: [first, ...rest],
           content: [{ type: "text", text: request.text }],
-        }).pipe(Effect.mapError(sendFailure));
+        });
   });
 }
 
@@ -444,7 +433,7 @@ function waitForInbox(
   }).pipe(Effect.scoped);
 }
 
-function listConversations(agent: Agent, request: ListConversationsRequest) {
+function listConversations(agent: Agent, request: PaginatedRequest) {
   const { inbox } = agent;
   return Effect.gen(function* () {
     const position =
@@ -466,10 +455,8 @@ function listConversations(agent: Agent, request: ListConversationsRequest) {
       const observed = page.conversations.map((members) =>
         addressOf(members, agent.card.agentId),
       );
-      for (const address of observed) {
-        if (address > afterAddress) {
-          addresses.add(address);
-        }
+      for (const address of observed.filter((each) => each > afterAddress)) {
+        addresses.add(address);
       }
       nextPageCursor = page.nextCursor;
       morePages = nextPageCursor !== undefined;
@@ -542,33 +529,13 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
         return yield* new HistoryError({ reason: "invalid-address" });
       }
     }
-    if (position.phase === "messages" && members !== undefined) {
-      const page = yield* communication.readHistory({
+    if (members !== undefined) {
+      const page = yield* messageRecords(
+        agent,
         members,
-        ...(position.communicationCursor === undefined
-          ? {}
-          : { cursor: position.communicationCursor }),
-      });
-      for (const { message } of page.entries) {
-        if (message.author.agentId === card.agentId) {
-          records.push({ kind: "sent", message });
-        } else {
-          const entry = yield* inbox.storedEntry({
-            authorAgentId: message.author.agentId,
-            msgId: message.msgId,
-          });
-          if (entry !== undefined) {
-            records.push({
-              kind: "received",
-              message: {
-                authorAgentId: message.author.agentId,
-                msgId: message.msgId,
-              },
-              ...entry,
-            });
-          }
-        }
-      }
+        position.communicationCursor,
+      );
+      records.push(...page.records);
       if (page.nextCursor !== undefined) {
         return {
           records,
@@ -623,6 +590,41 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
         : {}),
     };
   }).pipe(Effect.mapError(historyFailure));
+}
+
+/**
+ * One page of a conversation's messages as history records: each one this
+ * agent sent, and each one it received that its inbox stored an entry for.
+ */
+function messageRecords(agent: Agent, members: Conversation, cursor?: string) {
+  return Effect.gen(function* () {
+    const page = yield* agent.communication.readHistory({
+      members,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    const records: HistoryRecord[] = [];
+    for (const { message } of page.entries) {
+      if (message.author.agentId === agent.card.agentId) {
+        records.push({ kind: "sent", message });
+      } else {
+        const entry = yield* agent.inbox.storedEntry({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+        });
+        if (entry !== undefined) {
+          records.push({
+            kind: "received",
+            message: {
+              authorAgentId: message.author.agentId,
+              msgId: message.msgId,
+            },
+            ...entry,
+          });
+        }
+      }
+    }
+    return { records, nextCursor: page.nextCursor };
+  });
 }
 
 function checkIncoming(agent: Agent, unchecked: Unchecked) {
@@ -722,7 +724,7 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   const text =
     decision.reply ??
     (decision.reason === "rule-violation"
-      ? Option.getOrUndefined(agent.withheldReply)
+      ? agent.settings.withheldReply
       : undefined);
   if (text === undefined) {
     return Effect.succeed(undefined);
@@ -753,11 +755,7 @@ function evidenceFor(
   before?: Message,
 ): Effect.Effect<FirewallEvidence, InboxError> {
   return Effect.gen(function* () {
-    const selected = yield* conversation(members).pipe(
-      Effect.catchTag("HistoryError", () =>
-        Effect.fail(new InboxError({ reason: "persistence-failed" })),
-      ),
-    );
+    const selected = yield* conversation(members);
     const page = yield* agent.communication
       .readHistory({
         members: selected,
@@ -805,13 +803,13 @@ function evidenceFor(
 
 function conversation(
   members: readonly AgentCard[],
-): Effect.Effect<Conversation, HistoryError> {
+): Effect.Effect<Conversation, InboxError> {
   const ordered = [...members].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
   );
   const [first, second, ...rest] = ordered;
   return first === undefined || second === undefined
-    ? Effect.fail(new HistoryError({ reason: "invalid-address" }))
+    ? Effect.fail(new InboxError({ reason: "persistence-failed" }))
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 

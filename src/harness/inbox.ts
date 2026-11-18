@@ -51,21 +51,6 @@ const inboxCursor = Schema.Struct({
   after: Schema.NonNegativeInt,
   through: Schema.NonNegativeInt,
 });
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The harness composes page positions with this private owner's cursor grammar.
-const historyCursor = Schema.Struct({
-  operation: Schema.Literal("history"),
-  phase: Schema.Literal("messages", "collectiveResults"),
-  address: MessageAddress,
-  communicationCursor: Schema.optional(Schema.String),
-  after: Schema.NonNegativeInt,
-  through: Schema.NonNegativeInt,
-});
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The harness composes page positions with this private owner's cursor grammar.
-const conversationsCursor = Schema.Struct({
-  operation: Schema.Literal("conversations"),
-  address: MessageAddress,
-  communicationCursor: Schema.optional(Schema.String),
-});
 
 /**
  * A received message or collective result the firewall has not yet decided,
@@ -531,6 +516,3 @@ function decodeCursor<A, I>(
     Effect.mapError(() => new InboxError({ reason: "invalid-cursor" })),
   );
 }
-
-/** History and conversation-list positions remain private to their owning process. */
-export { conversationsCursor, historyCursor };
