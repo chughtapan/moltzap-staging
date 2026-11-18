@@ -53,7 +53,7 @@ import {
   type SubscriptionStatus,
 } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";
-import { ProtocolError } from "./vendor/effect-mcp/McpSchema.js";
+import { JsonRpcError } from "./tool-server.js";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
 export type WebhookFailureReason = (typeof callbackReasons)[number];
@@ -334,9 +334,9 @@ interface WakeUp {
 }
 
 const persistenceFailure = () =>
-  new ProtocolError(-32603, "Event persistence failed");
+  new JsonRpcError(-32603, "Event persistence failed");
 const verificationFailure = (reason: WebhookFailureReason) =>
-  new ProtocolError(-32015, "Callback verification failed", { reason });
+  new JsonRpcError(-32015, "Callback verification failed", { reason });
 const subscriptionId = (url: string) =>
   `sub_${createHash("sha256")
     .update(JSON.stringify([url, INBOX_PENDING_EVENT, {}]))
@@ -457,7 +457,7 @@ const refuseSecondSubscription = (webhook: AgentWebhook, id: string) =>
     return webhook.saved.subscription !== null &&
       webhook.saved.subscription.id !== id
       ? Effect.fail(
-          new ProtocolError(
+          new JsonRpcError(
             -32013,
             "Unsubscribe the current callback before subscribing another",
             { limit: "subscriptions", max: 1 },
@@ -477,7 +477,7 @@ const saveVerifiedSubscription = (
       yield* refuseSecondSubscription(webhook, callback.id);
       if (generation !== webhook.generation) {
         return yield* Effect.fail(
-          new ProtocolError(-32012, "Subscription changed during verification"),
+          new JsonRpcError(-32012, "Subscription changed during verification"),
         );
       }
       const expiresAt =
@@ -507,7 +507,7 @@ const subscribe = (
   Effect.gen(function* () {
     if (webhookUrl(url) === undefined || !validWebhookSecret(secret)) {
       return yield* Effect.fail(
-        new ProtocolError(-32602, "Invalid callback URL or secret"),
+        new JsonRpcError(-32602, "Invalid callback URL or secret"),
       );
     }
     const callback = { id: subscriptionId(url), url, secret };
@@ -706,7 +706,7 @@ const unsubscribe = (webhook: AgentWebhook, url: string) =>
     const subscription = webhook.saved.subscription;
     if (subscription === null || subscription.id !== subscriptionId(url)) {
       return Effect.fail(
-        new ProtocolError(-32011, "Subscription not found", {
+        new JsonRpcError(-32011, "Subscription not found", {
           kind: "subscription",
         }),
       );
@@ -767,7 +767,7 @@ function inboxEvents(webhook: AgentWebhook) {
   const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
     Schema.decodeUnknown(schema)(input).pipe(
       Effect.catchTag("ParseError", () =>
-        Effect.fail(new ProtocolError(-32602, "Invalid event arguments")),
+        Effect.fail(new JsonRpcError(-32602, "Invalid event arguments")),
       ),
     );
   return {
@@ -775,7 +775,7 @@ function inboxEvents(webhook: AgentWebhook) {
       decode(eventListRequest, raw).pipe(
         Effect.filterOrFail(
           (input) => input.cursor === undefined,
-          () => new ProtocolError(-32602, "Invalid event catalog cursor"),
+          () => new JsonRpcError(-32602, "Invalid event catalog cursor"),
         ),
         Effect.as({ events: [inboxPendingCatalogEntry] }),
       ),
@@ -784,7 +784,7 @@ function inboxEvents(webhook: AgentWebhook) {
         Effect.flatMap(onlyInboxPending),
         Effect.filterOrFail(
           (input) => input.delivery.mode === "webhook",
-          () => new ProtocolError(-32602, "Unsupported delivery mode"),
+          () => new JsonRpcError(-32602, "Unsupported delivery mode"),
         ),
         Effect.flatMap((input) =>
           subscribe(webhook, input.delivery, input.ttlMs),
@@ -812,13 +812,13 @@ function onlyInboxPending<
 >(input: A) {
   if (input.name !== INBOX_PENDING_EVENT) {
     return Effect.fail(
-      new ProtocolError(-32011, "Event not found", { kind: "event" }),
+      new JsonRpcError(-32011, "Event not found", { kind: "event" }),
     );
   }
   return input.cursor == null
     ? Effect.succeed(input)
     : Effect.fail(
-        new ProtocolError(
+        new JsonRpcError(
           -32014,
           "Event replay is unavailable; read the inbox",
           {

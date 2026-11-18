@@ -26,14 +26,9 @@ import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
 import { SocialHarness } from "../agent.js";
-import {
-  makeMcpHttpApp,
-  type McpAuthentication,
-  untilStopped,
-} from "../listener.js";
+import { makeMcpHttpApp, type McpAuthentication } from "../listener.js";
 import { roleOf } from "../startup.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../subscriptions.js";
-import { serveTools } from "../tool-server.js";
 
 /** The credential has no authority beyond this process. */
 export const mcpTestCredential = Redacted.make(
@@ -45,7 +40,7 @@ const mcpTestHeaders = {
   host: "127.0.0.1",
 };
 
-/** An MCP app over a database, whose `harness` operations a test replaces one by one. */
+/** The daemon's HTTP app over a database, serving one agent whose `harness` operations a test replaces one by one. */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly hideCollectives?: boolean;
@@ -106,29 +101,24 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     database.directory,
     card.agentName,
   );
-  const agentApp = untilStopped(
-    yield* serveTools(
-      { name: "mcp-contract-test", version: "1" },
-      yield* role
-        .tools(subscription)
-        .pipe(
-          Effect.provideService(SocialHarness, harness),
-          Effect.provideService(Identity, identity),
-          Effect.provideService(Firewall, firewall),
-        ),
-      subscription,
-    ),
+  const agent = {
+    tools: yield* role
+      .tools(subscription)
+      .pipe(
+        Effect.provideService(SocialHarness, harness),
+        Effect.provideService(Identity, identity),
+        Effect.provideService(Firewall, firewall),
+      ),
+    events: subscription,
     stopped,
-  );
+  };
   const owners = yield* Ref.make<
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
   >([]);
   const app = yield* makeMcpHttpApp(
     options.authentication ?? { kind: "local", credential: mcpTestCredential },
     (owner) =>
-      Ref.update(owners, (values) => [...values, owner]).pipe(
-        Effect.as(agentApp),
-      ),
+      Ref.update(owners, (values) => [...values, owner]).pipe(Effect.as(agent)),
     Option.fromNullable(options.serverAgentCredential),
   );
   return {

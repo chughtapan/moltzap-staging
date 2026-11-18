@@ -12,6 +12,7 @@ import {
   HttpServerResponse,
 } from "@effect/platform";
 import { NodeHttpServer } from "@effect/platform-node";
+import { getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/server";
 import {
   Data,
   Deferred,
@@ -28,13 +29,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
+import { packageVersion } from "../version.js";
 import { localOwner, type Owner, serverAgentOwner } from "./owners.js";
-
-const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
-  new URL(
-    `/.well-known/oauth-protected-resource${resource.pathname}`,
-    resource.origin,
-  ).href;
+import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
 
 /** What a request gets when its agent cannot serve it. */
 const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
@@ -57,22 +54,27 @@ export class AuthenticationRefused extends Data.TaggedError(
   "AuthenticationRefused",
 ) {}
 
-/** An agent's MCP app, served to the requests admitted as its owner. */
-type AppOfOwner = (
+/** The running agent of an owner: its tools, its Events calls and what completes when it stops. */
+type AgentOfOwner = (
   owner: Owner,
-) => Effect.Effect<HttpApp.Default<never, Scope.Scope>, unknown, Scope.Scope>;
+) => Effect.Effect<
+  AgentCalls & { readonly stopped: Deferred.Deferred<undefined> },
+  unknown,
+  Scope.Scope
+>;
 
 /**
  * The app the listener serves. It answers only POST /mcp whose Host and
- * Origin headers it trusts, admits the caller, and hands the request to that
- * owner's agent. An agent that cannot serve answers 503, and the log names
- * what failed.
+ * Origin headers it trusts, admits the caller, and has the MCP handler answer
+ * the request from that owner's agent. An agent that cannot serve answers 503,
+ * and the log names what failed.
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
   authentication: McpAuthentication,
-  appOfOwner: AppOfOwner,
+  agentOfOwner: AgentOfOwner,
   serverAgentCredential: Option.Option<Redacted.Redacted>,
 ) {
+  const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
   const admit = yield* makeRequestAdmission(
     authentication,
     serverAgentCredential,
@@ -114,8 +116,8 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
             HttpServerResponse.fromWeb(authenticationChallenge(authentication)),
           ),
         onSuccess: ({ owner, expiresAt }) =>
-          appOfOwner(owner).pipe(
-            Effect.flatMap((app) => app),
+          agentOfOwner(owner).pipe(
+            Effect.flatMap((agent) => untilStopped(mcp(agent), agent.stopped)),
             Effect.flatMap((response) =>
               expiresAt === undefined
                 ? response
@@ -141,7 +143,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
  * every later request are answered as unavailable, and a response stream
  * still open ends.
  */
-export function untilStopped<E, R>(
+function untilStopped<E, R>(
   app: HttpApp.Default<E, R>,
   stopped: Deferred.Deferred<undefined>,
 ) {
