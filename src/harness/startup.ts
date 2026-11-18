@@ -1,5 +1,5 @@
 /** @file Opens the daemon's database and owns agent resources independently of MCP connections. */
-import { HttpClient } from "@effect/platform";
+import { type FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
@@ -55,11 +55,6 @@ import {
   makeWebhookEvents,
   webhookHttpClientLayer,
 } from "./webhook.js";
-
-/** A daemon scope restores saved agents and serves authenticated requests to them. */
-export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
-  Layer.provide(spanExport),
-);
 
 /**
  * One agent's role, and everything that follows from it. In P2P mode every
@@ -137,68 +132,76 @@ export function roleOf(
   };
 }
 
-function runDaemon() {
-  return Effect.gen(function* () {
-    const url = yield* databaseUrl;
-    const { settings, agentName, serverAgentCredential } =
-      yield* loadDaemonSettings();
-    return yield* Effect.gen(function* () {
-      yield* checkDatabase;
-      if (settings.authentication.kind === "local") {
-        yield* getOrCreateOwnedAgentKey(localOwner, agentName).pipe(
-          Effect.catchTag("OwnershipError", () =>
-            refused(
-              "database",
-              "This database's agent has another name than agentName in the settings, or another agent has that name. Set agentName to the name the database was first started with, or prepare a new database.",
-            ),
+/** The Node file system, typed by the interface the daemon reads files through. */
+const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
+
+/**
+ * Runs the daemon until it is interrupted: restores saved agents and serves
+ * authenticated requests to them. Fails if it cannot start.
+ */
+export const runDaemon = Effect.gen(function* () {
+  const url = yield* databaseUrl;
+  const { settings, agentName, serverAgentCredential } =
+    yield* loadDaemonSettings();
+  return yield* Effect.gen(function* () {
+    yield* checkDatabase;
+    if (settings.authentication.kind === "local") {
+      yield* getOrCreateOwnedAgentKey(localOwner, agentName).pipe(
+        Effect.catchTag("OwnershipError", () =>
+          refused(
+            "database",
+            "This database's agent has another name than agentName in the settings, or another agent has that name. Set agentName to the name the database was first started with, or prepare a new database.",
           ),
-        );
-      }
-      const norms =
-        settings.norms === undefined
-          ? undefined
-          : yield* daemonNorms(settings.norms);
-      if (settings.serverAgentName !== undefined) {
-        yield* getOrCreateOwnedAgentKey(
-          serverAgentOwner,
-          settings.serverAgentName,
-        ).pipe(
-          Effect.catchTag("OwnershipError", () =>
-            refused(
-              "database",
-              "This database's server agent has another name than serverAgentName in the settings, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.",
-            ),
-          ),
-        );
-      }
-      const appOfOwner = yield* makeAgentApps(settings, norms);
-      const app = yield* makeMcpHttpApp(
-        settings.authentication,
-        appOfOwner,
-        serverAgentCredential,
+        ),
+      );
+    }
+    const norms =
+      settings.norms === undefined
+        ? undefined
+        : yield* daemonNorms(settings.norms);
+    if (settings.serverAgentName !== undefined) {
+      yield* getOrCreateOwnedAgentKey(
+        serverAgentOwner,
+        settings.serverAgentName,
       ).pipe(
-        Effect.catchTag("AuthenticationRefused", () =>
+        Effect.catchTag("OwnershipError", () =>
           refused(
-            "issuer",
-            "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
+            "database",
+            "This database's server agent has another name than serverAgentName in the settings, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.",
           ),
         ),
       );
-      yield* serveMcp(settings.port, app, settings.host).pipe(
-        Effect.catchTag("ServeError", () =>
-          refused(
-            "listener",
-            `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
-          ),
+    }
+    const appOfOwner = yield* makeAgentApps(settings, norms);
+    const app = yield* makeMcpHttpApp(
+      settings.authentication,
+      appOfOwner,
+      serverAgentCredential,
+    ).pipe(
+      Effect.catchTag("AuthenticationRefused", () =>
+        refused(
+          "issuer",
+          "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
         ),
-      );
-      yield* Console.log(
-        `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
-      );
-      return yield* Effect.never;
-    }).pipe(Effect.scoped, Effect.provide(databaseConnection(url)));
-  }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
-}
+      ),
+    );
+    yield* serveMcp(settings.port, app, settings.host).pipe(
+      Effect.catchTag("ServeError", () =>
+        refused(
+          "listener",
+          `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
+        ),
+      ),
+    );
+    yield* Console.log(
+      `sharnessd listening on http://${settings.host}:${settings.port}/mcp (package ${packageVersion})`,
+    );
+    return yield* Effect.never;
+  }).pipe(Effect.scoped, Effect.provide(databaseConnection(url)));
+}).pipe(
+  Effect.withSpan("runDaemon"),
+  Effect.provide(Layer.merge(fileSystem, spanExport)),
+);
 
 /** Whether `members` are the server agent and one other agent. */
 function serverAgentAndOne(serverAgentName: AgentName) {

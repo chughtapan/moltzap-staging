@@ -356,8 +356,6 @@ interface AgentWebhook {
   readonly clock: Clock.Clock;
   /** Guards the subscription. */
   readonly subscriptionLock: Effect.Semaphore;
-  /** Allows one post at a time. */
-  readonly postLock: Effect.Semaphore;
   verified?: {
     readonly id: string;
     readonly secretDigest: string;
@@ -636,45 +634,43 @@ const settle = (
     }),
   );
 
-/** Posts the wake-up that is due, if there is one. */
+/** Posts the wake-up that is due, if there is one. Only the one wake-up loop calls it, so posts never overlap. */
 const postDueWakeUp = (webhook: AgentWebhook) =>
-  webhook.postLock.withPermits(1)(
-    Effect.gen(function* () {
-      const due = yield* webhook.subscriptionLock.withPermits(1)(
-        Effect.gen(function* () {
-          const subscription = webhook.saved.subscription;
-          if (
-            subscription === null ||
-            !active(webhook) ||
-            subscription.stalled !== null
-          ) {
-            return null;
-          }
-          const wakeUp = yield* prepareWakeUp(webhook);
-          return wakeUp === null || wakeUp.nextAttemptAt > now(webhook)
-            ? null
-            : { subscription, wakeUp, generation: webhook.generation };
-        }),
-      );
-      if (due === null) {
-        return;
-      }
-      yield* sendWebhook({
-        url: due.subscription.url,
-        secret: due.subscription.secret,
-        subscriptionId: due.subscription.id,
-        messageId: due.wakeUp.id,
-        body: due.wakeUp.body,
-        timestamp: now(webhook),
-      }).pipe(
-        Effect.provideService(HttpClient.HttpClient, webhook.http),
-        Effect.matchEffect({
-          onSuccess: () => settle(webhook, due),
-          onFailure: (error) => settle(webhook, due, error),
-        }),
-      );
-    }),
-  );
+  Effect.gen(function* () {
+    const due = yield* webhook.subscriptionLock.withPermits(1)(
+      Effect.gen(function* () {
+        const subscription = webhook.saved.subscription;
+        if (
+          subscription === null ||
+          !active(webhook) ||
+          subscription.stalled !== null
+        ) {
+          return null;
+        }
+        const wakeUp = yield* prepareWakeUp(webhook);
+        return wakeUp === null || wakeUp.nextAttemptAt > now(webhook)
+          ? null
+          : { subscription, wakeUp, generation: webhook.generation };
+      }),
+    );
+    if (due === null) {
+      return;
+    }
+    yield* sendWebhook({
+      url: due.subscription.url,
+      secret: due.subscription.secret,
+      subscriptionId: due.subscription.id,
+      messageId: due.wakeUp.id,
+      body: due.wakeUp.body,
+      timestamp: now(webhook),
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, webhook.http),
+      Effect.matchEffect({
+        onSuccess: () => settle(webhook, due),
+        onFailure: (error) => settle(webhook, due, error),
+      }),
+    );
+  });
 
 /** Waits for a change, or for the time a failed wake-up is due again. */
 const untilNextAttempt = (webhook: AgentWebhook) =>
@@ -895,7 +891,6 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     clock: yield* Effect.clock,
     saved,
     subscriptionLock: yield* Effect.makeSemaphore(1),
-    postLock: yield* Effect.makeSemaphore(1),
     generation: 0,
     inboxChangedSinceLastWakeUp: true,
     tokensInLastWakeUp: new Set(),
