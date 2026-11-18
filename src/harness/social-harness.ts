@@ -35,7 +35,6 @@ import {
   Communication,
   type Conversation,
   type Incoming,
-  type Outgoing,
   restarting,
 } from "../communication/service.js";
 import { transaction } from "../database/index.js";
@@ -53,21 +52,28 @@ import {
   type HistoryRecord,
   InboxError,
   type InboxPage,
-  type MessageAddress,
+  MessageAddress,
   otherMemberNames,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
 } from "./contracts.js";
-import {
-  conversationsCursor,
-  historyCursor,
-  makeInbox,
-  type Unchecked,
-} from "./inbox.js";
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 
-/** Start a live conversation-list traversal by omitting cursor. */
-interface ListConversationsRequest extends PaginatedRequest {}
+const historyCursor = Schema.Struct({
+  operation: Schema.Literal("history"),
+  phase: Schema.Literal("messages", "collectiveResults"),
+  address: MessageAddress,
+  communicationCursor: Schema.optional(Schema.String),
+  after: Schema.NonNegativeInt,
+  through: Schema.NonNegativeInt,
+});
+const conversationsCursor = Schema.Struct({
+  operation: Schema.Literal("conversations"),
+  address: MessageAddress,
+  communicationCursor: Schema.optional(Schema.String),
+});
+
 /** Conversation addresses are canonical and follow unsigned-ASCII order. */
 interface ConversationsPage extends Page {
   readonly addresses: readonly MessageAddress[];
@@ -80,8 +86,6 @@ interface ReadHistoryRequest extends PaginatedRequest {
 export interface HistoryPage extends Page {
   readonly records: readonly HistoryRecord[];
 }
-type CommunicationService = Context.Tag.Service<typeof Communication>;
-type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
   /**
@@ -108,11 +112,11 @@ interface SocialHarnessService {
   ) => Effect.Effect<InboxPage, InboxError>;
   /**
    * Lists live canonical addresses, direct conversations before groups.
-   * Follow `nextCursor` until absent. New conversations before the cursor require
-   * a fresh traversal.
+   * Omitting the cursor starts a live traversal. Follow `nextCursor` until
+   * absent. New conversations before the cursor require a fresh traversal.
    */
   readonly listConversations: (
-    request?: ListConversationsRequest,
+    request?: PaginatedRequest,
   ) => Effect.Effect<ConversationsPage, HistoryError>;
   /**
    * Pages include only history available at the first read. Rule edits leave
@@ -159,6 +163,18 @@ export interface HarnessSettings {
   readonly withheldReply?: string;
 }
 
+/** What one agent's operations share: its card, the services it acts through and its settings. */
+interface Agent {
+  readonly card: AgentCard;
+  readonly identity: Context.Tag.Service<typeof Identity>;
+  readonly firewall: Context.Tag.Service<typeof Firewall>;
+  readonly communication: Context.Tag.Service<typeof Communication>;
+  readonly inbox: Inbox;
+  readonly changes: PubSub.PubSub<undefined>;
+  readonly settings: HarnessSettings;
+  readonly historyLimit: number;
+}
+
 function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
   return Effect.gen(function* () {
     const identity = yield* Identity;
@@ -170,8 +186,16 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     const changes = yield* PubSub.sliding<undefined>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
     const capacity = settings.maximumConcurrentChecks ?? 4;
-    const historyLimit = settings.maximumHistoryRecords ?? 256;
-    const self = identity.me;
+    const agent: Agent = {
+      card: identity.me,
+      identity,
+      firewall,
+      communication,
+      inbox,
+      changes,
+      settings,
+      historyLimit: settings.maximumHistoryRecords ?? 256,
+    };
     yield* supervise(
       workers,
       scope,
@@ -179,7 +203,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
         .consume((incoming) =>
           inbox
             .storeUnchecked(
-              addressOf(incomingMembers(incoming), self.agentId),
+              addressOf(incomingMembers(incoming), agent.card.agentId),
               incoming,
             )
             .pipe(Effect.zipRight(Queue.offer(wake, undefined)), Effect.asVoid),
@@ -194,15 +218,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
         }
         if (!addressesBeingChecked.has(unchecked.address)) {
           addressesBeingChecked.add(unchecked.address);
-          const check = checkIncoming(
-            inbox,
-            firewall,
-            communication,
-            unchecked,
-            self,
-            historyLimit,
-            Option.fromNullable(settings.withheldReply),
-          ).pipe(
+          const check = checkIncoming(agent, unchecked).pipe(
             Effect.zipRight(PubSub.publish(changes, undefined)),
             Effect.ensuring(
               Effect.sync(() =>
@@ -221,363 +237,398 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     );
     yield* Queue.offer(wake, undefined);
     return SocialHarness.of({
-      send: (input) =>
-        Effect.suspend(() => {
-          const request = structuredClone(input);
-          return Effect.gen(function* () {
-            if (
-              settings.hideGroups &&
-              request.to.startsWith(GROUP_ADDRESS_PREFIX)
-            ) {
-              return yield* new SendError({
-                reason: "invalid-address",
-                detail:
-                  "this daemon does not offer groups; address one agent as agent:<name>",
-              });
-            }
-            const destination = yield* canonicalMessageAddress(
-              request.to,
-              self.agentName,
-            );
-            let outgoing: Outgoing;
-            if ("collectiveResponse" in request) {
-              if (
-                !(yield* inbox.isCollectiveRequestVisible(
-                  request.collectiveResponse.requestId,
-                ))
-              ) {
-                return yield* new RequestError({
-                  failure: { kind: "request-none" },
-                });
-              }
-              const collectiveRequest = yield* communication
-                .getCollectiveRequest(request.collectiveResponse.requestId)
-                .pipe(
-                  Effect.catchTag("CommunicationError", (error) =>
-                    Effect.fail(sendFailure(error)),
-                  ),
-                );
-              const expected = [
-                collectiveRequest.author,
-                ...collectiveRequest.recipients,
-              ]
-                .filter((member) => member.agentId !== self.agentId)
-                .map((member) => member.agentName)
-                .sort(compareAscii);
-              const selectedNames = otherMemberNames(
-                destination,
-                self.agentName,
-              );
-              if (
-                expected.join(",") !==
-                [...selectedNames].sort(compareAscii).join(",")
-              ) {
-                return yield* new SendError({ reason: "invalid-address" });
-              }
-              outgoing = yield* CollectiveResponse.create({
-                author: self,
-                request: collectiveRequest,
-                response: request.collectiveResponse,
-              }).pipe(
-                Effect.catchTag("CommunicationError", (error) =>
-                  Effect.fail(sendFailure(error)),
-                ),
-              );
-            } else {
-              const recipients = yield* identity
-                .resolve(otherMemberNames(destination, self.agentName))
-                .pipe(
-                  Effect.catchTag("IdentityError", (error) =>
-                    Effect.fail(
-                      new SendError({
-                        reason:
-                          error.reason === "unknown-agent"
-                            ? "unknown-agent"
-                            : "persistence-failed",
-                        ...(error.reason === "unknown-agent" &&
-                        error.agentName !== undefined
-                          ? {
-                              detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
-                            }
-                          : {}),
-                      }),
-                    ),
-                  ),
-                );
-              const [first, ...rest] = recipients;
-              if (first === undefined) {
-                return yield* new SendError({ reason: "membership-invalid" });
-              }
-              outgoing =
-                "collectiveRequest" in request
-                  ? yield* CollectiveRequest.create({
-                      author: self,
-                      recipients: [first, ...rest],
-                      question: request.text,
-                      ...request.collectiveRequest,
-                    }).pipe(
-                      Effect.catchTag("CommunicationError", (error) =>
-                        Effect.fail(sendFailure(error)),
-                      ),
-                    )
-                  : yield* Message.create({
-                      author: self,
-                      recipients: [first, ...rest],
-                      content: [{ type: "text", text: request.text }],
-                    }).pipe(Effect.mapError(sendFailure));
-            }
-            const evidence = yield* evidenceFor(
-              inbox,
-              communication,
-              [outgoing.author, ...outgoing.recipients],
-              historyLimit,
-            );
-            const decision = yield* firewall
-              .checkOutgoing(outgoing, evidence)
-              .pipe(
-                Effect.catchTag("InvalidCheckError", () =>
-                  Effect.fail(new SendError({ reason: "content-invalid" })),
-                ),
-              );
-            yield* decision.save.pipe(
-              Effect.catchTag("FirewallPolicyError", () =>
-                Effect.fail(new SendError({ reason: "persistence-failed" })),
-              ),
-            );
-            if (decision.kind === "refused") {
-              return yield* decision.refusal;
-            }
-            yield* communication
-              .send(outgoing)
-              .pipe(
-                Effect.catchTag("CommunicationError", (error) =>
-                  Effect.fail(sendFailure(error)),
-                ),
-              );
-            return { id: outgoing.msgId, address: destination.address };
-          }).pipe(
-            Effect.catchTag("InboxError", () =>
-              Effect.fail(new SendError({ reason: "persistence-failed" })),
-            ),
-            Effect.tapError((error) =>
-              Effect.logWarning("Send failed").pipe(
-                Effect.annotateLogs({
-                  agentKey: settings.agentKey,
-                  error: error._tag,
-                  reason: error.message,
-                }),
-              ),
-            ),
-          );
-        }),
+      send: (request) => send(agent, request),
       listInbox: inbox.listInbox,
-      receive: Effect.fn(function* ({ wait, ...request }) {
-        const page = yield* wait === undefined
-          ? inbox.listInbox(request)
-          : waitForInbox(inbox, changes, request, Duration.seconds(wait));
-        for (const entry of page.entries) {
-          yield* inbox
-            .acknowledgeDelivery(entry.deliveryToken)
-            .pipe(
-              Effect.catchTag("DeliveryAcknowledgeError", () =>
-                Effect.fail(new InboxError({ reason: "persistence-failed" })),
-              ),
-            );
-        }
-        return page;
-      }),
-      listConversations: (request = {}) =>
-        Effect.gen(function* () {
-          const position =
-            request.cursor === undefined
-              ? undefined
-              : yield* inbox.decodeCursor(conversationsCursor, request.cursor);
-          const afterAddress = position?.address ?? "";
-          const addresses = new Set(
-            yield* inbox.collectiveResultAddresses(afterAddress),
-          );
-          let nextPageCursor = position?.communicationCursor;
-          let lastPageCursor = nextPageCursor;
-          let morePages = true;
-          while (morePages) {
-            lastPageCursor = nextPageCursor;
-            const page = yield* communication.listConversations(
-              lastPageCursor === undefined ? {} : { cursor: lastPageCursor },
-            );
-            const observed = page.conversations.map((members) =>
-              addressOf(members, self.agentId),
-            );
-            for (const address of observed) {
-              if (address > afterAddress) {
-                addresses.add(address);
-              }
-            }
-            nextPageCursor = page.nextCursor;
-            morePages = nextPageCursor !== undefined;
-            const firstAddressPastPage = [...addresses].sort(compareAscii)[
-              PAGE_SIZE
-            ];
-            const lastObserved = observed[observed.length - 1];
-            if (
-              firstAddressPastPage !== undefined &&
-              ((lastObserved !== undefined &&
-                lastObserved >= firstAddressPastPage) ||
-                !morePages)
-            ) {
-              break;
-            }
-          }
-          const ordered = [...addresses].sort(compareAscii);
-          const selected = ordered.slice(0, PAGE_SIZE);
-          const last = selected[selected.length - 1];
-          return {
-            addresses: selected,
-            ...(last !== undefined && (ordered.length > PAGE_SIZE || morePages)
-              ? {
-                  nextCursor: yield* inbox.encodeCursor(conversationsCursor, {
-                    operation: "conversations",
-                    address: last,
-                    ...(lastPageCursor === undefined
-                      ? {}
-                      : { communicationCursor: lastPageCursor }),
-                  }),
-                }
-              : {}),
-          };
-        }).pipe(Effect.mapError(historyFailure)),
-      readHistory: (request) =>
-        Effect.gen(function* () {
-          const destination = yield* canonicalMessageAddress(
-            request.address,
-            self.agentName,
-          );
-          if (destination.address !== request.address) {
-            return yield* new HistoryError({ reason: "invalid-address" });
-          }
-          const initial: typeof historyCursor.Type = {
-            operation: "history",
-            phase: "messages",
-            address: destination.address,
-            after: 0,
-            through: yield* inbox.collectiveResultHead(request.address),
-          };
-          const position =
-            request.cursor === undefined
-              ? initial
-              : yield* inbox.decodeCursor(historyCursor, request.cursor);
-          if (position.address !== request.address) {
-            return yield* new HistoryError({ reason: "invalid-cursor" });
-          }
-          const names = otherMemberNames(destination, self.agentName);
-          const records: HistoryRecord[] = [];
-          const members =
-            position.phase === "messages"
-              ? yield* communication.getConversation([self.agentName, ...names])
-              : undefined;
-          if (position.phase === "messages" && members === undefined) {
-            if (position.communicationCursor !== undefined) {
-              return yield* new HistoryError({ reason: "invalid-cursor" });
-            }
-            if (position.through === 0) {
-              yield* identity.resolve(names);
-              return yield* new HistoryError({ reason: "invalid-address" });
-            }
-          }
-          if (position.phase === "messages" && members !== undefined) {
-            const page = yield* communication.readHistory({
-              members,
-              ...(position.communicationCursor === undefined
-                ? {}
-                : { cursor: position.communicationCursor }),
-            });
-            for (const { message } of page.entries) {
-              if (message.author.agentId === self.agentId) {
-                records.push({ kind: "sent", message });
-              } else {
-                const entry = yield* inbox.storedEntry({
-                  authorAgentId: message.author.agentId,
-                  msgId: message.msgId,
-                });
-                if (entry !== undefined) {
-                  records.push({
-                    kind: "received",
-                    message: {
-                      authorAgentId: message.author.agentId,
-                      msgId: message.msgId,
-                    },
-                    ...entry,
-                  });
-                }
-              }
-            }
-            if (page.nextCursor !== undefined) {
-              return {
-                records,
-                nextCursor: yield* inbox.encodeCursor(historyCursor, {
-                  ...position,
-                  operation: "history",
-                  communicationCursor: page.nextCursor,
-                }),
-              };
-            }
-          }
-          const available = PAGE_SIZE - records.length;
-          if (available === 0 && position.through > 0) {
-            return {
-              records,
-              nextCursor: yield* inbox.encodeCursor(historyCursor, {
-                operation: "history",
-                phase: "collectiveResults",
-                address: destination.address,
-                after: position.after,
-                through: position.through,
-              }),
-            };
-          }
-          const collectiveResults = yield* inbox.collectiveResultPage(
-            request.address,
-            position.after,
-            position.through,
-            available,
-          );
-          const selected = collectiveResults.slice(0, available);
-          for (const collectiveResult of selected) {
-            records.push({
-              kind: "collectiveResult",
-              deliveryToken: collectiveResult.token,
-              ...collectiveResult.entry,
-            });
-          }
-          const last = selected[selected.length - 1];
-          return {
-            records,
-            ...(collectiveResults.length > selected.length && last !== undefined
-              ? {
-                  nextCursor: yield* inbox.encodeCursor(historyCursor, {
-                    operation: "history",
-                    phase: "collectiveResults",
-                    address: destination.address,
-                    after: last.sequence,
-                    through: position.through,
-                  }),
-                }
-              : {}),
-          };
-        }).pipe(Effect.mapError(historyFailure)),
+      receive: (request) => receive(agent, request),
+      listConversations: (request = {}) => listConversations(agent, request),
+      readHistory: (request) => readHistory(agent, request),
       inboxChanged: Stream.fromPubSub(changes),
     });
   }).pipe(Effect.withSpan("SocialHarness.layer"));
 }
 
-function checkIncoming(
-  inbox: Inbox,
-  firewall: Context.Tag.Service<typeof Firewall>,
-  communication: CommunicationService,
-  unchecked: Unchecked,
-  self: AgentCard,
-  historyLimit: number,
-  withheldReply: Option.Option<string>,
+function send(agent: Agent, input: SendRequest) {
+  return Effect.suspend(() => {
+    const request = structuredClone(input);
+    return Effect.gen(function* () {
+      if (
+        agent.settings.hideGroups &&
+        request.to.startsWith(GROUP_ADDRESS_PREFIX)
+      ) {
+        return yield* new SendError({
+          reason: "invalid-address",
+          detail:
+            "this daemon does not offer groups; address one agent as agent:<name>",
+        });
+      }
+      const destination = yield* canonicalMessageAddress(
+        request.to,
+        agent.card.agentName,
+      );
+      const outgoing = yield* outgoingFor(
+        agent,
+        request,
+        otherMemberNames(destination, agent.card.agentName),
+      );
+      const evidence = yield* evidenceFor(agent, [
+        outgoing.author,
+        ...outgoing.recipients,
+      ]);
+      const decision = yield* agent.firewall
+        .checkOutgoing(outgoing, evidence)
+        .pipe(
+          Effect.catchTag("InvalidCheckError", () =>
+            Effect.fail(new SendError({ reason: "content-invalid" })),
+          ),
+        );
+      yield* decision.save.pipe(
+        Effect.catchTag("FirewallPolicyError", () =>
+          Effect.fail(new SendError({ reason: "persistence-failed" })),
+        ),
+      );
+      if (decision.kind === "refused") {
+        return yield* decision.refusal;
+      }
+      yield* agent.communication.send(outgoing);
+      return { id: outgoing.msgId, address: destination.address };
+    }).pipe(
+      Effect.catchTag("CommunicationError", (error) =>
+        Effect.fail(sendFailure(error)),
+      ),
+      Effect.catchTag("InboxError", () =>
+        Effect.fail(new SendError({ reason: "persistence-failed" })),
+      ),
+      Effect.tapError((error) =>
+        Effect.logWarning("Send failed").pipe(
+          Effect.annotateLogs({
+            agentKey: agent.settings.agentKey,
+            error: error._tag,
+            reason: error.message,
+          }),
+        ),
+      ),
+    );
+  });
+}
+
+/**
+ * The outgoing message a send request amounts to, addressed to the agents
+ * `names` other than this one: a response to a collective request this agent
+ * was shown, a collective request, or a message.
+ */
+function outgoingFor(
+  agent: Agent,
+  request: SendRequest,
+  names: ReadonlyArray<AgentCard["agentName"]>,
 ) {
+  return Effect.gen(function* () {
+    if ("collectiveResponse" in request) {
+      if (
+        !(yield* agent.inbox.isCollectiveRequestVisible(
+          request.collectiveResponse.requestId,
+        ))
+      ) {
+        return yield* new RequestError({ failure: { kind: "request-none" } });
+      }
+      const collectiveRequest = yield* agent.communication.getCollectiveRequest(
+        request.collectiveResponse.requestId,
+      );
+      const expected = [
+        collectiveRequest.author,
+        ...collectiveRequest.recipients,
+      ]
+        .filter((member) => member.agentId !== agent.card.agentId)
+        .map((member) => member.agentName)
+        .sort(compareAscii);
+      if (expected.join(",") !== [...names].sort(compareAscii).join(",")) {
+        return yield* new SendError({ reason: "invalid-address" });
+      }
+      return yield* CollectiveResponse.create({
+        author: agent.card,
+        request: collectiveRequest,
+        response: request.collectiveResponse,
+      });
+    }
+    const recipients = yield* agent.identity.resolve(names).pipe(
+      Effect.catchTag("IdentityError", (error) =>
+        Effect.fail(
+          new SendError({
+            reason:
+              error.reason === "unknown-agent"
+                ? "unknown-agent"
+                : "persistence-failed",
+            ...(error.reason === "unknown-agent" &&
+            error.agentName !== undefined
+              ? {
+                  detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
+                }
+              : {}),
+          }),
+        ),
+      ),
+    );
+    const [first, ...rest] = recipients;
+    if (first === undefined) {
+      return yield* new SendError({ reason: "membership-invalid" });
+    }
+    return "collectiveRequest" in request
+      ? yield* CollectiveRequest.create({
+          author: agent.card,
+          recipients: [first, ...rest],
+          question: request.text,
+          ...request.collectiveRequest,
+        })
+      : yield* Message.create({
+          author: agent.card,
+          recipients: [first, ...rest],
+          content: [{ type: "text", text: request.text }],
+        });
+  });
+}
+
+function receive(
+  agent: Agent,
+  { wait, ...request }: PaginatedRequest & { readonly wait?: number },
+) {
+  return Effect.gen(function* () {
+    const page = yield* wait === undefined
+      ? agent.inbox.listInbox(request)
+      : waitForInbox(agent, request, Duration.seconds(wait));
+    for (const entry of page.entries) {
+      yield* agent.inbox
+        .acknowledgeDelivery(entry.deliveryToken)
+        .pipe(
+          Effect.catchTag("DeliveryAcknowledgeError", () =>
+            Effect.fail(new InboxError({ reason: "persistence-failed" })),
+          ),
+        );
+    }
+    return page;
+  });
+}
+
+/**
+ * Reads the inbox and, while nothing is pending, rereads after each change
+ * until `wait` ends. Subscribing before the first read keeps an entry that
+ * becomes pending between that read and the wait from being missed.
+ */
+function waitForInbox(
+  agent: Agent,
+  request: PaginatedRequest,
+  wait: Duration.Duration,
+) {
+  return Effect.gen(function* () {
+    const arrivals = yield* PubSub.subscribe(agent.changes);
+    const read = agent.inbox.listInbox(request);
+    const first = yield* read;
+    if (first.entries.length > 0) {
+      return first;
+    }
+    const arrived = yield* Queue.take(arrivals).pipe(
+      Effect.zipRight(read),
+      Effect.repeat({ until: (page) => page.entries.length > 0 }),
+      Effect.timeoutOption(wait),
+    );
+    return Option.isSome(arrived) ? arrived.value : yield* read;
+  }).pipe(Effect.scoped);
+}
+
+function listConversations(agent: Agent, request: PaginatedRequest) {
+  const { inbox } = agent;
+  return Effect.gen(function* () {
+    const position =
+      request.cursor === undefined
+        ? undefined
+        : yield* inbox.decodeCursor(conversationsCursor, request.cursor);
+    const afterAddress = position?.address ?? "";
+    const addresses = new Set(
+      yield* inbox.collectiveResultAddresses(afterAddress),
+    );
+    let nextPageCursor = position?.communicationCursor;
+    let lastPageCursor = nextPageCursor;
+    let morePages = true;
+    while (morePages) {
+      lastPageCursor = nextPageCursor;
+      const page = yield* agent.communication.listConversations(
+        lastPageCursor === undefined ? {} : { cursor: lastPageCursor },
+      );
+      const observed = page.conversations.map((members) =>
+        addressOf(members, agent.card.agentId),
+      );
+      for (const address of observed.filter((each) => each > afterAddress)) {
+        addresses.add(address);
+      }
+      nextPageCursor = page.nextCursor;
+      morePages = nextPageCursor !== undefined;
+      const firstAddressPastPage = [...addresses].sort(compareAscii)[PAGE_SIZE];
+      const lastObserved = observed[observed.length - 1];
+      if (
+        firstAddressPastPage !== undefined &&
+        ((lastObserved !== undefined && lastObserved >= firstAddressPastPage) ||
+          !morePages)
+      ) {
+        break;
+      }
+    }
+    const ordered = [...addresses].sort(compareAscii);
+    const selected = ordered.slice(0, PAGE_SIZE);
+    const last = selected[selected.length - 1];
+    return {
+      addresses: selected,
+      ...(last !== undefined && (ordered.length > PAGE_SIZE || morePages)
+        ? {
+            nextCursor: yield* inbox.encodeCursor(conversationsCursor, {
+              operation: "conversations",
+              address: last,
+              ...(lastPageCursor === undefined
+                ? {}
+                : { communicationCursor: lastPageCursor }),
+            }),
+          }
+        : {}),
+    };
+  }).pipe(Effect.mapError(historyFailure));
+}
+
+function readHistory(agent: Agent, request: ReadHistoryRequest) {
+  const { card, communication, inbox } = agent;
+  return Effect.gen(function* () {
+    const destination = yield* canonicalMessageAddress(
+      request.address,
+      card.agentName,
+    );
+    if (destination.address !== request.address) {
+      return yield* new HistoryError({ reason: "invalid-address" });
+    }
+    const initial: typeof historyCursor.Type = {
+      operation: "history",
+      phase: "messages",
+      address: destination.address,
+      after: 0,
+      through: yield* inbox.collectiveResultHead(request.address),
+    };
+    const position =
+      request.cursor === undefined
+        ? initial
+        : yield* inbox.decodeCursor(historyCursor, request.cursor);
+    if (position.address !== request.address) {
+      return yield* new HistoryError({ reason: "invalid-cursor" });
+    }
+    const names = otherMemberNames(destination, card.agentName);
+    const records: HistoryRecord[] = [];
+    const members =
+      position.phase === "messages"
+        ? yield* communication.getConversation([card.agentName, ...names])
+        : undefined;
+    if (position.phase === "messages" && members === undefined) {
+      if (position.communicationCursor !== undefined) {
+        return yield* new HistoryError({ reason: "invalid-cursor" });
+      }
+      if (position.through === 0) {
+        yield* agent.identity.resolve(names);
+        return yield* new HistoryError({ reason: "invalid-address" });
+      }
+    }
+    if (members !== undefined) {
+      const page = yield* messageRecords(
+        agent,
+        members,
+        position.communicationCursor,
+      );
+      records.push(...page.records);
+      if (page.nextCursor !== undefined) {
+        return {
+          records,
+          nextCursor: yield* inbox.encodeCursor(historyCursor, {
+            ...position,
+            operation: "history",
+            communicationCursor: page.nextCursor,
+          }),
+        };
+      }
+    }
+    const available = PAGE_SIZE - records.length;
+    if (available === 0 && position.through > 0) {
+      return {
+        records,
+        nextCursor: yield* inbox.encodeCursor(historyCursor, {
+          operation: "history",
+          phase: "collectiveResults",
+          address: destination.address,
+          after: position.after,
+          through: position.through,
+        }),
+      };
+    }
+    const collectiveResults = yield* inbox.collectiveResultPage(
+      request.address,
+      position.after,
+      position.through,
+      available,
+    );
+    const selected = collectiveResults.slice(0, available);
+    for (const collectiveResult of selected) {
+      records.push({
+        kind: "collectiveResult",
+        deliveryToken: collectiveResult.token,
+        ...collectiveResult.entry,
+      });
+    }
+    const last = selected[selected.length - 1];
+    return {
+      records,
+      ...(collectiveResults.length > selected.length && last !== undefined
+        ? {
+            nextCursor: yield* inbox.encodeCursor(historyCursor, {
+              operation: "history",
+              phase: "collectiveResults",
+              address: destination.address,
+              after: last.sequence,
+              through: position.through,
+            }),
+          }
+        : {}),
+    };
+  }).pipe(Effect.mapError(historyFailure));
+}
+
+/**
+ * One page of a conversation's messages as history records: each one this
+ * agent sent, and each one it received that its inbox stored an entry for.
+ */
+function messageRecords(agent: Agent, members: Conversation, cursor?: string) {
+  return Effect.gen(function* () {
+    const page = yield* agent.communication.readHistory({
+      members,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    const records: HistoryRecord[] = [];
+    for (const { message } of page.entries) {
+      if (message.author.agentId === agent.card.agentId) {
+        records.push({ kind: "sent", message });
+      } else {
+        const entry = yield* agent.inbox.storedEntry({
+          authorAgentId: message.author.agentId,
+          msgId: message.msgId,
+        });
+        if (entry !== undefined) {
+          records.push({
+            kind: "received",
+            message: {
+              authorAgentId: message.author.agentId,
+              msgId: message.msgId,
+            },
+            ...entry,
+          });
+        }
+      }
+    }
+    return { records, nextCursor: page.nextCursor };
+  });
+}
+
+function checkIncoming(agent: Agent, unchecked: Unchecked) {
+  const { card, communication, inbox } = agent;
   return Effect.gen(function* () {
     const incoming = unchecked.incoming;
     if (
@@ -590,27 +641,23 @@ function checkIncoming(
     let evidence: FirewallEvidence | CollectiveResultEvidence | undefined;
     if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
       evidence = yield* evidenceFor(
-        inbox,
-        communication,
+        agent,
         [incoming.message.author, ...incoming.message.recipients],
-        historyLimit,
         incoming.message,
       );
     } else if (incoming.kind === "collectiveResult") {
       const collectiveRequest =
-        incoming.sources.request?.author.agentId === self.agentId
+        incoming.sources.request?.author.agentId === card.agentId
           ? undefined
           : incoming.sources.request;
       const responses = yield* Effect.forEach(
         incoming.sources.responses.filter(
-          (message) => message.author.agentId !== self.agentId,
+          (message) => message.author.agentId !== card.agentId,
         ),
         (message) =>
           evidenceFor(
-            inbox,
-            communication,
+            agent,
             [message.author, ...message.recipients],
-            historyLimit,
             message,
           ).pipe(
             Effect.map((evidence) => ({
@@ -629,17 +676,15 @@ function checkIncoming(
           ? {}
           : {
               question: yield* evidenceFor(
-                inbox,
-                communication,
+                agent,
                 [collectiveRequest.author, ...collectiveRequest.recipients],
-                historyLimit,
                 collectiveRequest,
               ),
             }),
       };
     }
-    const decision = yield* firewall.checkIncoming(incoming, evidence);
-    const reply = yield* replyTo(incoming, decision, self, withheldReply);
+    const decision = yield* agent.firewall.checkIncoming(incoming, evidence);
+    const reply = yield* replyTo(agent, incoming, decision);
     const expired =
       incoming.kind === "collectiveRequest" &&
       (yield* Clock.currentTimeMillis) >=
@@ -672,19 +717,14 @@ function checkIncoming(
  * reply. A reply that is not a valid message is not sent, and the message
  * stays withheld.
  */
-function replyTo(
-  incoming: Incoming,
-  decision: IncomingDecision,
-  self: AgentCard,
-  withheldReply: Option.Option<string>,
-) {
+function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   if (decision.kind !== "withheld" || !("message" in incoming)) {
     return Effect.succeed(undefined);
   }
   const text =
     decision.reply ??
     (decision.reason === "rule-violation"
-      ? Option.getOrUndefined(withheldReply)
+      ? agent.settings.withheldReply
       : undefined);
   if (text === undefined) {
     return Effect.succeed(undefined);
@@ -697,9 +737,9 @@ function replyTo(
   ).pipe(
     Effect.flatMap((msgId) =>
       messageWithId(
-        self,
+        agent.card,
         [withheld.author, ...withheld.recipients].filter(
-          (member) => member.agentId !== self.agentId,
+          (member) => member.agentId !== agent.card.agentId,
         ),
         msgId,
         [{ type: "text", text }],
@@ -709,51 +749,18 @@ function replyTo(
   );
 }
 
-/**
- * Reads the inbox and, while nothing is pending, rereads after each change
- * until `wait` ends. Subscribing before the first read keeps an entry that
- * becomes pending between that read and the wait from being missed.
- */
-function waitForInbox(
-  inbox: Inbox,
-  changes: PubSub.PubSub<undefined>,
-  request: PaginatedRequest,
-  wait: Duration.Duration,
-) {
-  return Effect.gen(function* () {
-    const arrivals = yield* PubSub.subscribe(changes);
-    const read = inbox.listInbox(request);
-    const first = yield* read;
-    if (first.entries.length > 0) {
-      return first;
-    }
-    const arrived = yield* Queue.take(arrivals).pipe(
-      Effect.zipRight(read),
-      Effect.repeat({ until: (page) => page.entries.length > 0 }),
-      Effect.timeoutOption(wait),
-    );
-    return Option.isSome(arrived) ? arrived.value : yield* read;
-  }).pipe(Effect.scoped);
-}
-
 function evidenceFor(
-  inbox: Inbox,
-  communication: CommunicationService,
+  agent: Agent,
   members: readonly AgentCard[],
-  historyLimit: number,
   before?: Message,
 ): Effect.Effect<FirewallEvidence, InboxError> {
   return Effect.gen(function* () {
-    const selected = yield* conversation(members).pipe(
-      Effect.catchTag("HistoryError", () =>
-        Effect.fail(new InboxError({ reason: "persistence-failed" })),
-      ),
-    );
-    const page = yield* communication
+    const selected = yield* conversation(members);
+    const page = yield* agent.communication
       .readHistory({
         members: selected,
         order: "newest",
-        limit: historyLimit,
+        limit: agent.historyLimit,
         ...(before === undefined
           ? {}
           : {
@@ -779,7 +786,7 @@ function evidenceFor(
       bytes += earlier.messageBytes;
     }
     recent.reverse();
-    const history = yield* inbox.visibleMessages(
+    const history = yield* agent.inbox.visibleMessages(
       recent.map((earlier) => earlier.message),
     );
     return {
@@ -796,13 +803,13 @@ function evidenceFor(
 
 function conversation(
   members: readonly AgentCard[],
-): Effect.Effect<Conversation, HistoryError> {
+): Effect.Effect<Conversation, InboxError> {
   const ordered = [...members].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
   );
   const [first, second, ...rest] = ordered;
   return first === undefined || second === undefined
-    ? Effect.fail(new HistoryError({ reason: "invalid-address" }))
+    ? Effect.fail(new InboxError({ reason: "persistence-failed" }))
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
