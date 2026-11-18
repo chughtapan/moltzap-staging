@@ -1,47 +1,116 @@
 /**
- * @file Serves a table of tools over MCP: each call's arguments are decoded,
- * its operation run, its result encoded and its failure worded by the tool's
- * definition.
+ * @file The daemon's MCP handler and the tools it serves. Each request is
+ * answered from one agent: a call's arguments are decoded, its operation run,
+ * its result encoded and its failure worded by the tool's definition.
  */
 
+import { HttpApp } from "@effect/platform";
+import {
+  createMcpHandler,
+  McpServer,
+  ProtocolError,
+} from "@modelcontextprotocol/server";
 import {
   Array as Arr,
   Cause,
-  type Context,
+  Data,
   Effect,
+  Exit,
   JSONSchema,
   Option,
   type ParseResult,
+  Runtime,
   Schema,
   SchemaAST,
 } from "effect";
 import { issuesText, type ValidationIssue } from "../communication/index.js";
-import {
-  CallToolResult,
-  ProtocolError,
-  Tool,
-  ToolAnnotations,
-} from "./vendor/effect-mcp/McpSchema.js";
-import { makeHttpApp, McpServer } from "./vendor/effect-mcp/McpServer.js";
+
+/** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
+export interface AgentCalls {
+  readonly tools: ReadonlyArray<ReturnType<typeof bind>>;
+  readonly events: Readonly<
+    Record<
+      "list" | "subscribe" | "unsubscribe",
+      (
+        params: unknown,
+      ) => Effect.Effect<Readonly<Record<string, unknown>>, JsonRpcError>
+    >
+  >;
+}
+
+/** The JSON-RPC error a tool call or an Events call is answered with. */
+export class JsonRpcError extends Data.TaggedError("JsonRpcError")<{
+  readonly code: number;
+  readonly message: string;
+  readonly data?: unknown;
+}> {
+  constructor(code: number, message: string, data?: unknown) {
+    super({ code, message, data });
+  }
+}
 
 /**
- * The HTTP app that lists and calls `tools`, in their order, and answers the
- * MCP Events calls with `events`.
+ * One admitted HTTP request: the agent that answers it, the runtime of the
+ * fiber that carries it and the signal that it was aborted. It travels through
+ * the MCP SDK as the request's authentication info, which the SDK reads
+ * nothing from and hands to the server it builds for the request.
  */
-export const serveTools = Effect.fn("serveTools")(function* (
-  implementation: { readonly name: string; readonly version: string },
-  tools: ReadonlyArray<ReturnType<typeof bind>>,
-  events: NonNullable<
-    Context.Tag.Service<typeof McpServer>["events"]["current"]
-  >,
-) {
-  const mcp = yield* McpServer.make;
-  mcp.events.current = events;
-  yield* Effect.forEach(tools, mcp.addTool, { concurrency: 1, discard: true });
-  return yield* makeHttpApp(implementation).pipe(
-    Effect.provideService(McpServer, mcp),
+class AdmittedRequest extends Data.Class<{
+  readonly agent: AgentCalls;
+  readonly runtime: Runtime.Runtime<never>;
+  readonly signal: AbortSignal;
+}> {}
+
+/** The Events capability, which the SDK's capability type does not name. */
+const eventsCapability = { events: {} };
+
+const anyParams = Schema.standardSchemaV1(Schema.Unknown);
+
+/** A tool's arguments and its result are objects, which is the JSON Schema MCP lists a tool with. */
+const objectSchema = Schema.decodeUnknownSync(
+  Schema.Struct(
+    { type: Schema.Literal("object") },
+    Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+);
+
+/**
+ * The daemon's one MCP handler. The returned function gives the HTTP app that
+ * answers the current request from `agent`; the SDK parses the request,
+ * negotiates the protocol revision, dispatches the method and frames the
+ * response, and no MCP server outlives a request. The app is interruptible so
+ * that a stopped agent or an aborted request ends a call in flight.
+ */
+export function makeMcpHandler(implementation: {
+  readonly name: string;
+  readonly version: string;
+}) {
+  const handler = createMcpHandler(({ authInfo }) =>
+    requestServer(implementation, authInfo?.extra?.admitted),
   );
-});
+  return (agent: AgentCalls) =>
+    Effect.runtime().pipe(
+      Effect.flatMap((runtime) =>
+        HttpApp.fromWebHandler((request) =>
+          handler.fetch(request, {
+            authInfo: {
+              token: "",
+              clientId: "",
+              scopes: [],
+              extra: {
+                admitted: new AdmittedRequest({
+                  agent,
+                  runtime,
+                  signal: request.signal,
+                }),
+              },
+            },
+          }),
+        ),
+      ),
+      Effect.interruptible,
+    );
+}
 
 /** What a tool definition says about a tool before any operation is attached. */
 interface Definition<A, I, B, J, E> {
@@ -73,20 +142,95 @@ export function bind<A, I, B, J, E extends { readonly message: string }>(
   visible?: Effect.Effect<boolean>,
 ) {
   return {
-    tool: new Tool({
+    tool: {
       name,
       description: definition.description,
-      inputSchema: jsonSchema(definition.input),
-      outputSchema: openObjects(jsonSchema(definition.output)),
-      annotations: new ToolAnnotations({
+      inputSchema: objectSchema(jsonSchema(definition.input)),
+      outputSchema: objectSchema(openObjects(jsonSchema(definition.output))),
+      annotations: {
         destructiveHint: true,
         idempotentHint: false,
         ...definition.annotations,
-      }),
-    }),
+      },
+    },
     ...(visible === undefined ? {} : { visible }),
     handle: handler(definition, execute),
   };
+}
+
+/** The MCP server for one request, answering from the agent `admitted` names. */
+function requestServer(
+  implementation: { readonly name: string; readonly version: string },
+  admitted: unknown,
+) {
+  const mcp = new McpServer(implementation, {
+    capabilities: { tools: { listChanged: true }, ...eventsCapability },
+  });
+  if (!(admitted instanceof AdmittedRequest)) {
+    return mcp;
+  }
+  const { agent } = admitted;
+  const visible = (tool: AgentCalls["tools"][number]) =>
+    tool.visible ?? Effect.succeed(true);
+  mcp.server.setRequestHandler("tools/list", () =>
+    run(
+      admitted,
+      Effect.filter(agent.tools, visible).pipe(
+        Effect.map((tools) => ({ tools: tools.map(({ tool }) => tool) })),
+      ),
+    ),
+  );
+  mcp.server.setRequestHandler("tools/call", ({ params }) =>
+    run(
+      admitted,
+      Effect.gen(function* () {
+        const called = agent.tools.find(
+          ({ tool }) => tool.name === params.name,
+        );
+        if (called === undefined || !(yield* visible(called))) {
+          return yield* Effect.fail(new JsonRpcError(-32602, "Tool not found"));
+        }
+        return yield* called.handle(params.arguments ?? {});
+      }),
+    ),
+  );
+  for (const call of ["list", "subscribe", "unsubscribe"] as const) {
+    mcp.server.setRequestHandler(
+      `events/${call}`,
+      { params: anyParams },
+      (params) => run(admitted, agent.events[call](params)),
+    );
+  }
+  return mcp;
+}
+
+/**
+ * Runs the Effect that answers one MCP request in the runtime of the HTTP
+ * request's fiber, so its spans keep their parent, and interrupts it when the
+ * request is aborted. A failure rejects with the SDK's error for it, which the
+ * SDK answers as the JSON-RPC error.
+ */
+function run<A>(
+  { runtime, signal }: AdmittedRequest,
+  effect: Effect.Effect<A, JsonRpcError>,
+) {
+  return new Promise<A>((resolve, reject) => {
+    const interrupt = Runtime.runCallback(runtime)(effect, {
+      onExit: Exit.match({
+        onSuccess: resolve,
+        onFailure: (cause) => {
+          const { code, message, data } = Option.getOrElse(
+            Cause.failureOption(cause),
+            () => new JsonRpcError(-32603, "Internal error"),
+          );
+          reject(new ProtocolError(code, message, data));
+        },
+      }),
+    });
+    signal.addEventListener("abort", () => {
+      interrupt();
+    });
+  });
 }
 
 /**
@@ -99,10 +243,10 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
   execute: (input: A) => Effect.Effect<B, E>,
 ) {
   const refusal = (error: E) =>
-    new ProtocolError(-32603, error.message, definition.failure.toData(error));
+    new JsonRpcError(-32603, error.message, definition.failure.toData(error));
   const unexpected =
     definition.failure.unexpected === undefined
-      ? new ProtocolError(
+      ? new JsonRpcError(
           -32603,
           "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
         )
@@ -117,10 +261,10 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
       const encoded = yield* Schema.encode(definition.output)(output, {
         onExcessProperty: "error",
       }).pipe(Effect.mapError(() => unexpected));
-      return new CallToolResult({
-        content: [{ type: "text", text: JSON.stringify(encoded) }],
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(encoded) }],
         structuredContent: encoded,
-      });
+      };
     }).pipe(
       Effect.catchAllCause((cause) =>
         Effect.fail(
@@ -133,7 +277,7 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
 /** A refusal of arguments that names each wrong field in its message and its data. */
 function invalidArguments(error: Parameters<typeof validationIssues>[0]) {
   const issues = validationIssues(error);
-  return new ProtocolError(
+  return new JsonRpcError(
     -32602,
     `Invalid tool arguments: ${issuesText(issues)}`,
     { issues },

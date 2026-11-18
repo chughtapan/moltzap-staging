@@ -67,12 +67,8 @@ const fixture = Effect.gen(function* () {
     Effect.tryPromise(() =>
       test.fetch(
         mcpRequest(
-          "initialize",
-          {
-            protocolVersion: "2026-07-28",
-            capabilities: {},
-            clientInfo: { name: "oauth-test", version: "1" },
-          },
+          "server/discover",
+          {},
           {
             headers: {
               host: host ?? resource.host,

@@ -1,4 +1,4 @@
-/** @file Opens the daemon's database and owns agent resources independently of MCP connections. */
+/** @file Opens the daemon's database and runs its agents independently of MCP connections. */
 import { type FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
@@ -35,7 +35,7 @@ import {
 import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
-import { makeMcpHttpApp, serveMcp, untilStopped } from "./listener.js";
+import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
   listOwnedAgentKeys,
@@ -54,7 +54,7 @@ import {
   makeWebhookEvents,
   webhookHttpClientLayer,
 } from "./subscriptions.js";
-import { bind, serveTools } from "./tool-server.js";
+import { bind } from "./tool-server.js";
 
 /**
  * One agent's role, and everything that follows from it. In P2P mode every
@@ -172,10 +172,10 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
     }
-    const appOfOwner = yield* makeAgentApps(settings, norms);
+    const agentOfOwner = yield* runningAgents(settings, norms);
     const app = yield* makeMcpHttpApp(
       settings.authentication,
-      appOfOwner,
+      agentOfOwner,
       serverAgentCredential,
     ).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
@@ -361,8 +361,12 @@ function normsTool(
   });
 }
 
-/** Requests borrow a prepared app; their cancellation never owns its acquisition. */
-function makeAgentApps(settings: DaemonSettings, norms?: DaemonNorms) {
+/**
+ * The daemon's running agents. Every saved agent starts with the daemon, and
+ * the returned function gives an owner's agent, starting it on that owner's
+ * first request.
+ */
+function runningAgents(settings: DaemonSettings, norms?: DaemonNorms) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
@@ -374,9 +378,10 @@ function makeAgentApps(settings: DaemonSettings, norms?: DaemonNorms) {
       ),
     };
     const consumers = new Map<string, Effect.Latch>();
+    /** An agent that fails to start is not kept, so the next request for it starts it again. */
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
-      lookup: (agentKey: string) => makeAgentApp(daemon, consumers, agentKey),
+      lookup: (agentKey: string) => startAgent(daemon, consumers, agentKey),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -387,16 +392,14 @@ function makeAgentApps(settings: DaemonSettings, norms?: DaemonNorms) {
         acquire(agentKey).pipe(
           Effect.catchAll((error) =>
             Effect.logError("Agent restoration failed").pipe(
-              Effect.annotateLogs({
-                agentKey,
-                failure: "_tag" in error ? error._tag : "ProtocolError",
-              }),
+              Effect.annotateLogs({ agentKey, failure: error._tag }),
             ),
           ),
         ),
       { concurrency: 4, discard: true },
     ).pipe(Effect.forkScoped);
-    return (owner: Owner) =>
+    /** The start runs in the daemon's scope and the request joins it, so a cancelled request cannot interrupt an agent that is starting. */
+    const agentOfOwner = (owner: Owner) =>
       getOrCreateOwnedAgentKey(owner).pipe(
         Effect.flatMap(acquire),
         Effect.provideService(SqlClient.SqlClient, sql),
@@ -404,14 +407,17 @@ function makeAgentApps(settings: DaemonSettings, norms?: DaemonNorms) {
         Effect.forkIn(daemonScope),
         Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.interruptible)),
       );
-  }).pipe(Effect.withSpan("makeAgentApps"));
+    return agentOfOwner;
+  }).pipe(Effect.withSpan("runningAgents"));
 }
 
 /**
- * One agent's retained services and MCP app. `consumers` holds the latch each
- * agent's consumer waits on, which a send to that agent opens.
+ * Starts one agent: its services, which run until the scope closes, and from
+ * them its tools, its Events calls and what completes when its workers stop.
+ * `consumers` holds the latch each agent's consumer waits on, which a send to
+ * that agent opens.
  */
-function makeAgentApp(
+function startAgent(
   daemon: Parameters<typeof roleOf>[0],
   consumers: Map<string, Effect.Latch>,
   agentKey: string,
@@ -459,11 +465,9 @@ function makeAgentApp(
         Context.get(callbackHttp, HttpClient.HttpClient),
       ),
     );
-    const app = yield* serveTools(
-      { name: "sharnessd", version: packageVersion },
-      yield* role.tools(subscription).pipe(Effect.provide(services)),
-      subscription,
-    );
+    const tools = yield* role
+      .tools(subscription)
+      .pipe(Effect.provide(services));
     yield* FiberSet.join(workers).pipe(
       Effect.matchCauseEffect({
         onFailure: (cause) =>
@@ -477,8 +481,8 @@ function makeAgentApp(
       Effect.ensuring(Deferred.succeed(stopped, undefined)),
       Effect.forkScoped,
     );
-    return untilStopped(app, stopped);
-  }).pipe(Effect.withSpan("makeAgentApp"));
+    return { tools, events: subscription, stopped };
+  }).pipe(Effect.withSpan("startAgent"));
 }
 
 /** Deployment prepares schema and encryption metadata before the daemon starts. */

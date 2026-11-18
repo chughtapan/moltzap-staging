@@ -5,6 +5,15 @@ communication, firewall and durable inbox. It checks new messages and stores
 each permitted one as an inbox entry before notifying the host. `startup.ts` chooses the mode,
 P2P or client/server, once and builds every agent from it.
 
+The daemon runs one MCP handler, built on `@modelcontextprotocol/server`, which
+parses requests, negotiates the protocol revision and frames responses.
+`listener.ts` admits a request and finds its owner's agent. `tool-server.ts`
+has the handler answer the request from that agent's tools and Events calls,
+and binds each tool definition to its operation. A running agent is its
+services, its tools, its Events calls and the signal that it has stopped;
+`startup.ts` starts every saved agent with the daemon and an owner's agent on
+that owner's first request.
+
 ## Startup
 
 ```mermaid

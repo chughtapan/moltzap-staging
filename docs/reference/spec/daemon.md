@@ -154,9 +154,39 @@ read what it stores, so protect it as you would the messages themselves.
 
 ## MCP compatibility
 
-Serve MCP `2026-07-28` over Streamable HTTP, also negotiating older revisions
-supported by the daemon. Tool discovery publishes input and output schemas
-using JSON Schema 2020-12.
+The daemon serves MCP over Streamable HTTP at `POST /mcp`. It keeps no MCP
+session: each request is answered on its own, from the agent of the owner it
+is admitted as. Tool discovery publishes input and output schemas using JSON
+Schema 2020-12.
+
+| Revision | How a host connects |
+| --- | --- |
+| `2026-07-28` | Every request names the revision. `server/discover` returns the supported revision and the capabilities |
+| `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07` | `initialize` negotiates the revision. An `initialize` that asks for `2026-07-28` or an unknown revision is answered at `2025-11-25` |
+
+A `2026-07-28` request names its method in the `Mcp-Method` header, and a
+`tools/call` names its tool in `Mcp-Name`. A request whose headers are missing
+or disagree with its body is answered HTTP 400 with error `-32020`. The
+official MCP clients send these headers.
+
+The daemon answers `tools/list`, `tools/call`, `subscriptions/listen` and the
+[Events](./host/receiving.md#mcp-events-and-inbox) calls `events/list`,
+`events/subscribe` and `events/unsubscribe`, and `ping` on the older
+revisions. Any other method is answered `-32601`, with HTTP 404 on
+`2026-07-28`. A tool or Events call that fails is answered as a JSON-RPC
+error whose `code`, `message` and `data` are the ones its contract gives. A
+host cancels a call by closing its request. `notifications/cancelled` is
+acknowledged and interrupts nothing.
+
+| Request | Response |
+| --- | --- |
+| `2026-07-28` call | `application/json` |
+| `subscriptions/listen` | `text/event-stream`: the acknowledgement, then notifications, with a comment line every 15 seconds |
+| Older-revision call | `text/event-stream` with one `message` event. The request's `Accept` header names both `application/json` and `text/event-stream`, or the daemon answers 406 |
+
+A request body is `application/json`, or the daemon answers 415, and holds at
+most 4 MiB, or it answers 413. The daemon serves at most 1,024 open
+`subscriptions/listen` streams, and refuses one more with error `-32603`.
 
 ## MCP interface
 

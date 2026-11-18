@@ -19,7 +19,7 @@ type FunctionNode = (
 type StrictRules = ReturnType<typeof makeStrictRules>;
 type GuardPreset = typeof guard.configs.documentation;
 
-/** Build outputs, dependencies, agent state and the vendored MCP server are not linted. */
+/** Build outputs, dependencies and agent state are not linted. */
 const globalIgnores = {
   ignores: [
     "**/dist/**",
@@ -27,8 +27,6 @@ const globalIgnores = {
     "**/*.d.ts",
     ".claude/**",
     ".repos/**",
-    "src/daemon/vendor/effect-mcp/McpSchema.ts",
-    "src/daemon/vendor/effect-mcp/McpServer.ts",
   ],
 };
 

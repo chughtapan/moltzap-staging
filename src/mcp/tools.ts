@@ -594,7 +594,7 @@ const policyFails = failsWith(
 
 /**
  * Each tool's contract: its description, argument and result schemas, and how
- * its failures are written and read. Discovery, the MCP app and callers all
+ * its failures are written and read. Discovery, the MCP handler and callers all
  * derive from it.
  */
 export const toolDefinitions = {

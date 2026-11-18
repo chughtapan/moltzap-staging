@@ -202,10 +202,6 @@
       "reason": "encoding.ts and identity.ts are each one module by choice, and a schema module's exports have different users by nature"
     },
     {
-      "rule": "folder-explicit-api-required",
-      "reason": "daemon/vendor holds vendored source, whose two modules the daemon imports by file"
-    },
-    {
       "rule": "require-curated-public-facade",
       "reason": "The main entry re-exports the host contract from the five modules that define it"
     },

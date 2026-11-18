@@ -90,7 +90,7 @@ carries that id as its `requestId`, and a response may name any copy.
 | **settings file** | The JSON document an operator writes. **Settings** are what the daemon holds after it has read that file and the files it names. |
 | **mode** | P2P, or client/server. |
 | **server agent**, **client** | The two roles of client/server mode. "Server" and "client" name nothing else. |
-| **MCP app** | The MCP server the daemon runs for one agent. |
+| **MCP handler** | The one MCP server the daemon runs. It answers each request from the agent of the owner the request is admitted as. |
 | **listener** | The daemon's one HTTP socket. |
 | **subscription** | A host's request to be woken at a callback URL. A **wake-up** is one post to that URL. |
 | **database URL** | Where the daemon's database is. |
