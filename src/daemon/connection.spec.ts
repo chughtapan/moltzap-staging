@@ -18,11 +18,7 @@ import {
   sendMessage,
 } from "../mcp/connection.js";
 import { toolDefinitions } from "../mcp/tools.js";
-import {
-  loopbackMcpEndpoint,
-  mcpFixture,
-  mcpTestCredential,
-} from "./__tests__/mcp-fixtures.js";
+import { loopbackMcpFixture } from "./__tests__/mcp-fixtures.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");
@@ -66,7 +62,7 @@ afterEach(() => {
 const inboxFixture = Effect.gen(function* () {
   const acknowledged = yield* Ref.make(0);
   const receipt = yield* Deferred.make<undefined>();
-  const fixture = yield* mcpFixture({
+  const fixture = yield* loopbackMcpFixture({
     harness: {
       receive: () =>
         Ref.get(acknowledged).pipe(
@@ -81,8 +77,12 @@ const inboxFixture = Effect.gen(function* () {
         ),
     },
   });
-  const endpoint = yield* loopbackMcpEndpoint(fixture.app);
-  return { acknowledged, receipt, endpoint };
+  return {
+    acknowledged,
+    receipt,
+    endpoint: fixture.endpoint,
+    credential: fixture.credential,
+  };
 });
 
 describe("shared inbox reception", () => {
@@ -90,7 +90,7 @@ describe("shared inbox reception", () => {
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
-        { endpoint: fixture.endpoint, credential: mcpTestCredential },
+        { endpoint: fixture.endpoint, credential: fixture.credential },
         implementation,
       );
       const entered = yield* Deferred.make<undefined>();
@@ -115,7 +115,7 @@ describe("shared inbox reception", () => {
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
-        { endpoint: fixture.endpoint, credential: mcpTestCredential },
+        { endpoint: fixture.endpoint, credential: fixture.credential },
         implementation,
       );
       const refusal = "host-refused";
@@ -132,7 +132,7 @@ describe("shared inbox reception", () => {
       const fixture = yield* inboxFixture;
       const scope = yield* Scope.make();
       const connection = yield* acquireMcpConnection(
-        { endpoint: fixture.endpoint, credential: mcpTestCredential },
+        { endpoint: fixture.endpoint, credential: fixture.credential },
         implementation,
       ).pipe(Effect.provideService(Scope.Scope, scope));
       const entered = yield* Deferred.make<undefined>();

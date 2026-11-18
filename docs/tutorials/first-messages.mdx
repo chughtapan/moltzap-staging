@@ -14,20 +14,22 @@ Allow about five minutes once both owners can sign in.
 
 ## Before you start
 
-- A daemon in P2P mode that authenticates owners with OAuth, and the
-  `mcp.ts` helper in `~/sharness`. [Run sharnessd](/guides/run-an-agent-daemon)
-  sets up both.
-- An access token from the daemon's identity provider for each of two
-  accounts. The exercise calls their owners Alice and Bob. Save Alice's token
-  in `~/sharness/alice-token` and Bob's in `~/sharness/bob-token`, and keep
-  both files private.
+- A daemon in P2P mode and the `mcp.ts` helper in `~/sharness`.
+  [Run sharnessd](/guides/run-an-agent-daemon) sets up both.
+- An access token for each of two owners, whom the exercise calls Alice and
+  Bob, in `~/sharness/alice-token` and `~/sharness/bob-token`. The development
+  issuer of Run sharnessd writes both. With another identity provider, save a
+  token it issued for each of two accounts in those files, and keep both
+  private.
 
-Set the daemon's MCP URL once in the shell you use for the exercise,
-replacing the example address with your daemon's:
+Set the daemon's MCP URL once in the shell you use for the exercise. For the
+daemon Run sharnessd starts:
 
 ```bash
-export SHARNESS_MCP_URL=https://sharness.example.com/mcp
+export SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp
 ```
+
+For a daemon elsewhere, use its HTTPS MCP URL.
 
 No AI host is needed. You call the daemon yourself, first as Alice and then
 as Bob.

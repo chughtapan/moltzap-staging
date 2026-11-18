@@ -25,7 +25,7 @@ export {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
   FirewallPolicyError,
-  loadedMessagePolicySchema,
+  type LoadedMessagePolicy,
   loadMessagePolicy,
   policyReadSchema,
   policyRevisionSchema,

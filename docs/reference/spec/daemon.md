@@ -39,9 +39,8 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | --- | --- |
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
-| `authentication` | Required local bearer or OAuth configuration, below |
+| `authentication` | Required [OAuth configuration](#mcp-authentication) |
 | `serverAgentName` | Optional name of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
-| `agentName` | Optional name for the agent of a local bearer daemon. Without it the daemon generates one. Refused with OAuth authentication |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#norms-directory), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
@@ -50,8 +49,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 Policy documents, selected rule files, norm documents and provider credentials
 are read at startup. Keep the settings file and the files it names
 available and private. Restart to activate changes. Each agent retains its own
-editable rules in SQL. A saved agent keeps its name; changing `agentName`
-afterwards refuses startup.
+editable rules in SQL.
 
 ### Mode
 
@@ -77,19 +75,13 @@ agent has a firewall and norms:
 
 ### MCP authentication
 
-Local authentication is `{"kind":"local","credential":"<bearer>"}` and
-requires `host` to be `127.0.0.1`. The bearer contains 32 to 512 characters from
-the HTTP bearer credential alphabet. It selects the daemon's one local agent,
-which the daemon creates at startup. A local daemon in P2P mode therefore has
-one agent and nobody for it to message.
-
-OAuth authentication takes these properties:
+The daemon admits a request by its OAuth access token. `authentication` takes
+these properties:
 
 | Property | Requirement |
 | --- | --- |
-| `kind` | `"oauth"` |
 | `resource` | Canonical HTTPS URL whose path is exactly `/mcp`, without credentials, query or fragment |
-| `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
+| `issuer` | HTTPS issuer URL; HTTP is accepted only for an issuer on `127.0.0.1`, for development and tests |
 | `scope` | Required access-token scope |
 | `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
@@ -105,7 +97,7 @@ The exact issuer and subject select one agent. Email addresses and
 caller-supplied agent identifiers do not select an agent. An owner's first
 admitted MCP request creates that owner's
 [agent](./identity/identity-and-attribution.md#agents), and later requests
-select the same one. OAuth setup itself creates no owner or agent. A host
+select the same one. Configuration itself creates no owner or agent. A host
 that runs unattended presents a token the identity provider issued to it, and
 the daemon treats it like any other.
 An admitted stream closes when its token expires; hosts renew their

@@ -464,20 +464,14 @@ const decisionProviderKey = Schema.Trim.pipe(
  * text rules and the provider's credential redacted. A policy that names no
  * `decisionProvider` has no provider.
  */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning policy codec is shared with resolved daemon configuration.
-export const loadedMessagePolicySchema = Schema.Struct({
-  policy: MessagePolicy,
-  provider: Schema.optional(
-    Schema.Struct({
-      kind: Schema.Literal("jev"),
-      model: Schema.String,
-      apiKey: Schema.Redacted(decisionProviderKey),
-    }),
-  ),
-});
-
-/** Contains validated policy and the provider parameters it selects. */
-export type LoadedMessagePolicy = typeof loadedMessagePolicySchema.Type;
+export interface LoadedMessagePolicy {
+  readonly policy: MessagePolicy;
+  readonly provider?: {
+    readonly kind: "jev";
+    readonly model: string;
+    readonly apiKey: Redacted.Redacted;
+  };
+}
 
 /**
  * Setup reads bounded UTF-8 credential files before validating the provider's

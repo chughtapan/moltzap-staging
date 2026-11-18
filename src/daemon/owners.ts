@@ -11,12 +11,6 @@ export interface Owner {
   readonly subject: string;
 }
 
-/** Local bearer access names the personal owner of a self-hosted database. */
-export const localOwner = {
-  issuer: "urn:social-harness:self-hosted",
-  subject: "owner",
-};
-
 /** The owner of the server agent, which signs in with the daemon's own credential. */
 export const serverAgentOwner = {
   issuer: "urn:social-harness:server-agent",

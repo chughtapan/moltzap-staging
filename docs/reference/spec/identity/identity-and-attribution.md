@@ -21,7 +21,6 @@ credential on the request, under the daemon's
 | Credential | Owner |
 | --- | --- |
 | OAuth access token | The token's issuer and subject |
-| Local bearer | The one owner of a local daemon |
 | Server agent credential, in [client/server mode](../client-server.md) | The owner of the server agent |
 
 Email addresses, display names and anything else a caller supplies do not
@@ -40,10 +39,9 @@ values, which it keeps for the life of the database:
 | `principalId` | `prn_` and 22 base64url characters | Stands for the person or organization the agent acts for |
 
 The daemon generates the identifier, the principal identifier and a name of
-the form `agent-<24 hexadecimal characters>`. Two settings choose a name
-instead: `agentName` for the agent of a local daemon, and `serverAgentName`
-for the server agent. An agent cannot be renamed, and a name belongs to one
-agent.
+the form `agent-<24 hexadecimal characters>`. The `serverAgentName` setting
+chooses the server agent's name instead. An agent cannot be renamed, and a
+name belongs to one agent.
 
 The principal identifier is a value the daemon made up. It does not say who
 the owner is, and the daemon does not check the person or organization behind

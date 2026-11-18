@@ -40,10 +40,9 @@ import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
-  mcpTestCredential,
 } from "./__tests__/mcp-fixtures.js";
 import { serveMcp } from "./listener.js";
-import { localOwner, serverAgentOwner } from "./owners.js";
+import { serverAgentOwner } from "./owners.js";
 
 const response = Schema.parseJson(
   Schema.Struct({
@@ -152,66 +151,41 @@ it("reports the agent's identifier and name in a result native draft-07 and 2020
   }));
 
 const serverAgentCredential = "server-agent-credential-000000000001";
-/** Whom each credential admits a request as. */
-const owners = new Map([
-  [Redacted.value(mcpTestCredential), localOwner],
-  [serverAgentCredential, serverAgentOwner],
-]);
-/** How a Host header, then an Origin header, names the machine the daemon runs on. */
-const localHost = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/u;
-const localOrigin = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/u;
-const hosts = mostly(
-  fc.constantFrom("127.0.0.1", "localhost:8080", "[::1]"),
-  fc.oneof(fc.domain(), fc.ipV4()),
-);
-/** The Origin header of a request, which a request need not carry. */
-const origins = fc.record(
-  {
-    origin: fc
-      .tuple(
-        mostly(fc.constantFrom("http", "https"), fc.constantFrom("ws", "ftp")),
-        mostly(fc.constant("://"), fc.constant("://user@")),
-        hosts,
-        mostly(fc.constant(""), fc.constant("#part")),
-      )
-      .map((parts) => parts.join("")),
-  },
-  { requiredKeys: [] },
-);
 const bearerSchemes = mostly(
   fc.constantFrom("Bearer ", "bearer   ", "BEARER "),
   fc.constantFrom("Basic ", "Bearer", ""),
 );
-const tokens = fc
-  .constantFrom(...owners.keys())
-  .chain((known) =>
-    mostly(fc.constant(known), fc.constantFrom(`${known}x`, known.slice(1))),
-  );
 
-it("answers 403 unless Host and Origin name this machine over plain http(s), then 401 unless the bearer is a credential, and otherwise serves that credential's owner", () =>
+it("answers 401 unless the bearer is the server agent's credential or an owner's token, and otherwise serves that credential's owner", () =>
   Effect.gen(function* () {
     const fixture = yield* mcpFixture({
       serverAgentCredential: Redacted.make(serverAgentCredential),
     });
+    /** Whom each credential admits a request as. */
+    const owners = new Map([
+      [Redacted.value(fixture.credential), fixture.owner],
+      [serverAgentCredential, serverAgentOwner],
+    ]);
+    const tokens = fc
+      .constantFrom(...owners.keys())
+      .chain((known) =>
+        mostly(
+          fc.constant(known),
+          fc.constantFrom(`${known}x`, known.slice(1)),
+        ),
+      );
     yield* forAll(
-      [hosts, origins, bearerSchemes, tokens],
-      Effect.fnUntraced(function* (host, from, scheme, token) {
-        const headers = { host, authorization: `${scheme}${token}`, ...from };
+      [bearerSchemes, tokens],
+      Effect.fnUntraced(function* (scheme, token) {
+        const headers = { authorization: `${scheme}${token}` };
         const reply = yield* exchange(fixture, "tools/list", {}, { headers });
-        const local =
-          localHost.test(host) &&
-          (from.origin === undefined || localOrigin.test(from.origin));
         const owner = /^bearer +$/iu.test(scheme)
           ? owners.get(token)
           : undefined;
-        const refusal = local ? 401 : 403;
-        const status = local && owner !== undefined ? 200 : refusal;
-        expect(reply.status).toBe(status);
-        expect(reply.headers.get("www-authenticate") === "Bearer").toBe(
-          status === 401,
-        );
+        expect(reply.status).toBe(owner === undefined ? 401 : 200);
+        expect(reply.headers.has("www-authenticate")).toBe(owner === undefined);
         expect(yield* Ref.getAndSet(fixture.owners, [])).toEqual(
-          status === 200 ? [owner] : [],
+          owner === undefined ? [] : [owner],
         );
       }),
     );
@@ -598,9 +572,11 @@ it("reports an occupied port before declaring the listener ready", () =>
   Effect.gen(function* () {
     const port = yield* boundPort;
     expect(
-      yield* serveMcp(port, Effect.succeed(HttpServerResponse.empty())).pipe(
-        Effect.flip,
-      ),
+      yield* serveMcp(
+        port,
+        Effect.succeed(HttpServerResponse.empty()),
+        "127.0.0.1",
+      ).pipe(Effect.flip),
     ).toMatchObject({ _tag: "ServeError" });
   }));
 
@@ -615,7 +591,9 @@ it("closes an active event stream with the listener's scope", () =>
         ),
       ),
     );
-    yield* serveMcp(port, app).pipe(Effect.provideService(Scope.Scope, scope));
+    yield* serveMcp(port, app, "127.0.0.1").pipe(
+      Effect.provideService(Scope.Scope, scope),
+    );
     const url = `http://127.0.0.1:${port}`;
     yield* HttpClient.get(url).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),

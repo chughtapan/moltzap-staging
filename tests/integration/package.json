@@ -59,7 +59,6 @@
     "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:",
     "eslint": "catalog:",
-    "jose": "catalog:",
     "tsx": "catalog:",
     "vitest": "catalog:"
   }

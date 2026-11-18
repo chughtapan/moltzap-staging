@@ -400,9 +400,6 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 9.39.4(jiti@2.7.0)
-      jose:
-        specifier: 'catalog:'
-        version: 6.2.5
       tsx:
         specifier: 'catalog:'
         version: 4.21.0

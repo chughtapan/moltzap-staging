@@ -20,7 +20,7 @@ import {
 } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareAscii, exactStruct } from "../encoding.js";
+import { compareAscii } from "../encoding.js";
 import {
   type Chain,
   chainRuleFileSchema,
@@ -38,13 +38,10 @@ const builtInDirectory = fileURLToPath(
 );
 
 /** The settings' copy of a norms directory: the norm documents each new agent holds, and the rule file. */
-export const installedNorms = exactStruct({
-  initial: Schema.Array(Schema.String),
-  ruleFile: chainRuleFileSchema,
-});
-
-/** The norm documents a new agent holds and the rule file every agent applies. */
-export type InstalledNorms = typeof installedNorms.Type;
+export interface InstalledNorms {
+  readonly initial: readonly string[];
+  readonly ruleFile: typeof chainRuleFileSchema.Type;
+}
 
 /**
  * A daemon's norms once read: the rule chain every agent applies, how each

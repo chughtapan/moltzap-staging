@@ -18,14 +18,14 @@ import {
 import { dirname, resolve } from "node:path";
 import { exactStruct } from "../encoding.js";
 import {
-  loadedMessagePolicySchema,
+  type LoadedMessagePolicy,
   loadMessagePolicy,
   readPolicyCredential,
 } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 import {
   initialNormsHaveRules,
-  installedNorms,
+  type InstalledNorms,
   loadNorms,
   type NormsConfigurationError,
 } from "../norms/index.js";
@@ -91,8 +91,8 @@ const oauthIssuer = Schema.Union(
   ),
 );
 
-const publicOAuth = exactStruct({
-  kind: Schema.Literal("oauth"),
+/** The OAuth resource the daemon is, and the issuer whose tokens it admits. */
+const authentication = exactStruct({
   resource: httpsUrl.pipe(
     Schema.filter(
       (value) =>
@@ -115,53 +115,34 @@ const bearerSecret = Schema.String.pipe(
   Schema.maxLength(512),
   Schema.pattern(/^[A-Za-z0-9\-._~+/]+=*$/u),
 );
-const localBearer = exactStruct({
-  kind: Schema.Literal("local"),
-  credential: Schema.Redacted(bearerSecret),
-});
 
-const commonFields = {
+/** The settings file as an operator writes it. */
+const settingsFile = exactStruct({
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
-  authentication: Schema.Union(localBearer, publicOAuth),
+  authentication,
   serverAgentName: Schema.optional(AgentName),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   hideCollectives: Schema.optionalWith(Schema.Boolean, {
     default: () => false,
   }),
-};
-
-const daemonSettings = exactStruct({
-  ...commonFields,
-  messagePolicy: Schema.optional(loadedMessagePolicySchema),
-  norms: Schema.optional(installedNorms),
-}).pipe(
-  Schema.filter(
-    (settings) =>
-      settings.authentication.kind === "oauth" || settings.host === "127.0.0.1",
-  ),
-);
+  messagePolicyFile: Schema.optional(Schema.NonEmptyString),
+  decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
+  normsDirectory: Schema.optional(Schema.NonEmptyString),
+});
 
 /**
  * What the daemon holds after reading the settings file and the files it
  * names: the message policy, the provider credential and the norms
  * themselves, in place of their paths.
  */
-export type DaemonSettings = typeof daemonSettings.Type;
-
-/** The settings file as an operator writes it. */
-const settingsFile = exactStruct({
-  ...commonFields,
-  agentName: Schema.optional(AgentName),
-  messagePolicyFile: Schema.optional(Schema.NonEmptyString),
-  decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
-  normsDirectory: Schema.optional(Schema.NonEmptyString),
-}).pipe(
-  Schema.filter(
-    (file) =>
-      file.authentication.kind === "local" || file.agentName === undefined,
-  ),
-);
+export type DaemonSettings = Omit<
+  typeof settingsFile.Type,
+  "messagePolicyFile" | "decisionProviderKeyFile" | "normsDirectory"
+> & {
+  readonly messagePolicy?: LoadedMessagePolicy;
+  readonly norms?: InstalledNorms;
+};
 
 /**
  * The paths the settings file names resolve against its own directory,
@@ -233,28 +214,19 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       "The configured norms have English rules, which need a messagePolicyFile with a decisionProvider to check them",
     );
   }
-  const settings = yield* Schema.validate(daemonSettings)({
+  const settings: DaemonSettings = {
     ...Struct.omit(
       file,
-      "agentName",
       "messagePolicyFile",
       "decisionProviderKeyFile",
       "normsDirectory",
     ),
     messagePolicy: Option.getOrUndefined(messagePolicy),
     ...(norms === undefined ? {} : { norms }),
-  }).pipe(
-    Effect.mapError(() =>
-      refused(
-        "settings-file",
-        "Local bearer access requires the 127.0.0.1 listener",
-      ),
-    ),
-  );
+  };
   return {
     settings,
     serverAgentCredential: yield* readServerAgentCredential(settings),
-    ...(file.agentName === undefined ? {} : { agentName: file.agentName }),
   };
 }, Effect.withSpan("loadDaemonSettings"));
 

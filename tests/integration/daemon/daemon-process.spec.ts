@@ -1,8 +1,7 @@
 /** @file One daemon process delivers between its owners' agents, alone and in a group, and keeps their messages across restarts. */
 
 import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
-import { Effect, Redacted, Schema } from "effect";
-import { randomBytes } from "node:crypto";
+import { Effect, Schema } from "effect";
 import { expect, it } from "vitest";
 import {
   groupAddress,
@@ -216,38 +215,6 @@ it(
           third.id,
         ]);
       }
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-const localAgentName = "solo";
-
-it(
-  "keeps a local daemon's agent across a restart",
-  processTrace(
-    Effect.gen(function* () {
-      const credential = randomBytes(32).toString("base64url");
-      const daemon = yield* sharedDaemon({
-        settings: {
-          authentication: { kind: "local", credential },
-          agentName: localAgentName,
-        },
-      });
-      const signIn = Effect.scoped(
-        daemon
-          .signIn(Redacted.make(credential))
-          .pipe(Effect.map(({ agent }) => agent)),
-      );
-      const original = yield* daemon.start();
-      const before = yield* signIn;
-      expect(before.agentName).toBe(localAgentName);
-      yield* stopProcess(original);
-
-      yield* daemon.configure({ agentName: undefined });
-      const restarted = yield* daemon.start();
-      expect(yield* signIn).toEqual(before);
-      yield* stopProcess(restarted);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
