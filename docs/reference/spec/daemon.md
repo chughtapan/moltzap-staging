@@ -134,14 +134,6 @@ read what it stores, so protect it as you would the messages themselves.
 
 ## MCP interface
 
-The daemon serves MCP over Streamable HTTP at `POST /mcp` with the official
-MCP server SDK, which owns protocol revisions, headers, framing and limits. It
-keeps no MCP session: each request is answered from the agent of the owner it
-is admitted as. It offers its tools and the
-[Events](./host/receiving.md#mcp-events-and-inbox) calls `events/list`,
-`events/subscribe` and `events/unsubscribe`; a failed tool call is
-[a result marked as an error](./host/messaging.md#mcp-projection).
-
 The daemon exposes one tool catalog for status, messaging, history, policy and
 delivery. One authenticated connection can call every operation.
 
