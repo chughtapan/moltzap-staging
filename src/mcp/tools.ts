@@ -157,6 +157,7 @@ const collectiveRequest = exactStruct({
 const MessageSend = exactStruct({
   to: MessageAddressInput,
   text: wellFormedString,
+  replyToMsgId: Schema.optional(MsgId),
 });
 const CollectiveRequestSend = exactStruct({
   to: MessageAddressInput,
@@ -191,6 +192,10 @@ const SendArguments = exactStruct({
     description:
       "The message text. Required unless collectiveResponse is given.",
   }),
+  replyToMsgId: Schema.optional(MsgId).annotations({
+    description:
+      "The ID of the message this replies to. Omit when starting a new norm interaction.",
+  }),
   collectiveRequest: Schema.optionalWith(collectiveRequest, {
     exact: true,
   }).annotations({
@@ -213,6 +218,7 @@ const TextSendArguments = exactStruct({
   text: Schema.propertySignature(wellFormedString).annotations({
     description: "The message text.",
   }),
+  replyToMsgId: Schema.optional(MsgId),
 });
 
 /**
@@ -536,6 +542,7 @@ export const clientToolDefinitions = {
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",
       }),
+      replyToMsgId: Schema.optional(MsgId),
     }),
   },
   read_conversation: {

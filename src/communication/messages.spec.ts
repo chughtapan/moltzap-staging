@@ -68,7 +68,7 @@ it.each([
 it("captures nested content independently of the caller's objects", () =>
   Effect.gen(function* () {
     const data = { times: ["monday"] };
-    const message = yield* messageWithId(alice, [bob], msgId, [
+    const message = yield* messageWithId(alice, [bob], { msgId }, [
       { type: "data", value: data },
     ]);
     data.times.push("tuesday");
@@ -76,6 +76,32 @@ it("captures nested content independently of the caller's objects", () =>
       { type: "data", value: { times: ["monday"] } },
     ]);
   }));
+
+vitestIt(
+  "keeps the reply reference its sender named through storage, and none when none was named",
+  () => {
+    fc.assert(
+      fc.property(
+        fc.option(fc.integer({ min: 0, max: 255 }), { nil: undefined }),
+        (byte) => {
+          const replyToMsgId =
+            byte === undefined
+              ? undefined
+              : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
+          const message = Effect.runSync(
+            messageWithId(alice, [bob], { msgId, replyToMsgId }, content),
+          );
+          const stored = Schema.encodeSync(Schema.parseJson(Message))(message);
+          const read = Schema.decodeUnknownSync(Schema.parseJson(Message))(
+            stored,
+          );
+          expect(read.replyToMsgId).toBe(replyToMsgId);
+          expect(Object.hasOwn(read, "replyToMsgId")).toBe(byte !== undefined);
+        },
+      ),
+    );
+  },
+);
 
 it("captures a collective request and a response while keeping their decoded meaning out of stored message bytes", () =>
   Effect.gen(function* () {
@@ -94,7 +120,7 @@ it("captures a collective request and a response while keeping their decoded mea
     const received = yield* messageWithId(
       request.author,
       request.recipients,
-      request.msgId,
+      { msgId: request.msgId },
       yield* collectiveRequestContent(request),
     );
     if (!isCollectiveRequestMessage(received)) {

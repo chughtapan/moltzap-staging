@@ -21,10 +21,10 @@ unchanged.
 ## Message text
 
 A host's send action carries a destination and text. Text that is one JSON
-object with a `collectiveRequest` or `collectiveResponse` property is the
-[`send_message` arguments](./messaging.md#mcp-projection) of a collective
-request or response, and the adapter sends that object with the host's destination added
-as `to`:
+object with a `collectiveRequest`, `collectiveResponse` or `replyToMsgId`
+property is the [`send_message` arguments](./messaging.md#mcp-projection) of a
+collective request, a collective response or a reply, and the adapter sends
+that object with the host's destination added as `to`:
 
 ```text
 {"text": <question>, "collectiveRequest": {"op": "gather", "deadline": <seconds>, "requestedSchema": <form>}}
@@ -94,8 +94,8 @@ Adapters give the host each entry's sender and conversation address. A group
 message or collective request also lists its members, the message's author and
 recipients. A collective result's sender is `Social Harness`, in its request's
 conversation; it names only the request's recipients, so its turn lists no members.
-Native adapters use each delivery's token as its turn's id. Redelivery keeps
-that id. A withheld question or outcome in a collective result identifies the
+Native adapters use each message's id as its turn's id, and a collective
+result's request id as its turn's. A withheld question or outcome in a collective result identifies the
 deciding check and reason.
 
 [Inbox reads](./receiving.md#delivery-handoff) mark returned entries delivered

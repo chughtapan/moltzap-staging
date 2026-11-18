@@ -18,6 +18,7 @@ import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { InboxEntry } from "../mcp/tools.js";
 import type { HistoryPage } from "./agent.js";
+import { digest } from "../__tests__/agents.js";
 import {
   CollectiveRequest,
   CollectiveRequestMessage,
@@ -26,6 +27,7 @@ import {
   Message,
   MessageAddressInput,
   messageWithId,
+  MsgId,
 } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
@@ -155,7 +157,7 @@ function collectiveRequest(
     const message = yield* messageWithId(
       participants.author,
       participants.recipients,
-      request.msgId,
+      { msgId: request.msgId },
       yield* encodeCollectiveContent(
         {
           kind: "request",
@@ -236,15 +238,22 @@ const membership = fc
     };
   });
 
-it("sends each call as new work to exactly the agents its address names, and refuses an address that names an unknown agent", () =>
+it("sends each call as new work to exactly the agents its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const { harness } = yield* subject.open();
     const receipts: string[] = [];
     yield* forAll(
-      membership,
-      Effect.fn(function* ({ others, canonical, address }) {
-        const request = { to: address, text: "Hello" };
+      fc.tuple(
+        membership,
+        fc.option(fc.integer({ min: 0, max: 255 }), { nil: undefined }),
+      ),
+      Effect.fn(function* ([{ others, canonical, address }, byte]) {
+        const replyToMsgId =
+          byte === undefined
+            ? undefined
+            : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
+        const request = { to: address, text: "Hello", replyToMsgId };
         const dispatched = subject.submitted.length;
         if (others.includes("nobody")) {
           expect(yield* harness.send(request).pipe(Effect.flip)).toMatchObject({
@@ -262,6 +271,12 @@ it("sends each call as new work to exactly the agents its address names, and ref
               recipients: others.map((agentName) => ({ agentName })),
             },
           ]);
+          const submitted = subject.submitted.at(-1);
+          expect(
+            submitted !== undefined && "replyToMsgId" in submitted
+              ? submitted.replyToMsgId
+              : undefined,
+          ).toBe(replyToMsgId);
         }
       }),
     );

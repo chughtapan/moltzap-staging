@@ -107,9 +107,10 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * The `send_message` arguments an outbound row amounts to. Text that is a
- * JSON object with a `collectiveRequest` or `collectiveResponse` property is
- * the tool's own arguments for a collective request or response, which the
- * daemon validates. Any other text is a message's text.
+ * JSON object with a `collectiveRequest`, `collectiveResponse` or
+ * `replyToMsgId` property is the tool's own arguments for a collective
+ * request, a collective response or a reply, which the daemon validates. Any
+ * other text is a message's text.
  */
 function sendArguments({
   to,
@@ -117,8 +118,9 @@ function sendArguments({
 }: OutboundText): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
   return written !== undefined &&
-    (Object.hasOwn(written, "collectiveRequest") ||
-      Object.hasOwn(written, "collectiveResponse"))
+    ["collectiveRequest", "collectiveResponse", "replyToMsgId"].some((field) =>
+      Object.hasOwn(written, field),
+    )
     ? { ...written, to }
     : { to, text };
 }
@@ -501,7 +503,10 @@ class HarnessChannelAdapter {
       host,
       entry.address,
       hostMessage({
-        id: entry.deliveryToken,
+        id:
+          entry.item.kind === "collectiveResult"
+            ? entry.item.requestId
+            : entry.item.message.msgId,
         address: entry.address,
         ...entryParticipants(entry),
         text: entryText(entry),

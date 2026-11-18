@@ -241,10 +241,11 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
     );
     expect(entryRead(requestTurn)).toEqual({
       address,
-      deliveryToken: requestTurn.raw.id,
+      deliveryToken: expect.any(String),
       item: peerRequest,
     });
     const requestId = peerRequest.message.msgId;
+    expect(requestTurn.raw.id).toBe(requestId);
     yield* send(peer, {
       to: group,
       collectiveResponse: { action: "decline", requestId },
@@ -281,9 +282,10 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
     });
     expect(entryRead(resultTurn)).toEqual({
       address,
-      deliveryToken: resultTurn.raw.id,
+      deliveryToken: expect.any(String),
       item: callerResult,
     });
+    expect(resultTurn.raw.id).toBe(requestId);
     return address;
   });
 }
@@ -348,9 +350,10 @@ function sendAllGather(scenario: HostedScenario, group: string) {
     });
     expect(entryRead(resultTurn)).toEqual({
       address: group,
-      deliveryToken: resultTurn.raw.id,
+      deliveryToken: expect.any(String),
       item: memberResult,
     });
+    expect(memberResult).toMatchObject({ requestId: resultTurn.raw.id });
   });
 }
 

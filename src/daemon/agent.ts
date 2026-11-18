@@ -379,6 +379,7 @@ function outgoingFor(
           author: agent.card,
           recipients: [first, ...rest],
           content: [{ type: "text", text: request.text }],
+          replyToMsgId: request.replyToMsgId,
         });
   });
 }
@@ -736,7 +737,7 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
         [withheld.author, ...withheld.recipients].filter(
           (member) => member.agentId !== agent.card.agentId,
         ),
-        msgId,
+        { msgId },
         [{ type: "text", text }],
       ),
     ),

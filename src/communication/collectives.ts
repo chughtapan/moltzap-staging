@@ -209,7 +209,7 @@ function sendRequest(agent: CollectiveAgent, request: CollectiveRequest) {
             ? messageWithId(
                 request.author,
                 recipients,
-                request.msgId,
+                { msgId: request.msgId },
                 content,
               ).pipe(
                 Effect.catchTag(

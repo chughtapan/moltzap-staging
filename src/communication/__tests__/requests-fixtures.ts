@@ -119,7 +119,7 @@ export const wireMessage = Effect.fn("wireMessage")(function* (
   return yield* messageWithId(
     author,
     recipients,
-    testMsgId(options.byte),
+    { msgId: testMsgId(options.byte) },
     content,
   );
 }, Effect.orDie);
