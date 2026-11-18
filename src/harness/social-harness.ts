@@ -62,6 +62,7 @@ import {
 import {
   conversationsCursor,
   historyCursor,
+  type Inbox,
   makeInbox,
   type Unchecked,
 } from "./inbox.js";
@@ -81,7 +82,6 @@ export interface HistoryPage extends Page {
   readonly records: readonly HistoryRecord[];
 }
 type CommunicationService = Context.Tag.Service<typeof Communication>;
-type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
   /**
