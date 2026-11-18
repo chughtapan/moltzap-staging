@@ -473,5 +473,5 @@ function startAgent(
   }).pipe(Effect.withSpan("startAgent"));
 }
 
-/** Deployment prepares schema and encryption metadata before the daemon starts. */
+/** Deployment prepares the schema before the daemon starts. */
 export { prepareDatabase } from "../database/index.js";
