@@ -3,21 +3,9 @@
 /** Replaces a configured decision provider around the daemon's own composition. */
 export { DecisionProviderOverride } from "./firewall/service.js";
 /** Offline firewall checks with a caller-supplied provider. */
-export {
-  type DecisionProvider,
-  DecisionProviderError,
-  type DecisionRequest,
-} from "./firewall/index.js";
+export type { DecisionProvider, DecisionRequest } from "./firewall/index.js";
 
-/** Trusted database qualification uses the same schema, ownership and inbox operations as the daemon. */
-export { checkDatabase, migrateDaemon } from "./database/index.js";
 /** Database selection uses the production driver composition. */
 export { databaseConnection, databaseUrl } from "./database/index.js";
-/** An isolated, prepared database for one test. */
-export { openTestDatabase, type TestDatabase } from "./database/testing.js";
-/** Restricted-role tests exercise production transaction scoping. */
-export { withAgentRows } from "./database/index.js";
-/** Process qualification persists deliveries through the daemon inbox. */
-export { makeInbox } from "./daemon/inbox.js";
-/** Creates agents for owners the way the daemon does. */
-export { getOrCreateOwnedAgentKey } from "./daemon/owners.js";
+/** An isolated, prepared database for one test, and the login a daemon serves it through. */
+export { openTestDatabase, restrictedLogin } from "./database/testing.js";

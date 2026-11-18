@@ -7,14 +7,12 @@
  * and allows it incoming with guidance.
  */
 
-import { FileSystem } from "@effect/platform";
-import { runDaemon } from "@social-harness/social-harness/service";
-import {
-  type DecisionProvider,
-  DecisionProviderOverride,
-  type DecisionRequest,
+import type {
+  DecisionProvider,
+  DecisionRequest,
 } from "@social-harness/social-harness/test";
-import { ConfigProvider, Effect, Schema } from "effect";
+import { FileSystem } from "@effect/platform";
+import { Effect, Schema } from "effect";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -118,21 +116,6 @@ export const writeNorms = Effect.fn("writeNorms")(function* (
   );
   return { normsDirectory };
 });
-
-/**
- * Runs the daemon's own composition in this process with `environment` as its
- * configuration, judging text rules with `provider`, until the scope closes.
- */
-export const launchDaemon = Effect.fn("launchDaemon")(
-  (environment: Readonly<Record<string, string>>, provider: DecisionProvider) =>
-    runDaemon.pipe(
-      Effect.provideService(DecisionProviderOverride, provider),
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(environment))),
-      ),
-      Effect.forkScoped,
-    ),
-);
 
 function markedResponse(request: DecisionRequest) {
   const state = Schema.decodeUnknownSync(stateSchema)(request.state);

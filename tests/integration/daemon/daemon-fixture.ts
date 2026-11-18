@@ -33,6 +33,10 @@ import {
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
+  openTestDatabase,
+  restrictedLogin,
+} from "@social-harness/social-harness/test";
+import {
   ConfigProvider,
   Console,
   Data,
@@ -55,7 +59,6 @@ import {
 } from "../firewall/policy-fixture.js";
 import { callTool } from "../tool-call.js";
 import { issuerFixture, requiredScope } from "./oauth-fixture.js";
-import { acquirePostgres } from "./postgres-fixture.js";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -412,11 +415,12 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   const serverAgentBearer = Redacted.make(
     randomBytes(32).toString("base64url"),
   );
-  const database = yield* acquirePostgres;
+  const database = yield* openTestDatabase();
+  const restrictedUrl = yield* restrictedLogin(database);
   const environment = {
     SHARNESS_CONFIG_FILE: join(directory, "settings.json"),
     SHARNESS_SERVER_AGENT_CREDENTIAL: Redacted.value(serverAgentBearer),
-    SHARNESS_DATABASE_URL: Redacted.value(database.runtimeLocator),
+    SHARNESS_DATABASE_URL: Redacted.value(restrictedUrl),
   };
   const configure = yield* settingsDocument(environment.SHARNESS_CONFIG_FILE, {
     port,
@@ -437,7 +441,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   });
   yield* prepare({
     ...environment,
-    SHARNESS_DATABASE_URL: Redacted.value(database.configureLocator),
+    SHARNESS_DATABASE_URL: Redacted.value(database.url),
   });
   const spawned = (changes: Readonly<Record<string, string>>) =>
     managedProcess(
