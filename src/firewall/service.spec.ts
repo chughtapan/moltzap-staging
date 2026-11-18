@@ -1,8 +1,14 @@
 /** @file Public policy operations retain safe decisions and rule edits across transactions and restart. */
 
+import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import {
+  type Context,
   Deferred,
   Duration,
   Effect,
@@ -11,6 +17,7 @@ import {
   Fiber,
 } from "effect";
 import { describe, expect } from "vitest";
+import type { AgentCard } from "../identity.js";
 import type { Chain, Matcher, MessageToMatch } from "./chain.js";
 import { openTestDatabase } from "../database/testing.js";
 import {
@@ -95,6 +102,19 @@ function replying(reply?: string): Matcher {
         reply === undefined ? { matched: true } : { matched: true, reply },
       ),
   };
+}
+
+/** Checks the fixtures' draft from `self`, or their peer message to it, with `firewall`. */
+function check(
+  firewall: Context.Tag.Service<typeof Firewall>,
+  self: AgentCard,
+  direction: MessageToMatch["direction"],
+) {
+  return Effect.gen(function* () {
+    return direction === "outgoing"
+      ? yield* firewall.checkOutgoing(yield* outgoing(self), evidence)
+      : yield* firewall.checkIncoming(yield* incoming(self), evidence);
+  });
 }
 
 it("isolates saved decisions and editable policy between agents sharing a database", () =>
@@ -516,13 +536,7 @@ describe("Firewall chain actions", () => {
         {},
         (firewall, self) =>
           Effect.gen(function* () {
-            const decision =
-              direction === "outgoing"
-                ? yield* firewall.checkOutgoing(yield* outgoing(self), evidence)
-                : yield* firewall.checkIncoming(
-                    yield* incoming(self),
-                    evidence,
-                  );
+            const decision = yield* check(firewall, self, direction);
             yield* decision.save;
             const saved = (yield* firewall.readDecisions({})).decisions;
             const first = rules.find(
@@ -701,6 +715,55 @@ describe("Firewall chain replies and holds", () => {
           (agentKey) => Firewall.layer(agentKey, undefined, chain),
         );
       }),
+  );
+});
+
+describe("Firewall check activity", () => {
+  it.prop(
+    "exports a pending span and then a settled span for each check, naming its direction",
+    [
+      fc.array(
+        fc.constantFrom<MessageToMatch["direction"]>("incoming", "outgoing"),
+        { minLength: 1, maxLength: 4 },
+      ),
+    ],
+    ([directions]) =>
+      Effect.gen(function* () {
+        const exporter = new InMemorySpanExporter();
+        const exported = yield* withFirewall(
+          {},
+          (firewall, self) =>
+            Effect.forEach(
+              directions,
+              (direction) => check(firewall, self, direction),
+              { concurrency: 1 },
+            ).pipe(Effect.map(() => exporter.getFinishedSpans())),
+          (agentKey) => Firewall.layer(agentKey, policy([], [privacy])),
+        ).pipe(
+          Effect.provide(
+            NodeSdk.layer(() => ({
+              spanProcessor: new SimpleSpanProcessor(exporter),
+            })),
+          ),
+        );
+
+        expect(
+          exported
+            .filter(({ name }) => name.startsWith("retry."))
+            .map(({ name, attributes }) => ({ name, ...attributes })),
+        ).toEqual(
+          directions.flatMap((id) => [
+            { name: "retry.pending", kind: "firewall-check", id },
+            {
+              name: "retry.settled",
+              kind: "firewall-check",
+              id,
+              outcome: "checked",
+            },
+          ]),
+        );
+      }),
+    { fastCheck: { numRuns: 12 } },
   );
 });
 

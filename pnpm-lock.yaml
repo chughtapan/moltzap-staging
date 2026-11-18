@@ -120,9 +120,6 @@ catalogs:
     oxfmt:
       specifier: ^0.7.0
       version: 0.7.0
-    protobufjs:
-      specifier: 7.6.5
-      version: 7.6.5
     puppeteer:
       specifier: 24.43.1
       version: 24.43.1
@@ -406,9 +403,6 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.5
-      protobufjs:
-        specifier: 'catalog:'
-        version: 7.6.5
       tsx:
         specifier: 'catalog:'
         version: 4.21.0
