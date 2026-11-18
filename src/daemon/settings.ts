@@ -35,26 +35,12 @@ import { packageVersion } from "../version.js";
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
-  readonly reason:
-    | "environment"
-    | "settings-file"
-    | "policy"
-    | "norms"
-    | "database"
-    | "issuer"
-    | "listener";
   readonly message: string;
 }> {}
 
 /** A startup refusal whose message names the setting to change. */
-export const refused = (
-  reason: DaemonConfigurationError["reason"],
-  message: string,
-) =>
-  new DaemonConfigurationError({
-    reason,
-    message,
-  });
+export const refused = (message: string) =>
+  new DaemonConfigurationError({ message });
 
 const httpsUrl = Schema.String.pipe(
   Schema.filter((value) => {
@@ -151,24 +137,14 @@ export type DaemonSettings = Omit<
 export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
-      refused(
-        "environment",
-        "Set SHARNESS_CONFIG_FILE to the daemon settings file",
-      ),
+      refused("Set SHARNESS_CONFIG_FILE to the daemon settings file"),
     ),
   );
   const filesystem = yield* FileSystem.FileSystem;
   const file = yield* filesystem.readFileString(settingsPath).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknown(Schema.parseJson(settingsFile), {
-        onExcessProperty: "error",
-      }),
-    ),
+    Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(settingsFile))),
     Effect.mapError(() =>
-      refused(
-        "settings-file",
-        "The daemon settings file is unreadable or invalid",
-      ),
+      refused("The daemon settings file is unreadable or invalid"),
     ),
   );
   const settingsDirectory = dirname(resolve(settingsPath));
@@ -178,7 +154,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
   if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
-      "norms",
       "The configured norms need a messagePolicyFile: each agent holds its norms in its editable message policy",
     );
   }
@@ -199,7 +174,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   ).pipe(
     Effect.mapError(() =>
       refused(
-        "policy",
         "The configured message policy or provider credential is invalid",
       ),
     ),
@@ -210,7 +184,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     Option.getOrUndefined(messagePolicy)?.provider === undefined
   ) {
     return yield* refused(
-      "norms",
       "The configured norms have English rules, which need a messagePolicyFile with a decisionProvider to check them",
     );
   }
@@ -228,7 +201,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     settings,
     serverAgentCredential: yield* readServerAgentCredential(settings),
   };
-}, Effect.withSpan("loadDaemonSettings"));
+});
 
 /**
  * The secret the server agent signs in with, from the environment so that it
@@ -245,14 +218,12 @@ function readServerAgentCredential(settings: DaemonSettings) {
     }
     if (Option.isNone(configured)) {
       return yield* refused(
-        "environment",
         "Set SHARNESS_SERVER_AGENT_CREDENTIAL to the secret the server agent signs in with: 32 to 512 letters, digits or -._~+/ characters",
       );
     }
     return Schema.is(bearerSecret)(Redacted.value(configured.value))
       ? configured
       : yield* refused(
-          "environment",
           "SHARNESS_SERVER_AGENT_CREDENTIAL must be 32 to 512 letters, digits or -._~+/ characters",
         );
   });
@@ -262,10 +233,7 @@ function readServerAgentCredential(settings: DaemonSettings) {
 function configuredNorms(directory: string) {
   return loadNorms(directory).pipe(
     Effect.mapError((error: NormsConfigurationError) =>
-      refused(
-        "norms",
-        `The configured norms directory is invalid: ${error.reason}`,
-      ),
+      refused(`The configured norms directory is invalid: ${error.reason}`),
     ),
   );
 }
@@ -336,7 +304,6 @@ function spanExportUrl(
   if (protocol !== "http/protobuf") {
     return Either.left(
       refused(
-        "environment",
         "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
       ),
     );
@@ -348,7 +315,6 @@ function spanExportUrl(
     ? Either.right(url)
     : Either.left(
         refused(
-          "environment",
           "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
         ),
       );

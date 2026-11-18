@@ -53,11 +53,11 @@ export class AuthenticationRefused extends Data.TaggedError(
 ) {}
 
 /** The running agent of an owner: its tools, its Events calls and what completes when it stops. */
-type AgentOfOwner = (
+type AgentOfOwner<E> = (
   owner: Owner,
 ) => Effect.Effect<
   AgentCalls & { readonly stopped: Deferred.Deferred<undefined> },
-  unknown,
+  E,
   Scope.Scope
 >;
 
@@ -67,9 +67,11 @@ type AgentOfOwner = (
  * the request from that owner's agent. An agent that cannot serve answers 503,
  * and the log names what failed.
  */
-export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
+export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
+  E extends { readonly _tag: string },
+>(
   authentication: McpAuthentication,
-  agentOfOwner: AgentOfOwner,
+  agentOfOwner: AgentOfOwner<E>,
   serverAgentCredential: Option.Option<Redacted.Redacted>,
 ) {
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
@@ -125,7 +127,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
             ),
             Effect.catchAll((error) =>
               Effect.logWarning("Agent unavailable").pipe(
-                Effect.annotateLogs(failureKind(error)),
+                Effect.annotateLogs({ failure: error._tag }),
                 Effect.as(agentUnavailable),
               ),
             ),
@@ -133,7 +135,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
       }),
     );
   });
-}, Effect.withSpan("makeMcpHttpApp"));
+});
 
 /**
  * Serves `app` until the agent stops. From then on a request in flight and
@@ -189,22 +191,6 @@ function limitResponseStream(
     ),
     Match.orElse(() => response),
   );
-}
-
-/** The tag and reason of a failure, which name its kind and carry none of its content. */
-function failureKind(error: unknown): Record<string, string> {
-  if (typeof error !== "object" || error === null) {
-    return { failure: "unknown" };
-  }
-  return {
-    failure:
-      "_tag" in error && typeof error._tag === "string"
-        ? error._tag
-        : "unknown",
-    ...("reason" in error && typeof error.reason === "string"
-      ? { reason: error.reason }
-      : {}),
-  };
 }
 
 /**

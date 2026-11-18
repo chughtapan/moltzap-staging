@@ -154,7 +154,6 @@ export const runDaemon = Effect.gen(function* () {
       ).pipe(
         Effect.catchTag("OwnershipError", () =>
           refused(
-            "database",
             "This database's server agent has another name than serverAgentName in the settings, or another agent has that name. Set serverAgentName to the name the database was first started with, or prepare a new database.",
           ),
         ),
@@ -168,7 +167,6 @@ export const runDaemon = Effect.gen(function* () {
     ).pipe(
       Effect.catchTag("AuthenticationRefused", () =>
         refused(
-          "issuer",
           "The OAuth issuer did not answer with its configuration. Check authentication.issuer and that the daemon can reach it.",
         ),
       ),
@@ -176,7 +174,6 @@ export const runDaemon = Effect.gen(function* () {
     yield* serveMcp(settings.port, app, settings.host).pipe(
       Effect.catchTag("ServeError", () =>
         refused(
-          "listener",
           `The daemon could not listen on ${settings.host}:${settings.port}. Stop the process that uses the port, or set another port.`,
         ),
       ),

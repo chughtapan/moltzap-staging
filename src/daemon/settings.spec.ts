@@ -119,7 +119,6 @@ it("names the missing settings-file variable", () =>
     Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),
     Effect.flip,
     Effect.tap((failure) => {
-      expect(failure).toMatchObject({ reason: "environment" });
       expect(failure.message).toContain(settingsVariable);
     }),
     Effect.provide(NodeContext.layer),
@@ -141,9 +140,9 @@ it("refuses a settings file that does not exist", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.filesystem.remove(test.filename);
-    expect(yield* test.load.pipe(Effect.flip)).toMatchObject({
-      reason: "settings-file",
-    });
+    expect((yield* test.load.pipe(Effect.flip)).message).toContain(
+      "settings file",
+    );
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.prop(
@@ -208,7 +207,7 @@ it.each([
 
     const failure = yield* test.load.pipe(Effect.flip);
 
-    expect(failure).toMatchObject({ reason: "norms" });
+    expect(failure.message).toContain("configured norms");
   }).pipe(Effect.provide(NodeContext.layer)),
 );
 
@@ -222,7 +221,6 @@ it("refuses a norms directory without its rule file, naming the file", () =>
       normsDirectory: "norms",
     });
     const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "norms" });
     expect(failure.message).toContain(rulesFile);
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -281,7 +279,7 @@ it.prop(
 
       const failure = yield* test.load.pipe(Effect.flip);
 
-      expect(failure).toMatchObject({ reason: "settings-file" });
+      expect(failure.message).toContain("settings file");
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 40 } },
 );
@@ -294,7 +292,6 @@ it("refuses a server agent without its credential and names the variable to set"
       serverAgentName: "server-agent",
     });
     const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "environment" });
     expect(failure.message).toContain(serverCredentialVariable);
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -371,12 +368,9 @@ it.each(spanExportRules)("span export $rule", ({ variables, refusal }) =>
 
     expect(
       Either.match(started, {
-        onLeft: ({ reason, message }) => ({
-          reason,
-          variablesToFix: message.match(/OTEL_[A-Z_]+/gu),
-        }),
+        onLeft: ({ message }) => message.match(/OTEL_[A-Z_]+/gu),
         onRight: () => undefined,
       }),
-    ).toEqual(refusal && { reason: "environment", variablesToFix: refusal });
+    ).toEqual(refusal);
   }),
 );
