@@ -14,6 +14,7 @@ import {
 import { NodeHttpServer } from "@effect/platform-node";
 import {
   Data,
+  Deferred,
   Effect,
   Match,
   Option,
@@ -34,6 +35,11 @@ const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
     `/.well-known/oauth-protected-resource${resource.pathname}`,
     resource.origin,
   ).href;
+
+/** What a request gets when its agent cannot serve it. */
+const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
+  status: 503,
+});
 
 /** Request admission uses the validated authentication settings without translating them. */
 export type McpAuthentication = DaemonSettings["authentication"];
@@ -123,9 +129,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
             Effect.catchAll((error) =>
               Effect.logWarning("Agent unavailable").pipe(
                 Effect.annotateLogs(failureKind(error)),
-                Effect.as(
-                  HttpServerResponse.text("Agent unavailable", { status: 503 }),
-                ),
+                Effect.as(agentUnavailable),
               ),
             ),
           ),
@@ -133,6 +137,30 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
     );
   });
 }, Effect.withSpan("makeMcpHttpApp"));
+
+/**
+ * Serves `app` until the agent stops. From then on a request in flight and
+ * every later request are answered as unavailable, and a response stream
+ * still open ends.
+ */
+export function untilStopped<E, R>(
+  app: HttpApp.Default<E, R>,
+  stopped: Deferred.Deferred<undefined>,
+) {
+  const whenStopped = Deferred.await(stopped);
+  const unavailable = whenStopped.pipe(
+    Effect.interruptible,
+    Effect.as(agentUnavailable),
+  );
+  return Deferred.isDone(stopped).pipe(
+    Effect.flatMap((done) =>
+      done ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
+    ),
+    Effect.flatMap((response) =>
+      limitResponseStream(response, Stream.interruptWhen(whenStopped)),
+    ),
+  );
+}
 
 /** A local bearer daemon binds and advertises the same default address. */
 const LOOPBACK_HOST = "127.0.0.1";
@@ -154,7 +182,7 @@ export const serveMcp = Effect.fn("Mcp.serve")(function* (
 });
 
 /** Ends a streamed response body when `limit` says so. Other bodies are returned as they are. */
-export function limitResponseStream(
+function limitResponseStream(
   response: HttpServerResponse.HttpServerResponse,
   limit: <A, E>(body: Stream.Stream<A, E>) => Stream.Stream<A, E>,
 ) {

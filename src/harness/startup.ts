@@ -35,7 +35,12 @@ import {
   refused,
   spanExport,
 } from "./config.js";
-import { makeMcpHttpApp, serveMcp } from "./http.js";
+import {
+  clientToolDefinitions,
+  textOnlyToolDefinitions,
+  toolDefinitions,
+} from "./contracts.js";
+import { makeMcpHttpApp, serveMcp, untilStopped } from "./http.js";
 import {
   getOrCreateOwnedAgentKey,
   listOwnedAgentKeys,
@@ -43,14 +48,94 @@ import {
   type Owner,
   serverAgentOwner,
 } from "./ownership.js";
-import { makeAgentMcpApp } from "./server.js";
+import { bind, serveTools } from "./server.js";
 import { SocialHarness } from "./social-harness.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "./webhook.js";
+import {
+  type HarnessWebhookEvents,
+  makeWebhookEvents,
+  webhookHttpClientLayer,
+} from "./webhook.js";
 
 /** A daemon scope restores saved agents and serves authenticated requests to them. */
 export const daemonLayer = Layer.scopedDiscard(runDaemon()).pipe(
   Layer.provide(spanExport),
 );
+
+/**
+ * One agent's role, and everything that follows from it. In P2P mode every
+ * agent is a peer: it messages any agent, alone or in a group, and checks its
+ * own messages. In client/server mode every conversation is the server agent
+ * and one client: the server agent checks its messages and holds the norms,
+ * and a client checks nothing of its own, reads the server agent's norms and
+ * talks only to it.
+ *
+ * @internal
+ */
+export function roleOf(
+  daemon: {
+    readonly settings: Pick<
+      DaemonSettings,
+      "serverAgentName" | "hideGroups" | "hideCollectives" | "messagePolicy"
+    >;
+    readonly norms?: DaemonNorms;
+    /** The norms the server agent holds, once it has started; clients read them. */
+    readonly serverAgentHeldNorms: Ref.Ref<
+      Option.Option<Context.Tag.Service<typeof HeldNorms>>
+    >;
+  },
+  agentKey: string,
+  agentName: AgentName,
+) {
+  const { settings, norms, serverAgentHeldNorms } = daemon;
+  const { serverAgentName } = settings;
+  const checked = () => {
+    const firewall = Firewall.layer(
+      agentKey,
+      settings.messagePolicy,
+      norms?.chain,
+      norms?.normDocuments,
+    );
+    return norms === undefined
+      ? firewall
+      : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall));
+  };
+  if (serverAgentName === undefined) {
+    return {
+      hideGroups: settings.hideGroups,
+      permits: undefined,
+      withheldReply: undefined,
+      firewall: checked(),
+      started: () => Effect.void,
+      tools: peerTools(settings.hideCollectives),
+    };
+  }
+  const permits = serverAgentAndOne(serverAgentName);
+  if (agentName === serverAgentName) {
+    return {
+      hideGroups: true,
+      permits,
+      withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
+      firewall: checked(),
+      started: (services: Context.Context<never>) =>
+        Ref.set(serverAgentHeldNorms, Context.getOption(services, HeldNorms)),
+      tools: peerTools(true),
+    };
+  }
+  const unchecked = Firewall.layer(agentKey);
+  return {
+    hideGroups: true,
+    permits,
+    withheldReply: undefined,
+    firewall:
+      norms === undefined
+        ? unchecked
+        : serverAgentNormsLayer(serverAgentHeldNorms).pipe(
+            Layer.provideMerge(unchecked),
+          ),
+    started: () => Effect.void,
+    tools: clientTools(MessageAddressInput.make(`agent:${serverAgentName}`)),
+  };
+}
 
 function runDaemon() {
   return Effect.gen(function* () {
@@ -86,14 +171,7 @@ function runDaemon() {
           ),
         );
       }
-      const appOfOwner = yield* makeAgentApps({
-        settings,
-        norms,
-        serverAgentHeldNorms: yield* Ref.make(
-          Option.none<Context.Tag.Service<typeof HeldNorms>>(),
-        ),
-        consumers: new Map(),
-      });
+      const appOfOwner = yield* makeAgentApps(settings, norms);
       const app = yield* makeMcpHttpApp(
         settings.authentication,
         appOfOwner,
@@ -122,40 +200,6 @@ function runDaemon() {
   }).pipe(Effect.provide(NodeFileSystem.layer), Effect.withSpan("runDaemon"));
 }
 
-/**
- * One agent's role. In P2P mode every agent is a `peer`: it messages any
- * agent, alone or in a group, and checks its own messages. In client/server
- * mode every conversation is the `server-agent` and one `client`: the server
- * agent checks its messages and holds the norms, and a client checks nothing
- * of its own, reads the server agent's norms and talks only to it.
- */
-function roleOf(
-  settings: DaemonSettings,
-  agentName: AgentName,
-  hasNorms: boolean,
-) {
-  const { serverAgentName } = settings;
-  if (serverAgentName === undefined) {
-    return {
-      kind: "peer",
-      hideGroups: settings.hideGroups,
-      hideCollectives: settings.hideCollectives,
-      serverAgentAddress: Option.none(),
-    } as const;
-  }
-  const isServerAgent = agentName === serverAgentName;
-  return {
-    kind: isServerAgent ? "server-agent" : "client",
-    permits: serverAgentAndOne(serverAgentName),
-    hideGroups: true,
-    hideCollectives: true,
-    serverAgentAddress: isServerAgent
-      ? Option.none()
-      : Option.some(MessageAddressInput.make(`agent:${serverAgentName}`)),
-    withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${hasNorms ? " Call read_norms to see which messages it accepts." : ""}`,
-  } as const;
-}
-
 /** Whether `members` are the server agent and one other agent. */
 function serverAgentAndOne(serverAgentName: AgentName) {
   return (members: readonly AgentCard[]) =>
@@ -163,26 +207,173 @@ function serverAgentAndOne(serverAgentName: AgentName) {
     members.some((member) => member.agentName === serverAgentName);
 }
 
-/** What every agent of the daemon is built from. */
-interface DaemonResources {
-  readonly settings: DaemonSettings;
-  readonly norms?: DaemonNorms;
-  /** The norms the server agent holds, once it has started; clients read them. */
-  readonly serverAgentHeldNorms: Ref.Ref<
-    Option.Option<Context.Tag.Service<typeof HeldNorms>>
-  >;
-  /** The latch each agent's consumer waits on, which a send to that agent opens. */
-  readonly consumers: Map<string, Effect.Latch>;
+/** Norms a client reads: the ones the server agent holds, once it has started. */
+function serverAgentNormsLayer(
+  serverAgentHeldNorms: Parameters<typeof roleOf>[0]["serverAgentHeldNorms"],
+) {
+  return Layer.succeed(
+    HeldNorms,
+    HeldNorms.of({
+      read: () =>
+        Ref.get(serverAgentHeldNorms).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () =>
+                Effect.fail(
+                  new FirewallPolicyError({ reason: "not-configured" }),
+                ),
+              onSome: (reader) => reader.read(),
+            }),
+          ),
+        ),
+    }),
+  );
+}
+
+/**
+ * The tools of a peer and of the server agent: each addresses any agent and
+ * owns its message policy. `hideCollectives` leaves collective requests and
+ * responses out of send_message, which then sends text only.
+ */
+function peerTools(hideCollectives: boolean) {
+  return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
+    const harness = yield* SocialHarness;
+    const firewall = yield* Firewall;
+    const policyConfigured = firewall
+      .readPolicy()
+      .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+    return [
+      yield* statusTool(subscription),
+      hideCollectives
+        ? bind(
+            "send_message",
+            textOnlyToolDefinitions.send_message,
+            harness.send,
+          )
+        : bind("send_message", toolDefinitions.send_message, harness.send),
+      bind(
+        "receive_messages",
+        toolDefinitions.receive_messages,
+        harness.receive,
+      ),
+      bind(
+        "list_conversations",
+        toolDefinitions.list_conversations,
+        harness.listConversations,
+      ),
+      bind(
+        "read_conversation",
+        toolDefinitions.read_conversation,
+        harness.readHistory,
+      ),
+      bind(
+        "read_policy",
+        toolDefinitions.read_policy,
+        () => firewall.readPolicy(),
+        policyConfigured,
+      ),
+      bind(
+        "update_policy",
+        toolDefinitions.update_policy,
+        firewall.updatePolicy,
+        policyConfigured,
+      ),
+      bind(
+        "read_firewall_decisions",
+        toolDefinitions.read_firewall_decisions,
+        firewall.readDecisions,
+      ),
+      ...(yield* normsTool(toolDefinitions.read_norms)),
+    ];
+  });
+}
+
+/**
+ * The tools of a client in client/server mode. It sends to and reads its
+ * conversation with the server agent, and names neither.
+ */
+function clientTools(serverAgentAddress: MessageAddressInput) {
+  return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
+    const harness = yield* SocialHarness;
+    return [
+      yield* statusTool(subscription),
+      bind("send_message", clientToolDefinitions.send_message, ({ text }) =>
+        harness.send({ to: serverAgentAddress, text }),
+      ),
+      bind(
+        "receive_messages",
+        toolDefinitions.receive_messages,
+        harness.receive,
+      ),
+      bind(
+        "read_conversation",
+        clientToolDefinitions.read_conversation,
+        (page) => harness.readHistory({ ...page, address: serverAgentAddress }),
+      ),
+      ...(yield* normsTool(clientToolDefinitions.read_norms)),
+    ];
+  });
+}
+
+function statusTool(subscription: HarnessWebhookEvents) {
+  return Effect.map(Identity, (identity) =>
+    bind("status", toolDefinitions.status, () =>
+      Effect.map(subscription.status, (status) => ({
+        agentId: identity.me.agentId,
+        agentName: identity.me.agentName,
+        subscription: status,
+      })),
+    ),
+  );
+}
+
+/**
+ * `read_norms` lists the norms held: this agent's, or for a client the server
+ * agent's. An agent that holds none has no such tool.
+ */
+function normsTool(
+  definition: (
+    | typeof toolDefinitions
+    | typeof clientToolDefinitions
+  )["read_norms"],
+) {
+  return Effect.gen(function* () {
+    const heldNorms = yield* Effect.serviceOption(HeldNorms);
+    if (Option.isNone(heldNorms)) {
+      return [];
+    }
+    const read = heldNorms.value.read().pipe(
+      Effect.map((held) => ({
+        norms: held.map((norm) => ({
+          name: norm.name,
+          description: norm.description,
+          ...(norm.protocolName === undefined
+            ? {}
+            : { protocol: norm.protocolName }),
+          document: norm.document,
+        })),
+      })),
+    );
+    return [bind("read_norms", definition, () => read)];
+  });
 }
 
 /** Requests borrow a prepared app; their cancellation never owns its acquisition. */
-function makeAgentApps(daemon: DaemonResources) {
+function makeAgentApps(settings: DaemonSettings, norms?: DaemonNorms) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
+    const daemon = {
+      settings,
+      norms,
+      serverAgentHeldNorms: yield* Ref.make(
+        Option.none<Context.Tag.Service<typeof HeldNorms>>(),
+      ),
+    };
+    const consumers = new Map<string, Effect.Latch>();
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
-      lookup: (agentKey: string) => makeAgentApp(daemon, agentKey),
+      lookup: (agentKey: string) => makeAgentApp(daemon, consumers, agentKey),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -214,78 +405,27 @@ function makeAgentApps(daemon: DaemonResources) {
 }
 
 /**
- * The checks an agent runs. A peer and the server agent run the daemon's
- * message policy with the norms they hold. A client runs no policy of its own
- * and reads the server agent's norms.
+ * One agent's retained services and MCP app. `consumers` holds the latch each
+ * agent's consumer waits on, which a send to that agent opens.
  */
-function firewallLayerFor(
-  daemon: DaemonResources,
-  roleKind: ReturnType<typeof roleOf>["kind"],
+function makeAgentApp(
+  daemon: Parameters<typeof roleOf>[0],
+  consumers: Map<string, Effect.Latch>,
   agentKey: string,
 ) {
-  const { settings, norms, serverAgentHeldNorms } = daemon;
-  if (roleKind === "client") {
-    const unchecked = Firewall.layer(agentKey);
-    return norms === undefined
-      ? unchecked
-      : serverAgentNormsLayer(serverAgentHeldNorms).pipe(
-          Layer.provideMerge(unchecked),
-        );
-  }
-  const firewall = Firewall.layer(
-    agentKey,
-    settings.messagePolicy,
-    norms?.chain,
-    norms?.normDocuments,
-  );
-  return norms === undefined
-    ? firewall
-    : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall));
-}
-
-/** Norms a client reads: the ones the server agent holds, once it has started. */
-function serverAgentNormsLayer(
-  serverAgentHeldNorms: Ref.Ref<
-    Option.Option<Context.Tag.Service<typeof HeldNorms>>
-  >,
-) {
-  return Layer.succeed(
-    HeldNorms,
-    HeldNorms.of({
-      read: () =>
-        Ref.get(serverAgentHeldNorms).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new FirewallPolicyError({ reason: "not-configured" }),
-                ),
-              onSome: (reader) => reader.read(),
-            }),
-          ),
-        ),
-    }),
-  );
-}
-
-/** One agent's retained services and MCP app. */
-function makeAgentApp(daemon: DaemonResources, agentKey: string) {
-  const { settings, norms, serverAgentHeldNorms } = daemon;
   return Effect.gen(function* () {
     const identity = yield* Layer.build(Identity.layer(agentKey));
     const card = Context.get(identity, Identity).me;
-    const role = roleOf(settings, card.agentName, norms !== undefined);
+    const role = roleOf(daemon, agentKey, card.agentName);
     const workers = yield* FiberSet.make();
     const stopped = yield* Deferred.make<undefined>();
-    const policy = settings.messagePolicy?.policy;
+    const policy = daemon.settings.messagePolicy?.policy;
     const services = yield* Layer.build(
       SocialHarness.layer(
         {
           agentKey,
           hideGroups: role.hideGroups,
-          ...(role.kind === "server-agent"
-            ? { withheldReply: role.withheldReply }
-            : {}),
+          withheldReply: role.withheldReply,
           maximumHistoryRecords: policy?.maximumHistoryRecords,
           maximumConcurrentChecks: policy?.maximumConcurrentChecks,
         },
@@ -295,24 +435,19 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
           Communication.layer({
             agentKey,
             card,
-            consumers: daemon.consumers,
+            consumers,
             maximumHistoryRecords: policy?.maximumHistoryRecords,
-            ...(role.kind === "peer" ? {} : { permits: role.permits }),
+            permits: role.permits,
           }),
         ),
         Layer.provideMerge(
-          firewallLayerFor(daemon, role.kind, agentKey).pipe(
+          role.firewall.pipe(
             Layer.provideMerge(Layer.succeedContext(identity)),
           ),
         ),
       ),
     );
-    if (role.kind === "server-agent") {
-      yield* Ref.set(
-        serverAgentHeldNorms,
-        Context.getOption(services, HeldNorms),
-      );
-    }
+    yield* role.started(services);
     const callbackHttp = yield* Layer.build(webhookHttpClientLayer);
     const subscription = yield* makeWebhookEvents(agentKey).pipe(
       Effect.provide(services),
@@ -321,13 +456,11 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
         Context.get(callbackHttp, HttpClient.HttpClient),
       ),
     );
-    const app = yield* makeAgentMcpApp({
-      hideCollectives: role.hideCollectives,
-      serverAgentAddress: role.serverAgentAddress,
+    const app = yield* serveTools(
+      { name: "sharnessd", version: packageVersion },
+      yield* role.tools(subscription).pipe(Effect.provide(services)),
       subscription,
-      stopped,
-      implementation: { name: "sharnessd", version: packageVersion },
-    }).pipe(Effect.provide(services));
+    );
     yield* FiberSet.join(workers).pipe(
       Effect.matchCauseEffect({
         onFailure: (cause) =>
@@ -341,7 +474,7 @@ function makeAgentApp(daemon: DaemonResources, agentKey: string) {
       Effect.ensuring(Deferred.succeed(stopped, undefined)),
       Effect.forkScoped,
     );
-    return app;
+    return untilStopped(app, stopped);
   }).pipe(Effect.withSpan("makeAgentApp"));
 }
 

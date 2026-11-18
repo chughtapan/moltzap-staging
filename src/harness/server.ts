@@ -1,28 +1,21 @@
-/** @file One agent's MCP app: its tools and its inbox events. */
+/**
+ * @file Serves a table of tools over MCP: each call's arguments are decoded,
+ * its operation run, its result encoded and its failure worded by the tool's
+ * definition.
+ */
 
-import { HttpServerResponse } from "@effect/platform";
 import {
   Array as Arr,
   Cause,
   type Context,
-  Deferred,
   Effect,
   JSONSchema,
   Option,
   type ParseResult,
   Schema,
   SchemaAST,
-  Stream,
 } from "effect";
-import type { HarnessWebhookEvents } from "./webhook.js";
-import {
-  issuesText,
-  type MessageAddressInput,
-  type ValidationIssue,
-} from "../communication/index.js";
-import { Firewall } from "../firewall/service.js";
-import { Identity } from "../identity.js";
-import { HeldNorms } from "../norms/index.js";
+import { issuesText, type ValidationIssue } from "../communication/index.js";
 import {
   CallToolResult,
   ProtocolError,
@@ -30,191 +23,25 @@ import {
   ToolAnnotations,
 } from "../vendor/effect-mcp/McpSchema.js";
 import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
-import {
-  clientToolDefinitions,
-  textOnlyToolDefinitions,
-  toolDefinitions,
-} from "./contracts.js";
-import { limitResponseStream } from "./http.js";
-import { SocialHarness } from "./social-harness.js";
-
-interface AgentMcpAppSettings {
-  readonly subscription: HarnessWebhookEvents;
-  /** Leaves collective requests and responses out of send_message, which then sends text only. */
-  readonly hideCollectives: boolean;
-  /**
-   * Set when this agent is a client in client/server mode: the address of the
-   * server agent, the only agent it exchanges messages with.
-   */
-  readonly serverAgentAddress: Option.Option<MessageAddressInput>;
-  readonly stopped: Deferred.Deferred<undefined>;
-  readonly implementation: { readonly name: string; readonly version: string };
-}
-
-type Harness = Context.Tag.Service<typeof SocialHarness>;
 
 /**
- * Serves one agent's tools and inbox events until the agent stops, after
- * which every request, and every stream still open, gets 503.
+ * The HTTP app that lists and calls `tools`, in their order, and answers the
+ * MCP Events calls with `events`.
  */
-export const makeAgentMcpApp = Effect.fn("makeAgentMcpApp")(function* (
-  settings: AgentMcpAppSettings,
+export const serveTools = Effect.fn("serveTools")(function* (
+  implementation: { readonly name: string; readonly version: string },
+  tools: ReadonlyArray<ReturnType<typeof bind>>,
+  events: NonNullable<
+    Context.Tag.Service<typeof McpServer>["events"]["current"]
+  >,
 ) {
-  const harness = yield* SocialHarness;
-  const firewall = yield* Firewall;
   const mcp = yield* McpServer.make;
-  mcp.events.current = settings.subscription;
-  yield* Effect.forEach(
-    [
-      yield* statusTool(settings.subscription),
-      ...Option.match(settings.serverAgentAddress, {
-        onNone: () => peerTools(harness, firewall, settings),
-        onSome: (serverAgentAddress) =>
-          clientTools(harness, serverAgentAddress),
-      }),
-      ...Option.toArray(yield* Effect.serviceOption(HeldNorms)).map(
-        (heldNorms) =>
-          normsTool(heldNorms, Option.isSome(settings.serverAgentAddress)),
-      ),
-    ],
-    mcp.addTool,
-    { concurrency: 1, discard: true },
-  );
-  const app = yield* makeHttpApp(settings.implementation).pipe(
+  mcp.events.current = events;
+  yield* Effect.forEach(tools, mcp.addTool, { concurrency: 1, discard: true });
+  return yield* makeHttpApp(implementation).pipe(
     Effect.provideService(McpServer, mcp),
   );
-  const stopped = Deferred.await(settings.stopped);
-  const unavailable = stopped.pipe(
-    Effect.interruptible,
-    Effect.as(HttpServerResponse.text("Agent unavailable", { status: 503 })),
-  );
-  return Deferred.isDone(settings.stopped).pipe(
-    Effect.flatMap((done) =>
-      done ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
-    ),
-    Effect.flatMap((response) =>
-      limitResponseStream(response, Stream.interruptWhen(stopped)),
-    ),
-  );
 });
-
-/** The tools of a peer and of the server agent: each addresses any agent and owns its message policy. */
-function peerTools(
-  harness: Harness,
-  firewall: Context.Tag.Service<typeof Firewall>,
-  settings: Pick<AgentMcpAppSettings, "hideCollectives">,
-) {
-  const policyConfigured = firewall
-    .readPolicy()
-    .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
-  const send = { name: "send_message", execute: harness.send };
-  return [
-    settings.hideCollectives
-      ? bind({ ...send, definition: textOnlyToolDefinitions.send_message })
-      : bind({ ...send, definition: toolDefinitions.send_message }),
-    receiveTool(harness),
-    bind({
-      name: "list_conversations",
-      definition: toolDefinitions.list_conversations,
-      execute: harness.listConversations,
-    }),
-    bind({
-      name: "read_conversation",
-      definition: toolDefinitions.read_conversation,
-      execute: harness.readHistory,
-    }),
-    bind({
-      name: "read_policy",
-      definition: toolDefinitions.read_policy,
-      execute: () => firewall.readPolicy(),
-      visible: policyConfigured,
-    }),
-    bind({
-      name: "update_policy",
-      definition: toolDefinitions.update_policy,
-      execute: firewall.updatePolicy,
-      visible: policyConfigured,
-    }),
-    bind({
-      name: "read_firewall_decisions",
-      definition: toolDefinitions.read_firewall_decisions,
-      execute: firewall.readDecisions,
-    }),
-  ];
-}
-
-/**
- * The tools of a client in client/server mode. It sends to and reads its
- * conversation with the server agent, and names neither.
- */
-function clientTools(
-  harness: Harness,
-  serverAgentAddress: MessageAddressInput,
-) {
-  return [
-    bind({
-      name: "send_message",
-      definition: clientToolDefinitions.send_message,
-      execute: ({ text }) => harness.send({ to: serverAgentAddress, text }),
-    }),
-    receiveTool(harness),
-    bind({
-      name: "read_conversation",
-      definition: clientToolDefinitions.read_conversation,
-      execute: (page) =>
-        harness.readHistory({ ...page, address: serverAgentAddress }),
-    }),
-  ];
-}
-
-function receiveTool(harness: Harness) {
-  return bind({
-    name: "receive_messages",
-    definition: toolDefinitions.receive_messages,
-    execute: harness.receive,
-  });
-}
-
-function statusTool(subscription: HarnessWebhookEvents) {
-  return Effect.map(Identity, (identity) =>
-    bind({
-      name: "status",
-      definition: toolDefinitions.status,
-      execute: () =>
-        Effect.map(subscription.status, (status) => ({
-          agentId: identity.me.agentId,
-          agentName: identity.me.agentName,
-          subscription: status,
-        })),
-    }),
-  );
-}
-
-/** `read_norms` lists the norms held: this agent's, or for a client the server agent's. */
-function normsTool(
-  heldNorms: Context.Tag.Service<typeof HeldNorms>,
-  forClient: boolean,
-) {
-  return bind({
-    name: "read_norms",
-    definition: forClient
-      ? clientToolDefinitions.read_norms
-      : toolDefinitions.read_norms,
-    execute: () =>
-      heldNorms.read().pipe(
-        Effect.map((held) => ({
-          norms: held.map((norm) => ({
-            name: norm.name,
-            description: norm.description,
-            ...(norm.protocolName === undefined
-              ? {}
-              : { protocol: norm.protocolName }),
-            document: norm.document,
-          })),
-        })),
-      ),
-  });
-}
 
 /** What a tool definition says about a tool before any operation is attached. */
 interface Definition<A, I, B, J, E> {
@@ -235,28 +62,16 @@ interface Definition<A, I, B, J, E> {
 }
 
 /**
- * Turns a tool definition and the operation behind it into a registered
- * tool: arguments are decoded with the definition's input, the result is
- * encoded with its output, and a failure is answered with its message and
- * the data the definition writes for it.
+ * Turns a tool definition and the operation behind it into a tool to serve.
+ * `visible` is checked on every listing and call; a tool without it is
+ * always offered.
  */
-function bind<A, I, B, J, E extends { readonly message: string }>(binding: {
-  readonly name: string;
-  readonly definition: Definition<A, I, B, J, E>;
-  readonly execute: (input: A) => Effect.Effect<B, E>;
-  /** Checked on every listing and call. A tool without it is always offered. */
-  readonly visible?: Effect.Effect<boolean>;
-}) {
-  const { name, definition, execute, visible } = binding;
-  const refusal = (error: E) =>
-    new ProtocolError(-32603, error.message, definition.failure.toData(error));
-  const unexpected =
-    definition.failure.unexpected === undefined
-      ? new ProtocolError(
-          -32603,
-          "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
-        )
-      : refusal(definition.failure.unexpected);
+export function bind<A, I, B, J, E extends { readonly message: string }>(
+  name: string,
+  definition: Definition<A, I, B, J, E>,
+  execute: (input: A) => Effect.Effect<B, E>,
+  visible?: Effect.Effect<boolean>,
+) {
   return {
     tool: new Tool({
       name,
@@ -270,28 +85,49 @@ function bind<A, I, B, J, E extends { readonly message: string }>(binding: {
       }),
     }),
     ...(visible === undefined ? {} : { visible }),
-    handle: (input: unknown) =>
-      Effect.gen(function* () {
-        const decoded = yield* Schema.decodeUnknown(definition.input, {
-          onExcessProperty: "error",
-          errors: "all",
-        })(input).pipe(Effect.mapError(invalidArguments));
-        const output = yield* execute(decoded).pipe(Effect.mapError(refusal));
-        const encoded = yield* Schema.encode(definition.output)(output, {
-          onExcessProperty: "error",
-        }).pipe(Effect.mapError(() => unexpected));
-        return new CallToolResult({
-          content: [{ type: "text", text: JSON.stringify(encoded) }],
-          structuredContent: encoded,
-        });
-      }).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.fail(
-            Option.getOrElse(Cause.failureOption(cause), () => unexpected),
-          ),
+    handle: handler(definition, execute),
+  };
+}
+
+/**
+ * Answers a call of a tool: arguments are decoded with the definition's
+ * input, the result is encoded with its output, and a failure is answered
+ * with its message and the data the definition writes for it.
+ */
+function handler<A, I, B, J, E extends { readonly message: string }>(
+  definition: Definition<A, I, B, J, E>,
+  execute: (input: A) => Effect.Effect<B, E>,
+) {
+  const refusal = (error: E) =>
+    new ProtocolError(-32603, error.message, definition.failure.toData(error));
+  const unexpected =
+    definition.failure.unexpected === undefined
+      ? new ProtocolError(
+          -32603,
+          "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
+        )
+      : refusal(definition.failure.unexpected);
+  return (input: unknown) =>
+    Effect.gen(function* () {
+      const decoded = yield* Schema.decodeUnknown(definition.input, {
+        onExcessProperty: "error",
+        errors: "all",
+      })(input).pipe(Effect.mapError(invalidArguments));
+      const output = yield* execute(decoded).pipe(Effect.mapError(refusal));
+      const encoded = yield* Schema.encode(definition.output)(output, {
+        onExcessProperty: "error",
+      }).pipe(Effect.mapError(() => unexpected));
+      return new CallToolResult({
+        content: [{ type: "text", text: JSON.stringify(encoded) }],
+        structuredContent: encoded,
+      });
+    }).pipe(
+      Effect.catchAllCause((cause) =>
+        Effect.fail(
+          Option.getOrElse(Cause.failureOption(cause), () => unexpected),
         ),
       ),
-  };
+    );
 }
 
 /** A refusal of arguments that names each wrong field in its message and its data. */

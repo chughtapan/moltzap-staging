@@ -19,15 +19,20 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { MessageAddressInput } from "../../communication/index.js";
+import type { HeldNorms } from "../../norms/index.js";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../communication/__tests__/store-fixtures.js";
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
-import { Identity } from "../../identity.js";
-import { makeMcpHttpApp, type McpAuthentication } from "../http.js";
-import { makeAgentMcpApp } from "../server.js";
+import { type AgentName, Identity } from "../../identity.js";
+import {
+  makeMcpHttpApp,
+  type McpAuthentication,
+  untilStopped,
+} from "../http.js";
+import { serveTools } from "../server.js";
 import { SocialHarness } from "../social-harness.js";
+import { roleOf } from "../startup.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../webhook.js";
 
 /** The credential has no authority beyond this process. */
@@ -44,7 +49,8 @@ const mcpTestHeaders = {
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
     readonly hideCollectives?: boolean;
-    readonly serverAgent?: MessageAddressInput;
+    /** Makes the agent a client of the server agent with this name. */
+    readonly serverAgentName?: AgentName;
     readonly serverAgentCredential?: Redacted.Redacted;
     readonly authentication?: McpAuthentication;
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
@@ -86,16 +92,33 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     Effect.provideService(SqlClient.SqlClient, database.sql),
   );
   const stopped = yield* Deferred.make<undefined>();
-  const agentApp = yield* makeAgentMcpApp({
-    subscription,
+  const role = roleOf(
+    {
+      settings: {
+        serverAgentName: options.serverAgentName,
+        hideGroups: false,
+        hideCollectives: options.hideCollectives ?? false,
+      },
+      serverAgentHeldNorms: yield* Ref.make(
+        Option.none<Context.Tag.Service<typeof HeldNorms>>(),
+      ),
+    },
+    database.directory,
+    card.agentName,
+  );
+  const agentApp = untilStopped(
+    yield* serveTools(
+      { name: "mcp-contract-test", version: "1" },
+      yield* role
+        .tools(subscription)
+        .pipe(
+          Effect.provideService(SocialHarness, harness),
+          Effect.provideService(Identity, identity),
+          Effect.provideService(Firewall, firewall),
+        ),
+      subscription,
+    ),
     stopped,
-    hideCollectives: options.hideCollectives ?? false,
-    serverAgentAddress: Option.fromNullable(options.serverAgent),
-    implementation: { name: "mcp-contract-test", version: "1" },
-  }).pipe(
-    Effect.provideService(SocialHarness, harness),
-    Effect.provideService(Identity, identity),
-    Effect.provideService(Firewall, firewall),
   );
   const owners = yield* Ref.make<
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
