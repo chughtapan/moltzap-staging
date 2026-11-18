@@ -45,9 +45,8 @@ import {
   IdentityError,
 } from "../../identity.js";
 import { type HarnessSettings, SocialHarness } from "../agent.js";
-import { makeInbox } from "../inbox.js";
+import { type Inbox, makeInbox } from "../inbox.js";
 
-type Harness = Context.Tag.Service<typeof SocialHarness>;
 type Policy = Context.Tag.Service<typeof Firewall>;
 
 /**
@@ -134,17 +133,17 @@ export function composedPolicy(
 /** Waits until the inbox holds `count` pending entries, surfacing background failures. */
 export function waitForInbox(
   runtime: {
-    readonly harness: Harness;
+    readonly inbox: Inbox;
     readonly failed: Effect.Effect<never, unknown>;
   },
   count = 1,
 ) {
-  return runtime.harness.listInbox().pipe(
+  return runtime.inbox.listInbox().pipe(
     Effect.repeat({
       until: (page) => page.entries.length >= count,
       schedule: Schedule.spaced("5 millis"),
     }),
-    Effect.zipRight(runtime.harness.listInbox()),
+    Effect.zipRight(runtime.inbox.listInbox()),
     Effect.raceFirst(runtime.failed),
     Effect.timeout("10 seconds"),
   );

@@ -318,6 +318,18 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         error instanceof InboxError ? error : persistenceFailure(),
       ),
     ),
+    /** The delivery token of each pending entry. */
+    pendingTokens: SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ delivery_token: DeliveryToken }),
+      execute: () =>
+        run(
+          inboxRows().select("delivery_token").where("status", "=", "pending"),
+        ),
+    })(undefined).pipe(
+      Effect.map((rows) => rows.map((row) => row.delivery_token)),
+      Effect.mapError(persistenceFailure),
+    ),
     /** Marks the pending entries carrying these delivery tokens delivered, all or none. */
     markDelivered: (tokens: readonly DeliveryToken[]) =>
       tokens.length === 0

@@ -48,6 +48,7 @@ import { type AgentCard, Identity, IdentityError } from "../identity.js";
 import {
   addressOf,
   canonicalMessageAddress,
+  type DeliveryToken,
   HistoryError,
   type HistoryRecord,
   InboxError,
@@ -97,10 +98,8 @@ interface SocialHarnessService {
   readonly send: (
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
-  /** Reads pending inbox entries without marking them delivered. */
-  readonly listInbox: (
-    request?: PaginatedRequest,
-  ) => Effect.Effect<InboxPage, InboxError>;
+  /** The delivery token of each pending inbox entry. */
+  readonly pendingTokens: Effect.Effect<readonly DeliveryToken[], InboxError>;
   /**
    * Hands over a page of pending inbox entries and marks each delivered, which
    * does not respond to a collective request. With `wait`, a read that finds
@@ -239,7 +238,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     yield* Queue.offer(wake, undefined);
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      listInbox: inbox.listInbox,
+      pendingTokens: inbox.pendingTokens,
       receive: (request) => receive(agent, request),
       listConversations: (request = {}) => listConversations(agent, request),
       readHistory: (request) => readHistory(agent, request),

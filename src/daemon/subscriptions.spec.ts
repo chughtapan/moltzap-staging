@@ -164,22 +164,19 @@ describe("a subscribed callback", () => {
           ...store,
           harness: {
             ...store.harness,
-            listInbox: (request) =>
-              store.harness
-                .listInbox(request)
-                .pipe(
-                  Effect.tap((page) =>
-                    page.entries.length === 0
-                      ? Effect.void
-                      : Ref.getAndSet(signalled, true).pipe(
-                          Effect.flatMap((already) =>
-                            already
-                              ? Effect.void
-                              : PubSub.publish(repeated, undefined),
-                          ),
-                        ),
-                  ),
-                ),
+            pendingTokens: store.harness.pendingTokens.pipe(
+              Effect.tap((tokens) =>
+                tokens.length === 0
+                  ? Effect.void
+                  : Ref.getAndSet(signalled, true).pipe(
+                      Effect.flatMap((already) =>
+                        already
+                          ? Effect.void
+                          : PubSub.publish(repeated, undefined),
+                      ),
+                    ),
+              ),
+            ),
             inboxChanged: Stream.merge(
               store.harness.inboxChanged,
               Stream.fromPubSub(repeated),

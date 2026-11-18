@@ -76,9 +76,6 @@ export interface WebhookPost {
   readonly timestamp: number;
 }
 
-/** Maximum complete UTF-8 callback body accepted by the event transport. */
-const maximumEventBytes = 256 * 1024;
-
 /* eslint-disable sonarjs/no-hardcoded-ip -- These are excluded address ranges for callback SSRF defense, never configured endpoints. */
 const blockedV4 = new BlockList();
 for (const [address, prefix] of [
@@ -208,22 +205,14 @@ export const webhookHttpClientLayer = NodeHttpClient.layerWithoutAgent.pipe(
   ),
 );
 
-const validatePost = (post: WebhookPost) =>
-  Effect.gen(function* () {
-    const url = webhookUrl(post.url);
-    if (
-      url === undefined ||
-      !validWebhookSecret(post.secret) ||
-      Buffer.byteLength(post.body, "utf8") > maximumEventBytes
-    ) {
-      return yield* Effect.fail(callbackFailure("connection_refused"));
-    }
-    const host = url.hostname.replace(/^\[|\]$/gu, "");
-    if (isIP(host) !== 0 && !isPublicWebhookAddress(host)) {
-      return yield* Effect.fail(callbackFailure("connection_refused"));
-    }
-    return url;
-  });
+/** The URL to post to, refused when it names a literal address that is not public. */
+const postUrl = (post: WebhookPost) => {
+  const url = new URL(post.url);
+  const host = url.hostname.replace(/^\[|\]$/gu, "");
+  return isIP(host) !== 0 && !isPublicWebhookAddress(host)
+    ? Effect.fail(callbackFailure("connection_refused"))
+    : Effect.succeed(url);
+};
 const transportFailure = (cause: unknown) => {
   if (
     !(cause instanceof Error) ||
@@ -247,7 +236,7 @@ const executeWebhook = (
   HttpClient.HttpClient | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const url = yield* validatePost(post);
+    const url = yield* postUrl(post);
     const http = yield* HttpClient.HttpClient;
     const response = yield* HttpClient.withScope(http)
       .execute(
@@ -525,21 +514,6 @@ const subscribe = (
     );
   });
 
-/** The delivery tokens of the pending inbox entries. */
-const pendingInbox = (harness: SocialHarness["Type"]) =>
-  Effect.gen(function* () {
-    const tokens: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = yield* harness.listInbox(
-        cursor === undefined ? {} : { cursor },
-      );
-      tokens.push(...page.entries.map((entry) => entry.deliveryToken));
-      cursor = page.nextCursor;
-    } while (cursor !== undefined);
-    return tokens;
-  }).pipe(Effect.withSpan("pendingInbox"));
-
 /** The event that tells a host how many inbox entries are pending. */
 const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
   ({
@@ -561,7 +535,7 @@ const prepareWakeUp = (webhook: AgentWebhook) =>
       return webhook.wakeUp;
     }
     webhook.inboxChangedSinceLastWakeUp = false;
-    const pending = yield* pendingInbox(webhook.harness).pipe(
+    const pending = yield* webhook.harness.pendingTokens.pipe(
       Effect.mapError(persistenceFailure),
     );
     const tokensInLastWakeUp = webhook.tokensInLastWakeUp;
