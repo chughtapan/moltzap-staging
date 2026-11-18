@@ -5,7 +5,6 @@ import {
   Context,
   Deferred,
   Effect,
-  FiberSet,
   Layer,
   Queue,
   Schedule,
@@ -130,11 +129,10 @@ export function composedPolicy(
   };
 }
 
-/** Waits until the inbox holds `count` pending entries, surfacing background failures. */
+/** Waits until the inbox holds `count` pending entries. */
 export function waitForInbox(
   runtime: {
     readonly inbox: Inbox;
-    readonly failed: Effect.Effect<never, unknown>;
   },
   count = 1,
 ) {
@@ -144,7 +142,6 @@ export function waitForInbox(
       schedule: Schedule.spaced("5 millis"),
     }),
     Effect.zipRight(runtime.inbox.listInbox()),
-    Effect.raceFirst(runtime.failed),
     Effect.timeout("10 seconds"),
   );
 }
@@ -240,7 +237,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
 
 function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
   return Effect.gen(function* () {
-    const workers = yield* FiberSet.make();
     const identity = Layer.succeed(Identity, identityFor(environment)).pipe(
       Layer.provideMerge(
         Layer.succeed(SqlClient.SqlClient, environment.database.sql),
@@ -257,18 +253,15 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
         ? services
         : Context.add(services, Firewall, options.decorateFirewall(firewall));
     const context = yield* Layer.build(
-      SocialHarness.layer(
-        {
-          agentKey,
-          maximumHistoryRecords: options.maximumHistoryRecords,
-          maximumConcurrentChecks: options.maximumConcurrentChecks,
-          hideGroups: options.hideGroups,
-          ...(options.withheldReply === undefined
-            ? {}
-            : { withheldReply: options.withheldReply }),
-        },
-        workers,
-      ),
+      SocialHarness.layer({
+        agentKey,
+        maximumHistoryRecords: options.maximumHistoryRecords,
+        maximumConcurrentChecks: options.maximumConcurrentChecks,
+        hideGroups: options.hideGroups,
+        ...(options.withheldReply === undefined
+          ? {}
+          : { withheldReply: options.withheldReply }),
+      }),
     ).pipe(
       Effect.provide(provided),
       Effect.provideService(Communication, environment.communication),
@@ -278,7 +271,6 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
       harness,
       inbox: yield* makeInbox(agentKey).pipe(Effect.provide(services)),
       firewall,
-      failed: FiberSet.join(workers).pipe(Effect.zipRight(Effect.never)),
     };
   });
 }

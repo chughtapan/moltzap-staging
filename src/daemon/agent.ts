@@ -2,11 +2,11 @@
 
 import {
   absurd,
+  Cause,
   Clock,
   Context,
   Duration,
   Effect,
-  FiberSet,
   Layer,
   Option,
   PubSub,
@@ -143,8 +143,8 @@ export class SocialHarness extends Context.Tag("SocialHarness/Harness")<
   SocialHarnessService
 >() {
   /** One agent's harness over its identity, firewall and communication. */
-  static layer(settings: HarnessSettings, workers: FiberSet.FiberSet) {
-    return Layer.scoped(SocialHarness, makeHarness(settings, workers));
+  static layer(settings: HarnessSettings) {
+    return Layer.scoped(SocialHarness, makeHarness(settings));
   }
 }
 
@@ -174,7 +174,7 @@ interface Agent {
   readonly historyLimit: number;
 }
 
-function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
+function makeHarness(settings: HarnessSettings) {
   return Effect.gen(function* () {
     const identity = yield* Identity;
     const firewall = yield* Firewall;
@@ -196,9 +196,9 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
       settings,
       historyLimit: settings.maximumHistoryRecords ?? 256,
     };
-    yield* supervise(
-      workers,
-      scope,
+    const fork = <E, R>(work: Effect.Effect<unknown, E, R>) =>
+      Effect.forkIn(Effect.interruptible(work), scope);
+    yield* fork(
       communication
         .consume((incoming) =>
           inbox
@@ -218,24 +218,27 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
         }
         if (!addressesBeingChecked.has(unchecked.address)) {
           addressesBeingChecked.add(unchecked.address);
-          const check = checkIncoming(agent, unchecked).pipe(
-            Effect.zipRight(PubSub.publish(changes, undefined)),
-            Effect.ensuring(
-              Effect.sync(() =>
-                addressesBeingChecked.delete(unchecked.address),
-              ).pipe(Effect.zipRight(Queue.offer(wake, undefined))),
+          yield* fork(
+            checkIncoming(agent, unchecked).pipe(
+              Effect.zipRight(PubSub.publish(changes, undefined)),
+              Effect.catchAllCause((cause) => retryLater(agent, cause)),
+              Effect.ensuring(
+                Effect.sync(() =>
+                  addressesBeingChecked.delete(unchecked.address),
+                ).pipe(Effect.zipRight(Queue.offer(wake, undefined))),
+              ),
             ),
           );
-          yield* supervise(workers, scope, check);
         }
       }
     });
-    yield* supervise(
-      workers,
-      scope,
-      Queue.take(wake).pipe(Effect.zipRight(startChecks), Effect.forever),
+    yield* fork(
+      startChecks.pipe(
+        Effect.zipRight(Queue.take(wake)),
+        Effect.forever,
+        restarting(settings.agentKey, "check loop"),
+      ),
     );
-    yield* Queue.offer(wake, undefined);
     return SocialHarness.of({
       send: (request) => send(agent, request),
       pendingTokens: inbox.pendingTokens,
@@ -867,12 +870,15 @@ function historyFailure(error: unknown): HistoryError {
   return new HistoryError({ reason: "invalid-address" });
 }
 
-function supervise<E, R>(
-  workers: FiberSet.FiberSet,
-  scope: Scope.Scope,
-  work: Effect.Effect<unknown, E, R>,
-) {
-  return Effect.forkIn(Effect.interruptible(work), scope).pipe(
-    Effect.flatMap((fiber) => FiberSet.add(workers, fiber)),
-  );
+/**
+ * Logs a check that failed and holds its conversation for a second. The
+ * message stays unchecked, so the checks started next take it again.
+ */
+function retryLater(agent: Agent, cause: Cause.Cause<unknown>) {
+  return Cause.isInterruptedOnly(cause)
+    ? Effect.void
+    : Effect.logError("A check failed and will be tried again").pipe(
+        Effect.annotateLogs({ agentKey: agent.settings.agentKey, cause }),
+        Effect.zipRight(Effect.sleep("1 second")),
+      );
 }

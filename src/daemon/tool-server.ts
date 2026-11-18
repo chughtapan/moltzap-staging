@@ -77,7 +77,7 @@ const objectSchema = Schema.decodeUnknownSync(
  * answers the current request from `agent`; the SDK parses the request,
  * negotiates the protocol revision, dispatches the method and frames the
  * response, and no MCP server outlives a request. The app is interruptible so
- * that a stopped agent or an aborted request ends a call in flight.
+ * that an aborted request ends a call in flight.
  */
 export function makeMcpHandler(implementation: {
   readonly name: string;

@@ -3,15 +3,12 @@ import { type FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
-  Cause,
   Console,
   Context,
-  Deferred,
   Duration,
   Effect,
   Exit,
   Fiber,
-  FiberSet,
   Layer,
   Option,
   Ref,
@@ -398,7 +395,7 @@ function runningAgents(settings: DaemonSettings, norms?: DaemonNorms) {
 
 /**
  * Starts one agent: its services, which run until the scope closes, and from
- * them its tools, its Events calls and what completes when its workers stop.
+ * them its tools and its Events calls.
  * `consumers` holds the latch each agent's consumer waits on, which a send to
  * that agent opens.
  */
@@ -411,20 +408,15 @@ function startAgent(
     const identity = yield* Layer.build(Identity.layer(agentKey));
     const card = Context.get(identity, Identity).me;
     const role = roleOf(daemon, agentKey, card.agentName);
-    const workers = yield* FiberSet.make();
-    const stopped = yield* Deferred.make<undefined>();
     const policy = daemon.settings.messagePolicy?.policy;
     const services = yield* Layer.build(
-      SocialHarness.layer(
-        {
-          agentKey,
-          hideGroups: role.hideGroups,
-          withheldReply: role.withheldReply,
-          maximumHistoryRecords: policy?.maximumHistoryRecords,
-          maximumConcurrentChecks: policy?.maximumConcurrentChecks,
-        },
-        workers,
-      ).pipe(
+      SocialHarness.layer({
+        agentKey,
+        hideGroups: role.hideGroups,
+        withheldReply: role.withheldReply,
+        maximumHistoryRecords: policy?.maximumHistoryRecords,
+        maximumConcurrentChecks: policy?.maximumConcurrentChecks,
+      }).pipe(
         Layer.provideMerge(
           Communication.layer({
             agentKey,
@@ -453,20 +445,7 @@ function startAgent(
     const tools = yield* role
       .tools(subscription)
       .pipe(Effect.provide(services));
-    yield* FiberSet.join(workers).pipe(
-      Effect.matchCauseEffect({
-        onFailure: (cause) =>
-          Cause.isInterruptedOnly(cause)
-            ? Effect.void
-            : Effect.logError("Agent worker stopped").pipe(
-                Effect.annotateLogs({ agentKey }),
-              ),
-        onSuccess: () => Effect.void,
-      }),
-      Effect.ensuring(Deferred.succeed(stopped, undefined)),
-      Effect.forkScoped,
-    );
-    return { tools, events: subscription, stopped };
+    return { tools, events: subscription };
   }).pipe(Effect.withSpan("startAgent"));
 }
 

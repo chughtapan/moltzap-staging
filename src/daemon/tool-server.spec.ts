@@ -509,54 +509,6 @@ describe("MCP tool contracts", () => {
     }));
 });
 
-it("ends an in-flight request and refuses later calls when its agent stops", () =>
-  Effect.gen(function* () {
-    const entered = yield* Deferred.make<undefined>();
-    const fixture = yield* mcpFixture({
-      harness: {
-        send: () =>
-          Deferred.succeed(entered, undefined).pipe(
-            Effect.zipRight(Effect.never),
-          ),
-      },
-    });
-    const waiting = yield* Effect.tryPromise(() =>
-      fixture.fetch(mcpRequest("tools/call", send)),
-    ).pipe(Effect.forkScoped);
-    yield* Deferred.await(entered);
-    yield* Deferred.succeed(fixture.stopped, undefined);
-    expect((yield* Fiber.join(waiting)).status).toBe(503);
-    const later = yield* Effect.tryPromise(() =>
-      fixture.fetch(mcpRequest("tools/list")),
-    );
-    expect(later.status).toBe(503);
-  }));
-
-it("closes a retained stream when its agent stops", () =>
-  Effect.gen(function* () {
-    const fixture = yield* mcpFixture();
-    const reply = yield* Effect.tryPromise(() =>
-      fixture.fetch(
-        mcpRequest("subscriptions/listen", {
-          notifications: { toolsListChanged: true },
-        }),
-      ),
-    );
-    expect(reply.status).toBe(200);
-    if (reply.body === null) {
-      return yield* Effect.dieMessage("Expected a stream body");
-    }
-    const reader = reply.body.getReader();
-    const next = Effect.tryPromise(() => reader.read());
-    expect((yield* next).done).toBe(false);
-    yield* Deferred.succeed(fixture.stopped, undefined);
-    const ended = yield* Effect.iterate(yield* next, {
-      while: (chunk) => !chunk.done,
-      body: () => next,
-    });
-    expect(ended.done).toBe(true);
-  }));
-
 const boundPort = Effect.gen(function* () {
   const server = yield* NodeHttpServer.make(createServer, {
     host: "127.0.0.1",

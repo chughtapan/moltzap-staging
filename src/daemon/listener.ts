@@ -15,7 +15,6 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/server";
 import {
   Data,
-  Deferred,
   Effect,
   Match,
   Option,
@@ -53,19 +52,15 @@ export class AuthenticationRefused extends Data.TaggedError(
   "AuthenticationRefused",
 ) {}
 
-/** The running agent of an owner: its tools, its Events calls and what completes when it stops. */
+/** The running agent of an owner: its tools and its Events calls. */
 type AgentOfOwner<E> = (
   owner: Owner,
-) => Effect.Effect<
-  AgentCalls & { readonly stopped: Deferred.Deferred<undefined> },
-  E,
-  Scope.Scope
->;
+) => Effect.Effect<AgentCalls, E, Scope.Scope>;
 
 /**
  * The app the listener serves. It answers only POST /mcp whose Host and
  * Origin headers it trusts, admits the caller, and has the MCP handler answer
- * the request from that owner's agent. An agent that cannot serve answers 503,
+ * the request from that owner's agent. An agent that cannot start answers 503,
  * and the log names what failed.
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
@@ -117,7 +112,7 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
           ),
         onSuccess: ({ owner, expiresAt }) =>
           agentOfOwner(owner).pipe(
-            Effect.flatMap((agent) => untilStopped(mcp(agent), agent.stopped)),
+            Effect.flatMap(mcp),
             Effect.flatMap((response) =>
               expiresAt === undefined
                 ? response
@@ -137,30 +132,6 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
     );
   });
 });
-
-/**
- * Serves `app` until the agent stops. From then on a request in flight and
- * every later request are answered as unavailable, and a response stream
- * still open ends.
- */
-function untilStopped<E, R>(
-  app: HttpApp.Default<E, R>,
-  stopped: Deferred.Deferred<undefined>,
-) {
-  const whenStopped = Deferred.await(stopped);
-  const unavailable = whenStopped.pipe(
-    Effect.interruptible,
-    Effect.as(agentUnavailable),
-  );
-  return Deferred.isDone(stopped).pipe(
-    Effect.flatMap((done) =>
-      done ? unavailable : app.pipe(Effect.raceFirst(unavailable)),
-    ),
-    Effect.flatMap((response) =>
-      limitResponseStream(response, Stream.interruptWhen(whenStopped)),
-    ),
-  );
-}
 
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (

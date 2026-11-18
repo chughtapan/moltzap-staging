@@ -60,7 +60,6 @@ function waitForDecisions(runtime: Runtime, count = 1) {
       schedule: Schedule.spaced("5 millis"),
     }),
     Effect.zipRight(runtime.firewall.readDecisions({})),
-    Effect.raceFirst(runtime.failed),
     Effect.timeout("10 seconds"),
   );
 }
@@ -93,7 +92,6 @@ function waitForPending(runtime: Runtime, count: number) {
       until: (entries) => entries.length === count,
       schedule: Schedule.spaced("5 millis"),
     }),
-    Effect.raceFirst(runtime.failed),
     Effect.timeout("10 seconds"),
   );
 }
@@ -524,42 +522,37 @@ it("returns an empty page when the wait ends with nothing pending", () =>
     expect(page.entries).toEqual([]);
   }));
 
-it("rolls back a policy decision when it cannot be saved with its inbox entry and recovers both on restart", () =>
+it("rolls back a check whose decision cannot be saved, then checks the message again and keeps serving", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const scope = yield* Scope.make();
-    const policy = composedPolicy({
-      decide: (request) => Effect.succeed(decisionResponse(request)),
-    });
-    const runtime = yield* subject
-      .open({
-        policy,
-        decorateFirewall: (firewall) => ({
-          ...firewall,
-          checkIncoming: (incoming, evidence) =>
-            firewall.checkIncoming(incoming, evidence).pipe(
-              Effect.map((decision) => ({
-                ...decision,
-                save: decision.save.pipe(
-                  Effect.zipRight(
-                    Effect.fail(
-                      new FirewallPolicyError({ reason: "persistence-failed" }),
-                    ),
-                  ),
+    const failed = yield* Deferred.make<undefined>();
+    const runtime = yield* subject.open({
+      policy: composedPolicy({
+        decide: (request) => Effect.succeed(decisionResponse(request)),
+      }),
+      decorateFirewall: (firewall) => ({
+        ...firewall,
+        checkIncoming: (incoming, evidence) =>
+          firewall.checkIncoming(incoming, evidence).pipe(
+            Effect.map((decision) => ({
+              ...decision,
+              save: Effect.zipRight(
+                decision.save,
+                Effect.whenEffect(
+                  new FirewallPolicyError({ reason: "persistence-failed" }),
+                  Deferred.succeed(failed, undefined),
                 ),
-              })),
-            ),
-        }),
-      })
-      .pipe(Scope.extend(scope));
+              ),
+            })),
+          ),
+      }),
+    });
     yield* receive(subject, "Publish atomically");
-    expect((yield* runtime.failed.pipe(Effect.either))._tag).toBe("Left");
+    yield* Deferred.await(failed);
     expect((yield* runtime.firewall.readDecisions({})).decisions).toEqual([]);
-    expect((yield* runtime.inbox.listInbox()).entries).toEqual([]);
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* subject.open({ policy });
-    expect((yield* waitForInbox(reopened)).entries).toHaveLength(1);
-    expect((yield* reopened.firewall.readDecisions({})).decisions).toHaveLength(
+    expect((yield* runtime.harness.receive({})).entries).toEqual([]);
+    expect((yield* waitForInbox(runtime)).entries).toHaveLength(1);
+    expect((yield* runtime.firewall.readDecisions({})).decisions).toHaveLength(
       1,
     );
   }));

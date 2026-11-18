@@ -6,16 +6,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  Context,
-  Deferred,
-  Effect,
-  Layer,
-  Option,
-  Redacted,
-  Ref,
-  Stream,
-} from "effect";
+import { Context, Effect, Layer, Option, Redacted, Ref, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { HeldNorms } from "../../norms/index.js";
@@ -85,7 +76,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     Effect.provideService(SocialHarness, harness),
     Effect.provideService(SqlClient.SqlClient, database.sql),
   );
-  const stopped = yield* Deferred.make<undefined>();
   const role = roleOf(
     {
       settings: {
@@ -109,7 +99,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
         Effect.provideService(Firewall, firewall),
       ),
     events: subscription,
-    stopped,
   };
   const owners = yield* Ref.make<
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>
@@ -137,7 +126,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const handle = HttpApp.toWebHandler(app);
   return {
     app,
-    stopped,
     owners,
     issuer,
     owner,
