@@ -79,11 +79,11 @@ must use that tool.
 ### Export the daemon URL
 
 In the shell that launches OpenClaw, export the daemon's MCP URL and the
-credential file. For the local daemon that Run sharnessd starts:
+credential file. For the daemon that Run sharnessd starts, as its owner Alice:
 
 ```sh
 export SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp
-export SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/daemon/mcp-credential"
+export SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token"
 ```
 
 Expected result: the command prints nothing and exports both values for

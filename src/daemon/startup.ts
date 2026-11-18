@@ -39,7 +39,6 @@ import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
   listOwnedAgentKeys,
-  localOwner,
   type Owner,
   serverAgentOwner,
 } from "./owners.js";
@@ -141,20 +140,9 @@ const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
  */
 export const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
-  const { settings, agentName, serverAgentCredential } =
-    yield* loadDaemonSettings();
+  const { settings, serverAgentCredential } = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* checkDatabase;
-    if (settings.authentication.kind === "local") {
-      yield* getOrCreateOwnedAgentKey(localOwner, agentName).pipe(
-        Effect.catchTag("OwnershipError", () =>
-          refused(
-            "database",
-            "This database's agent has another name than agentName in the settings, or another agent has that name. Set agentName to the name the database was first started with, or prepare a new database.",
-          ),
-        ),
-      );
-    }
     const norms =
       settings.norms === undefined
         ? undefined

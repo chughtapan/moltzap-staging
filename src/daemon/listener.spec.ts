@@ -1,13 +1,7 @@
 /** @file OAuth admission validates owner-bound JWTs against a real issuer key-set endpoint. */
-import { HttpServerRequest, HttpServerResponse } from "@effect/platform";
-import { NodeHttpServer } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, FastCheck as fc, Ref } from "effect";
-import { exportJWK, generateKeyPair, SignJWT } from "jose";
-// eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
-import { createServer } from "node:http";
 import { expect } from "vitest";
-import type { McpAuthentication } from "./listener.js";
 import { mcpFixture, mcpRequest } from "./__tests__/mcp-fixtures.js";
 
 const resource = new URL("https://mcp.example.test/mcp");
@@ -16,34 +10,10 @@ const scope = "use:mcp";
 const allowedOrigin = "https://owner.example.test";
 
 const fixture = Effect.gen(function* () {
-  const keys = yield* Effect.tryPromise(() => generateKeyPair("RS256"));
-  const key = yield* Effect.tryPromise(() => exportJWK(keys.publicKey));
-  const server = yield* NodeHttpServer.make(createServer, {
-    host: "127.0.0.1",
-    port: 0,
-  });
-  if (server.address._tag !== "TcpAddress") {
-    return yield* Effect.dieMessage("Expected issuer listener");
-  }
-  const issuer = `http://127.0.0.1:${server.address.port}/`;
-  yield* server.serve(
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const data =
-        request.url === "/.well-known/openid-configuration"
-          ? { issuer, jwks_uri: `${issuer}jwks` }
-          : { keys: [{ ...key, kid: "issuer-key", alg: "RS256" }] };
-      return yield* HttpServerResponse.json(data).pipe(Effect.orDie);
-    }),
-  );
-  const oauth: McpAuthentication = {
-    kind: "oauth",
+  const test = yield* mcpFixture({
     resource,
-    issuer,
-    scope,
     allowedOrigins: [allowedOrigin],
-  };
-  const test = yield* mcpFixture({ authentication: oauth });
+  });
   const token = (
     changes: {
       readonly audience?: string;
@@ -52,16 +22,13 @@ const fixture = Effect.gen(function* () {
       readonly secondsLeft?: number;
     } = {},
   ) =>
-    Effect.tryPromise(() =>
-      new SignJWT({ scope: (changes.granted ?? [scope]).join(" ") })
-        .setProtectedHeader({ alg: "RS256", kid: "issuer-key" })
-        .setIssuer(issuer)
-        .setAudience(changes.audience ?? resource.href)
-        .setSubject(changes.subject ?? owner)
-        .setExpirationTime(
-          Math.floor(Date.now() / 1000) + (changes.secondsLeft ?? 300),
-        )
-        .sign(keys.privateKey),
+    test.issuer.token(
+      changes.subject ?? owner,
+      changes.audience ?? resource.href,
+      {
+        scope: (changes.granted ?? [scope]).join(" "),
+        secondsLeft: changes.secondsLeft ?? 300,
+      },
     );
   const call = (bearer?: string, host?: string, origin?: string) =>
     Effect.tryPromise(() =>
@@ -79,7 +46,7 @@ const fixture = Effect.gen(function* () {
         ),
       ),
     );
-  return { ...test, oauth, token, call };
+  return { ...test, token, call };
 });
 
 /** A scope that begins with the configured one and goes on past it. */
@@ -137,7 +104,7 @@ it("advertises protected-resource discovery without granting MCP access", () =>
     expect(metadata.status).toBe(200);
     expect(yield* Effect.tryPromise(() => metadata.json())).toEqual({
       resource: resource.href,
-      authorization_servers: [test.oauth.issuer],
+      authorization_servers: [test.issuer.issuer],
       scopes_supported: [scope],
       bearer_methods_supported: ["header"],
     });
@@ -160,7 +127,7 @@ it("selects the subject of a token granted the scope, under the verified issuer"
             const response = yield* test.call(token, host, origin);
             expect(response.status).toBe(200);
             expect(yield* Ref.get(test.owners)).toEqual([
-              { issuer: test.oauth.issuer, subject: claims.subject },
+              { issuer: test.issuer.issuer, subject: claims.subject },
             ]);
           }).pipe(Effect.runPromise),
         ),

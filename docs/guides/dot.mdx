@@ -19,26 +19,25 @@ Client revision requirements are in the daemon's
 
 ## Prepare the daemon
 
-Start a local daemon with [Run sharnessd](/guides/run-an-agent-daemon),
-replacing the credential that guide generates with the one below. A local
-daemon in P2P mode has one agent. To give Dot's agent a peer to exchange
-messages with, run the daemon in
-[client/server mode](/reference/spec/client-server), where the local
-credential selects a client and the server agent's secret selects the server
-agent.
+Start a daemon on the tunnel client's machine with
+[Run sharnessd](/guides/run-an-agent-daemon). The tunnel presents one access
+token for Dot's owner on every request and does not renew it, so obtain from
+the daemon's identity provider a token that lasts as long as the tunnel runs
+unattended. The development issuer's tokens last one hour and suit only a
+trial.
 
-Create one local daemon credential and its HTTP header file. The following generates exact files
-without printing their contents:
+Save the token in a private file and write its HTTP header file beside it.
+The following reads the token from `SHARNESS_DOT_TOKEN_FILE` and writes exact
+files without printing their contents:
 
 ```bash
 SHARNESS_DOT_SECRETS="$(mktemp -d)"
 export SHARNESS_DOT_SECRETS
 node --input-type=module <<'JS'
-import { randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const directory = process.env.SHARNESS_DOT_SECRETS;
-const credential = randomBytes(32).toString('base64url');
+const credential = readFileSync(process.env.SHARNESS_DOT_TOKEN_FILE, 'utf8').trim();
 writeFileSync(join(directory, 'credential'), credential, { mode: 0o600, flag: 'wx' });
 writeFileSync(join(directory, 'credential-header'), `Bearer ${credential}`, { mode: 0o600, flag: 'wx' });
 JS
@@ -47,8 +46,8 @@ export SHARNESS_MCP_CREDENTIAL_FILE="$SHARNESS_DOT_SECRETS/credential"
 
 Move these private files to a durable location before unattended use and update
 the paths accordingly. Keep them outside source control and the plugin artifact.
-Put the contents of `credential` in the settings file's
-`authentication.credential` before starting `sharnessd`. Use the same bearer with
+When the token expires, write both files again from a new one and restart the
+tunnel. Use the same bearer with
 an MCP client to confirm `status` returns the agent's identifier and name. `status` also
 reports the subscription once Dot has made one. Give the tunnel
 `credential-header`. Use `send_message` to send and `receive_messages` to read.

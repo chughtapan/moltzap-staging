@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { loadDaemonSettings, spanExport } from "./settings.js";
 
-const secret = "configuration-only-test-bearer-0000000001";
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
 const rulesFile = "rules.json";
@@ -23,7 +22,11 @@ const providerKey = "private-decision-provider-key";
 const settings = {
   port: 4319,
   host: "127.0.0.1",
-  authentication: { kind: "local", credential: secret },
+  authentication: {
+    resource: "https://mcp.example/mcp",
+    issuer: "https://issuer.example/",
+    scope: "use:mcp",
+  },
 };
 const shippedNorms = fileURLToPath(
   new URL("../../config/norms/", import.meta.url),
@@ -127,9 +130,11 @@ it("loads the settings file its variable names", () =>
     const test = yield* fixture;
     const loaded = yield* test.load;
     expect(loaded.settings.port).toBe(settings.port);
-    expect(loaded.settings.authentication.kind).toBe(
-      settings.authentication.kind,
-    );
+    expect(loaded.settings.authentication).toEqual({
+      ...settings.authentication,
+      resource: new URL(settings.authentication.resource),
+      allowedOrigins: [],
+    });
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("refuses a settings file that does not exist", () =>
@@ -221,28 +226,23 @@ it("refuses a norms directory without its rule file, naming the file", () =>
     expect(failure.message).toContain(rulesFile);
   }).pipe(Effect.provide(NodeContext.layer)));
 
-it("accepts OAuth settings on a public listener", () =>
+it("loads the origins its authentication allows", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    const authentication = {
-      kind: "oauth",
-      resource: "https://mcp.example/mcp",
-      issuer: "https://issuer.example/",
-      scope: "use:mcp",
-      allowedOrigins: ["https://owner.example"],
-    };
-    yield* test.write({ ...settings, host: "0.0.0.0", authentication });
-    const loaded = yield* test.load;
-    expect(loaded.settings.authentication).toEqual({
-      ...authentication,
-      resource: new URL(authentication.resource),
+    const allowedOrigins = ["https://owner.example"];
+    yield* test.write({
+      ...settings,
+      authentication: { ...settings.authentication, allowedOrigins },
     });
+    const loaded = yield* test.load;
+    expect(loaded.settings.authentication.allowedOrigins).toEqual(
+      allowedOrigins,
+    );
   }).pipe(Effect.provide(NodeContext.layer)));
 
 const knownSettings = new Set([
   ...Object.keys(settings),
   "serverAgentName",
-  "agentName",
   "hideGroups",
   "hideCollectives",
   "messagePolicyFile",
@@ -250,12 +250,8 @@ const knownSettings = new Set([
   "normsDirectory",
 ]);
 
-/** One setting no daemon serves: a listener beyond this machine under a local bearer, a port outside 1 to 65535, a setting the document does not have, or a server agent name that is not an agent name. */
+/** One setting no daemon serves: a port outside 1 to 65535, a setting the document does not have, or a server agent name that is not an agent name. */
 const unservable = fc.oneof(
-  fc
-    .oneof(fc.ipV4(), fc.domain())
-    .filter((host) => host !== settings.host)
-    .map((host) => ({ host })),
   fc
     .oneof(
       fc.integer({ min: -65_535, max: 0 }),
@@ -276,21 +272,16 @@ const unservable = fc.oneof(
 );
 
 it.prop(
-  "refuses a document with a setting it cannot serve, without disclosing the bearer",
-  [unservable, fc.stringMatching(/^[A-Za-z0-9]{32,48}$/)],
-  ([setting, credential]) =>
+  "refuses a document with a setting it cannot serve",
+  [unservable],
+  ([setting]) =>
     Effect.gen(function* () {
       const test = yield* fixture;
-      yield* test.write({
-        ...settings,
-        authentication: { kind: "local", credential },
-        ...setting,
-      });
+      yield* test.write({ ...settings, ...setting });
 
       const failure = yield* test.load.pipe(Effect.flip);
 
       expect(failure).toMatchObject({ reason: "settings-file" });
-      expect(JSON.stringify(failure)).not.toContain(credential);
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 40 } },
 );

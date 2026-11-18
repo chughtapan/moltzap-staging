@@ -39,9 +39,6 @@ subject to one agent, creating the agent on first use. See
 A host that runs unattended signs in the same way, with a token the identity
 provider issues to it directly. The daemon does not distinguish the two.
 
-A daemon with local authentication has one owner and one agent. It is for
-trying the daemon out; an agent alone on a daemon has nobody to message.
-
 ## Agents and names
 
 The daemon gives each agent an identifier and a unique name when it creates

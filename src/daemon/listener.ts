@@ -30,7 +30,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
 import { packageVersion } from "../version.js";
-import { localOwner, type Owner, serverAgentOwner } from "./owners.js";
+import { type Owner, serverAgentOwner } from "./owners.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
 
 /** What a request gets when its agent cannot serve it. */
@@ -40,8 +40,6 @@ const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
 
 /** Request admission uses the validated authentication settings without translating them. */
 export type McpAuthentication = DaemonSettings["authentication"];
-
-type OAuthSettings = Extract<McpAuthentication, { readonly kind: "oauth" }>;
 
 /** The verified owner selects an agent; expiry bounds the admitted response stream. */
 interface AdmittedCaller {
@@ -92,7 +90,6 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* (
     }
     const path = new URL(request.url, "http://localhost").pathname;
     if (
-      authentication.kind === "oauth" &&
       path === protectedResourcePath(authentication) &&
       request.method === "GET"
     ) {
@@ -162,14 +159,11 @@ function untilStopped<E, R>(
   );
 }
 
-/** A local bearer daemon binds and advertises the same default address. */
-const LOOPBACK_HOST = "127.0.0.1";
-
 /** Returns after listening. Scope closure disconnects streaming requests before the listener closes. */
 export const serveMcp = Effect.fn("Mcp.serve")(function* (
   port: number,
   app: HttpApp.Default<never, Scope.Scope>,
-  host: string = LOOPBACK_HOST,
+  host: string,
 ) {
   const listener = yield* Effect.sync(createServer);
   const http = yield* NodeHttpServer.make(() => listener, { host, port });
@@ -214,47 +208,24 @@ function failureKind(error: unknown): Record<string, string> {
 }
 
 /**
- * The Host and Origin headers a request may carry. A local bearer daemon is reached only through
- * loopback. An OAuth daemon is reached at its resource and from its allowed
- * origins.
+ * The Host and Origin headers a request may carry: the daemon is reached at
+ * its resource and from its allowed origins.
  */
 function trustedCallers(authentication: McpAuthentication) {
-  if (authentication.kind === "oauth") {
-    return {
-      host: (host: string) =>
-        host.toLowerCase() === authentication.resource.host.toLowerCase(),
-      origin: (origin: string) =>
-        authentication.allowedOrigins.includes(origin),
-    };
-  }
   return {
-    host: (host: string) => isLoopbackUrl(`http://${host}`),
-    origin: isLoopbackUrl,
+    host: (host: string) =>
+      host.toLowerCase() === authentication.resource.host.toLowerCase(),
+    origin: (origin: string) => authentication.allowedOrigins.includes(origin),
   };
 }
 
-/** A plain http(s) URL on this machine, with no credentials or fragment. */
-function isLoopbackUrl(value: string): boolean {
-  const url = Schema.decodeUnknownOption(Schema.URL)(value);
-  if (Option.isNone(url)) {
-    return false;
-  }
-  const { username, password, hash, protocol, hostname } = url.value;
-  const plain = !username && !password && !hash;
-  return (
-    plain &&
-    ["http:", "https:"].includes(protocol) &&
-    ["127.0.0.1", "[::1]", "localhost"].includes(hostname)
-  );
-}
-
 /** Metadata and bearer challenges derive from the same fixed resource. */
-function protectedResourcePath(oauth: OAuthSettings): string {
+function protectedResourcePath(oauth: McpAuthentication): string {
   return new URL(getOAuthProtectedResourceMetadataUrl(oauth.resource)).pathname;
 }
 
 /** Native discovery does not grant access to any daemon operation. */
-function protectedResourceResponse(oauth: OAuthSettings): Response {
+function protectedResourceResponse(oauth: McpAuthentication): Response {
   return Response.json(
     {
       resource: oauth.resource.href,
@@ -274,13 +245,13 @@ type Admit = (
 /**
  * One cached verifier serves every request, including Events and receipts. A
  * request carrying the server agent's credential is admitted as the server
- * agent; any other goes through the configured authentication.
+ * agent; any other is admitted by its access token.
  */
 function makeRequestAdmission(
   authentication: McpAuthentication,
   serverAgentCredential: Option.Option<Redacted.Redacted>,
 ): Effect.Effect<Admit, AuthenticationRefused> {
-  return Effect.map(configuredAdmission(authentication), (admit) => {
+  return Effect.map(tokenAdmission(authentication), (admit) => {
     if (Option.isNone(serverAgentCredential)) {
       return admit;
     }
@@ -297,26 +268,19 @@ function makeRequestAdmission(
 
 /** Rejected requests disclose only the standard discovery challenge. */
 function authenticationChallenge(authentication: McpAuthentication): Response {
-  const challenge =
-    authentication.kind === "local"
-      ? "Bearer"
-      : `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.resource)}"`;
   return new Response("Unauthorized", {
     status: 401,
-    headers: { "www-authenticate": challenge, "cache-control": "no-store" },
+    headers: {
+      "www-authenticate": `Bearer resource_metadata="${getOAuthProtectedResourceMetadataUrl(authentication.resource)}"`,
+      "cache-control": "no-store",
+    },
   });
 }
 
-/** Admission by the configured local bearer or OAuth resource. */
-function configuredAdmission(
-  authentication: McpAuthentication,
+/** Admission of the owner an access token for the resource names. */
+function tokenAdmission(
+  oauth: McpAuthentication,
 ): Effect.Effect<Admit, AuthenticationRefused> {
-  if (authentication.kind === "local") {
-    return Effect.succeed(
-      bearerAdmission(authentication.credential, localOwner),
-    );
-  }
-  const oauth = authentication;
   return discoverKeys(oauth).pipe(
     Effect.map(
       (keys) => (authorization: string) =>
@@ -381,7 +345,7 @@ const issuerMetadata = Schema.Struct({
 });
 
 /** Discover the key-set location from the configured issuer before opening the listener. */
-function discoverKeys(oauth: OAuthSettings) {
+function discoverKeys(oauth: McpAuthentication) {
   return HttpClient.get(
     new URL(
       `${oauth.issuer.replace(/\/$/u, "")}/.well-known/openid-configuration`,

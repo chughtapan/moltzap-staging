@@ -32,12 +32,12 @@ docker run --detach --name agent-daemon \
 ```
 
 Wait for `sharnessd listening` in `docker logs agent-daemon`. A local sidecar
-host uses `--network container:agent-daemon` and its matching MCP bearer file.
+host uses `--network container:agent-daemon` and a file holding its owner's access token.
 Its loopback MCP URL stays inside that shared namespace. See the
 [OpenClaw](../openclaw-agent/README.md) or
 [NanoClaw](../nanoclaw-agent/README.md) image instructions.
 
-For hosted OAuth access, configure the canonical HTTPS MCP resource and bind
+For hosted access, configure the canonical HTTPS MCP resource and bind
 the daemon to `0.0.0.0` behind the deployment's HTTPS ingress. The daemon must
 reach the OAuth issuer when it starts. Keep one daemon replica and retain the
 database when replacing it.
@@ -54,7 +54,7 @@ Use an exec startup probe that connects to `127.0.0.1:4319` before starting the
 host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
 establishes listener readiness, and agents are restored asynchronously.
 
-Mount only the MCP bearer into the host and set `SHARNESS_MCP_URL` and
+Mount only the owner's access token into the host and set `SHARNESS_MCP_URL` and
 `SHARNESS_MCP_CREDENTIAL_FILE` there. Keep database credentials private to the daemon. Choose daemon and host images from the same
 published commit. Container runtimes own their lifecycle and signals.
 

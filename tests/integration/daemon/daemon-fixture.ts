@@ -33,7 +33,9 @@ import {
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
+  issuerFixture,
   openTestDatabase,
+  requiredScope,
   restrictedLogin,
 } from "@social-harness/social-harness/test";
 import {
@@ -58,7 +60,6 @@ import {
   writeMessagePolicy,
 } from "../firewall/policy-fixture.js";
 import { callTool } from "../tool-call.js";
-import { issuerFixture, requiredScope } from "./oauth-fixture.js";
 
 /** A fixture failure, with the child's output when it has any. */
 export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
@@ -75,8 +76,8 @@ export interface RunningProcess {
 /** What `sharedDaemon` prepares differently from its defaults. */
 export interface DaemonOptions {
   /**
-   * Settings that replace the fixture's: `mode` for client/server mode,
-   * `authentication` for a local bearer, a message policy, norms.
+   * Settings that replace the fixture's: `serverAgentName` for client/server
+   * mode, a message policy, norms.
    */
   readonly settings?: Readonly<Record<string, unknown>>;
   /**
@@ -406,7 +407,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   const directory = yield* filesystem
     .makeTempDirectoryScoped({ prefix: "sharness-daemon-" })
     .pipe(Effect.mapError(failed("could not create the daemon directory")));
-  const issuer = yield* issuerFixture.pipe(
+  const issuer = yield* issuerFixture().pipe(
     Effect.mapError(failed("could not start the test issuer")),
   );
   const port = yield* reservePort;
@@ -426,7 +427,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
     port,
     host: LOOPBACK_HOST,
     authentication: {
-      kind: "oauth",
       resource,
       issuer: issuer.issuer,
       scope: requiredScope,
