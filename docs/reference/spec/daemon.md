@@ -39,7 +39,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | --- | --- |
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
-| `authentication` | Required [OAuth configuration](#mcp-authentication) |
+| `authentication` | Required OAuth configuration, below |
 | `serverAgentName` | Optional name of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
@@ -75,13 +75,12 @@ agent has a firewall and norms:
 
 ### MCP authentication
 
-The daemon admits a request by its OAuth access token. `authentication` takes
-these properties:
+OAuth authentication takes these properties:
 
 | Property | Requirement |
 | --- | --- |
 | `resource` | Canonical HTTPS URL whose path is exactly `/mcp`, without credentials, query or fragment |
-| `issuer` | HTTPS issuer URL; HTTP is accepted only for an issuer on `127.0.0.1`, for development and tests |
+| `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
 | `scope` | Required access-token scope |
 | `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
@@ -97,7 +96,7 @@ The exact issuer and subject select one agent. Email addresses and
 caller-supplied agent identifiers do not select an agent. An owner's first
 admitted MCP request creates that owner's
 [agent](./identity/identity-and-attribution.md#agents), and later requests
-select the same one. Configuration itself creates no owner or agent. A host
+select the same one. OAuth setup itself creates no owner or agent. A host
 that runs unattended presents a token the identity provider issued to it, and
 the daemon treats it like any other.
 An admitted stream closes when its token expires; hosts renew their
