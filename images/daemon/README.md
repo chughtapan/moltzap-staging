@@ -1,7 +1,7 @@
 # Daemon image
 
-Run the image's installed `sharnessd` with a prepared PostgreSQL database, its encryption
-key and a private settings file. One daemon serves every owner's agent
+Run the image's installed `sharnessd` with a prepared PostgreSQL database
+and a private settings file. One daemon serves every owner's agent
 through one MCP endpoint. PostgreSQL enforces row-level security between
 agents. Deployment prepares schema before startup and owns
 manual image upgrades.

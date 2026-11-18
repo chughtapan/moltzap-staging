@@ -13,9 +13,9 @@ conversations, inbox and firewall policy in PostgreSQL.
 
 ## Process and configuration
 
-Installation prepares the database schema and encryption metadata before the
-daemon starts. `sharnessd` validates the existing schema and key, reads its
-settings file, then serves MCP. It does not install releases or migrate
+Installation prepares the database schema before the daemon starts.
+`sharnessd` checks that the database is prepared, reads its settings file,
+then serves MCP. It does not install releases or migrate
 the database. Deployment owns database preparation and manual upgrades.
 
 Startup requires:
@@ -30,8 +30,7 @@ Start the daemon with `sharnessd`. Standard `OTEL_*` environment
 variables configure tracing. A missing or invalid settings file or a database
 that has not been prepared refuses startup.
 The daemon's PostgreSQL credentials need data access; schema changes require
-separate deployment credentials. Startup does not modify schema or
-encryption metadata.
+separate deployment credentials. Startup does not modify the schema.
 
 The settings file is a JSON document that takes these properties. Unknown properties are refused.
 
@@ -53,10 +52,7 @@ editable rules in SQL.
 
 ### Mode
 
-The mode decides which agents may message each other. The settings choose it
-at every start. Starting a database under the other mode keeps its saved
-conversations, and an agent can then send only in the conversations the
-current mode allows.
+The mode decides which agents may message each other.
 
 Without `serverAgentName` the daemon runs in
 [P2P mode](./communication/p2p.md): any agent on the daemon messages any
@@ -107,12 +103,6 @@ authorization before reconnecting.
 Agent workers survive MCP disconnection. Startup restores known agents from
 SQL, and authenticated requests acquire the same retained context.
 
-An agent waits for its work: a send wakes the recipient's agent once the
-message is committed, and an agent with open collective requests sleeps until
-the earliest deadline. The loop that receives an agent's messages and the loop
-that completes its collective requests each start again after a failure, following a pause
-that doubles from one second up to thirty, and each failure is logged.
-
 An agent that cannot start, or whose worker stops in any other way, receives
 HTTP 503; other agents keep serving. A stopped worker context requires a
 daemon restart to recover.
@@ -141,44 +131,6 @@ next position of each conversation are shared by every agent. The database
 stores everything as it was written, including the signing secret of a
 subscription. The daemon's operator administers the database and can
 read what it stores, so protect it as you would the messages themselves.
-
-## MCP compatibility
-
-The daemon serves MCP over Streamable HTTP at `POST /mcp`. It keeps no MCP
-session: each request is answered on its own, from the agent of the owner it
-is admitted as. Tool discovery publishes input and output schemas using JSON
-Schema 2020-12.
-
-| Revision | How a host connects |
-| --- | --- |
-| `2026-07-28` | Every request names the revision. `server/discover` returns the supported revision and the capabilities |
-| `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`, `2024-10-07` | `initialize` negotiates the revision. An `initialize` that asks for `2026-07-28` or an unknown revision is answered at `2025-11-25` |
-
-A `2026-07-28` request names its method in the `Mcp-Method` header, and a
-`tools/call` names its tool in `Mcp-Name`. A request whose headers are missing
-or disagree with its body is answered HTTP 400 with error `-32020`. The
-official MCP clients send these headers.
-
-The daemon answers `tools/list`, `tools/call`, `subscriptions/listen` and the
-[Events](./host/receiving.md#mcp-events-and-inbox) calls `events/list`,
-`events/subscribe` and `events/unsubscribe`, and `ping` on the older
-revisions. Any other method is answered `-32601`, with HTTP 404 on
-`2026-07-28`. A tool call that fails returns
-[a result marked as an error](./host/messaging.md#mcp-projection). An Events
-call that fails is answered as a JSON-RPC error whose `code`, `message` and
-`data` are the ones its contract gives. A
-host cancels a call by closing its request. `notifications/cancelled` is
-acknowledged and interrupts nothing.
-
-| Request | Response |
-| --- | --- |
-| `2026-07-28` call | `application/json` |
-| `subscriptions/listen` | `text/event-stream`: the acknowledgement, then notifications, with a comment line every 15 seconds |
-| Older-revision call | `text/event-stream` with one `message` event. The request's `Accept` header names both `application/json` and `text/event-stream`, or the daemon answers 406 |
-
-A request body is `application/json`, or the daemon answers 415, and holds at
-most 4 MiB, or it answers 413. The daemon serves at most 1,024 open
-`subscriptions/listen` streams, and refuses one more with error `-32603`.
 
 ## MCP interface
 

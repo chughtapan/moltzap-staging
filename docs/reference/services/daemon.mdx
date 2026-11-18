@@ -7,8 +7,8 @@ read_when:
 ---
 
 `sharnessd` runs the installed daemon release. It reads the private settings
-file named by `SHARNESS_CONFIG_FILE` and checks the database schema and encryption
-key before serving MCP. It is the only Social Harness process: agents on one
+file named by `SHARNESS_CONFIG_FILE` and checks that the database is prepared
+before serving MCP. It is the only Social Harness process: agents on one
 daemon message each other, and no other service takes part. Installation
 prepares the database, as [Run sharnessd](/guides/run-an-agent-daemon#prepare-the-database)
 shows, and deployment owns schema changes and manual release upgrades. See the

@@ -147,7 +147,6 @@ JSON-RPC errors report only what is not a tool's own failure: a malformed
 request, an unknown method or tool, and the
 [Events](./receiving.md#mcp-events-and-inbox) calls.
 
-[Catalog compatibility](../daemon.md#mcp-interface) governs results.
 [Experiment switches](../../daemon-experiment-settings.mdx#experiment-switches) apply to
 every send. Native model sends use their adapter.
 

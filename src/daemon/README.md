@@ -3,7 +3,7 @@
 The daemon admits each request as its owner's agent and connects that agent's
 communication, firewall and durable inbox. It checks new messages and stores
 each permitted one as an inbox entry before notifying the host. `startup.ts` chooses the mode,
-P2P or client/server, once and builds every agent from it.
+P2P or client/server, and builds every agent from it.
 
 The daemon runs one MCP handler, built on `@modelcontextprotocol/server`, which
 parses requests, negotiates the protocol revision and frames responses.
@@ -19,8 +19,7 @@ that owner's first request.
 ```mermaid
 flowchart LR
   A[Load configuration] --> B[Open the database]
-  B --> C[Claim the mode]
-  C --> D[Restore agents and unfinished work]
+  B --> D[Restore agents and unfinished work]
   D --> E[Serve authenticated requests]
 ```
 
@@ -66,5 +65,4 @@ Domain operations decode saved values with their owning Effect Schemas and use
 SQL transactions for related writes.
 Delivery changes an inbox entry's status and leaves its content stored.
 
-The database layer rejects incompatible state before serving requests. Recovery
-restores accepted work before new requests begin.
+Recovery restores accepted work before new requests begin.

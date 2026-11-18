@@ -102,9 +102,7 @@ writeFileSync(join(dir, "env"), [
 the daemon to the issuer and is always an HTTPS URL. A request to the
 listener at `http://127.0.0.1:4319/mcp` carries the same host, which is what
 the daemon checks. `issuer` is the development issuer you start below. To use
-another PostgreSQL database, put its connection URL in `env`. Keep `env` with
-the database: the key in it cannot be recovered, and the daemon does not start
-on the database without it.
+another PostgreSQL database, put its connection URL in `env`.
 
 </Step>
 <Step title="Prepare the database">
