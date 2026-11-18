@@ -13,14 +13,12 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   acquireMcpConnection,
-  callTool,
-  callToolAsWritten,
   connectFromEnvironment,
   McpConnectError,
+  sendMessage,
 } from "../mcp/connection.js";
-import { toolDefinitions, type ToolRequest } from "../mcp/tools.js";
+import { toolDefinitions } from "../mcp/tools.js";
 import {
-  connectInProcessClient,
   loopbackMcpEndpoint,
   mcpFixture,
   mcpTestCredential,
@@ -256,151 +254,39 @@ describe("the host's environment", () => {
 });
 
 describe("send outcomes", () => {
+  const hello = { to: "agent:bob", text: "hello" };
   it.each([
-    new Error("transport closed"),
-    new ProtocolError(-32603, "private failure"),
-  ])("does not retry an uncertain send", (error) => {
-    const mcp = new Client(implementation);
-    const called = vi.spyOn(mcp, "callTool").mockRejectedValue(error);
-    const sendArguments = Schema.decodeUnknownSync(
-      toolDefinitions.send_message.input,
-    )({
-      to: "agent:bob",
-      text: "hello",
-    });
-    return callTool(mcp, {
-      name: "send_message",
-      arguments: sendArguments,
-    }).pipe(
-      Effect.flip,
-      Effect.tap((failure) =>
-        Effect.sync(() => {
-          expect(failure).toMatchObject({
-            _tag: "SendError",
-            reason: "outcome-unknown",
-          });
-          expect(called).toHaveBeenCalledTimes(1);
-        }),
-      ),
-      Effect.asVoid,
-      Effect.runPromise,
-    );
-  });
-  it("treats a malformed completed send result as uncertain", () => {
-    const mcp = new Client(implementation);
-    vi.spyOn(mcp, "callTool").mockResolvedValue({
-      content: [],
-      structuredContent: { private: "invalid-result" },
-    });
-    const sendArguments = Schema.decodeUnknownSync(
-      toolDefinitions.send_message.input,
-    )({
-      to: "agent:bob",
-      text: "hello",
-    });
-    return callTool(mcp, {
-      name: "send_message",
-      arguments: sendArguments,
-    }).pipe(
-      Effect.flip,
-      Effect.tap((failure) =>
-        Effect.sync(() => {
-          expect(failure).toMatchObject({ reason: "outcome-unknown" });
-        }),
-      ),
-      Effect.asVoid,
-      Effect.runPromise,
-    );
-  });
-});
-
-describe("a send the daemon's tool does not take", () => {
-  const request = {
-    to: "agent:bob",
-    text: "Which day?",
-    collectiveRequest: {
-      op: "gather",
-      deadline: 60,
-      requestedSchema: {
-        type: "object",
-        properties: { slot: { type: "string" } },
-      },
-    },
-  };
-  const connected = (options: Parameters<typeof mcpFixture>[0]) =>
-    mcpFixture(options).pipe(
-      Effect.flatMap((fixture) =>
-        connectInProcessClient((input, init) =>
-          fixture.fetch(new Request(input, init)),
-        ),
-      ),
-    );
-
-  it("fails naming the refused argument when the daemon hides collective requests", () =>
-    Effect.gen(function* () {
-      const mcp = yield* connected({ hideCollectives: true });
-      const failure = yield* callTool(mcp, {
-        name: "send_message",
-        arguments: Schema.decodeUnknownSync(toolDefinitions.send_message.input)(
-          request,
-        ),
-      }).pipe(Effect.flip);
-      expect(failure).toMatchObject({
-        _tag: "SendError",
-        reason: "content-invalid",
-        issues: [{ path: ["collectiveRequest"] }],
-      });
-    }).pipe(Effect.scoped, Effect.runPromise));
-
-  it("fails naming the malformed argument of a collective request an agent wrote", () =>
-    Effect.gen(function* () {
-      const mcp = yield* connected({});
-      const failure = yield* callToolAsWritten(mcp, "send_message", {
-        ...request,
-        collectiveRequest: {
-          ...request.collectiveRequest,
-          deadline: "tomorrow",
-        },
-      }).pipe(Effect.flip);
-      expect(failure).toMatchObject({
-        _tag: "SendError",
-        reason: "content-invalid",
-        issues: [{ path: ["collectiveRequest", "deadline"] }],
-      });
-    }).pipe(Effect.scoped, Effect.runPromise));
-});
-
-describe("management failures", () => {
-  const transportDetail = "private transport detail";
-  const failures: ReadonlyArray<{
-    readonly request: ToolRequest;
-    readonly data: { readonly reason: string };
-    readonly tag: string;
-  }> = [
     {
-      request: { name: "list_conversations", arguments: {} },
-      data: { reason: "invalid-cursor" },
-      tag: "HistoryError",
+      ending: "the transport closes",
+      error: new Error("transport closed"),
+      reason: "outcome-unknown",
     },
     {
-      request: { name: "read_policy", arguments: {} },
-      data: { reason: "approval-refused" },
-      tag: "FirewallPolicyError",
+      ending: "the daemon answers a protocol error",
+      error: new ProtocolError(-32603, "private failure"),
+      reason: "outcome-unknown",
     },
-  ];
-  it.each(failures)(
-    "reconstructs $tag from the owning wire schema",
-    ({ request, data, tag }) => {
+    {
+      ending: "the daemon refuses the connection",
+      error: new Error("fetch failed", {
+        cause: Object.assign(new Error("refused"), { code: "ECONNREFUSED" }),
+      }),
+      reason: "network-unavailable",
+    },
+  ])(
+    "answers $reason, without calling again, when $ending",
+    ({ error, reason }) => {
       const mcp = new Client(implementation);
-      vi.spyOn(mcp, "callTool").mockRejectedValue(
-        new ProtocolError(-32603, transportDetail, data),
-      );
-      return callTool(mcp, request).pipe(
-        Effect.flip,
-        Effect.tap((failure) =>
+      const called = vi.spyOn(mcp, "callTool").mockRejectedValue(error);
+      return sendMessage(mcp, hello).pipe(
+        Effect.tap((result) =>
           Effect.sync(() => {
-            expect(failure).toMatchObject({ _tag: tag, reason: data.reason });
-            expect(String(failure)).not.toContain(transportDetail);
+            expect(result).toMatchObject({
+              isError: true,
+              structuredContent: { reason },
+            });
+            expect(JSON.stringify(result)).not.toContain(error.message);
+            expect(called).toHaveBeenCalledTimes(1);
           }),
         ),
         Effect.asVoid,
@@ -408,4 +294,23 @@ describe("management failures", () => {
       );
     },
   );
+  it("treats a completed send whose result is not a send's as uncertain", () => {
+    const mcp = new Client(implementation);
+    vi.spyOn(mcp, "callTool").mockResolvedValue({
+      content: [],
+      structuredContent: { private: "invalid-result" },
+    });
+    return sendMessage(mcp, hello).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result).toMatchObject({
+            isError: true,
+            structuredContent: { reason: "outcome-unknown" },
+          });
+        }),
+      ),
+      Effect.asVoid,
+      Effect.runPromise,
+    );
+  });
 });

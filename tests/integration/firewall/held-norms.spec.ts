@@ -16,7 +16,6 @@
  */
 
 import {
-  callTool as call,
   MAXIMUM_WAIT_SECONDS,
   type PermittedItem,
 } from "@social-harness/social-harness";
@@ -25,6 +24,7 @@ import { expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
 import { sharedDaemon, type SignedIn } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
+import { callTool as call } from "../tool-call.js";
 import { writeNorms } from "./policy-fixture.js";
 
 /** Each test starts one daemon under `tsx`. */

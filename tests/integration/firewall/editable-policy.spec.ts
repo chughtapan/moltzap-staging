@@ -4,7 +4,7 @@ import type {
   DecisionProvider,
   DecisionRequest,
 } from "@social-harness/social-harness/service";
-import { callTool, toolDefinitions } from "@social-harness/social-harness";
+import { toolDefinitions } from "@social-harness/social-harness";
 import { Deferred, Effect, Fiber, Schedule, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
@@ -15,6 +15,7 @@ import {
 } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
+import { callTool } from "../tool-call.js";
 import {
   launchDaemon,
   markedPolicy,

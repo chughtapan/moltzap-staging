@@ -1,17 +1,13 @@
 /** @file NanoClaw channel that hands inbox entries to the host and sends what its model writes. */
 import {
   type AgentCard,
-  callToolAsWritten,
   connectFromEnvironment,
-  type DeliveryAcknowledgeError,
-  type FirewallRefusal,
   type InboxEntry,
   type McpConnectError,
   type McpConnection,
   MessageAddressInput,
   packageVersion,
-  type RequestError,
-  type SendError,
+  sendMessage,
 } from "@social-harness/social-harness";
 import {
   absurd,
@@ -192,17 +188,26 @@ function extractOutboundText(message: OutboundMessage): string | null {
 }
 
 /**
- * Reports these failures to the model instead of asking NanoClaw to retry.
- * Invalid input would fail again, and a retry of an `outcome-unknown` send
+ * The reasons of a failed send that is reported to the model instead of
+ * failing NanoClaw's queue item, which NanoClaw would retry. A refusal or
+ * invalid input would fail again, and a retry of an `outcome-unknown` send
  * would create a new send.
  */
-const FINAL_REFUSALS: ReadonlySet<SendError["reason"]> = new Set([
+const FINAL_REFUSALS: ReadonlySet<string> = new Set([
+  "invalid-arguments",
   "invalid-address",
   "unknown-agent",
   "membership-invalid",
   "content-invalid",
+  "collective-failed",
+  "firewall-refused",
   "outcome-unknown",
 ]);
+
+/** Reads the reason a failed result's structured content names. */
+const failureReason = Schema.decodeUnknownOption(
+  Schema.Struct({ reason: Schema.String }),
+);
 
 /**
  * The sender NanoClaw records for what no agent authored: a collective result
@@ -406,10 +411,7 @@ class HarnessChannelAdapter {
   private sendOutbound(
     address: string,
     message: OutboundMessage,
-  ): Effect.Effect<
-    void,
-    ChannelError | SendError | RequestError | FirewallRefusal
-  > {
+  ): Effect.Effect<void, ChannelError> {
     const activation = this.activation;
     const host = this.host;
     if (activation?.state !== "active" || host === null) {
@@ -419,48 +421,47 @@ class HarnessChannelAdapter {
         }),
       );
     }
-    return decodeOutboundText(address, message).pipe(
-      Effect.flatMap((outbound) =>
-        callToolAsWritten(
+    return Effect.gen(
+      function* (this: HarnessChannelAdapter) {
+        const outbound = yield* decodeOutboundText(address, message);
+        const result = yield* sendMessage(
           activation.connection.mcp,
-          "send_message",
           sendArguments(outbound),
-        ).pipe(
-          Effect.asVoid,
-          Effect.catchTag("RequestError", (error) =>
-            this.reportRefusedText(host, outbound.to, error.message),
-          ),
-          Effect.catchTag("FirewallRefusal", (error) =>
-            this.reportRefusedText(host, outbound.to, error.message),
-          ),
-          Effect.catchTag(
-            "SendError",
-            (error): Effect.Effect<void, ChannelError | SendError> =>
-              FINAL_REFUSALS.has(error.reason)
-                ? this.reportFinalRefusal(host, outbound.to, error)
-                : Effect.fail(error),
-          ),
-        ),
-      ),
+        );
+        if (result.isError === true) {
+          yield* this.reportFailedSend(host, outbound.to, result);
+        }
+      }.bind(this),
     );
   }
 
   /**
-   * Completes an `outcome-unknown` send even when the report fails, so NanoClaw
-   * cannot repeat a send that may already have reached its recipients. The
-   * model can choose to resend deliberately.
+   * Tells the model what a failed send's result says. A failure whose reason
+   * is not final fails the queue item instead. An `outcome-unknown` send
+   * completes even when the report fails, so NanoClaw cannot repeat a send
+   * that may already have reached its recipients; the model can choose to
+   * resend deliberately.
    */
-  private reportFinalRefusal(
+  private reportFailedSend(
     host: ChannelSetup,
     to: MessageAddressInput,
-    error: SendError,
+    result: Effect.Effect.Success<ReturnType<typeof sendMessage>>,
   ): Effect.Effect<void, ChannelError> {
-    const report = this.reportRefusedText(host, to, error.message);
-    return error.reason === "outcome-unknown"
+    const text = result.content
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n");
+    const reason = Option.getOrUndefined(
+      failureReason(result.structuredContent),
+    )?.reason;
+    if (reason === undefined || !FINAL_REFUSALS.has(reason)) {
+      return Effect.fail(new ChannelError({ reason: text }));
+    }
+    const report = this.reportRefusedText(host, to, text);
+    return reason === "outcome-unknown"
       ? report.pipe(
           Effect.catchAll((unreported) =>
             Effect.logWarning(
-              `Social Harness completed a ${error.reason} send to ${to} without reporting it: ${unreported.message}`,
+              `Social Harness completed a ${reason} send to ${to} without reporting it: ${unreported.message}`,
             ),
           ),
         )
@@ -491,7 +492,7 @@ class HarnessChannelAdapter {
 
   private handleInboxEntry(
     entry: InboxEntry,
-  ): Effect.Effect<void, ChannelError | DeliveryAcknowledgeError> {
+  ): Effect.Effect<void, ChannelError> {
     const host = this.host;
     if (host === null) {
       return Effect.void;

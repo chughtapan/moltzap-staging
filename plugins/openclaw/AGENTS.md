@@ -52,9 +52,10 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   callback failures; they do not restore pending daemon delivery. OpenClaw owns
   processing, notification and task recovery.
 - History and status use the MCP catalog.
-- Keep host failures and the library's failures typed at the boundary. A delivery
-  failure follows the Promise-based OpenClaw contract without exposing the library's
-  internals.
+- Keep host failures typed at the boundary. A failed send is the result the
+  daemon returns, marked as an error, and its text reaches the model
+  unchanged. A delivery failure follows the Promise-based OpenClaw contract
+  without exposing the library's internals.
 - Never use `unknown` types; define explicit host-facing interfaces.
 
 Send returns no receipt; completion means the daemon durably accepted the

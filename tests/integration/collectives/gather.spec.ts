@@ -1,6 +1,5 @@
 /** @file A requester and two recipients on one daemon run gathers. */
 
-import { RequestError, SendError } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -89,7 +88,6 @@ function expectUnknownGatherMemberRefused({
         requestedSchema: slotSchema,
       },
     }).pipe(Effect.flip);
-    expect(failure).toBeInstanceOf(SendError);
     expect(failure).toMatchObject({ reason: "unknown-agent" });
     expect(failure).toHaveProperty(
       "detail",
@@ -282,7 +280,7 @@ function expectInvalidResponseRefused(
         content: { slot: "sun" },
       },
     }).pipe(Effect.flip);
-    expect(invalid).toBeInstanceOf(RequestError);
+    expect(invalid).toMatchObject({ reason: "collective-failed" });
     expect(invalid).toMatchObject({
       requestId,
       failure: {

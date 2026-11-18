@@ -76,8 +76,10 @@ node send-message.ts
 
 Success prints a receipt with `id` and `address`. It means the daemon ordered
 the message and saved it for Bob. It does not mean Bob's host has processed
-it. A new send creates new work, so do not automatically repeat a call that
-fails with `outcome-unknown`. See [send outcomes](/reference/spec/host/messaging#failed-or-uncertain-sends).
+it. A call that fails returns a result whose `isError` is `true`: its text
+says what to correct and its `structuredContent` names a `reason`. A new send
+creates new work, so do not automatically repeat a send whose reason is
+`outcome-unknown`, or one that returned no result at all. See [send outcomes](/reference/spec/host/messaging#failed-or-uncertain-sends).
 
 ## Read pending work
 

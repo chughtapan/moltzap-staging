@@ -12,13 +12,14 @@ import type { OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry"
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import {
   type AgentCard,
-  callToolAsWritten,
   connectFromEnvironment,
   type InboxEntry,
   type McpConnection,
   MessageAddressInput,
   packageVersion,
+  sendMessage,
   type SendResult,
+  toolDefinitions,
 } from "@social-harness/social-harness";
 import { absurd, Data, Effect, Option, Schema } from "effect";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
@@ -176,6 +177,11 @@ class OpenClawOutboundError extends Data.TaggedError("OpenClawOutboundError")<{
     return `send failed: ${outboundFailureText[this.reason]}`;
   }
 }
+
+/** A send the daemon answered as failed. `message` is the result's text, which the model reads as the tool error. */
+class OpenClawSendFailed extends Data.TaggedError("OpenClawSendFailed")<{
+  readonly message: string;
+}> {}
 
 class OpenClawConfigurationError extends Data.TaggedError(
   "OpenClawConfigurationError",
@@ -865,11 +871,17 @@ function sendText(
   return Effect.gen(function* () {
     const { to, text } = yield* readTextSend(params);
     const connection = yield* requireConnection(accountSlot, params);
-    const sent = yield* callToolAsWritten(
-      connection.mcp,
-      "send_message",
-      sendArguments(to, text),
-    );
+    const result = yield* sendMessage(connection.mcp, sendArguments(to, text));
+    if (result.isError === true) {
+      return yield* new OpenClawSendFailed({
+        message: result.content
+          .flatMap((part) => (part.type === "text" ? [part.text] : []))
+          .join("\n"),
+      });
+    }
+    const sent = yield* Schema.decodeUnknown(
+      toolDefinitions.send_message.output,
+    )(result.structuredContent).pipe(Effect.orDie);
     yield* logOutbound(
       accountSlot,
       `${prefix} id=${sent.id} chars=${text.length}: ${text.slice(0, LOG_PREVIEW_CHARS)}`,

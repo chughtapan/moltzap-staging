@@ -11,7 +11,6 @@ export {
   CollectiveResponse,
   type CollectiveResultSources,
   DeadlineSeconds,
-  decodeCollectiveFailure,
   encodeCollectiveContent,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,

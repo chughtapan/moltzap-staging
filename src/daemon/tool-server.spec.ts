@@ -426,6 +426,7 @@ it("refuses a call with a field its tool does not take, naming the field without
             { text: `Invalid tool arguments: ${name}: Unexpected field` },
           ],
           structuredContent: {
+            reason: "invalid-arguments",
             issues: [{ path: [name], message: "Unexpected field" }],
           },
         });

@@ -295,7 +295,10 @@ function invalidArguments(error: ParseResult.ParseError) {
     0,
     MAXIMUM_VALIDATION_ISSUES,
   );
-  return failed(`Invalid tool arguments: ${issuesText(issues)}`, { issues });
+  return failed(`Invalid tool arguments: ${issuesText(issues)}`, {
+    reason: "invalid-arguments",
+    issues,
+  });
 }
 
 /** What the tool expects where an issue was found, without the value that was there. */

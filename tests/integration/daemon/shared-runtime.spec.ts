@@ -3,7 +3,6 @@ import { HttpClient } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
-  callTool,
   MAXIMUM_WAIT_SECONDS,
   toolDefinitions,
 } from "@social-harness/social-harness";
@@ -22,6 +21,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
+import { callTool } from "../tool-call.js";
 import {
   type Daemon,
   sharedDaemon,

@@ -1,13 +1,12 @@
 /** @file The tool contract: the values a host sends and receives, the address grammar, and the MCP tools, Events and wire errors built from them. */
 
-import { Effect, Option, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
   CollectiveOp,
   CollectiveResponse,
   DeadlineSeconds,
-  decodeCollectiveFailure,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
@@ -18,9 +17,8 @@ import {
   Page,
   PaginatedRequest,
   RequestedSchema,
-  RequestError,
+  type RequestError,
   SendError,
-  sendFailureReasons,
   wellFormedString,
 } from "../communication/index.js";
 import {
@@ -30,12 +28,10 @@ import {
   isStrictlyAscending,
 } from "../encoding.js";
 import {
-  checkedGuidanceSchema,
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
-  FirewallPolicyError,
-  FirewallRefusal,
-  firewallRefusalReasonSchema,
+  type FirewallPolicyError,
+  type FirewallRefusal,
   LocalGuidance,
   PermittedItem,
   policyReadSchema,
@@ -314,18 +310,6 @@ export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
 /** A wake-up to read the pending inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
-/**
- * Refusals disclose the check, the deciding chain rule, registered feedback and
- * the rule's matcher detail, without assessment evidence.
- */
-const firewallRefusalSchema = exactStruct({
-  checkId: checkedGuidanceSchema.fields.checkId,
-  refusal: firewallRefusalReasonSchema,
-  rule: Schema.optionalWith(Schema.NonEmptyString, { exact: true }),
-  feedback: Schema.Array(exactStruct({ text: Schema.NonEmptyString })),
-  detail: Schema.optionalWith(Schema.Unknown, { exact: true }),
-});
-
 const savedItemSchema = Schema.typeSchema(PermittedItem);
 
 const historyRecordSchema = Schema.Union(
@@ -395,45 +379,11 @@ const receiveMessagesInput = exactStruct({
   ),
 });
 const receiveMessagesOutput = Schema.typeSchema(InboxPage);
-/** What the daemon answers when a call's arguments are not what the tool takes. */
-const invalidArgumentsSchema = Schema.Struct({
-  issues: Schema.Array(
-    Schema.Struct({
-      path: Schema.Array(Schema.Union(Schema.String, Schema.Number)),
-      message: Schema.String,
-    }),
-  ),
-});
-
-/**
- * Preserves typed send and collective failures without disclosing unrelated
- * requests. New fields are ignored. Missing firewall or collective fields cannot
- * decode as a plain send reason.
- */
-const sendErrorDataSchema = Schema.Union(
-  invalidArgumentsSchema,
-  Schema.Struct({
-    reason: Schema.Literal("firewall-refused"),
-    ...firewallRefusalSchema.fields,
-  }),
-  Schema.Struct({
-    reason: Schema.Literal("collective-failed"),
-    requestId: Schema.optionalWith(MsgId, { exact: true }),
-    failure: Schema.Unknown,
-  }),
-  Schema.Struct({
-    reason: Schema.Literal(...sendFailureReasons),
-    detail: Schema.optionalWith(Schema.String, { exact: true }),
-  }),
-);
-
 /**
  * Writes the typed refusal's details, the collective request's message id and
  * failing members or fields as the structured content of a failed send.
  */
-function sendErrorData(
-  error: SendError | RequestError | FirewallRefusal,
-): typeof sendErrorDataSchema.Encoded {
+function sendErrorData(error: SendError | RequestError | FirewallRefusal) {
   if (error._tag === "FirewallRefusal") {
     return {
       reason: "firewall-refused",
@@ -457,107 +407,9 @@ function sendErrorData(
   return { reason: error.reason, detail: error.detail };
 }
 
-/** Reads a failed send's structured content back as the typed failure, with its send and collective details. */
-function sendErrorFromData(value: unknown) {
-  return Effect.gen(function* () {
-    const data = yield* Schema.decodeUnknown(sendErrorDataSchema)(value);
-    if ("issues" in data) {
-      return new SendError({
-        reason: "content-invalid",
-        detail: "the arguments are invalid",
-        issues: data.issues,
-      });
-    }
-    if ("refusal" in data) {
-      return new FirewallRefusal(data);
-    }
-    if ("failure" in data) {
-      return new RequestError({
-        failure: yield* decodeCollectiveFailure(data.failure),
-        ...(data.requestId === undefined ? {} : { requestId: data.requestId }),
-      });
-    }
-    return new SendError(data);
-  });
-}
-
-/**
- * How a tool call ended without the tool's result, as its caller saw it.
- * `refused` carries the structured content of the failed result the daemon
- * answered with, or the data of its protocol error. `unanswered` says whether
- * the request can have reached the daemon. `unreadable` is a successful answer
- * that is not the tool's result.
- */
-export type ToolCallFailure =
-  | { readonly kind: "refused"; readonly data: unknown }
-  | { readonly kind: "unanswered"; readonly sent: boolean }
-  | { readonly kind: "unreadable" };
-
 /** The structured content of a failure that tells its caller only a reason. */
 const reasonData = <Reason>(error: { readonly reason: Reason }) => ({
   reason: error.reason,
-});
-
-/**
- * A tool whose failed results carry `data` as structured content: `toData`
- * writes a typed failure as that data, and `make` turns the data a caller
- * receives back into the failure.
- */
-const failsWith = <A, I, E>(
-  data: Schema.Schema<A, I>,
-  make: (data: A) => E,
-  toData: (error: E) => I,
-) =>
-  ({
-    readsEveryFailure: false,
-    toData,
-    toError: (failure: ToolCallFailure): Option.Option<E> =>
-      failure.kind === "refused"
-        ? Option.map(Schema.decodeUnknownOption(data)(failure.data), make)
-        : Option.none(),
-  }) as const;
-
-/** A tool whose callers read no typed failure, whichever failure `toData` writes. */
-const failsUntyped = <E>(toData: (error: E) => unknown) =>
-  ({
-    readsEveryFailure: false,
-    toData,
-    toError: (): Option.Option<never> => Option.none(),
-  }) as const;
-
-/**
- * A send reads every failure. One that may have reached the daemon without a
- * readable answer has an unknown outcome, so its caller must not send again;
- * the daemon answers the same for a send that ends in a way it does not declare.
- */
-const sendFails = {
-  readsEveryFailure: true,
-  toData: sendErrorData,
-  unexpected: new SendError({ reason: "outcome-unknown" }),
-  toError: (
-    failure: ToolCallFailure,
-  ): Option.Option<SendError | RequestError | FirewallRefusal> => {
-    if (failure.kind === "unanswered" && !failure.sent) {
-      return Option.some(new SendError({ reason: "network-unavailable" }));
-    }
-    if (failure.kind !== "refused") {
-      return Option.some(sendFails.unexpected);
-    }
-    return Option.some(
-      Effect.runSync(
-        sendErrorFromData(failure.data).pipe(
-          Effect.orElseSucceed(() => sendFails.unexpected),
-        ),
-      ),
-    );
-  },
-} as const;
-
-const policyFailure = Schema.Struct({
-  reason: FirewallPolicyError.fields.reason,
-  ruleId: FirewallPolicyError.fields.ruleId,
-  path: FirewallPolicyError.fields.path,
-  problem: FirewallPolicyError.fields.problem,
 });
 
 const noArguments = Schema.Record({
@@ -583,25 +435,24 @@ const readNormsOutput = exactStruct({
   ),
 });
 
-const historyFails = failsWith(
-  Schema.Struct({ reason: HistoryError.fields.reason }),
-  (data) => new HistoryError(data),
-  reasonData,
-);
-const policyFails = failsWith(
-  policyFailure,
-  (data) => new FirewallPolicyError(data),
-  reasonData,
-);
+const historyFails = { toData: (error: HistoryError) => reasonData(error) };
+const policyFails = {
+  toData: (error: FirewallPolicyError) => reasonData(error),
+};
 
 /**
- * Each tool's contract: its description, argument and result schemas, and how
- * its failures are written and read. Discovery, the MCP handler and callers all
- * derive from it.
+ * Each tool's contract: its description, its argument and result schemas, and
+ * the structured content a failed call's result carries. `unexpected` is the
+ * failure a call answers when it ends in a way the tool does not declare; a
+ * send's is `outcome-unknown`, because the message may have been sent.
+ * Discovery, the MCP handler and callers all derive from it.
  */
 export const toolDefinitions = {
   send_message: {
-    failure: sendFails,
+    failure: {
+      toData: sendErrorData,
+      unexpected: new SendError({ reason: "outcome-unknown" }),
+    },
     description:
       "Send a message. With collectiveRequest the message is a collective request, which asks its recipients to respond in a form by a deadline; with collectiveResponse it is your response to one you received. Returns id, the message id, and address, the canonical conversation address. For a collective request, id is the requestId of the collectiveResult you will receive. A refusal names the argument or rule to correct: a collective-failed refusal carries failure.kind, one of schema-invalid, deadline-passed, request-none, request-responded, request-expired or response-invalid, and the requestId when the request is known. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
     input: SendArguments,
@@ -609,11 +460,7 @@ export const toolDefinitions = {
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
   receive_messages: {
-    failure: failsWith(
-      Schema.Struct({ reason: InboxError.fields.reason }),
-      (data) => new InboxError(data),
-      reasonData,
-    ),
+    failure: { toData: (error: InboxError) => reasonData(error) },
     description:
       "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: receiveMessagesInput,
@@ -625,7 +472,7 @@ export const toolDefinitions = {
     },
   },
   status: {
-    failure: failsUntyped((error: never) => error),
+    failure: { toData: (error: never) => error },
     description:
       "Read this agent's identifier and name. subscription reports whether a callback is subscribed for inbox wake-ups, when the subscription must be refreshed, whether it is stalled and its last error. Other agents address this agent as agent:<agentName>.",
     input: noArguments,
@@ -657,11 +504,12 @@ export const toolDefinitions = {
     annotations: readOnlyAnnotations,
   },
   update_policy: {
-    failure: failsWith(
-      policyFailure,
-      (data) => new FirewallPolicyError(data),
-      (error) => ({ reason: error.reason, ...error.data }),
-    ),
+    failure: {
+      toData: (error: FirewallPolicyError) => ({
+        reason: error.reason,
+        ...error.data,
+      }),
+    },
     description:
       "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
     input: policyUpdateSchema,
@@ -677,7 +525,7 @@ export const toolDefinitions = {
     annotations: readOnlyAnnotations,
   },
   read_norms: {
-    failure: failsUntyped((error: FirewallPolicyError) => reasonData(error)),
+    failure: policyFails,
     description:
       "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
     input: noArguments,

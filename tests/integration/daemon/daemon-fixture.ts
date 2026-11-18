@@ -29,7 +29,6 @@ import {
   AgentAddress,
   type AgentId,
   type AgentName,
-  callTool,
   type McpConnection,
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
@@ -54,6 +53,7 @@ import {
   markedPolicy,
   writeMessagePolicy,
 } from "../firewall/policy-fixture.js";
+import { callTool } from "../tool-call.js";
 import { issuerFixture, requiredScope } from "./oauth-fixture.js";
 import { acquirePostgres } from "./postgres-fixture.js";
 

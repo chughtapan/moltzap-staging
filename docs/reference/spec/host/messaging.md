@@ -134,10 +134,10 @@ Invalid arguments fail before invocation. Invalid completed results produce
 
 A tool call that fails returns a result marked as an error (`isError: true`).
 Its text is the failure's message, written for the model to act on. Its
-structured content holds the failure's fields: `reason` for a send, collective
-or firewall refusal and for every other tool's failure, or `issues` for
-invalid arguments, where each issue names a field's path and what the tool
-expects there without repeating the value sent. A collective failure names
+structured content holds the failure's fields, among them its `reason`.
+Invalid arguments have the reason `invalid-arguments` and `issues`, where each
+issue names a field's path and what the tool expects there without repeating
+the value sent. A collective failure names
 failing members or fields and includes `requestId`, the request's message id,
 when the request is known. A firewall refusal includes its check, rule and
 feedback. Credentials, private evidence and internal causes stay inside the

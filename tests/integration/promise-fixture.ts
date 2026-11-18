@@ -1,7 +1,6 @@
 /** @file Promise access to one daemon and its agents for node:test suites. */
 import {
   AgentAddress,
-  callTool,
   GroupAddress,
   type PermittedItem,
   type SendResult,
@@ -16,6 +15,7 @@ import {
 } from "./daemon/daemon-fixture.ts";
 import { inboxStream } from "./mcp-inbox.js";
 import { historyMessage } from "./saved-history.js";
+import { callTool } from "./tool-call.js";
 
 /* eslint-disable agent-code-guard/async-keyword, agent-code-guard/promise-type -- node:test consumes promises at the fixture boundary. */
 

@@ -11,7 +11,6 @@ export {
 } from "./chain.js";
 /** Guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
 export {
-  checkedGuidanceSchema,
   type DecisionProvider,
   DecisionProviderError,
   type DecisionRequest,
@@ -27,7 +26,6 @@ export {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
   FirewallPolicyError,
-  firewallRefusalReasonSchema,
   loadedMessagePolicySchema,
   loadMessagePolicy,
   policyReadSchema,
