@@ -32,18 +32,18 @@ import {
   sendFailureReasons,
 } from "../communication/index.js";
 import {
+  HistoryError,
+  MAXIMUM_WAIT_SECONDS,
+  toolDefinitions,
+} from "../mcp/tools.js";
+import {
   connectInProcessClient,
   mcpFixture,
   mcpRequest,
   mcpTestCredential,
 } from "./__tests__/mcp-fixtures.js";
-import {
-  HistoryError,
-  MAXIMUM_WAIT_SECONDS,
-  toolDefinitions,
-} from "./contracts.js";
-import { serveMcp } from "./http.js";
-import { localOwner, serverAgentOwner } from "./ownership.js";
+import { serveMcp } from "./listener.js";
+import { localOwner, serverAgentOwner } from "./owners.js";
 
 const response = Schema.parseJson(
   Schema.Struct({

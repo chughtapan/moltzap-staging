@@ -47,8 +47,8 @@ import {
   Identity,
   IdentityError,
 } from "../../identity.js";
+import { type HarnessSettings, SocialHarness } from "../agent.js";
 import { makeInbox } from "../inbox.js";
-import { type HarnessSettings, SocialHarness } from "../social-harness.js";
 
 type Harness = Context.Tag.Service<typeof SocialHarness>;
 type Policy = Context.Tag.Service<typeof Firewall>;

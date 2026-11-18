@@ -15,8 +15,8 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { InboxEntry } from "./contracts.js";
-import type { HistoryPage } from "./social-harness.js";
+import type { InboxEntry } from "../mcp/tools.js";
+import type { HistoryPage } from "./agent.js";
 import {
   CollectiveRequest,
   CollectiveRequestMessage,

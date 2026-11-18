@@ -7,7 +7,7 @@
  */
 import { NodeRuntime } from "@effect/platform-node";
 import { Console, Effect } from "effect";
-import { runDaemon } from "./harness/startup.js";
+import { runDaemon } from "./daemon/startup.js";
 
 /** What `--help` prints: the variables the daemon reads at every start. */
 const HELP_MESSAGE = [

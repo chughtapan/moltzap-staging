@@ -27,8 +27,8 @@ const globalIgnores = {
     "**/*.d.ts",
     ".claude/**",
     ".repos/**",
-    "src/vendor/effect-mcp/McpSchema.ts",
-    "src/vendor/effect-mcp/McpServer.ts",
+    "src/daemon/vendor/effect-mcp/McpSchema.ts",
+    "src/daemon/vendor/effect-mcp/McpServer.ts",
   ],
 };
 
@@ -487,7 +487,7 @@ export default [
   largeModuleRules,
   {
     files: [
-      "src/harness/inbox.ts",
+      "src/daemon/inbox.ts",
       "src/firewall/service.ts",
       "src/firewall/store.ts",
     ],

@@ -16,6 +16,6 @@ export { databaseConnection, databaseUrl } from "./database/index.js";
 /** Restricted-role tests exercise production transaction scoping. */
 export { withAgentRows } from "./database/index.js";
 /** Process qualification persists deliveries through the daemon inbox. */
-export { makeInbox } from "./harness/inbox.js";
+export { makeInbox } from "./daemon/inbox.js";
 /** Creates agents for owners the way the daemon does. */
-export { getOrCreateOwnedAgentKey } from "./harness/ownership.js";
+export { getOrCreateOwnedAgentKey } from "./daemon/owners.js";

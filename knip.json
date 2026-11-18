@@ -22,7 +22,7 @@
         ]
       },
       "ignore": [
-        "src/vendor/effect-mcp/**"
+        "src/daemon/vendor/effect-mcp/**"
       ],
       "ignoreDependencies": [
         "@mermaid-js/mermaid-cli"

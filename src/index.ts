@@ -1,41 +1,35 @@
 /** @file What a host needs to talk to the daemon: the MCP tool contracts, a typed MCP connection, and the values and failures a tool call carries. */
 
-/** The tools, the types derived from their schemas, the longest wait a read accepts and the name of the event a wake-up carries. */
-export {
-  INBOX_PENDING_EVENT,
-  MAXIMUM_WAIT_SECONDS,
-  type ToolCallFailure,
-  toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
-} from "./harness/contracts.js";
-/** A host's MCP connection to the daemon, its typed tool calls and inbox reception. */
+/** The tools and their types, a host's MCP connection with its typed calls, and the values and failures a tool call carries. */
 export {
   acquireMcpConnection,
   callTool,
   callToolAsWritten,
   connectFromEnvironment,
+  DeliveryAcknowledgeError,
+  DeliveryToken,
+  HistoryError,
+  type HistoryRecord,
+  INBOX_PENDING_EVENT,
+  InboxEntry,
+  InboxError,
+  MAXIMUM_WAIT_SECONDS,
   McpConnectError,
   type McpConnection,
   type McpConnectionSettings,
   McpReceiveError,
   McpSettingsError,
   McpToolError,
-  type ToolFailure,
-} from "./harness/client.js";
-/** What a host sends, the inbox entries and history records it reads, and why a read or an acknowledgment failed. */
-export {
-  DeliveryAcknowledgeError,
-  DeliveryToken,
-  HistoryError,
-  type HistoryRecord,
-  InboxEntry,
-  InboxError,
   SendRequest,
   type SendResult,
   StoredInboxEntry,
-} from "./harness/contracts.js";
+  type ToolCallFailure,
+  toolDefinitions,
+  type ToolFailure,
+  type ToolName,
+  type ToolRequest,
+  type ToolResult,
+} from "./mcp/index.js";
 /** The content policy permits an agent to read, and why policy refused a send or an edit. */
 export {
   FirewallPolicyError,

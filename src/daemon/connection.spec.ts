@@ -12,19 +12,19 @@ import {
 } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  connectInProcessClient,
-  loopbackMcpEndpoint,
-  mcpFixture,
-  mcpTestCredential,
-} from "./__tests__/mcp-fixtures.js";
-import {
   acquireMcpConnection,
   callTool,
   callToolAsWritten,
   connectFromEnvironment,
   McpConnectError,
-} from "./client.js";
-import { toolDefinitions, type ToolRequest } from "./contracts.js";
+} from "../mcp/connection.js";
+import { toolDefinitions, type ToolRequest } from "../mcp/tools.js";
+import {
+  connectInProcessClient,
+  loopbackMcpEndpoint,
+  mcpFixture,
+  mcpTestCredential,
+} from "./__tests__/mcp-fixtures.js";
 
 const implementation = { name: "shared-mcp-test", version: "1" };
 const credential = Redacted.make("private-fixture-credential");

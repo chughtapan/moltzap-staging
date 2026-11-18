@@ -12,7 +12,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import { maximumMembers, MessageAddressInput } from "../communication/index.js";
-import { canonicalMessageAddress, toolDefinitions } from "./contracts.js";
+import { canonicalMessageAddress, toolDefinitions } from "./tools.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;
 

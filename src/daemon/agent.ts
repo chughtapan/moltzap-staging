@@ -57,7 +57,7 @@ import {
   PAGE_SIZE,
   type SendRequest,
   type SendResult,
-} from "./contracts.js";
+} from "../mcp/tools.js";
 import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 
 const historyCursor = Schema.Struct({
