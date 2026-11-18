@@ -60,7 +60,6 @@
     "effect": "catalog:",
     "eslint": "catalog:",
     "jose": "catalog:",
-    "protobufjs": "catalog:",
     "tsx": "catalog:",
     "vitest": "catalog:"
   }

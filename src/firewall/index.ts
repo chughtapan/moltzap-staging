@@ -12,7 +12,6 @@ export {
 /** Guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
 export {
   type DecisionProvider,
-  DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
   FirewallRefusal,

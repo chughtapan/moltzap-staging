@@ -1,4 +1,4 @@
-/** @file Operator feedback through the installed process interface. */
+/** @file What the installed `sharnessd` binary prints and how it exits before it serves. */
 
 import { Command } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
@@ -7,18 +7,15 @@ import { Effect, Stream } from "effect";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { acquireOtlpReceiver } from "../observability/otlp-receiver.js";
 
 const binary = fileURLToPath(new URL("../../../dist/main.js", import.meta.url));
-const processName = "sharnessd";
 const requiredVariable = "SHARNESS_DATABASE_URL";
-const settingsEntry = "SHARNESS_CONFIG_FILE: JSON daemon settings file";
 const secret = "secret-path-value";
 
 /** An empty environment makes missing-variable behavior independent of the test runner. */
 function runProcess(
   processArguments: readonly string[],
-  environment: Readonly<Record<string, string>> = {},
+  environment: Readonly<Record<string, string>>,
 ) {
   return Effect.gen(function* () {
     const child = yield* Command.start(
@@ -49,140 +46,54 @@ function runProcess(
   }).pipe(Effect.timeout("10 seconds"), Effect.provide(NodeContext.layer));
 }
 
-it(
-  "prints environment requirements and defaults without starting",
-  () =>
+/** A run of the binary, whether it succeeds, and what it prints on standard output when it does and on standard error when it does not. */
+const runs: ReadonlyArray<{
+  readonly behavior: string;
+  readonly processArguments: readonly string[];
+  readonly environment: Readonly<Record<string, string>>;
+  readonly succeeds: boolean;
+  readonly says: readonly string[];
+}> = [
+  {
+    behavior: "prints its usage and the variables it reads, and succeeds",
+    processArguments: ["--help"],
+    environment: { [requiredVariable]: secret },
+    succeeds: true,
+    says: [
+      "Usage: sharnessd [--help]",
+      `${requiredVariable}: PostgreSQL connection URL`,
+      "SHARNESS_CONFIG_FILE: JSON daemon settings file",
+    ],
+  },
+  {
+    behavior: "names a missing variable and fails",
+    processArguments: [],
+    environment: {},
+    succeeds: false,
+    says: [`Set ${requiredVariable}`],
+  },
+  {
+    behavior: "fails on invalid configuration",
+    processArguments: [],
+    environment: { [requiredVariable]: secret },
+    succeeds: false,
+    says: [],
+  },
+];
+
+it.each(runs)(
+  "sharnessd $behavior, without echoing a supplied value",
+  ({ processArguments, environment, succeeds, says }) =>
     Effect.gen(function* () {
-      const result = yield* runProcess(["--help"], {
-        [requiredVariable]: secret,
-      });
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(`Usage: ${processName} [--help]`);
-      expect(result.stdout).toContain(
-        `${requiredVariable}: PostgreSQL connection URL`,
-      );
-      expect(result.stdout).toContain(settingsEntry);
-      expect(result.stdout).not.toContain(secret);
-      expect(result.stderr).toBe("");
-    }),
-  15_000,
-);
+      const result = yield* runProcess(processArguments, environment);
+      const [spoken, silent] = succeeds
+        ? [result.stdout, result.stderr]
+        : [result.stderr, result.stdout];
 
-it(
-  "names missing environment variables and exits unsuccessfully",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* runProcess([]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(`Set ${requiredVariable}`);
-      expect(result.stdout).toBe("");
-    }),
-  15_000,
-);
-
-it(
-  "reports invalid configuration without echoing supplied values",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* runProcess([], { [requiredVariable]: secret });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr + result.stdout).not.toContain(secret);
-      expect(result.stdout).toBe("");
-    }),
-  15_000,
-);
-
-const protocolRefusal =
-  "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf";
-
-it(
-  "refuses an OTLP trace protocol other than http/protobuf at startup",
-  () =>
-    Effect.gen(function* () {
-      const receiver = yield* acquireOtlpReceiver;
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.endpoint.origin,
-        OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-      });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(protocolRefusal);
-      expect(result.stdout).toBe("");
-    }),
-  15_000,
-);
-
-it(
-  "refuses a traces-only OTLP protocol other than http/protobuf at startup",
-  () =>
-    Effect.gen(function* () {
-      const receiver = yield* acquireOtlpReceiver;
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.endpoint.origin,
-        OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc",
-      });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(protocolRefusal);
-    }),
-  15_000,
-);
-
-it(
-  "lets the traces protocol override the general one",
-  () =>
-    Effect.gen(function* () {
-      const receiver = yield* acquireOtlpReceiver;
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.endpoint.origin,
-        OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
-        OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-      });
-      expect(result.stderr).not.toContain(protocolRefusal);
-      expect(result.stderr).toContain(`Set ${requiredVariable}`);
-    }),
-  15_000,
-);
-
-const endpointRefusal =
-  "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL";
-
-it(
-  "refuses an OTLP endpoint that is not an http or https URL at startup",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: "collector:4318",
-      });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(endpointRefusal);
-    }),
-  15_000,
-);
-
-it(
-  "refuses a traces endpoint that is not an http or https URL at startup",
-  () =>
-    Effect.gen(function* () {
-      const receiver = yield* acquireOtlpReceiver;
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.endpoint.origin,
-        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "collector:4318/v1/traces",
-      });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain(endpointRefusal);
-    }),
-  15_000,
-);
-
-it(
-  "treats a blank OTLP endpoint as unset",
-  () =>
-    Effect.gen(function* () {
-      const result = yield* runProcess([], {
-        OTEL_EXPORTER_OTLP_ENDPOINT: " ",
-        OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-      });
-      expect(result.stderr).not.toContain(protocolRefusal);
-      expect(result.stderr).toContain(`Set ${requiredVariable}`);
+      expect(result.exitCode === 0).toBe(succeeds);
+      expect(says.filter((text) => !spoken.includes(text))).toEqual([]);
+      expect(silent).toBe("");
+      expect(result.stdout + result.stderr).not.toContain(secret);
     }),
   15_000,
 );

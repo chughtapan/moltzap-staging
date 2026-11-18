@@ -487,10 +487,3 @@ function startAgent(
 
 /** Deployment prepares schema and encryption metadata before the daemon starts. */
 export { prepareDatabase } from "../database/index.js";
-
-/** This agent's card and the other agents of its daemon by name. */
-export { Identity } from "../identity.js";
-/** Message policy produces permitted content and owns its decision history. */
-export { type ComposedMessagePolicy, Firewall } from "../firewall/service.js";
-/** Trusted policy providers receive typed assessment requests at construction. */
-export type { DecisionProvider, DecisionRequest } from "../firewall/index.js";

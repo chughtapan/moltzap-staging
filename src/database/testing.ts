@@ -54,3 +54,32 @@ export const openTestDatabase = Effect.fn("openTestDatabase")(function* (
 export type TestDatabase = Effect.Effect.Success<
   ReturnType<typeof openTestDatabase>
 >;
+
+/**
+ * Creates a login of `database`'s tables that can read and write rows but can
+ * neither create objects nor bypass row policies, as the login a daemon serves
+ * through cannot. Returns the URL that reaches the schema as that login;
+ * closing the scope drops it.
+ */
+export const restrictedLogin = Effect.fn("restrictedLogin")(function* ({
+  schema,
+  url,
+  sql,
+}: TestDatabase) {
+  const role = `runtime_${schema}`;
+  const password = randomBytes(24).toString("hex");
+  yield* sql`CREATE ROLE ${sql(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD ${sql.literal("'" + password + "'")}`;
+  yield* Effect.addFinalizer(() =>
+    sql`DROP OWNED BY ${sql(role)}`.pipe(
+      Effect.zipRight(sql`DROP ROLE ${sql(role)}`),
+      Effect.orDie,
+    ),
+  );
+  yield* sql`GRANT USAGE ON SCHEMA ${sql(schema)} TO ${sql(role)}`;
+  yield* sql`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${sql(schema)} TO ${sql(role)}`;
+  yield* sql`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${sql(schema)} TO ${sql(role)}`;
+  const restricted = new URL(Redacted.value(url));
+  restricted.username = role;
+  restricted.password = password;
+  return Redacted.make(restricted.href);
+}, Effect.orDie);
