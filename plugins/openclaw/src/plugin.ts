@@ -144,6 +144,7 @@ interface InboundTurn {
 
 /** One host send as the host supplies it, each field unchecked. */
 interface TextSend {
+  readonly replyToMsgId?: string;
   readonly accountId?: string | null;
   readonly to: unknown;
   readonly text: unknown;
@@ -353,6 +354,9 @@ function handleMessageAction(
         accountId: ctx.accountId,
         to: ctx.params.to,
         text: ctx.params.message,
+        ...(ctx.reply?.source === "explicit"
+          ? { replyToMsgId: ctx.reply.replyToId }
+          : {}),
       }),
     ),
     Effect.map(({ to }) => jsonResult({ ok: true, to })),
@@ -585,7 +589,7 @@ function handleInboxEntry(
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const projected: ProjectedEntry = {
-    id: entry.deliveryToken,
+    id: entryId(entry),
     kind,
     address: entry.address,
     ...entryParticipants(entry, kind),
@@ -633,13 +637,23 @@ function entryParticipants(
     case "collectiveResult":
       return {
         sender: {
-          id: `sharness:${entry.deliveryToken}`,
+          id: `sharness:${entryId(entry)}`,
           name: HARNESS_SENDER_NAME,
         },
       };
     default:
       return absurd(item);
   }
+}
+
+/**
+ * The id the host knows an entry by, which its explicit reply names: the
+ * message id, or for a collective result the id of its request.
+ */
+function entryId(entry: InboxEntry): string {
+  return entry.item.kind === "collectiveResult"
+    ? entry.item.requestId
+    : entry.item.message.msgId;
 }
 
 function agentSender(agent: AgentCard): EntrySender {
@@ -853,6 +867,9 @@ function sendCoreText(
     accountId: ctx.accountId,
     text: ctx.text,
     to: ctx.to,
+    ...(ctx.replyToIdSource === "explicit" && ctx.replyToId != null
+      ? { replyToMsgId: ctx.replyToId }
+      : {}),
   }).pipe(Effect.map(({ sent }) => makeMessageSendResult(sent)));
 }
 
@@ -871,7 +888,10 @@ function sendText(
   return Effect.gen(function* () {
     const { to, text } = yield* readTextSend(params);
     const connection = yield* requireConnection(accountSlot, params);
-    const result = yield* sendMessage(connection.mcp, sendArguments(to, text));
+    const result = yield* sendMessage(
+      connection.mcp,
+      sendArguments(to, text, params.replyToMsgId),
+    );
     if (result.isError === true) {
       return yield* new OpenClawSendFailed({
         message: result.content
@@ -894,20 +914,23 @@ function sendText(
 
 /**
  * The `send_message` arguments a host send amounts to. Text that is a JSON
- * object with a `collectiveRequest` or `collectiveResponse` property is the
- * tool's own arguments for a collective request or response, which the daemon
- * validates. Any other text is a message's text.
+ * object with a `collectiveRequest`, `collectiveResponse` or `replyToMsgId`
+ * property is the tool's own arguments for a collective request, a collective
+ * response or a reply, which the daemon validates. Any other text is a
+ * message's text, sent with the reply reference the host gave.
  */
 function sendArguments(
   to: MessageAddressInput,
   text: string,
+  replyToMsgId?: string,
 ): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
   return written !== undefined &&
-    (Object.hasOwn(written, "collectiveRequest") ||
-      Object.hasOwn(written, "collectiveResponse"))
+    ["collectiveRequest", "collectiveResponse", "replyToMsgId"].some((field) =>
+      Object.hasOwn(written, field),
+    )
     ? { ...written, to }
-    : { to, text };
+    : { to, text, ...(replyToMsgId === undefined ? {} : { replyToMsgId }) };
 }
 
 function logOutboundFailure(

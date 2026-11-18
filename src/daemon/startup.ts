@@ -288,8 +288,8 @@ function clientTools(serverAgentAddress: MessageAddressInput) {
     const harness = yield* SocialHarness;
     return [
       yield* statusTool(subscription),
-      bind("send_message", clientToolDefinitions.send_message, ({ text }) =>
-        harness.send({ to: serverAgentAddress, text }),
+      bind("send_message", clientToolDefinitions.send_message, (message) =>
+        harness.send({ ...message, to: serverAgentAddress }),
       ),
       bind(
         "receive_messages",

@@ -618,10 +618,11 @@ const clientTools = [
 const sendTool = "send_message";
 const missingField = "text";
 const collectiveField = "collectiveRequest";
-const textFields = ["to", missingField];
+const replyField = "replyToMsgId";
+const textFields = ["to", missingField, replyField];
 
 describe("send_message arguments", () => {
-  it("offers only a recipient and text when collectives are turned off", () =>
+  it("offers only a recipient, text and a reply reference when collectives are turned off", () =>
     Effect.gen(function* () {
       const fixture = yield* mcpFixture({ hideCollectives: true });
       const client = yield* connectInProcessClient((input, init) =>
@@ -678,6 +679,7 @@ describe("send_message arguments", () => {
       const send = tools.find((tool) => tool.name === sendTool);
       expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual([
         missingField,
+        replyField,
       ]);
       yield* Effect.tryPromise(() =>
         client.callTool({ name: sendTool, arguments: { text: clientText } }),

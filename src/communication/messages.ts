@@ -820,8 +820,11 @@ const requestTerms = {
   deadlineAt: EpochMillis,
 };
 
+/** `replyToMsgId` is the id of the message this one answers, when its sender named one. */
 const encodedMessage = MessageHeader.pipe(
-  Schema.extend(exactStruct({ content: Content })),
+  Schema.extend(
+    exactStruct({ replyToMsgId: Schema.optional(MsgId), content: Content }),
+  ),
 );
 const decodedMessage = encodedMessage.pipe(
   Schema.extend(
@@ -870,6 +873,9 @@ const messageSchema = Schema.transformOrFail(
         author: message.author,
         recipients: message.recipients,
         msgId: message.msgId,
+        ...(message.replyToMsgId === undefined
+          ? {}
+          : { replyToMsgId: message.replyToMsgId }),
         content: message.content,
       }),
   },
@@ -877,12 +883,14 @@ const messageSchema = Schema.transformOrFail(
 
 /** Owns construction of a message and the one decoding of its collective part. */
 export const Message = Object.assign(messageSchema, {
-  create(input: Pick<Message, "author" | "recipients" | "content">) {
+  create(
+    input: Pick<Message, "author" | "recipients" | "content" | "replyToMsgId">,
+  ) {
     return Effect.gen(function* () {
       return yield* messageWithId(
         input.author,
         input.recipients,
-        yield* mintMsgId(),
+        { msgId: yield* mintMsgId(), replyToMsgId: input.replyToMsgId },
         input.content,
       );
     }).pipe(
@@ -1193,11 +1201,14 @@ export function collectivePartOf(
   );
 }
 
-/** A message with a message id its caller chose, to recipients in any order. */
+/**
+ * A message with a message id its caller chose, to recipients in any order.
+ * `replyToMsgId` names the message it answers.
+ */
 export function messageWithId(
   author: AgentCard,
   recipients: readonly AgentCard[],
-  msgId: MsgId,
+  { msgId, replyToMsgId }: Pick<Message, "msgId" | "replyToMsgId">,
   content: Content,
 ) {
   return Effect.try({
@@ -1208,6 +1219,7 @@ export function messageWithId(
           compareAscii(left.agentName, right.agentName),
         ),
         msgId,
+        ...(replyToMsgId === undefined ? {} : { replyToMsgId }),
         content,
       }),
     catch: () =>
