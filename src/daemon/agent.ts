@@ -37,7 +37,7 @@ import {
   type Incoming,
   restarting,
 } from "../communication/service.js";
-import { transaction } from "../database/index.js";
+import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import {
   type CollectiveResultEvidence,
@@ -182,6 +182,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
     const communication = yield* Communication;
     const scope = yield* Scope.Scope;
     const inbox = yield* makeInbox(settings.agentKey);
+    /** Offered once an unchecked entry is committed, so the check that it starts can read the entry. */
     const wake = yield* Queue.sliding<undefined>(1);
     const changes = yield* PubSub.sliding<undefined>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
@@ -206,7 +207,7 @@ function makeHarness(settings: HarnessSettings, workers: FiberSet.FiberSet) {
               addressOf(incomingMembers(incoming), agent.card.agentId),
               incoming,
             )
-            .pipe(Effect.zipRight(Queue.offer(wake, undefined)), Effect.asVoid),
+            .pipe(Effect.zipRight(afterCommit(Queue.offer(wake, undefined)))),
         )
         .pipe(restarting(settings.agentKey, "consumer")),
     );
