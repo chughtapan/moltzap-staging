@@ -1,6 +1,5 @@
 /** @file The OpenClaw channel plugin connected to a real daemon as one of its agents. */
 
-import { callTool } from "@social-harness/social-harness";
 import { Effect, Exit, Fiber, Queue, Schema } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -13,6 +12,7 @@ import { ProcessTestError, type SignedIn } from "../daemon/daemon-fixture.js";
 import { markedRule } from "../firewall/policy-fixture.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
+import { callTool } from "../tool-call.js";
 import {
   acquireGuardedServer,
   acquirePeers,

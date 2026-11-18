@@ -13,7 +13,6 @@
  * checks the request it receives.
  */
 
-import { callTool, FirewallRefusal } from "@social-harness/social-harness";
 import { Effect, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -30,6 +29,7 @@ import { inNameOrder } from "../collectives/name-order.js";
 import { sharedDaemon } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { anyNumber, anyString, objectContaining } from "../test-matchers.js";
+import { callTool } from "../tool-call.js";
 import {
   markedPolicy,
   markedRule,
@@ -220,7 +220,7 @@ function expectOutgoingGatherRefused(
       question: "[out] Which day works?",
       deadline: 60,
     }).pipe(Effect.flip);
-    expect(refused).toBeInstanceOf(FirewallRefusal);
+    expect(refused).toMatchObject({ reason: "firewall-refused" });
     expect(refused).toMatchObject({ refusal: "rule-violation" });
   });
 }
@@ -385,7 +385,7 @@ function expectUnsureRequestRefused(
       question: "[unsure] Which day works for the demo?",
       deadline: ANSWERED_DEADLINE_SECONDS,
     }).pipe(Effect.flip);
-    expect(refused).toBeInstanceOf(FirewallRefusal);
+    expect(refused).toMatchObject({ reason: "firewall-refused" });
     expect(refused).toMatchObject({
       refusal: "unresolved-evidence",
       feedback: [{ text: "Remove the marked text." }],

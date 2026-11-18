@@ -301,7 +301,7 @@ const checkedGuidance = {
 };
 
 /** Exact decoding of one check's guidance, wherever a host receives it. */
-export const checkedGuidanceSchema = exactStruct(checkedGuidance);
+const checkedGuidanceSchema = exactStruct(checkedGuidance);
 
 /** The guidance a host reads with one checked text. */
 export type CheckedGuidance = typeof checkedGuidanceSchema.Type;

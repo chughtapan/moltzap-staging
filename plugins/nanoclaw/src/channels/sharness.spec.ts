@@ -1,6 +1,6 @@
 /** @file NanoClaw hands each inbox entry to its host and sends native text through a stock MCP client. */
 import type * as SocialHarness from "@social-harness/social-harness";
-import { Client, ProtocolError } from "@modelcontextprotocol/client";
+import { Client } from "@modelcontextprotocol/client";
 import {
   AgentAddress,
   AgentCard,
@@ -10,7 +10,6 @@ import {
   InboxEntry,
   type McpConnection,
   MsgId,
-  SendError,
   type SendResult,
 } from "@social-harness/social-harness";
 import {
@@ -337,40 +336,38 @@ describe("NanoClaw sends", () => {
       }),
     );
   });
-  const issues = [
-    { path: ["collectiveRequest", "deadline"], message: "Expected a number" },
-  ];
+  const invalidArguments =
+    "Invalid tool arguments: collectiveRequest.deadline: Expected a number";
   it.each([
     {
       failure: "refuses an argument",
-      error: new ProtocolError(-32602, "Invalid tool arguments", { issues }),
-      told: new SendError({
-        reason: "content-invalid",
-        detail: "the arguments are invalid",
-        issues,
-      }),
+      answer: () =>
+        Promise.resolve({
+          isError: true,
+          content: [{ type: "text" as const, text: invalidArguments }],
+          structuredContent: { reason: "invalid-arguments" },
+        }),
+      told: invalidArguments,
     },
     {
-      failure: "cannot say whether it sent",
-      error: new ProtocolError(-32603, "Uncertain", {
-        reason: "outcome-unknown",
-      }),
-      told: new SendError({ reason: "outcome-unknown" }),
+      failure: "gives no answer",
+      answer: () => Promise.reject(new Error("connection lost")),
+      told: "send failed: the send did not complete; the message may or may not have been sent",
     },
   ])(
     "tells the model when the daemon $failure, and does not send again",
-    async ({ error, told }) => {
+    async ({ answer, told }) => {
       const fake = connection();
       const current = await channel();
       const callbacks = host();
-      fake.call.mockRejectedValue(error);
+      fake.call.mockImplementation(answer);
       await current.setup(callbacks);
       await expect(
         current.deliver(address, null, { kind: "chat", content: messageText }),
       ).resolves.toBeUndefined();
       expect(
         jsonObject(callbacks.onInboundEvent.mock.calls[0]?.[0].message.content),
-      ).toMatchObject({ sender: "Social Harness", text: told.message });
+      ).toMatchObject({ sender: "Social Harness", text: told });
       expect(fake.call).toHaveBeenCalledTimes(1);
     },
   );

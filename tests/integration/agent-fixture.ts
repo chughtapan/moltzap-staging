@@ -1,7 +1,6 @@
 /** @file Agents of one daemon whose deliveries a trace takes in order. */
 
 import {
-  callTool,
   type InboxEntry,
   type PermittedItem,
   SendRequest,
@@ -14,6 +13,7 @@ import {
   type SignedIn,
 } from "./daemon/daemon-fixture.js";
 import { inboxStream } from "./mcp-inbox.js";
+import { callTool } from "./tool-call.js";
 
 /** A signed-in owner and the items its agent has received, in order. */
 export interface Participant extends SignedIn {

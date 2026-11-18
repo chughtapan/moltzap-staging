@@ -1,8 +1,8 @@
-/** @file Scoped MCP connections and tool calls shared by native host plugins. */
+/** @file What a host needs beyond the official MCP client: a connection made from its environment, the inbox reader, and a send whose outcome is always stated. */
 import {
+  type CallToolResult,
   Client,
   type Implementation,
-  ProtocolError,
   SdkError,
   SdkErrorCode,
   SdkHttpError,
@@ -14,7 +14,6 @@ import {
   Data,
   Effect,
   Fiber,
-  Option,
   Redacted,
   Ref,
   Schema,
@@ -22,14 +21,11 @@ import {
 } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
+import { SendError } from "../communication/index.js";
 import {
   type InboxEntry,
   MAXIMUM_WAIT_SECONDS,
-  type ToolCallFailure,
   toolDefinitions,
-  type ToolName,
-  type ToolRequest,
-  type ToolResult,
 } from "./tools.js";
 
 /** Connection failures omit the private endpoint and credential. */
@@ -47,26 +43,6 @@ export class McpSettingsError extends Data.TaggedError("McpSettingsError")<{
   readonly message: string;
 }> {}
 
-/** Non-send tool failures never include unvalidated daemon or transport details. */
-export class McpToolError extends Data.TaggedError("McpToolError")<{
-  readonly tool: ToolName;
-  readonly reason: "tool-failed" | "transport-failed" | "decode-failed";
-}> {}
-
-type FailureContract<Name extends ToolName> =
-  (typeof toolDefinitions)[Name]["failure"];
-
-/**
- * How calling a tool can fail: the failure its definition reads from the
- * daemon's answer, and {@link McpToolError} for a tool whose definition does
- * not read every failure.
- */
-export type ToolFailure<Name extends ToolName> =
-  | Option.Option.Value<ReturnType<FailureContract<Name>["toError"]>>
-  | (FailureContract<Name>["readsEveryFailure"] extends true
-      ? never
-      : McpToolError);
-
 /** Native channels connect with the daemon credential supplied by their host. */
 export interface McpConnectionSettings {
   readonly endpoint: URL;
@@ -81,7 +57,7 @@ export interface McpConnectionSettings {
  * the entry.
  */
 export interface McpConnection {
-  /** The MCP SDK's connected `Client`, which {@link callTool} calls tools on. */
+  /** The MCP SDK's connected `Client`, which a host calls tools on. */
   readonly mcp: Client;
   readonly consumeInbox: <E, R>(
     accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
@@ -194,90 +170,59 @@ export const connectFromEnvironment = Effect.fn("Mcp.connectFromEnvironment")(
   },
 );
 
-/** What a caller is told when a tool's definition does not read a failure. */
-const toolErrorReasonByKind = {
-  refused: "tool-failed",
-  unanswered: "transport-failed",
-  unreadable: "decode-failed",
-} as const;
-
 /**
- * Calls the named MCP tool once and never retries. The tool's definition
- * decodes its result and reads its failures.
+ * Calls `send_message` once and never retries, and returns the tool's result
+ * as the MCP client gives it. A call that ends without a readable result is
+ * answered as a failed send whose reason is `network-unavailable` when the
+ * request cannot have reached the daemon, and otherwise `outcome-unknown`: the
+ * message may have been sent, so a host must not send it again.
  */
-export function callTool<Name extends ToolName>(
+export function sendMessage(
   mcp: Pick<Client, "callTool">,
-  request: ToolRequest & { readonly name: Name },
-): Effect.Effect<ToolResult<Name>, ToolFailure<Name>> {
-  return callToolAsWritten(mcp, request.name, request.arguments);
-}
-
-export function callToolAsWritten<Name extends ToolName>(
-  mcp: Pick<Client, "callTool">,
-  name: Name,
-  writtenArguments: Readonly<Record<string, unknown>>,
-): Effect.Effect<ToolResult<Name>, ToolFailure<Name>>;
-/**
- * Calls a tool as {@link callTool} does, with arguments as an agent wrote
- * them. The daemon validates them, and its refusal names each field the tool
- * does not take.
- */
-export function callToolAsWritten(
-  mcp: Pick<Client, "callTool">,
-  name: ToolName,
-  writtenArguments: Readonly<Record<string, unknown>>,
-): Effect.Effect<unknown, unknown> {
-  const definition: ToolContract = toolDefinitions[name];
-  const toToolFailure = (failure: ToolCallFailure) =>
-    Option.getOrElse(
-      definition.failure.toError(failure),
-      () =>
-        new McpToolError({
-          tool: name,
-          reason: toolErrorReasonByKind[failure.kind],
-        }),
-    );
-  return Effect.tryPromise({
-    try: (signal) =>
-      mcp.callTool(
-        { name, arguments: writtenArguments },
-        { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
+  sendArguments: Readonly<Record<string, unknown>>,
+): Effect.Effect<CallToolResult> {
+  return Effect.tryPromise((signal) =>
+    mcp.callTool(
+      { name: "send_message", arguments: sendArguments },
+      { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
+    ),
+  ).pipe(
+    Effect.map((result) =>
+      result.isError === true ||
+      Schema.is(Schema.encodedSchema(toolDefinitions.send_message.output))(
+        result.structuredContent,
+      )
+        ? result
+        : unanswered("outcome-unknown"),
+    ),
+    Effect.catchAll(({ error }) =>
+      Effect.succeed(
+        unanswered(
+          requestNotSent(error) ? "network-unavailable" : "outcome-unknown",
+        ),
       ),
-    catch: (cause) => toToolFailure(classifyRejection(cause)),
-  }).pipe(
-    Effect.flatMap((response) =>
-      response.isError === true
-        ? Effect.fail(toToolFailure({ kind: "refused", data: undefined }))
-        : Schema.decodeUnknown(definition.output)(
-            response.structuredContent,
-          ).pipe(
-            Effect.map((result): unknown => result),
-            Effect.mapError(() => toToolFailure({ kind: "unreadable" })),
-          ),
     ),
   );
 }
 
-/** The part of any tool's definition a call needs: its result and how its failures read. */
-interface ToolContract {
-  readonly output: Schema.Schema.AnyNoContext;
-  readonly failure: {
-    readonly toError: (failure: ToolCallFailure) => Option.Option<unknown>;
+/** The failed result of a send the daemon gave no readable answer to. */
+function unanswered(
+  reason: "network-unavailable" | "outcome-unknown",
+): CallToolResult {
+  return {
+    isError: true,
+    content: [{ type: "text", text: new SendError({ reason }).message }],
+    structuredContent: { reason },
   };
 }
 
-/** What a rejected call says about whether the daemon received the request. */
-function classifyRejection(cause: unknown): ToolCallFailure {
-  if (ProtocolError.isInstance(cause)) {
-    return { kind: "refused", data: cause.data };
-  }
-  const refusedBeforeTheTool =
-    SdkHttpError.isInstance(cause) &&
-    [400, 401, 403, 404, 405].includes(cause.status);
-  return {
-    kind: "unanswered",
-    sent: !(refusedBeforeTheTool || connectionRefused(cause)),
-  };
+/** Whether a rejected call shows the daemon never received the request. */
+function requestNotSent(cause: unknown): boolean {
+  return (
+    (SdkHttpError.isInstance(cause) &&
+      [400, 401, 403, 404, 405].includes(cause.status)) ||
+    connectionRefused(cause)
+  );
 }
 
 /**
@@ -291,24 +236,40 @@ function readPending<E, R>(
   return Effect.gen(function* () {
     let cursor: string | undefined;
     do {
-      const page = yield* callTool(mcp, {
-        name: "receive_messages",
-        arguments:
-          cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
-      }).pipe(
-        Effect.catchTags({
-          InboxError: () =>
-            Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
-          McpToolError: () =>
-            Effect.fail(new McpReceiveError({ reason: "transport-failed" })),
-        }),
-      );
+      const page = yield* receivePage(mcp, cursor);
       for (const entry of page.entries) {
         yield* accept(entry);
       }
       cursor = page.nextCursor;
     } while (cursor !== undefined);
   });
+}
+
+/** One page of the pending inbox. A read without a cursor waits for a message when the inbox is empty. */
+function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
+  const unreadable = () =>
+    Effect.fail(new McpReceiveError({ reason: "transport-failed" }));
+  return Effect.tryPromise((signal) =>
+    mcp.callTool(
+      {
+        name: "receive_messages",
+        arguments:
+          cursor === undefined ? { wait: MAXIMUM_WAIT_SECONDS } : { cursor },
+      },
+      { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
+    ),
+  ).pipe(
+    Effect.filterOrFail(
+      (result) => result.isError !== true,
+      () => new McpReceiveError({ reason: "transport-failed" }),
+    ),
+    Effect.flatMap((result) =>
+      Schema.decodeUnknown(toolDefinitions.receive_messages.output)(
+        result.structuredContent,
+      ),
+    ),
+    Effect.catchTags({ UnknownException: unreadable, ParseError: unreadable }),
+  );
 }
 
 function connectionRefused(cause: unknown): boolean {

@@ -7,7 +7,7 @@
  * the sender's firewall and `[in]` for the receiver's.
  */
 
-import { callTool, type PermittedItem } from "@social-harness/social-harness";
+import type { PermittedItem } from "@social-harness/social-harness";
 import { Effect } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -19,6 +19,7 @@ import {
 import { sharedDaemon } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { arrayContaining, objectContaining } from "../test-matchers.js";
+import { callTool } from "../tool-call.js";
 import { writeNorms } from "./policy-fixture.js";
 
 /** Each test starts one daemon under `tsx`. */

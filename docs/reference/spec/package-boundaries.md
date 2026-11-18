@@ -36,7 +36,7 @@ Three library entries expose named exports:
 
 | Entry | Audience and boundary |
 |---|---|
-| `@social-harness/social-harness` | Host values, MCP contracts, a host's MCP connection and the identifiers and name of an agent |
+| `@social-harness/social-harness` | For a host that calls the daemon with the official MCP client: the tool contracts and the values they carry, a connection made from the host's environment with its inbox reader, a send whose outcome is always stated, and the identifiers and name of an agent |
 | `@social-harness/social-harness/service` | Daemon composition, database preparation and an agent's identity and firewall services |
 | `@social-harness/social-harness/test` | Process tests and a decision-provider override. Requires `sharness-test` |
 
@@ -84,8 +84,10 @@ startup order and loopback access.
 
 ## Error boundaries
 
-Each boundary returns its owner's closed typed failures. MCP preserves domain
-failures in error data.
+Each boundary inside the daemon returns its owner's closed typed failures. MCP
+returns a failed tool call as a result marked as an error, with the failure's
+fields as its structured content. A host reads the result; the library gives
+it no error classes.
 Decoder and infrastructure causes remain private.
 
 ## Releases

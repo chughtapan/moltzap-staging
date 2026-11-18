@@ -327,35 +327,32 @@ export type CollectiveResponse = typeof collectiveResponseSchema.Type;
  * request whose schema is outside the form-mode grammar or whose deadline
  * passed while its check ran; or a collective response its author cannot send.
  */
-const collectiveFailure = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("schema-invalid"),
-    detail: Schema.String,
-  }),
-  exactStruct({
-    kind: Schema.Literal("response-invalid"),
-    fields: Schema.NonEmptyArray(
-      exactStruct({
-        field: Schema.String,
-        reason: Schema.Literal("missing", "unexpected", "invalid"),
-        detail: Schema.optionalWith(Schema.String, { exact: true }),
-      }),
-    ),
-  }),
-  exactStruct({ kind: Schema.Literal("request-none") }),
-  exactStruct({ kind: Schema.Literal("request-responded") }),
-  exactStruct({ kind: Schema.Literal("request-expired") }),
-  exactStruct({ kind: Schema.Literal("deadline-passed") }),
-);
-/** A validated collective failure. */
-export type CollectiveFailure = typeof collectiveFailure.Type;
+export type CollectiveFailure =
+  | { readonly kind: "schema-invalid"; readonly detail: string }
+  | {
+      readonly kind: "response-invalid";
+      readonly fields: readonly [
+        ResponseFieldFailure,
+        ...ResponseFieldFailure[],
+      ];
+    }
+  | {
+      readonly kind:
+        | "request-none"
+        | "request-responded"
+        | "request-expired"
+        | "deadline-passed";
+    };
 
 /**
- * Decode a collective failure carried across the loopback MCP boundary.
- * @param value Untrusted failure detail from a refused send's error data.
- * @returns The validated failure.
+ * Why one response field failed its request's schema; `detail` names each
+ * keyword an `invalid` field fails.
  */
-export const decodeCollectiveFailure = Schema.decodeUnknown(collectiveFailure);
+interface ResponseFieldFailure {
+  readonly field: string;
+  readonly reason: "missing" | "unexpected" | "invalid";
+  readonly detail?: string;
+}
 
 /**
  * One line per issue of a decode failure, each led by its path, such as
@@ -767,12 +764,6 @@ const responseValidator = new Ajv({
     uri: fullFormats.uri,
   },
 });
-
-/**
- * Why one response field failed its request's schema; `detail` names each
- * keyword an `invalid` field fails.
- */
-type ResponseFieldFailure = ResponseFieldFailures[number];
 
 /** Omit cursor to begin and pass the returned nextCursor unchanged. */
 export const PaginatedRequest = exactStruct({

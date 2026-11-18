@@ -132,10 +132,20 @@ one request leaves others active. Accepted sends and stored inbox entries surviv
 Invalid arguments fail before invocation. Invalid completed results produce
 `outcome-unknown`.
 
-JSON-RPC error data preserves send, collective and firewall refusals. Collective
-errors name failing members or fields and include `requestId`, the request's
-message id, when the request is known. Other tool failures preserve their domain reason. Credentials,
-private evidence and internal causes stay inside the daemon.
+A tool call that fails returns a result marked as an error (`isError: true`).
+Its text is the failure's message, written for the model to act on. Its
+structured content holds the failure's fields, among them its `reason`.
+Invalid arguments have the reason `invalid-arguments` and `issues`, where each
+issue names a field's path and what the tool expects there without repeating
+the value sent. A collective failure names
+failing members or fields and includes `requestId`, the request's message id,
+when the request is known. A firewall refusal includes its check, rule and
+feedback. Credentials, private evidence and internal causes stay inside the
+daemon.
+
+JSON-RPC errors report only what is not a tool's own failure: a malformed
+request, an unknown method or tool, and the
+[Events](./receiving.md#mcp-events-and-inbox) calls.
 
 [Catalog compatibility](../daemon.md#mcp-interface) governs results.
 [Experiment switches](../../daemon-experiment-settings.mdx#experiment-switches) apply to

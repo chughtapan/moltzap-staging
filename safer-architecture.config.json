@@ -191,7 +191,7 @@
     }
   ],
   "maxFolderChildren": 12,
-  "maxPublicExports": 41,
+  "maxPublicExports": 30,
   "disabledRules": [
     {
       "rule": "file-implicit-boundary-module",

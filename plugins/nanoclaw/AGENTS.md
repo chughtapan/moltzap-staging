@@ -46,7 +46,9 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   beyond the explicit-address capability and route, inbox replay, scheduling,
   and runtime isolation.
 - History and status use the MCP catalog.
-- Keep host-shape failures distinct from the library's typed failures without
+- A failed send is the result the daemon returns, marked as an error: its
+  text reaches the model unchanged and its structured `reason` decides whether
+  the queue item completes. Keep host-shape failures distinct from it without
   exposing private action evidence, credentials, or protocol state.
 
 Send returns no receipt; completion means the daemon durably accepted the

@@ -11,17 +11,15 @@ import {
   ProtocolError,
 } from "@modelcontextprotocol/server";
 import {
-  Array as Arr,
   Cause,
   Data,
   Effect,
   Exit,
   JSONSchema,
   Option,
-  type ParseResult,
+  ParseResult,
   Runtime,
   Schema,
-  SchemaAST,
 } from "effect";
 import { issuesText, type ValidationIssue } from "../communication/index.js";
 
@@ -235,19 +233,19 @@ function run<A>(
 
 /**
  * Answers a call of a tool: arguments are decoded with the definition's
- * input, the result is encoded with its output, and a failure is answered
- * with its message and the data the definition writes for it.
+ * input and the result is encoded with its output. A call that fails is
+ * answered with a result marked as an error, whose text is the failure's
+ * message and whose structured content is what the definition writes for it.
  */
 function handler<A, I, B, J, E extends { readonly message: string }>(
   definition: Definition<A, I, B, J, E>,
   execute: (input: A) => Effect.Effect<B, E>,
 ) {
   const refusal = (error: E) =>
-    new JsonRpcError(-32603, error.message, definition.failure.toData(error));
+    failed(error.message, definition.failure.toData(error));
   const unexpected =
     definition.failure.unexpected === undefined
-      ? new JsonRpcError(
-          -32603,
+      ? failed(
           "The daemon could not complete this call. Try again; if it keeps failing, check the daemon's log.",
         )
       : refusal(definition.failure.unexpected);
@@ -267,241 +265,63 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
       };
     }).pipe(
       Effect.catchAllCause((cause) =>
-        Effect.fail(
+        Effect.succeed(
           Option.getOrElse(Cause.failureOption(cause), () => unexpected),
         ),
       ),
     );
 }
 
-/** A refusal of arguments that names each wrong field in its message and its data. */
-function invalidArguments(error: Parameters<typeof validationIssues>[0]) {
-  const issues = validationIssues(error);
-  return new JsonRpcError(
-    -32602,
-    `Invalid tool arguments: ${issuesText(issues)}`,
-    { issues },
-  );
-}
-
 const MAXIMUM_VALIDATION_ISSUES = 20;
 
 /**
- * Returns at most 20 distinct schema expectations and field paths. Submitted
- * values and custom decoder messages stay private. Union errors describe the
- * arms selected by the input. Named values report their full constraint.
+ * A refusal of arguments that names at most 20 wrong fields, each by its path
+ * and what the tool expects there. Submitted values are left out, and so is
+ * the absent alternative of an optional field unless it is all there is to say.
  */
-function validationIssues(error: ParseResult.ParseError) {
-  const issues: ValidationIssue[] = [];
-  appendIssues(error.issue, [], issues);
-  return issues;
-}
-
-function appendIssues(
-  issue: ParseResult.ParseIssue,
-  path: ReadonlyArray<string | number>,
-  issues: ValidationIssue[],
-): void {
-  if (issues.length >= MAXIMUM_VALIDATION_ISSUES) {
-    return;
-  }
-  if (issue._tag === "Pointer") {
-    appendIssues(
-      issue.issue,
-      [...path, ...Arr.ensure(issue.path).map(pathSegment)],
-      issues,
-    );
-    return;
-  }
-  if (issue._tag === "Composite" && issue.ast._tag === "Union") {
-    appendUnion(issue, path, issues);
-    return;
-  }
-  if (issue._tag === "Composite") {
-    appendChildren(Arr.ensure(issue.issues), path, issues);
-    return;
-  }
-  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
-    appendRefined(issue, path, issues);
-    return;
-  }
-  addIssue(issues, { path, message: expectedMessage(issue) });
-}
-
-/** Named values report their full constraint. Other refinements report the inner failure. */
-function appendRefined(
-  issue: ParseResult.Refinement | ParseResult.Transformation,
-  path: ReadonlyArray<string | number>,
-  issues: ValidationIssue[],
-): void {
-  if (issue._tag === "Refinement" && namedValue(issue)) {
-    addIssue(issues, { path, message: expectedSchemaMessage(issue.ast) });
-    return;
-  }
-  appendIssues(issue.issue, path, issues);
-}
-
-/**
- * Reports selected union arms once when they reject the whole value, or reports
- * their failing fields when they match its structure.
- */
-function appendUnion(
-  issue: ParseResult.Composite,
-  path: ReadonlyArray<string | number>,
-  issues: ValidationIssue[],
-): void {
-  const arms = selectedArms(Arr.ensure(issue.issues), issue.actual);
-  const inside = arms.filter((arm) => !leafFailure(arm));
-  if (inside.length === 0 && arms.length > 1) {
-    addIssue(issues, { path, message: expectedSchemaMessage(issue.ast) });
-    return;
-  }
-  appendChildren(inside.length === 0 ? arms : inside, path, issues);
-}
-
-function appendChildren(
-  children: readonly ParseResult.ParseIssue[],
-  path: ReadonlyArray<string | number>,
-  issues: ValidationIssue[],
-): void {
-  for (const child of children) {
-    appendIssues(child, path, issues);
-    if (issues.length >= MAXIMUM_VALIDATION_ISSUES) {
-      break;
-    }
-  }
-}
-
-/**
- * Selects arms by matching literal fields, then required and forbidden fields.
- * An absent-value arm cannot explain a present value. If none match, all report.
- */
-function selectedArms(
-  arms: readonly ParseResult.ParseIssue[],
-  actual: unknown,
-): readonly ParseResult.ParseIssue[] {
-  const present = arms.filter(
-    (arm) => !(arm._tag === "Type" && arm.ast._tag === "UndefinedKeyword"),
+function invalidArguments(error: ParseResult.ParseError) {
+  const found = ParseResult.ArrayFormatter.formatErrorSync(error).map(
+    (issue): ValidationIssue => ({
+      path: issue.path.map((key) =>
+        typeof key === "number" ? key : String(key),
+      ),
+      message: expectation(issue),
+    }),
   );
-  const candidates = present.length === 0 ? arms : present;
-  const chosen = candidates.filter((arm) => literalsMatch(arm, actual));
-  if (chosen.length > 0) {
-    return chosen;
-  }
-  const fitting = candidates.filter((arm) => !fieldsMismatch(arm));
-  return fitting.length > 0 ? fitting : candidates;
-}
-
-function literalsMatch(
-  issue: ParseResult.ParseIssue,
-  actual: unknown,
-): boolean {
-  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
-    return literalsMatch(issue.issue, actual);
-  }
-  if (issue._tag !== "Composite") {
-    return false;
-  }
-  if (issue.ast._tag === "Union") {
-    return Arr.ensure(issue.issues).some((arm) => literalsMatch(arm, actual));
-  }
-  if (issue.ast._tag !== "TypeLiteral" || !isRecord(actual)) {
-    return false;
-  }
-  const literals = issue.ast.propertySignatures.flatMap((signature) =>
-    signature.type._tag === "Literal"
-      ? [{ name: signature.name, literal: signature.type.literal }]
-      : [],
+  const present = found.filter(
+    ({ message }) => message !== "Expected undefined",
   );
-  return (
-    literals.length > 0 &&
-    literals.every(({ name, literal }) => actual[name] === literal)
+  const issues = (present.length === 0 ? found : present).slice(
+    0,
+    MAXIMUM_VALIDATION_ISSUES,
   );
+  return failed(`Invalid tool arguments: ${issuesText(issues)}`, {
+    reason: "invalid-arguments",
+    issues,
+  });
 }
 
-function fieldsMismatch(issue: ParseResult.ParseIssue): boolean {
-  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
-    return fieldsMismatch(issue.issue);
+/** What the tool expects where an issue was found, without the value that was there. */
+function expectation(issue: ParseResult.ArrayFormatterIssue): string {
+  if (issue._tag === "Missing") {
+    return "Required field is missing";
   }
-  if (issue._tag !== "Composite") {
-    return false;
+  if (
+    issue._tag === "Unexpected" ||
+    issue.message.startsWith("Expected never")
+  ) {
+    return "Unexpected field";
   }
-  const children = Arr.ensure(issue.issues);
-  if (issue.ast._tag === "Union") {
-    return children.every(fieldsMismatch);
-  }
-  return children.some(
-    (child) =>
-      child._tag === "Pointer" &&
-      (child.issue._tag === "Missing" || child.issue._tag === "Unexpected"),
-  );
+  return issue.message.replace(/, actual [\s\S]*$/u, "");
 }
 
-function namedValue(issue: ParseResult.Refinement): boolean {
-  return (
-    Option.isSome(SchemaAST.getIdentifierAnnotation(issue.ast)) &&
-    Option.isSome(SchemaAST.getDescriptionAnnotation(issue.ast)) &&
-    leafFailure(issue)
-  );
-}
-
-function leafFailure(issue: ParseResult.ParseIssue): boolean {
-  if (issue._tag === "Refinement" || issue._tag === "Transformation") {
-    return leafFailure(issue.issue);
-  }
-  return issue._tag !== "Composite" && issue._tag !== "Pointer";
-}
-
-function addIssue(issues: ValidationIssue[], issue: ValidationIssue): void {
-  const repeated = issues.some(
-    (other) =>
-      other.message === issue.message &&
-      other.path.join("\0") === issue.path.join("\0"),
-  );
-  if (!repeated) {
-    issues.push(issue);
-  }
-}
-
-function isRecord(
-  value: unknown,
-): value is Readonly<Record<PropertyKey, unknown>> {
-  return typeof value === "object" && value !== null;
-}
-
-function pathSegment(key: PropertyKey): string | number {
-  return typeof key === "number" ? key : String(key);
-}
-
-function expectedMessage(
-  issue:
-    | ParseResult.Type
-    | ParseResult.Forbidden
-    | ParseResult.Missing
-    | ParseResult.Unexpected,
-): string {
-  switch (issue._tag) {
-    case "Unexpected":
-      return "Unexpected field";
-    case "Missing":
-      return "Required field is missing";
-    case "Type":
-      if (issue.ast._tag === "NeverKeyword") {
-        return "Unexpected field";
-      }
-      return expectedSchemaMessage(issue.ast);
-    case "Forbidden":
-      return expectedSchemaMessage(issue.ast);
-    default:
-      return issue satisfies never;
-  }
-}
-
-function expectedSchemaMessage(ast: SchemaAST.AST): string {
-  return `Expected ${Option.getOrElse(
-    SchemaAST.getDescriptionAnnotation(ast),
-    () => String(ast),
-  )}`;
+/** The result of a call that failed: `message` for the model to read, and the failure's fields. */
+function failed(message: string, structuredContent?: unknown) {
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: message }],
+    structuredContent,
+  };
 }
 
 function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
