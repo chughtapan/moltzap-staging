@@ -170,3 +170,21 @@ export const canonicalIdentifier = <const Name extends string>(
     }),
   );
 };
+
+/**
+ * The URL `value` names when it parses, uses one of `protocols` (each with its
+ * colon) and carries no userinfo and no fragment; otherwise `undefined`.
+ */
+export const plainUrl = (
+  value: string | URL,
+  protocols: readonly string[],
+): URL | undefined => {
+  if (!URL.canParse(value)) {
+    return undefined;
+  }
+  const url = new URL(value);
+  return protocols.includes(url.protocol) &&
+    [url.username, url.password, url.hash].every((part) => part === "")
+    ? url
+    : undefined;
+};

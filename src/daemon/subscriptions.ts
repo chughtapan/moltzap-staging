@@ -47,6 +47,7 @@ import {
 import { lookup } from "node:dns";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
+import { plainUrl } from "../encoding.js";
 import {
   callbackReasons,
   INBOX_PENDING_EVENT,
@@ -117,23 +118,6 @@ export const isPublicWebhookAddress = (address: string): boolean => {
     : family === 6 &&
         globalV6.check(address, "ipv6") &&
         !blockedV6.check(address, "ipv6");
-};
-
-/**
- * Returns a canonical HTTPS URL without userinfo or fragments, or `undefined`
- * when invalid. Verification and wake-ups validate URLs before connecting.
- */
-const webhookUrl = (value: string): URL | undefined => {
-  if (!URL.canParse(value)) {
-    return undefined;
-  }
-  const url = new URL(value);
-  if (url.protocol !== "https:") {
-    return undefined;
-  }
-  return url.username === "" && url.password === "" && url.hash === ""
-    ? url
-    : undefined;
 };
 
 /** Requires `whsec_` followed by canonical base64 encoding of 24–64 bytes. */
@@ -494,7 +478,10 @@ const subscribe = (
   ttlMs?: number | null,
 ) =>
   Effect.gen(function* () {
-    if (webhookUrl(url) === undefined || !validWebhookSecret(secret)) {
+    if (
+      plainUrl(url, ["https:"]) === undefined ||
+      !validWebhookSecret(secret)
+    ) {
       return yield* Effect.fail(
         new JsonRpcError(-32602, "Invalid callback URL or secret"),
       );

@@ -29,6 +29,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import type { DaemonSettings } from "./settings.js";
+import { plainUrl } from "../encoding.js";
 import { packageVersion } from "../version.js";
 import { type Owner, serverAgentOwner } from "./owners.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
@@ -367,14 +368,9 @@ function discoverKeys(oauth: McpAuthentication) {
 
 /** Plaintext issuer fixtures cannot relax verification for an HTTPS provider. */
 function isTrustedKeySetUrl(value: string, issuer: string): boolean {
-  if (!URL.canParse(value)) {
-    return false;
-  }
-  const url = new URL(value);
-  const noCredentials =
-    url.username === "" && url.password === "" && url.hash === "";
+  const url = plainUrl(value, ["https:", "http:"]);
   return (
-    noCredentials &&
+    url !== undefined &&
     (url.protocol === "https:" || isLocalIssuerKeySet(url, new URL(issuer)))
   );
 }

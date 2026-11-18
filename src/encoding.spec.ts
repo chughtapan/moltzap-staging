@@ -3,7 +3,7 @@
 import { Effect, Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { decodeJson, encodeJson, sameJson } from "./encoding.js";
+import { decodeJson, encodeJson, plainUrl, sameJson } from "./encoding.js";
 
 describe("JSON text of schema values", () => {
   it("round-trips generated JSON through one stable text", () => {
@@ -54,5 +54,42 @@ describe("comparing two JSON texts", () => {
     { left: "not JSON", right: "not JSON" },
   ])("tells $left from $right", ({ left, right }) => {
     expect(sameJson(left, right)).toBe(false);
+  });
+});
+
+describe("a plain URL", () => {
+  it("is one that parses, uses an allowed protocol and carries no userinfo or fragment", () => {
+    const protocols = ["https:", "http:", "ftp:", "ws:"];
+    fc.assert(
+      fc.property(
+        fc.record({
+          protocol: fc.constantFrom(...protocols),
+          allowed: fc.subarray(protocols),
+          userinfo: fc.constantFrom("", "user@", ":secret@", "user:secret@"),
+          host: fc.constantFrom(
+            "example.com",
+            "127.0.0.1",
+            "[::1]:8443",
+            "not a host",
+          ),
+          path: fc.constantFrom("", "/", "/mcp", "/a/b"),
+          query: fc.constantFrom("", "?", "?a=1"),
+          fragment: fc.constantFrom("", "#", "#part"),
+        }),
+        ({ protocol, allowed, userinfo, host, path, query, fragment }) => {
+          const text = `${protocol}//${userinfo}${host}${path}${query}${fragment}`;
+          const plain =
+            URL.canParse(text) &&
+            allowed.includes(protocol) &&
+            userinfo === "" &&
+            fragment !== "#part";
+          const expected = plain ? new URL(text).href : undefined;
+          expect(plainUrl(text, allowed)?.href).toBe(expected);
+          expect(
+            plainUrl(URL.canParse(text) ? new URL(text) : text, allowed)?.href,
+          ).toBe(expected);
+        },
+      ),
+    );
   });
 });

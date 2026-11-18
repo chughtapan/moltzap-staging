@@ -16,7 +16,7 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { exactStruct } from "../encoding.js";
+import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
@@ -43,18 +43,7 @@ export const refused = (message: string) =>
   new DaemonConfigurationError({ message });
 
 const httpsUrl = Schema.String.pipe(
-  Schema.filter((value) => {
-    if (!URL.canParse(value)) {
-      return false;
-    }
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      [url.username, url.password, url.search, url.hash].every(
-        (part) => part === "",
-      )
-    );
-  }),
+  Schema.filter((value) => plainUrl(value, ["https:"])?.search === ""),
 );
 
 /** Plaintext discovery is limited to local issuer fixtures; hosted providers require HTTPS. */
@@ -62,17 +51,8 @@ const oauthIssuer = Schema.Union(
   httpsUrl,
   Schema.String.pipe(
     Schema.filter((value) => {
-      if (!URL.canParse(value)) {
-        return false;
-      }
-      const url = new URL(value);
-      return (
-        url.protocol === "http:" &&
-        url.hostname === "127.0.0.1" &&
-        [url.username, url.password, url.search, url.hash].every(
-          (part) => part === "",
-        )
-      );
+      const url = plainUrl(value, ["http:"]);
+      return url?.search === "" && url.hostname === "127.0.0.1";
     }),
   ),
 );
