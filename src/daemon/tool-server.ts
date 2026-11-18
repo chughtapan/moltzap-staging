@@ -21,8 +21,8 @@ import {
   ProtocolError,
   Tool,
   ToolAnnotations,
-} from "../vendor/effect-mcp/McpSchema.js";
-import { makeHttpApp, McpServer } from "../vendor/effect-mcp/McpServer.js";
+} from "./vendor/effect-mcp/McpSchema.js";
+import { makeHttpApp, McpServer } from "./vendor/effect-mcp/McpServer.js";
 
 /**
  * The HTTP app that lists and calls `tools`, in their order, and answers the

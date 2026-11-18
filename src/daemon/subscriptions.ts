@@ -47,13 +47,13 @@ import {
 import { lookup } from "node:dns";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
-import { ProtocolError } from "../vendor/effect-mcp/McpSchema.js";
 import {
   callbackReasons,
   INBOX_PENDING_EVENT,
   type SubscriptionStatus,
-} from "./contracts.js";
-import { SocialHarness } from "./social-harness.js";
+} from "../mcp/tools.js";
+import { SocialHarness } from "./agent.js";
+import { ProtocolError } from "./vendor/effect-mcp/McpSchema.js";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
 export type WebhookFailureReason = (typeof callbackReasons)[number];

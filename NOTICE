@@ -5,9 +5,9 @@ This product is licensed under the Apache License, Version 2.0; see LICENSE.
 
 Releases whose published manifests declare the MIT License remain under it.
 Third-party dependencies retain their own licenses. The vendored Effect MCP
-implementation in src/vendor/effect-mcp/McpServer.ts and McpSchema.ts derives
+implementation in src/daemon/vendor/effect-mcp/McpServer.ts and McpSchema.ts derives
 from Effect revision 417e0faa80e471d77fc4a67452e68b09ae0ee861, with backports
-identified in src/vendor/effect-mcp/README.md. These files retain the MIT License:
+identified in src/daemon/vendor/effect-mcp/README.md. These files retain the MIT License:
 
 MIT License
 

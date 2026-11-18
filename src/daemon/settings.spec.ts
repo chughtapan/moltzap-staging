@@ -6,7 +6,7 @@ import { ConfigProvider, Effect, FastCheck as fc, Redacted } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { loadDaemonSettings } from "./config.js";
+import { loadDaemonSettings } from "./settings.js";
 
 const secret = "configuration-only-test-bearer-0000000001";
 const settingsVariable = "SHARNESS_CONFIG_FILE";

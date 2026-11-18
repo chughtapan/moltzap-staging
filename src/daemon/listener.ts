@@ -27,8 +27,8 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { createHash, timingSafeEqual } from "node:crypto";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { DaemonSettings } from "./config.js";
-import { localOwner, type Owner, serverAgentOwner } from "./ownership.js";
+import type { DaemonSettings } from "./settings.js";
+import { localOwner, type Owner, serverAgentOwner } from "./owners.js";
 
 const getOAuthProtectedResourceMetadataUrl = (resource: URL): string =>
   new URL(

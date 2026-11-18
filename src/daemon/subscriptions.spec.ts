@@ -18,6 +18,7 @@ import {
 import * as fc from "fast-check";
 import { createHmac } from "node:crypto";
 import { describe, expect } from "vitest";
+import { INBOX_PENDING_EVENT } from "../mcp/tools.js";
 import {
   decodeWakeUp,
   enqueue,
@@ -26,12 +27,11 @@ import {
   secret,
   subscribeRequest,
 } from "./__tests__/webhook-fixtures.js";
-import { INBOX_PENDING_EVENT } from "./contracts.js";
 import {
   isPublicWebhookAddress,
   sendWebhook,
   webhookHttpClientLayer,
-} from "./webhook.js";
+} from "./subscriptions.js";
 
 type Store = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 type Callback = Effect.Effect.Success<ReturnType<typeof scriptedWebhook>>;

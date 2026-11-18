@@ -5,7 +5,7 @@ import { Context, Effect, Exit, FastCheck as fc, Layer } from "effect";
 import { expect } from "vitest";
 import { openTestDatabase } from "../communication/__tests__/store-fixtures.js";
 import { AgentName, Identity } from "../identity.js";
-import { getOrCreateOwnedAgentKey } from "./ownership.js";
+import { getOrCreateOwnedAgentKey } from "./owners.js";
 
 const owner = { issuer: "https://issuer.example", subject: "owner" };
 

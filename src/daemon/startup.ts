@@ -27,34 +27,34 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
-import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
-import { packageVersion } from "../version.js";
-import {
-  type DaemonSettings,
-  loadDaemonSettings,
-  refused,
-  spanExport,
-} from "./config.js";
 import {
   clientToolDefinitions,
   textOnlyToolDefinitions,
   toolDefinitions,
-} from "./contracts.js";
-import { makeMcpHttpApp, serveMcp, untilStopped } from "./http.js";
+} from "../mcp/tools.js";
+import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
+import { packageVersion } from "../version.js";
+import { SocialHarness } from "./agent.js";
+import { makeMcpHttpApp, serveMcp, untilStopped } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
   listOwnedAgentKeys,
   localOwner,
   type Owner,
   serverAgentOwner,
-} from "./ownership.js";
-import { bind, serveTools } from "./server.js";
-import { SocialHarness } from "./social-harness.js";
+} from "./owners.js";
+import {
+  type DaemonSettings,
+  loadDaemonSettings,
+  refused,
+  spanExport,
+} from "./settings.js";
 import {
   type HarnessWebhookEvents,
   makeWebhookEvents,
   webhookHttpClientLayer,
-} from "./webhook.js";
+} from "./subscriptions.js";
+import { bind, serveTools } from "./tool-server.js";
 
 /**
  * One agent's role, and everything that follows from it. In P2P mode every

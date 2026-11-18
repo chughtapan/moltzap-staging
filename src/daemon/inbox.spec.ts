@@ -5,7 +5,7 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
 import { databaseConnection, migrateDaemon } from "../database/index.js";
-import { MessageAddress } from "./contracts.js";
+import { MessageAddress } from "../mcp/tools.js";
 import { makeInbox } from "./inbox.js";
 
 it("stores the same peer message for each agent and refuses another agent's delivery token", () =>

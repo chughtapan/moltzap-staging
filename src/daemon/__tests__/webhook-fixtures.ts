@@ -24,9 +24,9 @@ import {
   INBOX_PENDING_EVENT,
   InboxError,
   StoredInboxEntry,
-} from "../contracts.js";
-import { SocialHarness } from "../social-harness.js";
-import { makeWebhookEvents } from "../webhook.js";
+} from "../../mcp/tools.js";
+import { SocialHarness } from "../agent.js";
+import { makeWebhookEvents } from "../subscriptions.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
 
 /** The signing secret of the scripted subscription. */

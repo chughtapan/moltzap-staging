@@ -32,7 +32,7 @@ import {
   MessageAddress,
   PAGE_SIZE,
   StoredInboxEntry,
-} from "./contracts.js";
+} from "../mcp/tools.js";
 
 const uncheckedRow = Schema.Struct({
   sequence: Schema.Number,

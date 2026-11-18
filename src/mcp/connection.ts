@@ -30,7 +30,7 @@ import {
   type ToolName,
   type ToolRequest,
   type ToolResult,
-} from "./contracts.js";
+} from "./tools.js";
 
 /** Connection failures omit the private endpoint and credential. */
 export class McpConnectError extends Data.TaggedError("McpConnectError")<{

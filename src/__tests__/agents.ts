@@ -2,7 +2,7 @@
 
 import { Context, Effect, Encoding, Layer, Schema } from "effect";
 import { createHash } from "node:crypto";
-import { getOrCreateOwnedAgentKey } from "../harness/ownership.js";
+import { getOrCreateOwnedAgentKey } from "../daemon/owners.js";
 import { AgentCard, AgentName, Identity } from "../identity.js";
 
 /** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */

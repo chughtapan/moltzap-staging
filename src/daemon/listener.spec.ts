@@ -7,7 +7,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- The issuer fixture owns an actual HTTP listener for discovery and JWKS.
 import { createServer } from "node:http";
 import { expect } from "vitest";
-import type { McpAuthentication } from "./http.js";
+import type { McpAuthentication } from "./listener.js";
 import { mcpFixture, mcpRequest } from "./__tests__/mcp-fixtures.js";
 
 const resource = new URL("https://mcp.example.test/mcp");
