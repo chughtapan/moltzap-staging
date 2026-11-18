@@ -33,10 +33,10 @@ import {
 } from "@social-harness/social-harness";
 import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
-  openTestDatabase,
-  restrictedLogin,
   issuerFixture,
+  openTestDatabase,
   requiredScope,
+  restrictedLogin,
 } from "@social-harness/social-harness/test";
 import {
   ConfigProvider,
