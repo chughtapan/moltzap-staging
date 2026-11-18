@@ -200,6 +200,8 @@ export function mcpRequest(
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
       "mcp-protocol-version": version,
+      "mcp-method": method,
+      ...(typeof params.name === "string" ? { "mcp-name": params.name } : {}),
       ...options.headers,
     },
     body: JSON.stringify({
