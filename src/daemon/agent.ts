@@ -59,7 +59,13 @@ import {
   type SendRequest,
   type SendResult,
 } from "../mcp/tools.js";
-import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
+import {
+  decodeCursor,
+  encodeCursor,
+  type Inbox,
+  makeInbox,
+  type Unchecked,
+} from "./inbox.js";
 
 const historyCursor = Schema.Struct({
   operation: Schema.Literal("history"),
@@ -436,7 +442,7 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
     const position =
       request.cursor === undefined
         ? undefined
-        : yield* inbox.decodeCursor(conversationsCursor, request.cursor);
+        : yield* decodeCursor(conversationsCursor, request.cursor);
     const afterAddress = position?.address ?? "";
     const addresses = new Set(
       yield* inbox.collectiveResultAddresses(afterAddress),
@@ -474,7 +480,7 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
       addresses: selected,
       ...(last !== undefined && (ordered.length > PAGE_SIZE || morePages)
         ? {
-            nextCursor: yield* inbox.encodeCursor(conversationsCursor, {
+            nextCursor: yield* encodeCursor(conversationsCursor, {
               operation: "conversations",
               address: last,
               ...(lastPageCursor === undefined
@@ -507,7 +513,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     const position =
       request.cursor === undefined
         ? initial
-        : yield* inbox.decodeCursor(historyCursor, request.cursor);
+        : yield* decodeCursor(historyCursor, request.cursor);
     if (position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
@@ -536,7 +542,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
       if (page.nextCursor !== undefined) {
         return {
           records,
-          nextCursor: yield* inbox.encodeCursor(historyCursor, {
+          nextCursor: yield* encodeCursor(historyCursor, {
             ...position,
             operation: "history",
             communicationCursor: page.nextCursor,
@@ -548,7 +554,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (available === 0 && position.through > 0) {
       return {
         records,
-        nextCursor: yield* inbox.encodeCursor(historyCursor, {
+        nextCursor: yield* encodeCursor(historyCursor, {
           operation: "history",
           phase: "collectiveResults",
           address: destination.address,
@@ -576,7 +582,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
       records,
       ...(collectiveResults.length > selected.length && last !== undefined
         ? {
-            nextCursor: yield* inbox.encodeCursor(historyCursor, {
+            nextCursor: yield* encodeCursor(historyCursor, {
               operation: "history",
               phase: "collectiveResults",
               address: destination.address,

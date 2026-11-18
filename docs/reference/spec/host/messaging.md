@@ -108,9 +108,8 @@ appear first, followed by the agent's collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
 outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
-`cursor` with the same selection until absent. Cursors belong to the service
-lifetime. An invalid cursor returns `invalid-cursor`. Start a new traversal after
-reconnecting.
+`cursor` with the same selection until absent. An invalid cursor returns
+`invalid-cursor`. Start a new traversal after reconnecting.
 
 An invalid history page returns no messages. Reading history neither
 marks an inbox entry delivered nor authorizes a send.

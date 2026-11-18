@@ -2,7 +2,7 @@
 
 import { SqlClient } from "@effect/sql";
 import { Effect, Encoding, Schema } from "effect";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type {
   Message,
   MessageReference,
@@ -84,7 +84,7 @@ type InboxTables = Record<
 /** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
 export type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 
-/** Captures the database and scopes opaque cursors to this inbox instance. */
+/** Captures the database. */
 export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   agentKey: string,
 ) {
@@ -111,7 +111,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
       ),
     ).pipe(Effect.map((found) => found[0]?.head ?? 0));
-  const cursorKey = randomBytes(32);
   return {
     storeUnchecked: Effect.fn(function* (
       address: MessageAddress,
@@ -272,7 +271,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         const position =
           request.cursor === undefined
             ? { after: 0, through: yield* head(inboxRows()) }
-            : yield* decodeCursor(inboxCursor, request.cursor, cursorKey);
+            : yield* decodeCursor(inboxCursor, request.cursor);
         const rows = yield* read(
           pendingRow,
           inboxRows()
@@ -300,11 +299,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           entries,
           ...(rows.length > entries.length
             ? {
-                nextCursor: yield* encodeCursor(
-                  inboxCursor,
-                  { operation: "inbox", after, through: position.through },
-                  cursorKey,
-                ),
+                nextCursor: yield* encodeCursor(inboxCursor, {
+                  operation: "inbox",
+                  after,
+                  through: position.through,
+                }),
               }
             : {}),
         } satisfies InboxPage;
@@ -416,10 +415,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ),
         { concurrency: 1 },
       ).pipe(Effect.mapError(persistenceFailure)),
-    encodeCursor: <A, I>(schema: Schema.Schema<A, I>, position: NoInfer<A>) =>
-      encodeCursor(schema, position, cursorKey),
-    decodeCursor: <A, I>(schema: Schema.Schema<A, I>, cursor: string) =>
-      decodeCursor(schema, cursor, cursorKey),
   };
 });
 
@@ -427,50 +422,28 @@ function persistenceFailure() {
   return new InboxError({ reason: "persistence-failed" });
 }
 
-/** Binds cursor integrity and lifetime to this inbox independently of access control. */
-function encodeCursor<A, I>(
+/** A cursor is its position as base64url JSON text. */
+export function encodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   position: NoInfer<A>,
-  key: Uint8Array,
 ) {
   return encodeJson(schema, position).pipe(
-    Effect.map((text) => {
-      const payload = Encoding.encodeBase64Url(text);
-      const signature = createHmac("sha256", key)
-        .update(payload)
-        .digest("base64url");
-      return `${payload}.${signature}`;
-    }),
+    Effect.map((text) => Encoding.encodeBase64Url(text)),
     Effect.mapError(persistenceFailure),
   );
 }
 
-function decodeCursor<A, I>(
+/** The position a cursor holds, when it is one `schema` describes. */
+export function decodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   cursor: string,
-  key: Uint8Array,
 ) {
-  return Effect.gen(function* () {
-    const [payload, signature, extra] = cursor.split(".");
-    if (
-      payload === undefined ||
-      signature === undefined ||
-      extra !== undefined
-    ) {
-      return yield* new InboxError({ reason: "invalid-cursor" });
-    }
-    const supplied = yield* Encoding.decodeBase64Url(signature);
-    const expected = createHmac("sha256", key).update(payload).digest();
-    if (
-      supplied.byteLength !== expected.byteLength ||
-      !timingSafeEqual(supplied, expected)
-    ) {
-      return yield* new InboxError({ reason: "invalid-cursor" });
-    }
-    const text = yield* Encoding.decodeBase64UrlString(payload);
-    return yield* decodeJson(schema, text);
-  }).pipe(
-    // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- Malformed, expired and foreign cursor diagnostics share the public invalid-cursor failure.
-    Effect.mapError(() => new InboxError({ reason: "invalid-cursor" })),
+  return Encoding.decodeBase64UrlString(cursor).pipe(
+    Effect.flatMap((text) => decodeJson(schema, text)),
+    Effect.catchTags({
+      DecodeException: () => new InboxError({ reason: "invalid-cursor" }),
+      JsonRepresentationError: () =>
+        new InboxError({ reason: "invalid-cursor" }),
+    }),
   );
 }
