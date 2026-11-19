@@ -2,10 +2,11 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Context, Effect, Layer, Option, Queue, Record } from "effect";
+import type { AgentCard } from "../../identity.js";
 import type { Message } from "../messages.js";
 import { createTestAgent } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../database/testing.js";
-import { Communication, type Conversation } from "../service.js";
+import { openTestDatabase } from "../../test.js";
+import { Communication } from "../service.js";
 
 /**
  * Alice, Bob and Carol in one database: each one's key, card and service,
@@ -39,12 +40,12 @@ export const conversationFixture = Effect.gen(function* () {
       return inbox;
     });
   /** The newest 1024 messages of a conversation as `agent` reads it, oldest first. */
-  const history = (agent: typeof hosted.alice, members: Conversation) =>
+  const history = (agent: typeof hosted.alice, members: readonly AgentCard[]) =>
     agent
       .readHistory({ members, order: "newest", limit: 1024 })
       .pipe(Effect.map((page) => page.entries.map((entry) => entry.message)));
   /** A conversation as each of its members on this daemon reads it. */
-  const histories = (members: Conversation) =>
+  const histories = (members: readonly AgentCard[]) =>
     Effect.all(
       Record.filterMap(hosted, (agent, name) =>
         members.some((member) => member.agentName === name)

@@ -10,11 +10,11 @@ import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { testAgentCard } from "../../__tests__/agents.js";
-import { openTestDatabase } from "../../database/testing.js";
 import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
 import { MessageAddressInput } from "../../mcp/tools.js";
+import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "../subscriptions.js";
@@ -76,7 +76,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   const tools =
     options.serverAgentName === undefined
-      ? peerTools(false, false)
+      ? peerTools(false, false, false)
       : clientTools(
           MessageAddressInput.make(`agent:${options.serverAgentName}`),
         );

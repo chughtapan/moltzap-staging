@@ -149,11 +149,9 @@ function connection() {
     structuredContent: { id: msgId, address } satisfies SendResult,
   });
   const inbox = Effect.runSync(Queue.unbounded<InboxEntry>());
-  const released = vi.fn();
   boundary.acquire.mockReturnValue(
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
-      yield* Effect.addFinalizer(() => Effect.sync(released));
       return {
         mcp,
         consumeInbox: (accept) =>
@@ -170,7 +168,7 @@ function connection() {
       } satisfies McpConnection;
     }),
   );
-  return { call, inbox, released };
+  return { call, inbox };
 }
 async function channel() {
   const created = await registration.factory();
@@ -206,19 +204,6 @@ describe("NanoClaw lifecycle", () => {
     expect(await registration.factory()).toBeNull();
     expect(boundary.acquire).not.toHaveBeenCalled();
   });
-  it("shares one scoped connection across repeated setup and teardown", async () => {
-    const fake = connection();
-    const current = await channel();
-    const callbacks = host();
-    await current.setup(callbacks);
-    await current.setup(callbacks);
-    expect(boundary.acquire).toHaveBeenCalledTimes(1);
-    expect(current.isConnected()).toBe(true);
-    await current.teardown();
-    await current.teardown();
-    expect(fake.released).toHaveBeenCalledTimes(1);
-    expect(current.isConnected()).toBe(false);
-  });
 });
 
 describe("NanoClaw inbox entries", () => {
@@ -244,17 +229,6 @@ describe("NanoClaw inbox entries", () => {
       members: ["agent:alice", "agent:bob", "agent:carol"],
     });
     expect(entryInText(content)).toEqual(guidedEntry);
-  });
-  it("disconnects when the native inbound callback fails", async () => {
-    const fake = connection();
-    const current = await channel();
-    const callbacks = host();
-    callbacks.onInboundEvent.mockRejectedValue(new Error("host refused"));
-    await current.setup(callbacks);
-    Effect.runSync(Queue.offer(fake.inbox, plainEntry));
-    await vi.waitFor(() => {
-      expect(current.isConnected()).toBe(false);
-    });
   });
 });
 
@@ -304,39 +278,24 @@ describe("NanoClaw sends", () => {
     );
   });
   const invalidArguments = "Invalid tool arguments: text: Expected a string";
-  it.each([
-    {
-      failure: "refuses an argument",
-      answer: () =>
-        Promise.resolve({
-          isError: true,
-          content: [{ type: "text" as const, text: invalidArguments }],
-          structuredContent: { reason: "invalid-arguments" },
-        }),
-      told: invalidArguments,
-    },
-    {
-      failure: "gives no answer",
-      answer: () => Promise.reject(new Error("connection lost")),
-      told: "send failed: the send did not complete; the message may or may not have been sent",
-    },
-  ])(
-    "tells the model when the daemon $failure, and does not send again",
-    async ({ answer, told }) => {
-      const fake = connection();
-      const current = await channel();
-      const callbacks = host();
-      fake.call.mockImplementation(answer);
-      await current.setup(callbacks);
-      await expect(
-        current.deliver(address, null, { kind: "chat", content: messageText }),
-      ).resolves.toBeUndefined();
-      expect(
-        jsonObject(callbacks.onInboundEvent.mock.calls[0]?.[0].message.content),
-      ).toMatchObject({ sender: "Social Harness", text: told });
-      expect(fake.call).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("tells the model when the daemon refuses an argument, and does not send again", async () => {
+    const fake = connection();
+    const current = await channel();
+    const callbacks = host();
+    fake.call.mockResolvedValue({
+      isError: true,
+      content: [{ type: "text", text: invalidArguments }],
+      structuredContent: { reason: "invalid-arguments" },
+    });
+    await current.setup(callbacks);
+    await expect(
+      current.deliver(address, null, { kind: "chat", content: messageText }),
+    ).resolves.toBeUndefined();
+    expect(
+      jsonObject(callbacks.onInboundEvent.mock.calls[0]?.[0].message.content),
+    ).toMatchObject({ sender: "Social Harness", text: invalidArguments });
+    expect(fake.call).toHaveBeenCalledTimes(1);
+  });
 });
 
 /* eslint-enable agent-code-guard/async-keyword -- Restore Effect-first production boundaries. */

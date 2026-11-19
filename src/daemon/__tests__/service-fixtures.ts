@@ -21,11 +21,9 @@ import { testAgentCard } from "../../__tests__/agents.js";
 import { CommunicationError, Message } from "../../communication/index.js";
 import {
   Communication,
-  type Conversation,
   type HistoryPage,
   type HistoryQuery,
 } from "../../communication/service.js";
-import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import { compareAscii } from "../../encoding.js";
 import { Firewall } from "../../firewall/service.js";
 import {
@@ -34,6 +32,7 @@ import {
   Identity,
   IdentityError,
 } from "../../identity.js";
+import { openTestDatabase, type TestDatabase } from "../../test.js";
 import { type HarnessSettings, SocialHarness } from "../agent.js";
 import { type Inbox, makeInbox } from "../inbox.js";
 
@@ -156,7 +155,7 @@ interface Network {
   readonly self: AgentCard;
   readonly messages: Message[];
   readonly submitted: Message[];
-  readonly conversations: Map<string, Conversation>;
+  readonly conversations: Map<string, readonly AgentCard[]>;
   readonly historyPositions: Map<string, HistoryPosition>;
   readonly incoming: Queue.Queue<Intake>;
   cursorId: number;
@@ -212,7 +211,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
       Effect.sync(() => {
         retain(network, message);
       }),
-    addConversation: (members: Conversation) =>
+    addConversation: (members: readonly AgentCard[]) =>
       Effect.sync(() => {
         network.conversations.set(addressOf(self, members), members);
       }),
@@ -408,14 +407,10 @@ function retain(network: Network, message: Message) {
 
 function membersOf(
   message: Pick<Message, "author" | "recipients">,
-): Conversation {
-  const [first, second, ...rest] = [message.author, ...message.recipients].sort(
-    (left, right) => compareAscii(left.agentName, right.agentName),
+): readonly AgentCard[] {
+  return [message.author, ...message.recipients].sort((left, right) =>
+    compareAscii(left.agentName, right.agentName),
   );
-  if (first === undefined || second === undefined) {
-    throw new Error("A fixture conversation needs two members");
-  }
-  return [first, second, ...rest];
 }
 
 function addressOf(self: AgentCard, members: readonly AgentCard[]) {

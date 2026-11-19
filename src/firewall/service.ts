@@ -4,6 +4,7 @@ import {
   Clock,
   Context,
   Effect,
+  Exit,
   Layer,
   Schedule,
   Schema,
@@ -468,6 +469,7 @@ function checkMessageText(
         Effect.catchTag("InvalidCheckError", () =>
           Effect.succeed(unavailable()),
         ),
+        markCheckActivity(direction),
       );
       const { check, guidance } = guidanceProjection(concluded, checkId);
       const detail =
@@ -918,4 +920,46 @@ function saveEditablePolicy(
       store.writeEditablePolicy(editablePolicyJson, activation),
     ),
   );
+}
+
+const activityKind = "firewall-check";
+/** How a marked check ended. */
+type ActivityEnding = "checked" | "interrupted" | "failed";
+
+/** Pairs a pending and a settled span around one check, even when it fails or is cancelled. */
+function markCheckActivity(direction: Direction) {
+  return <A, E, R>(work: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.uninterruptibleMask((restore) =>
+      checkPending(direction).pipe(
+        Effect.zipRight(restore(work)),
+        Effect.onExit((exit) => {
+          if (Exit.isSuccess(exit)) {
+            return checkSettled(direction, "checked");
+          }
+          return checkSettled(
+            direction,
+            Exit.isInterrupted(exit) ? "interrupted" : "failed",
+          );
+        }),
+      ),
+    );
+}
+
+/** Opens the span that `checkSettled` closes for the same direction. */
+function checkPending(direction: Direction): Effect.Effect<void> {
+  return Effect.withSpan(Effect.void, "retry.pending", {
+    captureStackTrace: false,
+    attributes: { kind: activityKind, id: direction },
+  });
+}
+
+/** Closes the span `checkPending` opened. */
+function checkSettled(
+  direction: Direction,
+  ending: ActivityEnding,
+): Effect.Effect<void> {
+  return Effect.withSpan(Effect.void, "retry.settled", {
+    captureStackTrace: false,
+    attributes: { kind: activityKind, id: direction, outcome: ending },
+  });
 }

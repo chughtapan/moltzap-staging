@@ -21,6 +21,7 @@ import {
   Runtime,
   Schema,
 } from "effect";
+import type { CompiledContract } from "../firewall/index.js";
 import { issuesText } from "../encoding.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
@@ -31,7 +32,7 @@ import {
   type SubscriptionStatus,
   toolDefinitions,
 } from "../mcp/tools.js";
-import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";
+import { compiledPolicyEdit } from "../norms/index.js";
 import { SocialHarness } from "./agent.js";
 
 /** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
@@ -141,9 +142,14 @@ interface Definition<A, I, B, J, E> {
 
 /**
  * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy. Without `groups` an address names one agent.
+ * owns its message policy. Without `groups` an address names one agent. An
+ * agent that holds norms lists them with `read_norms`.
  */
-export function peerTools(policyConfigured: boolean, groups: boolean) {
+export function peerTools(
+  policyConfigured: boolean,
+  groups: boolean,
+  holdsNorms: boolean,
+) {
   return Effect.fnUntraced(function* (
     status: Effect.Effect<SubscriptionStatus>,
   ) {
@@ -196,16 +202,22 @@ export function peerTools(policyConfigured: boolean, groups: boolean) {
         toolDefinitions.read_firewall_decisions,
         firewall.readDecisions,
       ),
-      ...(yield* normsTool(toolDefinitions.read_norms)),
+      ...(holdsNorms
+        ? [normsTool(toolDefinitions.read_norms, firewall.readContracts())]
+        : []),
     ];
   });
 }
 
 /**
  * The tools of a client in client/server mode. It sends to and reads its
- * conversation with the server agent, and names neither.
+ * conversation with the server agent, and names neither. With
+ * `serverAgentContracts`, the norms the server agent holds, it has `read_norms`.
  */
-export function clientTools(serverAgentAddress: MessageAddressInput) {
+export function clientTools(
+  serverAgentAddress: MessageAddressInput,
+  serverAgentContracts?: Effect.Effect<readonly CompiledContract[]>,
+) {
   return Effect.fnUntraced(function* (
     status: Effect.Effect<SubscriptionStatus>,
   ) {
@@ -225,9 +237,31 @@ export function clientTools(serverAgentAddress: MessageAddressInput) {
         clientToolDefinitions.read_conversation,
         (page) => harness.readHistory({ ...page, address: serverAgentAddress }),
       ),
-      ...(yield* normsTool(clientToolDefinitions.read_norms)),
+      ...(serverAgentContracts === undefined
+        ? []
+        : [normsTool(clientToolDefinitions.read_norms, serverAgentContracts)]),
     ];
   });
+}
+
+/** `read_norms` lists the contracts `held` reads: this agent's, or for a client the server agent's. */
+function normsTool(
+  definition: (
+    | typeof toolDefinitions
+    | typeof clientToolDefinitions
+  )["read_norms"],
+  held: Effect.Effect<readonly CompiledContract[]>,
+) {
+  const read = held.pipe(
+    Effect.map((contracts) => ({
+      norms: contracts.map((norm) => ({
+        name: norm.name,
+        description: norm.description,
+        document: norm.source,
+      })),
+    })),
+  );
+  return bind("read_norms", definition, () => read);
 }
 
 /** Turns a tool definition and the operation behind it into a tool to serve. */
@@ -263,34 +297,6 @@ function statusTool(status: Effect.Effect<SubscriptionStatus>) {
       })),
     ),
   );
-}
-
-/**
- * `read_norms` lists the norms held: this agent's, or for a client the server
- * agent's. An agent that holds none has no such tool.
- */
-function normsTool(
-  definition: (
-    | typeof toolDefinitions
-    | typeof clientToolDefinitions
-  )["read_norms"],
-) {
-  return Effect.gen(function* () {
-    const heldNorms = yield* Effect.serviceOption(HeldNorms);
-    if (Option.isNone(heldNorms)) {
-      return [];
-    }
-    const read = heldNorms.value.read().pipe(
-      Effect.map((held) => ({
-        norms: held.map((norm) => ({
-          name: norm.name,
-          description: norm.description,
-          document: norm.source,
-        })),
-      })),
-    );
-    return [bind("read_norms", definition, () => read)];
-  });
 }
 
 /** The MCP server for one request, answering from the agent `admitted` names. */

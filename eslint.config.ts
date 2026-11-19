@@ -4,17 +4,8 @@
  * `scripts/`, each plugin, the agent-image tooling and
  * the integration tests.
  */
-import type { Rule } from "eslint";
-import type * as ESTree from "estree";
 import comments from "@eslint-community/eslint-plugin-eslint-comments";
 import { plugin as guard } from "eslint-plugin-agent-code-guard";
-
-type FunctionNode = (
-  | ESTree.ArrowFunctionExpression
-  | ESTree.FunctionDeclaration
-  | ESTree.FunctionExpression
-) &
-  Rule.NodeParentExtension;
 
 type StrictRules = ReturnType<typeof makeStrictRules>;
 type GuardPreset = typeof guard.configs.documentation;
@@ -39,60 +30,6 @@ const PACKAGE_SOURCE_FILES = ["src/**/*.ts", "*.ts"];
 const documentationRules = {
   "jsdoc/require-param": "off",
   "jsdoc/require-returns": "off",
-};
-
-/**
- * Effect.gen abandons its generator when a yielded effect fails, so a
- * `finally` block cannot provide reliable cleanup on that path. This rule
- * flags try/finally inside Effect-driven generators while leaving plain
- * generators alone, where iteration runs finally through `.return()`.
- * Effect.ensuring and Effect.acquireRelease preserve cleanup on every path.
- */
-const genFinallyRule: Rule.RuleModule = {
-  meta: {
-    type: "problem",
-    docs: {
-      description:
-        "Disallow try/finally inside Effect-driven generator bodies; use Effect.ensuring",
-    },
-    schema: [],
-    messages: {
-      genFinally:
-        "try/finally inside Effect.gen — no finally code runs when a yielded effect fails; use Effect.ensuring",
-    },
-  },
-  create(context) {
-    const functionStack: FunctionNode[] = [];
-    const enter = (node: FunctionNode): void => {
-      functionStack.push(node);
-    };
-    const exit = (): void => {
-      functionStack.pop();
-    };
-    return {
-      FunctionDeclaration: enter,
-      "FunctionDeclaration:exit": exit,
-      FunctionExpression: enter,
-      "FunctionExpression:exit": exit,
-      ArrowFunctionExpression: enter,
-      "ArrowFunctionExpression:exit": exit,
-      TryStatement(node) {
-        const fn = functionStack.at(-1);
-        if (
-          node.finalizer != null &&
-          fn !== undefined &&
-          isEffectDrivenGenerator(fn)
-        ) {
-          context.report({ node, messageId: "genFinally" });
-        }
-      },
-    };
-  },
-};
-
-const strictPlugins = {
-  ...guard.configs.strict.plugins,
-  "local-guard": { rules: { "gen-finally": genFinallyRule } },
 };
 
 /** One TypeScript project covers every linted file. */
@@ -275,7 +212,6 @@ function makeStrictRules() {
     "sonarjs/argument-type": "off",
     // `sharnessd` takes `--help` or nothing, which needs no argument parser.
     "agent-code-guard/prefer-effect-platform": ["error", { disable: ["argv"] }],
-    "local-guard/gen-finally": "error",
   };
 }
 
@@ -292,7 +228,7 @@ function makeStrictBlock(files: readonly string[], rules: StrictRules) {
   return {
     files: [...files],
     languageOptions,
-    plugins: strictPlugins,
+    plugins: guard.configs.strict.plugins,
     settings: guard.configs.strict.settings,
     rules,
   };
@@ -305,37 +241,6 @@ function makePresetBlock(files: readonly string[], preset: GuardPreset) {
     plugins: preset.plugins,
     rules: preset.rules,
   };
-}
-
-function isEffectDrivenGenerator(fn: FunctionNode): boolean {
-  const call = fn.parent;
-  if (!fn.generator || call.type !== "CallExpression") {
-    return false;
-  }
-  return (
-    call.arguments.some((argument) => argument === fn) &&
-    isEffectGeneratorRunner(call.callee)
-  );
-}
-
-/** True for `Effect.gen` and for the `Effect.fn(...)` call that wraps a body. */
-function isEffectGeneratorRunner(callee: ESTree.Node): boolean {
-  return (
-    isEffectMember(callee, "gen") ||
-    (callee.type === "CallExpression" && isEffectMember(callee.callee, "fn"))
-  );
-}
-
-function isEffectMember(node: ESTree.Node, name: string): boolean {
-  return (
-    node.type === "MemberExpression" &&
-    isIdentifier(node.object, "Effect") &&
-    isIdentifier(node.property, name)
-  );
-}
-
-function isIdentifier(node: ESTree.Node, name: string): boolean {
-  return node.type === "Identifier" && node.name === name;
 }
 
 /** A spec asserts the literal reasons, codes and names that are the contract under test. */

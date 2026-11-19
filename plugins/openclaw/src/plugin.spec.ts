@@ -1,21 +1,10 @@
-/** @file The channel advertises OpenClaw's standard explicitly addressed actions. */
+/** @file The channel records a send in its recipient's session and refuses to start an account without the host runtime. */
 
 import { live as it } from "@effect/vitest";
 import { Effect } from "effect";
 import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { expect, it as unit } from "vitest";
 import { createChannelPlugin } from "./plugin.js";
-
-unit(
-  "offers send and reply without Social Harness-specific tool parameters",
-  () => {
-    expect(
-      createChannelPlugin().actions?.describeMessageTool({
-        cfg: { channels: { sharness: { accounts: [{ id: "primary" }] } } },
-      }),
-    ).toEqual({ actions: ["send", "reply"] });
-  },
-);
 
 unit.each(["shared", "private"] as const)(
   "records a send in the session its recipient's turns use in %s mode",

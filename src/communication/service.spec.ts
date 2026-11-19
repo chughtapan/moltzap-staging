@@ -2,7 +2,6 @@
 import { scopedLive as it } from "@effect/vitest";
 import { Effect, FastCheck as fc, Queue, Record, Schema } from "effect";
 import { expect } from "vitest";
-import type { Conversation } from "./service.js";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { Message } from "./messages.js";
@@ -10,7 +9,7 @@ import { Message } from "./messages.js";
 /** Alice as a server agent and Bob as its client. */
 const fixture = Effect.gen(function* () {
   const f = yield* conversationFixture;
-  const members: Conversation = [f.cards.alice, f.cards.bob];
+  const members = [f.cards.alice, f.cards.bob];
   const message = (text: string) =>
     Message.create({
       author: f.cards.bob,
@@ -111,7 +110,7 @@ it("appends a message once to the history of the server agent and the client it 
             recipients: [people[to]],
             content: [{ type: "text", text: "hello" }],
           });
-          const members: Conversation = [message.author, ...message.recipients];
+          const members = [message.author, ...message.recipients];
           const admitted = author === caller && to in f.hosted;
           const before = yield* f.histories(members);
           const refusal = yield* f.hosted[caller].send(message).pipe(
@@ -168,7 +167,7 @@ it("keeps one copy of a message its author sends again, and refuses a different 
           ...(yield* write(author, elsewhere, "changed")),
           msgId: message.msgId,
         });
-        const members: Conversation = [message.author, ...message.recipients];
+        const members = [message.author, ...message.recipients];
         const before = yield* f.histories(members);
         yield* f.hosted[author].send(message);
         yield* f.hosted[author].send(message);

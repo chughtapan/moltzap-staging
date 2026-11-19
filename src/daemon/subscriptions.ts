@@ -47,7 +47,7 @@ import {
 } from "node:crypto";
 import { lookup } from "node:dns";
 import { isIP, type LookupFunction } from "node:net";
-import { executeQuery, makeQueries, withAgentRows } from "../database/index.js";
+import { executeQuery, makeQueries, withAgentRows } from "../database.js";
 import { plainUrl } from "../encoding.js";
 import { callbackReasons, type SubscriptionStatus } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";

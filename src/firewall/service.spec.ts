@@ -1,8 +1,14 @@
 /** @file Public policy operations retain safe decisions and rule edits across transactions and restart. */
 
+import * as NodeSdk from "@effect/opentelemetry/NodeSdk";
 import { SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
 import {
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from "@opentelemetry/sdk-trace-base";
+import {
+  type Context,
   Deferred,
   Duration,
   Effect,
@@ -11,7 +17,8 @@ import {
   Fiber,
 } from "effect";
 import { describe, expect } from "vitest";
-import { openTestDatabase } from "../database/testing.js";
+import type { AgentCard } from "../identity.js";
+import { openTestDatabase } from "../test.js";
 import {
   certainProvider,
   evidence,
@@ -23,7 +30,7 @@ import {
   privacy,
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
-import { FirewallPolicyError, type TextRule } from "./rules.js";
+import { type Direction, FirewallPolicyError, type TextRule } from "./rules.js";
 import { Firewall } from "./service.js";
 
 const initial = {
@@ -46,6 +53,18 @@ const edits = fc.record({
     { maxLength: 3 },
   ),
 });
+/** Checks the fixtures' draft from `self`, or their peer message to it, with `firewall`. */
+function check(
+  firewall: Context.Tag.Service<typeof Firewall>,
+  self: AgentCard,
+  direction: Direction,
+) {
+  return Effect.gen(function* () {
+    return direction === "outgoing"
+      ? yield* firewall.checkOutgoing(yield* outgoing(self), evidence)
+      : yield* firewall.checkIncoming(yield* incoming(self), evidence);
+  });
+}
 
 it("isolates saved decisions and editable policy between agents sharing a database", () =>
   Effect.gen(function* () {
@@ -393,6 +412,55 @@ describe("Firewall.layer", () => {
         (agentKey) => firewallLayer(agentKey, policy([initial])),
       );
     }));
+});
+
+describe("Firewall check activity", () => {
+  it.prop(
+    "exports a pending span and then a settled span for each check, naming its direction",
+    [
+      fc.array(fc.constantFrom<Direction>("incoming", "outgoing"), {
+        minLength: 1,
+        maxLength: 4,
+      }),
+    ],
+    ([directions]) =>
+      Effect.gen(function* () {
+        const exporter = new InMemorySpanExporter();
+        const exported = yield* withFirewall(
+          {},
+          (firewall, self) =>
+            Effect.forEach(
+              directions,
+              (direction) => check(firewall, self, direction),
+              { concurrency: 1 },
+            ).pipe(Effect.map(() => exporter.getFinishedSpans())),
+          (agentKey) => firewallLayer(agentKey, policy([], [privacy])),
+        ).pipe(
+          Effect.provide(
+            NodeSdk.layer(() => ({
+              spanProcessor: new SimpleSpanProcessor(exporter),
+            })),
+          ),
+        );
+
+        expect(
+          exported
+            .filter(({ name }) => name.startsWith("retry."))
+            .map(({ name, attributes }) => ({ name, ...attributes })),
+        ).toEqual(
+          directions.flatMap((id) => [
+            { name: "retry.pending", kind: "firewall-check", id },
+            {
+              name: "retry.settled",
+              kind: "firewall-check",
+              id,
+              outcome: "checked",
+            },
+          ]),
+        );
+      }),
+    { fastCheck: { numRuns: 12 } },
+  );
 });
 
 describe("Firewall text rule replies", () => {
