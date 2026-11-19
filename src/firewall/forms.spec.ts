@@ -13,12 +13,13 @@ const fieldSchema = (field: object) =>
 
 /** Whether a field accepts a value. */
 const accepted = (field: object, value: unknown) =>
-  Either.isRight(
+  Either.match(
     Effect.runSync(
       Effect.either(
         validateResponseContent(fieldSchema(field), { field: value }),
       ),
     ),
+    { onLeft: () => false, onRight: () => true },
   );
 
 const fieldNames = ["slot", "hours", "note", "constructor", "toString"];

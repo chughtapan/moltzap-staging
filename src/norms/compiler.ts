@@ -154,7 +154,14 @@ function compileForm(form: Declaration) {
         ),
       ),
     );
-    const by = yield* compileSender(form.attributes.get(":by"));
+    const sender = form.attributes.get(":by");
+    if (sender === undefined) {
+      return yield* new NormDocumentError({
+        detail: "Every sender role must be declared.",
+        declaration: form.name,
+      });
+    }
+    const by = yield* compileSender(sender);
     const maximum = yield* numberAttribute(form, ":max");
     const delay = yield* compileDelay(form);
     return {
@@ -178,10 +185,10 @@ function compileForm(form: Declaration) {
 }
 
 function compileSender(
-  node?: SExpression,
+  node: SExpression,
 ): Effect.Effect<MessageForm["by"], NormDocumentError> {
   if (
-    node?.kind !== "list" ||
+    node.kind !== "list" ||
     atom(node.values[0]) !== "recipient" ||
     node.values[1]?.kind !== "list"
   ) {
