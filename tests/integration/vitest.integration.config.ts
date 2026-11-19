@@ -8,6 +8,7 @@ export default defineConfig({
     include: ["**/*.spec.ts"],
     exclude: [...configDefaults.exclude, "images/**"],
     maxWorkers: 2,
+    expect: { requireAssertions: true },
     passWithNoTests: false,
   },
 });

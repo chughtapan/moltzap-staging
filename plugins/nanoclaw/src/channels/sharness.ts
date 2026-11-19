@@ -214,7 +214,7 @@ const HARNESS_SENDER_NAME = "Social Harness";
  */
 function entryText(entry: InboxEntry): string {
   if (entry.guidance === undefined) {
-    const [part, ...rest] = entry.item.message.content;
+    const [part, ...rest] = entry.message.content;
     if (part.type === "text" && rest.length === 0) {
       return part.text;
     }
@@ -226,7 +226,7 @@ function entryText(entry: InboxEntry): string {
 function entryParticipants(
   entry: InboxEntry,
 ): Pick<ProjectedEntry, "sender" | "members"> {
-  const { author, recipients } = entry.item.message;
+  const { author, recipients } = entry.message;
   const sender = agentAddress(author);
   return isGroup(entry.address)
     ? { sender, members: [sender, ...recipients.map(agentAddress)] }
@@ -479,7 +479,7 @@ class HarnessChannelAdapter {
       host,
       entry.address,
       hostMessage({
-        id: entry.item.message.msgId,
+        id: entry.message.msgId,
         address: entry.address,
         ...entryParticipants(entry),
         text: entryText(entry),

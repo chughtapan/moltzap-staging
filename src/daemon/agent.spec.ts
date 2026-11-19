@@ -285,7 +285,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     }
     const stored = {
       address: delivery.address,
-      item: delivery.item,
+      message: delivery.message,
       guidance: delivery.guidance,
     };
     expect(stored.guidance).toBeDefined();
@@ -442,10 +442,8 @@ it("ends a waiting read as soon as an entry arrives", () =>
 
     expect(page.entries).toMatchObject([
       {
-        item: {
-          message: {
-            content: [{ type: "text", text: "Arrived while waiting" }],
-          },
+        message: {
+          content: [{ type: "text", text: "Arrived while waiting" }],
         },
       },
     ]);

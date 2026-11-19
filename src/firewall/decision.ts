@@ -100,7 +100,7 @@ export function contractRefusal(
             peer,
             judgment: problem.reason === "rule-violation" ? "reject" : "hold",
             reason: problem.reason,
-            decidedBy: [{ ruleId, from: "chain" }],
+            decidedBy: [{ ruleId, from: "contract" }],
             checkedRuleIds: [ruleId],
             activeRevision: revision,
           }),

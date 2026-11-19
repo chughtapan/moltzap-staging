@@ -9,8 +9,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { Context, Duration, Effect, Layer, Ref } from "effect";
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
-import { LOOPBACK_HOST, sharedDaemon } from "../daemon/daemon-fixture.js";
-import { processTrace } from "../scenario-fixture.js";
+import { LOOPBACK_HOST, processTrace, sharedDaemon } from "./daemon-fixture.js";
 
 /** The standard batch delay, shortened from 5 s so spans leave the daemon sooner. */
 const BATCH_DELAY = Duration.millis(100);

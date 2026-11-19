@@ -53,12 +53,12 @@
     "@effect/platform": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
-    "@effect/vitest": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
     "@social-harness/openclaw-channel": "workspace:*",
     "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:",
     "eslint": "catalog:",
+    "openclaw": "catalog:",
     "tsx": "catalog:",
     "vitest": "catalog:"
   }

@@ -3,16 +3,18 @@
 import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { expect, it } from "vitest";
+import { groupAddress, P2P } from "./agent-fixture.p2p.js";
 import {
+  callTool,
   joinParticipants,
   nextItem,
-  type Participant,
+  processTrace,
+  receivedOrder,
   send,
-} from "../agent-fixture.js";
-import { groupAddress, P2P } from "../agent-fixture.p2p.js";
-import { processTrace } from "../scenario-fixture.js";
-import { callTool } from "../tool-call.js";
-import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
+  sharedDaemon,
+  type SignedIn,
+  stopProcess,
+} from "./daemon-fixture.js";
 
 /** Each trace starts one daemon, and two of them start it twice. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
@@ -28,14 +30,6 @@ const savedOrder = (reader: SignedIn, address: string) =>
     },
   }).pipe(
     Effect.map((page) => page.records.map((record) => record.message.msgId)),
-  );
-
-/** The identifiers of the next `count` messages the participant receives, in order. */
-const receivedOrder = (participant: Participant, count: number) =>
-  Effect.forEach(
-    Array.from({ length: count }),
-    () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
-    { concurrency: 1 },
   );
 
 it(
@@ -55,11 +49,9 @@ it(
           }
           const first = yield* send(alice, { to: bob.address, text: "hello" });
           expect(yield* nextItem(bob)).toMatchObject({
-            message: {
-              msgId: first.id,
-              author: alice.agent,
-              recipients: [bob.agent],
-            },
+            msgId: first.id,
+            author: alice.agent,
+            recipients: [bob.agent],
           });
           const second = yield* send(bob, { to: alice.address, text: "reply" });
           expect(yield* receivedOrder(alice, 1)).toEqual([second.id]);
