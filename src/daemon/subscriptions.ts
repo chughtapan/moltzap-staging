@@ -776,12 +776,6 @@ function writeSavedSubscription(
   }).pipe(Effect.provideService(SqlClient.SqlClient, webhook.sql));
 }
 
-/**
- * One agent's callback subscription for inbox wake-ups: the MCP Events calls,
- * each taking a request as it arrived, and what the `status` tool reports.
- */
-export type HarnessWebhookEvents = ReturnType<typeof inboxEvents>;
-
 /** Loads the agent's subscription and posts wake-ups for it until the scope closes. */
 export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
   agentKey: string,

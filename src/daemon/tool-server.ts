@@ -22,6 +22,17 @@ import {
   Schema,
 } from "effect";
 import { issuesText } from "../encoding.js";
+import { Firewall } from "../firewall/service.js";
+import { Identity } from "../identity.js";
+import {
+  clientToolDefinitions,
+  directToolDefinitions,
+  type MessageAddressInput,
+  type SubscriptionStatus,
+  toolDefinitions,
+} from "../mcp/tools.js";
+import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";
+import { SocialHarness } from "./agent.js";
 
 /** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
 export interface AgentCalls {
@@ -128,8 +139,99 @@ interface Definition<A, I, B, J, E> {
   };
 }
 
+/**
+ * The tools of a peer and of the server agent: each addresses any agent and
+ * owns its message policy. Without `groups` an address names one agent.
+ */
+export function peerTools(policyConfigured: boolean, groups: boolean) {
+  return Effect.fnUntraced(function* (
+    status: Effect.Effect<SubscriptionStatus>,
+  ) {
+    const harness = yield* SocialHarness;
+    const firewall = yield* Firewall;
+    return [
+      yield* statusTool(status),
+      groups
+        ? bind("send_message", toolDefinitions.send_message, harness.send)
+        : bind(
+            "send_message",
+            directToolDefinitions.send_message,
+            harness.send,
+          ),
+      bind(
+        "receive_messages",
+        toolDefinitions.receive_messages,
+        harness.receive,
+      ),
+      bind(
+        "list_conversations",
+        toolDefinitions.list_conversations,
+        harness.listConversations,
+      ),
+      groups
+        ? bind(
+            "read_conversation",
+            toolDefinitions.read_conversation,
+            harness.readHistory,
+          )
+        : bind(
+            "read_conversation",
+            directToolDefinitions.read_conversation,
+            harness.readHistory,
+          ),
+      ...(policyConfigured
+        ? [
+            bind("read_policy", toolDefinitions.read_policy, () =>
+              firewall.readPolicy(),
+            ),
+            bind("update_policy", toolDefinitions.update_policy, (update) =>
+              compiledPolicyEdit(update).pipe(
+                Effect.flatMap(firewall.updatePolicy),
+              ),
+            ),
+          ]
+        : []),
+      bind(
+        "read_firewall_decisions",
+        toolDefinitions.read_firewall_decisions,
+        firewall.readDecisions,
+      ),
+      ...(yield* normsTool(toolDefinitions.read_norms)),
+    ];
+  });
+}
+
+/**
+ * The tools of a client in client/server mode. It sends to and reads its
+ * conversation with the server agent, and names neither.
+ */
+export function clientTools(serverAgentAddress: MessageAddressInput) {
+  return Effect.fnUntraced(function* (
+    status: Effect.Effect<SubscriptionStatus>,
+  ) {
+    const harness = yield* SocialHarness;
+    return [
+      yield* statusTool(status),
+      bind("send_message", clientToolDefinitions.send_message, (message) =>
+        harness.send({ ...message, to: serverAgentAddress }),
+      ),
+      bind(
+        "receive_messages",
+        toolDefinitions.receive_messages,
+        harness.receive,
+      ),
+      bind(
+        "read_conversation",
+        clientToolDefinitions.read_conversation,
+        (page) => harness.readHistory({ ...page, address: serverAgentAddress }),
+      ),
+      ...(yield* normsTool(clientToolDefinitions.read_norms)),
+    ];
+  });
+}
+
 /** Turns a tool definition and the operation behind it into a tool to serve. */
-export function bind<A, I, B, J, E extends { readonly message: string }>(
+function bind<A, I, B, J, E extends { readonly message: string }>(
   name: string,
   definition: Definition<A, I, B, J, E>,
   execute: (input: A) => Effect.Effect<B, E>,
@@ -148,6 +250,47 @@ export function bind<A, I, B, J, E extends { readonly message: string }>(
     },
     handle: handler(definition, execute),
   };
+}
+
+/** `status` names this agent and reports its subscription as `status` reads it. */
+function statusTool(status: Effect.Effect<SubscriptionStatus>) {
+  return Effect.map(Identity, (identity) =>
+    bind("status", toolDefinitions.status, () =>
+      Effect.map(status, (subscription) => ({
+        agentId: identity.me.agentId,
+        agentName: identity.me.agentName,
+        subscription,
+      })),
+    ),
+  );
+}
+
+/**
+ * `read_norms` lists the norms held: this agent's, or for a client the server
+ * agent's. An agent that holds none has no such tool.
+ */
+function normsTool(
+  definition: (
+    | typeof toolDefinitions
+    | typeof clientToolDefinitions
+  )["read_norms"],
+) {
+  return Effect.gen(function* () {
+    const heldNorms = yield* Effect.serviceOption(HeldNorms);
+    if (Option.isNone(heldNorms)) {
+      return [];
+    }
+    const read = heldNorms.value.read().pipe(
+      Effect.map((held) => ({
+        norms: held.map((norm) => ({
+          name: norm.name,
+          description: norm.description,
+          document: norm.source,
+        })),
+      })),
+    );
+    return [bind("read_norms", definition, () => read)];
+  });
 }
 
 /** The MCP server for one request, answering from the agent `admitted` names. */
