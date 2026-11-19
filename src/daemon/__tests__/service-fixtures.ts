@@ -85,11 +85,14 @@ interface TestPolicy {
 }
 
 /**
- * One text rule makes check order and saved advice observable.
- * `maximumConcurrentChecks` bounds how many checks run at once.
+ * One text rule makes check order and saved advice
+ * observable. With `action`, the rule replies to or silently withholds the
+ * incoming messages it rejects. `maximumConcurrentChecks` bounds how many
+ * checks run at once.
  */
 export function composedPolicy(
   provider: DecisionProvider,
+  action?: "deny" | "reply",
   maximumConcurrentChecks?: number,
 ): TestPolicy {
   return {
@@ -106,6 +109,7 @@ export function composedPolicy(
               text: "Protect the owner's private information.",
               guidance: "Check before sharing private information.",
               feedback: "Keep private information private.",
+              ...(action === undefined ? {} : { action }),
             },
           ],
         },
@@ -120,7 +124,7 @@ export function composedPolicy(
   };
 }
 
-/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were stored. */
+/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were allowed. */
 export function waitForInbox(
   runtime: {
     readonly inbox: Inbox;
@@ -250,6 +254,10 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
       SocialHarness.layer({
         agentKey,
         maximumHistoryRecords: options.maximumHistoryRecords,
+        maximumConcurrentChecks: options.maximumConcurrentChecks,
+        ...(options.withheldReply === undefined
+          ? {}
+          : { withheldReply: options.withheldReply }),
       }),
     ).pipe(
       Effect.provide(provided),

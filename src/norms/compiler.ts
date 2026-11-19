@@ -41,6 +41,7 @@ export const compileNorm = Effect.fn("compileNorm")(function* (source: string) {
     ":initiator",
     ":participant",
     ":description",
+    ":on-refusal",
   ]);
   const initiator = atom(header.attributes.get(":initiator"));
   const participant = atom(header.attributes.get(":participant"));
@@ -73,6 +74,7 @@ export const compileNorm = Effect.fn("compileNorm")(function* (source: string) {
     (form, index) => compileRule(form, `${header.name}-rule-${index + 1}`),
     { concurrency: 1 },
   );
+  const onRefusal = atom(header.attributes.get(":on-refusal"));
   const contract = yield* Schema.decodeUnknown(compiledContractSchema)({
     name: header.name,
     digest: createHash("sha256").update(source, "utf8").digest("hex"),
@@ -81,6 +83,7 @@ export const compileNorm = Effect.fn("compileNorm")(function* (source: string) {
     roles,
     forms,
     textRules,
+    ...(onRefusal === undefined ? {} : { onRefusal }),
   }).pipe(
     Effect.catchTag("ParseError", () =>
       Effect.fail(
@@ -631,6 +634,7 @@ function validateReferences(contract: CompiledContract) {
     for (const form of contract.forms) {
       yield* validateForm(contract, form, forms);
     }
+    yield* validateRefusal(contract, forms);
   }).pipe(Effect.withSpan("validateReferences"));
 }
 
@@ -676,6 +680,32 @@ function validateForm(
       yield* validateRelation(form, relation, forms);
     }
   });
+}
+
+function validateRefusal(
+  contract: CompiledContract,
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  if (contract.onRefusal === undefined) {
+    return Effect.void;
+  }
+  const form = forms.get(contract.onRefusal);
+  if (form === undefined) {
+    return Effect.fail(
+      new NormDocumentError({
+        detail: "The refusal act must have a declared form.",
+      }),
+    );
+  }
+  return form.fields.properties.reason?.type !== "string" ||
+    form.fields.required.some((field) => field !== "reason")
+    ? Effect.fail(
+        new NormDocumentError({
+          detail:
+            "Automatic refusal supplies a reason string and no other required fields.",
+        }),
+      )
+    : Effect.void;
 }
 
 function validateOpening(contract: CompiledContract, form: MessageForm) {

@@ -3,11 +3,12 @@
 import { Effect, Either, FastCheck as fc, Schema } from "effect";
 import { expect, it } from "vitest";
 import { Message } from "../communication/index.js";
-import { formatAct, peer } from "./__tests__/firewall-fixtures.js";
+import { peer } from "./__tests__/firewall-fixtures.js";
 import {
   type Act,
   checkStructure,
   compiledContractSchema,
+  formatAct,
   readAct,
 } from "./contract.js";
 

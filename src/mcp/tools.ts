@@ -334,7 +334,7 @@ export const toolDefinitions = {
   read_firewall_decisions: {
     failure: policyFails,
     description:
-      "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed or refused), the reason and the deciding rules' registered advice, without message content or private model evidence.",
+      "Read completed firewall decision summaries since inclusive Unix milliseconds. Each gives the decision applied (allowed, refused or withheld), the reason and the deciding rules' registered advice, without message content or private model evidence.",
     input: firewallDecisionsRequestSchema,
     output: firewallDecisionsSchema,
     annotations: readOnlyAnnotations,
@@ -356,7 +356,7 @@ export const clientToolDefinitions = {
   send_message: {
     ...toolDefinitions.send_message,
     description:
-      "Send a message to the server agent, which checks it against its norms and rules before it is stored. Returns the message id. A refused message was not sent: the refusal names the form, field or rule to correct, or says the check could not complete. An outcome-unknown failure must not be retried as a new send.",
+      "Send a message to the server agent. Returns the message id. An outcome-unknown failure must not be retried as a new send.",
     input: exactStruct({
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",

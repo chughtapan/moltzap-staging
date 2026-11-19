@@ -19,7 +19,7 @@ const firewallRefusalReasonSchema = Schema.Literal(
   "check-unavailable",
 );
 
-/** Why the firewall refused a message. */
+/** Why the firewall refused a message its agent sent, or withheld one it received. */
 export type FirewallRefusalReason = typeof firewallRefusalReasonSchema.Type;
 
 /** Whether the agent received the message under check or is sending it. */
@@ -36,7 +36,9 @@ export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
  * One text rule: the prose a decision provider judges, the guidance it gives
  * the receiving agent and the feedback it gives the sender of a message it
  * refuses. Validation requires nonempty text without restricting its
- * language.
+ * language. An incoming message that violates a rule whose `action` is `reply`
+ * is withheld, and its sender receives the rule's feedback text as a message;
+ * `deny`, the default, withholds it silently.
  * The message policy specification defines who owns each rule and how edits
  * are validated.
  */
@@ -44,6 +46,7 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   id: identifier,
   guidance: Schema.optional(Schema.NonEmptyString),
   feedback: Schema.optional(Schema.NonEmptyString),
+  action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
 }) {}
@@ -68,7 +71,7 @@ export const firewallDecisionsRequestSchema = exactStruct({
 /**
  * Contains one row per peer without message content.
  * `decidedBy[].advice` contains the
- * rule's feedback for a refused message, or its guidance for an
+ * rule's feedback for a refused or withheld message, or its guidance for an
  * allowed one. `from` identifies a contract stage as `contract`, or a text rule
  * as `fixed`. `checkedRuleIds` lists the rules the check judged: a
  * rule that does not apply to the message's direction is not listed.
@@ -89,13 +92,14 @@ export const firewallDecisionSummarySchema = exactStruct({
 });
 
 /**
- * Reports each saved check with the decision the daemon applied.
+ * Reports each saved check with the decision the daemon applied. A sent
+ * message is `allowed` or `refused`; a received one is `allowed` or `withheld`.
  */
 export const firewallDecisionsSchema = exactStruct({
   decisions: Schema.Array(
     exactStruct({
       ...firewallDecisionSummarySchema.fields,
-      decision: Schema.Literal("allowed", "refused"),
+      decision: Schema.Literal("allowed", "refused", "withheld"),
       checkId: Schema.NonEmptyString,
       time: Schema.NonNegativeInt,
     }),
@@ -210,6 +214,7 @@ const behaviorFrontmatter = Schema.Struct({
       applies: TextRule.fields.applies,
       guidance: TextRule.fields.guidance,
       feedback: TextRule.fields.feedback,
+      action: TextRule.fields.action,
     }),
   }),
 });
