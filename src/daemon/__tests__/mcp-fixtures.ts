@@ -41,6 +41,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
+    checkIncoming: () => Effect.dieMessage("Unexpected check"),
     ...options.harness,
   });
   const unused = () => Effect.dieMessage("Unexpected firewall assessment");

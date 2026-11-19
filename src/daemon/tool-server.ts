@@ -22,7 +22,6 @@ import {
   Schema,
 } from "effect";
 import type { Firewall } from "../firewall/service.js";
-import type { SocialHarness } from "./agent.js";
 import {
   Cursor,
   Message,
@@ -40,7 +39,7 @@ import {
   LocalGuidance,
 } from "../firewall/index.js";
 import { type AgentCard, AgentId, AgentName } from "../identity.js";
-import { makeInbox } from "./inbox.js";
+import { readInboxEntries, type SocialHarness } from "./agent.js";
 import {
   AgentAddress,
   INBOX_EVENT,
@@ -148,10 +147,14 @@ export const makeInboxEvents = Effect.gen(function* () {
     check: (...[{ principal, maxEvents, signal }, , cursor]) =>
       run(
         Effect.gen(function* () {
-          const inbox = yield* makeInbox(yield* Effect.fromNullable(principal));
-          const page = yield* inbox.listInbox(
-            Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-            cursor === null ? undefined : yield* Schema.decode(Cursor)(cursor),
+          const page = yield* readInboxEntries(
+            yield* Effect.fromNullable(principal),
+            {
+              limit: Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+              ...(cursor === null
+                ? {}
+                : { cursor: yield* Schema.decode(Cursor)(cursor) }),
+            },
           );
           return {
             events: (yield* Schema.encode(Schema.Array(InboxEntry))(

@@ -1,6 +1,7 @@
 /** @file SocialHarness fixtures: one agent's harness over real policy, identity and communication in a test database, with the peers that message it. */
 
-import { Context, Effect, flow, Layer, Schedule, Schema, Scope } from "effect";
+import { SqlClient } from "@effect/sql";
+import { Context, Effect, flow, Layer, PubSub, Schema, Scope } from "effect";
 import type {
   CompiledContract,
   DecisionProvider,
@@ -10,13 +11,17 @@ import type {
 } from "../../firewall/index.js";
 import type { AgentCard } from "../../identity.js";
 import { createTestAgent } from "../../__tests__/agents.js";
-import { CommunicationError, Message } from "../../communication/index.js";
+import { CommunicationError, type Message } from "../../communication/index.js";
 import { Communication } from "../../communication/service.js";
 import { Firewall } from "../../firewall/service.js";
 import { openTestDatabase } from "../../test.js";
-import { type HarnessSettings, SocialHarness } from "../agent.js";
-import { type Inbox, makeInbox } from "../inbox.js";
+import {
+  type HarnessSettings,
+  readInboxEntries,
+  SocialHarness,
+} from "../agent.js";
 import { identityLayer } from "../owners.js";
+import { AgentAddress, type SendRequest } from "../values.js";
 
 type Policy = Context.Tag.Service<typeof Firewall>;
 
@@ -69,13 +74,11 @@ interface TestPolicy {
 /**
  * One text rule makes check order and saved advice
  * observable. With `action`, the rule replies to or silently withholds the
- * incoming messages it rejects. `maximumConcurrentChecks` bounds how many
- * checks run at once.
+ * incoming messages it rejects.
  */
 export function composedPolicy(
   provider: DecisionProvider,
   action?: "deny" | "reply",
-  maximumConcurrentChecks?: number,
 ): TestPolicy {
   return {
     provider,
@@ -100,81 +103,79 @@ export function composedPolicy(
           maximumRequestBytes: 100_000,
           timeoutMilliseconds: 5_000,
         },
-        maximumConcurrentChecks,
       },
     },
   };
 }
 
-/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were allowed. */
-export function waitForInbox(
-  runtime: {
-    readonly inbox: Inbox;
-  },
-  count = 1,
-) {
-  const read = runtime.inbox.listInbox(1000, "0");
-  return read.pipe(
-    Effect.repeat({
-      until: (page) => page.entries.length >= count,
-      schedule: Schedule.spaced("5 millis"),
-    }),
-    Effect.zipRight(read),
-    Effect.timeout("10 seconds"),
-  );
-}
-
 /** How a harness opens. */
-interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
+interface OpenOptions extends Omit<HarnessSettings, "agentKey" | "checkedBy"> {
   readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
   readonly contracts?: readonly CompiledContract[];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 
+type Harness = Context.Tag.Service<typeof SocialHarness>;
+
 /**
- * Alice, whose harness a test opens, with Bob, Carol and any peer a test adds,
- * on one daemon. `submitted` lists what Alice's harness handed to
- * communication, and after `failSends` communication stores none of it.
+ * Alice, the server agent whose harness a test opens, with her clients Bob,
+ * Carol and any peer a test adds, on one daemon. A client sends through a
+ * harness of its own, which has Alice's open harness check the message.
+ * `submitted` lists what Alice's harness handed to communication, and after
+ * `failSends` communication stores none of it.
  */
 export const makeHarnessFixture = Effect.gen(function* () {
   const database = yield* openTestDatabase();
   const scope = yield* Effect.scope;
-  const consumers = new Map<string, Effect.Latch>();
+  const readable = yield* PubSub.unbounded<string>();
   const submitted: Message[] = [];
   let sendsFail = false;
-  const senders = new Map<string, Context.Tag.Service<typeof Communication>>();
-  /** Creates an agent that sends through a communication service of its own, which closes with the fixture. */
+  let server: Harness | undefined;
+  const clients = new Map<string, Harness>();
+  /** Creates a client, whose harness closes with the fixture. */
   const join = Effect.fn(
     function* (name: string) {
       const agent = yield* createTestAgent(name);
       const services = yield* Layer.build(
-        Communication.layer({ ...agent, consumers }),
+        SocialHarness.layer({
+          agentKey: agent.agentKey,
+          checkedBy: Effect.suspend(() => Effect.fromNullable(server)).pipe(
+            Effect.orDie,
+          ),
+        }).pipe(
+          Layer.provide(Communication.layer({ ...agent, readable })),
+          Layer.provide(
+            Firewall.layer(agent.agentKey).pipe(
+              Layer.provideMerge(identityLayer(agent.agentKey)),
+            ),
+          ),
+        ),
       );
-      senders.set(agent.card.agentId, Context.get(services, Communication));
-      return agent;
+      clients.set(agent.card.agentId, Context.get(services, SocialHarness));
+      return agent.card;
     },
     flow(database.run, Scope.extend(scope)),
   );
-  const alice = yield* join("alice");
-  const bob = (yield* join("bob")).card;
-  const carol = (yield* join("carol")).card;
+  const alice = yield* database.run(createTestAgent("alice"));
+  const bob = yield* join("bob");
+  const carol = yield* join("carol");
   /** Alice's communication, recording each send and failing it once sends fail. */
   const communication = Layer.effect(
     Communication,
     Effect.map(Communication, (real) => ({
       ...real,
-      send: (message: Message) =>
+      send: (...[message, received]: Parameters<typeof real.send>) =>
         Effect.suspend(() => {
           submitted.push(message);
           return sendsFail
             ? Effect.fail(
                 new CommunicationError({ reason: "persistence-failed" }),
               )
-            : real.send(message);
+            : real.send(message, received);
         }),
     })),
-  ).pipe(Layer.provide(Communication.layer({ ...alice, consumers })));
+  ).pipe(Layer.provide(Communication.layer({ ...alice, readable })));
   const open = Effect.fn(function* (options: OpenOptions = {}) {
     const services = yield* Layer.build(
       Firewall.layer(
@@ -196,10 +197,20 @@ export const makeHarnessFixture = Effect.gen(function* () {
           : Context.add(services, Firewall, options.decorateFirewall(firewall)),
       ),
     );
+    const harness = Context.get(context, SocialHarness);
+    server = harness;
     return {
-      harness: Context.get(context, SocialHarness),
-      inbox: yield* makeInbox(alice.agentKey),
+      harness,
       firewall,
+      /** Every entry of Alice's inbox, in read order. */
+      inbox: readInboxEntries(alice.agentKey, {
+        limit: 1000,
+        cursor: "0",
+      }).pipe(
+        Effect.map((page) => page.entries),
+        Effect.provideService(SqlClient.SqlClient, database.sql),
+        Effect.orDie,
+      ),
     };
   }, database.run);
   return {
@@ -208,22 +219,22 @@ export const makeHarnessFixture = Effect.gen(function* () {
     carol,
     submitted,
     open,
-    /** Sends `message` as its author, past the author's firewall. */
-    deliver: (message: Message) =>
+    /** Sends Alice a message through the harness of its author, Bob unless given. */
+    sendFrom: (request: Omit<SendRequest, "to">, author: AgentCard = bob) =>
       Effect.flatMap(
-        Effect.fromNullable(senders.get(message.author.agentId)),
-        (sender) => sender.send(message),
+        Effect.fromNullable(clients.get(author.agentId)),
+        (client) =>
+          client.send({ ...request, to: AgentAddress.make("agent:alice") }),
       ),
-    addPeer: (name: string) => Effect.map(join(name), (peer) => peer.card),
+    /** The kinds of the records a client, Bob unless given, reads of its conversation with Alice. */
+    historyOf: (client: AgentCard = bob) =>
+      Effect.flatMap(Effect.fromNullable(clients.get(client.agentId)), (own) =>
+        own.readHistory({ address: AgentAddress.make("agent:alice") }),
+      ).pipe(Effect.map(({ records }) => records.map(({ kind }) => kind))),
+    addPeer: join,
     failSends: () =>
       Effect.sync(() => {
         sendsFail = true;
-      }),
-    message: (text: string, author: AgentCard = bob) =>
-      Message.create({
-        author,
-        recipients: [alice.card],
-        content: [{ type: "text", text }],
       }),
   };
 }).pipe(Effect.withSpan("makeHarnessFixture"));

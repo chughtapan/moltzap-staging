@@ -18,10 +18,9 @@ The daemon processes incoming work even without a subscription.
 
 [Incoming policy](../firewall/message-policy.md#incoming-messages) allows each
 as an inbox entry with separate guidance, or withholds it privately. Checks
-follow conversation order, continue past what is withheld and survive restart.
+follow conversation order and continue past what is withheld.
 
-Interrupted checks leave messages
-unchecked for recovery. An allowed entry takes the next place in the agent's
+An allowed entry takes the next place in the agent's
 read order when its check is recorded.
 
 ## Messages

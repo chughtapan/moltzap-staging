@@ -16,8 +16,7 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
   readonly reason:
     | "membership-invalid"
     | "content-invalid"
-    | "persistence-failed"
-    | "message-conflict";
+    | "persistence-failed";
 }> {}
 
 /** The byte limit of one message's content as JSON text. */
