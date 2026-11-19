@@ -21,9 +21,8 @@ what you cannot infer.
   tooling an agent can drive (the `auth0` CLI and Auth0's own skill, the
   `railway` CLI or connector).
 
-Signing in to a provider, paying for a plan and supplying a secret are the
-owner's to do. Ask for each when you reach it, never ask for a password, key
-or token in chat, and never print one.
+Signing in to a provider and paying for a plan are the owner's to do. Never
+print a secret or commit one.
 
 ## What must be true
 
@@ -85,8 +84,7 @@ a conversation may contain and in what order; the
 defines it and the repository's `config/norms/examples/` shows complete ones.
 The [message policy](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/firewall/message-policy.md)
 adds rules for every message. English rules, in a norm or the policy, are
-judged by a model: the policy then names a `decisionProvider`, and the owner
-supplies its key.
+judged by a model: the policy then names a `decisionProvider`, which needs a key.
 
 **Variables on the daemon:** `SHARNESS_CONFIG_FILE` (the Dockerfile sets it),
 `SHARNESS_DATABASE_URL`, and `SHARNESS_DECISION_PROVIDER_KEY` when the policy
