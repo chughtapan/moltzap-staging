@@ -60,22 +60,14 @@ function roleOf(
     return {
       withheldReply: undefined,
       firewall: checked(),
-      tools: peerTools(
-        settings.messagePolicy !== undefined,
-        !settings.hideGroups,
-        norms !== undefined,
-      ),
+      tools: peerTools(!settings.hideGroups, norms !== undefined),
     };
   }
   if (agentName === serverAgent.name) {
     return {
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       firewall: checked(),
-      tools: peerTools(
-        settings.messagePolicy !== undefined,
-        false,
-        norms !== undefined,
-      ),
+      tools: peerTools(false, norms !== undefined),
     };
   }
   return {

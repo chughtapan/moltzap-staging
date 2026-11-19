@@ -24,6 +24,7 @@ Startup requires:
 | --- | --- |
 | `SHARNESS_DATABASE_URL` | A PostgreSQL connection URL (`postgres://user:password@host:5432/database`) |
 | `SHARNESS_CONFIG_FILE` | Path to the private settings file |
+| `SHARNESS_DECISION_PROVIDER_KEY` | The decision provider's API key, when the selected policy names a provider |
 
 Start the daemon with `sharnessd`. Standard `OTEL_*` environment
 variables configure tracing. A missing or invalid settings file or a database
@@ -40,7 +41,6 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `authentication` | Required OAuth configuration, below |
 | `serverAgent` | Optional `name` and `subject` of the server agent. With it the daemon runs in [client/server mode](./modes.md#server-agent-and-clients); without it, in P2P mode |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
-| `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups` | Optional boolean; default `false`. With `true`, a daemon in P2P mode offers no group addresses |
 | `maximumHistoryRecords` | Default 256; [window bounds](./firewall/message-policy.md#available-history). |
@@ -77,14 +77,14 @@ An agent that cannot start receives HTTP 503; other agents keep serving.
 ## Firewalls
 
 The configured message policy and norms apply before host calls are accepted.
-Agents use `read_policy`, `update_policy`, `read_firewall_decisions` and, with
+Agents use `read_firewall_decisions` and, with
 norms, `read_norms` through their own MCP context.
 
 <a id="persistence"></a>
 
 ## Persistence
 
-Messages, inbox entries, firewall decisions and editable policy
+Messages, inbox entries and firewall decisions
 belong to an agent. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
 stores everything as it was written, including the signing secret of a

@@ -236,7 +236,7 @@ it("checks each conversation in order while another conversation progresses", ()
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
-it("recovers an interrupted check and keeps its inbox entry after edits, delivery and restart", () =>
+it("recovers an interrupted check and keeps its inbox entry after delivery and restart", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
@@ -274,7 +274,6 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
       guidance: delivery.guidance,
     };
     expect(stored.guidance).toBeDefined();
-    yield* resumed.firewall.updatePolicy({ remove: ["privacy"] });
     yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
     yield* resumed.inbox.markDelivered([delivery.deliveryToken]);
     expect((yield* resumed.inbox.listInbox()).entries).toEqual([]);

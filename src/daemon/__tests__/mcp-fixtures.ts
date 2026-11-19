@@ -10,7 +10,6 @@ import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
 import { testAgentCard } from "../../__tests__/agents.js";
-import { FirewallPolicyError } from "../../firewall/index.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
 import { MessageAddressInput } from "../../mcp/tools.js";
@@ -58,10 +57,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const firewall = Firewall.of({
     checkIncoming: unused,
     checkOutgoing: unused,
-    readPolicy: () =>
-      Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
     readContracts: () => Effect.succeed([]),
-    updatePolicy: unused,
     readDecisions: unused,
   });
   const callbackClient = yield* Layer.build(webhookHttpClientLayer);
@@ -75,7 +71,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   );
   const tools =
     options.serverAgentName === undefined
-      ? peerTools(false, false, false)
+      ? peerTools(false, false)
       : clientTools(
           MessageAddressInput.make(`agent:${options.serverAgentName}`),
         );

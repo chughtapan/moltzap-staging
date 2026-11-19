@@ -22,9 +22,6 @@ import {
   type FirewallPolicyError,
   type FirewallRefusal,
   LocalGuidance,
-  policyReadSchema,
-  policyRevisionSchema,
-  policyUpdateSchema,
 } from "../firewall/index.js";
 import {
   AGENT_NAME_RULE,
@@ -449,27 +446,6 @@ export const toolDefinitions = {
     input: readConversationInput,
     output: readConversationOutput,
     annotations: readOnlyAnnotations,
-  },
-  read_policy: {
-    failure: policyFails,
-    description:
-      "Read active editable rules, fixed rules, the names of the norms this agent holds, and the policy revision. Fixed rules include the English rules of held norms.",
-    input: noArguments,
-    output: policyReadSchema,
-    annotations: readOnlyAnnotations,
-  },
-  update_policy: {
-    failure: {
-      toData: (error: FirewallPolicyError) => ({
-        reason: error.reason,
-        ...error.data,
-      }),
-    },
-    description:
-      "Add, remove or replace editable rules and held norms. A behavior is a complete BEHAVIOR.md document, and {norm} adds a complete norm document; remove a norm with {norm: name}. Remove and add the same id or norm to replace it. Fixed rules refuse edits. Returns after the complete edit is active; saved decisions remain unchanged.",
-    input: policyUpdateSchema,
-    output: policyRevisionSchema,
-    annotations: { readOnlyHint: false, openWorldHint: false },
   },
   read_firewall_decisions: {
     failure: policyFails,

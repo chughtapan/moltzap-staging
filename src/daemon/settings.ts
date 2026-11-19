@@ -4,16 +4,7 @@ import { FileSystem } from "@effect/platform";
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import {
-  Config,
-  Data,
-  Effect,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-  Struct,
-} from "effect";
+import { Config, Data, Effect, Layer, Option, Schema, Struct } from "effect";
 import { dirname, resolve } from "node:path";
 import { exactStruct, plainUrl } from "../encoding.js";
 import {
@@ -81,7 +72,6 @@ const settingsFile = exactStruct({
   ),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
-  decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),
   maximumHistoryRecords: Schema.optional(
     Schema.Int.pipe(Schema.between(1, 1024)),
@@ -95,7 +85,7 @@ const settingsFile = exactStruct({
  */
 export type DaemonSettings = Omit<
   typeof settingsFile.Type,
-  "messagePolicyFile" | "decisionProviderKeyFile" | "normsDirectory"
+  "messagePolicyFile" | "normsDirectory"
 > & {
   readonly messagePolicy?: LoadedMessagePolicy;
   readonly norms?: InstalledNorms;
@@ -125,24 +115,17 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
   if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
-      "The configured norms need a messagePolicyFile: each agent holds its norms in its editable message policy",
+      "The configured norms need a messagePolicyFile: the message policy checks them",
     );
   }
-  const messagePolicy = yield* loadMessagePolicy({
-    messagePolicyFile:
-      file.messagePolicyFile === undefined
-        ? undefined
-        : resolve(settingsDirectory, file.messagePolicyFile),
-    decisionProviderKeyFile:
-      file.decisionProviderKeyFile === undefined
-        ? undefined
-        : Redacted.make(
-            resolve(settingsDirectory, file.decisionProviderKeyFile),
-          ),
-  }).pipe(
+  const messagePolicy = yield* loadMessagePolicy(
+    file.messagePolicyFile === undefined
+      ? undefined
+      : resolve(settingsDirectory, file.messagePolicyFile),
+  ).pipe(
     Effect.mapError(() =>
       refused(
-        "The configured message policy or provider credential is invalid",
+        "The configured message policy is invalid, or it names a decisionProvider and SHARNESS_DECISION_PROVIDER_KEY does not hold its key",
       ),
     ),
   );
@@ -156,12 +139,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     );
   }
   const settings: DaemonSettings = {
-    ...Struct.omit(
-      file,
-      "messagePolicyFile",
-      "decisionProviderKeyFile",
-      "normsDirectory",
-    ),
+    ...Struct.omit(file, "messagePolicyFile", "normsDirectory"),
     messagePolicy: Option.getOrUndefined(messagePolicy),
     ...(norms === undefined ? {} : { norms }),
   };

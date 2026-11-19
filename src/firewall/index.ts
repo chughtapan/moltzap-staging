@@ -16,16 +16,11 @@ export {
 } from "./contract.js";
 /** The form-mode schema a norm's act form declares its fields in. */
 export { RequestedSchema } from "./forms.js";
-/** One edit of an agent's editable policy, with each norm document it adds compiled. */
-export type { PolicyEdit } from "./editable-policy.js";
-/** Text rules, message-policy loading from its file, and the schemas of policy reads, updates and decisions. */
+/** Text rules, message-policy loading from its file, and the schemas of decisions. */
 export {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
   FirewallPolicyError,
   type LoadedMessagePolicy,
   loadMessagePolicy,
-  policyReadSchema,
-  policyRevisionSchema,
-  policyUpdateSchema,
 } from "./rules.js";
