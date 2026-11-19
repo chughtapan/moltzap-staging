@@ -1,14 +1,6 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import {
-  Data,
-  Effect,
-  Option,
-  ParseResult,
-  Redacted,
-  Schema,
-  Struct,
-} from "effect";
+import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
@@ -20,15 +12,11 @@ import { AgentCard } from "../identity.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-/**
- * Operational holds remain distinct from a settled rule violation. A draft
- * that a rule holds for the owner, who has not approved it, has its own reason.
- */
+/** Operational holds remain distinct from a settled rule violation. */
 const firewallRefusalReasonSchema = Schema.Literal(
   "rule-violation",
   "unresolved-evidence",
   "check-unavailable",
-  "owner-approval-required",
 );
 
 /** Why the firewall refused a message its agent sent, or withheld one it received. */
@@ -62,11 +50,6 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
-  /**
-   * A matcher the daemon registers.
-   * The provider is asked about the rule only for messages it matches.
-   */
-  match: Schema.optional(Schema.NonEmptyTrimmedString),
 }) {}
 
 /** The time and byte limits of one check against the text rules. */
@@ -88,13 +71,8 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-/**
- * An editable rule names no matcher: matchers come with the daemon's
- * configuration, so only a fixed rule can be scoped to one.
- */
-export const editableRuleSchema = exactStruct(
-  Struct.omit(TextRule.fields, "match"),
-);
+/** One editable text rule, which admits no field a text rule lacks. */
+export const editableRuleSchema = exactStruct(TextRule.fields);
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
@@ -166,9 +144,9 @@ const firewallActivationSchema = exactStruct({
  * Contains one row per peer without message content or provider traces.
  * `judgment` is what the check concluded. `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
- * allowed one. `from` identifies a chain rule, or a fixed or editable text
- * rule. `checkedRuleIds` lists the rules the check judged: a rule that does
- * not apply to the message, by its direction or its matcher, is not listed.
+ * allowed one. `from` identifies a contract stage as `chain`, or a fixed or
+ * editable text rule. `checkedRuleIds` lists the rules the check judged: a
+ * rule that does not apply to the message's direction is not listed.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),

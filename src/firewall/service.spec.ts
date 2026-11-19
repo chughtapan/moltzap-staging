@@ -18,14 +18,11 @@ import {
 } from "effect";
 import { describe, expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { Chain, Matcher, MessageToMatch } from "./chain.js";
 import { openTestDatabase } from "../database/testing.js";
 import {
-  always,
   certainProvider,
   evidence,
   incoming,
-  never,
   outgoing,
   peer,
   policy,
@@ -33,7 +30,7 @@ import {
   privateProviderResponse,
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
-import { FirewallPolicyError, type TextRule } from "./rules.js";
+import { type Direction, FirewallPolicyError, type TextRule } from "./rules.js";
 import { type ComposedMessagePolicy, Firewall } from "./service.js";
 
 const initial = {
@@ -56,59 +53,11 @@ const edits = fc.record({
     { maxLength: 3 },
   ),
 });
-/** A chain's chain rules, each naming the matcher that matches every message or the one that matches none. */
-const chainRules = fc
-  .array(
-    fc.record({
-      applies: fc.constantFrom<TextRule["applies"]>(
-        "incoming",
-        "outgoing",
-        "both",
-      ),
-      match: fc.constantFrom("always", "never"),
-      action: fc.constantFrom<"allow" | "deny" | "reply">(
-        "allow",
-        "deny",
-        "reply",
-      ),
-    }),
-    { maxLength: 4 },
-  )
-  .map((rules) =>
-    rules.map((rule, index) => ({ ...rule, id: `rule-${index}` })),
-  );
-/** What a matcher reports with a match: a detail, and its reason when that is not a rule violation. */
-const matchReport = fc.record(
-  {
-    reason: fc.constantFrom<"unresolved-evidence" | "check-unavailable">(
-      "unresolved-evidence",
-      "check-unavailable",
-    ),
-    detail: fc.jsonValue(),
-  },
-  { requiredKeys: ["detail"] },
-);
-/** Whether a rule replies to the sender of a message it withholds, and the reply its matcher gives, if any. */
-const replyCase = fc.record({
-  action: fc.constantFrom<"deny" | "reply">("deny", "reply"),
-  reply: fc.option(fc.string({ minLength: 1 }), { nil: undefined }),
-});
-
-/** A matcher that matches every message and gives `reply`, if any. */
-function replying(reply?: string): Matcher {
-  return {
-    match: () =>
-      Effect.succeed(
-        reply === undefined ? { matched: true } : { matched: true, reply },
-      ),
-  };
-}
-
 /** Checks the fixtures' draft from `self`, or their peer message to it, with `firewall`. */
 function check(
   firewall: Context.Tag.Service<typeof Firewall>,
   self: AgentCard,
-  direction: MessageToMatch["direction"],
+  direction: Direction,
 ) {
   return Effect.gen(function* () {
     return direction === "outgoing"
@@ -487,244 +436,16 @@ describe("Firewall.layer", () => {
         (agentKey) => Firewall.layer(agentKey, policy([initial])),
       );
     }));
-
-  it.prop(
-    "starts only when every chain rule names a registered matcher, and otherwise names the first that does not",
-    [fc.array(fc.constantFrom("always", "missing"), { maxLength: 4 })],
-    ([matches]) =>
-      Effect.gen(function* () {
-        const rules = matches.map((match, index): Chain["rules"][number] => ({
-          id: `rule-${index}`,
-          applies: "both",
-          match,
-          action: "deny",
-        }));
-        const unregistered = rules.find(({ match }) => match === "missing");
-        const started = yield* withFirewall(
-          {},
-          () => Effect.void,
-          (agentKey) =>
-            Firewall.layer(agentKey, undefined, {
-              rules,
-              matchers: { always },
-            }),
-        ).pipe(Effect.either);
-
-        expect(started).toMatchObject(
-          unregistered === undefined
-            ? { _tag: "Right" }
-            : {
-                _tag: "Left",
-                left: { reason: "build-failed", ruleId: unregistered.id },
-              },
-        );
-      }),
-    { fastCheck: { numRuns: 24 } },
-  );
-});
-
-describe("Firewall chain actions", () => {
-  it.prop(
-    "decides a message by the first rule for its direction whose matcher matches, and leaves a message no rule matches to the text rules",
-    [
-      chainRules,
-      fc.constantFrom<MessageToMatch["direction"]>("incoming", "outgoing"),
-    ],
-    ([rules, direction]) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* check(firewall, self, direction);
-            yield* decision.save;
-            const saved = (yield* firewall.readDecisions({})).decisions;
-            const first = rules.find(
-              ({ applies, match }) =>
-                match === "always" &&
-                (applies === "both" || applies === direction),
-            );
-
-            expect(decision.kind === "allowed").toBe(first?.action === "allow");
-            expect(
-              new Set(
-                saved
-                  .flatMap((row) => row.decidedBy)
-                  .map(({ ruleId }) => ruleId),
-              ),
-            ).toEqual(new Set([first?.id ?? privacy.id]));
-          }),
-        (agentKey) =>
-          Firewall.layer(agentKey, policy([], [privacy]), {
-            rules,
-            matchers: { always, never },
-          }),
-      ),
-    { fastCheck: { numRuns: 24 } },
-  );
-
-  it.prop(
-    "refuses a draft with the deciding rule, its matcher's reason and its matcher's detail",
-    [matchReport],
-    ([report]) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-            const refusal =
-              decision.kind === "refused" ? decision.refusal : undefined;
-
-            expect(refusal).toMatchObject({
-              refusal: report.reason ?? "rule-violation",
-              rule: "refuse-reported",
-              feedback: [],
-            });
-            expect(refusal?.detail).toEqual(report.detail);
-            expect(refusal?.message).toContain(
-              `Details: ${JSON.stringify(report.detail)}`,
-            );
-          }),
-        (agentKey) =>
-          Firewall.layer(agentKey, undefined, {
-            rules: [
-              {
-                id: "refuse-reported",
-                applies: "outgoing",
-                match: "reporting",
-                action: "deny",
-              },
-            ],
-            matchers: {
-              reporting: {
-                match: () => Effect.succeed({ matched: true, ...report }),
-              },
-            },
-          }),
-      ),
-    { fastCheck: { numRuns: 24 } },
-  );
-
-  it("refuses for an unavailable check when a matcher fails", () =>
-    Effect.gen(function* () {
-      const chain: Chain = {
-        rules: [
-          { id: "broken", applies: "both", match: "broken", action: "deny" },
-        ],
-        matchers: { broken: { match: () => Effect.die("matcher failed") } },
-      };
-      yield* withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkOutgoing(
-              yield* outgoing(self),
-              evidence,
-            );
-
-            expect(decision).toMatchObject({
-              kind: "refused",
-              refusal: { refusal: "check-unavailable", rule: "broken" },
-            });
-          }),
-        (agentKey) => Firewall.layer(agentKey, undefined, chain),
-      );
-    }));
-});
-
-describe("Firewall chain replies and holds", () => {
-  it.prop(
-    "sends its matcher's reply to the sender of a message a reply rule withholds, and nothing for a deny rule",
-    [replyCase],
-    ([{ action, reply }]) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkIncoming(
-              yield* incoming(self),
-              evidence,
-            );
-
-            expect(decision).toMatchObject({
-              kind: "withheld",
-              visibility: [{ visibleToAgent: false }],
-            });
-            expect("reply" in decision ? decision.reply : undefined).toBe(
-              action === "reply" ? reply : undefined,
-            );
-          }),
-        (agentKey) =>
-          Firewall.layer(agentKey, undefined, {
-            rules: [
-              {
-                id: "not-understood",
-                applies: "incoming",
-                match: "replying",
-                action,
-              },
-            ],
-            matchers: { replying: replying(reply) },
-          }),
-      ),
-    { fastCheck: { numRuns: 24 } },
-  );
-
-  it.each([
-    { approved: false, refusal: "owner-approval-required", rule: "consent" },
-    { approved: true, refusal: "rule-violation", rule: "refuse-drafts" },
-  ] as const)(
-    "holds a draft for its owner, who approves it: $approved",
-    ({ approved, refusal, rule }) =>
-      Effect.gen(function* () {
-        const chain: Chain = {
-          rules: [
-            {
-              id: "consent",
-              applies: "outgoing",
-              match: "always",
-              action: "hold",
-            },
-            {
-              id: "refuse-drafts",
-              applies: "outgoing",
-              match: "always",
-              action: "deny",
-            },
-          ],
-          matchers: { always },
-          approveHeld: () => Effect.succeed(approved),
-        };
-        yield* withFirewall(
-          {},
-          (firewall, self) =>
-            Effect.gen(function* () {
-              const decision = yield* firewall.checkOutgoing(
-                yield* outgoing(self),
-                evidence,
-              );
-
-              expect(decision).toMatchObject({
-                kind: "refused",
-                refusal: { refusal, rule },
-              });
-            }),
-          (agentKey) => Firewall.layer(agentKey, undefined, chain),
-        );
-      }),
-  );
 });
 
 describe("Firewall check activity", () => {
   it.prop(
     "exports a pending span and then a settled span for each check, naming its direction",
     [
-      fc.array(
-        fc.constantFrom<MessageToMatch["direction"]>("incoming", "outgoing"),
-        { minLength: 1, maxLength: 4 },
-      ),
+      fc.array(fc.constantFrom<Direction>("incoming", "outgoing"), {
+        minLength: 1,
+        maxLength: 4,
+      }),
     ],
     ([directions]) =>
       Effect.gen(function* () {
@@ -766,48 +487,10 @@ describe("Firewall check activity", () => {
   );
 });
 
-describe("Firewall text rules scoped by a matcher", () => {
-  it.prop(
-    "asks only about the scoped text rules whose matchers match the message",
-    [fc.array(fc.constantFrom("always", "never"), { maxLength: 4 })],
-    ([matches]) =>
-      Effect.gen(function* () {
-        const rules = matches.map((match, index) => ({
-          ...initial,
-          id: `rule-${index}`,
-          match,
-        }));
-        const asked = rules.flatMap(({ id, match }) =>
-          match === "always" ? [id] : [],
-        );
-        yield* withFirewall(
-          {},
-          (firewall, self) =>
-            Effect.gen(function* () {
-              const decision = yield* firewall.checkOutgoing(
-                yield* outgoing(self),
-                evidence,
-              );
-              yield* decision.save;
-
-              expect(
-                (yield* firewall.readDecisions({})).decisions,
-              ).toMatchObject([{ checkedRuleIds: asked }]);
-            }),
-          (agentKey) =>
-            Firewall.layer(agentKey, policy([], rules), {
-              rules: [],
-              matchers: { always, never },
-            }),
-        );
-      }),
-    { fastCheck: { numRuns: 24 } },
-  );
-
-  it.prop(
-    "answers the sender of a message that breaks a reply rule with its matcher's reply, or with the rule's feedback when the matcher gives none, and sends nothing for a deny rule",
-    [replyCase],
-    ([{ action, reply }]) =>
+describe("Firewall text rule replies", () => {
+  it.each(["deny", "reply"] as const)(
+    "answers the sender of a message that breaks a %s rule with the rule's feedback only when the rule replies",
+    (action) =>
       withFirewall(
         {},
         (firewall, self) =>
@@ -819,16 +502,11 @@ describe("Firewall text rules scoped by a matcher", () => {
 
             expect(decision.kind).toBe("withheld");
             expect("reply" in decision ? decision.reply : undefined).toBe(
-              action === "reply" ? (reply ?? privacy.feedback.text) : undefined,
+              action === "reply" ? privacy.feedback.text : undefined,
             );
           }),
         (agentKey) =>
-          Firewall.layer(
-            agentKey,
-            policy([], [{ ...privacy, action, match: "replying" }]),
-            { rules: [], matchers: { replying: replying(reply) } },
-          ),
+          Firewall.layer(agentKey, policy([], [{ ...privacy, action }])),
       ),
-    { fastCheck: { numRuns: 24 } },
   );
 });

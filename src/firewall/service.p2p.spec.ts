@@ -74,5 +74,5 @@ it("applies no contract to a group message, whatever its text", () =>
           }),
         { concurrency: 1, discard: true },
       ),
-    (agentKey) => Firewall.layer(agentKey, policy(), undefined, [exchange]),
+    (agentKey) => Firewall.layer(agentKey, policy(), [exchange]),
   ));

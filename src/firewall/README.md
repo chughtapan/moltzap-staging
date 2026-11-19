@@ -1,7 +1,7 @@
 # Message firewall
 
 The firewall checks incoming messages and outgoing drafts against its message
-policy: the contracts its agent holds, a chain and text rules. It returns a
+policy: the contracts its agent holds and text rules. It returns a
 decision with feedback or guidance, and manages changes to editable rules and
 held contracts.
 
@@ -12,9 +12,7 @@ flowchart LR
   A[Messages and their evidence] --> B[Capture message, evidence and active policy]
   B --> S[Check a direct act's structure and protocol]
   S -->|the act fails its contract| E
-  S --> C[Apply the chain]
-  C -->|not refused| D[Check applicable text rules]
-  C -->|a chain rule refused| E
+  S --> D[Check applicable text rules]
   D --> E[Combine findings and select feedback or guidance]
   E --> F[Return decisions and completed checks]
 ```
@@ -23,11 +21,9 @@ A contract is a compiled norm: forms, turn rules and English rules as data.
 For a direct text message of an agent that holds contracts, `contract.ts`
 reads the message as one act and checks its fields, and `protocol.ts` checks
 its place in the conversation, replayed from the history the daemon supplies
-and this firewall's own saved checks of it. The chain runs next: each chain
-rule names a matcher that another module registers, and the first rule whose
-matcher matches decides the message. A message the chain does not refuse goes
-on to the text rules: the owner's unless a chain rule allowed it, and the
-rules its contract gives its act either way.
+and this firewall's own saved checks of it. A message its contract does not
+refuse goes on to the text rules: the owner's, and the rules its contract
+gives its act.
 A call checks its message under the policy in force when it starts. Feedback
 and guidance carry the rules' registered text and the check ids the host may
 see.

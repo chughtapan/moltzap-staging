@@ -11,6 +11,7 @@ import {
 } from "effect";
 import {
   Message as CommunicationMessage,
+  type Message,
   RequestedSchema,
 } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
@@ -22,6 +23,31 @@ import {
   type ProviderRequestSettings,
   type TextRule,
 } from "./rules.js";
+
+/** The evidence a check may read: bounded preceding history and each message's visibility to the agent. */
+export interface FirewallEvidence {
+  /**
+   * Messages the conversation's history does not hold yet that a reply may
+   * name: the incoming message a reply to it answers.
+   */
+  readonly references?: readonly Message[];
+  /**
+   * Every message before the one under check, for a contract's protocol,
+   * apart from the bounded window the text rules read. `complete` is false
+   * when some of it could not be read.
+   */
+  readonly protocolHistory?: {
+    readonly messages: readonly Message[];
+    readonly complete: boolean;
+  };
+  readonly history: ReadonlyArray<{
+    readonly message: Message;
+    readonly visibleToAgent: boolean;
+  }>;
+  readonly earlierHistoryOmitted: boolean;
+  /** What else the history lacks, such as messages beyond the evidence byte limit. */
+  readonly gaps: readonly string[];
+}
 
 /**
  * The text rules, limits and revision one check captures, without storage or
@@ -35,20 +61,12 @@ export interface CheckConfiguration {
   readonly revision: string;
 }
 
-/**
- * The text rules one check applies, with their decision provider.
- * `outOfScope` names rules whose matcher does not match this message: they
- * are not applicable, and the provider is not asked about them.
- */
+/** The text rules one check applies, with their decision provider. */
 export interface CheckPolicy extends CheckConfiguration {
   readonly provider?: DecisionProvider;
-  readonly outOfScope?: readonly string[];
 }
 
-/** Only a chain rule holds a draft for its owner, so a check of the text rules never gives that reason. */
-type Reason =
-  | "eligible"
-  | Exclude<FirewallRefusalReason, "owner-approval-required">;
+type Reason = "eligible" | FirewallRefusalReason;
 
 /**
  * One instruction of a message's guidance: a rule the provider could not
@@ -349,11 +367,7 @@ const complianceQuestion = {
 export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
   function* (policy: CheckPolicy, captured: CapturedMessage) {
     yield* validateEvidence(captured);
-    const selected = forDirection(
-      policy.textRules,
-      captured.event.direction,
-      policy.outOfScope ?? [],
-    );
+    const selected = forDirection(policy.textRules, captured.event.direction);
     if (selected.rules.length === 0) {
       return concludeCheck(captured.evidence, policy.textRules, {
         findings: selected.skipped,
@@ -839,14 +853,9 @@ function checkText(
 }
 
 /** The rules asked about a message in `direction`, and those that do not apply to it. */
-function forDirection(
-  rules: readonly TextRule[],
-  direction: Direction,
-  outOfScope: readonly string[] = [],
-) {
+function forDirection(rules: readonly TextRule[], direction: Direction) {
   const applies = (rule: TextRule) =>
-    (rule.applies === "both" || rule.applies === direction) &&
-    !outOfScope.includes(rule.id);
+    rule.applies === "both" || rule.applies === direction;
   return Object.freeze({
     rules: Object.freeze(rules.filter((rule) => applies(rule))),
     skipped: Object.freeze(
@@ -1115,16 +1124,15 @@ const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
   "unresolved-evidence":
     "The policy check could not settle whether the message is allowed.",
   "check-unavailable": "The policy check could not complete.",
-  "owner-approval-required": "The agent's owner has not approved it.",
 };
 
 /**
  * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` names the chain rule or contract stage that refused, and `detail` is
- * a chain rule's matcher report or a contract's diagnostics: its norm, the
- * digest of its norm document, the stage that failed and the field at fault.
- * The message states each deciding rule's registered feedback as an error, or
- * the reason when there is none, then the check, and a matcher's detail.
+ * `rule` names the contract stage that refused, and `detail` is a contract's
+ * diagnostics: its norm, the digest of its norm document, the stage that
+ * failed and the field at fault. The message states each deciding rule's
+ * registered feedback as an error, or the reason when there is none, then the
+ * check.
  */
 export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
@@ -1136,10 +1144,6 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
 }> {
   override get message(): string {
     const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
-    const contractDetail =
-      typeof this.detail === "object" &&
-      this.detail !== null &&
-      "stage" in this.detail;
     return [
       ...(this.feedback.length === 0
         ? [`Error: ${refusalText[this.refusal]}`]
@@ -1149,9 +1153,6 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
               : `Error: ${entry.text}`,
           )),
       `Check: ${this.checkId}${rule}; ${this.refusal}.`,
-      ...(this.detail === undefined || contractDetail
-        ? []
-        : [`Details: ${JSON.stringify(this.detail)}`]),
     ].join(" ");
   }
 }
