@@ -214,22 +214,6 @@ export function readSExpressions(
   });
 }
 
-/** The text of one expression, with strings quoted as JSON, which `readSExpressions` reads back. */
-export function writeSExpression(value: SExpression): string {
-  switch (value.kind) {
-    case "symbol":
-      return value.value;
-    case "string":
-      return JSON.stringify(value.value);
-    case "list":
-      return `(${value.values.map((item) => writeSExpression(item)).join(" ")})`;
-    default: {
-      const exhaustive: never = value;
-      return exhaustive;
-    }
-  }
-}
-
 function acceptToken(
   token: string,
   offset: number,

@@ -242,26 +242,3 @@ describe("Firewall check activity", () => {
     { fastCheck: { numRuns: 12 } },
   );
 });
-
-describe("Firewall text rule replies", () => {
-  it.each(["deny", "reply"] as const)(
-    "answers the sender of a message that breaks a %s rule with the rule's feedback only when the rule replies",
-    (action) =>
-      withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const decision = yield* firewall.checkIncoming(
-              yield* incoming(self),
-              evidence,
-            );
-
-            expect(decision.kind).toBe("withheld");
-            expect("reply" in decision ? decision.reply : undefined).toBe(
-              action === "reply" ? privacy.feedback : undefined,
-            );
-          }),
-        (agentKey) => firewallLayer(agentKey, policy([{ ...privacy, action }])),
-      ),
-  );
-});

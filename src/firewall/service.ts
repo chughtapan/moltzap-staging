@@ -31,7 +31,6 @@ import {
 } from "./check.js";
 import {
   type ContractCheck,
-  contractReply,
   messageKey,
   prepareContract,
 } from "./contract-check.js";
@@ -48,7 +47,6 @@ import {
   type firewallDecisionsSchema,
   type firewallDecisionSummarySchema,
   FirewallPolicyError,
-  type FirewallRefusalReason,
   type LoadedMessagePolicy,
   TextRule,
 } from "./rules.js";
@@ -60,14 +58,13 @@ import {
 
 /**
  * The message policy one firewall applies for its whole scope. Every reason
- * but `eligible`, including a provider failure, refuses a send and withholds
- * an incoming message.
+ * but `eligible`, including a provider failure, refuses the message.
  */
 type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 
 /**
- * Run `save` before returning refusal or submitting this exact message.
- * Saving is repeatable and uses the caller's current SQL transaction.
+ * Run `save` before returning the refusal or storing this exact message, in
+ * the SQL transaction that stores it. Saving is repeatable.
  */
 type OutgoingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
@@ -76,24 +73,12 @@ type OutgoingDecision = {
   | { readonly kind: "refused"; readonly refusal: FirewallRefusal }
 );
 
-/**
- * Run `save` in the same SQL transaction as the inbox write.
- * Saving is repeatable. A withheld message with `reply` gets that text back, as
- * an ordinary message from this agent in the same conversation.
- */
-export type IncomingDecision = {
+/** An allowed message the provider was unsure about carries guidance for the agent that receives it. */
+type IncomingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
 } & (
-  | {
-      readonly kind: "allowed";
-      readonly guidance?: LocalGuidance;
-    }
-  | {
-      readonly kind: "withheld";
-      /** Why the message was withheld. */
-      readonly reason: FirewallRefusalReason;
-      readonly reply?: string;
-    }
+  | { readonly kind: "allowed"; readonly guidance?: LocalGuidance }
+  | { readonly kind: "refused"; readonly refusal: FirewallRefusal }
 );
 /**
  * Reads the evidence of one check. Only a check under a message policy runs
@@ -112,9 +97,8 @@ interface FirewallService {
     evidence: ReadEvidence<E, R>,
   ) => Effect.Effect<OutgoingDecision, E, R>;
   /**
-   * Checks a message a peer wrote with its preceding evidence. An allowed
-   * message the provider was unsure about carries guidance; a withheld one
-   * exposes none.
+   * Checks a message a peer is sending to this agent, with the evidence
+   * preceding it. Its refusal is the peer's to read.
    */
   readonly checkIncoming: <E, R>(
     message: Message,
@@ -163,64 +147,43 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
           readContracts: () => Effect.sync(() => policy?.contracts ?? []),
           readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (message, evidence) =>
-            Effect.gen(function* () {
-              const decision = yield* decide(
-                installed,
-                message,
-                evidence,
-                "outgoing",
-              );
-              const save = saveRecords(store, decision);
-              if (decision.kind === "allowed") {
-                return { kind: "allowed", save } satisfies OutgoingDecision;
-              }
-              const { refusal } = decision;
-              return {
-                kind: "refused",
-                save,
-                refusal: new FirewallRefusal({
-                  reason: "firewall-refused",
-                  checkId: decision.record.checkId,
-                  refusal: refusal.reason,
-                  ...(refusal.ruleId === undefined
-                    ? {}
-                    : { rule: refusal.ruleId }),
-                  feedback: refusal.feedback,
-                  ...(refusal.detail === undefined
-                    ? {}
-                    : { detail: refusal.detail }),
-                }),
-              } satisfies OutgoingDecision;
-            }),
+            decide(installed, message, evidence, "outgoing").pipe(
+              Effect.map((decision) => applied(store, decision)),
+            ),
           checkIncoming: (message, evidence) =>
-            Effect.gen(function* () {
-              const decision = yield* decide(
-                installed,
-                message,
-                evidence,
-                "incoming",
-              );
-              const save = saveRecords(store, decision);
-              if (decision.kind === "allowed") {
-                return {
-                  kind: "allowed",
-                  save,
-                  ...(decision.guidance === undefined
-                    ? {}
-                    : { guidance: decision.guidance }),
-                } satisfies IncomingDecision;
-              }
-              const { reply } = decision.refusal;
-              return {
-                kind: "withheld",
-                reason: decision.refusal.reason,
-                save,
-                ...(reply === undefined ? {} : { reply }),
-              } satisfies IncomingDecision;
-            }),
+            decide(installed, message, evidence, "incoming").pipe(
+              Effect.map((decision) => applied(store, decision)),
+            ),
         });
       }),
     );
+}
+
+/** A decision as its caller applies it: the saving of its record, and what a refusal tells the sender. */
+function applied(store: FirewallStore, decision: Decision) {
+  const save = saveRecords(store, decision);
+  if (decision.kind === "allowed") {
+    return {
+      kind: "allowed" as const,
+      save,
+      ...(decision.guidance === undefined
+        ? {}
+        : { guidance: decision.guidance }),
+    };
+  }
+  const { refusal } = decision;
+  return {
+    kind: "refused" as const,
+    save,
+    refusal: new FirewallRefusal({
+      reason: "firewall-refused",
+      checkId: decision.record.checkId,
+      refusal: refusal.reason,
+      ...(refusal.ruleId === undefined ? {} : { rule: refusal.ruleId }),
+      feedback: refusal.feedback,
+      ...(refusal.detail === undefined ? {} : { detail: refusal.detail }),
+    }),
+  };
 }
 
 /**
@@ -243,7 +206,7 @@ interface Installation {
 }
 
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
-export const defaultConcurrentChecks = 4;
+const defaultConcurrentChecks = 4;
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
@@ -341,8 +304,7 @@ function saveRecords(store: FirewallStore, decision: Decision) {
  * commits. The record of an act a contract governs also carries the
  * contract's norm and digest, and for an allowed act its protocol record,
  * which later checks replay. A refusal of such an act carries the contract's
- * diagnostics, and a withheld one is answered with the `:on-refusal` act when
- * one is declared.
+ * diagnostics.
  */
 function checkMessageText(
   policy: InstalledPolicy,
@@ -459,11 +421,6 @@ function checkMessageText(
         };
         return allowed;
       }
-      const reply =
-        direction === "incoming"
-          ? (contractRefusalReply(contract, check) ??
-            textReply(textRules, check))
-          : "";
       const refused: Decision = {
         kind: "refused",
         record,
@@ -471,7 +428,6 @@ function checkMessageText(
           reason: check.reason,
           feedback: check.feedback,
           ...(detail === undefined ? {} : { detail }),
-          ...(reply === "" ? {} : { reply }),
         },
       };
       return refused;
@@ -519,42 +475,6 @@ function isTransient(error: DecisionProviderError): boolean {
     error.reason === "transport" ||
     (error.reason === "http" && (status === 429 || status >= 500))
   );
-}
-
-/**
- * What the sender of a withheld message is told: each violated `reply` rule's
- * registered feedback, one per line. Holds reply nothing: the sender broke no
- * settled rule.
- */
-function textReply(
-  textRules: readonly TextRule[],
-  check: FirewallCheck,
-): string {
-  if (check.reason !== "rule-violation") {
-    return "";
-  }
-  const violated = new Set(check.decidedBy.map((rule) => rule.ruleId));
-  return textRules
-    .filter((rule) => violated.has(rule.id) && rule.action === "reply")
-    .flatMap((rule) => (rule.feedback === undefined ? [] : [rule.feedback]))
-    .join("\n");
-}
-
-/**
- * The act that answers the sender of an act the text rules withheld, when its
- * contract declares one: it carries the refusal's feedback.
- */
-function contractRefusalReply(
-  contract: TextCheckPlan["contract"],
-  check: FirewallCheck,
-) {
-  return contract === undefined
-    ? undefined
-    : contractReply(
-        contract,
-        check.feedback.join(" ") ||
-          `The semantic policy check returned ${check.reason}.`,
-      );
 }
 
 /** The summary a host reads of one check for one peer, naming the same captured rules as the decision. */

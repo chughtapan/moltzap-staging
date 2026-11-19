@@ -165,8 +165,6 @@ vitestIt(
       fc.property(
         fields,
         fc.constantFrom<(source: string) => string>(
-          (source) =>
-            source.replace("Answerer)\n", "Answerer :on-refusal absent)\n"),
           (source) => source.replace("(Asker Answerer)", "(Asker Absent)"),
           (source) =>
             source.replace(":ends true)", ":ends true :unless absent)"),

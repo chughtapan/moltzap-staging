@@ -15,11 +15,6 @@ import { exactStruct } from "../encoding.js";
 /** The evidence a check may read: bounded preceding history and each message's visibility to the agent. */
 export interface FirewallEvidence {
   /**
-   * Messages the conversation's history does not hold yet that a reply may
-   * name: the incoming message a reply to it answers.
-   */
-  readonly references?: readonly Message[];
-  /**
    * Every message before the one under check, for a contract's protocol,
    * apart from the bounded window the text rules read. `complete` is false
    * when some of it could not be read.
