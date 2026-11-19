@@ -14,30 +14,22 @@ accepted work. Hosts use MCP for this contract.
 ## Destinations
 
 An
-`agent:` address names one peer. A `group:` address names members including
-the sender. A client in [client/server mode](../modes.md#what-a-client-can-do)
+`agent:` address names one peer. A [client](../modes.md#what-a-client-can-do)
 names no destination, because its only peer is the server agent.
 
 ### Address grammar
 
 ```text
 agent:<AgentName>
-group:<AgentName>,<AgentName>,...
 ```
 
 Names follow the [agent name rule](../identity/identity-and-attribution.md#agents),
-which excludes commas and colons. Direct conversations contain sender and peer.
-Self-only addressing is invalid. Groups contain 3–32 members, adding the sender
-when omitted. Input order is arbitrary. Explicit duplicates are invalid. Naming
-only one peer produces its direct address.
+which excludes commas and colons. Conversations contain sender and peer.
+Self-only addressing is invalid.
 
-Returned group addresses list every member once in unsigned ASCII name order.
-The same identities produce the same address. Changing membership selects
-another conversation.
-
-The daemon validates the destination and resolves every member before accepting
+The daemon validates the destination and resolves the peer before accepting
 a send. Invalid destinations fail with `invalid-arguments` or `membership-invalid`.
-Resolution names the first member the daemon does not have with
+Resolution names a peer the daemon does not have with
 `unknown-agent`. These failures create no message.
 
 ## Sending a message

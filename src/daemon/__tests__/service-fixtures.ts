@@ -413,13 +413,8 @@ function membersOf(
 }
 
 function addressOf(self: AgentCard, members: readonly AgentCard[]) {
-  const others = members.filter((member) => member.agentId !== self.agentId);
-  return others.length === 1
-    ? `agent:${others[0]?.agentName}`
-    : `group:${members
-        .map((member) => member.agentName)
-        .sort(compareAscii)
-        .join(",")}`;
+  const other = members.find((member) => member.agentId !== self.agentId);
+  return `agent:${other?.agentName}`;
 }
 
 function addPeer(environment: FixtureEnvironment, name: string) {

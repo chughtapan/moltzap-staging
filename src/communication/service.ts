@@ -42,7 +42,6 @@ import {
 import { AgentCard, AgentId } from "../identity.js";
 import {
   CommunicationError,
-  maximumMembers,
   Message,
   messageMembers,
   type MessageReference,
@@ -127,9 +126,7 @@ const cursorSchema = Schema.Struct({
 const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
 const ConversationMembers = exactStruct({
   kind: Schema.Literal("conversation_identity"),
-  memberAgentIds: Schema.Tuple([AgentId, AgentId], AgentId).pipe(
-    Schema.maxItems(maximumMembers),
-  ),
+  memberAgentIds: Schema.Tuple(AgentId, AgentId),
 });
 const refused = (reason: CommunicationError["reason"]) =>
   new CommunicationError({ reason });
@@ -411,22 +408,22 @@ function historyWindow(agent: HostedAgent, query: HistoryQuery) {
 }
 
 /**
- * The conversation among `members`, in any order: at least two distinct
- * agents, `self` among them.
+ * The conversation between the two distinct agents `members`, in either
+ * order, `self` among them.
  */
 function conversationOf(self: AgentCard, members: readonly AgentCard[]) {
   return Effect.gen(function* () {
     const ids = members.map((member) => member.agentId).sort(compareAgentIds);
-    const [first, second, ...rest] = ids;
+    const [first, second] = ids;
     if (
+      ids.length !== 2 ||
       first === undefined ||
       second === undefined ||
-      new Set(ids).size !== ids.length ||
       !ids.includes(self.agentId)
     ) {
       return yield* refused("membership-invalid");
     }
-    return yield* deriveConversationId([first, second, ...rest]);
+    return yield* deriveConversationId([first, second]);
   });
 }
 

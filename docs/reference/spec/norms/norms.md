@@ -25,11 +25,10 @@ notification service, timer, send lock or agent-host behavior.
 
 ## Scope and installation
 
-This version governs direct text conversations with one active instance at
+This version governs text conversations with one active instance at
 a time. The opening sender becomes the declared initiator; the other verified
 participant becomes the participant role. These bindings last until an
-explicit ending act. Groups retain their existing
-firewall behavior.
+explicit ending act.
 
 The daemon's
 `normsDirectory` loads the `.lisp` files directly inside that directory and

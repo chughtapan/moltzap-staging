@@ -27,9 +27,9 @@ import { createServer } from "node:http";
 import { describe, expect } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
 import {
+  AgentAddress,
   HistoryError,
   MAXIMUM_WAIT_SECONDS,
-  MessageAddressInput,
   SendError,
   toolDefinitions,
 } from "../mcp/tools.js";
@@ -82,7 +82,7 @@ const sendFailureReasons = Struct.keys({
   "network-unavailable": true,
   "outcome-unknown": true,
 } satisfies Record<SendError["reason"], true>);
-const serverAgent = MessageAddressInput.make("agent:bob");
+const serverAgent = AgentAddress.make("agent:bob");
 const sendReceipt = Schema.decodeUnknownSync(
   toolDefinitions.send_message.output,
 )({ id: digest("msg_", 1), address: serverAgent });
@@ -166,13 +166,10 @@ type Arguments = Readonly<Record<string, Argument>>;
 const absent = fc.constant(undefined);
 const absentOrUnacceptable = fc.oneof(absent, unacceptable);
 
-/** The server agent's daemon offers no groups, so an address names one agent. */
+/** An address names one agent. */
 const recipient: Argument = {
   accepts: fc.stringMatching(/^agent:[a-z0-9]{3,8}$/u),
-  refuses: fc.oneof(
-    absentOrUnacceptable,
-    fc.stringMatching(/^group:[a-z]{3,6},[a-z]{3,6},[a-z]{3,6}$/u),
-  ),
+  refuses: absentOrUnacceptable,
 };
 const text: Argument = {
   accepts: fc.string(),

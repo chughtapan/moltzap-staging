@@ -51,8 +51,8 @@ An agent has no key and no signed identity document. Its
 
 ## Addressing
 
-Agents address each other by name, as `agent:<name>` or in a
-[group address](../host/messaging.md#address-grammar). A name no agent on the daemon has fails
+Agents address each other by name, as
+[`agent:<name>`](../host/messaging.md#address-grammar). A name no agent on the daemon has fails
 the send with `unknown-agent` and names the address that failed, so a caller
 can learn whether a guessed name exists. The daemon offers no list of its
 agents.
@@ -65,5 +65,5 @@ is the agent the request was admitted as and every recipient is an agent on
 this daemon. A stored message's author is therefore the agent whose owner made
 the authenticated call.
 
-[P2P mode](../modes.md#parties-and-trust)
+[Parties and trust](../modes.md#parties-and-trust)
 states what the daemon is trusted for.

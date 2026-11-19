@@ -26,9 +26,8 @@ import { issuesText } from "../encoding.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
 import {
+  type AgentAddress,
   clientToolDefinitions,
-  directToolDefinitions,
-  type MessageAddressInput,
   type SubscriptionStatus,
   toolDefinitions,
 } from "../mcp/tools.js";
@@ -140,10 +139,10 @@ interface Definition<A, I, B, J, E> {
 }
 
 /**
- * The tools of a peer and of the server agent: each addresses any agent. Without `groups` an address names one agent. An
- * agent that holds norms lists them with `read_norms`.
+ * The tools of the server agent, which addresses any client. One that holds
+ * norms lists them with `read_norms`.
  */
-export function peerTools(groups: boolean, holdsNorms: boolean) {
+export function serverAgentTools(holdsNorms: boolean) {
   return Effect.fnUntraced(function* (
     status: Effect.Effect<SubscriptionStatus>,
   ) {
@@ -151,13 +150,7 @@ export function peerTools(groups: boolean, holdsNorms: boolean) {
     const firewall = yield* Firewall;
     return [
       yield* statusTool(status),
-      groups
-        ? bind("send_message", toolDefinitions.send_message, harness.send)
-        : bind(
-            "send_message",
-            directToolDefinitions.send_message,
-            harness.send,
-          ),
+      bind("send_message", toolDefinitions.send_message, harness.send),
       bind(
         "receive_messages",
         toolDefinitions.receive_messages,
@@ -168,17 +161,11 @@ export function peerTools(groups: boolean, holdsNorms: boolean) {
         toolDefinitions.list_conversations,
         harness.listConversations,
       ),
-      groups
-        ? bind(
-            "read_conversation",
-            toolDefinitions.read_conversation,
-            harness.readHistory,
-          )
-        : bind(
-            "read_conversation",
-            directToolDefinitions.read_conversation,
-            harness.readHistory,
-          ),
+      bind(
+        "read_conversation",
+        toolDefinitions.read_conversation,
+        harness.readHistory,
+      ),
       bind(
         "read_firewall_decisions",
         toolDefinitions.read_firewall_decisions,
@@ -192,12 +179,12 @@ export function peerTools(groups: boolean, holdsNorms: boolean) {
 }
 
 /**
- * The tools of a client in client/server mode. It sends to and reads its
+ * The tools of a client. It sends to and reads its
  * conversation with the server agent, and names neither. With
  * `serverAgentContracts`, the norms the server agent holds, it has `read_norms`.
  */
 export function clientTools(
-  serverAgentAddress: MessageAddressInput,
+  serverAgentAddress: AgentAddress,
   serverAgentContracts?: Effect.Effect<readonly CompiledContract[]>,
 ) {
   return Effect.fnUntraced(function* (

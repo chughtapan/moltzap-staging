@@ -150,23 +150,13 @@ export class ContractProblem extends Data.TaggedError("ContractProblem")<{
   readonly field?: string;
 }> {}
 
-/** Whether a contract can govern `message`: a message from one agent to one other. */
-export function isDirectText(message: Message) {
-  return message.recipients.length === 1;
-}
-
 /**
- * Reads a message as one act. A contract governs direct text messages: the
+ * Reads a message as one act. A contract governs text messages: the
  * whole text is one parenthesized act, with no other content part.
  */
 export const readAct = Effect.fn("readAct")(function* (message: Message) {
-  if (
-    !isDirectText(message) ||
-    message.content.some((part) => part.type !== "text")
-  ) {
-    return yield* structuralProblem(
-      "This contract governs direct text messages.",
-    );
+  if (message.content.some((part) => part.type !== "text")) {
+    return yield* structuralProblem("This contract governs text messages.");
   }
   const text = message.content
     .map((part) => (part.type === "text" ? part.text : ""))
