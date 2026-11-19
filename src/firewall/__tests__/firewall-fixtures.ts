@@ -2,6 +2,7 @@
 
 import { SqlClient } from "@effect/sql";
 import { type Context, Effect, Encoding, Layer, Schema } from "effect";
+import type { SExpression } from "../../encoding.js";
 import type { DecisionProvider, FirewallEvidence } from "../check.js";
 import { Message } from "../../communication/index.js";
 import {
@@ -12,7 +13,11 @@ import {
   PrincipalId,
 } from "../../identity.js";
 import { openTestDatabase, type TestDatabase } from "../../test.js";
-import { type CompiledContract, compiledContractSchema } from "../contract.js";
+import {
+  type Act,
+  type CompiledContract,
+  compiledContractSchema,
+} from "../contract.js";
 import {
   decodeMessagePolicy,
   type LoadedMessagePolicy,
@@ -210,4 +215,46 @@ export function contractOf(
     textRules: [],
     ...rest,
   });
+}
+
+/** An act as message text, with strings quoted as a norm document quotes them. */
+export function formatAct(act: Act): string {
+  const values: SExpression[] = [
+    { kind: "symbol", value: act.name },
+    { kind: "symbol", value: ":ontology" },
+    { kind: "symbol", value: act.norm },
+  ];
+  for (const [field, value] of Object.entries(act.fields)) {
+    values.push({ kind: "symbol", value: `:${field}` }, valueExpression(value));
+  }
+  return writeSExpression({ kind: "list", values });
+}
+
+/** The text of one expression, with strings quoted as JSON, which `readSExpressions` reads back. */
+export function writeSExpression(value: SExpression): string {
+  switch (value.kind) {
+    case "symbol":
+      return value.value;
+    case "string":
+      return JSON.stringify(value.value);
+    case "list":
+      return `(${value.values.map((item) => writeSExpression(item)).join(" ")})`;
+    default: {
+      const exhaustive: never = value;
+      return exhaustive;
+    }
+  }
+}
+
+function valueExpression(value: Act["fields"][string]): SExpression {
+  if (typeof value === "string") {
+    return { kind: "string", value };
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return { kind: "symbol", value: String(value) };
+  }
+  return {
+    kind: "list",
+    values: value.map((choice) => ({ kind: "string", value: choice })),
+  };
 }

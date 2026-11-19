@@ -67,14 +67,11 @@ interface TestPolicy {
 }
 
 /**
- * One text rule makes check order and saved advice
- * observable. With `action`, the rule replies to or silently withholds the
- * incoming messages it rejects. `maximumConcurrentChecks` bounds how many
- * checks run at once.
+ * One text rule makes check order and saved advice observable.
+ * `maximumConcurrentChecks` bounds how many checks run at once.
  */
 export function composedPolicy(
   provider: DecisionProvider,
-  action?: "deny" | "reply",
   maximumConcurrentChecks?: number,
 ): TestPolicy {
   return {
@@ -91,7 +88,6 @@ export function composedPolicy(
               text: "Protect the owner's private information.",
               guidance: "Check before sharing private information.",
               feedback: "Keep private information private.",
-              ...(action === undefined ? {} : { action }),
             },
           ],
         },
@@ -106,7 +102,7 @@ export function composedPolicy(
   };
 }
 
-/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were allowed. */
+/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were stored. */
 export function waitForInbox(
   runtime: {
     readonly inbox: Inbox;
@@ -211,7 +207,7 @@ export const makeHarnessFixture = Effect.gen(function* () {
     /** Sends `message` as its author, past the author's firewall. */
     deliver: (message: Message) =>
       Effect.flatMap(
-        Effect.fromNullable(senders.get(message.author.agentId)),
+        Effect.orDie(Effect.fromNullable(senders.get(message.author.agentId))),
         (sender) => sender.send(message),
       ),
     addPeer: (name: string) => Effect.map(join(name), (peer) => peer.card),

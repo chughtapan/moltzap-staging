@@ -23,7 +23,7 @@ import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
 import { AgentAddress } from "../mcp/tools.js";
 import { packageVersion } from "../version.js";
-import { SocialHarness } from "./agent.js";
+import { type Admission, SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
@@ -46,8 +46,8 @@ import {
 /**
  * One agent's role, and everything that follows from it. Every conversation
  * is the server agent and one client: the server agent checks its messages and holds the
- * contracts, and a client checks nothing of its own, reads the server agent's
- * norms through `contractsOf` and talks only to it.
+ * contracts, and a client checks nothing of its own, talks only to the server
+ * agent, reads its norms and has each message it sends admitted by it.
  */
 function roleOf(
   settings: Pick<
@@ -56,12 +56,12 @@ function roleOf(
   >,
   agentKey: string,
   agentName: AgentName,
-  contractsOf: ContractsOf,
+  serverAgent: ServerAgent,
 ) {
-  const { norms, serverAgent } = settings;
-  if (agentName === serverAgent.name) {
+  const { norms } = settings;
+  if (agentName === settings.serverAgent.name) {
     return {
-      withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
+      admission: undefined,
       firewall: Firewall.layer(
         agentKey,
         settings.messagePolicy,
@@ -71,22 +71,23 @@ function roleOf(
     };
   }
   return {
-    withheldReply: undefined,
+    admission: (message, store) =>
+      Effect.flatMap(serverAgent, (agent) => agent.admit(message, store)),
     firewall: Firewall.layer(agentKey),
     tools: clientTools(
-      AgentAddress.make(`agent:${serverAgent.name}`),
+      AgentAddress.make(`agent:${settings.serverAgent.name}`),
       norms === undefined
         ? undefined
-        : contractsOf({
-            issuer: settings.authentication.issuer,
-            subject: serverAgent.subject,
-          }),
+        : Effect.flatMap(serverAgent, (agent) => agent.readContracts()),
     ),
-  };
+  } satisfies { readonly admission: Admission; [key: string]: unknown };
 }
 
-/** The contracts an owner's running agent holds, starting the agent if it is not running. */
-type ContractsOf = (owner: Owner) => Effect.Effect<readonly CompiledContract[]>;
+/** The running server agent, starting it if it is not running: the contracts it holds and its admission of a client's message. */
+type ServerAgent = Effect.Effect<{
+  readonly readContracts: () => Effect.Effect<readonly CompiledContract[]>;
+  readonly admit: Admission;
+}>;
 
 /** The Node file system, typed by the interface the daemon reads files through. */
 const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
@@ -156,9 +157,12 @@ function runningAgents(settings: DaemonSettings) {
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
-        startAgent(settings, consumers, agentKey, contractsOf).pipe(
-          Effect.map((agent) => ({ ...agent, events })),
-        ),
+        startAgent(
+          settings,
+          consumers,
+          agentKey,
+          Effect.suspend(serverAgent),
+        ).pipe(Effect.map((agent) => ({ ...agent, events }))),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -184,14 +188,12 @@ function runningAgents(settings: DaemonSettings) {
         Effect.forkIn(daemonScope),
         Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.interruptible)),
       );
-    /** An agent that cannot start ends the read as a call the daemon could not complete. */
-    function contractsOf(
-      owner: Owner,
-    ): Effect.Effect<readonly CompiledContract[]> {
-      return agentOfOwner(owner).pipe(
-        Effect.flatMap((agent) => agent.readContracts()),
-        Effect.orDie,
-      );
+    /** A server agent that cannot start ends the call as one the daemon could not complete. */
+    function serverAgent(): ServerAgent {
+      return agentOfOwner({
+        issuer: settings.authentication.issuer,
+        subject: settings.serverAgent.subject,
+      }).pipe(Effect.orDie);
     }
     return agentOfOwner;
   }).pipe(Effect.withSpan("runningAgents"));
@@ -207,19 +209,17 @@ function startAgent(
   settings: DaemonSettings,
   consumers: Map<string, Effect.Latch>,
   agentKey: string,
-  contractsOf: ContractsOf,
+  serverAgent: ServerAgent,
 ) {
   return Effect.gen(function* () {
     const identity = yield* Layer.build(identityLayer(agentKey));
     const card = Context.get(identity, Identity).me;
-    const role = roleOf(settings, agentKey, card.agentName, contractsOf);
+    const role = roleOf(settings, agentKey, card.agentName, serverAgent);
     const services = yield* Layer.build(
       SocialHarness.layer({
         agentKey,
-        withheldReply: role.withheldReply,
+        admission: role.admission,
         maximumHistoryRecords: settings.maximumHistoryRecords,
-        maximumConcurrentChecks:
-          settings.messagePolicy?.policy.maximumConcurrentChecks,
       }).pipe(
         Layer.provideMerge(
           Communication.layer({
@@ -239,6 +239,7 @@ function startAgent(
       agentKey,
       tools: yield* role.tools().pipe(Effect.provide(services)),
       readContracts: Context.get(services, Firewall).readContracts,
+      admit: Context.get(services, SocialHarness).admit,
     };
   }).pipe(Effect.withSpan("startAgent"));
 }

@@ -8,7 +8,6 @@ import {
   Exit,
   FastCheck as fc,
   Fiber,
-  Schedule,
   Schema,
   Scope,
 } from "effect";
@@ -47,32 +46,6 @@ const violation: DecisionProvider = {
   decide: (request) => Effect.succeed(decisionResponse(request, "violation")),
 };
 
-/** A decision service that finds every message a peer sent in violation, and every message this agent sends compliant. */
-const incomingViolation: DecisionProvider = {
-  decide: (request) =>
-    Effect.succeed(
-      decisionResponse(
-        request,
-        decisionState(request.state).direction === "incoming"
-          ? "violation"
-          : "compliant",
-      ),
-    ),
-};
-
-function waitForDecisions(runtime: Runtime, count = 1) {
-  return runtime.firewall.readDecisions({}).pipe(
-    Effect.repeat({
-      until: (page) =>
-        new Set(page.decisions.map((decision) => decision.checkId)).size >=
-        count,
-      schedule: Schedule.spaced("5 millis"),
-    }),
-    Effect.zipRight(runtime.firewall.readDecisions({})),
-    Effect.timeout("10 seconds"),
-  );
-}
-
 function ordinaryMessage(subject: Fixture, text: string) {
   return Message.create({
     author: subject.self,
@@ -85,6 +58,19 @@ function ordinaryMessage(subject: Fixture, text: string) {
 function receive(subject: Fixture, text: string, author?: AgentCard) {
   const sender = author ?? subject.bob;
   return Effect.flatMap(subject.message(text, sender), subject.deliver);
+}
+
+/** Has alice admit a text message `author` sends her, bob unless given, storing it in the fixture's history. */
+function admit(
+  subject: Fixture,
+  runtime: Runtime,
+  text: string,
+  author?: AgentCard,
+) {
+  return Effect.flatMap(
+    subject.message(text, author ?? subject.bob),
+    (message) => runtime.harness.admit(message, subject.deliver(message)),
+  );
 }
 
 /** Gives alice a conversation with a new peer `name` and returns its address. */
@@ -164,14 +150,13 @@ it("ends a send that could not be stored as a defect without sending it again", 
     expect(subject.submitted).toHaveLength(1);
   }));
 
-it("checks each conversation in order while another conversation progresses", () =>
+it("admits one sender's messages one at a time while another sender's proceed", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
     const assessed: string[] = [];
     const runtime = yield* subject.open({
-      maximumConcurrentChecks: 2,
       policy: composedPolicy({
         decide: (request) =>
           Effect.gen(function* () {
@@ -185,67 +170,46 @@ it("checks each conversation in order while another conversation progresses", ()
           }),
       }),
     });
-    yield* receive(subject, "First");
+    const first = yield* Effect.fork(admit(subject, runtime, "First"));
     yield* Deferred.await(entered);
-    yield* receive(subject, "Second");
-    yield* receive(subject, "Independent", subject.carol);
+    const second = yield* Effect.fork(admit(subject, runtime, "Second"));
+    yield* admit(subject, runtime, "Independent", subject.carol);
     expect((yield* waitForInbox(runtime)).entries).toMatchObject([
       { address: carolAddress },
     ]);
     expect(assessed).toEqual(["First", "Independent"]);
     yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(Fiber.zip(first, second));
     expect(
       (yield* waitForInbox(runtime, 3)).entries.map((entry) => entry.address),
     ).toEqual(["agent:carol", "agent:bob", "agent:bob"]);
     expect(assessed).toEqual(["First", "Independent", "Second"]);
   }));
 
-it("recovers an interrupted check, keeps its inbox entry across a restart and gives a message delivered again no second entry", () =>
+it("keeps an admitted message's inbox entry across a restart and gives a message delivered again no second entry", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const scope = yield* Scope.make();
-    const entered = yield* Deferred.make<undefined>();
-    yield* subject
-      .open({
-        policy: composedPolicy({
-          decide: () =>
-            Deferred.succeed(entered, undefined).pipe(
-              Effect.zipRight(Effect.never),
-            ),
-        }),
-      })
-      .pipe(Scope.extend(scope));
-    const message = yield* subject.message("Can we meet Tuesday?");
-    yield* subject.deliver(message);
-    yield* Deferred.await(entered);
-    yield* Scope.close(scope, Exit.void);
-    const resumedScope = yield* Scope.make();
-    const resumed = yield* subject
+    const admitting = yield* subject
       .open({
         policy: composedPolicy({
           decide: (request) =>
             Effect.succeed(decisionResponse(request, "compliant", 0.6)),
         }),
       })
-      .pipe(Scope.extend(resumedScope));
-    const [delivery] = (yield* waitForInbox(resumed)).entries;
+      .pipe(Scope.extend(scope));
+    const message = yield* subject.message("Can we meet Tuesday?");
+    yield* admitting.harness.admit(message, subject.deliver(message));
+    const [delivery] = (yield* waitForInbox(admitting)).entries;
     if (delivery === undefined) {
-      return yield* Effect.dieMessage("Expected recovered delivery");
+      return yield* Effect.dieMessage("Expected an inbox entry");
     }
-    const stored = {
-      address: delivery.address,
-      message: delivery.message,
-      guidance: delivery.guidance,
-    };
-    expect(stored.guidance).toBeDefined();
-    expect(
-      (yield* resumed.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "received", ...stored }]);
-    yield* Scope.close(resumedScope, Exit.void);
+    expect(delivery.guidance).toBeDefined();
+    yield* Scope.close(scope, Exit.void);
     const reopened = yield* subject.open();
     expect(
       (yield* reopened.harness.readHistory({ address: bobAddress })).records,
-    ).toMatchObject([{ kind: "received", ...stored }]);
+    ).toMatchObject([{ kind: "received", ...delivery }]);
     yield* subject.deliver(message);
     expect((yield* waitForInbox(reopened)).entries).toHaveLength(1);
   }));
@@ -273,84 +237,47 @@ it("reads the entries after a cursor in the order they were allowed, a page at a
     });
   }));
 
-it("withholds peer content from both the inbox and history", () =>
+it("refuses a message that breaks a rule to its sender and stores only the check", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
       policy: composedPolicy(violation),
     });
-    yield* receive(subject, "Private peer content");
-    expect((yield* waitForDecisions(runtime)).decisions).toMatchObject([
-      { reason: "rule-violation", decision: "withheld" },
-    ]);
+    const refusal = yield* admit(subject, runtime, "Private peer content").pipe(
+      Effect.flip,
+    );
+    expect(refusal).toMatchObject({
+      reason: "firewall-refused",
+      refusal: "rule-violation",
+      feedback: ["Keep private information private."],
+    });
+    expect(refusal.message).toMatch(
+      /^Error: Keep private information private\. Check: \S+; rule-violation\.$/u,
+    );
+    expect((yield* runtime.firewall.readDecisions({})).decisions).toMatchObject(
+      [
+        {
+          direction: "incoming",
+          reason: "rule-violation",
+          decision: "refused",
+        },
+      ],
+    );
     expect((yield* runtime.inbox.listInbox(1, "0")).entries).toEqual([]);
     expect(
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toEqual([]);
-    expect(subject.submitted).toEqual([]);
   }));
 
-it("answers a message that broke a rule with the configured reply when no rule gave one", () =>
+it("stores nothing of a message whose decision cannot be saved, and admits the next", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const withheldReply = "Your message was not accepted.";
-    const runtime = yield* subject.open({
-      withheldReply,
-      policy: composedPolicy(incomingViolation),
-    });
-    yield* receive(subject, "Private peer content");
-    yield* waitForDecisions(runtime, 2);
-    expect(subject.submitted).toMatchObject([
-      { content: [{ type: "text", text: withheldReply }] },
-    ]);
-    expect((yield* runtime.inbox.listInbox(1, "0")).entries).toEqual([]);
-  }));
-
-it("answers a message its rule withholds with that rule's feedback, as an ordinary message that names the withheld one", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({
-      policy: composedPolicy(incomingViolation, "reply"),
-    });
-
-    const withheld = yield* subject.message(
-      "Private peer content",
-      subject.bob,
+    let failing = true;
+    const failure = Effect.suspend(() =>
+      failing
+        ? new FirewallPolicyError({ reason: "persistence-failed" })
+        : Effect.void,
     );
-    yield* subject.deliver(withheld);
-    yield* waitForDecisions(runtime, 2);
-
-    expect(subject.submitted).toMatchObject([
-      {
-        author: subject.self,
-        recipients: [subject.bob],
-        replyToMsgId: withheld.msgId,
-        content: [{ type: "text", text: "Keep private information private." }],
-      },
-    ]);
-    expect((yield* runtime.inbox.listInbox(1, "0")).entries).toEqual([]);
-  }));
-
-it("sends no reply that its own message policy refuses, and saves that refusal", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({
-      policy: composedPolicy(violation, "reply"),
-    });
-
-    yield* receive(subject, "Private peer content");
-    const { decisions } = yield* waitForDecisions(runtime, 2);
-
-    expect(
-      decisions.map(({ decision }) => decision).sort(compareAscii),
-    ).toEqual(["refused", "withheld"]);
-    expect(subject.submitted).toEqual([]);
-  }));
-
-it("rolls back a check whose decision cannot be saved, then checks the message again and keeps serving", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const failed = yield* Deferred.make<undefined>();
     const runtime = yield* subject.open({
       policy: composedPolicy({
         decide: (request) => Effect.succeed(decisionResponse(request)),
@@ -361,22 +288,23 @@ it("rolls back a check whose decision cannot be saved, then checks the message a
           firewall.checkIncoming(incoming, evidence).pipe(
             Effect.map((decision) => ({
               ...decision,
-              save: Effect.zipRight(
-                decision.save,
-                Effect.whenEffect(
-                  new FirewallPolicyError({ reason: "persistence-failed" }),
-                  Deferred.succeed(failed, undefined),
-                ),
-              ),
+              save: Effect.zipRight(decision.save, failure),
             })),
           ),
       }),
     });
-    yield* receive(subject, "Publish atomically");
-    yield* Deferred.await(failed);
+    const failed = yield* admit(subject, runtime, "Publish atomically").pipe(
+      Effect.exit,
+    );
+    expect(Exit.isFailure(failed) && Cause.isDie(failed.cause)).toBe(true);
     expect((yield* runtime.firewall.readDecisions({})).decisions).toEqual([]);
     expect((yield* runtime.inbox.listInbox(1, "0")).entries).toEqual([]);
-    expect((yield* waitForInbox(runtime)).entries).toHaveLength(1);
+    expect(
+      (yield* runtime.harness.readHistory({ address: bobAddress })).records,
+    ).toEqual([]);
+    failing = false;
+    yield* admit(subject, runtime, "Publish atomically");
+    expect((yield* runtime.inbox.listInbox(1, "0")).entries).toHaveLength(1);
     expect((yield* runtime.firewall.readDecisions({})).decisions).toHaveLength(
       1,
     );
@@ -421,15 +349,13 @@ it.prop(
           to: bobAddress,
           text: "(open :ontology exchange)",
         });
-        yield* subject.deliver(
-          yield* Message.create({
-            author: subject.bob,
-            recipients: [subject.self],
-            content: [{ type: "text", text: "(close :ontology exchange)" }],
-            replyToMsgId: opened.id,
-          }),
-        );
-        yield* waitForInbox(runtime, instance);
+        const close = yield* Message.create({
+          author: subject.bob,
+          recipients: [subject.self],
+          content: [{ type: "text", text: "(close :ontology exchange)" }],
+          replyToMsgId: opened.id,
+        });
+        yield* runtime.harness.admit(close, subject.deliver(close));
       }
       expect((yield* waitForInbox(runtime)).entries).toHaveLength(instances);
     }),
@@ -453,8 +379,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
           }),
       }),
     });
-    yield* receive(subject, "Candidate");
-    yield* waitForInbox(runtime);
+    yield* admit(subject, runtime, "Candidate");
     const [assessment] = seen;
     if (assessment === undefined) {
       return yield* Effect.dieMessage("Expected assessment");
@@ -539,7 +464,6 @@ it("cancels an unaccepted draft and releases assessment capacity", () =>
             return Effect.succeed(decisionResponse(request));
           }),
       },
-      undefined,
       1,
     );
     const runtime = yield* subject.open({ policy });
