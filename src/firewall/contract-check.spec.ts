@@ -5,6 +5,7 @@ import { type Context, Effect, FastCheck as fc } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { DecisionProvider, FirewallEvidence } from "./check.js";
+import type { Act } from "./contract.js";
 import type { Firewall } from "./service.js";
 import { Message, type MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
@@ -14,52 +15,35 @@ import {
   contractOf,
   firewallLayer,
   form,
+  formatAct,
   noFields,
   peer,
   policy,
   valueField,
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
-import { type Act, formatAct, readAct } from "./contract.js";
 
 const bob = peer("bob", 2);
 
-const reasonField = {
-  type: "object",
-  properties: { reason: { type: "string" } },
-  required: ["reason"],
-};
-
-/** `open` starts an instance, `close` ends it, and `reject` answers a withheld act. */
-const exchange = contractOf(
-  "exchange",
-  [
-    {
-      ...form,
-      act: "open",
-      by: ["Sender"],
-      fields: valueField,
-      starts: true,
-      initiates: ["opened"],
-    },
-    {
-      ...form,
-      act: "close",
-      by: ["Receiver"],
-      fields: noFields,
-      when: ["opened"],
-      ends: true,
-    },
-    {
-      ...form,
-      act: "reject",
-      by: ["Sender", "Receiver"],
-      fields: reasonField,
-      when: ["opened"],
-    },
-  ],
-  { onRefusal: "reject" },
-);
+/** `open` starts an instance and `close` ends it. */
+const exchange = contractOf("exchange", [
+  {
+    ...form,
+    act: "open",
+    by: ["Sender"],
+    fields: valueField,
+    starts: true,
+    initiates: ["opened"],
+  },
+  {
+    ...form,
+    act: "close",
+    by: ["Receiver"],
+    fields: noFields,
+    when: ["opened"],
+    ends: true,
+  },
+]);
 
 /** The norm of `exchange` under another document: `begin` starts an instance in place of `open`. */
 const replacement = contractOf(
@@ -311,65 +295,4 @@ it.prop(
       );
     }),
   { fastCheck: { numRuns: 6 } },
-);
-
-it.prop(
-  "proposes the contract's refusal act for a withheld act of an instance, a reply its own check allows only when the withheld act replied into that instance",
-  [
-    fc.oneof(
-      fc.string({ minLength: 1 }),
-      fc.constantFrom(
-        actText("unknown", "exchange"),
-        actText("close", "exchange", { extra: "unasked" }),
-        actText("open", "exchange", { value: "again" }),
-        actText("close", "other"),
-      ),
-    ),
-    fc.boolean(),
-  ],
-  ([text, repliesIntoInstance]) =>
-    Effect.gen(function* () {
-      yield* withFirewall(
-        {},
-        (firewall, self) =>
-          Effect.gen(function* () {
-            const open = yield* direct(
-              bob,
-              self,
-              actText("open", "exchange", { value: "first" }),
-            );
-            yield* check(firewall, self, open, after([]));
-            const withheld = yield* direct(
-              bob,
-              self,
-              text,
-              repliesIntoInstance ? open.msgId : undefined,
-            );
-            const decision = yield* check(
-              firewall,
-              self,
-              withheld,
-              after([open]),
-            );
-            if (decision.kind !== "withheld" || decision.reply === undefined) {
-              return yield* Effect.dieMessage("the act was not answered");
-            }
-            const reply = yield* direct(
-              self,
-              bob,
-              decision.reply,
-              withheld.msgId,
-            );
-            const act = yield* readAct(reply);
-            expect(act).toMatchObject({ name: "reject", norm: "exchange" });
-            expect(Object.keys(act.fields)).toEqual(["reason"]);
-            const sent = yield* firewall.checkOutgoing(reply, () =>
-              Effect.succeed({ ...after([open]), references: [withheld] }),
-            );
-            expect(sent.kind).toBe(repliesIntoInstance ? "allowed" : "refused");
-          }),
-        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
-      );
-    }),
-  { fastCheck: { numRuns: 12 } },
 );

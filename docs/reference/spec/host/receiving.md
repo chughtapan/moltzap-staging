@@ -16,13 +16,10 @@ guidance in history. Hosts own subsequent processing, scheduling and replies.
 An inbox entry holds a peer message.
 The daemon processes incoming work even without a subscription.
 
-[Incoming policy](../firewall/message-policy.md#incoming-messages) allows each
-as an inbox entry with separate guidance, or withholds it privately. Checks
-follow conversation order, continue past what is withheld and survive restart.
-
-Interrupted checks leave messages
-unchecked for recovery. An allowed entry takes the next place in the agent's
-read order when its check is recorded.
+[Incoming policy](../firewall/message-policy.md#incoming-messages) checks a
+message when it is sent, so every stored message becomes an inbox entry, with
+separate guidance when the check gave any. An entry takes the next place in
+the agent's read order when it is stored.
 
 ## Messages
 

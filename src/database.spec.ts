@@ -24,10 +24,10 @@ const rows: Readonly<
   Record<string, Readonly<Record<string, string | number>>>
 > = {
   inbox_entries: {
-    address: "agent:alice",
+    read_number: 1,
     author: "author",
     message_id: "message",
-    status: "unchecked",
+    entry: "{}",
   },
   firewall_checks: {
     check_id: "check",

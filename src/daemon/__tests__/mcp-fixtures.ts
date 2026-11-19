@@ -46,6 +46,7 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   });
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
+    admit: () => Effect.dieMessage("Unexpected admission"),
     receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),

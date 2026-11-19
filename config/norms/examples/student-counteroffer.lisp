@@ -1,5 +1,4 @@
 (norm student-counteroffer :initiator Student :participant Professor
-  :on-refusal not-understood
   :description "The student requests a meeting and gives availability. The professor offers a slot. The student accepts that slot or gives alternative availability. The professor books and confirms the accepted slot.")
 
 (content request :by Student :starts true :initiates (open offer-due)

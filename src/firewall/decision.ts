@@ -9,11 +9,7 @@ import type {
   FirewallRefusalReason,
 } from "./rules.js";
 import type { CheckRecord } from "./store.js";
-import {
-  type ContractCheck,
-  contractReply,
-  messageKey,
-} from "./contract-check.js";
+import { type ContractCheck, messageKey } from "./contract-check.js";
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
@@ -23,18 +19,16 @@ export interface Candidate {
   readonly evidence: FirewallEvidence;
 }
 
-/** A refused or withheld message's reason, the contract stage that decided, and what its sender is told. */
+/** A refused message's reason, the contract stage that decided, and what its sender is told. */
 interface Refusal {
   readonly reason: FirewallRefusalReason;
   readonly ruleId?: string;
   readonly feedback: readonly string[];
   readonly detail?: unknown;
-  readonly reply?: string;
 }
 
 /**
- * One candidate's decision and the check record that saves it. `refused`
- * refuses a message the agent sends and withholds one it receives. Only a
+ * One candidate's decision and the check record that saves it. Only a
  * message of an agent without a message policy has no record.
  */
 export type Decision =
@@ -52,8 +46,7 @@ export type Decision =
 /**
  * The refusal of a message that fails its contract's structure or protocol.
  * Its rule names the norm of the instance in progress and the stage that
- * failed. A withheld message is answered with the contract's `:on-refusal`
- * act when it declares one.
+ * failed.
  */
 export function contractRefusal(
   revision: string,
@@ -71,8 +64,6 @@ export function contractRefusal(
     ...(problem.field === undefined ? {} : { field: problem.field }),
   };
   const ruleId = `${check.view.instance?.contract.name ?? "norm"}-${problem.stage}`;
-  const reply =
-    direction === "incoming" ? contractReply(check, problem.detail) : undefined;
   return {
     kind: "refused",
     record: {
@@ -106,7 +97,6 @@ export function contractRefusal(
       ruleId,
       feedback: [problem.detail],
       detail,
-      ...(reply === undefined ? {} : { reply }),
     },
   };
 }
