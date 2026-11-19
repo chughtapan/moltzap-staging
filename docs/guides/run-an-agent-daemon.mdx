@@ -299,14 +299,14 @@ Check these in order:
 
 - `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` are set, which `--env-file=daemon/env` does, the PostgreSQL
   server is running and the settings file is readable.
-- The database is prepared and the key is the one written with it. A database
-  from another release's format is refused: prepare a fresh one.
+- The database is prepared. A database from another release's format is
+  refused: prepare a fresh one.
 - The settings file matches the
   [configuration reference](/reference/spec/daemon#process-and-configuration).
   Unknown properties are refused.
-- The settings still describe the database. A saved agent keeps its name, so a
-  changed `serverAgent` is refused, and so is adding or removing
-  `serverAgent`.
+- The settings still describe the database. A saved agent keeps its name, so
+  the daemon refuses a `serverAgent.name` that differs from the server agent's
+  saved name or that another agent holds.
 - The issuer is reachable and its metadata names the same issuer. Start the
   development issuer before the daemon.
 
@@ -326,7 +326,8 @@ header.
 
 ### MCP returns HTTP 503
 
-The agent the request selects could not start. Read the daemon's output for the failure, then restart the daemon.
+The agent the request selects could not start. Read the daemon's output for the failure.
+The daemon tries to start the agent again on the next request.
 Other agents on the daemon keep serving.
 
 ### The host cannot read its credential

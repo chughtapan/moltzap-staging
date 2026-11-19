@@ -91,9 +91,7 @@
         "src/daemon"
       ],
       "entrypoints": [
-        "src/daemon/startup.ts",
-        "src/daemon/agent.ts",
-        "src/daemon/inbox.ts"
+        "src/daemon/startup.ts"
       ],
       "reason": "The sharnessd process: agents, their inboxes and the MCP tools served to their hosts"
     },
@@ -115,7 +113,7 @@
       "entrypoints": [
         "src/database/index.ts"
       ],
-      "reason": "SQL connections, typed query compilation, transaction context and sealed secrets shared by daemon domains"
+      "reason": "SQL connections, typed query compilation, transaction context and migrations shared by daemon domains"
     }
   ],
   "layers": [
@@ -187,7 +185,7 @@
   "allowedTestPublicSubpaths": [
     {
       "subpath": "./test",
-      "reason": "Test databases and decision-provider overrides require the explicit sharness-test resolution condition"
+      "reason": "Test databases and an OAuth issuer fixture require the explicit sharness-test resolution condition"
     }
   ],
   "maxFolderChildren": 12,

@@ -1,25 +1,16 @@
 /**
- * @file NanoClaw v2.3.0 channel adapter interface. The host ABI carries Node's
- * `Buffer`, and the preserved types directive below travels into the published
- * declaration so a consumer resolves it from this package's own `@types/node`.
- *
- * Channel adapters bridge NanoClaw with messaging platforms (Discord, Slack, etc.).
- * Two patterns: native adapters (implement directly) or Chat SDK bridge (wrap a Chat SDK adapter).
+ * @file The members of NanoClaw v2.3.0's channel adapter interface that this
+ * channel uses. The host ABI carries Node's `Buffer`, and the preserved types
+ * directive below travels into the published declaration so a consumer
+ * resolves it from this package's own `@types/node`.
  */
 
-/* eslint-disable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type, jsdoc/require-description-complete-sentence, jsdoc/text-escaping -- This file mirrors NanoClaw's Promise-native host ABI and upstream API prose. */
+/* eslint-disable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type, jsdoc/require-description-complete-sentence -- This file mirrors NanoClaw's Promise-native host ABI and upstream API prose. */
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference -- An import of `Buffer` is erased from the emitted declaration; only a preserved directive reaches consumers.
 /// <reference types="node" preserve="true" />
 
 /** Passed to the adapter at setup time. */
 export interface ChannelSetup {
-  /** Called when an inbound message arrives from the platform. */
-  onInbound(
-    platformId: string,
-    threadId: string | null,
-    message: InboundMessage,
-  ): void | Promise<void>;
-
   /**
    * Called by admin-transport adapters (CLI) that want to route a message to
    * an arbitrary channel/platform and optionally redirect replies elsewhere.
@@ -30,9 +21,6 @@ export interface ChannelSetup {
 
   /** Called when the adapter discovers metadata about a conversation. */
   onMetadata(platformId: string, name?: string, isGroup?: boolean): void;
-
-  /** Called when a user clicks a button/action in a card (e.g., ask_user_question response). */
-  onAction(questionId: string, selectedOption: string, userId: string): void;
 }
 
 /** Delivery address used for reply-to overrides and (normally) the inbound's own origin. */
@@ -115,13 +103,6 @@ interface OutboundMessage {
   files?: OutboundFile[]; // file attachments from the session outbox
 }
 
-/** Discovered conversation info (from syncConversations). */
-interface ConversationInfo {
-  platformId: string;
-  name: string;
-  isGroup: boolean;
-}
-
 /** Wiring/mg defaults for one conversation context (DM vs group/channel). */
 interface ChannelContextDefaults {
   /** Default engage_mode for wirings created in this context. */
@@ -146,24 +127,6 @@ interface ChannelContextDefaults {
    * Per-wiring override: messaging_group_agents.threads (NULL = inherit).
    */
   threads: boolean;
-  /**
-   * Default session_mode stamped on wirings created in this context
-   * (messaging_group_agents.session_mode). Declared by a context whose
-   * conversations are thread-rooted — each thread is its own conversation, so
-   * each should root its own session from the first message. Applies to
-   * whichever context declares it (dm, group, or both); omitting it selects
-   * 'shared'. The two-level model consists of this declaration and the
-   * per-wiring value chosen at creation.
-   *
-   * Declaring 'per-thread' also derives the wiring's threads stamp:
-   * resolveWiringDefaults stamps messaging_group_agents.threads = 1 at
-   * creation (per-thread sessions structurally require honored thread ids);
-   * otherwise the column is left NULL to inherit `threads`. There is no
-   * independent threads declaration: the stamp is a code invariant of the
-   * session mode, so the incoherent pairing
-   * (per-thread sessions with thread ids stripped) is unrepresentable here.
-   */
-  sessionMode?: "shared" | "per-thread";
   /**
    * unknown_sender_policy stamped on messaging_groups rows auto-created by
    * the router or created by wizard/CLI paths in this context.
@@ -204,15 +167,6 @@ interface ChannelAdapter {
   channelType: string;
 
   /**
-   * Adapter-instance name — distinguishes N adapters of one platform
-   * (e.g. three Slack apps in one workspace). Defaults to channelType.
-   * channelType stays the SEMANTIC platform key (user ids '<channelType>:<handle>',
-   * formatting, container config); instance is a host-side routing key only.
-   * Must be unique across active adapters and URL-safe (no '/', '?', ':').
-   */
-  instance?: string;
-
-  /**
    * Whether this adapter models conversations as threads.
    *
    * true  — adapter's platform uses threads as the primary conversation unit
@@ -235,73 +189,6 @@ interface ChannelAdapter {
     threadId: string | null,
     message: OutboundMessage,
   ): Promise<string | undefined>;
-
-  // Optional
-  setTyping?(
-    platformId: string,
-    threadId: string | null,
-    status?: string,
-    statusKind?: "auto" | "agent",
-  ): Promise<void>;
-  syncConversations?(): Promise<ConversationInfo[]>;
-  resolveChannelName?(platformId: string): Promise<string | null>;
-  /**
-   * Set a human-readable title on a conversation thread. Platforms with a
-   * thread-title concept render this in the conversation list; the router
-   * fires it once when a brand-new per-thread DM session is created, titled
-   * after the first user message.
-   *
-   * Only adapters whose platform has a thread-title concept expose this —
-   * everyone else omits it and callers no-op via optional chaining
-   * (setThreadTitle in channel-registry.ts).
-   */
-  setThreadTitle?(
-    platformId: string,
-    threadId: string,
-    title: string,
-  ): Promise<void>;
-  setSuggestedPrompts?(
-    platformId: string,
-    prompts: Array<{ title: string; message: string }>,
-    title?: string,
-  ): Promise<void>;
-
-  /**
-   * Subscribe the bot to a thread so follow-up messages route via the
-   * platform's "subscribed message" path (onSubscribedMessage in Chat SDK).
-   * Called by the router when a mention-sticky wiring first engages in a
-   * thread. Idempotent: calling twice on the same thread is a no-op.
-   *
-   * Platforms without a subscription concept can omit this; the router
-   * treats absence as a no-op.
-   */
-  subscribe?(platformId: string, threadId: string): Promise<void>;
-
-  /**
-   * Open (or fetch) a DM with this user, returning the platform_id of the
-   * resulting DM channel. Called by the host on demand to initiate cold
-   * DMs — approvals, pairing handshakes, host-initiated notifications — to
-   * users who may never have messaged the bot themselves.
-   *
-   * Omit this method on channels where the user handle IS already the DM
-   * chat id (Telegram, WhatsApp, iMessage, email, Matrix). Callers will
-   * fall through to using the handle directly.
-   *
-   * For channels that distinguish user id from DM channel id (Discord,
-   * Slack, Teams, Webex, gChat): implement by delegating to Chat SDK's
-   * chat.openDM, which hits the platform's idempotent open-DM endpoint.
-   * Returning the same platform_id on repeated calls is expected.
-   */
-  openDM?(userHandle: string): Promise<string>;
-
-  /**
-   * Declared wiring-time defaults for this channel. When absent, core uses
-   * fallbackChannelDefaults(supportsThreads) from channel-registry.ts. The
-   * value may be computed from adapter-internal environment at module load
-   * (e.g. WhatsApp shared-number mode), but is immutable for the process
-   * lifetime.
-   */
-  defaults?: ChannelDefaults;
 }
 
 /** Factory function that creates a channel adapter (returns null if credentials missing). */
@@ -314,21 +201,12 @@ type ChannelAdapterFactory = () =>
 export interface ChannelRegistration {
   factory: ChannelAdapterFactory;
   /**
-   * Same declaration as ChannelAdapter.defaults, resolvable WITHOUT
-   * instantiating the adapter — offline creation paths (setup/register.ts,
+   * The channel's wiring-time defaults, resolvable WITHOUT instantiating the
+   * adapter — offline creation paths (setup/register.ts,
    * scripts/init-first-agent.ts, ncl against a host where the factory
-   * returned null for missing creds) read it from the registry. Channel
-   * modules pass the same const here and to the adapter/bridge.
+   * returned null for missing creds) read it from the registry.
    */
   defaults?: ChannelDefaults;
-  containerConfig?: {
-    mounts?: Array<{
-      hostPath: string;
-      containerPath: string;
-      readonly: boolean;
-    }>;
-    env?: Record<string, string>;
-  };
 }
 
-/* eslint-enable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type, jsdoc/require-description-complete-sentence, jsdoc/text-escaping -- Restore repository defaults after the host ABI mirror. */
+/* eslint-enable agent-code-guard/promise-type, @typescript-eslint/no-invalid-void-type, jsdoc/require-description-complete-sentence -- Restore repository defaults after the host ABI mirror. */

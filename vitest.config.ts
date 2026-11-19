@@ -5,8 +5,6 @@ export default defineConfig({
   test: {
     projects: [
       {
-        resolve: { conditions: ["sharness-test"] },
-        ssr: { resolve: { conditions: ["sharness-test"] } },
         test: {
           name: "social-harness",
           include: ["src/**/*.spec.ts"],

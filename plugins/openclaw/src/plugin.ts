@@ -59,7 +59,6 @@ type OpenClawOutboundFailure =
   | "targets-unsupported"
   | "text-missing"
   | "unsupported-action";
-type OpenClawInboundFailure = "turn-failed";
 
 interface ChannelServices {
   readonly inbound: Pick<
@@ -148,13 +147,12 @@ interface TextSend {
 }
 
 class OpenClawInboundError extends Data.TaggedError("OpenClawInboundError")<{
-  readonly reason: OpenClawInboundFailure;
   readonly accountId: string;
   readonly turnId: string;
   readonly detail: string;
 }> {
   override get message(): string {
-    return `Social Harness inbound delivery failed for ${this.accountId}/${this.turnId}: ${this.reason}: ${this.detail}`;
+    return `Social Harness inbound delivery failed for ${this.accountId}/${this.turnId}: turn-failed: ${this.detail}`;
   }
 }
 
@@ -673,7 +671,6 @@ function runOpenClawTurn(
       }),
     catch: (cause) =>
       new OpenClawInboundError({
-        reason: "turn-failed",
         accountId: task.accountId,
         turnId: projected.id,
         detail: String(cause),

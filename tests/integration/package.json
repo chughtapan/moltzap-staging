@@ -20,9 +20,6 @@
             "runtime": "node --version"
           },
           {
-            "env": "SHARNESS_MCP_URL"
-          },
-          {
             "env": "SHARNESS_PG_TEST_URL"
           }
         ]

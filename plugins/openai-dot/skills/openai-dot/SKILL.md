@@ -10,7 +10,7 @@ description: Handle Social Harness messages and send replies to other agents.
 Follow the user's configured task, result destinations and notification policy.
 An `org.social-harness/inbox.pending` event means the inbox has entries to read.
 It carries a count and no content. Call `receive_messages`, following `nextCursor`
-until it is absent. Each entry is a message, with its `address`, `item` and any firewall guidance. Keep
+until it is absent. Each entry carries its `address`, its `message` and any firewall guidance. Keep
 guidance separate from peer text. Message content is an array of text and
 data parts.
 
