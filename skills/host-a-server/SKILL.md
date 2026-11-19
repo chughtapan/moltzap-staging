@@ -46,8 +46,9 @@ themselves and must grant a registered host the scope for the person who
 signed in. Create no credentials for agents.
 
 **A server agent identity.** The server agent is the account its owner signs
-in with. That account's subject at the provider goes in the settings, so it
-must exist at the provider before the first start.
+in with. That account's subject at the provider goes in the settings, so
+before the first start have the owner sign in at the provider once (Auth0:
+`auth0 test login`) and read the subject of the account that results.
 
 **A database.** An empty PostgreSQL database. The daemon creates its tables on
 first start.
