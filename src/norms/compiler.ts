@@ -30,11 +30,8 @@ interface Declaration {
 
 const attributes: Readonly<Record<string, readonly string[]>> = {
   string: [":min-length", ":max-length"],
-  number: [":minimum", ":maximum"],
   integer: [":minimum", ":maximum"],
-  select: [":choices"],
   "multi-select": [":choices", ":min-items", ":max-items"],
-  boolean: [],
 };
 
 /** The digest names the exact document bytes supplied to both participants. */
@@ -69,7 +66,7 @@ export const compileNorm = Effect.fn("compileNorm")(function* (source: string) {
   const roles = { initiator, participant };
   const forms = yield* Effect.forEach(
     body.filter((form) => form.kind === "content"),
-    (form) => compileForm(form, roles),
+    (form) => compileForm(form),
     { concurrency: 1 },
   );
   const textRules = yield* Effect.forEach(
@@ -101,14 +98,13 @@ export const compileNorm = Effect.fn("compileNorm")(function* (source: string) {
   return contract;
 });
 
-function compileForm(form: Declaration, roles: CompiledContract["roles"]) {
+function compileForm(form: Declaration) {
   return Effect.gen(function* () {
     yield* checkAttributes(form, [
       ":by",
       ":starts",
       ":ends",
       ":when",
-      ":unless",
       ":initiates",
       ":terminates",
       ":max",
@@ -158,7 +154,7 @@ function compileForm(form: Declaration, roles: CompiledContract["roles"]) {
         ),
       ),
     );
-    const by = yield* compileSender(roles, form.attributes.get(":by"));
+    const by = yield* compileSender(form.attributes.get(":by"));
     const maximum = yield* numberAttribute(form, ":max");
     const delay = yield* compileDelay(form);
     return {
@@ -168,7 +164,6 @@ function compileForm(form: Declaration, roles: CompiledContract["roles"]) {
       starts: yield* booleanAttribute(form, ":starts"),
       ends: yield* booleanAttribute(form, ":ends"),
       when: yield* names(form.attributes.get(":when")),
-      unless: yield* names(form.attributes.get(":unless")),
       initiates: yield* names(form.attributes.get(":initiates")),
       terminates: yield* names(form.attributes.get(":terminates")),
       ...(maximum === undefined ? {} : { maximum }),
@@ -183,14 +178,10 @@ function compileForm(form: Declaration, roles: CompiledContract["roles"]) {
 }
 
 function compileSender(
-  roles: CompiledContract["roles"],
   node?: SExpression,
 ): Effect.Effect<MessageForm["by"], NormDocumentError> {
-  if (node === undefined) {
-    return Effect.succeed([roles.initiator, roles.participant]);
-  }
   if (
-    node.kind !== "list" ||
+    node?.kind !== "list" ||
     atom(node.values[0]) !== "recipient" ||
     node.values[1]?.kind !== "list"
   ) {
@@ -215,13 +206,7 @@ function compileSender(
 
 function compileRule(form: Declaration, id: string) {
   return Effect.gen(function* () {
-    yield* checkAttributes(form, [
-      ":act",
-      ":applies",
-      ":guidance",
-      ":feedback",
-      ":action",
-    ]);
+    yield* checkAttributes(form, [":act", ":feedback"]);
     const [text, ...rest] = form.children;
     if (text?.kind !== "string" || rest.length !== 0) {
       return yield* new NormDocumentError({
@@ -229,17 +214,13 @@ function compileRule(form: Declaration, id: string) {
       });
     }
     const act = atom(form.attributes.get(":act"));
-    const guidance = atom(form.attributes.get(":guidance"));
     const feedback = atom(form.attributes.get(":feedback"));
-    const action = atom(form.attributes.get(":action"));
     return {
       id,
       text: text.value,
-      applies: atom(form.attributes.get(":applies")) ?? "both",
+      applies: "both",
       ...(act === undefined ? {} : { act }),
-      ...(guidance === undefined ? {} : { guidance }),
       ...(feedback === undefined ? {} : { feedback }),
-      ...(action === undefined ? {} : { action }),
     };
   });
 }
@@ -330,14 +311,13 @@ function compileActReference(
       }
       return { fact };
     }
-    const references = yield* names(node);
-    const [first, ...rest] = references;
-    if (first === undefined || new Set(references).size !== references.length) {
+    const act = atom(node);
+    if (act === undefined) {
       return yield* new NormDocumentError({
-        detail: "An act reference requires distinct, nonempty act names.",
+        detail: "An act reference names one act or one fact.",
       });
     }
-    return rest.length === 0 ? first : ([first, ...rest] as const);
+    return act;
   });
 }
 
@@ -349,17 +329,12 @@ function compileDelay(form: Declaration) {
     if (fact === undefined && field === undefined && unit === undefined) {
       return undefined;
     }
-    if (
-      fact === undefined ||
-      field === undefined ||
-      (unit !== "seconds" && unit !== "milliseconds")
-    ) {
+    if (fact === undefined || field === undefined || unit !== "seconds") {
       return yield* new NormDocumentError({
-        detail:
-          "A delay supplies :after, :delay and :unit seconds or milliseconds.",
+        detail: "A delay supplies :after, :delay and :unit seconds.",
       });
     }
-    return { fact, field, millisecondsPerUnit: unit === "seconds" ? 1000 : 1 };
+    return { fact, field };
   });
 }
 
@@ -394,7 +369,7 @@ function compileField(form: Declaration) {
     }
     const choices = yield* names(form.attributes.get(":choices"));
     if (
-      (type === "select" || type === "multi-select") &&
+      type === "multi-select" &&
       (choices.length === 0 || new Set(choices).size !== choices.length)
     ) {
       return yield* new NormDocumentError({
@@ -407,23 +382,14 @@ function compileField(form: Declaration) {
       name: form.name,
       optional: yield* booleanAttribute(form, ":optional"),
       schema: {
-        ...fieldShape(type, choices),
+        ...(type === "multi-select"
+          ? { type: "array", items: { type: "string", enum: choices } }
+          : { type }),
         ...bounds,
         ...(description === undefined ? {} : { description }),
       },
     };
   }).pipe(Effect.withSpan("compileField"));
-}
-
-function fieldShape(type: string, choices: readonly string[]) {
-  switch (type) {
-    case "multi-select":
-      return { type: "array", items: { type: "string", enum: choices } };
-    case "select":
-      return { type: "string", enum: choices };
-    default:
-      return { type };
-  }
 }
 
 function readBounds(form: Declaration) {
@@ -690,9 +656,7 @@ function validateForm(
     }
     if (
       !/^[a-z][a-z0-9-]{0,63}$/u.test(form.act) ||
-      [...form.when, ...form.unless, ...form.terminates].some(
-        (fact) => !facts.has(fact),
-      )
+      [...form.when, ...form.terminates].some((fact) => !facts.has(fact))
     ) {
       return yield* new NormDocumentError({
         detail: "Act names are lowercase; fact guards refer to declared facts.",
@@ -727,7 +691,7 @@ function validateRefusal(
     );
   }
   return form.fields.properties.reason?.type !== "string" ||
-    form.fields.required?.some((field) => field !== "reason")
+    form.fields.required.some((field) => field !== "reason")
     ? Effect.fail(
         new NormDocumentError({
           detail:
@@ -766,14 +730,9 @@ function validateDelay(
     anchors.length !== 0 &&
     anchors.every((anchor) => {
       const field = anchor.fields.properties[delay.field];
-      if (
-        field === undefined ||
-        (field.type !== "number" && field.type !== "integer")
-      ) {
-        return false;
-      }
       return (
-        anchor.fields.required?.includes(delay.field) &&
+        field?.type === "integer" &&
+        anchor.fields.required.includes(delay.field) &&
         field.minimum !== undefined &&
         field.minimum >= 0
       );
@@ -874,7 +833,7 @@ function validateSelectedValues(
     }
     for (const act of targets) {
       const field = forms.get(act)?.fields.properties[keys.field];
-      if (field?.type !== "array" || !("enum" in field.items)) {
+      if (field?.type !== "array") {
         return yield* new NormDocumentError({
           detail:
             "Selected values require a choice list of declared string field names.",
@@ -900,10 +859,7 @@ function referenceNames(
   if (typeof reference === "string") {
     return [reference];
   }
-  if ("fact" in reference) {
-    return [...forms.values()]
-      .filter((form) => form.initiates.includes(reference.fact))
-      .map((form) => form.act);
-  }
-  return reference;
+  return [...forms.values()]
+    .filter((form) => form.initiates.includes(reference.fact))
+    .map((form) => form.act);
 }

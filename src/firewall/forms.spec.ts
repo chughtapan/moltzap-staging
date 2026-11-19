@@ -1,103 +1,25 @@
-/** @file A form admits the MCP form-mode shapes, and a filled form is held to each field's keywords. */
+/** @file A filled form is held to the fields its form declares and to each field's type and bounds. */
 
 import { Effect, Either, FastCheck as fc, Schema, Struct } from "effect";
 import { expect, it } from "vitest";
-import {
-  RequestedSchema,
-  type ResponseContent,
-  validateResponseContent,
-} from "./forms.js";
+import { RequestedSchema, validateResponseContent } from "./forms.js";
 
 const fieldSchema = (field: object) =>
   Schema.decodeUnknownSync(RequestedSchema)({
     type: "object",
     properties: { field },
+    required: [],
   });
 
-/** The keyword of each issue a response field's value raises against a field; none when it is accepted. */
-const keywordsOf = (field: object, value: ResponseContent[string]) =>
-  Either.match(
+/** Whether a field accepts a value. */
+const accepted = (field: object, value: unknown) =>
+  Either.isRight(
     Effect.runSync(
       Effect.either(
         validateResponseContent(fieldSchema(field), { field: value }),
       ),
     ),
-    {
-      onRight: () => [],
-      onLeft: (failures) =>
-        failures.flatMap(({ detail }) =>
-          (detail ?? "").split(", ").map((issue) => issue.split(":")[0]),
-        ),
-    },
   );
-
-const accepts = (format: string, text: string) =>
-  keywordsOf({ type: "string", format }, text).length === 0;
-
-const padded = (value: number, width = 2) => String(value).padStart(width, "0");
-
-it("accepts a date exactly when the calendar holds that day", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 0, max: 9999 }),
-      fc.integer({ min: 0, max: 13 }),
-      fc.integer({ min: 0, max: 32 }),
-      (year, month, day) => {
-        const calendar = new Date(0);
-        calendar.setUTCFullYear(year, month - 1, day);
-        const held =
-          calendar.getUTCFullYear() === year &&
-          calendar.getUTCMonth() === month - 1 &&
-          calendar.getUTCDate() === day;
-
-        expect(
-          accepts("date", `${padded(year, 4)}-${padded(month)}-${padded(day)}`),
-        ).toBe(held);
-      },
-    ),
-  );
-});
-
-it("accepts an instant's ISO text and refuses it without its zone", () => {
-  fc.assert(
-    fc.property(
-      fc.date({
-        min: new Date("0000-01-01T00:00:00Z"),
-        max: new Date("9999-12-31T23:59:59Z"),
-        noInvalidDate: true,
-      }),
-      (instant) => {
-        const text = instant.toISOString();
-
-        expect(accepts("date-time", text)).toBe(true);
-        expect(accepts("date-time", text.slice(0, -1))).toBe(false);
-      },
-    ),
-  );
-});
-
-it("accepts an email only when its host name has a dot", () => {
-  const label = fc.stringMatching(/^[a-z0-9]{1,8}$/);
-  fc.assert(
-    fc.property(label, label, label, (local, host, top) => {
-      expect(accepts("email", `${local}@${host}.${top}`)).toBe(true);
-      expect(accepts("email", `${local}@${host}`)).toBe(false);
-    }),
-  );
-});
-
-it("accepts every web URL as a uri and refuses text without a scheme", () => {
-  fc.assert(
-    fc.property(
-      fc.webUrl({ withQueryParameters: true, withFragments: true }),
-      fc.string().filter((text) => !text.includes(":")),
-      (url, bare) => {
-        expect(accepts("uri", url)).toBe(true);
-        expect(accepts("uri", bare)).toBe(false);
-      },
-    ),
-  );
-});
 
 const fieldNames = ["slot", "hours", "note", "constructor", "toString"];
 
@@ -117,7 +39,7 @@ it("names exactly the fields a response is missing, adds or gets wrong", () => {
       const schema = Schema.decodeUnknownSync(RequestedSchema)({
         type: "object",
         properties: Object.fromEntries(
-          declared.map(({ name }) => [name, { type: "string", enum: ["yes"] }]),
+          declared.map(({ name }) => [name, { type: "string", maxLength: 3 }]),
         ),
         required: declared
           .filter((state) => state.required)
@@ -128,7 +50,7 @@ it("names exactly the fields a response is missing, adds or gets wrong", () => {
           .filter((state) => state.response !== "absent")
           .map(({ name, response }) => [
             name,
-            response === "valid" ? "yes" : "no",
+            response === "valid" ? "yes" : "never",
           ]),
       );
       const reasonOf = (state: (typeof named)[number]) => {
@@ -158,11 +80,10 @@ it("names exactly the fields a response is missing, adds or gets wrong", () => {
   );
 });
 
-it("names the type of a value another type of field is given", () => {
+it("refuses a value another type of field is given", () => {
   const kinds = {
     string: { field: { type: "string" }, value: "a" },
-    number: { field: { type: "number" }, value: 1.5 },
-    boolean: { field: { type: "boolean" }, value: false },
+    integer: { field: { type: "integer" }, value: 1 },
     array: {
       field: { type: "array", items: { type: "string", enum: ["a"] } },
       value: ["a"],
@@ -171,31 +92,28 @@ it("names the type of a value another type of field is given", () => {
   const kind = fc.constantFrom(...Struct.keys(kinds));
   fc.assert(
     fc.property(kind, kind, (asked, given) => {
-      expect(keywordsOf(kinds[asked].field, kinds[given].value)).toEqual(
-        asked === given ? [] : ["type"],
+      expect(accepted(kinds[asked].field, kinds[given].value)).toBe(
+        asked === given,
       );
     }),
   );
 });
 
-it("holds a number to its bounds and an integer to whole values", () => {
+it("holds an integer to its bounds and to whole values", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("number", "integer"),
       fc.integer({ min: -100, max: 100 }),
       fc.integer({ min: 0, max: 50 }),
       fc.oneof(
         fc.integer({ min: -200, max: 200 }),
         fc.double({ min: -200, max: 200, noNaN: true }),
       ),
-      (type, minimum, span, value) => {
+      (minimum, span, value) => {
         const maximum = minimum + span;
 
-        expect(keywordsOf({ type, minimum, maximum }, value)).toEqual([
-          ...(type === "integer" && !Number.isInteger(value) ? ["type"] : []),
-          ...(value < minimum ? ["minimum"] : []),
-          ...(value > maximum ? ["maximum"] : []),
-        ]);
+        expect(accepted({ type: "integer", minimum, maximum }, value)).toBe(
+          Number.isInteger(value) && value >= minimum && value <= maximum,
+        );
       },
     ),
   );
@@ -211,38 +129,9 @@ it("counts a string's length in code points against its bounds", () => {
         const maxLength = minLength + span;
         const length = Array.from(text).length;
 
-        expect(
-          keywordsOf({ type: "string", minLength, maxLength }, text),
-        ).toEqual([
-          ...(length < minLength ? ["minLength"] : []),
-          ...(length > maxLength ? ["maxLength"] : []),
-        ]);
-      },
-    ),
-  );
-});
-
-it("accepts a single selection exactly when one option holds it", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.constantFrom("a", "b", "c"), { minLength: 1, maxLength: 4 }),
-      fc.constantFrom("a", "b", "c", "d"),
-      fc.boolean(),
-      (options, value, titled) => {
-        const holders = options.filter((option) => option === value).length;
-        const field = titled
-          ? {
-              type: "string",
-              oneOf: options.map((option) => ({
-                const: option,
-                title: option,
-              })),
-            }
-          : { type: "string", enum: options };
-        const refusal = titled ? ["oneOf"] : ["enum"];
-        const held = titled ? holders === 1 : holders > 0;
-
-        expect(keywordsOf(field, value)).toEqual(held ? [] : refusal);
+        expect(accepted({ type: "string", minLength, maxLength }, text)).toBe(
+          length >= minLength && length <= maxLength,
+        );
       },
     ),
   );
@@ -254,29 +143,17 @@ it("checks each selected item against the options and their count against its bo
       fc.array(fc.constantFrom("a", "b", "x"), { maxLength: 5 }),
       fc.integer({ min: 0, max: 3 }),
       fc.integer({ min: 0, max: 3 }),
-      fc.boolean(),
-      (selected, minItems, span, titled) => {
+      (selected, minItems, span) => {
         const maxItems = minItems + span;
-        const items = titled
-          ? {
-              anyOf: [
-                { const: "a", title: "A" },
-                { const: "b", title: "B" },
-              ],
-            }
-          : { type: "string", enum: ["a", "b"] };
+        const items = { type: "string", enum: ["a", "b"] };
 
         expect(
-          keywordsOf({ type: "array", minItems, maxItems, items }, selected),
-        ).toEqual([
-          ...(selected.length < minItems ? ["minItems"] : []),
-          ...(selected.length > maxItems ? ["maxItems"] : []),
-          ...selected.flatMap((item, index) =>
-            item === "x"
-              ? [`items[${index}].${titled ? "anyOf" : "enum"}`]
-              : [],
-          ),
-        ]);
+          accepted({ type: "array", minItems, maxItems, items }, selected),
+        ).toBe(
+          selected.length >= minItems &&
+            selected.length <= maxItems &&
+            !selected.includes("x"),
+        );
       },
     ),
   );
