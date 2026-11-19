@@ -8,7 +8,7 @@
  */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Context, Effect, Layer, Predicate, Schedule, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import {
   afterCommit,
@@ -95,32 +95,6 @@ export interface CommunicationSettings {
    * daemon is given the same map, so a send opens its recipients' latches.
    */
   readonly consumers: Map<string, Effect.Latch>;
-}
-
-/**
- * Keeps a background loop of one agent running. A failure is logged and the
- * loop starts again after a pause that doubles from one second up to thirty.
- */
-export function restarting(agentKey: string, loop: string) {
-  return <E, R>(work: Effect.Effect<never, E, R>) =>
-    work.pipe(
-      Effect.tapError((error) =>
-        Effect.logError(`The ${loop} failed and will start again`).pipe(
-          Effect.annotateLogs({
-            agentKey,
-            failure: Predicate.hasProperty(error, "_tag")
-              ? String(error._tag)
-              : "unknown",
-          }),
-        ),
-      ),
-      Effect.retry(
-        Schedule.union(
-          Schedule.exponential("1 second"),
-          Schedule.spaced("30 seconds"),
-        ),
-      ),
-    );
 }
 
 /** The agent whose history is read, and the session its cursors belong to. */

@@ -7,8 +7,10 @@ import {
   Effect,
   Layer,
   Option,
+  Predicate,
   PubSub,
   Queue,
+  Schedule,
   Schema,
   Scope,
   Stream,
@@ -27,7 +29,6 @@ import {
   Communication,
   type Conversation,
   type HistoryPage as MessageHistoryPage,
-  restarting,
 } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
@@ -724,6 +725,32 @@ function historyFailure(error: object) {
   return reason === "invalid-cursor" || reason === "unknown-agent"
     ? Effect.fail(new HistoryError({ reason }))
     : Effect.die(error);
+}
+
+/**
+ * Keeps a background loop of one agent running. A failure is logged and the
+ * loop starts again after a pause that doubles from one second up to thirty.
+ */
+function restarting(agentKey: string, loop: string) {
+  return <E, R>(work: Effect.Effect<never, E, R>) =>
+    work.pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`The ${loop} failed and will start again`).pipe(
+          Effect.annotateLogs({
+            agentKey,
+            failure: Predicate.hasProperty(error, "_tag")
+              ? String(error._tag)
+              : "unknown",
+          }),
+        ),
+      ),
+      Effect.retry(
+        Schedule.union(
+          Schedule.exponential("1 second"),
+          Schedule.spaced("30 seconds"),
+        ),
+      ),
+    );
 }
 
 /**
