@@ -42,7 +42,6 @@
     "tests/integration": {
       "entry": [
         "**/*.spec.ts",
-        "firewall/firewall-daemon.ts",
         "**/*vitest*.config.ts",
         "images/nanoclaw-probe.ts"
       ],

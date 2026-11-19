@@ -1,26 +1,12 @@
 /**
- * @file Message policies, norms directories and a deterministic decision
- * provider for daemons that run the daemon's own composition. The provider
- * decides each check by the text it judges: an incoming text carrying `[in]`,
- * or an outgoing text carrying `[out]`, breaks every rule it is asked about,
- * and a text carrying `[unsure]` is left unsettled, which refuses it outgoing
- * and allows it incoming with guidance.
+ * @file Message policies and norms directories for daemons whose text rules
+ * the marked provider of `marked-provider.ts` judges.
  */
 
-import type {
-  DecisionProvider,
-  DecisionRequest,
-} from "@social-harness/social-harness/test";
 import { FileSystem } from "@effect/platform";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { join } from "node:path";
-
-/** The marker an incoming text carries to break the rules it is checked against. */
-const INCOMING_BREACH = "[in]";
-/** The marker an outgoing text carries to break the rules it is checked against. */
-const OUTGOING_BREACH = "[out]";
-/** The marker a text carries for its judgment to be left unsettled. */
-const UNSURE = "[unsure]";
+import { inject } from "vitest";
 
 /** The text rule the agents of a firewall fixture hold unless a test gives its daemon other rules. */
 export const markedRule = {
@@ -45,7 +31,11 @@ export function markedPolicy(
   return {
     format: "org.social-harness/message-policy/v2",
     text,
-    decisionProvider: { kind: "jev", model: "fixture" },
+    decisionProvider: {
+      kind: "jev",
+      model: "fixture",
+      endpoint: inject("markedProviderEndpoint"),
+    },
     textSettings: {
       minimumProbability: 0.8,
       maximumRequestBytes: 1_000_000,
@@ -59,22 +49,9 @@ export function markedPolicy(
   };
 }
 
-const stateSchema = Schema.parseJson(
-  Schema.Struct({
-    direction: Schema.Literal("incoming", "outgoing"),
-    candidate: Schema.Struct({ text: Schema.optional(Schema.String) }),
-  }),
-);
-
-/** Decides every question about a request by the markers in its candidate's text. */
-export const markedProvider: DecisionProvider = {
-  decide: (request) => Effect.succeed(markedResponse(request)),
-};
-
 /**
  * Writes `document` and a placeholder provider key into `directory`, and
- * returns the settings that name them. The provider override replaces the
- * provider the key would open.
+ * returns the settings that name them.
  */
 export const writeMessagePolicy = Effect.fn("writeMessagePolicy")(function* (
   directory: string,
@@ -133,33 +110,3 @@ export const writeNorms = Effect.fn("writeNorms")(function* (
   );
   return { normsDirectory };
 });
-
-function markedResponse(request: DecisionRequest) {
-  const state = Schema.decodeUnknownSync(stateSchema)(request.state);
-  const text = state.candidate.text ?? "";
-  const breached = text.includes(
-    state.direction === "incoming" ? INCOMING_BREACH : OUTGOING_BREACH,
-  );
-  const selected = breached ? "violation" : "compliant";
-  const probability = text.includes(UNSURE) ? 0.6 : 1;
-  return {
-    provider: "fixture",
-    model: "deterministic",
-    usage: {},
-    raw: "",
-    answers: Object.fromEntries(
-      Object.entries(request.questions).map(([id, question]) => [
-        id,
-        {
-          choice: selected,
-          probabilities: Object.fromEntries(
-            Object.keys(question.criteria).map((choice) => [
-              choice,
-              choice === selected ? probability : 1 - probability,
-            ]),
-          ),
-        },
-      ]),
-    ),
-  };
-}

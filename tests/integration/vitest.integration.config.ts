@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     include: ["**/*.spec.ts"],
     exclude: [...configDefaults.exclude, "images/**"],
+    globalSetup: ["firewall/marked-provider.ts"],
     maxWorkers: 2,
     passWithNoTests: false,
   },

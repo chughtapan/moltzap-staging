@@ -14,7 +14,13 @@ import {
   DecisionResponse,
 } from "./check.js";
 
-const jevEndpoint = "https://api.typesafe.ai/v1/systemone";
+/** The endpoint Jev is called at, its model, and the key sent as the bearer. */
+interface JevOptions {
+  readonly endpoint: string;
+  readonly apiKey: Redacted.Redacted;
+  readonly model: string;
+}
+
 const jevVendorName = "typesafe";
 const maximumChoices = 255;
 /** Bounds response bodies retained in audits. */
@@ -40,11 +46,8 @@ const wireResponse = Schema.Struct({
 });
 
 const prepareJevRequest = Effect.fn("MessagePolicy.Jev.prepareRequest")(
-  function* (
-    request: DecisionRequest,
-    options: { readonly apiKey: Redacted.Redacted; readonly model: string },
-  ) {
-    return yield* HttpClientRequest.post(jevEndpoint).pipe(
+  function* (request: DecisionRequest, options: JevOptions) {
+    return yield* HttpClientRequest.post(options.endpoint).pipe(
       HttpClientRequest.bearerToken(options.apiKey),
       HttpClientRequest.bodyJson({
         model: options.model,
@@ -138,10 +141,7 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
 
 const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
   request: DecisionRequest,
-  options: {
-    readonly apiKey: Redacted.Redacted;
-    readonly model: string;
-  },
+  options: JevOptions,
 ) {
   if (
     Redacted.value(options.apiKey).length === 0 ||
@@ -171,14 +171,11 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
 });
 
 /**
- * Uses the fixed TypeSafe origin and a pinned model. The caller owns retries
+ * Uses the configured endpoint and a pinned model. The caller owns retries
  * and timeouts. Calls remain interruptible while consuming response bodies.
  * Credentials stay out of serialized diagnostics.
  */
-export function makeJevDecisionProvider(options: {
-  readonly apiKey: Redacted.Redacted;
-  readonly model: string;
-}): DecisionProvider {
+export function makeJevDecisionProvider(options: JevOptions): DecisionProvider {
   const configuration = Object.freeze({ ...options });
   return {
     provider: jevVendorName,

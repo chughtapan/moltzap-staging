@@ -211,7 +211,7 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | --- | --- |
 | `format` | Required: `org.social-harness/message-policy/v2`. |
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
-| `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model}`. |
+| `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model, endpoint?}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
 | `settings` | Defaults: 150 s per check; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
