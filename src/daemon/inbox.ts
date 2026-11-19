@@ -70,12 +70,7 @@ type InboxTables = Record<
     Record<"unchecked" | "entry", string | null> &
     Record<"sequence", Generated<number>> &
     Record<"status", "unchecked" | "withheld" | "pending" | "delivered">
-> &
-  Record<
-    "inbox_visibility",
-    Record<"agent_key" | "author" | "message_id", string> &
-      Record<"visible", number>
-  >;
+>;
 
 /** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
 export type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
@@ -198,36 +193,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("delivery_token", "=", unchecked.token)
           .where("status", "=", "unchecked"),
       );
-      for (const permission of decision.visibility) {
-        const visible = encodedEntry !== undefined && permission.visibleToAgent;
-        yield* run(
-          queries
-            .insertInto("inbox_visibility")
-            .values({
-              agent_key: agentKey,
-              author: permission.message.authorAgentId,
-              message_id: permission.message.msgId,
-              visible: visible ? 1 : 0,
-            })
-            .onConflict((conflict) =>
-              conflict
-                .columns(["agent_key", "author", "message_id"])
-                .doUpdateSet((eb) => ({
-                  // eslint-disable-next-line agent-code-guard/then-chain -- Kysely CASE branches compile SQL; this is not Promise chaining.
-                  visible: eb
-                    .case()
-                    .when(
-                      "excluded.visible",
-                      ">",
-                      eb.ref("inbox_visibility.visible"),
-                    )
-                    .then(eb.ref("excluded.visible"))
-                    .else(eb.ref("inbox_visibility.visible"))
-                    .end(),
-                })),
-            ),
-        );
-      }
     }),
     listInbox: Effect.fn(function* (
       request: typeof PaginatedRequest.Type = {},
@@ -305,15 +270,16 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         (message) =>
           run(
             queries
-              .selectFrom("inbox_visibility")
-              .select("visible")
+              .selectFrom("inbox_entries")
+              .select("delivery_token")
               .where("agent_key", "=", agentKey)
               .where("author", "=", message.author.agentId)
-              .where("message_id", "=", message.msgId),
+              .where("message_id", "=", message.msgId)
+              .where("entry", "is not", null),
           ).pipe(
             Effect.map((rows) => ({
               message,
-              visibleToAgent: rows[0]?.visible === 1,
+              visibleToAgent: rows.length > 0,
             })),
           ),
         { concurrency: 1 },

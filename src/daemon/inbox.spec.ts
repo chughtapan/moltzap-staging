@@ -31,14 +31,9 @@ it("stores the same message for each agent and leaves another agent's delivery t
         "Both agents must store their own unchecked message",
       );
     }
-    const reference = {
-      authorAgentId: message.author.agentId,
-      msgId: message.msgId,
-    };
     const decision = {
       kind: "allowed",
       item: { kind: "message", message },
-      visibility: [{ message: reference, visibleToAgent: true }],
       save: Effect.void,
     } as const;
     yield* first.recordDecision(firstUnchecked, decision);

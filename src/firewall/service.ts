@@ -11,7 +11,7 @@ import {
   Struct,
 } from "effect";
 import { createHash } from "node:crypto";
-import type { Message, MessageReference } from "../communication/index.js";
+import type { Message } from "../communication/index.js";
 import {
   decodeJson,
   exactStruct,
@@ -118,16 +118,12 @@ type OutgoingDecision = {
 );
 
 /**
- * Run `save` in the same SQL transaction as the inbox write and visibility update.
+ * Run `save` in the same SQL transaction as the inbox write.
  * Saving is repeatable. A withheld message with `reply` gets that text back, as
  * an ordinary message from this agent in the same conversation.
  */
 export type IncomingDecision = {
   readonly save: Effect.Effect<void, FirewallPolicyError>;
-  readonly visibility: ReadonlyArray<{
-    readonly message: MessageReference;
-    readonly visibleToAgent: boolean;
-  }>;
 } & (
   | {
       readonly kind: "allowed";
@@ -270,21 +266,11 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 "incoming",
               );
               const save = saveRecords(store, decision);
-              const visibility = [
-                {
-                  message: {
-                    authorAgentId: message.author.agentId,
-                    msgId: message.msgId,
-                  },
-                  visibleToAgent: decision.kind === "allowed",
-                },
-              ];
               if (decision.kind === "allowed") {
                 return {
                   kind: "allowed",
                   item,
                   save,
-                  visibility,
                   ...(decision.guidance === undefined
                     ? {}
                     : { guidance: decision.guidance }),
@@ -295,7 +281,6 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 kind: "withheld",
                 reason: decision.refusal.reason,
                 save,
-                visibility,
                 ...(reply === undefined ? {} : { reply }),
               } satisfies IncomingDecision;
             }),
