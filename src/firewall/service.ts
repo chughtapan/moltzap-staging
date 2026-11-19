@@ -455,7 +455,6 @@ function checkMessageText(
       const concluded = yield* checkCapturedMessage(
         {
           textRules: active.textRules,
-          limits: configured.policy.settings,
           revision: active.revision,
           ...(configured.provider === undefined
             ? {}
@@ -498,7 +497,7 @@ function checkMessageText(
         }),
         allowed: check.reason === "eligible",
         resultJson: JSON.stringify({
-          check: Struct.omit(check, "trace", "decidedBy"),
+          check: Struct.omit(check, "decidedBy"),
           summaries: (direction === "outgoing"
             ? message.recipients
             : [message.author]
@@ -858,7 +857,6 @@ function buildPolicy(
         maximumConcurrentChecks:
           policy.maximumConcurrentChecks ?? defaultConcurrentChecks,
       },
-      limits: policy.settings,
       questionEdition: textQuestionEdition,
       textRules,
       fixedRuleIds,

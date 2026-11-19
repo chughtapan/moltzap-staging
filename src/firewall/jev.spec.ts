@@ -62,34 +62,16 @@ it.prop(
     }),
 );
 
-it("preserves reported probabilities, model, usage and raw response", () =>
+it("returns the probabilities the provider reports", () =>
   Effect.gen(function* () {
     const fetch: typeof globalThis.fetch = () =>
       Promise.resolve(new Response(JSON.stringify(wire)));
     const response = yield* provider
       .decide(request)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-    expect(response.model).toBe(model);
     expect(response.answers.compliance?.probabilities).toEqual(
       wire.answers.compliance.probabilities,
     );
-    expect(JSON.parse(response.raw)).toEqual(wire);
-    expect(response.usage).toEqual(wire.usage);
-  }));
-
-it("redacts a JSON-escaped credential echo in the response it returns", () =>
-  Effect.gen(function* () {
-    const body = JSON.stringify({ ...wire, model: secret }).replace(
-      secret,
-      `\\u0075${secret.slice(1)}`,
-    );
-    const fetch: typeof globalThis.fetch = () =>
-      Promise.resolve(new Response(body));
-    const response = yield* provider
-      .decide(request)
-      .pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
-    expect(JSON.stringify(response)).not.toContain(secret);
-    expect(JSON.stringify(response)).toContain("[REDACTED]");
   }));
 
 it.each([

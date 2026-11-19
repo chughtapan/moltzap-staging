@@ -28,7 +28,6 @@ import {
   peer,
   policy,
   privacy,
-  privateProviderResponse,
   withFirewall,
 } from "./__tests__/firewall-fixtures.js";
 import { type Direction, FirewallPolicyError, type TextRule } from "./rules.js";
@@ -156,7 +155,6 @@ describe("Firewall.readDecisions", () => {
         Firewall.layer,
       );
       expect(reopened).toEqual(saved);
-      expect(JSON.stringify(reopened)).not.toContain(privateProviderResponse);
     }));
 
   it("keeps the original summary and save time across concurrent and repeated saves", () =>

@@ -104,7 +104,7 @@ describe("policy documents", () => {
       }),
   );
 
-  it("keeps the limits a policy file gives and fills the settings it omits", () =>
+  it("keeps the concurrency limit a policy file gives and fills the settings it omits", () =>
     Effect.gen(function* () {
       const { policy } = yield* loadConfigured({
         messagePolicyFile: file({
@@ -115,7 +115,7 @@ describe("policy documents", () => {
       });
       expect(policy.maximumConcurrentChecks).toBe(2);
       expect(policy.maximumHistoryRecords).toBeUndefined();
-      expect(policy.settings.timeoutMilliseconds).toBeGreaterThan(0);
+      expect(policy.textSettings.timeoutMilliseconds).toBeGreaterThan(0);
     }));
 
   /** Each thing that stops a policy with text rules from installing. */
@@ -169,7 +169,7 @@ describe("policy documents", () => {
     "refuses an unknown property, or a value its field does not take",
     [
       fc.oneof(
-        fc.constantFrom("format", "text", "settings", "facts"),
+        fc.constantFrom("format", "text", "textSettings", "facts"),
         fc.stringMatching(/^[A-Z]{4,8}$/u),
       ),
       fc.uuid(),

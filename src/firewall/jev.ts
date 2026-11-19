@@ -6,7 +6,7 @@ import {
   HttpClientRequest,
   type HttpClientResponse,
 } from "@effect/platform";
-import { Effect, Redacted, Schema, Stream } from "effect";
+import { Effect, type Redacted, Schema, Stream } from "effect";
 import {
   type DecisionProvider,
   DecisionProviderError,
@@ -22,7 +22,7 @@ interface JevOptions {
 
 const jevVendorName = "typesafe";
 const jevUrl = "https://api.typesafe.ai/v1/systemone";
-/** Bounds response bodies retained in audits. */
+/** The most bytes of a response body that are read. */
 const maximumResponseBytes = 1_048_576;
 const wireResponse = Schema.Struct({
   model: Schema.NonEmptyTrimmedString,
@@ -94,13 +94,8 @@ const readJevBody = Effect.fn("MessagePolicy.Jev.readBody")(function* (
 });
 
 const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
-  function* (
-    response: HttpClientResponse.HttpClientResponse,
-    apiKey: Redacted.Redacted,
-  ) {
-    const raw = yield* readJevBody(response).pipe(
-      Effect.flatMap((text) => redactBody(text, apiKey)),
-    );
+  function* (response: HttpClientResponse.HttpClientResponse) {
+    const body = yield* readJevBody(response);
     if (response.status < 200 || response.status >= 300) {
       return yield* new DecisionProviderError({
         reason: "http",
@@ -109,14 +104,12 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
     }
     const wire = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
       onExcessProperty: "error",
-    })(raw).pipe(
+    })(body).pipe(
       Effect.catchTag("ParseError", () =>
         Effect.fail(new DecisionProviderError({ reason: "invalid-response" })),
       ),
     );
     return new DecisionResponse({
-      provider: jevVendorName,
-      model: wire.model,
       answers: Object.fromEntries(
         Object.entries(wire.answers).map(([id, answer]) => [
           id,
@@ -126,8 +119,6 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
           },
         ]),
       ),
-      usage: wire.usage,
-      raw,
     });
   },
 );
@@ -146,7 +137,7 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
         Effect.fail(new DecisionProviderError({ reason: "transport" })),
     }),
   );
-  return yield* parseJevResponse(response, options.apiKey);
+  return yield* parseJevResponse(response);
 });
 
 /**
@@ -167,13 +158,4 @@ export function makeJevDecisionProvider(options: JevOptions): DecisionProvider {
         }),
       ),
   };
-}
-
-/** Decode JSON escapes before scrubbing so encoded credential echoes stay private. */
-function redactBody(body: string, apiKey: Redacted.Redacted) {
-  return Schema.decodeUnknown(Schema.parseJson(Schema.Unknown))(body).pipe(
-    Effect.flatMap(Schema.encode(Schema.parseJson(Schema.Unknown))),
-    Effect.catchTag("ParseError", () => Effect.succeed(body)),
-    Effect.map((text) => text.replaceAll(Redacted.value(apiKey), "[REDACTED]")),
-  );
 }

@@ -141,8 +141,7 @@ elsewhere require separately supplied evidence.
 ### Retained decisions
 
 Each completed check identifies the message, evidence and policy it checked.
-Only completed checks enter decision history. Private provider traces stay in
-memory. Each completed record saves its decision summary with the revision of
+Only completed checks enter decision history. Each completed record saves its decision summary with the revision of
 the policy it applied, checked and deciding rule ids, origins and registered advice.
 Reads return that saved summary without message content or private evidence.
 
@@ -158,7 +157,6 @@ Initial rules seed only a missing editable policy; retained empty policies stay.
 | `text` | Optional: `fixedRules`, `initialRules` (`TextRule` arrays); `fixedBehaviors`, `initialBehaviors` (directory paths). Arrays default `[]`. |
 | `decisionProvider` | Required with `text` and for held norms with English rules: `{kind: "jev", model}`. |
 | `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
-| `settings` | Defaults: 150 s per check; 512,000 input bytes; 2,000,000 result bytes. |
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumHistoryRecords` | Default 256; [window bounds](#available-history). |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
