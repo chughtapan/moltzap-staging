@@ -8,6 +8,7 @@ import type { DecisionProvider, FirewallEvidence } from "./check.js";
 import type { Firewall } from "./service.js";
 import { Message, type MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
+import { openTestDatabase } from "../test.js";
 import {
   certainProvider,
   contractOf,
@@ -249,50 +250,47 @@ it.prop(
             expect([...asked].sort(compareAscii)).toEqual(
               [...expected].sort(compareAscii),
             );
-            expect((yield* firewall.readPolicy()).fixedRules).toMatchObject(
-              duo.textRules.map(({ id }) => ({ id })),
-            );
           }),
         (agentKey) =>
-          firewallLayer(agentKey, policy([brief], [], recording), [duo]),
+          firewallLayer(agentKey, policy([brief], recording), [duo]),
       );
     }),
   { fastCheck: { numRuns: 8 } },
 );
 
 it.prop(
-  "continues an instance under the contract it opened with after the agent removes or replaces that norm, and opens the next under what it then holds",
-  [fc.boolean(), fc.string()],
-  ([replaced, value]) =>
+  "continues an instance under the contract it opened with after a restart that holds another document of that norm, and opens the next under the new one",
+  [fc.string()],
+  ([value]) =>
     Effect.gen(function* () {
-      yield* withFirewall(
-        {},
+      const database = yield* openTestDatabase();
+      const open = yield* withFirewall(
+        { database },
         (firewall, self) =>
           Effect.gen(function* () {
-            const open = yield* direct(
+            const opening = yield* direct(
               self,
               bob,
               actText("open", "exchange", { value }),
             );
-            expect((yield* check(firewall, self, open, after([]))).kind).toBe(
-              "allowed",
-            );
-            yield* firewall.updatePolicy({
-              remove: [{ norm: "exchange" }],
-              add: replaced ? [{ contract: replacement }] : [],
-            });
-            expect((yield* firewall.readPolicy()).norms).toEqual(
-              replaced ? ["exchange"] : [],
-            );
+            const decision = yield* check(firewall, self, opening, after([]));
+            expect(decision.kind).toBe("allowed");
+            return opening;
+          }),
+        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
+      );
+      yield* withFirewall(
+        { database },
+        (firewall, self) =>
+          Effect.gen(function* () {
             const close = yield* direct(
               bob,
               self,
               actText("close", "exchange"),
               open.msgId,
             );
-            expect(
-              (yield* check(firewall, self, close, after([open]))).kind,
-            ).toBe("allowed");
+            const closed = yield* check(firewall, self, close, after([open]));
+            expect(closed.kind).toBe("allowed");
             const history = [open, close];
             const again = yield* check(
               firewall,
@@ -306,10 +304,10 @@ it.prop(
               yield* direct(self, bob, actText("begin", "exchange")),
               after(history),
             );
-            expect(again.kind).toBe(replaced ? "refused" : "allowed");
+            expect(again.kind).toBe("refused");
             expect(begun.kind).toBe("allowed");
           }),
-        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
+        (agentKey) => firewallLayer(agentKey, policy(), [replacement]),
       );
     }),
   { fastCheck: { numRuns: 6 } },
@@ -369,59 +367,6 @@ it.prop(
               Effect.succeed({ ...after([open]), references: [withheld] }),
             );
             expect(sent.kind).toBe(repliesIntoInstance ? "allowed" : "refused");
-          }),
-        (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
-      );
-    }),
-  { fastCheck: { numRuns: 12 } },
-);
-
-/** The place in `add` of the first contract whose norm the agent keeps or the edit already added, or -1. */
-function firstDuplicate(
-  kept: readonly string[],
-  add: ReadonlyArray<{ readonly name: string }>,
-) {
-  const names = add.map((contract) => contract.name);
-  return names.findIndex(
-    (name, index) => kept.includes(name) || names.indexOf(name) !== index,
-  );
-}
-
-it.prop(
-  "holds one contract for each norm name: an edit may add a norm it does not hold and remove one it does, and names the place of any other",
-  [fc.subarray(["exchange", "duo"]), fc.subarray([exchange, duo, replacement])],
-  ([remove, add]) =>
-    Effect.gen(function* () {
-      yield* withFirewall(
-        {},
-        (firewall) =>
-          Effect.gen(function* () {
-            const unknown = remove.indexOf("duo");
-            const kept = remove.includes("exchange") ? [] : ["exchange"];
-            const duplicate = firstDuplicate(kept, add);
-            const edited = yield* Effect.either(
-              firewall.updatePolicy({
-                remove: remove.map((norm) => ({ norm })),
-                add: add.map((contract) => ({ contract })),
-              }),
-            );
-            const held = (yield* firewall.readPolicy()).norms;
-            if (unknown >= 0) {
-              expect(edited).toMatchObject({
-                left: { problem: "unknown-id", path: ["remove", unknown] },
-              });
-              expect(held).toEqual(["exchange"]);
-            } else if (duplicate >= 0) {
-              expect(edited).toMatchObject({
-                left: { problem: "duplicate-id", path: ["add", duplicate] },
-              });
-              expect(held).toEqual(["exchange"]);
-            } else {
-              expect(held).toEqual([
-                ...kept,
-                ...add.map((contract) => contract.name),
-              ]);
-            }
           }),
         (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
       );

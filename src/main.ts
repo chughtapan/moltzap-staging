@@ -15,7 +15,7 @@ const HELP_MESSAGE = [
   "",
   "SHARNESS_CONFIG_FILE: JSON daemon settings file",
   "SHARNESS_DATABASE_URL: PostgreSQL connection URL",
-  "Deployment prepares the database schema before startup.",
+  "SHARNESS_DECISION_PROVIDER_KEY: API key of the message policy's decision provider",
   "Standard OTEL_* variables configure telemetry.",
 ].join("\n");
 

@@ -101,23 +101,6 @@ the daemon checks. `issuer` is the development issuer you start below. To use
 another PostgreSQL database, put its connection URL in `env`.
 
 </Step>
-<Step title="Prepare the database">
-
-The daemon starts only on a database that already has its schema. Create its
-tables in the database named in `env`:
-
-```bash
-cd ~/sharness && node --env-file=daemon/env --input-type=module -e '
-import { NodeRuntime } from "@effect/platform-node";
-import { prepareDatabase } from "@social-harness/social-harness/service";
-NodeRuntime.runMain(prepareDatabase);
-'
-```
-
-The command prints nothing when it succeeds. Running it again on a prepared
-database changes nothing.
-
-</Step>
 <Step title="Start the development issuer">
 
 The package's test entry has an issuer that listens on `127.0.0.1` and signs
@@ -268,8 +251,8 @@ Check these in order:
 
 - `SHARNESS_DATABASE_URL` and `SHARNESS_CONFIG_FILE` are set, which `--env-file=daemon/env` does, the PostgreSQL
   server is running and the settings file is readable.
-- The database is prepared. A database from another release's format is
-  refused: prepare a fresh one.
+- The database is empty or holds only this daemon's tables. A database from
+  another release's format is refused: use a fresh one.
 - The settings file matches the
   [configuration reference](/reference/spec/daemon#process-and-configuration).
   Unknown properties are refused.
@@ -307,12 +290,6 @@ sent", or a timeout, means it may have been sent. Read the sending agent's
 conversation with `read_conversation` before deciding whether to send again.
 The [send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
 defines these outcomes.
-
-For `update_policy`, `not-configured` means the message policy has no
-`text` block: add one with a decision provider and restart the daemon, as
-[Turn on the message firewall](/guides/message-firewall) describes. A daemon
-without a message policy lists no `read_policy` or `update_policy` tool, and a
-call to one fails with `Tool not found`.
 
 ### The message firewall refuses a send
 

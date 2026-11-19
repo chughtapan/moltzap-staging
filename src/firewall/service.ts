@@ -1,4 +1,4 @@
-/** @file Owns one agent's message policy: its checks, the content they permit, its edits and its saved decisions. */
+/** @file Owns one agent's message policy: its checks, the content they permit and its saved decisions. */
 
 import {
   Clock,
@@ -12,11 +12,7 @@ import {
 } from "effect";
 import { createHash } from "node:crypto";
 import type { Message } from "../communication/index.js";
-import {
-  decodeJson,
-  exactStruct,
-  MAXIMUM_RUNTIME_ITEM_BYTES,
-} from "../encoding.js";
+import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { type AgentCard, Identity } from "../identity.js";
 import {
   type AssessmentText,
@@ -25,7 +21,6 @@ import {
   type DecisionProvider,
   type DecisionProviderError,
   decodeFrozen,
-  deepFreeze,
   type FirewallCheck,
   type FirewallEvidence,
   FirewallRefusal,
@@ -51,45 +46,28 @@ import {
   type Decision,
   mintCheckId,
 } from "./decision.js";
-import {
-  editedContracts,
-  editedRules,
-  type PolicyEdit,
-  resolvedChange,
-} from "./editable-policy.js";
 import { makeJevDecisionProvider } from "./jev.js";
 import {
   type Direction,
-  editableRulesSchema,
   type firewallDecisionsSchema,
   type firewallDecisionSummarySchema,
   FirewallPolicyError,
   type FirewallRefusalReason,
   type LoadedMessagePolicy,
-  type policyReadSchema,
-  type policyRevisionSchema,
   TextRule,
 } from "./rules.js";
 import {
   type CheckRecord,
-  type FirewallActivation,
   type FirewallStore,
   makeFirewallStore,
-  persistenceFailure,
 } from "./store.js";
 
 /**
- * A message policy as configured, which edits leave unchanged, and the
- * decision provider that judges its text rules. Every reason but
- * `eligible`, including a provider failure, refuses a send and withholds an
- * incoming message.
+ * The message policy one firewall applies for its whole scope. Every reason
+ * but `eligible`, including a provider failure, refuses a send and withholds
+ * an incoming message.
  */
-interface ConfiguredPolicy {
-  readonly policy: LoadedMessagePolicy["policy"];
-  readonly provider?: DecisionProvider;
-}
-
-type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof initialPolicy>>;
+type InstalledPolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 
 /**
  * Run `save` before returning refusal or submitting this exact message.
@@ -124,14 +102,13 @@ export type IncomingDecision = {
 /**
  * Reads the evidence of one check. Only a check under a message policy runs
  * it. `protocolHistory` asks for every message before the one under check as
- * well, which the check of an agent that has ever held a contract needs,
- * since an instance outlives the removal of its contract.
+ * well, which the check of an agent that holds a contract needs.
  */
 type ReadEvidence<E, R> = (
   protocolHistory: boolean,
 ) => Effect.Effect<FirewallEvidence, E, R>;
 
-/** Message checks, policy edits and saved decision summaries. */
+/** Message checks and saved decision summaries. */
 interface FirewallService {
   /** Checks without saving. Refusals expose feedback. */
   readonly checkOutgoing: <E, R>(
@@ -147,32 +124,24 @@ interface FirewallService {
     message: Message,
     evidence: ReadEvidence<E, R>,
   ) => Effect.Effect<IncomingDecision, E, R>;
-  readonly readPolicy: () => Effect.Effect<
-    typeof policyReadSchema.Type,
-    FirewallPolicyError
-  >;
-  /** The contracts the agent holds in its active revision. */
+  /** The contracts the agent holds. */
   readonly readContracts: () => Effect.Effect<readonly CompiledContract[]>;
-  /** Validates each edit before saving and activating it. */
-  readonly updatePolicy: (
-    request: PolicyEdit,
-  ) => Effect.Effect<typeof policyRevisionSchema.Type, FirewallPolicyError>;
   readonly readDecisions: (request: {
     readonly since?: number;
   }) => Effect.Effect<typeof firewallDecisionsSchema.Type, FirewallPolicyError>;
 }
 
-/** One agent's firewall: it checks messages against the message policy, edits that policy and reads its saved decisions. */
+/** One agent's firewall: it checks messages against the message policy and reads its saved decisions. */
 export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   Firewall,
   FirewallService
 >() {
   /**
    * Policy resources are fixed for this scope. Identity supplies this agent's
-   * card. An agent with no saved policy starts holding `contracts`; structure
-   * and protocol checks of a direct message's act apply before the text rules
-   * of `source`, and a contract's text rules join the fixed rules. `provider`
-   * judges the text rules in place of the provider `source` names.
+   * card. The agent holds `contracts`; structure and protocol checks of a
+   * direct message's act apply before the text rules of `source`, and a
+   * contract's text rules join them. `provider` judges the text rules in
+   * place of the provider `source` names.
    */
   static readonly layer = (
     agentKey: string,
@@ -188,34 +157,14 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
         const policy =
           source === undefined
             ? undefined
-            : yield* initialPolicy(store, source, contracts, provider);
+            : yield* buildPolicy(source, contracts, provider);
         const installed: Installation = {
           store,
           ...(policy === undefined ? {} : { policy }),
           localAgent: identity.me,
         };
         return Firewall.of({
-          readPolicy: () =>
-            policy === undefined
-              ? Effect.fail(
-                  new FirewallPolicyError({ reason: "not-configured" }),
-                )
-              : Effect.sync(() => ({
-                  rules: policy.active.editableRules,
-                  fixedRules: policy.active.fixedRules,
-                  norms: policy.active.contracts.map(
-                    (contract) => contract.name,
-                  ),
-                  activeRevision: policy.active.revision,
-                })),
-          readContracts: () =>
-            Effect.sync(() => policy?.active.contracts ?? []),
-          updatePolicy: (request) =>
-            policy === undefined
-              ? Effect.fail(
-                  new FirewallPolicyError({ reason: "not-configured" }),
-                )
-              : updatePolicy(policy, request),
+          readContracts: () => Effect.sync(() => policy?.contracts ?? []),
           readDecisions: (request) => store.readDecisions(request),
           checkOutgoing: (message, evidence) =>
             Effect.gen(function* () {
@@ -285,7 +234,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
  */
 interface TextCheckPlan {
   readonly candidate: Candidate;
-  readonly active: ActivePolicy;
+  readonly textRules: readonly TextRule[];
   readonly contract?: Extract<ContractCheck, { readonly kind: "ready" }>;
   readonly protocol?: CheckEvidence["protocol"];
 }
@@ -297,24 +246,13 @@ interface Installation {
   readonly localAgent: AgentCard;
 }
 
-const storedPolicyFormat = "org.social-harness/editable-policy/v1";
-
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
 export const defaultConcurrentChecks = 4;
-
-const storedPolicySchema = exactStruct({
-  format: Schema.Literal(storedPolicyFormat),
-  rules: editableRulesSchema,
-  contracts: Schema.Array(compiledContractSchema),
-  contractsUsed: Schema.Boolean,
-});
-
-type ActivePolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 /**
- * Decides a message. A direct message of an agent that has held a contract
+ * Decides a message. A direct message of an agent that holds a contract
  * is first read as an act and checked for structure and protocol; a failure
  * refuses it. The text rules then judge the candidate: the owner's rules and
  * the rules its contract gives its act. An agent without a message policy
@@ -331,27 +269,27 @@ function decide<E, R>(
     if (policy === undefined) {
       return { kind: "allowed" } satisfies Decision;
     }
+    const contractsUsed = policy.contracts.length !== 0;
     const candidate: Candidate = {
       message,
-      evidence: yield* readEvidence(policy.active.contractsUsed),
+      evidence: yield* readEvidence(contractsUsed),
     };
-    const active = policy.active;
     const contract =
-      active.contractsUsed && isDirectText(candidate.message)
+      contractsUsed && isDirectText(candidate.message)
         ? yield* prepareContract(
-            active.contracts,
+            policy.contracts,
             installed.store,
             candidate.message,
             candidate.evidence,
           )
         : undefined;
     if (contract?.kind === "refused") {
-      return contractRefusal(active.revision, candidate, direction, contract);
+      return contractRefusal(policy.revision, candidate, direction, contract);
     }
     return yield* checkMessageText(
       policy,
       installed.localAgent,
-      textCheckPlan(active, candidate, contract),
+      textCheckPlan(policy, candidate, contract),
       direction,
     );
   });
@@ -360,16 +298,16 @@ function decide<E, R>(
 /**
  * The text rules that judge a candidate: the owner's and those its contract
  * gives its act. The contract's come from the contract its instance began
- * under, which the agent may have since replaced or removed.
+ * under.
  */
 function textCheckPlan(
-  active: ActivePolicy,
+  policy: InstalledPolicy,
   candidate: Candidate,
   contract?: ContractCheck,
 ): TextCheckPlan {
   const ready = contract?.kind === "ready" ? contract : undefined;
-  const ownerRules = active.textRules.filter(
-    (rule) => !active.contractRuleIds.has(rule.id),
+  const ownerRules = policy.textRules.filter(
+    (rule) => !policy.contractRuleIds.has(rule.id),
   );
   const act = ready?.record.act.name;
   const contractRules = (ready?.contract.textRules ?? [])
@@ -378,14 +316,7 @@ function textCheckPlan(
   const form = ready?.contract.forms.find((declared) => declared.act === act);
   return {
     candidate,
-    active: {
-      ...active,
-      textRules: [...ownerRules, ...contractRules],
-      fixedRuleIds: [
-        ...active.fixedRuleIds,
-        ...contractRules.map((rule) => rule.id),
-      ],
-    },
+    textRules: [...ownerRules, ...contractRules],
     ...(ready === undefined ? {} : { contract: ready }),
     ...(ready === undefined || form === undefined
       ? {}
@@ -421,12 +352,11 @@ function saveRecords(store: FirewallStore, decision: Decision) {
 function checkMessageText(
   policy: InstalledPolicy,
   self: AgentCard,
-  { candidate, active, contract, protocol }: TextCheckPlan,
+  { candidate, textRules, contract, protocol }: TextCheckPlan,
   direction: Direction,
 ) {
   return Effect.gen(function* () {
     const { message } = candidate;
-    const { configured } = policy;
     const now = yield* Clock.currentTimeMillis;
     const cards = new Map<string, AgentCard>();
     for (const card of [
@@ -456,7 +386,7 @@ function checkMessageText(
       history,
       earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
       now,
-      facts: configured.policy.facts,
+      facts: policy.configured.facts,
       gaps: candidate.evidence.gaps,
       ...(protocol === undefined ? {} : { protocol }),
     };
@@ -465,13 +395,13 @@ function checkMessageText(
       const checkId = mintCheckId();
       const concluded = yield* checkCapturedMessage(
         {
-          textRules: active.textRules,
-          revision: active.revision,
-          ...(configured.provider === undefined
+          textRules,
+          revision: policy.revision,
+          ...(policy.provider === undefined
             ? {}
             : {
-                providerSettings: configured.policy.textSettings,
-                provider: configured.provider,
+                providerSettings: policy.configured.textSettings,
+                provider: policy.provider,
               }),
         },
         { event: { direction, message: text }, evidence },
@@ -497,8 +427,8 @@ function checkMessageText(
         direction,
         messageJson: JSON.stringify(message),
         inputJson: JSON.stringify({
-          revision: active.revision,
-          revisionContents: active.revisionContents,
+          revision: policy.revision,
+          revisionContents: policy.revisionContents,
           evidence,
           agents,
           message: text,
@@ -514,7 +444,7 @@ function checkMessageText(
             : [message.author]
           ).map((peer) =>
             decisionSummary(
-              active,
+              policy.revision,
               check,
               direction,
               cards.get(peer.agentId) ?? peer,
@@ -536,7 +466,8 @@ function checkMessageText(
       }
       const reply =
         direction === "incoming"
-          ? (contractRefusalReply(contract, check) ?? textReply(active, check))
+          ? (contractRefusalReply(contract, check) ??
+            textReply(textRules, check))
           : "";
       const refused: Decision = {
         kind: "refused",
@@ -571,87 +502,6 @@ function referenceId(reference: string): string {
   return `msg_${createHash("sha256").update(reference).digest("hex")}`;
 }
 
-/**
- * Installs the message policy `source` gives. Its revision covers the held
- * contracts, so a decision names the rules that applied. Without `provider`,
- * Jev judges the text rules of a policy that names it.
- */
-function initialPolicy(
-  store: FirewallStore,
-  source: LoadedMessagePolicy,
-  initialContracts: readonly CompiledContract[],
-  provider?: DecisionProvider,
-) {
-  return Effect.gen(function* () {
-    const configured: ConfiguredPolicy = {
-      policy: source.policy,
-      provider:
-        provider ??
-        (source.provider === undefined
-          ? undefined
-          : retryingTransientFailures(
-              makeJevDecisionProvider(source.provider),
-            )),
-    };
-    const { saved, editableRules, contracts, contractsUsed } =
-      yield* loadEditablePolicy(store, configured, initialContracts);
-    const active = yield* buildPolicy(
-      configured,
-      editableRules,
-      contracts,
-      contractsUsed,
-    );
-    if (saved === undefined) {
-      yield* saveEditablePolicy(store, active);
-    }
-    return {
-      store,
-      configured,
-      active,
-      edits: yield* Effect.makeSemaphore(1),
-      permits: yield* Effect.makeSemaphore(
-        configured.policy.maximumConcurrentChecks ?? defaultConcurrentChecks,
-      ),
-    };
-  });
-}
-
-/** The saved editable rules and contracts, or the initial ones for an agent with none saved. */
-function loadEditablePolicy(
-  store: FirewallStore,
-  configured: ConfiguredPolicy,
-  initialContracts: readonly CompiledContract[],
-) {
-  return Effect.gen(function* () {
-    const savedJson = yield* store.readEditablePolicy();
-    const saved =
-      savedJson === undefined
-        ? undefined
-        : yield* decodeJson(storedPolicySchema, savedJson).pipe(
-            Effect.mapError(persistenceFailure),
-          );
-    const editableRules =
-      saved?.rules ?? configured.policy.text?.initialRules ?? [];
-    const contracts =
-      saved?.contracts ??
-      (yield* decodeFrozen(
-        Schema.Array(compiledContractSchema),
-        initialContracts,
-      ).pipe(
-        Effect.catchTag("ParseError", () =>
-          Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-        ),
-      ));
-    deepFreeze(editableRules);
-    return {
-      saved,
-      editableRules,
-      contracts,
-      contractsUsed: saved?.contractsUsed === true || contracts.length !== 0,
-    };
-  });
-}
-
 /** Only transient transport, rate-limit and server failures share the stage's bounded retry window. */
 function retryingTransientFailures(
   provider: DecisionProvider,
@@ -682,12 +532,15 @@ function isTransient(error: DecisionProviderError): boolean {
  * registered feedback, one per line. Holds reply nothing: the sender broke no
  * settled rule.
  */
-function textReply(active: ActivePolicy, check: FirewallCheck): string {
+function textReply(
+  textRules: readonly TextRule[],
+  check: FirewallCheck,
+): string {
   if (check.reason !== "rule-violation") {
     return "";
   }
   const violated = new Set(check.decidedBy.map((rule) => rule.ruleId));
-  return active.textRules
+  return textRules
     .filter((rule) => violated.has(rule.id) && rule.action === "reply")
     .flatMap((rule) => (rule.feedback === undefined ? [] : [rule.feedback]))
     .join("\n");
@@ -712,7 +565,7 @@ function contractRefusalReply(
 
 /** The summary a host reads of one check for one peer, naming the same captured rules as the decision. */
 function decisionSummary(
-  active: ActivePolicy,
+  activeRevision: string,
   check: FirewallCheck,
   direction: Direction,
   peer: AgentCard,
@@ -723,7 +576,7 @@ function decisionSummary(
     reason: check.reason,
     decidedBy: check.decidedBy.map((rule) => ({
       ruleId: rule.ruleId,
-      from: active.fixedRuleIds.includes(rule.ruleId) ? "fixed" : "editable",
+      from: "fixed",
       ...(rule.advice === undefined ? {} : { advice: rule.advice }),
     })),
     checkedRuleIds: [
@@ -733,7 +586,7 @@ function decisionSummary(
         ),
       ),
     ],
-    activeRevision: active.revision,
+    activeRevision,
   };
 }
 
@@ -766,66 +619,28 @@ function unavailable(): FirewallCheck {
   };
 }
 
-function updatePolicy(policy: InstalledPolicy, request: PolicyEdit) {
-  return policy.edits.withPermits(1)(
-    Effect.gen(function* () {
-      const change = yield* resolvedChange(request);
-      const editableRules = yield* editedRules(
-        policy.active.editableRules,
-        policy.active.fixedRuleIds,
-        change,
-      );
-      const contracts = yield* editedContracts(policy.active.contracts, change);
-      const replacement = yield* buildPolicy(
-        policy.configured,
-        editableRules,
-        contracts,
-        policy.active.contractsUsed,
-      );
-      const removedContracts = new Set(
-        change.removeContracts.map(({ name }) => name),
-      );
-      return yield* Effect.uninterruptible(
-        Effect.gen(function* () {
-          yield* saveEditablePolicy(policy.store, replacement, {
-            time: yield* Clock.currentTimeMillis,
-            activeRevision: replacement.revision,
-            addedRuleIds: [
-              ...change.addRules.map(({ rule }) => rule.id),
-              ...change.addContracts.flatMap(({ contract }) =>
-                contract.textRules.map((rule) => rule.id),
-              ),
-            ],
-            removedRuleIds: [
-              ...change.removeRules.map(({ ruleId }) => ruleId),
-              ...policy.active.contracts
-                .filter((contract) => removedContracts.has(contract.name))
-                .flatMap((contract) =>
-                  contract.textRules.map((rule) => rule.id),
-                ),
-            ],
-          });
-          yield* Effect.sync(() => {
-            policy.active = replacement;
-          });
-          return { activeRevision: replacement.revision };
-        }),
-      );
-    }),
-  );
-}
-
 /**
- * One activation of the message policy: the configured fixed rules, the held
- * contracts' text rules and the editable rules. `contractsUsed` stays true once the agent has held a contract.
+ * Installs the message policy `source` gives with the held `contracts`: the
+ * configured rules and the contracts' text rules. Its revision covers the
+ * contracts, so a decision names the rules that applied. Without `provider`,
+ * Jev judges the text rules of a policy that names it.
  */
 function buildPolicy(
-  configured: ConfiguredPolicy,
-  editableRules: readonly TextRule[],
-  contracts: readonly CompiledContract[],
-  contractsUsed: boolean,
+  source: LoadedMessagePolicy,
+  heldContracts: readonly CompiledContract[],
+  injected?: DecisionProvider,
 ) {
   return Effect.gen(function* () {
+    const configured = source.policy;
+    const provider =
+      injected ??
+      (source.provider === undefined
+        ? undefined
+        : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
+    const contracts = yield* decodeFrozen(
+      Schema.Array(compiledContractSchema),
+      heldContracts,
+    );
     if (
       new Set(contracts.map((contract) => contract.name)).size !==
       contracts.length
@@ -837,41 +652,27 @@ function buildPolicy(
       contracts.flatMap((contract) =>
         contract.textRules.map((rule) => Struct.omit(rule, "act")),
       ),
-    ).pipe(
-      Effect.catchTag("ParseError", () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-      ),
     );
-    const { policy, provider } = configured;
-    const fixed = [...(policy.text?.fixedRules ?? []), ...contractRules];
-    const fixedRuleIds = fixed.map((rule) => rule.id);
-    const collision = editableRules.find((rule) =>
-      fixedRuleIds.includes(rule.id),
-    );
-    if (collision !== undefined) {
-      return yield* new FirewallPolicyError({
-        reason: "fixed-rule",
-        ruleId: collision.id,
-      });
-    }
-    const textRules = [...fixed, ...editableRules];
+    const textRules = [
+      ...(configured.text?.fixedRules ?? []),
+      ...contractRules,
+    ];
     if (textRules.length > 0 && provider === undefined) {
       return yield* new FirewallPolicyError({ reason: "not-configured" });
     }
     const revisionContents = {
       configuration: {
-        facts: policy.facts,
+        facts: configured.facts,
         maximumConcurrentChecks:
-          policy.maximumConcurrentChecks ?? defaultConcurrentChecks,
+          configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
       },
       questionEdition: textQuestionEdition,
       textRules,
-      fixedRuleIds,
       contracts: contracts.map((contract) => contract.digest),
       ...(provider === undefined
         ? {}
         : {
-            providerSettings: policy.textSettings,
+            providerSettings: configured.textSettings,
             provider: provider.provider ?? null,
             model: provider.model ?? null,
           }),
@@ -882,23 +683,27 @@ function buildPolicy(
       revision,
       ...(provider === undefined
         ? {}
-        : { providerSettings: policy.textSettings }),
+        : { providerSettings: configured.textSettings }),
     });
     return {
+      configured,
+      provider,
       revisionContents,
-      editableRules,
       contracts,
-      contractsUsed: contractsUsed || contracts.length !== 0,
       contractRuleIds: new Set(contractRules.map((rule) => rule.id)),
       revision,
       textRules,
-      fixedRules: fixed,
-      fixedRuleIds,
+      permits: yield* Effect.makeSemaphore(
+        configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
+      ),
     };
   }).pipe(
-    Effect.catchTag("InvalidCheckError", () =>
-      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-    ),
+    Effect.catchTags({
+      InvalidCheckError: () =>
+        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+      ParseError: () =>
+        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
+    }),
     Effect.catchAllDefect(() =>
       Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
     ),
@@ -911,25 +716,6 @@ function buildPolicy(
  */
 function digest(hashed: unknown) {
   return createHash("sha256").update(JSON.stringify(hashed)).digest("hex");
-}
-
-function saveEditablePolicy(
-  store: FirewallStore,
-  active: ActivePolicy,
-  activation?: FirewallActivation,
-) {
-  return Effect.sync(() =>
-    JSON.stringify({
-      format: storedPolicyFormat,
-      rules: active.editableRules,
-      contracts: active.contracts,
-      contractsUsed: active.contractsUsed,
-    }),
-  ).pipe(
-    Effect.flatMap((editablePolicyJson) =>
-      store.writeEditablePolicy(editablePolicyJson, activation),
-    ),
-  );
 }
 
 const activityKind = "firewall-check";

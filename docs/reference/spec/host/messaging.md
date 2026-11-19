@@ -79,7 +79,7 @@ contents, ordering and replay.
 ## Reading history
 
 History lists conversations and returns the messages retained for the agent.
-The content and any guidance stay the same across rule edits and restart.
+The content and any guidance stay the same across restart.
 
 A history read fixes an opaque end position at its start. Later appends remain
 outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as

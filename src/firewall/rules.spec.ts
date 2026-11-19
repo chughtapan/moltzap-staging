@@ -2,6 +2,7 @@
 
 import { live as it } from "@effect/vitest";
 import {
+  ConfigProvider,
   Effect,
   FastCheck as fc,
   Option,
@@ -20,14 +21,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
 import {
   decodeMessagePolicy,
   loadMessagePolicy,
   MAXIMUM_DOCUMENT_BYTES,
-  type PolicyFilePaths,
 } from "./rules.js";
 
 const policyFormat = "org.social-harness/message-policy/v2";
@@ -46,8 +46,15 @@ function directory(): string {
 }
 
 /** An explicit configured file loads without constructing a provider or daemon. */
-function loadConfigured(configuration: PolicyFilePaths) {
-  return loadMessagePolicy(configuration).pipe(
+function loadConfigured(messagePolicyFile: string, key?: string) {
+  return loadMessagePolicy(messagePolicyFile).pipe(
+    Effect.withConfigProvider(
+      ConfigProvider.fromMap(
+        new Map(
+          key === undefined ? [] : [["SHARNESS_DECISION_PROVIDER_KEY", key]],
+        ),
+      ),
+    ),
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.dieMessage("expected configured policy"),
@@ -71,31 +78,32 @@ describe("policy documents", () => {
 
   it("installs no firewall without a policy file", () =>
     Effect.gen(function* () {
-      const installed = yield* loadMessagePolicy({});
+      const installed = yield* loadMessagePolicy();
       expect(Option.isNone(installed)).toBe(true);
     }));
 
   it.prop(
-    "installs the fixed and initial rules a policy file gives, in its order and wording, with the provider it names",
+    "installs the rules a policy file gives, in its order and wording, with the provider it names",
     [
       fc.uniqueArray(fc.stringMatching(/^[a-z0-9.-]{1,12}$/u), {
         maxLength: 4,
       }),
-      fc.nat({ max: 4 }),
       fc.string({ unit: "grapheme", minLength: 1 }),
     ],
-    ([ids, fixedCount, ruleText]) =>
+    ([ids, ruleText]) =>
       Effect.gen(function* () {
-        const rule = (id: string) => ({ id, applies: "both", text: ruleText });
         const text = {
-          fixedRules: ids.slice(0, fixedCount).map(rule),
-          initialRules: ids.slice(fixedCount).map(rule),
+          fixedRules: ids.map((id) => ({
+            id,
+            applies: "both",
+            text: ruleText,
+          })),
         };
 
-        const installed = yield* loadConfigured({
-          messagePolicyFile: file({ ...jevDocument, text }),
-          decisionProviderKeyFile: Redacted.make(file("key-value")),
-        });
+        const installed = yield* loadConfigured(
+          file({ ...jevDocument, text }),
+          "key-value",
+        );
 
         expect(installed.policy.text).toEqual(text);
         expect(installed.provider?.model).toBe(
@@ -106,13 +114,10 @@ describe("policy documents", () => {
 
   it("keeps the concurrency limit a policy file gives and fills the settings it omits", () =>
     Effect.gen(function* () {
-      const { policy } = yield* loadConfigured({
-        messagePolicyFile: file({
-          ...jevDocument,
-          maximumConcurrentChecks: 2,
-        }),
-        decisionProviderKeyFile: Redacted.make(file("key-value")),
-      });
+      const { policy } = yield* loadConfigured(
+        file({ ...jevDocument, maximumConcurrentChecks: 2 }),
+        "key-value",
+      );
       expect(policy.maximumConcurrentChecks).toBe(2);
       expect(policy.textSettings.timeoutMilliseconds).toBeGreaterThan(0);
     }));
@@ -123,7 +128,7 @@ describe("policy documents", () => {
     "no decision provider",
     "a repeated rule id",
     "an absent behavior directory",
-    "no provider key file",
+    "no provider key",
   ] as const;
 
   it.prop(
@@ -134,8 +139,8 @@ describe("policy documents", () => {
         const meets = (obstacle: (typeof obstacles)[number]) =>
           met.includes(obstacle);
 
-        yield* loadConfigured({
-          messagePolicyFile: meets("an absent policy file")
+        yield* loadConfigured(
+          meets("an absent policy file")
             ? join(directory(), "absent.json")
             : file({
                 format: policyFormat,
@@ -143,17 +148,16 @@ describe("policy documents", () => {
                   ? undefined
                   : jevDocument.decisionProvider,
                 text: {
-                  fixedRules: [ownerRule],
-                  initialRules: meets("a repeated rule id") ? [ownerRule] : [],
+                  fixedRules: meets("a repeated rule id")
+                    ? [ownerRule, ownerRule]
+                    : [ownerRule],
                   fixedBehaviors: meets("an absent behavior directory")
                     ? ["absent"]
                     : [],
                 },
               }),
-          decisionProviderKeyFile: meets("no provider key file")
-            ? undefined
-            : Redacted.make(file("key-value")),
-        }).pipe(Effect.flip);
+          meets("no provider key") ? undefined : "key-value",
+        ).pipe(Effect.flip);
       }),
     {
       fastCheck: {
@@ -175,10 +179,10 @@ describe("policy documents", () => {
     ],
     ([field, value]) =>
       Effect.gen(function* () {
-        yield* loadConfigured({
-          messagePolicyFile: file({ ...jevDocument, [field]: value }),
-          decisionProviderKeyFile: Redacted.make(file("key-value")),
-        }).pipe(Effect.flip);
+        yield* loadConfigured(
+          file({ ...jevDocument, [field]: value }),
+          "key-value",
+        ).pipe(Effect.flip);
       }),
   );
 
@@ -187,14 +191,14 @@ describe("policy documents", () => {
     [fc.integer({ min: -1024, max: 1024 })],
     ([excess]) =>
       Effect.gen(function* () {
-        const outcome = yield* loadConfigured({
-          messagePolicyFile: file(
+        const outcome = yield* loadConfigured(
+          file(
             JSON.stringify({ format: policyFormat }).padEnd(
               1_048_576 + excess,
               " ",
             ),
           ),
-        }).pipe(
+        ).pipe(
           Effect.match({
             onFailure: () => "refused",
             onSuccess: () => "loaded",
@@ -205,51 +209,9 @@ describe("policy documents", () => {
     { fastCheck: { examples: [[0], [1]] } },
   );
 
-  it.prop(
-    "installs the provider key without its surrounding whitespace exactly when its file holds one token",
-    [
-      fc.array(fc.stringMatching(/^[!-~]{8,24}$/u), { maxLength: 3 }),
-      fc.stringMatching(/^[ \t\r\n]{0,2}$/u),
-      fc.stringMatching(/^[ \t\r\n]{1,2}$/u),
-      fc.stringMatching(/^[ \t\r\n]{0,2}$/u),
-    ],
-    ([tokens, before, between, after]) =>
-      Effect.gen(function* () {
-        const outcome = yield* loadConfigured({
-          messagePolicyFile: file(jevDocument),
-          decisionProviderKeyFile: Redacted.make(
-            file(before + tokens.join(between) + after),
-          ),
-        }).pipe(
-          Effect.match({
-            onFailure: () => "refused",
-            onSuccess: ({ provider }) => ({
-              key: provider && Redacted.value(provider.apiKey),
-            }),
-          }),
-        );
-        expect(outcome).toEqual(
-          tokens.length === 1 ? { key: tokens[0] } : "refused",
-        );
-      }),
-  );
-
-  it("reads the provider key through symbolic links, as a Kubernetes Secret volume presents it", () =>
+  it("installs the provider key its variable holds", () =>
     Effect.gen(function* () {
-      const mount = directory();
-      mkdirSync(join(mount, "..2026_11_06_00_00_00.000000000"));
-      writeFileSync(
-        join(mount, "..2026_11_06_00_00_00.000000000", "jev.key"),
-        "key-value",
-        { mode: 0o600 },
-      );
-      symlinkSync("..2026_11_06_00_00_00.000000000", join(mount, "..data"));
-      symlinkSync(join("..data", "jev.key"), join(mount, "jev.key"));
-
-      const installed = yield* loadConfigured({
-        messagePolicyFile: file(jevDocument),
-        decisionProviderKeyFile: Redacted.make(join(mount, "jev.key")),
-      });
+      const installed = yield* loadConfigured(file(jevDocument), "key-value");
 
       expect(
         installed.provider === undefined
@@ -305,10 +267,7 @@ describe("policy documents", () => {
           }),
         ),
       )(readFileSync(path, "utf8"));
-      const loaded = yield* loadConfigured({
-        messagePolicyFile: path,
-        decisionProviderKeyFile: Redacted.make(file("key-value")),
-      });
+      const loaded = yield* loadConfigured(path, "key-value");
       expect(loaded.policy.text?.fixedRules).toHaveLength(
         shipped.text.fixedBehaviors.length,
       );
@@ -323,13 +282,6 @@ describe("behavior files", () => {
     id: "inline-fixed",
     applies: "both",
     text: "Protect owner data.",
-  } as const;
-
-  const initialInlineRule = {
-    id: "inline-initial",
-    applies: "both",
-    text: "Be brief.",
-    guidance: "Keep it brief.",
   } as const;
 
   /** A valid BEHAVIOR.md for the rule `name`, which applies in the direction `applies`. */
@@ -406,16 +358,11 @@ ${behaviorBody}
   /** A policy directory listing `behaviors`, whose `fixed` directory holds the document `fixed`. */
   function fixture(
     fixed = behaviorDocument,
-    behaviors = { fixedBehaviors: ["fixed"], initialBehaviors: ["initial"] },
+    behaviors = { fixedBehaviors: ["fixed"] },
   ) {
     const root = directory();
     mkdirSync(join(root, "fixed"));
-    mkdirSync(join(root, "initial"));
     writeFileSync(join(root, "fixed", "BEHAVIOR.md"), fixed);
-    writeFileSync(
-      join(root, "initial", "BEHAVIOR.md"),
-      behavior("ask-first", "both"),
-    );
     const path = join(root, "policy.json");
     writeFileSync(join(root, "key"), "key-value");
     writeFileSync(
@@ -425,7 +372,6 @@ ${behaviorBody}
         decisionProvider: { model: "jev-1.13.0" },
         text: {
           fixedRules: [fixedInlineRule],
-          initialRules: [initialInlineRule],
           ...behaviors,
         },
       }),
@@ -434,10 +380,7 @@ ${behaviorBody}
   }
 
   function loaded(path: string) {
-    return loadConfigured({
-      messagePolicyFile: path,
-      decisionProviderKeyFile: Redacted.make(join(dirname(path), "key")),
-    });
+    return loadConfigured(path, "key-value");
   }
 
   /** Whether the policy at `path` is `loaded` or `refused`. */
@@ -515,7 +458,6 @@ ${behaviorBody}
       Effect.gen(function* () {
         const { path } = fixture(behaviorDocument, {
           fixedBehaviors: [anchor + steps.join("/")],
-          initialBehaviors: [],
         });
         const reached = steps.filter((step) => step !== ".").join("/");
 
@@ -527,8 +469,8 @@ ${behaviorBody}
       }),
   );
 
-  /** Rule ids a listed behavior can carry: both inline ids, then ids no inline rule has. */
-  const names = [fixedInlineRule.id, initialInlineRule.id, "a", "b", "c", "d"];
+  /** Rule ids a listed behavior can carry: the inline id, then ids no inline rule has. */
+  const names = [fixedInlineRule.id, "a", "b", "c", "d"];
 
   /** Listed directories: one per name in `names`, and one that does not exist. */
   const listedNames = fc.array(fc.constantFrom(...names, "absent"), {
@@ -536,13 +478,12 @@ ${behaviorBody}
   });
 
   it.prop(
-    "refuses a listed behavior that is absent or repeats an earlier rule id, and otherwise adds fixed then initial behaviors in order",
-    [listedNames, listedNames],
-    ([fixed, initial]) =>
+    "refuses a listed behavior that is absent or repeats an earlier rule id, and otherwise adds the behaviors in order",
+    [listedNames],
+    ([listed]) =>
       Effect.gen(function* () {
         const { root, path } = fixture(behaviorDocument, {
-          fixedBehaviors: fixed,
-          initialBehaviors: initial,
+          fixedBehaviors: listed,
         });
         for (const name of names) {
           mkdirSync(join(root, name));
@@ -551,34 +492,22 @@ ${behaviorBody}
             behavior(name, "both"),
           );
         }
-        const listed = [...fixed, ...initial];
         const refused = listed.some(
           (name, at) =>
             name === "absent" ||
-            [
-              fixedInlineRule.id,
-              initialInlineRule.id,
-              ...listed.slice(0, at),
-            ].includes(name),
+            [fixedInlineRule.id, ...listed.slice(0, at)].includes(name),
         );
 
         const result = yield* loaded(path).pipe(
           Effect.match({
             onFailure: () => "refused",
-            onSuccess: ({ policy }) => ({
-              fixed: policy.text?.fixedRules.map(({ id }) => id),
-              initial: policy.text?.initialRules.map(({ id }) => id),
-            }),
+            onSuccess: ({ policy }) =>
+              policy.text?.fixedRules.map(({ id }) => id),
           }),
         );
 
         expect(result).toEqual(
-          refused
-            ? "refused"
-            : {
-                fixed: [fixedInlineRule.id, ...fixed],
-                initial: [initialInlineRule.id, ...initial],
-              },
+          refused ? "refused" : [fixedInlineRule.id, ...listed],
         );
       }),
   );

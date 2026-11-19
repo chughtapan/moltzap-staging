@@ -14,7 +14,11 @@ import {
 } from "effect";
 import type { CompiledContract } from "../firewall/index.js";
 import { Communication } from "../communication/service.js";
-import { checkDatabase, databaseConnection, databaseUrl } from "../database.js";
+import {
+  databaseConnection,
+  databaseUrl,
+  prepareDatabase,
+} from "../database.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
 import { MessageAddressInput } from "../mcp/tools.js";
@@ -60,22 +64,14 @@ function roleOf(
     return {
       withheldReply: undefined,
       firewall: checked(),
-      tools: peerTools(
-        settings.messagePolicy !== undefined,
-        !settings.hideGroups,
-        norms !== undefined,
-      ),
+      tools: peerTools(!settings.hideGroups, norms !== undefined),
     };
   }
   if (agentName === serverAgent.name) {
     return {
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       firewall: checked(),
-      tools: peerTools(
-        settings.messagePolicy !== undefined,
-        false,
-        norms !== undefined,
-      ),
+      tools: peerTools(false, norms !== undefined),
     };
   }
   return {
@@ -107,7 +103,7 @@ export const runDaemon = Effect.gen(function* () {
   const url = yield* databaseUrl;
   const settings = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
-    yield* checkDatabase;
+    yield* prepareDatabase;
     if (settings.serverAgent !== undefined) {
       yield* getOrCreateOwnedAgentKey(
         {
@@ -260,6 +256,3 @@ function startAgent(
     };
   }).pipe(Effect.withSpan("startAgent"));
 }
-
-/** Deployment prepares the schema before the daemon starts. */
-export { prepareDatabase } from "../database.js";

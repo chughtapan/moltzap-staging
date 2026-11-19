@@ -135,9 +135,8 @@ interface TestPolicy {
   readonly provider: DecisionProvider;
 }
 
-/** A message policy with the given initial editable rules and fixed rules, judged by `provider`. */
+/** A message policy with the given text rules, judged by `provider`. */
 export function policy(
-  initialRules: readonly TextRule[] = [],
   fixedRules: readonly TextRule[] = [],
   provider: DecisionProvider = certainProvider,
 ): TestPolicy {
@@ -149,7 +148,7 @@ export function policy(
           JSON.stringify({
             format: "org.social-harness/message-policy/v2",
             decisionProvider: { model: "test" },
-            text: { fixedRules, initialRules },
+            text: { fixedRules },
             textSettings: {
               minimumProbability: 0.5,
               maximumRequestBytes: 60_000,
@@ -162,7 +161,7 @@ export function policy(
   };
 }
 
-/** The firewall of the agent `agentKey` names under `configured`, which starts holding `contracts`. */
+/** The firewall of the agent `agentKey` names under `configured`, which holds `contracts`. */
 export function firewallLayer(
   agentKey: string,
   configured: TestPolicy,

@@ -47,7 +47,6 @@ import {
   type ToolRequest,
   type ToolResult,
 } from "@social-harness/social-harness";
-import { prepareDatabase } from "@social-harness/social-harness/service";
 import {
   issuerFixture,
   openTestDatabase,
@@ -55,7 +54,6 @@ import {
   restrictedLogin,
 } from "@social-harness/social-harness/test";
 import {
-  ConfigProvider,
   Console,
   Data,
   Duration,
@@ -381,15 +379,6 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
     Effect.withSpan("signIn"),
   );
 
-/** Creates the daemon's tables and encryption check as deployment does. */
-const prepare = (environment: Readonly<Record<string, string>>) =>
-  prepareDatabase.pipe(
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(new Map(Object.entries(environment))),
-    ),
-    Effect.mapError(failed("could not prepare the daemon database")),
-  );
-
 /**
  * Prepares one daemon whose server agent's owner and clients' owners sign in
  * with tokens from its own test issuer. The scope removes its directory and
@@ -424,10 +413,6 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
     },
     serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
     ...options.settings,
-  });
-  yield* prepare({
-    ...environment,
-    SHARNESS_DATABASE_URL: Redacted.value(database.url),
   });
   const spawned = (changes: Readonly<Record<string, string>>) =>
     managedProcess(...DAEMON_COMMAND, { ...environment, ...changes });

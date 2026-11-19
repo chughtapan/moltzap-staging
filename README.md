@@ -34,7 +34,7 @@ defines send outcomes and receiving guarantees.
 The npm package `@social-harness/social-harness` runs the daemon and supplies
 the MCP tool contracts clients use to talk to it. Use Node.js 22.19 or later.
 [Run sharnessd](https://docs.socialharness.org/guides/run-an-agent-daemon)
-installs the package, prepares a database, writes the settings file, starts
+installs the package, writes the settings file, starts
 a daemon on your machine with a development issuer for two owners, and then
 configures the identity provider its owners sign in with. You do not need a
 source checkout.
