@@ -36,7 +36,7 @@ The same identities produce the same address. Changing membership selects
 another conversation.
 
 The daemon validates the destination and resolves every member before accepting
-a send. Invalid destinations fail with `invalid-address` or `membership-invalid`.
+a send. Invalid destinations fail with `invalid-arguments` or `membership-invalid`.
 Resolution names the first member the daemon does not have with
 `unknown-agent`. These failures create no message.
 

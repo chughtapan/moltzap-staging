@@ -9,8 +9,17 @@
  */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Cause, Context, Effect, Layer, Option, Schema } from "effect";
-import { randomBytes } from "node:crypto";
+import {
+  Cause,
+  Context,
+  Effect,
+  Either,
+  Encoding,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
+import { createHash, randomBytes } from "node:crypto";
 import {
   afterCommit,
   executeQuery,
@@ -20,16 +29,20 @@ import {
   withAgentRows,
 } from "../database/index.js";
 import {
-  compareAgentIds,
+  canonicalIdentifier,
   compareAscii,
   decodeJson,
   encodeJson,
+  exactStruct,
+  isStrictlyAscending,
+  type JsonRepresentationError,
+  representationFailure,
   sameJson,
 } from "../encoding.js";
-import { AgentCard, type AgentId } from "../identity.js";
+import { AgentCard, AgentId } from "../identity.js";
 import {
   CommunicationError,
-  deriveConversationId,
+  maximumMembers,
   Message,
   messageMembers,
   type MessageReference,
@@ -110,6 +123,13 @@ const cursorSchema = Schema.Struct({
   conversation: Schema.String,
   after: Schema.Int,
   through: Schema.Int,
+});
+const ConversationId = canonicalIdentifier("ConversationId", "cnv_", 32);
+const ConversationMembers = exactStruct({
+  kind: Schema.Literal("conversation_identity"),
+  memberAgentIds: Schema.Tuple([AgentId, AgentId], AgentId).pipe(
+    Schema.maxItems(maximumMembers),
+  ),
 });
 const refused = (reason: CommunicationError["reason"]) =>
   new CommunicationError({ reason });
@@ -407,6 +427,61 @@ function conversationOf(self: AgentCard, members: readonly AgentCard[]) {
       return yield* refused("membership-invalid");
     }
     return yield* deriveConversationId([first, second, ...rest]);
+  });
+}
+
+/**
+ * The identifier of the conversation among these members: a hash of their
+ * agent identifiers, which must be given in ascending order with no repeats.
+ */
+function deriveConversationId(
+  memberAgentIds: (typeof ConversationMembers.Type)["memberAgentIds"],
+): Effect.Effect<typeof ConversationId.Type, JsonRepresentationError> {
+  return isStrictlyAscending(memberAgentIds, compareAgentIds)
+    ? encodeJson(ConversationMembers, {
+        kind: "conversation_identity" as const,
+        memberAgentIds,
+      }).pipe(
+        Effect.map(
+          (members) =>
+            `cnv_${createHash("sha256")
+              .update("org.social-harness/client/v2/conversation\0")
+              .update(members)
+              .digest("base64url")}`,
+        ),
+        Effect.flatMap(Schema.decodeUnknown(ConversationId)),
+        Effect.mapError(representationFailure),
+      )
+    : Effect.fail(representationFailure());
+}
+
+/**
+ * Compares validated agent IDs by decoded bytes, as membership lists require.
+ */
+function compareAgentIds(left: string, right: string): number {
+  const leftBytes = decodeCanonicalBase64Url(left.slice(4));
+  const rightBytes = decodeCanonicalBase64Url(right.slice(4));
+  if (leftBytes === undefined || rightBytes === undefined) {
+    return 0;
+  }
+  const length = Math.min(leftBytes.byteLength, rightBytes.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftBytes[index] ?? 0) - (rightBytes[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return leftBytes.byteLength - rightBytes.byteLength;
+}
+
+/**
+ * Returns bytes for canonical base64url, or undefined for another spelling.
+ */
+function decodeCanonicalBase64Url(value: string): Uint8Array | undefined {
+  return Either.match(Encoding.decodeBase64Url(value), {
+    onLeft: () => undefined,
+    onRight: (bytes) =>
+      Encoding.encodeBase64Url(bytes) === value ? bytes : undefined,
   });
 }
 

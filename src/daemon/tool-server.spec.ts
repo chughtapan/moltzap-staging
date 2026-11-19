@@ -76,7 +76,6 @@ const read = {
 };
 /** Every reason a send fails with; the type refuses a missing or an unknown one. */
 const sendFailureReasons = Struct.keys({
-  "invalid-address": true,
   "unknown-agent": true,
   "membership-invalid": true,
   "content-invalid": true,

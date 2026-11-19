@@ -53,11 +53,6 @@ import {
   type Unchecked,
 } from "./inbox.js";
 
-const historyCursor = Schema.Struct({
-  operation: Schema.Literal("history"),
-  address: MessageAddress,
-  communicationCursor: Schema.String,
-});
 const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
   address: MessageAddress,
@@ -383,36 +378,18 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (destination.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-address" });
     }
-    const position =
-      request.cursor === undefined
-        ? undefined
-        : yield* decodeCursor(historyCursor, request.cursor);
-    if (position !== undefined && position.address !== request.address) {
-      return yield* new HistoryError({ reason: "invalid-cursor" });
-    }
-    const page = yield* messageRecords(
+    return yield* messageRecords(
       agent,
       [card, ...(yield* agent.identity.resolve(destination.others))],
-      position?.communicationCursor,
+      request.cursor,
     );
-    return {
-      records: page.records,
-      ...(page.nextCursor === undefined
-        ? {}
-        : {
-            nextCursor: yield* encodeCursor(historyCursor, {
-              operation: "history",
-              address: destination.address,
-              communicationCursor: page.nextCursor,
-            }),
-          }),
-    };
   }).pipe(Effect.catchAll(historyFailure));
 }
 
 /**
  * One page of a conversation's messages as history records: each one this
  * agent sent, and each one it received that its inbox stored an entry for.
+ * The cursor is the one communication returned for this conversation.
  */
 function messageRecords(
   agent: Agent,
@@ -438,7 +415,10 @@ function messageRecords(
         }
       }
     }
-    return { records, nextCursor: page.nextCursor };
+    return {
+      records,
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    };
   });
 }
 
