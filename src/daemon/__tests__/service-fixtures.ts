@@ -124,19 +124,20 @@ export function composedPolicy(
   };
 }
 
-/** Waits until the inbox holds `count` pending entries. */
+/** Waits until the inbox holds `count` entries, and reads every entry it holds in the order they were allowed. */
 export function waitForInbox(
   runtime: {
     readonly inbox: Inbox;
   },
   count = 1,
 ) {
-  return runtime.inbox.listInbox().pipe(
+  const read = runtime.inbox.listInbox(1000, "0");
+  return read.pipe(
     Effect.repeat({
       until: (page) => page.entries.length >= count,
       schedule: Schedule.spaced("5 millis"),
     }),
-    Effect.zipRight(runtime.inbox.listInbox()),
+    Effect.zipRight(read),
     Effect.timeout("10 seconds"),
   );
 }

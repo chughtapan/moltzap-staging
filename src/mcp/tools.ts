@@ -9,12 +9,7 @@ import {
   PaginatedRequest,
   wellFormedString,
 } from "../communication/index.js";
-import {
-  canonicalIdentifier,
-  compareAscii,
-  exactStruct,
-  isStrictlyAscending,
-} from "../encoding.js";
+import { compareAscii, exactStruct, isStrictlyAscending } from "../encoding.js";
 import {
   firewallDecisionsRequestSchema,
   firewallDecisionsSchema,
@@ -111,44 +106,23 @@ export function addressOf(
   return AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other?.agentName}`);
 }
 
-/** Identifies one inbox entry: what a host names to mark that entry delivered. */
-export const DeliveryToken = canonicalIdentifier("DeliveryToken", "dlv_", 32);
-/** @useDeclaredType */
-export type DeliveryToken = typeof DeliveryToken.Type;
-
-/** One message as the host reads it. It keeps its delivery token once delivered. */
+/** One message as the host reads it. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
   address: AgentAddress,
   message: Message,
   guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-  deliveryToken: DeliveryToken,
 });
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** Reading leaves entries pending. Absence of nextCursor ends the page traversal. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const InboxPage = Schema.Struct({
-  ...Page.fields,
-  entries: Schema.Array(InboxEntry),
-});
-/** @useDeclaredType */
-export type InboxPage = typeof InboxPage.Type;
+/** A place in an inbox's read order: the count of entries allowed before it, as decimal text. */
+export const InboxCursor = Schema.String.pipe(
+  Schema.pattern(/^\d{1,15}$/u),
+).annotations({ description: "the nextCursor of an earlier result" });
 
-const inboxFailureText = {
-  "invalid-cursor":
-    "the cursor is not one this inbox returned; call again without a cursor",
-} as const;
-
-/** An inbox read rejects a cursor it did not return. */
-export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
-  reason: Schema.Literal("invalid-cursor"),
-}) {
-  override get message(): string {
-    return `receiving failed: ${inboxFailureText[this.reason]}`;
-  }
-}
+/** The name of the event whose occurrences are an agent's inbox entries, in read order. */
+export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /** Host addresses are resolved by SocialHarness before communication preparation. */
 export const SendRequest = exactStruct({
@@ -198,29 +172,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
   }
 }
 
-/** Callback failures expose no upstream response or destination details. */
-export const callbackReasons = [
-  "connection_refused",
-  "timeout",
-  "tls_error",
-  "http_4xx",
-  "http_5xx",
-  "challenge_failed",
-] as const;
-/** Owner-visible diagnostics omit callback addresses and signing authority. */
-const subscriptionStatusSchema = Schema.Struct({
-  mode: Schema.Literal("none", "webhook"),
-  id: Schema.optional(Schema.String),
-  refreshBefore: Schema.optional(Schema.String),
-  stalled: Schema.optional(
-    Schema.NullOr(Schema.Literal("callback", "terminal")),
-  ),
-  lastError: Schema.optional(Schema.NullOr(Schema.Literal(...callbackReasons))),
-});
-
-/** A subscription as the `status` tool reports it, without its callback URL or secret. */
-export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
-
 const historyRecordSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
@@ -244,7 +195,6 @@ export type HistoryRecord = typeof historyRecordSchema.Type;
 const statusOutput = Schema.Struct({
   agentId: AgentId,
   agentName: AgentName,
-  subscription: subscriptionStatusSchema,
 });
 
 /** Canonically ordered local-conversation page selector. */
@@ -268,24 +218,14 @@ const readConversationOutput = Schema.Struct({
   ...Page.fields,
 });
 
-/**
- * The longest a receive_messages call may wait. It stays under the time after
- * which hosts and proxies give up on a tool call.
- */
-export const MAXIMUM_WAIT_SECONDS = 50;
-
 const receiveMessagesInput = exactStruct({
-  ...PaginatedRequest.fields,
-  wait: Schema.optional(
-    Schema.Number.pipe(
-      Schema.positive(),
-      Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
-    ).annotations({
-      description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for a message when none is pending. Call receive_messages again to keep waiting. Without wait the call returns at once.`,
-    }),
-  ),
+  cursor: Schema.optional(InboxCursor),
 });
-const receiveMessagesOutput = Schema.typeSchema(InboxPage);
+/** Entries in read order, with the cursor that reads on from the last of them. */
+const receiveMessagesOutput = Schema.Struct({
+  entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
+  nextCursor: InboxCursor,
+});
 /** Writes the typed refusal's details as the structured content of a failed send. */
 function sendErrorData(error: SendError | FirewallRefusal) {
   if (error._tag === "FirewallRefusal") {
@@ -360,21 +300,17 @@ export const toolDefinitions = {
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
   receive_messages: {
-    failure: { toData: (error: InboxError) => reasonData(error) },
+    failure: { toData: (error: never) => error },
     description:
-      "Receive pending inbox entries, each with its conversation address, its message and any guidance. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      openWorldHint: false,
-    },
+    annotations: readOnlyAnnotations,
   },
   status: {
     failure: { toData: (error: never) => error },
     description:
-      "Read this agent's identifier and name. subscription reports whether a callback is subscribed for inbox wake-ups, when the subscription must be refreshed, whether it is stalled and its last error. Other agents address this agent as agent:<agentName>.",
+      "Read this agent's identifier and name. Other agents address this agent as agent:<agentName>.",
     input: noArguments,
     output: statusOutput,
     annotations: readOnlyAnnotations,

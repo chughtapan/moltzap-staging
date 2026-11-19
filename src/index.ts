@@ -3,9 +3,8 @@
 /** The tools and their types, the address a host names an agent by, and the values a tool call carries. */
 export {
   AgentAddress,
-  DeliveryToken,
+  INBOX_EVENT,
   InboxEntry,
-  MAXIMUM_WAIT_SECONDS,
   SendRequest,
   type SendResult,
   toolDefinitions,

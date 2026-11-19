@@ -4,12 +4,16 @@
  * its result encoded and its failure worded by the tool's definition.
  */
 
+import type { SqlClient } from "@effect/sql";
 import { HttpApp } from "@effect/platform";
 import {
   createMcpHandler,
+  fromJsonSchema,
   McpServer,
   ProtocolError,
 } from "@modelcontextprotocol/server";
+import { EventsExtension } from "@modelcontextprotocol/server/ext/events";
+import { nodeWebhookSender } from "@modelcontextprotocol/server/ext/events/node";
 import {
   Cause,
   Data,
@@ -22,31 +26,32 @@ import {
   Schema,
 } from "effect";
 import type { CompiledContract } from "../firewall/index.js";
+import { PAGE_SIZE } from "../communication/index.js";
 import { issuesText } from "../encoding.js";
 import { Firewall } from "../firewall/service.js";
 import { Identity } from "../identity.js";
 import {
   type AgentAddress,
   clientToolDefinitions,
-  type SubscriptionStatus,
+  INBOX_EVENT,
+  InboxCursor,
+  InboxEntry,
   toolDefinitions,
 } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";
+import { makeInbox } from "./inbox.js";
 
-/** What a request is answered from: an agent's tools, in listing order, and its Events calls. */
+/**
+ * What a request is answered from: the agent's key, its tools in listing
+ * order, and the daemon's Events extension, which serves that agent's inbox.
+ */
 export interface AgentCalls {
+  readonly agentKey: string;
   readonly tools: ReadonlyArray<ReturnType<typeof bind>>;
-  readonly events: Readonly<
-    Record<
-      "list" | "subscribe" | "unsubscribe",
-      (
-        params: unknown,
-      ) => Effect.Effect<Readonly<Record<string, unknown>>, JsonRpcError>
-    >
-  >;
+  readonly events: EventsExtension;
 }
 
-/** The JSON-RPC error a tool call or an Events call is answered with. */
+/** The JSON-RPC error a tool call is answered with. */
 export class JsonRpcError extends Data.TaggedError("JsonRpcError")<{
   readonly code: number;
   readonly message: string;
@@ -68,11 +73,6 @@ class AdmittedRequest extends Data.Class<{
   readonly runtime: Runtime.Runtime<never>;
   readonly signal: AbortSignal;
 }> {}
-
-/** The Events capability, which the SDK's capability type does not name. */
-const eventsCapability = { events: {} };
-
-const anyParams = Schema.standardSchemaV1(Schema.Unknown);
 
 /** A tool's arguments and its result are objects, which is the JSON Schema MCP lists a tool with. */
 const objectSchema = Schema.decodeUnknownSync(
@@ -120,6 +120,65 @@ export function makeMcpHandler(implementation: {
     );
 }
 
+/** How often the SDK reads the inbox of an agent whose host holds a push stream or a webhook subscription. */
+const INBOX_CHECK_MILLISECONDS = 1000;
+
+/** The longest a webhook subscription lives without a refresh. */
+const WEBHOOK_TTL_MILLISECONDS = 30 * 60_000;
+
+/**
+ * The daemon's Events extension, which every request's server is built with.
+ * Its one event type is the inbox of the agent a request is admitted as: an
+ * occurrence is an inbox entry, and a subscription's cursor is the read
+ * number of the last entry it was sent. The SDK delivers by poll, push and
+ * webhook, and keeps every subscription in memory.
+ */
+export const makeInboxEvents = Effect.gen(function* () {
+  const run = Runtime.runPromise(yield* Effect.runtime<SqlClient.SqlClient>());
+  const events = new EventsExtension({
+    getPrincipal: ({ http }) => {
+      const admitted = http?.authInfo?.extra?.admitted;
+      return admitted instanceof AdmittedRequest
+        ? admitted.agent.agentKey
+        : null;
+    },
+    checkIntervalMs: INBOX_CHECK_MILLISECONDS,
+    webhookTtlMs: WEBHOOK_TTL_MILLISECONDS,
+    webhookSender: nodeWebhookSender(),
+  });
+  events.registerEvent(INBOX_EVENT, {
+    description:
+      "An inbox entry: its conversation address, its message and any guidance.",
+    payloadSchema: fromJsonSchema<typeof InboxEntry.Encoded>(
+      objectSchema(jsonSchema(InboxEntry)),
+    ),
+    check: (...[{ principal, maxEvents, signal }, , cursor]) =>
+      run(
+        Effect.gen(function* () {
+          const inbox = yield* makeInbox(yield* Effect.fromNullable(principal));
+          const page = yield* inbox.listInbox(
+            Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
+            cursor === null
+              ? undefined
+              : yield* Schema.decode(InboxCursor)(cursor),
+          );
+          return {
+            events: (yield* Schema.encode(Schema.Array(InboxEntry))(
+              page.entries,
+            )).map((data) => ({
+              eventId: `${data.message.author.agentId}/${data.message.msgId}`,
+              data,
+            })),
+            cursor: page.nextCursor,
+            hasMore: page.hasMore,
+          };
+        }),
+        { signal },
+      ),
+  });
+  return events;
+}).pipe(Effect.withSpan("makeInboxEvents"));
+
 /** What a tool definition says about a tool before any operation is attached. */
 interface Definition<A, I, B, J, E> {
   readonly description: string;
@@ -138,18 +197,26 @@ interface Definition<A, I, B, J, E> {
   };
 }
 
+/** `status` names this agent. */
+const statusTool = Effect.map(Identity, (identity) =>
+  bind("status", toolDefinitions.status, () =>
+    Effect.succeed({
+      agentId: identity.me.agentId,
+      agentName: identity.me.agentName,
+    }),
+  ),
+);
+
 /**
  * The tools of the server agent, which addresses any client. One that holds
  * norms lists them with `read_norms`.
  */
 export function serverAgentTools(holdsNorms: boolean) {
-  return Effect.fnUntraced(function* (
-    status: Effect.Effect<SubscriptionStatus>,
-  ) {
+  return Effect.fnUntraced(function* () {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
     return [
-      yield* statusTool(status),
+      yield* statusTool,
       bind("send_message", toolDefinitions.send_message, harness.send),
       bind(
         "receive_messages",
@@ -187,12 +254,10 @@ export function clientTools(
   serverAgentAddress: AgentAddress,
   serverAgentContracts?: Effect.Effect<readonly CompiledContract[]>,
 ) {
-  return Effect.fnUntraced(function* (
-    status: Effect.Effect<SubscriptionStatus>,
-  ) {
+  return Effect.fnUntraced(function* () {
     const harness = yield* SocialHarness;
     return [
-      yield* statusTool(status),
+      yield* statusTool,
       bind("send_message", clientToolDefinitions.send_message, (message) =>
         harness.send({ ...message, to: serverAgentAddress }),
       ),
@@ -255,31 +320,19 @@ function bind<A, I, B, J, E extends { readonly message: string }>(
   };
 }
 
-/** `status` names this agent and reports its subscription as `status` reads it. */
-function statusTool(status: Effect.Effect<SubscriptionStatus>) {
-  return Effect.map(Identity, (identity) =>
-    bind("status", toolDefinitions.status, () =>
-      Effect.map(status, (subscription) => ({
-        agentId: identity.me.agentId,
-        agentName: identity.me.agentName,
-        subscription,
-      })),
-    ),
-  );
-}
-
 /** The MCP server for one request, answering from the agent `admitted` names. */
 function requestServer(
   implementation: { readonly name: string; readonly version: string },
   admitted: unknown,
 ) {
-  const mcp = new McpServer(implementation, {
-    capabilities: { tools: {}, ...eventsCapability },
-  });
   if (!(admitted instanceof AdmittedRequest)) {
-    return mcp;
+    return new McpServer(implementation);
   }
   const { agent } = admitted;
+  const mcp = new McpServer(implementation, {
+    capabilities: { tools: {} },
+    extensions: [agent.events],
+  });
   mcp.server.setRequestHandler("tools/list", () =>
     run(
       admitted,
@@ -300,13 +353,6 @@ function requestServer(
       }),
     ),
   );
-  for (const call of ["list", "subscribe", "unsubscribe"] as const) {
-    mcp.server.setRequestHandler(
-      `events/${call}`,
-      { params: anyParams },
-      (params) => run(admitted, agent.events[call](params)),
-    );
-  }
   return mcp;
 }
 

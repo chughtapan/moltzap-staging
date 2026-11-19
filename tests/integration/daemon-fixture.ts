@@ -23,8 +23,8 @@
  *
  * A suite drives the signed-in agents as their hosts do, through the official
  * MCP client: `callTool` calls one tool, `send` sends a message,
- * `inboxStream` reads an inbox, and `joinParticipants` signs owners in and
- * queues what each agent receives for `nextItem` and `receivedOrder`.
+ * and `joinParticipants` signs owners in and queues what each agent
+ * receives, through the Events extension, for `nextItem` and `receivedOrder`.
  * `processTrace` makes a trace a vitest test whose children stop with it.
  */
 
@@ -35,11 +35,13 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import { EventsClientExtension } from "@modelcontextprotocol/client/ext/events";
 import {
   AgentAddress,
   type AgentId,
   type AgentName,
-  type InboxEntry,
+  INBOX_EVENT,
+  InboxEntry,
   SendRequest,
   toolDefinitions,
   type ToolName,
@@ -101,7 +103,10 @@ export interface SignedIn {
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
   /** How the server agent addresses this one. */
   readonly address: AgentAddress;
-  readonly connection: { readonly mcp: Client };
+  readonly connection: {
+    readonly mcp: Client;
+    readonly events: EventsClientExtension;
+  };
 }
 
 /** A prepared daemon. The file comment lists what each member is for. */
@@ -350,7 +355,11 @@ const settingsDocument = (
  */
 const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
   Effect.gen(function* () {
-    const mcp = new Client({ name: "integration-test", version: "test" });
+    const events = new EventsClientExtension();
+    const mcp = new Client(
+      { name: "integration-test", version: "test" },
+      { versionNegotiation: { mode: "auto" }, extensions: [events] },
+    );
     yield* Effect.acquireRelease(
       Effect.tryPromise(() =>
         mcp.connect(
@@ -363,7 +372,7 @@ const signIn = (endpoint: URL, bearer: Redacted.Redacted) =>
       ),
       () => Effect.tryPromise(() => mcp.close()).pipe(Effect.ignore),
     );
-    const connection = { mcp };
+    const connection = { mcp, events };
     const status = yield* callTool(connection.mcp, {
       name: "status",
       arguments: {},
@@ -514,8 +523,8 @@ export interface Participant extends SignedIn {
 }
 
 /**
- * Signs in one owner per name on a running `daemon` and queues every delivery
- * each agent receives.
+ * Signs in one owner per name on a running `daemon` and queues every inbox
+ * entry of each agent, from its first.
  * @param daemon The daemon the owners sign in to.
  * @param owners The owner of each participant: `SERVER_AGENT_OWNER` for the
  *   server agent, any other name for a client.
@@ -529,7 +538,7 @@ export const joinParticipants = Effect.fn("joinParticipants")(
         Effect.gen(function* () {
           const signedIn = yield* daemon.signInAs(owner);
           const inbox = yield* Queue.unbounded<InboxEntry>();
-          yield* inboxStream(signedIn.connection).pipe(
+          yield* inboxStream(signedIn.connection, "0").pipe(
             Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
             Effect.forkScoped,
           );
@@ -583,15 +592,27 @@ export function processTrace<E>(
   };
 }
 
-/** The agent's inbox entries as they arrive. Each read records delivery before its entries reach the test. */
-function inboxStream(connection: SignedIn["connection"]) {
-  return Stream.repeatEffect(
-    callTool(connection.mcp, { name: "receive_messages", arguments: {} }),
+/**
+ * The agent's inbox entries after `cursor`, as its subscription to the inbox
+ * event delivers them in `delivery` mode, or in the mode the client prefers.
+ */
+export function inboxStream(
+  { events }: SignedIn["connection"],
+  cursor: string,
+  delivery?: "poll" | "push",
+) {
+  return Stream.unwrap(
+    Effect.tryPromise(() =>
+      events.subscribe({ name: INBOX_EVENT, cursor, delivery }),
+    ).pipe(
+      Effect.map((subscription) =>
+        Stream.fromAsyncIterable(subscription, (cause) => cause),
+      ),
+    ),
   ).pipe(
-    Stream.flatMap((page) =>
-      page.entries.length === 0
-        ? Stream.fromEffect(Effect.sleep("50 millis")).pipe(Stream.drain)
-        : Stream.fromIterable(page.entries),
+    Stream.orDie,
+    Stream.mapEffect((event) =>
+      Schema.decodeUnknown(InboxEntry)(event.data).pipe(Effect.orDie),
     ),
   );
 }

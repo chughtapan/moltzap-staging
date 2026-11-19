@@ -1,11 +1,11 @@
 /** @file MCP tests substitute service behavior while exercising the real protocol and HTTP boundary. */
-import { HttpApp, HttpClient } from "@effect/platform";
+import { HttpApp } from "@effect/platform";
 import { SqlClient } from "@effect/sql";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { Context, Effect, Layer, Redacted, Ref, Stream } from "effect";
+import { type Context, Effect, Redacted, Ref } from "effect";
 import { testAgentCard } from "../../__tests__/agents.js";
 import { Firewall } from "../../firewall/service.js";
 import { type AgentName, Identity } from "../../identity.js";
@@ -13,9 +13,12 @@ import { AgentAddress } from "../../mcp/tools.js";
 import { openTestDatabase } from "../../test.js";
 import { SocialHarness } from "../agent.js";
 import { makeMcpHttpApp } from "../listener.js";
-import { makeWebhookEvents, webhookHttpClientLayer } from "../subscriptions.js";
 import { issuerFixture, requiredScope } from "../testing.js";
-import { clientTools, serverAgentTools } from "../tool-server.js";
+import {
+  clientTools,
+  makeInboxEvents,
+  serverAgentTools,
+} from "../tool-server.js";
 
 /** The Host of the fixture's resource, unless a test names another resource. */
 const mcpTestHeaders = { host: "127.0.0.1" };
@@ -43,11 +46,9 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   });
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
-    pendingTokens: Effect.succeed([]),
-    receive: () => Effect.succeed({ entries: [] }),
+    receive: () => Effect.succeed({ entries: [], nextCursor: "0" }),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
-    inboxChanged: Stream.never,
     ...options.harness,
   });
   const unused = () => Effect.dieMessage("Unexpected firewall assessment");
@@ -57,26 +58,20 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readContracts: () => Effect.succeed([]),
     readDecisions: unused,
   });
-  const callbackClient = yield* Layer.build(webhookHttpClientLayer);
-  const subscription = yield* makeWebhookEvents(card.agentName).pipe(
-    Effect.provideService(
-      HttpClient.HttpClient,
-      Context.get(callbackClient, HttpClient.HttpClient),
-    ),
-    Effect.provideService(SocialHarness, harness),
-    Effect.provideService(SqlClient.SqlClient, database.sql),
-  );
   const tools =
     options.serverAgentName === undefined
       ? serverAgentTools(false)
       : clientTools(AgentAddress.make(`agent:${options.serverAgentName}`));
   const agent = {
-    tools: yield* tools(subscription.status).pipe(
+    agentKey: card.agentName,
+    tools: yield* tools().pipe(
       Effect.provideService(SocialHarness, harness),
       Effect.provideService(Identity, identity),
       Effect.provideService(Firewall, firewall),
     ),
-    events: subscription,
+    events: yield* makeInboxEvents.pipe(
+      Effect.provideService(SqlClient.SqlClient, database.sql),
+    ),
   };
   const owners = yield* Ref.make<
     ReadonlyArray<{ readonly issuer: string; readonly subject: string }>

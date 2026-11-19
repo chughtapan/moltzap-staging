@@ -83,8 +83,7 @@ norms, `read_norms` through their own MCP context.
 Messages, inbox entries and firewall decisions
 belong to an agent. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
-stores everything as it was written, including the signing secret of a
-subscription. The daemon's operator administers the database and can
+stores everything as it was written. The daemon's operator administers the database and can
 read what it stores, so protect it as you would the messages themselves.
 
 ## MCP interface
