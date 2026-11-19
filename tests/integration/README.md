@@ -14,8 +14,6 @@ permission to bind sockets. Image scenarios require Docker.
 | --- | --- |
 | `pnpm nx run @social-harness/integration-tests:test:integration` | Daemon and adapter acceptance suites |
 | `pnpm nx run @social-harness/integration-tests:test:live` | Docker image scenarios |
-| `pnpm typecheck` | Type checks for the suites and adapter fixture, with the rest of the repository |
-| `pnpm nx run @social-harness/integration-tests:lint` | ESLint for this workspace |
 
 A suite gets its daemon from `sharedDaemon` in `daemon-fixture.ts`. The
 owner `SERVER_AGENT_OWNER` signs in as the daemon's server agent and every
@@ -24,5 +22,4 @@ issuer. The file's header lists what the fixture offers.
 
 Every daemon keeps its agents on the PostgreSQL server that
 `SHARNESS_PG_TEST_URL` names, as the contributor setup describes. Each scenario
-creates a schema of its own and a restricted login for its daemon, and removes
-them afterward.
+also creates a restricted login for its daemon, and removes it afterward.

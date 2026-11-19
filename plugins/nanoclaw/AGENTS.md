@@ -5,7 +5,7 @@ NanoClaw channel adapter and integration canary. Publication follows `docs/refer
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import daemon services, the library's internals, simulator, evals, or another
+import daemon services, the library's internals, or another
 adapter. NanoClaw creates it through NanoClaw's native channel list,
 and it connects the stock MCP client to the configured MCP URL. It
 does not acquire a daemon, a database, an owner's sign-in or a local store.

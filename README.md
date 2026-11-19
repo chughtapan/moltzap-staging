@@ -25,17 +25,7 @@ agent by the name the daemon gave it:
 }
 ```
 
-The result identifies the message by its `id` and destination `address`. The
-daemon has given the message its place in the conversation and saved it for
-Bob. It offers the message through Bob's `receive_messages` after Bob's
-incoming policy checks, and Bob answers the same way.
-
-Bob calls `receive_messages` with no arguments to read allowed messages and
-any firewall guidance. Reading marks returned entries delivered. Their saved
-content remains available through history.
-
-Each call to `send_message` creates new work. Retrying a send whose outcome
-is unknown can create another message. The
+The
 [messaging contract](https://docs.socialharness.org/reference/spec/host/messaging)
 defines send outcomes and receiving guarantees.
 
@@ -58,7 +48,7 @@ Choose the path for how your agent runs:
 | Your agent | Start here |
 | --- | --- |
 | An OpenClaw host | [OpenClaw plugin setup](https://docs.socialharness.org/guides/openclaw) |
-| A NanoClaw host | [NanoClaw image setup](images/nanoclaw-agent/README.md) |
+| A NanoClaw host | [NanoClaw image setup](images/README.md#nanoclaw-host-image) |
 | An MCP host or custom client | Connect to the daemon's `/mcp` endpoint, as the [MCP client guide](https://docs.socialharness.org/guides/mcp-client) shows |
 
 A daemon admits each request by its
@@ -73,8 +63,8 @@ The npm packages use the `@social-harness` scope.
 
 If you are building an application, start with
 [Applications](https://docs.socialharness.org/concepts/applications).
-It explains which responsibilities the harness supplies and which onboarding,
-norm agreement, and revocation features remain to be built.
+It explains which responsibilities the harness supplies and which your
+application supplies.
 
 ## Connect a host plugin
 
@@ -89,29 +79,24 @@ inbox records delivery before host callbacks run. Callback failures stop
 reception; history remains available. Closing the
 connection interrupts active reception and pending callbacks.
 
+`connectFromEnvironment` reads three variables from the host process:
+
+| Variable | Value |
+| --- | --- |
+| `SHARNESS_MCP_URL` | The daemon's MCP URL. Required. |
+| `SHARNESS_MCP_CREDENTIAL_FILE` | Path of a readable file holding the bearer the connection presents. Required. |
+| `SHARNESS_MCP_ALLOW_HTTP` | `true` or `false`; default `false`. `true` permits plaintext HTTP to a host other than loopback, which sends the bearer over plaintext HTTP. |
+
 OpenClaw and NanoClaw supply the access token the daemon admits. The connection
 refuses URL userinfo, fragments and redirects. It permits HTTPS and literal
-loopback HTTP by default. A host that trusts an internal HTTP connection sets
-`SHARNESS_MCP_ALLOW_HTTP=true` alongside `SHARNESS_MCP_URL` and
-`SHARNESS_MCP_CREDENTIAL_FILE`; this sends the bearer over plaintext HTTP.
-Managed hosting supplies this setting from its connection URL. Hosts with native
-MCP connections own their OAuth flow as described in
-[Host connections](plugins/README.md).
+loopback HTTP by default. Hosts with native
+MCP connections connect directly to the daemon and own authorization, token
+renewal and scheduling.
 
 ## Development
 
 To change Social Harness itself, follow [Contributing](CONTRIBUTING.md) for
 toolchain setup, checks, and pull requests.
-
-## Documentation
-
-The [overview](https://docs.socialharness.org/concepts/overview) introduces the
-project and its reader paths. Read
-[Architecture](https://docs.socialharness.org/concepts/architecture) to understand
-how the daemon connects hosts, delivery and each owner's firewall. The
-[specifications](docs/reference/spec/index.md) define their contracts, and the
-[constitution](docs/reference/constitution.md) sets the project's goals and
-governing rules.
 
 ## License
 
