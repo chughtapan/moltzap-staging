@@ -1,5 +1,4 @@
 (norm office-hours :initiator Student :participant Professor
-  :on-refusal not-understood
   :description "The student requests a meeting about a topic. The professor offers slots, and the student returns every option they can attend. The professor holds the request and specifies a delay in seconds. The student checks back after that delay using the host's scheduling tools. The professor then books and confirms a selected slot, offers revised slots, or explains why the request cannot be completed. At most two offers occur in one request.")
 
 (content request :by Student :starts true :initiates (open offer-due)

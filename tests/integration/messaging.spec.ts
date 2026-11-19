@@ -1,7 +1,9 @@
 /** @file One daemon process delivers between its server agent and a client, in one order for both. */
 
+import { FileSystem } from "@effect/platform";
 import { INBOX_EVENT } from "@social-harness/social-harness";
 import { Effect, Stream } from "effect";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   callTool,
@@ -115,6 +117,87 @@ it(
         first.id,
         second.id,
       ]);
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+/** The asker opens with `ask`, and the answerer ends with `answer`. */
+const exchangeNorm = `(norm exchange :initiator Asker :participant Answerer)
+(content ask :by Asker :starts true :initiates asked
+  (field question :type string :min-length 1))
+(content answer :by Answerer :when asked :ends true
+  (field reply :type string :min-length 1))
+`;
+
+it(
+  "refuses a client's message the server agent's norm does not allow on the send itself, and stores it for neither agent",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon({
+        settings: {
+          messagePolicyFile: "message-policy.json",
+          normsDirectory: "norms",
+        },
+      });
+      const filesystem = yield* FileSystem.FileSystem;
+      yield* filesystem.makeDirectory(join(daemon.directory, "norms"));
+      yield* filesystem.writeFileString(
+        join(daemon.directory, "norms", "exchange.lisp"),
+        exchangeNorm,
+      );
+      yield* filesystem.writeFileString(
+        join(daemon.directory, "message-policy.json"),
+        JSON.stringify({ format: "org.social-harness/message-policy/v2" }),
+      );
+      yield* daemon.start();
+      const [server, client] = yield* joinParticipants(daemon, [
+        SERVER_AGENT_OWNER,
+        "bob",
+      ]);
+      if (server === undefined || client === undefined) {
+        return yield* Effect.dieMessage("Expected two participants");
+      }
+
+      const plain = yield* send(client, { text: "Can we talk?" }).pipe(
+        Effect.flip,
+      );
+      expect(plain).toMatchObject({
+        reason: "firewall-refused",
+        refusal: "rule-violation",
+        rule: "norm-structural",
+      });
+      const outOfTurn = yield* send(client, {
+        text: '(answer :ontology exchange :reply "yes")',
+      }).pipe(Effect.flip);
+      expect(outOfTurn).toMatchObject({
+        reason: "firewall-refused",
+        refusal: "rule-violation",
+        rule: "norm-protocol",
+      });
+      expect(plain.message).toMatch(
+        /^Error: Reply does not contain exactly one parenthesized speech act\. Check: chk_\w+, rule norm-structural; rule-violation\.$/u,
+      );
+      expect(outOfTurn.message).toMatch(
+        /^Error: replyToMsgId is required for a continuation act\. Check: chk_\w+, rule norm-protocol; rule-violation\.$/u,
+      );
+
+      const asked = yield* send(client, {
+        text: '(ask :ontology exchange :question "Is it open?")',
+      });
+      expect(yield* nextItem(server)).toMatchObject({ msgId: asked.id });
+      for (const [participant, address] of [
+        [server, { address: client.address }],
+        [client, {}],
+      ] as const) {
+        const saved = yield* callTool(participant.connection.mcp, {
+          name: "read_conversation",
+          arguments: address,
+        });
+        expect(saved.records.map((record) => record.message.msgId)).toEqual([
+          asked.id,
+        ]);
+      }
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

@@ -10,8 +10,8 @@ import {
   readSExpressions,
   sameJson,
   type SExpression,
-  writeSExpression,
 } from "./encoding.js";
+import { writeSExpression } from "./firewall/__tests__/firewall-fixtures.js";
 
 describe("JSON text of schema values", () => {
   it("round-trips generated JSON through one stable text", () => {

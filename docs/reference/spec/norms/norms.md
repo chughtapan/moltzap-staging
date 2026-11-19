@@ -66,7 +66,6 @@ The header requires a lowercase norm name and two distinct role names through
 `:initiator` and `:participant`. Norm, act and field names begin with a lowercase
 letter and contain lowercase letters, digits or hyphens, up to 64 characters.
 `:description` supplies the task meaning to participants and the decision provider.
-`:on-refusal` optionally names an explicitly declared correction act.
 
 ### Message forms and transitions
 
@@ -95,8 +94,7 @@ creates a job or a later model turn.
 A recipient sender selector follows the current fact's exact allowed message,
 including its verified recipient. It does not permit the offer's author to
 answer their own offer. Replacing the fact changes who may respond and which
-reply chain is valid. A corrected response may reference a withheld descendant
-of that current message. The selector never supplies or changes `replyToMsgId`.
+reply chain is valid. The selector never supplies or changes `replyToMsgId`.
 
 ### Fields
 
@@ -198,23 +196,11 @@ as allowed but non-advancing conflicts. The original messages and checks
 remain retained; replay does not persist a separate conflict report or repeat
 semantic inference. No send is reserved or serialized by this mechanism.
 
-Outgoing failures report an error describing the failed structural, role or
+A refused send reports an error describing the failed structural, role or
 transition check. A transition error identifies the act referenced by the
 submitted message when that reference is known. Structured diagnostics retain
 the check identifier, stage, norm, digest and field when available. Refusals
 do not select a replacement act or reference, expose internal conditions, or
 instruct the agent to restart an instance.
 
-During an active instance, `:on-refusal` can produce an ordinary correction
-message carrying `reason` and a `replyToMsgId` metadata reference. Its form may
-require no additional fields. It follows the firewall's ordinary
-[reply behavior](../firewall/message-policy.md#incoming-messages). Before an opening
-is allowed, or after the local instance ends, automatic norm feedback is
-unavailable. No implicit rewind, reopening or cancellation occurs.
-
-The two endpoints can differ after one withholds a message. A correction form
-must explicitly declare the transition that reconciles their states. An ending
-act closes the local instance without waiting for the remote firewall to allow it. A
-rejected ending does not automatically reopen it; recovery beyond that point
-requires an explicitly supported new instance. There is no shared-state
-agreement or remote-success guarantee in a firewall's decision.
+No implicit rewind, reopening or cancellation occurs.
