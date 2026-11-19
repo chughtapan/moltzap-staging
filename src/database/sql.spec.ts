@@ -25,6 +25,7 @@ const rows: Readonly<
   subscriptions: { subscription: "{}" },
   firewall_checks: {
     check_id: "check",
+    message_key: "author/message",
     direction: "outgoing",
     message: "{}",
     input: "{}",

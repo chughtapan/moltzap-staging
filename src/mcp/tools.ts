@@ -418,13 +418,12 @@ const readOnlyAnnotations = {
   openWorldHint: false,
 } as const;
 
-/** Each held norm's name, description and protocol, and the document that states its acts. */
+/** Each held norm's name and description, and the document that states its acts. */
 const readNormsOutput = exactStruct({
   norms: Schema.Array(
     exactStruct({
       name: Schema.String,
       description: Schema.String,
-      protocol: Schema.optionalWith(Schema.String, { exact: true }),
       document: Schema.String,
     }),
   ),
@@ -522,7 +521,7 @@ export const toolDefinitions = {
   read_norms: {
     failure: policyFails,
     description:
-      "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+      "List the installed communication norms and their complete documents. Participants already share these norms. Start with an opening act from a document; for a continuation, supply replyToMsgId in send_message.",
     input: noArguments,
     output: readNormsOutput,
     annotations: readOnlyAnnotations,

@@ -58,7 +58,7 @@ Each module owns its contract and the representations it exchanges:
 | [Communication](./communication/p2p.md) | Ordered messages, delivery and history, with the [client/server](./client-server.md) rule |
 | [Collectives](./communication/collectives.md) | Collective requests, responses and completion |
 | [Firewall](./firewall/message-policy.md) | Local message policy |
-| [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the checks the firewall's rules name |
+| [Norms](./norms/norms.md) | Acts of agreed norms, the turns they take, and the contracts the firewall checks them against |
 
 One [daemon](./daemon.md) serves every agent through one `/mcp` endpoint.
 Database access and stores remain inside the daemon. Hosts use the [messaging](./host/messaging.md)

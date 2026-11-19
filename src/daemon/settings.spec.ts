@@ -4,13 +4,11 @@ import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
 import { ConfigProvider, Effect, FastCheck as fc, Redacted } from "effect";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { loadDaemonSettings } from "./settings.js";
 
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
-const rulesFile = "rules.json";
 const providerKey = "private-decision-provider-key";
 const settings = {
   port: 4319,
@@ -21,9 +19,6 @@ const settings = {
     scope: "use:mcp",
   },
 };
-const shippedNorms = fileURLToPath(
-  new URL("../../config/norms/", import.meta.url),
-);
 
 /**
  * A valid settings file in a directory of its own, loaded through the variable
@@ -82,26 +77,27 @@ function messagePolicy(
   });
 }
 
-/**
- * A norms directory in `beneath` holding one shipped norm and the shipped
- * rule file. `office-hours` gives English rules; `chat` gives none.
- */
+/** A norm document with no English rule. */
+const unruledNorm = `(norm ping :initiator Asker :participant Answerer)
+(content ask :by Asker :starts true :ends true)
+`;
+
+/** The same norm with an English rule, which needs a decision provider. */
+const ruledNorm = `${unruledNorm}(rule :act ask "The question is polite.")
+`;
+
+/** A norms directory in `beneath` holding `document` as its one norm document. */
 function norms(
   test: Effect.Effect.Success<typeof fixture>,
-  norm: "office-hours" | "chat",
+  document: string,
   beneath = "",
 ) {
   return Effect.gen(function* () {
     const directory = join(test.directory, beneath, "norms");
     yield* test.filesystem.makeDirectory(directory, { recursive: true });
-    yield* Effect.forEach(
-      [`examples/${norm}.lisp`, rulesFile],
-      (file) =>
-        test.filesystem.copyFile(
-          join(shippedNorms, file),
-          join(directory, file.replace("examples/", "")),
-        ),
-      { concurrency: 1 },
+    yield* test.filesystem.writeFileString(
+      join(directory, "ping.lisp"),
+      document,
     );
     return { normsDirectory: join(beneath, "norms") };
   });
@@ -148,7 +144,7 @@ it.prop(
       yield* test.write({
         ...settings,
         ...(yield* messagePolicy(test, true, beneath)),
-        ...(yield* norms(test, "chat", beneath)),
+        ...(yield* norms(test, unruledNorm, beneath)),
       });
 
       const loaded = (yield* test.load).settings;
@@ -157,11 +153,9 @@ it.prop(
         loaded.messagePolicy?.provider?.kind === "jev" &&
           Redacted.value(loaded.messagePolicy.provider.apiKey),
       ).toBe(providerKey);
-      expect(loaded.norms?.initial).toEqual([
-        yield* test.filesystem.readFileString(
-          join(shippedNorms, "examples/chat.lisp"),
-        ),
-      ]);
+      expect(
+        loaded.norms?.contracts.map((contract) => contract.source),
+      ).toEqual([unruledNorm]);
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 12 } },
 );
@@ -172,12 +166,12 @@ it("loads the decision provider that judges initial norms' English rules, though
     yield* test.write({
       ...settings,
       ...(yield* messagePolicy(test, true)),
-      ...(yield* norms(test, "office-hours")),
+      ...(yield* norms(test, ruledNorm)),
     });
 
     const loaded = yield* test.load;
 
-    expect(loaded.settings.norms?.initial).toHaveLength(1);
+    expect(loaded.settings.norms?.contracts).toHaveLength(1);
     expect(loaded.settings.messagePolicy?.policy.text).toBeUndefined();
     expect(loaded.settings.messagePolicy?.provider?.kind).toBe("jev");
   }).pipe(Effect.provide(NodeContext.layer)));
@@ -195,7 +189,7 @@ it.each([
     yield* test.write({
       ...settings,
       ...(yield* policy(test)),
-      ...(yield* norms(test, "office-hours")),
+      ...(yield* norms(test, ruledNorm)),
     });
 
     const failure = yield* test.load.pipe(Effect.flip);
@@ -204,17 +198,16 @@ it.each([
   }).pipe(Effect.provide(NodeContext.layer)),
 );
 
-it("refuses a norms directory without its rule file, naming the file", () =>
+it("refuses a norms directory whose document does not compile", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    yield* test.filesystem.makeDirectory(join(test.directory, "norms"));
     yield* test.write({
       ...settings,
       ...(yield* messagePolicy(test, false)),
-      normsDirectory: "norms",
+      ...(yield* norms(test, "(norm ping :initiator Asker)")),
     });
     const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure.message).toContain(rulesFile);
+    expect(failure.message).toContain("norms directory");
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it("loads the origins its authentication allows", () =>
