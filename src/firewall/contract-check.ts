@@ -10,6 +10,7 @@ import {
   checkStructure,
   type CompiledContract,
   ContractProblem,
+  formatAct,
   type ProtocolRecord,
   protocolRecordSchema,
   readAct,
@@ -72,7 +73,13 @@ export const prepareContract = Effect.fn("prepareContract")(function* (
     }
     const checkedHistory = yield* checkedMessages(store, history);
     const now = yield* Clock.currentTimeMillis;
-    view = yield* projectProtocol(checkedHistory);
+    view = yield* projectProtocol([
+      ...checkedHistory,
+      ...(evidence.references ?? []).map((reference) => ({
+        message: reference,
+        at: now,
+      })),
+    ]);
     if (view.instance === undefined && contracts.length === 0) {
       return { kind: "unconfigured" as const };
     }
@@ -110,6 +117,31 @@ export const prepareContract = Effect.fn("prepareContract")(function* (
     ...(selected === undefined ? {} : { selected }),
   } satisfies ContractCheck;
 });
+
+/**
+ * The act that tells the sender of a withheld message why, when the contract
+ * in force declares one in `:on-refusal` with a `reason` field.
+ */
+export function contractReply(
+  check: ContractCheck,
+  detail: string,
+): string | undefined {
+  const contract =
+    check.kind === "ready" ? check.contract : check.view.instance?.contract;
+  const act = contract?.onRefusal;
+  if (contract === undefined || act === undefined) {
+    return undefined;
+  }
+  const form = contract.forms.find((declared) => declared.act === act);
+  if (form === undefined || !Object.hasOwn(form.fields.properties, "reason")) {
+    return undefined;
+  }
+  return formatAct({
+    name: act,
+    norm: contract.name,
+    fields: { reason: detail },
+  });
+}
 
 /**
  * Each message of `history` with this firewall's saved check of exactly that

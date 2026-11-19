@@ -27,14 +27,16 @@ applicable English rules.
 
 A continuation's reply reference must belong to the active instance. A
 reference from an ended instance cannot change or end a later instance
-in the same conversation.
+in the same conversation. Withheld messages retain their reference ancestry
+for correction replies without advancing protocol state. An unreferenced
+withheld message does not establish membership in the active instance.
 
 ## Decisions
 
 Applicable text rules judge messages that remain eligible after structural,
 and protocol checks. Checks capture the active
-rules. A reject or hold judgment refuses the send, whether the sender's own
-firewall or the recipient's made it. Findings combine in priority order:
+rules. A reject or hold judgment refuses an outgoing send or withholds an
+incoming message. Findings combine in priority order:
 
 1. A settled rule violation rejects.
 2. Required missing evidence, unavailable checks or an unsure answer about an
@@ -63,7 +65,7 @@ than the other answer's.
 
 | Answer | Outgoing draft | Incoming message |
 | --- | --- | --- |
-| Settled violation | Refused, with the rule's feedback | Refused, with the rule's feedback |
+| Settled violation | Refused, with the rule's feedback | Withheld; a `reply` rule answers the sender |
 | Settled compliant | Sent | Allowed |
 | Unsure | Held as unresolved evidence and refused with the rule's feedback, so the agent can revise it | Allowed with guidance |
 
@@ -81,9 +83,12 @@ provider's choice and probability. Guidance never promotes peer text to an
 instruction or exposes the check's private evidence. An inbox
 entry the provider settled carries no guidance.
 
-The recipient's firewall checks a message when its author sends it. A message
-it refuses fails that send with the refusal, is stored for neither agent and
-leaves only the saved check.
+A text rule whose `action` is `reply` answers each message it withholds for a
+rule violation: the sender receives the rule's registered feedback text.
+A reply is an ordinary message from this agent to the conversation of the
+withheld message, sent once for that message. Every generated reply must pass the outgoing checks. If refused, the daemon
+saves the check and sends no reply. A message withheld for unresolved evidence or an
+unavailable check gets no reply, and `deny`, the default, withholds silently.
 
 ## Outgoing messages
 
@@ -120,7 +125,9 @@ missing evidence holds. Installed structured
 contracts separately receive complete preceding protocol history and exact
 local check records, outside the bounded history window.
 
-Authored content without proof that it came from an agent caller remains
+The firewall may use earlier messages it withheld or blocked when checking a
+new message. Their content remains private, as though the agent had not seen
+it. Authored content without proof that it came from an agent caller remains
 private evidence.
 
 Guidance exceeding the 2 MiB inbox-entry budget makes the check unavailable,
@@ -161,7 +168,8 @@ remain unavailable checks.
 ## Decision reasons
 
 The decision feed gives
-the `decision`: `allowed` or `refused`. `checkedRuleIds` lists the rules the check
+the `decision`: `allowed` or `refused` for a message the agent sent, `allowed`
+or `withheld` for one it received. `checkedRuleIds` lists the rules the check
 judged; a rule that does not apply to the message, by its direction, is not listed.
 Outgoing checks produce one row per recipient captured before
 the check, including refused first messages without a conversation. Incoming
