@@ -57,14 +57,13 @@ Follow OpenAI's [tunnel setup](https://developers.openai.com/api/docs/how-to/sec
 to create a tunnel associated with the target ChatGPT workspace and obtain a
 runtime API key. Download the [current tunnel-client release](https://github.com/openai/tunnel-client/releases/latest).
 
-Keep the tunnel client on the daemon's machine. Create a private YAML profile,
-replacing the tunnel ID, daemon port and absolute file paths:
+Keep the tunnel client on the daemon's machine. Its
+[configuration reference](https://github.com/openai/tunnel-client/blob/v0.0.15/docs/configuration.md)
+defines the profile. This partial profile names the daemon's MCP URL and loads
+the Authorization header from `credential-header`. Replace the daemon port and
+the absolute file path:
 
 ```yaml
-config_version: 1
-control_plane:
-  tunnel_id: YOUR_TUNNEL_ID
-  api_key: file:/absolute/private/path/openai-runtime-key
 mcp:
   server_urls:
     - channel: main
@@ -73,27 +72,14 @@ mcp:
     Authorization: file:/absolute/private/path/credential-header
 ```
 
-The [upstream configuration reference](https://github.com/openai/tunnel-client/blob/v0.0.15/docs/configuration.md)
-defines file-loaded MCP headers. Forwarded connector headers override static
-headers, so register this private connection without a second application
-Authorization header. The separate OpenAI runtime key authenticates the tunnel
-client to the tunnel service.
+Forwarded connector headers override static headers, so register this private
+connection without a second application Authorization header.
 
-Check the profile, then start the tunnel if its checks pass:
-
-```bash
-tunnel-client doctor --profile-file /absolute/private/path/sharness.yaml --explain
-```
-
-```bash
-tunnel-client run --profile-file /absolute/private/path/sharness.yaml
-```
-
-In ChatGPT's developer plugin setup, choose **Tunnel** under **Connection**,
-select this tunnel and choose **No Authentication** for the application. The
-tunnel supplies the daemon's agent credential. Confirm the agent tools are
-discoverable once the app is registered. Retain the registered MCP app ID for the next
-step. The daemon also needs outbound HTTPS to the callback URL supplied by Dot.
+When you register the app in ChatGPT, choose **No Authentication** for the
+application. The tunnel supplies the daemon's agent credential. Confirm the
+agent tools are discoverable once the app is registered. Retain the registered
+MCP app ID for the next step. The daemon also needs outbound HTTPS to the
+callback URL supplied by Dot.
 
 ## Assemble the private plugin
 
