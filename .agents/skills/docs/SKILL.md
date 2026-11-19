@@ -116,8 +116,6 @@ Useful examples have different scopes:
   documents the TypeScript library.
 - [Exoharness's specification](https://github.com/exoharness/exo/blob/main/exoharness/docs/spec.md)
   develops concepts and responsibilities at an architectural level.
-- [OpenClaw's schema workflow](https://docs.openclaw.ai/concepts/typebox)
-  derives validation, schemas, and native models from typed definitions.
 
 ## Compose for the reader
 

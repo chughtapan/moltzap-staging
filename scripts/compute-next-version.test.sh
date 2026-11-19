@@ -48,7 +48,7 @@ cleanup() { rm -rf "$MOCK_DIR"; }
 trap cleanup EXIT
 
 # Package names supplied to the release version planner.
-RELEASED=". plugins/openclaw"
+RELEASED=". images/daemon"
 
 echo "--- Test 1: No existing versions ---"
 export NPM_MOCK_RESPONSES='{"@social-harness/social-harness":[]}'
@@ -69,8 +69,8 @@ assert_eq "bootstrap starts a calendar history" "${TODAY}.0" "$RESULT"
 export NPM_MOCK_RESPONSES='{"@social-harness/social-harness":{"exit":0,"body":""}}'
 RESULT=$("$SCRIPT_DIR/compute-next-version.sh" .)
 assert_eq "bootstrap without latest starts a calendar history" "${TODAY}.0" "$RESULT"
-export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":{\"exit\":0,\"body\":\"\"},\"@social-harness/openclaw-channel\":[\"${TODAY}.2\"]}"
-RESULT=$("$SCRIPT_DIR/compute-next-version.sh" . plugins/openclaw)
+export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":{\"exit\":0,\"body\":\"\"},\"@social-harness/daemon\":[\"${TODAY}.2\"]}"
+RESULT=$("$SCRIPT_DIR/compute-next-version.sh" . images/daemon)
 assert_eq "bootstrap preserves the sibling counter" "${TODAY}.3" "$RESULT"
 
 echo "--- Test 2: One existing version today ---"
@@ -121,7 +121,7 @@ set -e
 assert_eq "empty-body failure exits 1" "1" "$STATUS"
 
 echo "--- Test 8: One version over the union of the released histories ---"
-export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":[\"${TODAY}.0\",\"${TODAY}.2\"],\"@social-harness/openclaw-channel\":[\"${TODAY}.1\"]}"
+export NPM_MOCK_RESPONSES="{\"@social-harness/social-harness\":[\"${TODAY}.0\",\"${TODAY}.2\"],\"@social-harness/daemon\":[\"${TODAY}.1\"]}"
 # shellcheck disable=SC2086 -- the package list is deliberately word-split.
 RESULT=$("$SCRIPT_DIR/compute-next-version.sh" $RELEASED)
 assert_eq "union takes the highest counter across packages" "${TODAY}.3" "$RESULT"

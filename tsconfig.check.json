@@ -18,8 +18,6 @@
   "include": [
     "*.ts",
     "src/**/*.ts",
-    "plugins/*/*.ts",
-    "plugins/*/src/**/*.ts",
     "scripts/**/*.ts",
     "images/*/*.ts",
     "tests/integration/**/*.ts"

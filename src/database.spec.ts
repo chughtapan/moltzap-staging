@@ -7,18 +7,9 @@
 import type { SqlError } from "@effect/sql/SqlError";
 import { Migrator, SqlClient } from "@effect/sql";
 import { scopedLive as it } from "@effect/vitest";
-import {
-  ConfigProvider,
-  Effect,
-  FastCheck as fc,
-  Fiber,
-  Layer,
-  Predicate,
-  Redacted,
-} from "effect";
+import { Effect, FastCheck as fc, Fiber, Layer, Predicate } from "effect";
 import { expect } from "vitest";
 import {
-  checkDatabase,
   databaseConnection,
   prepareDatabase,
   withAgentRows,
@@ -200,40 +191,32 @@ it.each([
     }),
 );
 
-/** A database nothing has prepared, and deployment's preparation of it. */
+/** A database nothing has prepared, and the daemon's preparation of it. */
 const fixture = Effect.gen(function* () {
-  const { sql, url, run } = yield* openTestDatabase({ prepared: false });
+  const { sql, run } = yield* openTestDatabase({ prepared: false });
   const tables = sql<{
     name: string;
   }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
-  const prepare = prepareDatabase.pipe(
-    Effect.withConfigProvider(
-      ConfigProvider.fromMap(
-        new Map([["SHARNESS_DATABASE_URL", Redacted.value(url)]]),
-      ),
-    ),
-  );
-  return { sql, run, tables, prepare };
+  return { sql, tables, prepare: run(prepareDatabase) };
 });
 
-it("prepares a fresh database, which the check refuses until then without creating its schema", () =>
+it("prepares a fresh database and leaves a prepared one as it is", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    expect(yield* test.run(checkDatabase).pipe(Effect.flip)).toMatchObject({
-      reason: "schema",
-    });
     expect(yield* test.tables).toEqual([]);
     yield* test.prepare;
-    yield* test.run(checkDatabase);
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    yield* test.sql`INSERT INTO owner_bindings (issuer, subject, agent_key) VALUES ('i', 's', 'k')`;
+    yield* test.prepare;
+    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(1);
   }));
 
 it("prepares a fresh database whose migration ledger already exists but is empty", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
-    yield* test.run(Migrator.make({})({ loader: Effect.succeed([]) }));
+    yield* Migrator.make({})({ loader: Effect.succeed([]) }).pipe(
+      Effect.provideService(SqlClient.SqlClient, test.sql),
+    );
     yield* test.prepare;
-    yield* test.run(checkDatabase);
     expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
   }));
 

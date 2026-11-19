@@ -40,11 +40,9 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql": "catalog:",
     "@modelcontextprotocol/client": "catalog:",
-    "@social-harness/openclaw-channel": "workspace:*",
     "@social-harness/social-harness": "workspace:*",
     "effect": "catalog:",
     "eslint": "catalog:",
-    "openclaw": "catalog:",
     "vitest": "catalog:"
   }
 }

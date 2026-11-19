@@ -15,7 +15,7 @@ words behind each rule are in docs-internal's
 Societies Need a Social Harness* describes them: identities (L1), reliable
 ordered communication (L2), each agent's personal firewall (L3), norms that
 agents agree to (L4), and institutions and applications built on them (L5).
-An agent runs inside a *host*, a program such as OpenClaw, which
+An agent runs inside a *host*, which
 reaches the stack through a local *daemon*. The *firewall* checks every message
 an agent sends or receives against its policies. An agent's *owner* is the
 person it acts for.

@@ -5,22 +5,12 @@
       "entry": [
         "src/**/*.spec.ts",
         "vitest*.config.ts",
-        "scripts/copy-social-harness-skills.ts",
         "scripts/test-*-package.ts"
       ],
       "project": [
         "src/**/*.ts",
         "*.ts",
         "scripts/**/*.ts"
-      ]
-    },
-    "plugins/openclaw": {
-      "entry": [
-        "src/**/*.spec.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "*.ts"
       ]
     },
     "tests/integration": {
@@ -30,20 +20,6 @@
       ],
       "project": [
         "**/*.ts"
-      ]
-    },
-    "images/openclaw-agent": {
-      "entry": [
-        "*.spec.ts",
-        "configure-channel.ts",
-        "patch-openclaw.ts"
-      ],
-      "project": [
-        "*.ts"
-      ],
-      "ignoreDependencies": [
-        "@social-harness/openclaw-channel",
-        "openclaw"
       ]
     },
     "images/daemon": {

@@ -73,8 +73,7 @@ The result should report no broken internal links.
 ## Integration tests
 
 The tests under `tests/integration` run a real `sharnessd` process and sign
-several owners' agents in to it, including delivery through the OpenClaw
-adapter. Use this workspace only for tests that start a daemon process. Keep
+several owners' agents in to it. Use this workspace only for tests that start a daemon process. Keep
 every other test beside the code it exercises.
 
 Run commands from the repository root. Nx builds the packages each target
