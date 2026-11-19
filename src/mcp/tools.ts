@@ -59,14 +59,24 @@ type CanonicalMessageAddress =
  * agent, reject duplicate names, and sort names in unsigned ASCII order.
  * One peer becomes a direct address. Larger groups contain 3 to `maximumMembers`
  * agents. Invalid names and membership return `invalid-address` or
- * `membership-invalid`.
+ * `membership-invalid`. With `hideGroups`, a group destination is refused.
  */
 export function canonicalMessageAddress(
   to: MessageAddressInput,
   localAgentName: AgentName,
+  hideGroups = false,
 ): Effect.Effect<CanonicalMessageAddress, SendError> {
-  return to.startsWith(AGENT_ADDRESS_PREFIX)
-    ? canonicalDirect(to, localAgentName)
+  if (to.startsWith(AGENT_ADDRESS_PREFIX)) {
+    return canonicalDirect(to, localAgentName);
+  }
+  return hideGroups
+    ? Effect.fail(
+        new SendError({
+          reason: "invalid-address",
+          detail:
+            "this daemon does not offer groups; address one agent as agent:<name>",
+        }),
+      )
     : canonicalGroup(to, localAgentName);
 }
 

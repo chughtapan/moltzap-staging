@@ -17,7 +17,6 @@ import { createHash } from "node:crypto";
 import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   type CommunicationError,
-  GROUP_ADDRESS_PREFIX,
   Message,
   type MessageAddressInput,
   messageWithId,
@@ -249,19 +248,10 @@ function send(agent: Agent, input: SendRequest) {
   return Effect.suspend(() => {
     const request = structuredClone(input);
     return Effect.gen(function* () {
-      if (
-        agent.settings.hideGroups &&
-        request.to.startsWith(GROUP_ADDRESS_PREFIX)
-      ) {
-        return yield* new SendError({
-          reason: "invalid-address",
-          detail:
-            "this daemon does not offer groups; address one agent as agent:<name>",
-        });
-      }
       const destination = yield* canonicalMessageAddress(
         request.to,
         agent.card.agentName,
+        agent.settings.hideGroups,
       );
       const outgoing = yield* outgoingFor(
         agent,
