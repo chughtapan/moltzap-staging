@@ -1,6 +1,6 @@
-/** @file One P2P daemon process gives a group's members one order and keeps their unread messages across a restart. */
+/** @file One P2P daemon process delivers between its peers, alone and in a group, and keeps their agents and messages across a restart. */
 
-import { GroupAddress } from "@social-harness/social-harness";
+import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
 import { Effect, Schema } from "effect";
 import { expect, it } from "vitest";
 import {
@@ -14,14 +14,18 @@ import { processTrace } from "../scenario-fixture.js";
 import { callTool } from "../tool-call.js";
 import { sharedDaemon, type SignedIn, stopProcess } from "./daemon-fixture.js";
 
-/** Each trace starts one daemon, and one of them starts it twice. */
+/** Each trace starts one daemon, and two of them start it twice. */
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
 
-/** The identifiers of the messages in the agent's saved group conversation, in order. The traces do not page it. */
+/** The identifiers of the messages in the agent's saved conversation at `address`, in order. The traces do not page it. */
 const savedOrder = (reader: SignedIn, address: string) =>
   callTool(reader.connection.mcp, {
     name: "read_conversation",
-    arguments: { address: Schema.decodeUnknownSync(GroupAddress)(address) },
+    arguments: {
+      address: Schema.decodeUnknownSync(
+        Schema.Union(AgentAddress, GroupAddress),
+      )(address),
+    },
   }).pipe(
     Effect.map((page) => page.records.map((record) => record.message.msgId)),
   );
@@ -33,6 +37,50 @@ const receivedOrder = (participant: Participant, count: number) =>
     () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
     { concurrency: 1 },
   );
+
+it(
+  "delivers between two peers in both directions, saves one history for both and keeps each owner's agent across a restart",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon({ settings: P2P });
+      const running = yield* daemon.start();
+      const before = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const [alice, bob] = yield* joinParticipants(daemon, [
+            "alice",
+            "bob",
+          ]);
+          if (alice === undefined || bob === undefined) {
+            return yield* Effect.dieMessage("Expected two participants");
+          }
+          const first = yield* send(alice, { to: bob.address, text: "hello" });
+          expect(yield* nextItem(bob)).toMatchObject({
+            message: {
+              msgId: first.id,
+              author: alice.agent,
+              recipients: [bob.agent],
+            },
+          });
+          const second = yield* send(bob, { to: alice.address, text: "reply" });
+          expect(yield* receivedOrder(alice, 1)).toEqual([second.id]);
+          return {
+            agents: [alice.agent, bob.agent],
+            ids: [first.id, second.id],
+          };
+        }),
+      );
+      yield* stopProcess(running);
+      yield* daemon.start();
+
+      const alice = yield* daemon.signInAs("alice");
+      const bob = yield* daemon.signInAs("bob");
+      expect([alice.agent, bob.agent]).toEqual(before.agents);
+      expect(yield* savedOrder(alice, bob.address)).toEqual(before.ids);
+      expect(yield* savedOrder(bob, alice.address)).toEqual(before.ids);
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
 
 it(
   "gives every member of a group of three the same order",

@@ -6,6 +6,7 @@ import {
   AgentCard,
   type connectFromEnvironment,
   DeliveryToken,
+  GroupAddress,
   InboxEntry,
   type McpConnection,
   MsgId,
@@ -51,6 +52,8 @@ const agent = (name: string, byte: number) =>
   });
 const alice = agent("alice", 1);
 const bob = agent("bob", 2);
+const carol = agent("carol", 3);
+const group = Schema.decodeUnknownSync(GroupAddress)("group:alice,bob,carol");
 /** Reads an entry as `receive_messages` returns it. */
 const readEntry = Schema.decodeUnknownSync(Schema.typeSchema(InboxEntry));
 const message = {
@@ -63,11 +66,14 @@ const message = {
   },
 };
 const plainEntry = readEntry({ deliveryToken, address, item: message });
-/** Alice's message in Bob's inbox with guidance. */
+/** Alice's message to the group, in Bob's inbox with guidance. */
 const guidedEntry = readEntry({
   deliveryToken,
-  address,
-  item: message,
+  address: group,
+  item: {
+    ...message,
+    message: { ...message.message, recipients: [bob, carol] },
+  },
   guidance: {
     checkId: `chk_${"a".repeat(64)}`,
     instructions: [
@@ -80,8 +86,13 @@ const guidedEntry = readEntry({
   },
 });
 const agentName = fc.stringMatching(/^[a-z0-9]{3,8}$/);
-/** An explicit address of one agent. */
-const addresses = agentName.map((name) => `agent:${name}`);
+/** An explicit address: one agent, or a group's members in any order. */
+const addresses = fc.oneof(
+  agentName.map((name) => `agent:${name}`),
+  fc
+    .uniqueArray(agentName, { minLength: 2, maxLength: 4 })
+    .map((names) => `group:${names.join(",")}`),
+);
 /** Fields a model may write beside a reply reference, an address among them. */
 const besides = fc.dictionary(
   fc.constantFrom("text", "to", "note"),
@@ -231,11 +242,15 @@ describe("NanoClaw inbox entries", () => {
       senderId: address,
     });
   });
-  it("hands a message with guidance to the host as its inbox entry", async () => {
+  it("hands a group message with guidance to the host as its inbox entry, in its group", async () => {
     const { metadata, isGroup, content } = await received(guidedEntry);
-    expect(metadata).toEqual([address, address, false]);
-    expect(isGroup).toBe(false);
-    expect(content).toMatchObject({ address, sender: address });
+    expect(metadata).toEqual([group, group, true]);
+    expect(isGroup).toBe(true);
+    expect(content).toMatchObject({
+      address: group,
+      sender: "agent:alice",
+      members: ["agent:alice", "agent:bob", "agent:carol"],
+    });
     expect(entryInText(content)).toEqual(guidedEntry);
   });
   it("disconnects when the native inbound callback fails", async () => {
@@ -283,7 +298,7 @@ describe("NanoClaw sends", () => {
       }),
     );
   });
-  it("refuses a name with no address scheme before contacting MCP", async () => {
+  it("refuses a name with no agent: or group: scheme before contacting MCP", async () => {
     const fake = connection();
     const current = await channel();
     await current.setup(host());
@@ -291,7 +306,7 @@ describe("NanoClaw sends", () => {
       fc.asyncProperty(agentName, async (name) => {
         await expect(
           current.deliver(name, null, { kind: "chat", content: messageText }),
-        ).rejects.toThrow("explicit agent");
+        ).rejects.toThrow("explicit agent or group address");
         expect(fake.call).not.toHaveBeenCalled();
       }),
     );

@@ -1,4 +1,4 @@
-/** @file Group messages, and messages between any two agents, on one daemon. */
+/** @file Group messages, and messages between any agents, on one daemon. */
 
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -8,6 +8,7 @@ import {
   FastCheck as fc,
   Queue,
   Record,
+  Schema,
 } from "effect";
 import { expect } from "vitest";
 import type { Conversation } from "./service.js";
@@ -97,4 +98,61 @@ it("appends a message once to the history of each member of its conversation, an
         }).pipe(Effect.runPromise),
     );
     yield* Effect.tryPromise(() => fc.assert(property));
+  }));
+
+it("keeps one copy of a message its author sends again, and refuses a different message under the same identifier", () =>
+  Effect.gen(function* () {
+    const f = yield* conversationFixture;
+    const names = Record.keys(f.hosted);
+    type Name = (typeof names)[number];
+    const write = (
+      author: Name,
+      recipients: Arr.NonEmptyReadonlyArray<Name>,
+      text: string,
+    ) =>
+      Message.create({
+        author: f.cards[author],
+        recipients: Arr.map(recipients, (name) => f.cards[name]),
+        content: [{ type: "text", text }],
+      });
+    /** An agent and two choices of the other agents to write to. */
+    const sends = fc.constantFrom(...names).chain((author) => {
+      const others = fc
+        .subarray(names.filter((name) => name !== author))
+        .filter(Arr.isNonEmptyArray);
+      return fc.record({
+        author: fc.constant(author),
+        to: others,
+        elsewhere: others,
+      });
+    });
+    const property = fc.asyncProperty(sends, ({ author, to, elsewhere }) =>
+      Effect.gen(function* () {
+        const message = yield* write(author, to, "original");
+        const different = yield* Schema.decodeUnknown(Message)({
+          ...(yield* write(author, elsewhere, "changed")),
+          msgId: message.msgId,
+        });
+        const members: Conversation = [message.author, ...message.recipients];
+        const before = yield* f.histories(members);
+        yield* f.hosted[author].send(message);
+        yield* f.hosted[author].send(message);
+        expect(
+          yield* f.hosted[author].send(different).pipe(Effect.flip),
+        ).toMatchObject({ reason: "message-conflict" });
+        expect(yield* f.histories(members)).toEqual(
+          Record.map(before, (earlier) => [...earlier, message]),
+        );
+        const reused = yield* f.histories([
+          different.author,
+          ...different.recipients,
+        ]);
+        for (const history of Record.values(reused)) {
+          expect(history).not.toContainEqual(different);
+        }
+      }).pipe(Effect.runPromise),
+    );
+    /** Sender and recipients combine in 27 ways, and every run lengthens the histories the next one reads. */
+    const numRuns = 30;
+    yield* Effect.tryPromise(() => fc.assert(property, { numRuns }));
   }));
