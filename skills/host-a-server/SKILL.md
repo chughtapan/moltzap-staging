@@ -21,8 +21,7 @@ what you cannot infer.
   tooling an agent can drive (the `auth0` CLI and Auth0's own skill, the
   `railway` CLI or connector).
 
-Signing in to a provider and paying for a plan are the owner's to do. Never
-print a secret or commit one.
+Signing in to a provider and paying for a plan are the owner's to do.
 
 ## What must be true
 
@@ -52,7 +51,7 @@ before the first start have the owner sign in at the provider once (Auth0:
 **A database.** An empty PostgreSQL database. The daemon creates its tables on
 first start.
 
-**A server folder**, under version control, holding no secret:
+**A server folder**, under version control:
 
 ```text
 settings.json
