@@ -96,6 +96,9 @@ catalogs:
     husky:
       specifier: ^9.0.0
       version: 9.1.7
+    ipaddr.js:
+      specifier: 2.2.0
+      version: 2.2.0
     jiti:
       specifier: ^2.7.0
       version: 2.7.0
@@ -205,6 +208,9 @@ importers:
       effect:
         specifier: 3.22.1
         version: 3.22.1
+      ipaddr.js:
+        specifier: 'catalog:'
+        version: 2.2.0
       jose:
         specifier: 'catalog:'
         version: 6.2.5
@@ -5975,6 +5981,10 @@ packages:
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
+
+  ipaddr.js@2.2.0:
+    resolution: {integrity: sha512-Ag3wB2o37wslZS19hZqorUnrnzSkpOVy+IiiDEiTqNubEYpYuHWIf6K4psgN2ZWKExS4xhVCrRVfb/wfW8fWJA==}
+    engines: {node: '>= 10'}
 
   is-alphabetical@2.0.1:
     resolution: {integrity: sha512-FWyyY60MeTNyeSRpkM2Iry0G9hpr7/9kD40mD/cGQEuilcZYS4okz8SN2Q6rLCJ8gbCt6fN+rC+6tMGS99LaxQ==}
@@ -15147,6 +15157,8 @@ snapshots:
   ip-regex@4.3.0: {}
 
   ipaddr.js@1.9.1: {}
+
+  ipaddr.js@2.2.0: {}
 
   is-alphabetical@2.0.1: {}
 
