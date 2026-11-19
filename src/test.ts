@@ -3,7 +3,7 @@
 import { SqlClient } from "@effect/sql";
 import { Config, Context, Effect, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
-import { databaseConnection, migrateDaemon } from "./database.js";
+import { databaseConnection, prepareDatabase } from "./database.js";
 
 const serverUrl = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
   Effect.catchTag("ConfigError", () =>
@@ -38,7 +38,9 @@ export const openTestDatabase = Effect.fn("openTestDatabase")(function* (
     sql`DROP SCHEMA ${sql(schema)} CASCADE`.pipe(Effect.orDie),
   );
   if (options.prepared !== false) {
-    yield* migrateDaemon.pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    yield* prepareDatabase.pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+    );
   }
   return {
     schema,

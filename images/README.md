@@ -7,11 +7,10 @@ version.
 
 ## Daemon image
 
-Run the image's installed `sharnessd` with a prepared PostgreSQL database
+Run the image's installed `sharnessd` with a PostgreSQL database
 and a private settings file. One daemon serves every owner's agent
 through one MCP endpoint. PostgreSQL enforces row-level security between
-agents. Deployment prepares schema before startup and owns
-manual image upgrades.
+agents. Deployment owns manual image upgrades.
 
 The [daemon configuration](../docs/reference/spec/daemon.md#process-and-configuration)
 defines settings and authentication.
@@ -49,9 +48,7 @@ database when replacing it.
 
 A local agent Pod can run the daemon as a native sidecar (`restartPolicy:
 Always` under `initContainers`). Mount the private settings file from a Secret
-and set the same daemon environment variables as above. The daemon's PostgreSQL
-credentials need data access; separate deployment credentials prepare schema
-before the daemon starts.
+and set the same daemon environment variables as above.
 
 Use an exec startup probe that connects to `127.0.0.1:4319` before starting the
 host. A kubelet TCP probe cannot reach a loopback-only listener. The probe
