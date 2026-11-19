@@ -202,7 +202,23 @@ const readConversationOutput = Schema.Struct({
   ...Page.fields,
 });
 
-const receiveMessagesInput = exactStruct({ ...PaginatedRequest.fields });
+/**
+ * The longest a receive_messages call may wait. It stays under the time after
+ * which hosts and proxies give up on a tool call.
+ */
+const MAXIMUM_WAIT_SECONDS = 50;
+
+const receiveMessagesInput = exactStruct({
+  ...PaginatedRequest.fields,
+  wait: Schema.optional(
+    Schema.Number.pipe(
+      Schema.positive(),
+      Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
+    ).annotations({
+      description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for an entry when none follows the cursor. Call receive_messages again with nextCursor to keep waiting. Without wait the call returns at once.`,
+    }),
+  ),
+});
 /** Entries in read order, with the cursor that reads on from the last of them. */
 const receiveMessagesOutput = Schema.Struct({
   entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
@@ -284,7 +300,7 @@ export const toolDefinitions = {
   receive_messages: {
     failure: { toData: (error: never) => error },
     description:
-      "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries.",
+      "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries. Pass wait to wait up to that many seconds when no entry follows the cursor; the call returns as soon as one becomes readable, or with no entries when the wait ends.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
     annotations: readOnlyAnnotations,

@@ -128,7 +128,8 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
      * An allowed entry takes the agent's next read number. The lock on the
      * agent is held until the transaction that records the decision ends, so
      * entries become readable in read-number order and a reader that has read
-     * to one number has seen every entry before it.
+     * to one number has seen every entry before it. Returns whether the
+     * entry is readable.
      */
     recordDecision: Effect.fn(function* (
       unchecked: Unchecked,
@@ -170,6 +171,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ),
         ),
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      return entry !== null;
     }),
     /**
      * At most `limit` of the entries after `cursor`, in read order, with the

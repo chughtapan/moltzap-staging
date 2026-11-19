@@ -3,9 +3,11 @@
 import {
   Cause,
   Context,
+  Duration,
   Effect,
   Layer,
   Predicate,
+  PubSub,
   Queue,
   Schedule,
   Schema,
@@ -39,6 +41,7 @@ import {
   SendError,
   type SendRequest,
   type SendResult,
+  type ToolRequest,
   type ToolResult,
 } from "../mcp/tools.js";
 import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
@@ -61,11 +64,12 @@ interface SocialHarnessService {
   /**
    * A page of the inbox entries after `cursor`, in the order they were
    * allowed, with the cursor that reads on from the last of them. Without a
-   * cursor the read starts from now and returns no entry.
+   * cursor the read starts from now. With `wait` and no entry to return, it
+   * reads once more when an entry becomes readable or `wait` seconds pass.
    */
-  readonly receive: (request: {
-    readonly cursor?: string;
-  }) => Effect.Effect<ToolResult<"receive_messages">>;
+  readonly receive: (
+    request: ToolRequest<"receive_messages">["arguments"],
+  ) => Effect.Effect<ToolResult<"receive_messages">>;
   /** The address of every conversation of the agent, in order. */
   readonly listConversations: () => Effect.Effect<
     ToolResult<"list_conversations">,
@@ -116,6 +120,8 @@ interface Agent {
   readonly inbox: Inbox;
   readonly settings: HarnessSettings;
   readonly historyLimit: number;
+  /** Published to each time an entry of this agent becomes readable, for the reads that wait. */
+  readonly entryReadable: PubSub.PubSub<undefined>;
 }
 
 function makeHarness(settings: HarnessSettings) {
@@ -130,6 +136,7 @@ function makeHarness(settings: HarnessSettings) {
     const capacity =
       settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
     const agent: Agent = {
+      entryReadable: yield* PubSub.sliding<undefined>(1),
       card: identity.me,
       identity,
       firewall,
@@ -185,15 +192,40 @@ function makeHarness(settings: HarnessSettings) {
     );
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      receive: ({ cursor }) =>
-        inbox.listInbox(PAGE_SIZE, cursor).pipe(
-          Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
-          Effect.orDie,
-        ),
+      receive: (request) => receive(agent, request),
       listConversations: () => listConversations(agent),
       readHistory: (request) => readHistory(agent, request),
     });
   }).pipe(Effect.withSpan("SocialHarness.layer"));
+}
+
+/**
+ * One read of the inbox. A waiting read subscribes before it reads, so an
+ * entry that becomes readable after the read is not missed.
+ */
+function receive(
+  agent: Agent,
+  { cursor, wait }: ToolRequest<"receive_messages">["arguments"],
+) {
+  const read = (from: typeof cursor) =>
+    agent.inbox.listInbox(PAGE_SIZE, from).pipe(
+      Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
+      Effect.orDie,
+    );
+  if (wait === undefined) {
+    return read(cursor);
+  }
+  return Effect.gen(function* () {
+    const readable = yield* PubSub.subscribe(agent.entryReadable);
+    const page = yield* read(cursor);
+    if (page.entries.length > 0) {
+      return page;
+    }
+    yield* Queue.take(readable).pipe(
+      Effect.timeoutOption(Duration.seconds(wait)),
+    );
+    return yield* read(page.nextCursor);
+  }).pipe(Effect.scoped);
 }
 
 function send(agent: Agent, input: SendRequest) {
@@ -352,6 +384,11 @@ function checkIncoming(agent: Agent, unchecked: Unchecked) {
       decision.save.pipe(
         Effect.zipRight(reply.save),
         Effect.zipRight(inbox.recordDecision(unchecked, decision)),
+        Effect.tap((readable) =>
+          readable
+            ? afterCommit(PubSub.publish(agent.entryReadable, undefined))
+            : Effect.void,
+        ),
         Effect.tap(() =>
           reply.message === undefined
             ? Effect.void

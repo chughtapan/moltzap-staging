@@ -175,10 +175,15 @@ const cursor: Argument = {
   accepts: fc.oneof(absent, fc.nat().map(String)),
   refuses: fc.oneof(fc.nat(), fc.constantFrom("", "-1", "1.5", "PRIVATE")),
 };
+/** A wait is optional, and is a positive number of seconds up to fifty. */
+const wait: Argument = {
+  accepts: fc.oneof(absent, fc.integer({ min: 1, max: 50 })),
+  refuses: fc.constantFrom(0, -1, 51, "5"),
+};
 /** Each kind of call the server agent makes with arguments. */
 const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
   { name: "read_conversation", takes: { address: recipient } },
-  { name: "receive_messages", takes: { cursor } },
+  { name: "receive_messages", takes: { cursor, wait } },
   { name: "send_message", takes: { to: recipient, text } },
 ];
 /** A call of any kind, with one value each of its arguments accepts and one value each refuses. */
