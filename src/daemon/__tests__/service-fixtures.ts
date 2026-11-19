@@ -12,6 +12,7 @@ import {
   Schema,
 } from "effect";
 import type {
+  CompiledContract,
   DecisionProvider,
   DecisionRequest,
   DecisionResponse,
@@ -173,6 +174,8 @@ interface Network {
 }
 interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly policy?: ComposedMessagePolicy;
+  /** The contracts the agent starts with. */
+  readonly contracts?: readonly CompiledContract[];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 /** Every harness a fixture opens stores its rows under this key. */
@@ -248,9 +251,12 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
       ),
     );
     const services = yield* Layer.build(
-      Firewall.layer(agentKey, options.policy).pipe(
-        Layer.provideMerge(identity),
-      ),
+      Firewall.layer(
+        agentKey,
+        options.policy,
+        undefined,
+        options.contracts,
+      ).pipe(Layer.provideMerge(identity)),
     );
     const firewall = Context.get(services, Firewall);
     const provided =

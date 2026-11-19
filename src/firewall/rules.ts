@@ -64,7 +64,7 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
   /**
-   * A matcher the daemon registers, such as the one for a norm rule's acts.
+   * A matcher the daemon registers.
    * The provider is asked about the rule only for messages it matches.
    */
   match: Schema.optional(Schema.NonEmptyTrimmedString),
@@ -107,7 +107,7 @@ export const editableRulesSchema = Schema.Array(editableRuleSchema).pipe(
 
 const behaviorAddition = exactStruct({ behavior: Schema.String });
 
-/** A norm document for the agent to hold, which the daemon's norms read. */
+/** A norm document for the agent to hold, compiled into a contract before the edit applies. */
 const normAddition = exactStruct({ norm: Schema.String });
 
 /** A norm the agent holds, by name, for it to stop holding. */
@@ -217,7 +217,6 @@ const policyProblemSchema = Schema.Literal(
   "frontmatter",
   "schema",
   "too-large",
-  "invalid-norm",
 );
 
 const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
@@ -231,8 +230,6 @@ const policyProblemText: Readonly<Record<PolicyProblem, string>> = {
   schema:
     "it does not map to an editable rule: a BEHAVIOR.md needs name, description and metadata.social-harness.applies; allowed policy metadata is applies, guidance, feedback and action",
   "too-large": "the document is over 64 KiB",
-  "invalid-norm":
-    "it is not a norm document this daemon can hold: the daemon reads no norms, the document does not parse, or it names a built-in norm",
 };
 
 const policyReasonText: Readonly<
@@ -427,7 +424,7 @@ export const decodeMessagePolicy = Schema.decodeUnknown(
   { onExcessProperty: "error" },
 );
 
-/** Limits each `BEHAVIOR.md`, and each norm document an edit adds, to 64 KiB. */
+/** Limits each `BEHAVIOR.md` to 64 KiB. */
 export const MAXIMUM_DOCUMENT_BYTES = 65_536;
 
 /** YAML defines frontmatter syntax. Only Social Harness metadata rejects unknown fields. */

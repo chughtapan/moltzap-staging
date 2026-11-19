@@ -35,6 +35,7 @@ import {
   Communication,
   type Conversation,
   type Incoming,
+  type HistoryPage as MessageHistoryPage,
   restarting,
 } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
@@ -686,18 +687,19 @@ function checkIncoming(agent: Agent, unchecked: Unchecked) {
       };
     }
     const decision = yield* agent.firewall.checkIncoming(incoming, evidence);
-    const reply = yield* replyTo(agent, incoming, decision);
+    const reply = yield* checkedReply(agent, incoming, decision, evidence);
     const expired =
       incoming.kind === "collectiveRequest" &&
       (yield* Clock.currentTimeMillis) >=
         incoming.message.collectiveRequest.deadlineAt;
     yield* transaction(
       decision.save.pipe(
+        Effect.zipRight(reply.save),
         Effect.zipRight(inbox.recordDecision(unchecked, decision, { expired })),
         Effect.tap(() =>
-          reply === undefined
+          reply.message === undefined
             ? Effect.void
-            : communication.send(reply).pipe(
+            : communication.send(reply.message).pipe(
                 Effect.catchIf(
                   (error) =>
                     error._tag === "CommunicationError" &&
@@ -712,12 +714,43 @@ function checkIncoming(agent: Agent, unchecked: Unchecked) {
 }
 
 /**
- * The reply to a message the firewall withheld: an ordinary message from this
- * agent to the same conversation. A rule's own reply is used when it gave one;
- * otherwise `withheldReply` answers a message that broke a rule. Its id derives
- * from the withheld message, so checking that message again sends at most one
- * reply. A reply that is not a valid message is not sent, and the message
- * stays withheld.
+ * The reply to a withheld message once this agent's own firewall has checked
+ * it as a message it sends, with the withheld message as one the reply may
+ * name: the reply when it is allowed, and the saving of that check either way.
+ */
+function checkedReply(
+  agent: Agent,
+  incoming: Incoming,
+  decision: IncomingDecision,
+  evidence?: FirewallEvidence | CollectiveResultEvidence,
+) {
+  return Effect.gen(function* () {
+    const proposed = yield* replyTo(agent, incoming, decision);
+    if (proposed === undefined || !("message" in incoming)) {
+      return { save: Effect.void };
+    }
+    const checked = yield* agent.firewall.checkOutgoing(proposed, {
+      ...(evidence !== undefined && "history" in evidence
+        ? evidence
+        : { history: [], earlierHistoryOmitted: false, gaps: [] }),
+      references: [incoming.message],
+    });
+    return {
+      save: checked.save,
+      ...(checked.kind === "allowed" ? { message: proposed } : {}),
+    };
+  });
+}
+
+/**
+ * The reply proposed for a message the firewall withheld: an ordinary message
+ * from this agent to the same conversation that names the withheld message as
+ * the one it answers. A rule's own reply is used when it gave one; otherwise
+ * `withheldReply` answers a message that broke a rule. Its id derives from
+ * the withheld message, so checking that message again sends at most one
+ * reply. The reply is checked as any message this agent sends, and is sent
+ * only if allowed. A reply that is not a valid message is not sent, and the
+ * message stays withheld.
  */
 function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   if (decision.kind !== "withheld" || !("message" in incoming)) {
@@ -743,7 +776,7 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
         [withheld.author, ...withheld.recipients].filter(
           (member) => member.agentId !== agent.card.agentId,
         ),
-        { msgId },
+        { msgId, replyToMsgId: withheld.msgId },
         [{ type: "text", text }],
       ),
     ),
@@ -751,6 +784,11 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   );
 }
 
+/**
+ * The evidence a check of a message among `members` reads: the bounded window
+ * of history before `before`, or the latest when it is not given, and for an
+ * agent that has held a contract every message before it.
+ */
 function evidenceFor(
   agent: Agent,
   members: readonly AgentCard[],
@@ -758,26 +796,18 @@ function evidenceFor(
 ): Effect.Effect<FirewallEvidence, InboxError> {
   return Effect.gen(function* () {
     const selected = yield* conversation(members);
-    const page = yield* agent.communication
-      .readHistory({
-        members: selected,
-        order: "newest",
-        limit: agent.historyLimit,
-        ...(before === undefined
-          ? {}
-          : {
-              beforeMessage: {
-                authorAgentId: before.author.agentId,
-                msgId: before.msgId,
-              },
-            }),
-      })
-      .pipe(
-        Effect.catchTag(
-          "CommunicationError",
-          () => new InboxError({ reason: "persistence-failed" }),
-        ),
-      );
+    const protocolHistory = agent.firewall.requiresProtocolHistory()
+      ? yield* readProtocolHistory(agent, selected, before)
+      : undefined;
+    const page =
+      protocolHistory === undefined
+        ? yield* readHistoryBefore(agent, selected, before)
+        : {
+            entries: protocolHistory.entries.slice(-agent.historyLimit),
+            earlierMessagesOmitted:
+              !protocolHistory.complete ||
+              protocolHistory.entries.length > agent.historyLimit,
+          };
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
     for (const earlier of [...page.entries].reverse()) {
@@ -799,8 +829,78 @@ function evidenceFor(
         recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
           : [],
+      ...(protocolHistory === undefined
+        ? {}
+        : {
+            protocolHistory: {
+              messages: protocolHistory.entries.map(({ message }) => message),
+              complete: protocolHistory.complete,
+            },
+          }),
     };
   });
+}
+
+/**
+ * Every message of a conversation before `before`, in order, read a page at
+ * a time from the newest. `complete` is false when a page that reports
+ * earlier messages gives none to continue from.
+ */
+function readProtocolHistory(
+  agent: Agent,
+  members: Conversation,
+  before?: Message,
+) {
+  return Effect.gen(function* () {
+    const pages: Array<MessageHistoryPage["entries"]> = [];
+    let boundary = before;
+    while (true) {
+      const page = yield* readHistoryBefore(agent, members, boundary);
+      pages.push(page.entries);
+      const oldest = page.entries[0]?.message;
+      const advanced =
+        oldest !== undefined &&
+        !(
+          oldest.author.agentId === boundary?.author.agentId &&
+          oldest.msgId === boundary.msgId
+        );
+      if (!page.earlierMessagesOmitted || !advanced) {
+        return {
+          entries: [...pages].reverse().flat(),
+          complete: !page.earlierMessagesOmitted,
+        };
+      }
+      boundary = oldest;
+    }
+  });
+}
+
+/** One page of a conversation's messages, in order: the latest before `before`, or the latest of all. */
+function readHistoryBefore(
+  agent: Agent,
+  members: Conversation,
+  before?: Message,
+) {
+  return agent.communication
+    .readHistory({
+      members,
+      order: "newest",
+      limit: agent.historyLimit,
+      ...(before === undefined
+        ? {}
+        : {
+            beforeMessage: {
+              authorAgentId: before.author.agentId,
+              msgId: before.msgId,
+            },
+          }),
+    })
+    .pipe(
+      Effect.catchTag(
+        "CommunicationError",
+        () => new InboxError({ reason: "persistence-failed" }),
+      ),
+    );
 }
 
 function conversation(

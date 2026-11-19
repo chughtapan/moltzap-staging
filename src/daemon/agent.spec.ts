@@ -30,6 +30,11 @@ import {
 } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
+  contractOf,
+  form,
+  noFields,
+} from "../firewall/__tests__/firewall-fixtures.js";
+import {
   type DecisionProvider,
   type DecisionRequest,
   FirewallPolicyError,
@@ -51,6 +56,19 @@ type Runtime = Effect.Effect.Success<ReturnType<Fixture["open"]>>;
 /** A decision service that finds every message in violation of its rule. */
 const violation: DecisionProvider = {
   decide: (request) => Effect.succeed(decisionResponse(request, "violation")),
+};
+
+/** A decision service that finds every message a peer sent in violation, and every message this agent sends compliant. */
+const incomingViolation: DecisionProvider = {
+  decide: (request) =>
+    Effect.succeed(
+      decisionResponse(
+        request,
+        decisionState(request.state).direction === "incoming"
+          ? "violation"
+          : "compliant",
+      ),
+    ),
 };
 
 function waitForDecisions(runtime: Runtime, count = 1) {
@@ -464,17 +482,42 @@ it("answers a message that broke a rule with the configured reply when no rule g
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
       withheldReply,
-      policy: composedPolicy(violation),
+      policy: composedPolicy(incomingViolation),
     });
     yield* receive(subject, "Private peer content");
-    yield* waitForDecisions(runtime);
+    yield* waitForDecisions(runtime, 2);
     expect(subject.submitted).toMatchObject([
       { content: [{ type: "text", text: withheldReply }] },
     ]);
     expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
   }));
 
-it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>
+it("answers a message its rule withholds with that rule's feedback, as an ordinary message that names the withheld one", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({
+      policy: composedPolicy(incomingViolation, "reply"),
+    });
+
+    const withheld = yield* subject.message(
+      "Private peer content",
+      subject.bob,
+    );
+    yield* subject.deliver({ kind: "message", message: withheld });
+    yield* waitForDecisions(runtime, 2);
+
+    expect(subject.submitted).toMatchObject([
+      {
+        author: subject.self,
+        recipients: [subject.bob],
+        replyToMsgId: withheld.msgId,
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
+  }));
+
+it("sends no reply that its own message policy refuses, and saves that refusal", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
@@ -482,16 +525,12 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
     });
 
     yield* receive(subject, "Private peer content");
-    yield* waitForDecisions(runtime);
+    const { decisions } = yield* waitForDecisions(runtime, 2);
 
-    expect(subject.submitted).toMatchObject([
-      {
-        author: subject.self,
-        recipients: [subject.bob],
-        content: [{ type: "text", text: "Keep private information private." }],
-      },
-    ]);
-    expect((yield* runtime.harness.listInbox()).entries).toEqual([]);
+    expect(
+      decisions.map(({ decision }) => decision).sort(compareAscii),
+    ).toEqual(["refused", "withheld"]);
+    expect(subject.submitted).toEqual([]);
   }));
 
 it("returns a waiting read at once when an entry is already pending", () =>
@@ -579,6 +618,61 @@ it("rolls back a policy decision when it cannot be saved with its inbox entry an
       1,
     );
   }));
+
+/** `open` starts an instance and `close`, from the other agent, ends it. */
+const exchange = contractOf("exchange", [
+  {
+    ...form,
+    act: "open",
+    by: ["Sender"],
+    fields: noFields,
+    starts: true,
+    initiates: ["opened"],
+  },
+  {
+    ...form,
+    act: "close",
+    by: ["Receiver"],
+    fields: noFields,
+    when: ["opened"],
+    ends: true,
+  },
+]);
+
+it.prop(
+  "checks each act of a contract against the whole conversation, however short the history window",
+  [fc.integer({ min: 1, max: 3 }), fc.integer({ min: 1, max: 4 })],
+  ([window, instances]) =>
+    Effect.gen(function* () {
+      const subject = yield* makeHarnessFixture;
+      const runtime = yield* subject.open({
+        maximumHistoryRecords: window,
+        contracts: [exchange],
+        policy: composedPolicy({
+          decide: (request) =>
+            Effect.succeed(decisionResponse(request, "compliant")),
+        }),
+      });
+      for (let instance = 1; instance <= instances; instance += 1) {
+        const opened = yield* runtime.harness.send({
+          to: bobAddress,
+          text: "(open :ontology exchange)",
+        });
+        yield* subject.deliver({
+          kind: "message",
+          message: yield* Message.create({
+            author: subject.bob,
+            recipients: [subject.self],
+            content: [{ type: "text", text: "(close :ontology exchange)" }],
+            replyToMsgId: opened.id,
+          }),
+        });
+        yield* waitForInbox(runtime, instance);
+      }
+      expect((yield* readInbox(runtime)).length).toBe(instances);
+    }),
+  { fastCheck: { numRuns: 6 } },
+);
 
 it("assesses the latest bounded preceding history without the candidate", () =>
   Effect.gen(function* () {

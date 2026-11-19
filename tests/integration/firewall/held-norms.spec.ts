@@ -1,63 +1,74 @@
 /**
  * @file The norms each agent of one daemon holds.
  *
- * In P2P mode two agents hold different norms.
- * Each agent starts with the norms directory's initial norms and changes its
- * own with `update_policy`, and its firewall applies the norms it holds: an
- * agent that stops holding `chat` answers plain text with `not-understood`
- * and refuses its own, while the other agent on the same daemon reads it.
+ * In P2P mode each agent starts with the contracts of the norms directory and
+ * changes its own with `update_policy`, and its firewall applies what it
+ * holds: an agent that holds a norm refuses a direct text that is not an act
+ * of it, while an agent that stopped holding it sends any text.
  *
  * In client/server mode only the server agent holds norms. A client reads the
- * server agent's norms and sends without a check of its own. The server
- * agent's firewall answers a message it cannot read or that does not fit a
- * norm with `not-understood`, which the client receives as an ordinary
- * message: plain text where the server agent holds no `chat` norm, an act
- * with a field its form lacks, or an answer to no open proposal.
+ * server agent's norms and sends without a check of its own. Inside an
+ * instance, the server agent answers an act it withholds with the norm's
+ * refusal act, which the client receives as an ordinary message. A message it
+ * withholds outside an instance gets no answer: the server agent's own
+ * firewall refuses any answer that is not an act of the norm.
  */
 
 import {
   MAXIMUM_WAIT_SECONDS,
   type PermittedItem,
 } from "@social-harness/social-harness";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
 import { sharedDaemon, type SignedIn } from "../daemon/daemon-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { callTool as call } from "../tool-call.js";
-import { writeNorms } from "./policy-fixture.js";
+import {
+  exchangeDocument,
+  exchangeName,
+  writeNorms,
+} from "./policy-fixture.js";
 
 /** Each test starts one daemon under `tsx`. */
 const HELD_NORMS_TEST_TIMEOUT_MS = 180_000;
 
+const policyTool = "update_policy";
+const ask = `(ask :ontology ${exchangeName} :text "A request")`;
+
 /**
- * A running firewall daemon whose new agents hold `chat` and `office-hours`,
- * in P2P mode unless `settings` name another.
+ * A running firewall daemon whose new agents hold the exchange norm, in P2P
+ * mode unless `settings` name another.
  */
 function normsDaemon(settings: Readonly<Record<string, unknown>> = {}) {
   return Effect.gen(function* () {
     const daemon = yield* sharedDaemon({ firewall: true, settings });
     yield* daemon.configure(
-      yield* writeNorms(daemon.directory, [
-        "examples/chat.lisp",
-        "examples/office-hours.lisp",
-      ]),
+      yield* writeNorms(daemon.directory, [exchangeDocument]),
     );
     yield* daemon.start();
     return daemon;
   });
 }
 
-/** Sends `text` as a client does, naming no recipient, and returns the server agent's answer. */
-function answerTo(client: SignedIn, text: string) {
+/** Sends `text` as a client does, naming no recipient, and returns the message id. */
+function sendAsClient(client: SignedIn, text: string, replyToMsgId?: string) {
   return Effect.tryPromise(() =>
     client.connection.mcp.callTool({
       name: "send_message",
-      arguments: { text },
+      arguments: {
+        text,
+        ...(replyToMsgId === undefined ? {} : { replyToMsgId }),
+      },
     }),
   ).pipe(
     Effect.filterOrFail((sent) => sent.isError !== true),
-    Effect.zipRight(firstDelivery(client)),
+    Effect.map(
+      (sent) =>
+        Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }))(
+          sent.structuredContent,
+        ).id,
+    ),
   );
 }
 
@@ -84,12 +95,6 @@ function textOf(item?: PermittedItem) {
     : "";
 }
 
-const policyTool = "update_policy";
-const droppedNorm = "chat";
-
-/** The first English rule of the `office-hours` norm, as an agent that holds the norm reads it in its policy. */
-const officeHoursRule = "office-hours-rule-1";
-
 const heldNorms = Effect.gen(function* () {
   const daemon = yield* normsDaemon();
   const alice = yield* daemon.signInAs("alice");
@@ -97,38 +102,46 @@ const heldNorms = Effect.gen(function* () {
 
   yield* call(alice.connection.mcp, {
     name: policyTool,
-    arguments: { remove: [{ norm: droppedNorm }] },
+    arguments: { remove: [{ norm: exchangeName }] },
   });
   const [alicePolicy, bobPolicy] = yield* Effect.all([
     call(alice.connection.mcp, { name: "read_policy", arguments: {} }),
     call(bob.connection.mcp, { name: "read_policy", arguments: {} }),
   ]);
-  const aliceNorms = yield* call(alice.connection.mcp, {
+  const [aliceNorms, bobNorms] = yield* Effect.all([
+    call(alice.connection.mcp, { name: "read_norms", arguments: {} }),
+    call(bob.connection.mcp, { name: "read_norms", arguments: {} }),
+  ]);
+  const refusal = yield* send(bob, {
+    to: alice.address,
+    text: "An ordinary message",
+  }).pipe(Effect.flip);
+  yield* send(alice, { to: bob.address, text: "An ordinary message" });
+  yield* call(alice.connection.mcp, {
+    name: policyTool,
+    arguments: { add: [{ norm: exchangeDocument }] },
+  });
+  const restored = yield* call(alice.connection.mcp, {
     name: "read_norms",
     arguments: {},
   });
-  yield* send(bob, { to: alice.address, text: "Can we meet today?" });
-  const answer = yield* firstDelivery(bob);
-  const refusal = yield* send(alice, {
-    to: bob.address,
-    text: "Yes, today.",
-  }).pipe(Effect.flip);
 
-  expect(alicePolicy.norms).toEqual(["office-hours"]);
-  expect(bobPolicy.norms).toEqual(["chat", "office-hours"]);
-  expect(alicePolicy.fixedRules.map((rule) => rule.id)).toContain(
-    officeHoursRule,
-  );
-  expect(aliceNorms.norms.map((norm) => norm.name)).toEqual([
-    "feedback",
-    "norm-agreement",
-    "norm-discovery",
-    "office-hours",
+  expect(alicePolicy.norms).toEqual([]);
+  expect(alicePolicy.fixedRules.map((rule) => rule.id)).toEqual(["marked"]);
+  expect(bobPolicy.norms).toEqual([exchangeName]);
+  expect(bobPolicy.fixedRules.map((rule) => rule.id)).toEqual([
+    "marked",
+    `${exchangeName}-rule-1`,
   ]);
-  expect(textOf(answer)).toMatch(
-    /^\(not-understood :ontology feedback .*:reason "plain-text"/u,
-  );
-  expect(refusal).toMatchObject({ refusal: "rule-violation" });
+  expect(aliceNorms.norms).toEqual([]);
+  expect(bobNorms.norms).toEqual([
+    { name: exchangeName, description: "", document: exchangeDocument },
+  ]);
+  expect(refusal).toMatchObject({
+    refusal: "rule-violation",
+    detail: { stage: "structural" },
+  });
+  expect(restored).toEqual(bobNorms);
 });
 
 it(
@@ -144,10 +157,6 @@ const serverOwnsNorms = Effect.gen(function* () {
   const server = yield* daemon.signIn(daemon.serverAgentBearer);
   const client = yield* daemon.signInAs("client");
 
-  yield* call(server.connection.mcp, {
-    name: policyTool,
-    arguments: { remove: [{ norm: droppedNorm }] },
-  });
   const serverNorms = yield* call(server.connection.mcp, {
     name: "read_norms",
     arguments: {},
@@ -158,34 +167,37 @@ const serverOwnsNorms = Effect.gen(function* () {
   const clientTools = yield* Effect.tryPromise(() =>
     client.connection.mcp.listTools(),
   );
-  const plainText = yield* answerTo(client, "Can we meet today?");
-  const extraField = yield* answerTo(
-    client,
-    "(propose :ontology norm-agreement :norm office-hours :when today)",
-  );
-  const noProposal = yield* answerTo(
-    client,
-    "(accept-proposal :ontology norm-agreement)",
+  yield* sendAsClient(client, "Can we meet today?");
+  const opening = yield* sendAsClient(client, ask);
+  const opened = yield* firstDelivery(server);
+  const repeated = yield* sendAsClient(client, ask, opening);
+  const answer = yield* firstDelivery(client);
+  yield* call(server.connection.mcp, {
+    name: policyTool,
+    arguments: { remove: [{ norm: exchangeName }] },
+  });
+  const afterRemoval = yield* Effect.tryPromise(() =>
+    client.connection.mcp.callTool({ name: "read_norms", arguments: {} }),
   );
 
   expect(clientTools.tools.map((tool) => tool.name)).not.toContain(policyTool);
-  expect(serverNorms.norms.map((norm) => norm.name)).not.toContain(droppedNorm);
+  expect(serverNorms.norms.map((norm) => norm.document)).toEqual([
+    exchangeDocument,
+  ]);
   expect(clientNorms.structuredContent).toEqual(serverNorms);
-  expect(plainText).toMatchObject({
+  expect(textOf(opened)).toBe(ask);
+  expect(answer).toMatchObject({
     kind: "message",
-    message: { author: server.agent },
+    message: { author: server.agent, replyToMsgId: repeated },
   });
-  expect(textOf(plainText)).toMatch(
-    /^\(not-understood :ontology feedback .*:reason "plain-text"/u,
+  expect(textOf(answer)).toMatch(
+    new RegExp(`^\\(not-understood :ontology ${exchangeName} :reason "`, "u"),
   );
-  expect(textOf(extraField)).toMatch(
-    /:reason "invalid-content" :error "field \\"when\\"/u,
-  );
-  expect(textOf(noProposal)).toMatch(/:reason "unknown-instance"/u);
+  expect(afterRemoval.structuredContent).toEqual({ norms: [] });
 });
 
 it(
-  "in client/server mode gives a client the server agent's norms and an answer to each message the server agent does not accept",
+  "in client/server mode gives a client the server agent's norms, no answer to plain text the server agent withholds, and inside an instance the norm's refusal act for an act it withholds",
   processTrace(serverOwnsNorms),
   HELD_NORMS_TEST_TIMEOUT_MS,
 );

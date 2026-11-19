@@ -32,7 +32,11 @@ import {
   textOnlyToolDefinitions,
   toolDefinitions,
 } from "../mcp/tools.js";
-import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
+import {
+  compiledPolicyEdit,
+  HeldNorms,
+  type InstalledNorms,
+} from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
@@ -59,9 +63,9 @@ import { bind } from "./tool-server.js";
  * One agent's role, and everything that follows from it. In P2P mode every
  * agent is a peer: it messages any agent, alone or in a group, and checks its
  * own messages. In client/server mode every conversation is the server agent
- * and one client: the server agent checks its messages and holds the norms,
- * and a client checks nothing of its own, reads the server agent's norms and
- * talks only to it.
+ * and one client: the server agent checks its messages and holds the
+ * contracts, and a client checks nothing of its own, reads the server agent's
+ * norms and talks only to it.
  *
  * @internal
  */
@@ -71,7 +75,7 @@ export function roleOf(
       DaemonSettings,
       "serverAgentName" | "hideGroups" | "hideCollectives" | "messagePolicy"
     >;
-    readonly norms?: DaemonNorms;
+    readonly norms?: InstalledNorms;
     /** The norms the server agent holds, once it has started; clients read them. */
     readonly serverAgentHeldNorms: Ref.Ref<
       Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -86,12 +90,12 @@ export function roleOf(
     const firewall = Firewall.layer(
       agentKey,
       settings.messagePolicy,
-      norms?.chain,
-      norms?.normDocuments,
+      undefined,
+      norms?.contracts,
     );
     return norms === undefined
       ? firewall
-      : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall));
+      : HeldNorms.layer.pipe(Layer.provideMerge(firewall));
   };
   if (serverAgentName === undefined) {
     return {
@@ -143,10 +147,6 @@ export const runDaemon = Effect.gen(function* () {
   const { settings, serverAgentCredential } = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* checkDatabase;
-    const norms =
-      settings.norms === undefined
-        ? undefined
-        : yield* daemonNorms(settings.norms);
     if (settings.serverAgentName !== undefined) {
       yield* getOrCreateOwnedAgentKey(
         serverAgentOwner,
@@ -160,7 +160,7 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
     }
-    const agentOfOwner = yield* runningAgents(settings, norms);
+    const agentOfOwner = yield* runningAgents(settings);
     const app = yield* makeMcpHttpApp(
       settings.authentication,
       agentOfOwner,
@@ -266,7 +266,10 @@ function peerTools(hideCollectives: boolean) {
       bind(
         "update_policy",
         toolDefinitions.update_policy,
-        firewall.updatePolicy,
+        (update) =>
+          compiledPolicyEdit(update).pipe(
+            Effect.flatMap(firewall.updatePolicy),
+          ),
         policyConfigured,
       ),
       bind(
@@ -338,10 +341,7 @@ function normsTool(
         norms: held.map((norm) => ({
           name: norm.name,
           description: norm.description,
-          ...(norm.protocolName === undefined
-            ? {}
-            : { protocol: norm.protocolName }),
-          document: norm.document,
+          document: norm.source,
         })),
       })),
     );
@@ -354,13 +354,13 @@ function normsTool(
  * the returned function gives an owner's agent, starting it on that owner's
  * first request.
  */
-function runningAgents(settings: DaemonSettings, norms?: DaemonNorms) {
+function runningAgents(settings: DaemonSettings) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
     const daemon = {
       settings,
-      norms,
+      norms: settings.norms,
       serverAgentHeldNorms: yield* Ref.make(
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),
       ),

@@ -24,9 +24,6 @@ export {
   PaginatedRequest,
   RequestedSchema,
   RequestError,
-  type ResponseContent,
-  type ResponseFieldFailures,
-  responseFieldsText,
   validateResponseContent,
   wellFormedString,
 } from "./messages.js";

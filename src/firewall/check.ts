@@ -15,6 +15,7 @@ import {
   CollectiveRequestMessage,
   Message as CommunicationMessage,
   MsgId,
+  RequestedSchema,
 } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
 import { AgentCard } from "../identity.js";
@@ -142,6 +143,21 @@ export class CheckEvidence extends Schema.Class<CheckEvidence>("CheckEvidence")(
     now: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
     facts: Schema.Array(OwnerFact),
     gaps: Schema.Array(Schema.NonEmptyString),
+    /**
+     * For an act a contract governs: its norm and that norm's description, the
+     * digest of its norm document, the act's performative and form, and the
+     * facts that hold in the instance.
+     */
+    protocol: Schema.optional(
+      Schema.Struct({
+        norm: Schema.String,
+        digest: Schema.String,
+        act: Schema.String,
+        description: Schema.String,
+        state: Schema.Array(Schema.String),
+        form: Schema.typeSchema(RequestedSchema),
+      }),
+    ),
   },
 ) {}
 
@@ -1000,8 +1016,15 @@ function policyState(
   evidence: ReturnType<typeof requestEvidence>,
 ): string {
   const { policy: catalog, ...common } = catalogState(policy);
-  const { history, earlierHistoryOmitted, now, facts, gaps, ...event } =
-    evidence;
+  const {
+    history,
+    earlierHistoryOmitted,
+    now,
+    facts,
+    gaps,
+    protocol,
+    ...event
+  } = evidence;
   return JSON.stringify({
     ...common,
     ...event,
@@ -1011,6 +1034,7 @@ function policyState(
     now,
     facts,
     gaps,
+    protocol,
   });
 }
 
@@ -1026,6 +1050,7 @@ function requestEvidence(check: TextCheck) {
     now: check.evidence.now,
     facts: check.evidence.facts,
     gaps: check.evidence.gaps,
+    protocol: check.evidence.protocol,
   };
 }
 
@@ -1052,6 +1077,7 @@ function minimumEvidence(
     now: undefined,
     facts: [],
     gaps: [],
+    protocol: undefined,
   };
 }
 
@@ -1178,9 +1204,11 @@ const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
 
 /**
  * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` names the chain rule that refused, and `detail` is that rule's matcher
- * report. The message states the reason, each deciding rule's registered
- * feedback and the detail.
+ * `rule` names the chain rule or contract stage that refused, and `detail` is
+ * a chain rule's matcher report or a contract's diagnostics: its norm, the
+ * digest of its norm document, the stage that failed and the field at fault.
+ * The message states each deciding rule's registered feedback as an error, or
+ * the reason when there is none, then the check, and a matcher's detail.
  */
 export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
@@ -1192,11 +1220,20 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
 }> {
   override get message(): string {
     const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
+    const contractDetail =
+      typeof this.detail === "object" &&
+      this.detail !== null &&
+      "stage" in this.detail;
     return [
-      `Message refused by the message policy (${this.refusal}${rule}, check ${this.checkId}).`,
-      refusalText[this.refusal],
-      ...this.feedback.map((entry) => entry.text),
-      ...(this.detail === undefined
+      ...(this.feedback.length === 0
+        ? [`Error: ${refusalText[this.refusal]}`]
+        : this.feedback.map((entry) =>
+            entry.text.startsWith("Error:")
+              ? entry.text
+              : `Error: ${entry.text}`,
+          )),
+      `Check: ${this.checkId}${rule}; ${this.refusal}.`,
+      ...(this.detail === undefined || contractDetail
         ? []
         : [`Details: ${JSON.stringify(this.detail)}`]),
     ].join(" ");

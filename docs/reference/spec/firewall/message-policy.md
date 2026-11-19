@@ -22,6 +22,27 @@ The firewall is optional and experimental. Without a message-policy file,
 [client/server mode](../client-server.md#firewall-and-norms) only the server
 agent has one. The host owns models, tools and the agent's private context.
 
+## Structured contracts
+
+A configured contract specifies message forms, permitted conversation
+transitions and scoped English rules. For direct text messages, structural
+and protocol checks run before the chain. Successful checks continue to the
+applicable English rules. A chain `allow` skips ordinary owner text rules but
+preserves the contract's required semantic checks. A chain refusal still
+withholds the message.
+
+A form may permit either fixed participant roles or the verified recipient of
+the message establishing a current fact. The latter requires that exact anchor
+to occur in the supplied reply ancestry. An absent fact, a different reply
+branch or a different sender fails the protocol check. Participant identity
+comes from the allowed message, not from its free-form fields.
+
+A continuation's reply reference must belong to the active instance. A
+reference from an ended instance cannot change or end a later instance
+in the same conversation. Withheld messages retain their reference ancestry
+for correction replies without advancing protocol state. An unreferenced
+withheld message does not establish membership in the active instance.
+
 ## Chain
 
 The chain applies before the text rules. Like a Google Cloud firewall
@@ -33,7 +54,7 @@ matchers by name; a rule naming an unregistered matcher prevents startup.
 
 | Action | Outgoing draft | Incoming message |
 | --- | --- | --- |
-| `allow` | Sent without the text rules. | Delivered without the text rules. |
+| `allow` | Sent without ordinary owner text rules. | Delivered without ordinary owner text rules. |
 | `deny` | Refused. | Withheld. |
 | `reply` | Refused. | Withheld, and the matcher's reply goes to the sender. |
 | `hold` | Goes on to the next rule once the owner approves it; otherwise refused with `owner-approval-required`. | Not allowed. |
@@ -41,8 +62,12 @@ matchers by name; a rule naming an unregistered matcher prevents startup.
 A reply is an ordinary message from this agent to the conversation of the
 withheld message, sent once for that message: its message id is derived from
 the withheld message, so checking that message again sends no second reply. A collective result's withheld
-parts get no reply. The daemon does not yet ask the owner about a held draft,
-so every held draft is approved.
+parts get no reply. Every generated reply must pass the outgoing checks. If
+allowed, it is sent once for the original message. If refused, the daemon
+saves the check and sends no reply.
+
+The daemon does not yet ask the owner about a held draft, so every held draft
+is approved.
 
 A match refuses for a rule violation unless the matcher reports missing
 history (`unresolved-evidence`) or cannot decide (`check-unavailable`). A
@@ -53,7 +78,8 @@ like a check of the text rules, and its `decidedBy` names the rule with
 
 ## Decisions
 
-Text rules decide a message no chain rule matched. Checks capture the active
+Applicable text rules judge messages that remain eligible after structural,
+protocol and chain checks. Checks capture the active
 rules. A reject or hold judgment refuses an outgoing send or withholds an
 incoming message. Findings combine in priority order:
 
@@ -75,8 +101,8 @@ Text rules describe when they apply and the conduct they require. A fixed
 rule may also name a registered matcher in `match`: the provider is asked
 about the rule only for messages that matcher matches, and the rule does not
 apply to the rest. A rule naming an unregistered matcher prevents startup,
-and editable rules name none. The daemon scopes each
-[norm rule](../norms/norms.md#english-rules) this way to the acts it governs.
+and editable rules name none. A [norm rule](../norms/norms.md#english-rules)'s
+explicit act and direction metadata only route which rules to judge.
 
 For each rule, the provider answers one question about the message: does it
 break the rule? The answer is `compliant` or `violation`, with a probability for each.
@@ -112,8 +138,8 @@ entry the provider settled carries no guidance.
 A text rule whose `action` is `reply` answers each message it withholds for a
 rule violation: the sender receives the rule's registered feedback text the way
 a chain rule's reply arrives. When the rule's `match` matcher gives a reply for
-the message, such as a norm's `not-understood`, the sender receives that reply
-instead. A message withheld for unresolved evidence or an
+the message, the sender receives that reply
+instead. The reply follows the same outgoing checks as a chain rule's reply. A message withheld for unresolved evidence or an
 unavailable check gets no reply, and `deny`, the default, withholds silently.
 
 ## Outgoing messages
@@ -152,7 +178,9 @@ Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
 An incoming check sees only the ordered history before its message. Exceeding the
 history window's separate 2 MiB budget creates an evidence gap. Required
-missing evidence holds.
+missing evidence holds. Installed structured
+contracts separately receive complete preceding protocol history and exact
+local check records, outside the bounded history window.
 
 The firewall may use earlier messages it withheld or blocked when checking a
 new message. Their content remains private, as though the agent had not seen
@@ -341,7 +369,7 @@ interaction. A proposed replacement cannot authorize itself. Fixed rules are sup
 cannot be changed through `update_policy`.
 
 An agent's editable policy also holds its
-[norms](../norms/norms.md#holding-norms). `update_policy` adds a norm with
+[norms](../norms/norms.md#scope-and-installation). `update_policy` adds a norm with
 `{norm: "<document>"}` in `add` and stops holding one with `{norm: "<name>"}`
 in `remove`; removing and adding one name replaces it. Each activation adds
 the held norms' English rules to the fixed rules, so they refuse edits like
@@ -368,8 +396,7 @@ path, without rejected text. Reasons: `invalid-rule`, `fixed-rule`,
 | `editable-limit` | Result exceeds 256 rules or 256 norms. |
 | `frontmatter` | Missing/invalid opening YAML frontmatter. |
 | `schema` | Invalid rule/behavior format. |
-| `too-large` | Behavior or norm document exceeds 64 KiB. |
-| `invalid-norm` | The daemon has no norms directory, or the document does not parse or names a built-in norm. |
+| `too-large` | Behavior exceeds 64 KiB. |
 
 Minimum rules, instructions, mandatory questions and structure must fit the
 request budget. Otherwise updates fail `build-failed`; lowering budgets can
@@ -406,6 +433,7 @@ rows identify authors. Daemon-generated failures have no row. Retained identitie
 | Chain decision | The chain rule that decided, including a held draft the owner has not approved. |
 
 Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an allowed message.
-Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller privileges. Agents agree on a norm in the
-conversation itself; see [norms](../norms/norms.md#agreement).
+Sources are `chain`, `fixed` or `editable`. A rule's source grants no caller
+privileges. A rule proposed by a peer becomes active only through an authorized
+policy change.
 

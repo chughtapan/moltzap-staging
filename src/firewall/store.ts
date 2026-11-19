@@ -5,7 +5,7 @@
  */
 
 import { SqlClient } from "@effect/sql";
-import { Clock, Effect, Schema } from "effect";
+import { Array as Arr, Clock, Effect, Schema } from "effect";
 import {
   executeQuery,
   type Generated,
@@ -41,6 +41,7 @@ const activationRow = Schema.Struct({
 const decision = Schema.Literal("allowed", "refused", "withheld");
 const checkRecord = Schema.Struct({
   checkId: Schema.NonEmptyString,
+  messageKey: Schema.NonEmptyString,
   direction: Schema.Literal("incoming", "outgoing"),
   messageJson: Schema.NonEmptyString,
   inputJson: Schema.NonEmptyString,
@@ -60,6 +61,13 @@ const decisionRow = Schema.Struct({
   decision,
   time: storedTime,
 });
+const messageCheck = Schema.Struct({
+  messageKey: Schema.NonEmptyString,
+  at: storedTime,
+  decision,
+  result: Schema.NonEmptyString,
+  message: Schema.NonEmptyString,
+});
 const savedSummary = Schema.parseJson(
   Schema.Struct({ summaries: Schema.Array(firewallDecisionSummarySchema) }),
 );
@@ -68,8 +76,8 @@ const savedSummary = Schema.parseJson(
 export type FirewallActivation = typeof activationRow.Type;
 
 /**
- * One completed check as delivery commits it. `messageJson` is the message it
- * checked, `inputJson` the revision and evidence it applied and `resultJson`
+ * One completed check as delivery commits it. `messageKey` names the message
+ * it checked by author and message id, `messageJson` is that message, `inputJson` the revision and evidence it applied and `resultJson`
  * what it concluded with its decision summaries, each as JSON text. Saving
  * the same check again must carry the same values, so a retry cannot rewrite
  * a decision.
@@ -91,6 +99,7 @@ interface FirewallTables {
     readonly agent_key: string;
     readonly sequence: Generated<number>;
     readonly check_id: string;
+    readonly message_key: string;
     readonly direction: typeof checkRecord.Type.direction;
     readonly message: string;
     readonly input: string;
@@ -142,6 +151,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
           .values({
             agent_key: agentKey,
             check_id: record.checkId,
+            message_key: record.messageKey,
             direction: record.direction,
             message: record.messageJson,
             input: record.inputJson,
@@ -175,6 +185,33 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
       }
     });
   return {
+    /**
+     * The saved checks of the messages `messageKeys` name, oldest first: each
+     * with the message it checked, its result, its decision and when it was
+     * decided.
+     */
+    readCheckRecords: (messageKeys: readonly string[]) =>
+      run(
+        Effect.forEach(
+          Arr.chunksOf(messageKeys, 400),
+          (keys) =>
+            executeQuery(
+              checksQuery
+                .select([
+                  "message_key as messageKey",
+                  "decided_at as at",
+                  "decision",
+                  "result",
+                  "message",
+                ])
+                .where("message_key", "in", keys)
+                .orderBy("sequence", "asc"),
+            ).pipe(
+              Effect.flatMap(Schema.decodeUnknown(Schema.Array(messageCheck))),
+            ),
+          { concurrency: 1 },
+        ).pipe(Effect.map(Arr.flatten)),
+      ),
     readEditablePolicy: () =>
       run(
         executeQuery(policyQuery).pipe(

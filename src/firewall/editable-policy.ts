@@ -1,13 +1,11 @@
 /**
- * @file Edits to an agent's editable policy: the text rules and norm documents
- * an update leaves the policy holding, checked one addition and removal at a
- * time before the firewall builds, approves and activates the replacement,
- * and the interface through which the norms layer names and compiles the norm
- * documents.
+ * @file Edits to an agent's editable policy: the text rules and contracts an
+ * update leaves the policy holding, checked one addition and removal at a
+ * time before the firewall builds, approves and activates the replacement.
  */
 
-import { Effect, Option } from "effect";
-import type { Chain } from "./chain.js";
+import { Effect } from "effect";
+import type { CompiledContract } from "./contract.js";
 import { decodeFrozen, deepFreeze } from "./check.js";
 import {
   decodeBehavior,
@@ -17,45 +15,28 @@ import {
   MAXIMUM_DOCUMENT_BYTES,
   MAXIMUM_EDITABLE_RULES,
   type PolicyProblem,
-  type policyUpdateSchema,
   type TextRule,
 } from "./rules.js";
 
-/**
- * The norm documents an agent may hold in its editable policy. The firewall
- * saves, versions and approves them with the agent's text rules without
- * reading them; the norms layer implements this interface to name and compile them.
- */
-export interface NormDocuments {
-  /** The documents a new agent holds. */
-  readonly initial: readonly string[];
-  /** The name a document gives its norm, or none when the agent cannot hold it. */
-  readonly name: (document: string) => Option.Option<string>;
-  /**
-   * The matchers the chain rules and text rules name, and the fixed text rules,
-   * that the held documents add; none when they cannot be held together.
-   */
-  readonly compile: (
-    documents: readonly string[],
-  ) => Option.Option<CompiledNorms>;
-}
+type EditableRule = (typeof editableRulesSchema.Type)[number];
 
-/** What the norms an agent holds add to its message policy. */
-export interface CompiledNorms {
-  readonly matchers: Chain["matchers"];
-  readonly fixedRules: readonly TextRule[];
+/**
+ * One edit of an agent's editable policy. It adds an inline rule, a
+ * `BEHAVIOR.md` document's rule or a contract compiled from a norm document,
+ * and removes an editable rule by id or a held contract by its norm's name.
+ * Removing and adding one id or name replaces it in one activation.
+ */
+export interface PolicyEdit {
+  readonly add?: ReadonlyArray<
+    | EditableRule
+    | { readonly behavior: string }
+    | { readonly contract: CompiledContract }
+  >;
+  readonly remove?: ReadonlyArray<string | { readonly norm: string }>;
 }
 
 /** Where an invalid addition or removal sits in an update, such as `["add", 0]`. */
 type PolicyEditPath = NonNullable<FirewallPolicyError["path"]>;
-
-/** A norm document the agent holds, and the name of its norm. */
-export interface HeldNorm {
-  readonly name: string;
-  readonly document: string;
-}
-
-type EditableRule = (typeof editableRulesSchema.Type)[number];
 
 /** What an edit adds and removes, each with its index in the request's `add` or `remove` list. */
 interface PolicyChange {
@@ -67,44 +48,37 @@ interface PolicyChange {
     readonly index: number;
     readonly ruleId: string;
   }>;
-  readonly addNorms: ReadonlyArray<{
+  readonly addContracts: ReadonlyArray<{
     readonly index: number;
-    readonly norm: HeldNorm;
+    readonly contract: CompiledContract;
   }>;
-  readonly removeNorms: ReadonlyArray<{
+  readonly removeContracts: ReadonlyArray<{
     readonly index: number;
     readonly name: string;
   }>;
 }
 
-type RequestedAddition = NonNullable<
-  typeof policyUpdateSchema.Type.add
->[number];
+type RequestedAddition = NonNullable<PolicyEdit["add"]>[number];
 
-/** One requested addition once read: a rule, or a norm document and its name. */
+/** One requested addition once read: a rule or a contract. */
 type Addition =
   | {
       readonly kind: "rule";
       readonly index: number;
       readonly rule: EditableRule;
     }
-  | { readonly kind: "norm"; readonly index: number; readonly norm: HeldNorm };
-
-/** The norm documents of a daemon without norms, which an agent cannot hold. */
-const noNorms: NormDocuments = {
-  initial: [],
-  name: () => Option.none(),
-  compile: () => Option.none(),
-};
+  | {
+      readonly kind: "contract";
+      readonly index: number;
+      readonly contract: CompiledContract;
+    };
 
 /**
- * Maps each `{behavior}` to a rule and names each `{norm}` document, keeping
- * every addition's and removal's index in its list, and reports an invalid
- * one at that index.
+ * Maps each `{behavior}` to a rule, keeping every addition's and removal's
+ * index in its list, and reports an invalid one at that index.
  */
 export const resolvedChange = Effect.fn("resolvedChange")(function* (
-  request: typeof policyUpdateSchema.Type,
-  norms?: NormDocuments,
+  request: PolicyEdit,
 ) {
   const frozenRequest = yield* Effect.try({
     try: () => structuredClone(request),
@@ -113,7 +87,7 @@ export const resolvedChange = Effect.fn("resolvedChange")(function* (
   deepFreeze(frozenRequest);
   const additions = yield* Effect.forEach(
     frozenRequest.add ?? [],
-    (requested, index) => addition(requested, index, norms ?? noNorms),
+    (requested, index) => addition(requested, index),
     { concurrency: 1 },
   );
   const removals = frozenRequest.remove ?? [];
@@ -121,13 +95,15 @@ export const resolvedChange = Effect.fn("resolvedChange")(function* (
     addRules: additions.flatMap((added) =>
       added.kind === "rule" ? [{ index: added.index, rule: added.rule }] : [],
     ),
-    addNorms: additions.flatMap((added) =>
-      added.kind === "norm" ? [{ index: added.index, norm: added.norm }] : [],
+    addContracts: additions.flatMap((added) =>
+      added.kind === "contract"
+        ? [{ index: added.index, contract: added.contract }]
+        : [],
     ),
     removeRules: removals.flatMap((removal, index) =>
       typeof removal === "string" ? [{ index, ruleId: removal }] : [],
     ),
-    removeNorms: removals.flatMap((removal, index) =>
+    removeContracts: removals.flatMap((removal, index) =>
       typeof removal === "string" ? [] : [{ index, name: removal.norm }],
     ),
   };
@@ -182,32 +158,36 @@ export const editedRules = Effect.fn("editedRules")(function* (
 });
 
 /**
- * The norms an edit leaves the agent holding, or the first addition or
- * removal it cannot apply: a removal of a norm the agent does not hold, an addition of a norm
- * it keeps or the edit adds twice, or more norms than the limit.
+ * The contracts an edit leaves the agent holding, or the first addition or
+ * removal it cannot apply: a removal of a norm the agent does not hold, an
+ * addition of a norm it keeps or the edit adds twice, or more contracts than
+ * the limit.
  */
-export const editedNorms = Effect.fn("editedNorms")(function* (
-  norms: readonly HeldNorm[],
-  { addNorms, removeNorms }: PolicyChange,
+export const editedContracts = Effect.fn("editedContracts")(function* (
+  contracts: readonly CompiledContract[],
+  { addContracts, removeContracts }: PolicyChange,
 ) {
-  for (const { index, name } of removeNorms) {
-    if (!norms.some((norm) => norm.name === name)) {
+  for (const { index, name } of removeContracts) {
+    if (!contracts.some((contract) => contract.name === name)) {
       return yield* invalidRule("unknown-id", { path: ["remove", index] });
     }
   }
-  const removed = new Set(removeNorms.map(({ name }) => name));
-  const kept = norms.filter((norm) => !removed.has(norm.name));
-  const names = new Set(kept.map((norm) => norm.name));
-  for (const { index, norm } of addNorms) {
-    if (names.has(norm.name)) {
+  const removed = new Set(removeContracts.map(({ name }) => name));
+  const kept = contracts.filter((contract) => !removed.has(contract.name));
+  const names = new Set(kept.map((contract) => contract.name));
+  for (const { index, contract } of addContracts) {
+    if (names.has(contract.name)) {
       return yield* invalidRule("duplicate-id", { path: ["add", index] });
     }
-    names.add(norm.name);
+    names.add(contract.name);
   }
-  if (kept.length + addNorms.length > MAXIMUM_EDITABLE_RULES) {
+  if (kept.length + addContracts.length > MAXIMUM_EDITABLE_RULES) {
     return yield* invalidRule("editable-limit");
   }
-  return Object.freeze([...kept, ...addNorms.map(({ norm }) => norm)]);
+  return Object.freeze([
+    ...kept,
+    ...addContracts.map(({ contract }) => contract),
+  ]);
 });
 
 /** An `invalid-rule` failure for `problem`, at the addition or removal `at` locates. */
@@ -219,14 +199,13 @@ export function invalidRule(
 }
 
 /**
- * One requested addition: an inline rule, a behavior's rule or a named norm
- * document. An inline rule is decoded, so its members are in its schema's
- * order like those of a rule read back from storage.
+ * One requested addition: an inline rule, a behavior's rule or a contract.
+ * An inline rule is decoded, so its members are in its schema's order like
+ * those of a rule read back from storage.
  */
 function addition(
   requested: RequestedAddition,
   index: number,
-  norms: NormDocuments,
 ): Effect.Effect<Addition, FirewallPolicyError> {
   const path: PolicyEditPath = ["add", index];
   if ("behavior" in requested) {
@@ -234,10 +213,12 @@ function addition(
       Effect.map((rule) => ({ kind: "rule", index, rule }) as const),
     );
   }
-  if ("norm" in requested) {
-    return heldNorm(requested.norm, path, norms).pipe(
-      Effect.map((norm) => ({ kind: "norm", index, norm }) as const),
-    );
+  if ("contract" in requested) {
+    return Effect.succeed({
+      kind: "contract",
+      index,
+      contract: requested.contract,
+    });
   }
   return decodeFrozen(editableRuleSchema, requested).pipe(
     Effect.mapBoth({
@@ -245,21 +226,6 @@ function addition(
       onSuccess: (rule) => ({ kind: "rule", index, rule }) as const,
     }),
   );
-}
-
-/** A norm document within the size limit that the daemon's norms name, or `invalid-norm`. */
-function heldNorm(
-  document: string,
-  path: PolicyEditPath,
-  norms: NormDocuments,
-): Effect.Effect<HeldNorm, FirewallPolicyError> {
-  if (Buffer.byteLength(document, "utf8") > MAXIMUM_DOCUMENT_BYTES) {
-    return Effect.fail(invalidRule("too-large", { path }));
-  }
-  return Option.match(norms.name(document), {
-    onNone: () => Effect.fail(invalidRule("invalid-norm", { path })),
-    onSome: (named) => Effect.succeed({ name: named, document }),
-  });
 }
 
 /** A behavior supplies the same direction, guidance and feedback as an inline rule. */

@@ -1,9 +1,16 @@
-/** @file JSON text round trips through a schema, and comparison of two texts. */
+/** @file JSON text round trips through a schema, comparison of two texts, and parenthesized data that reads back as written. */
 
 import { Effect, Either, Schema } from "effect";
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { decodeJson, encodeJson, sameJson } from "./encoding.js";
+import {
+  decodeJson,
+  encodeJson,
+  readSExpressions,
+  sameJson,
+  type SExpression,
+  writeSExpression,
+} from "./encoding.js";
 
 describe("JSON text of schema values", () => {
   it("round-trips generated JSON through one stable text", () => {
@@ -54,5 +61,70 @@ describe("comparing two JSON texts", () => {
     { left: "not JSON", right: "not JSON" },
   ])("tells $left from $right", ({ left, right }) => {
     expect(sameJson(left, right)).toBe(false);
+  });
+});
+
+describe("parenthesized data", () => {
+  /** Any expression: a symbol free of delimiters, a string, or a list of expressions. */
+  const { expression } = fc.letrec<{ expression: SExpression }>((tie) => ({
+    expression: fc.oneof(
+      { maxDepth: 3 },
+      fc
+        .stringMatching(/^[^\s();"]+$/u)
+        .map((value): SExpression => ({ kind: "symbol", value })),
+      fc.string().map((value): SExpression => ({ kind: "string", value })),
+      fc
+        .array(tie("expression"), { maxLength: 4 })
+        .map((values): SExpression => ({ kind: "list", values })),
+    ),
+  }));
+  const expressions = fc.array(expression, { maxLength: 4 });
+  const written = (values: readonly SExpression[]) =>
+    values.map((value) => writeSExpression(value)).join(" ");
+  const refused = (text: string, comments: boolean) =>
+    Either.match(readSExpressions(text, comments), {
+      onLeft: () => true,
+      onRight: () => false,
+    });
+
+  it("reads back every expression it writes", () => {
+    fc.assert(
+      fc.property(expressions, (values) => {
+        expect(readSExpressions(written(values))).toEqual(Either.right(values));
+      }),
+    );
+  });
+
+  it("skips a comment in a document and refuses one in a message", () => {
+    fc.assert(
+      fc.property(
+        expressions,
+        fc.stringMatching(/^[^\r\n]*$/u),
+        (values, comment) => {
+          const text = `${written(values)} ;${comment}\n`;
+          expect(readSExpressions(text)).toEqual(Either.right(values));
+          expect(refused(text, false)).toBe(true);
+        },
+      ),
+    );
+  });
+
+  it("refuses text whose parentheses do not balance", () => {
+    fc.assert(
+      fc.property(
+        expressions,
+        fc.constantFrom("(", ")"),
+        fc.boolean(),
+        (values, parenthesis, leading) => {
+          const text = written(values);
+          expect(
+            refused(
+              leading ? `${parenthesis} ${text}` : `${text} ${parenthesis}`,
+              true,
+            ),
+          ).toBe(true);
+        },
+      ),
+    );
   });
 });

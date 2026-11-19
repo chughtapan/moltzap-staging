@@ -1137,23 +1137,6 @@ export function outcomeOfResponse(
 }
 
 /**
- * Name each failing response field, such as `field "slot" is invalid (enum)`.
- * A refused response and a recipient's `invalid` outcome read the same. Field
- * names come from peers, so each is quoted as JSON: no name can close its
- * quotes or start a new line of the text a model reads.
- * @param fields The failing fields, in validation order.
- * @returns One clause per field, joined by `; `.
- */
-export function responseFieldsText(fields: ResponseFieldFailures): string {
-  return fields
-    .map(({ field, reason, detail }) => {
-      const named = `field ${JSON.stringify(field)} ${responseFieldText[reason]}`;
-      return detail === undefined ? named : `${named} (${detail})`;
-    })
-    .join("; ");
-}
-
-/**
  * Check a response's content against the schema its request carried.
  * @param requestedSchema The request's form-mode schema.
  * @param content The content of the recipient's accepting response.
@@ -1393,6 +1376,23 @@ function describeCollectiveFailure(failure: CollectiveFailure): string {
       return exhaustive;
     }
   }
+}
+
+/**
+ * Name each failing response field, such as `field "slot" is invalid (enum)`.
+ * A refused response and a recipient's `invalid` outcome read the same. Field
+ * names come from peers, so each is quoted as JSON: no name can close its
+ * quotes or start a new line of the text a model reads.
+ * @param fields The failing fields, in validation order.
+ * @returns One clause per field, joined by `; `.
+ */
+function responseFieldsText(fields: ResponseFieldFailures): string {
+  return fields
+    .map(({ field, reason, detail }) => {
+      const named = `field ${JSON.stringify(field)} ${responseFieldText[reason]}`;
+      return detail === undefined ? named : `${named} (${detail})`;
+    })
+    .join("; ");
 }
 
 function isFixedFailure(

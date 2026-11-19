@@ -12,6 +12,7 @@ import { ProcessTestError, type SignedIn } from "../daemon/daemon-fixture.js";
 import { markedRule } from "../firewall/policy-fixture.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
+import { anyString } from "../test-matchers.js";
 import { callTool } from "../tool-call.js";
 import {
   acquireGuardedServer,
@@ -241,7 +242,7 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
     );
     expect(entryRead(requestTurn)).toEqual({
       address,
-      deliveryToken: expect.any(String),
+      deliveryToken: anyString,
       item: peerRequest,
     });
     const requestId = peerRequest.message.msgId;
@@ -282,7 +283,7 @@ function receiveAllGather(scenario: HostedScenario, group: string) {
     });
     expect(entryRead(resultTurn)).toEqual({
       address,
-      deliveryToken: expect.any(String),
+      deliveryToken: anyString,
       item: callerResult,
     });
     expect(resultTurn.raw.id).toBe(requestId);
@@ -350,7 +351,7 @@ function sendAllGather(scenario: HostedScenario, group: string) {
     });
     expect(entryRead(resultTurn)).toEqual({
       address: group,
-      deliveryToken: expect.any(String),
+      deliveryToken: anyString,
       item: memberResult,
     });
     expect(memberResult).toMatchObject({ requestId: resultTurn.raw.id });
