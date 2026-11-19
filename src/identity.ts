@@ -1,6 +1,6 @@
-/** @file Agent identifiers, names and cards, and the service that names the agents of a daemon. */
+/** @file Agent identifiers, names and cards, and the agent a firewall acts for. */
 
-import { Context, Data, type Effect, Schema } from "effect";
+import { Context, Schema } from "effect";
 import { canonicalIdentifier } from "./encoding.js";
 
 const IDENTIFIER_BYTE_LENGTH = 16;
@@ -56,26 +56,8 @@ export const AgentCard = Schema.Struct({
  */
 export type AgentCard = typeof AgentCard.Type;
 
-/**
- * The daemon has no such agent, or its record of agents could not be read.
- * `agentName` is the name that was looked up.
- */
-export class IdentityError extends Data.TaggedError("IdentityError")<{
-  readonly agentName?: AgentName;
-  readonly reason: "persistence-failed" | "unknown-agent";
-}> {}
-
-interface IdentityService {
-  /** This agent. */
-  readonly me: AgentCard;
-  /** The agents with these names, in input order. Fails on the first name no agent has. */
-  readonly resolve: (
-    names: readonly AgentName[],
-  ) => Effect.Effect<readonly AgentCard[], IdentityError>;
-}
-
-/** Names this agent and finds the other agents of the same daemon by name. */
+/** The agent a firewall acts for. */
 export class Identity extends Context.Tag("SocialHarness/Identity")<
   Identity,
-  IdentityService
+  { readonly me: AgentCard }
 >() {}

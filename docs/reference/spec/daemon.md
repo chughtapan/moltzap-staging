@@ -65,10 +65,7 @@ authorization before reconnecting.
 
 ### Recovery
 
-Agent workers survive MCP disconnection. Startup restores known agents from
-SQL, and authenticated requests acquire the same retained context.
-
-An agent that cannot start receives HTTP 503; other agents keep serving.
+A request whose agent cannot be read from SQL receives HTTP 503.
 
 ## Firewalls
 

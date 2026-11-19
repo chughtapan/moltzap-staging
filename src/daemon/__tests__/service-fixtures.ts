@@ -1,7 +1,6 @@
-/** @file SocialHarness fixtures: one agent's harness over real policy, identity and communication in a test database, with the peers that message it. */
+/** @file SocialHarness fixtures: the server agent's harness over real policy and stored messages in a test database, with the clients that message it. */
 
-import { SqlClient } from "@effect/sql";
-import { Context, Effect, flow, Layer, PubSub, Schema, Scope } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import type {
   CompiledContract,
   DecisionProvider,
@@ -9,18 +8,16 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../../firewall/index.js";
-import type { AgentCard } from "../../identity.js";
 import { createTestAgent } from "../../__tests__/agents.js";
-import { CommunicationError, type Message } from "../../communication/index.js";
-import { Communication } from "../../communication/service.js";
+import { Message } from "../../communication/index.js";
 import { Firewall } from "../../firewall/service.js";
+import { type AgentCard, Identity } from "../../identity.js";
 import { openTestDatabase } from "../../test.js";
 import {
   type HarnessSettings,
+  makeHarness,
   readInboxEntries,
-  SocialHarness,
 } from "../agent.js";
-import { identityLayer } from "../owners.js";
 import { AgentAddress, type SendRequest } from "../values.js";
 
 type Policy = Context.Tag.Service<typeof Firewall>;
@@ -108,99 +105,44 @@ export function composedPolicy(
   };
 }
 
-/** How a harness opens. */
-interface OpenOptions extends Omit<HarnessSettings, "agentKey" | "checkedBy"> {
+/** How Alice's harness opens. */
+interface OpenOptions extends Omit<HarnessSettings, "serverAgent"> {
   readonly policy?: TestPolicy;
   /** The contracts the agent starts with. */
   readonly contracts?: readonly CompiledContract[];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
 
-type Harness = Context.Tag.Service<typeof SocialHarness>;
-
 /**
- * Alice, the server agent whose harness a test opens, with her clients Bob,
- * Carol and any peer a test adds, on one daemon. A client sends through a
- * harness of its own, which has Alice's open harness check the message.
- * `submitted` lists what Alice's harness handed to communication, and after
- * `failSends` communication stores none of it.
+ * Alice, the server agent, with her clients Bob, Carol and any peer a test
+ * adds, on one daemon. `open` installs Alice's firewall and gives her
+ * operations; a client then sends through the same harness.
  */
 export const makeHarnessFixture = Effect.gen(function* () {
   const database = yield* openTestDatabase();
-  const scope = yield* Effect.scope;
-  const readable = yield* PubSub.unbounded<string>();
-  const submitted: Message[] = [];
-  let sendsFail = false;
-  let server: Harness | undefined;
-  const clients = new Map<string, Harness>();
-  /** Creates a client, whose harness closes with the fixture. */
-  const join = Effect.fn(
-    function* (name: string) {
-      const agent = yield* createTestAgent(name);
-      const services = yield* Layer.build(
-        SocialHarness.layer({
-          agentKey: agent.agentKey,
-          checkedBy: Effect.suspend(() => Effect.fromNullable(server)).pipe(
-            Effect.orDie,
-          ),
-        }).pipe(
-          Layer.provide(Communication.layer({ ...agent, readable })),
-          Layer.provide(
-            Firewall.layer(agent.agentKey).pipe(
-              Layer.provideMerge(identityLayer(agent.agentKey)),
-            ),
-          ),
-        ),
-      );
-      clients.set(agent.card.agentId, Context.get(services, SocialHarness));
-      return agent.card;
-    },
-    flow(database.run, Scope.extend(scope)),
-  );
-  const alice = yield* database.run(createTestAgent("alice"));
+  const join = (name: string) => database.run(createTestAgent(name));
+  const alice = yield* join("alice");
   const bob = yield* join("bob");
   const carol = yield* join("carol");
-  /** Alice's communication, recording each send and failing it once sends fail. */
-  const communication = Layer.effect(
-    Communication,
-    Effect.map(Communication, (real) => ({
-      ...real,
-      send: (...[message, received]: Parameters<typeof real.send>) =>
-        Effect.suspend(() => {
-          submitted.push(message);
-          return sendsFail
-            ? Effect.fail(
-                new CommunicationError({ reason: "persistence-failed" }),
-              )
-            : real.send(message, received);
-        }),
-    })),
-  ).pipe(Layer.provide(Communication.layer({ ...alice, readable })));
+  const peers = new Map([bob, carol].map((peer) => [peer.card.agentId, peer]));
+  let harnessOf: Effect.Effect.Success<ReturnType<typeof makeHarness>>;
   const open = Effect.fn(function* (options: OpenOptions = {}) {
-    const services = yield* Layer.build(
+    const firewall = yield* Layer.build(
       Firewall.layer(
         alice.agentKey,
         options.policy?.source,
         options.contracts,
         options.policy?.provider,
-      ).pipe(Layer.provideMerge(identityLayer(alice.agentKey))),
-    );
-    const firewall = Context.get(services, Firewall);
-    const context = yield* Layer.build(
-      SocialHarness.layer({ ...options, agentKey: alice.agentKey }).pipe(
-        Layer.provide(communication),
-      ),
-    ).pipe(
-      Effect.provide(
-        options.decorateFirewall === undefined
-          ? services
-          : Context.add(services, Firewall, options.decorateFirewall(firewall)),
+      ).pipe(Layer.provide(Layer.succeed(Identity, { me: alice.card }))),
+    ).pipe(Effect.map(Context.get(Firewall)));
+    harnessOf = yield* makeHarness({ ...options, serverAgent: alice }).pipe(
+      Effect.provideService(
+        Firewall,
+        options.decorateFirewall?.(firewall) ?? firewall,
       ),
     );
-    const harness = Context.get(context, SocialHarness);
-    server = harness;
     return {
-      harness,
+      harness: harnessOf(alice),
       firewall,
       /** Every entry of Alice's inbox, in read order. */
       inbox: readInboxEntries(alice.agentKey, {
@@ -208,33 +150,49 @@ export const makeHarnessFixture = Effect.gen(function* () {
         cursor: "0",
       }).pipe(
         Effect.map((page) => page.entries),
-        Effect.provideService(SqlClient.SqlClient, database.sql),
+        database.run,
         Effect.orDie,
       ),
     };
   }, database.run);
+  /** The operations of a client of the open harness. */
+  const client = (card: AgentCard) =>
+    Effect.map(Effect.fromNullable(peers.get(card.agentId)), (peer) =>
+      harnessOf(peer),
+    );
+  const aliceAddress = AgentAddress.make("agent:alice");
   return {
     self: alice.card,
-    bob,
-    carol,
-    submitted,
+    bob: bob.card,
+    carol: carol.card,
     open,
-    /** Sends Alice a message through the harness of its author, Bob unless given. */
-    sendFrom: (request: Omit<SendRequest, "to">, author: AgentCard = bob) =>
+    /** Every message Alice has sent, in the order it was stored. */
+    sent: database.sql<{
+      message: string;
+    }>`SELECT message FROM message_log WHERE agent_key = ${alice.agentKey}
+        AND author_agent_id = ${alice.card.agentId} ORDER BY sequence`.pipe(
       Effect.flatMap(
-        Effect.fromNullable(clients.get(author.agentId)),
-        (client) =>
-          client.send({ ...request, to: AgentAddress.make("agent:alice") }),
+        Schema.decodeUnknown(
+          Schema.Array(Schema.Struct({ message: Schema.parseJson(Message) })),
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.message)),
+      Effect.orDie,
+    ),
+    /** Sends Alice a message as a client, Bob unless given. */
+    sendFrom: (request: Omit<SendRequest, "to">, author?: AgentCard) =>
+      Effect.flatMap(client(author ?? bob.card), (own) =>
+        own.send({ ...request, to: aliceAddress }),
       ),
     /** The kinds of the records a client, Bob unless given, reads of its conversation with Alice. */
-    historyOf: (client: AgentCard = bob) =>
-      Effect.flatMap(Effect.fromNullable(clients.get(client.agentId)), (own) =>
-        own.readHistory({ address: AgentAddress.make("agent:alice") }),
+    historyOf: (reader?: AgentCard) =>
+      Effect.flatMap(client(reader ?? bob.card), (own) =>
+        own.readHistory({ address: aliceAddress }),
       ).pipe(Effect.map(({ records }) => records.map(({ kind }) => kind))),
-    addPeer: join,
-    failSends: () =>
-      Effect.sync(() => {
-        sendsFail = true;
+    addPeer: (name: string) =>
+      Effect.map(join(name), (peer) => {
+        peers.set(peer.card.agentId, peer);
+        return peer.card;
       }),
   };
 }).pipe(Effect.withSpan("makeHarnessFixture"));

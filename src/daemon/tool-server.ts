@@ -50,13 +50,13 @@ import {
 } from "./values.js";
 
 /**
- * What a request is answered from: one running agent, its role and the
+ * What a request is answered from: one agent, its role and the
  * daemon's Events extension, which serves that agent's inbox.
  */
 export interface AgentCalls {
   readonly agentKey: string;
   readonly card: AgentCard;
-  readonly harness: Context.Tag.Service<typeof SocialHarness>;
+  readonly harness: SocialHarness;
   readonly firewall: Context.Tag.Service<typeof Firewall>;
   readonly events: EventsExtension;
   /**

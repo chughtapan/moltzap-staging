@@ -1,4 +1,4 @@
-/** @file SocialHarness sends, the checks of what an agent sends and is sent, the inbox and history. */
+/** @file Each owner's one agent, and its sends, the checks of what it sends and is sent, its inbox and its history. */
 
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -24,12 +24,15 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
+import { AgentName } from "../identity.js";
+import { openTestDatabase } from "../test.js";
 import {
   composedPolicy,
   decisionResponse,
   decisionState,
   makeHarnessFixture,
 } from "./__tests__/service-fixtures.js";
+import { getOrCreateOwnedAgent } from "./agent.js";
 import { AgentAddress } from "./values.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
@@ -95,41 +98,26 @@ it("sends each call as new work to the agent its address names, with the reply r
             : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
         const to = AgentAddress.make(`agent:${name}`);
         const request = { to, text: "Hello", replyToMsgId };
-        const dispatched = subject.submitted.length;
+        const dispatched = (yield* subject.sent).length;
         if (name === "nobody") {
           expect(yield* harness.send(request).pipe(Effect.flip)).toMatchObject({
             reason: "unknown-agent",
           });
-          expect(subject.submitted).toHaveLength(dispatched);
+          expect(yield* subject.sent).toHaveLength(dispatched);
         } else {
           const receipt = yield* harness.send(request);
           expect(receipt.address).toBe(to);
           expect(receipts).not.toContain(receipt.id);
           receipts.push(receipt.id);
-          expect(subject.submitted.slice(dispatched)).toMatchObject([
-            { msgId: receipt.id, recipients: [{ agentName: name }] },
-          ]);
-          const submitted = subject.submitted.at(-1);
-          expect(
-            submitted !== undefined && "replyToMsgId" in submitted
-              ? submitted.replyToMsgId
-              : undefined,
-          ).toBe(replyToMsgId);
+          const [stored] = (yield* subject.sent).slice(dispatched);
+          expect(stored).toMatchObject({
+            msgId: receipt.id,
+            recipients: [{ agentName: name }],
+          });
+          expect(stored?.replyToMsgId).toBe(replyToMsgId);
         }
       }),
     );
-  }));
-
-it("ends a send that could not be stored as a defect without sending it again", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open();
-    yield* subject.failSends();
-    const sent = yield* runtime.harness
-      .send({ to: bobAddress, text: "Not stored" })
-      .pipe(Effect.exit);
-    expect(Exit.isFailure(sent) && Cause.isDie(sent.cause)).toBe(true);
-    expect(subject.submitted).toHaveLength(1);
   }));
 
 it("checks the messages of one conversation in order while another conversation progresses", () =>
@@ -208,7 +196,7 @@ it("stores a withheld message for its sender, whose send succeeds, and keeps it 
       (yield* runtime.harness.readHistory({ address: bobAddress })).records,
     ).toEqual([]);
     expect(yield* subject.historyOf()).toEqual(["sent"]);
-    expect(subject.submitted).toEqual([]);
+    expect(yield* subject.sent).toEqual([]);
   }));
 
 it("fails a client's send and stores nothing when the check of its message could not run", () =>
@@ -233,7 +221,7 @@ it("answers a message that broke a rule with the configured reply when no rule g
       policy: composedPolicy(incomingViolation),
     });
     yield* subject.sendFrom({ text: "Private peer content" });
-    expect(subject.submitted).toMatchObject([
+    expect(yield* subject.sent).toMatchObject([
       { content: [{ type: "text", text: withheldReply }] },
     ]);
     expect(yield* runtime.inbox).toEqual([]);
@@ -247,7 +235,7 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
       policy: composedPolicy(incomingViolation, "reply"),
     });
     const withheld = yield* subject.sendFrom({ text: "Private peer content" });
-    expect(subject.submitted).toMatchObject([
+    expect(yield* subject.sent).toMatchObject([
       {
         author: subject.self,
         recipients: [subject.bob],
@@ -269,7 +257,7 @@ it("sends no reply that its own message policy refuses, and saves that refusal",
     expect(
       decisions.map(({ decision }) => decision).sort(compareAscii),
     ).toEqual(["refused", "withheld"]);
-    expect(subject.submitted).toEqual([]);
+    expect(yield* subject.sent).toEqual([]);
   }));
 
 it("stores nothing of a message whose decision cannot be saved, fails its send and keeps serving", () =>
@@ -355,7 +343,7 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
       "outgoing allowed",
       "outgoing allowed",
     ]);
-    expect(subject.submitted).toMatchObject(
+    expect(yield* subject.sent).toMatchObject(
       [plain, outOfTurn].map((withheld) => ({
         recipients: [subject.bob],
         replyToMsgId: withheld.id,
@@ -374,7 +362,7 @@ it("answers an act its text rule withholds with that rule's feedback when it hol
       policy: composedPolicy(incomingViolation, "reply"),
     });
     const act = yield* subject.sendFrom({ text: "(open :ontology exchange)" });
-    expect(subject.submitted).toMatchObject([
+    expect(yield* subject.sent).toMatchObject([
       {
         replyToMsgId: act.id,
         content: [{ type: "text", text: "Keep private information private." }],
@@ -502,7 +490,7 @@ it("cancels an unaccepted draft and releases its conversation's turn", () =>
     yield* Deferred.await(entered);
     yield* Fiber.interrupt(cancelled);
     yield* runtime.harness.send({ to: bobAddress, text: "Next draft" });
-    expect(subject.submitted).toMatchObject([
+    expect(yield* subject.sent).toMatchObject([
       { content: [{ text: "Next draft" }] },
     ]);
   }));
@@ -527,7 +515,7 @@ it("retains a draft's input while its caller changes the original object", () =>
     input.text = "Later mutation";
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(sending);
-    expect(subject.submitted).toMatchObject([
+    expect(yield* subject.sent).toMatchObject([
       { content: [{ text: "Captured draft" }] },
     ]);
   }));
@@ -557,4 +545,66 @@ it("reads a saved conversation's history at its agent's address, and reports an 
         expect(read).toEqual(saved[name]);
       }),
     );
+  }));
+
+const owner = { issuer: "https://issuer.example", subject: "owner" };
+
+const accounts = fc.array(
+  fc.record({
+    issuer: fc.constantFrom("https://issuer.example", "https://other.example"),
+    subject: fc.constantFrom("owner", "another", "third"),
+  }),
+  { minLength: 1, maxLength: 8 },
+);
+
+it.prop(
+  "binds each issuer and subject pair to one agent of its own, however many connections arrive at once or again",
+  [accounts],
+  ([owners]) =>
+    Effect.gen(function* () {
+      const { run, sql } = yield* openTestDatabase();
+      const account = ({ issuer, subject }: (typeof owners)[number]) =>
+        `${issuer} ${subject}`;
+      const distinct = new Set(owners.map(account)).size;
+      const agents = yield* Effect.all(
+        owners.map((each) => getOrCreateOwnedAgent(each)),
+        { concurrency: owners.length },
+      ).pipe(run);
+      const again = yield* Effect.forEach(
+        owners,
+        (each) => getOrCreateOwnedAgent(each),
+        { concurrency: 1 },
+      ).pipe(run);
+      expect(again).toEqual(agents);
+      expect(
+        new Set(
+          owners.map(
+            (each, index) =>
+              `${account(each)} ${agents[index]?.agentKey ?? ""}`,
+          ),
+        ).size,
+      ).toBe(distinct);
+      for (const identifiers of [
+        agents.map((agent) => agent.agentKey),
+        agents.map((agent) => agent.card.agentId),
+        agents.map((agent) => agent.card.principalId),
+      ]) {
+        expect(new Set(identifiers).size).toBe(distinct);
+      }
+      expect(yield* sql`SELECT * FROM agent_cards`).toHaveLength(distinct);
+    }),
+  { fastCheck: { numRuns: 25 } },
+);
+
+it("refuses to rename a saved agent", () =>
+  Effect.gen(function* () {
+    const { run, sql } = yield* openTestDatabase();
+    yield* run(getOrCreateOwnedAgent(owner));
+    const before = yield* sql`SELECT * FROM agent_cards`;
+    const changed = yield* getOrCreateOwnedAgent(
+      owner,
+      AgentName.make("another"),
+    ).pipe(run, Effect.exit);
+    expect(Exit.isFailure(changed)).toBe(true);
+    expect(yield* sql`SELECT * FROM agent_cards`).toEqual(before);
   }));
