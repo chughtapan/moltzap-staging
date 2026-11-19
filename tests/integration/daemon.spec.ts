@@ -208,7 +208,7 @@ it(
             text: "read before the restart",
           });
           expect(yield* awaitInbox(client)).toMatchObject([
-            { item: { message: { msgId: first.id } } },
+            { message: { msgId: first.id } },
           ]);
           const unread = yield* send(server, {
             to: client.address,
@@ -229,7 +229,7 @@ it(
       expect(client.agent).toEqual(sent.client);
       expect(server.agent).toEqual(sent.server);
       expect(yield* awaitInbox(client)).toMatchObject([
-        { item: { message: { msgId: sent.ids[1] } } },
+        { message: { msgId: sent.ids[1] } },
       ]);
       const history = yield* callTool(client.connection.mcp, {
         name: "read_conversation",

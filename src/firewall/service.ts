@@ -33,7 +33,6 @@ import {
   type HistoryEntry,
   InvalidCheckError,
   type LocalGuidance,
-  type PermittedItem,
   textQuestionEdition,
   validateChecks,
 } from "./check.js";
@@ -127,7 +126,6 @@ export type IncomingDecision = {
 } & (
   | {
       readonly kind: "allowed";
-      readonly item: PermittedItem;
       readonly guidance?: LocalGuidance;
     }
   | {
@@ -259,7 +257,6 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
             }),
           checkIncoming: (message, evidence) =>
             Effect.gen(function* () {
-              const item: PermittedItem = { kind: "message", message };
               const decision = yield* decide(
                 installed,
                 { message, evidence },
@@ -269,7 +266,6 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
               if (decision.kind === "allowed") {
                 return {
                   kind: "allowed",
-                  item,
                   save,
                   ...(decision.guidance === undefined
                     ? {}

@@ -455,14 +455,7 @@ function messageRecords(agent: Agent, members: Conversation, cursor?: string) {
           msgId: message.msgId,
         });
         if (entry !== undefined) {
-          records.push({
-            kind: "received",
-            message: {
-              authorAgentId: message.author.agentId,
-              msgId: message.msgId,
-            },
-            ...entry,
-          });
+          records.push({ kind: "received", ...entry });
         }
       }
     }

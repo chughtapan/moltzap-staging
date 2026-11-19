@@ -58,12 +58,9 @@ it(
       );
       expect(final).toEqual({ visibleReplySent: false });
       expect(yield* nextItem(caller)).toMatchObject({
-        kind: "message",
-        message: {
-          author: target.agent,
-          recipients: [caller.agent],
-          content: textContent(REPLY),
-        },
+        author: target.agent,
+        recipients: [caller.agent],
+        content: textContent(REPLY),
       });
       yield* stopGateway(hosted);
       expect(yield* Queue.size(turns)).toBe(0);
@@ -108,8 +105,8 @@ it(
       });
       expect(accepted.details).toEqual({ ok: true, to: caller.address });
       expect(yield* nextItem(caller)).toMatchObject({
-        kind: "message",
-        message: { author: target.agent, content: textContent(prose) },
+        author: target.agent,
+        content: textContent(prose),
       });
 
       yield* stopGateway(hosted);

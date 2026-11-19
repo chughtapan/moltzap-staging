@@ -8,7 +8,6 @@ export {
   type FirewallEvidence,
   FirewallRefusal,
   LocalGuidance,
-  PermittedItem,
 } from "./check.js";
 /** A compiled norm and the form of one of its acts, which the norms layer produces and the firewall checks messages against. */
 export {

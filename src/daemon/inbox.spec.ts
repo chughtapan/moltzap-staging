@@ -33,7 +33,6 @@ it("stores the same message for each agent and leaves another agent's delivery t
     }
     const decision = {
       kind: "allowed",
-      item: { kind: "message", message },
       save: Effect.void,
     } as const;
     yield* first.recordDecision(firstUnchecked, decision);

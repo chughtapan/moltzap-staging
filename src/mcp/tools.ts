@@ -9,7 +9,6 @@ import {
   groupMembers,
   Message,
   MessageAddressInput,
-  MessageReference,
   MsgId,
   Page,
   PaginatedRequest,
@@ -28,7 +27,6 @@ import {
   type FirewallPolicyError,
   type FirewallRefusal,
   LocalGuidance,
-  PermittedItem,
   policyReadSchema,
   policyRevisionSchema,
   policyUpdateSchema,
@@ -111,7 +109,7 @@ export type DeliveryToken = typeof DeliveryToken.Type;
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const StoredInboxEntry = Schema.Struct({
   address: MessageAddress,
-  item: PermittedItem,
+  message: Message,
   guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
 });
 /** @useDeclaredType */
@@ -234,8 +232,7 @@ const historyRecordSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("received"),
     address: MessageAddress,
-    message: MessageReference,
-    item: Schema.typeSchema(PermittedItem),
+    message: Schema.typeSchema(Message),
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );

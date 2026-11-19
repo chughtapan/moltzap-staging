@@ -586,7 +586,7 @@ function handleInboxEntry(
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const projected: ProjectedEntry = {
-    id: entry.item.message.msgId,
+    id: entry.message.msgId,
     kind,
     address: entry.address,
     ...entryParticipants(entry, kind),
@@ -604,7 +604,7 @@ function handleInboxEntry(
  */
 function entryText(entry: InboxEntry): string {
   if (entry.guidance === undefined) {
-    const [part, ...rest] = entry.item.message.content;
+    const [part, ...rest] = entry.message.content;
     if (part.type === "text" && rest.length === 0) {
       return part.text;
     }
@@ -617,7 +617,7 @@ function entryParticipants(
   entry: InboxEntry,
   kind: ProjectedEntry["kind"],
 ): Pick<ProjectedEntry, "sender" | "members"> {
-  const { author, recipients } = entry.item.message;
+  const { author, recipients } = entry.message;
   const sender = agentSender(author);
   return kind === "direct"
     ? { sender }

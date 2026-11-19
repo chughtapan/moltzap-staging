@@ -172,7 +172,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       if (decision.kind === "allowed") {
         encodedEntry = yield* encodeJson(StoredInboxEntry, {
           address: unchecked.address,
-          item: decision.item,
+          message: unchecked.message,
           ...(decision.guidance === undefined
             ? {}
             : { guidance: decision.guidance }),

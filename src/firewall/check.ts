@@ -9,11 +9,7 @@ import {
   ParseResult,
   Schema,
 } from "effect";
-import {
-  Message as CommunicationMessage,
-  type Message,
-  RequestedSchema,
-} from "../communication/index.js";
+import { type Message, RequestedSchema } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
 import {
   type CheckLimits,
@@ -1110,14 +1106,6 @@ function validateTextRules({
     ? Effect.void
     : Effect.fail(new InvalidCheckError({ reason: "rules" }));
 }
-
-/** The message the message policy permits the agent to read. */
-export const PermittedItem = exactStruct({
-  kind: Schema.Literal("message"),
-  message: CommunicationMessage,
-});
-/** @useDeclaredType */
-export type PermittedItem = typeof PermittedItem.Type;
 
 const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
   "rule-violation": "It breaks a rule of the agent's message policy.",

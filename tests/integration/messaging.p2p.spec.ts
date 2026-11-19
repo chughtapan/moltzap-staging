@@ -49,11 +49,9 @@ it(
           }
           const first = yield* send(alice, { to: bob.address, text: "hello" });
           expect(yield* nextItem(bob)).toMatchObject({
-            message: {
-              msgId: first.id,
-              author: alice.agent,
-              recipients: [bob.agent],
-            },
+            msgId: first.id,
+            author: alice.agent,
+            recipients: [bob.agent],
           });
           const second = yield* send(bob, { to: alice.address, text: "reply" });
           expect(yield* receivedOrder(alice, 1)).toEqual([second.id]);
