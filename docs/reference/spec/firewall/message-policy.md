@@ -153,6 +153,17 @@ The settings file's `messagePolicyFile` names a JSON file.
 | `facts` | Owner facts for every check; default `[]`. |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
 
+| Rule field | Requirement |
+| --- | --- |
+| `id` | Required. |
+| `text` | Required. |
+| `applies` | Required: `incoming`, `outgoing` or `both`. |
+| `guidance` | Optional: the guidance for an allowed incoming message the provider was unsure about. |
+| `feedback` | Optional. |
+| `action` | Optional: `deny` or `reply`. |
+
+Duplicate ids prevent startup.
+
 Unknown properties and unsupported values fail. Trusted process composition may
 supply its own provider and fixed text rules. The generated API reference owns
 those callable types. The norms an agent holds add their
