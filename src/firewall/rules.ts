@@ -20,13 +20,6 @@ export type FirewallRefusalReason = typeof firewallRefusalReasonSchema.Type;
 /** Whether the agent received the message under check or is sending it. */
 export type Direction = "incoming" | "outgoing";
 
-/** A fact the owner states for every check, with where it comes from. */
-export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
-  id: identifier,
-  source: identifier,
-  text: Schema.NonEmptyString,
-}) {}
-
 /**
  * One text rule: the prose a decision provider judges, the guidance it gives
  * the receiving agent and the feedback it gives the sender of a message it
@@ -47,14 +40,13 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
 }) {}
 
 /**
- * How one request to the decision provider is bounded, and the probability
- * below which its answer is unsure.
+ * How long one request to the decision provider may take, and the
+ * probability below which its answer is unsure.
  */
 export class ProviderRequestSettings extends Schema.Class<ProviderRequestSettings>(
   "ProviderRequestSettings",
 )({
   minimumProbability: Schema.Number.pipe(Schema.between(0.5, 1)),
-  maximumRequestBytes: Schema.Positive.pipe(Schema.int()),
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
@@ -67,8 +59,7 @@ export const firewallDecisionsRequestSchema = exactStruct({
  * Contains one row per peer without message content.
  * `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
- * allowed one. `from` identifies a contract stage as `contract`, or a text rule
- * as `fixed`. `checkedRuleIds` lists the rules the check judged: a
+ * allowed one. `checkedRuleIds` lists the rules the check judged: a
  * rule that does not apply to the message's direction is not listed.
  */
 export const firewallDecisionSummarySchema = exactStruct({
@@ -78,7 +69,6 @@ export const firewallDecisionSummarySchema = exactStruct({
   decidedBy: Schema.Array(
     exactStruct({
       ruleId: Schema.NonEmptyString,
-      from: Schema.Literal("contract", "fixed"),
       advice: Schema.optional(Schema.NonEmptyString),
     }),
   ),
@@ -141,21 +131,14 @@ const decisionProvider = Schema.Struct({
 
 const defaultProviderRequestSettings = {
   minimumProbability: 0.8,
-  maximumRequestBytes: 384_000,
   timeoutMilliseconds: 15_000,
 };
 
 const document = Schema.Struct({
   rules: Schema.optionalWith(Schema.Array(TextRule), { default: () => [] }),
   decisionProvider: Schema.optional(decisionProvider),
-  textSettings: Schema.optionalWith(
-    Schema.Struct(ProviderRequestSettings.fields),
-    {
-      default: () => defaultProviderRequestSettings,
-    },
-  ),
-  facts: Schema.optionalWith(Schema.Array(OwnerFact), {
-    default: () => [],
+  settings: Schema.optionalWith(Schema.Struct(ProviderRequestSettings.fields), {
+    default: () => defaultProviderRequestSettings,
   }),
   maximumConcurrentChecks: Schema.optional(
     Schema.Int.pipe(Schema.between(1, 32)),

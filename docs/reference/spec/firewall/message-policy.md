@@ -45,9 +45,9 @@ incoming message. Findings combine in priority order:
 
 Every active rule needs a finding. A pass cannot erase another rule's violation.
 Checks use the captured message and evidence and cannot alter them. An empty
-policy still validates the message and required evidence.
+policy still validates required evidence.
 
-Rules without valid answers or sufficient budget are unavailable.
+A check without a valid answer for every rule is unavailable.
 Cancellation produces no decision.
 
 ### Provider answers
@@ -69,7 +69,7 @@ than the other answer's.
 | Settled compliant | Sent | Allowed |
 | Unsure | Held as unresolved evidence and refused with the rule's feedback, so the agent can revise it | Allowed with guidance |
 
-Findings retain the provider's choice and probability. Settled violations retain
+Settled violations retain
 their effect. Invalid output or provider failure is unavailable; required
 missing evidence still holds. Accepting nonempty rule text promises no
 accuracy of its checks in any language.
@@ -107,7 +107,7 @@ guidance.
 
 ## Evidence
 
-A check receives the message, its participants, rules, owner facts and
+A check receives the message, its participants, rules and
 bounded conversation evidence once. The check applies to that captured
 evidence and exact message, without a freshness comparison or an
 automatic second check when later evidence arrives. Acceptance preserves the
@@ -130,15 +130,14 @@ new message. Their content remains private, as though the agent had not seen
 it. Authored content without proof that it came from an agent caller remains
 private evidence.
 
-Guidance exceeding the 2 MiB inbox-entry budget makes the check unavailable,
-which holds the message. Rules needing other conversations, older messages or owner instructions
+Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence.
 
 ### Retained decisions
 
 Each completed check identifies the message, evidence and policy it checked.
 Only completed checks enter decision history. Each completed record saves its decision summary with the revision of
-the policy it applied, checked and deciding rule ids, origins and registered advice.
+the policy it applied, checked and deciding rule ids and registered advice.
 Reads return that saved summary without message content or private evidence.
 
 ## Message-policy file
@@ -149,8 +148,7 @@ The settings file's `messagePolicyFile` names a JSON file.
 | --- | --- |
 | `rules` | Optional: a `TextRule` array, default `[]`. |
 | `decisionProvider` | Required with `rules` and for held norms with English rules: `{model}`. |
-| `textSettings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 384,000 request bytes; 15 s per request. |
-| `facts` | Owner facts for every check; default `[]`. |
+| `settings` | Defaults: `minimumProbability` 0.8, below which an answer is unsure; 15 s per request. |
 | `maximumConcurrentChecks` | Optional shared inference concurrency across revisions. |
 
 | Rule field | Requirement |
@@ -172,8 +170,7 @@ so a daemon whose norms have rules needs `decisionProvider` even when the file
 has no `rules`.
 
 Without `decisionProvider`, no
-provider or key is used. Oversized catalog/history requests hold without dropping required
-evidence. Bytes neither measure tokens nor reserve capacity; provider limits
+provider or key is used. Provider limits
 remain unavailable checks.
 
 ## Decision reasons
@@ -191,11 +188,9 @@ rows identify authors. Daemon-generated failures have no row. Retained identitie
 | Reason | Rules |
 | --- | --- |
 | Rule violation | Violated rules. |
-| Unavailable | Rules in checks that could not run, plus unavailable answers. |
+| Unavailable | None. |
 | Unresolved evidence | Rules reporting unresolved evidence, including an unsure answer about an outgoing draft. |
 | Allowed | Rules the provider was unsure about for an incoming message, otherwise none. |
 
 Advice is a rule's registered feedback for a refusal, and its guidance, or feedback when it has none, for an allowed message.
-Sources are `contract` or `fixed`. A rule's source grants no caller
-privileges.
 

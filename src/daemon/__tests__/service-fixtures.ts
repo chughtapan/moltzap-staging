@@ -81,7 +81,6 @@ export function composedPolicy(
     provider,
     source: {
       policy: {
-        facts: [],
         rules: [
           {
             id: "privacy",
@@ -92,9 +91,8 @@ export function composedPolicy(
             ...(action === undefined ? {} : { action }),
           },
         ],
-        textSettings: {
+        settings: {
           minimumProbability: 0.8,
-          maximumRequestBytes: 100_000,
           timeoutMilliseconds: 5_000,
         },
       },

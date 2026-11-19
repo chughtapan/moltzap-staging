@@ -1,33 +1,21 @@
 /** @file Owns one agent's message policy: its checks, the content they permit and its saved decisions. */
 
-import {
-  Clock,
-  Context,
-  Effect,
-  Exit,
-  Layer,
-  Schedule,
-  Schema,
-  Struct,
-} from "effect";
+import { Clock, Context, Effect, Exit, Layer, Schedule, Struct } from "effect";
 import { createHash } from "node:crypto";
 import type { Message } from "../communication/index.js";
-import { MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
+import type { CompiledContract } from "./contract.js";
 import { type AgentCard, Identity } from "../identity.js";
 import {
   type AssessmentText,
   checkCapturedMessage,
   type CheckEvidence,
   type DecisionProvider,
-  type DecisionProviderError,
-  decodeFrozen,
   type FirewallCheck,
   type FirewallEvidence,
   FirewallRefusal,
   type HistoryEntry,
   type LocalGuidance,
   textQuestionEdition,
-  validateTextRules,
 } from "./check.js";
 import {
   type ContractCheck,
@@ -35,7 +23,6 @@ import {
   messageKey,
   prepareContract,
 } from "./contract-check.js";
-import { type CompiledContract, compiledContractSchema } from "./contract.js";
 import {
   type Candidate,
   contractRefusal,
@@ -390,32 +377,18 @@ function checkMessageText(
       history,
       earlierHistoryOmitted: candidate.evidence.earlierHistoryOmitted,
       now,
-      facts: policy.configured.facts,
       gaps: candidate.evidence.gaps,
       ...(protocol === undefined ? {} : { protocol }),
     };
     const text = assessmentText(message);
     return yield* Effect.gen(function* () {
       const checkId = mintCheckId();
-      const concluded = yield* checkCapturedMessage(
-        {
-          textRules,
-          revision: policy.revision,
-          ...(policy.provider === undefined
-            ? {}
-            : {
-                providerSettings: policy.configured.textSettings,
-                provider: policy.provider,
-              }),
-        },
-        { event: { direction, message: text }, evidence },
-      ).pipe(
-        Effect.catchTag("InvalidCheckError", () =>
-          Effect.succeed(unavailable()),
-        ),
-        markCheckActivity(direction),
-      );
-      const { check, guidance } = guidanceProjection(concluded, checkId);
+      const check = yield* checkCapturedMessage(direction, text, evidence, {
+        textRules,
+        revision: policy.revision,
+        settings: policy.configured.settings,
+        ...(policy.provider === undefined ? {} : { provider: policy.provider }),
+      }).pipe(markCheckActivity(direction));
       const detail =
         contract === undefined
           ? undefined
@@ -464,7 +437,9 @@ function checkMessageText(
         const allowed: Decision = {
           kind: "allowed",
           record,
-          ...(guidance === undefined ? {} : { guidance }),
+          ...(check.instructions.length === 0
+            ? {}
+            : { guidance: { checkId, instructions: check.instructions } }),
         };
         return allowed;
       }
@@ -516,18 +491,10 @@ function retryingTransientFailures(
         Effect.retry({
           times: 2,
           schedule: Schedule.exponential("250 millis"),
-          while: isTransient,
+          while: (error) => error.transient,
         }),
       ),
   };
-}
-
-function isTransient(error: DecisionProviderError): boolean {
-  const status = error.status ?? 0;
-  return (
-    error.reason === "transport" ||
-    (error.reason === "http" && (status === 429 || status >= 500))
-  );
 }
 
 /**
@@ -577,48 +544,9 @@ function decisionSummary(
     direction,
     peer,
     reason: check.reason,
-    decidedBy: check.decidedBy.map((rule) => ({
-      ruleId: rule.ruleId,
-      from: "fixed",
-      ...(rule.advice === undefined ? {} : { advice: rule.advice }),
-    })),
-    checkedRuleIds: [
-      ...new Set(
-        check.findings.flatMap((finding) =>
-          finding.kind === "not-applicable" ? [] : [finding.ruleId],
-        ),
-      ),
-    ],
+    decidedBy: check.decidedBy,
+    checkedRuleIds: check.checkedRuleIds,
     activeRevision,
-  };
-}
-
-/**
- * The guidance of an allowed incoming message the provider was unsure about.
- * Guidance over `MAXIMUM_RUNTIME_ITEM_BYTES` makes the check unavailable.
- */
-function guidanceProjection(check: FirewallCheck, checkId: string) {
-  if (check.instructions.length === 0) {
-    return { check };
-  }
-  const guidance: LocalGuidance = {
-    checkId,
-    instructions: check.instructions,
-  };
-  return Buffer.byteLength(JSON.stringify(guidance)) >
-    MAXIMUM_RUNTIME_ITEM_BYTES
-    ? { check: { ...unavailable(), findings: check.findings } }
-    : { check, guidance };
-}
-
-/** A check that could not run holds without inventing a deciding rule. */
-function unavailable(): FirewallCheck {
-  return {
-    reason: "check-unavailable",
-    feedback: [],
-    instructions: [],
-    findings: [],
-    decidedBy: [],
   };
 }
 
@@ -630,7 +558,7 @@ function unavailable(): FirewallCheck {
  */
 function buildPolicy(
   source: LoadedMessagePolicy,
-  heldContracts: readonly CompiledContract[],
+  contracts: readonly CompiledContract[],
   injected?: DecisionProvider,
 ) {
   return Effect.gen(function* () {
@@ -640,21 +568,14 @@ function buildPolicy(
       (source.provider === undefined
         ? undefined
         : retryingTransientFailures(makeJevDecisionProvider(source.provider)));
-    const contracts = yield* decodeFrozen(
-      Schema.Array(compiledContractSchema),
-      heldContracts,
-    );
     if (
       new Set(contracts.map((contract) => contract.name)).size !==
       contracts.length
     ) {
       return yield* new FirewallPolicyError({ reason: "build-failed" });
     }
-    const contractRules = yield* decodeFrozen(
-      Schema.Array(TextRule),
-      contracts.flatMap((contract) =>
-        contract.textRules.map((rule) => Struct.omit(rule, "act")),
-      ),
+    const contractRules = contracts.flatMap((contract) =>
+      contract.textRules.map((rule) => new TextRule(Struct.omit(rule, "act"))),
     );
     const textRules = [...configured.rules, ...contractRules];
     if (textRules.length > 0 && provider === undefined) {
@@ -662,7 +583,6 @@ function buildPolicy(
     }
     const revisionContents = {
       configuration: {
-        facts: configured.facts,
         maximumConcurrentChecks:
           configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
       },
@@ -672,19 +592,12 @@ function buildPolicy(
       ...(provider === undefined
         ? {}
         : {
-            providerSettings: configured.textSettings,
+            providerSettings: configured.settings,
             provider: provider.provider ?? null,
             model: provider.model ?? null,
           }),
     };
     const revision = digest(revisionContents);
-    yield* validateTextRules({
-      textRules,
-      revision,
-      ...(provider === undefined
-        ? {}
-        : { providerSettings: configured.textSettings }),
-    });
     return {
       configured,
       provider,
@@ -697,17 +610,7 @@ function buildPolicy(
         configured.maximumConcurrentChecks ?? defaultConcurrentChecks,
       ),
     };
-  }).pipe(
-    Effect.catchTags({
-      InvalidCheckError: () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-      ParseError: () =>
-        Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-    }),
-    Effect.catchAllDefect(() =>
-      Effect.fail(new FirewallPolicyError({ reason: "build-failed" })),
-    ),
-  );
+  });
 }
 
 /**

@@ -63,7 +63,7 @@ const prepareJevRequest = Effect.fn("MessagePolicy.Jev.prepareRequest")(
         ),
       }),
       Effect.catchTag("HttpBodyError", () =>
-        Effect.fail(new DecisionProviderError({ reason: "transport" })),
+        Effect.fail(new DecisionProviderError({ transient: true })),
       ),
     );
   },
@@ -77,7 +77,7 @@ const readJevBody = Effect.fn("MessagePolicy.Jev.readBody")(function* (
     Stream.runFoldEffect({ bytes: 0, text: "" }, (current, chunk) => {
       const bytes = current.bytes + chunk.byteLength;
       return bytes > maximumResponseBytes
-        ? Effect.fail(new DecisionProviderError({ reason: "budget" }))
+        ? Effect.fail(new DecisionProviderError({ transient: false }))
         : Effect.succeed({
             bytes,
             text: current.text + decoder.decode(chunk, { stream: true }),
@@ -87,7 +87,7 @@ const readJevBody = Effect.fn("MessagePolicy.Jev.readBody")(function* (
     Effect.catchTag("ResponseError", (error) =>
       error.reason === "EmptyBody"
         ? Effect.succeed("")
-        : Effect.fail(new DecisionProviderError({ reason: "transport" })),
+        : Effect.fail(new DecisionProviderError({ transient: true })),
     ),
   );
   return body;
@@ -98,15 +98,14 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
     const body = yield* readJevBody(response);
     if (response.status < 200 || response.status >= 300) {
       return yield* new DecisionProviderError({
-        reason: "http",
-        status: response.status,
+        transient: response.status === 429 || response.status >= 500,
       });
     }
     const wire = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
       onExcessProperty: "error",
     })(body).pipe(
       Effect.catchTag("ParseError", () =>
-        Effect.fail(new DecisionProviderError({ reason: "invalid-response" })),
+        Effect.fail(new DecisionProviderError({ transient: false })),
       ),
     );
     return new DecisionResponse({
@@ -132,9 +131,9 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
   const response = yield* client.execute(httpRequest).pipe(
     Effect.catchTags({
       RequestError: () =>
-        Effect.fail(new DecisionProviderError({ reason: "transport" })),
+        Effect.fail(new DecisionProviderError({ transient: true })),
       ResponseError: () =>
-        Effect.fail(new DecisionProviderError({ reason: "transport" })),
+        Effect.fail(new DecisionProviderError({ transient: true })),
     }),
   );
   return yield* parseJevResponse(response);
@@ -146,12 +145,11 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
  * serialized diagnostics.
  */
 export function makeJevDecisionProvider(options: JevOptions): DecisionProvider {
-  const configuration = Object.freeze({ ...options });
   return {
     provider: jevVendorName,
-    model: configuration.model,
+    model: options.model,
     decide: (request) =>
-      requestJev(request, configuration).pipe(
+      requestJev(request, options).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.RequestInit, {
           redirect: "error",

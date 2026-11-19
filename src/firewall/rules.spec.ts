@@ -115,7 +115,7 @@ it("keeps the concurrency limit a policy file gives and fills the settings it om
       "key-value",
     );
     expect(policy.maximumConcurrentChecks).toBe(2);
-    expect(policy.textSettings.timeoutMilliseconds).toBeGreaterThan(0);
+    expect(policy.settings.timeoutMilliseconds).toBeGreaterThan(0);
   }));
 
 /** Each thing that stops a policy with text rules from installing. */
@@ -161,7 +161,7 @@ it.prop(
   "refuses an unknown property, or a value its field does not take, with a message naming the file",
   [
     fc.oneof(
-      fc.constantFrom("rules", "textSettings", "facts"),
+      fc.constantFrom("rules", "settings"),
       fc.stringMatching(/^[A-Z]{4,8}$/u),
     ),
     fc.uuid(),
