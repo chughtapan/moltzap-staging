@@ -28,9 +28,9 @@ rule names a matcher that another module registers, and the first rule whose
 matcher matches decides the message. A message the chain does not refuse goes
 on to the text rules: the owner's unless a chain rule allowed it, and the
 rules its contract gives its act either way.
-One call keeps the same policy for every message, including the request and
-responses behind a collective result. Feedback and guidance carry the rules'
-registered text and the check ids the host may see.
+A call checks its message under the policy in force when it starts. Feedback
+and guidance carry the rules' registered text and the check ids the host may
+see.
 
 The daemon supplies the participants and the evidence: the conversation history
 a check may read. It saves completed checks. Incoming messages remain unchecked

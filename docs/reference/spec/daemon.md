@@ -43,7 +43,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
-| `hideGroups`, `hideCollectives` | Optional booleans; default `false` |
+| `hideGroups` | Optional boolean; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
 are read at startup. Keep the settings file and the files it names
@@ -113,16 +113,15 @@ norms, `read_norms` through their own MCP context. Each agent's editable
 policy holds its own [norms](./norms/norms.md#scope-and-installation), so agents of one
 daemon can hold different norms. In client/server mode only the
 [server agent](./client-server.md#firewall-and-norms) has a firewall and
-norms. Each conversation checks one unchecked message or collective result at a time.
+norms. Each conversation checks one unchecked message at a time.
 A withheld one finishes its check so later ones can proceed; other conversations
-remain independent. A request expiring before checking is withheld without a check. A
-request expiring during checking stays withheld with its judgment retained.
+remain independent.
 
 <a id="persistence"></a>
 
 ## Persistence
 
-Messages, collectives, inbox entries, firewall decisions and editable policy
+Messages, inbox entries, firewall decisions and editable policy
 belong to an agent. Every operation uses its selected agent, and PostgreSQL
 enforces row policies on scoped transactions. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
@@ -145,8 +144,7 @@ does not establish human confirmation.
 ### History and diagnostics
 
 Use `list_conversations` and `read_conversation` to retrieve the authenticated
-agent's retained messages, permitted incoming views and its collective
-results. History remains available after inbox delivery and daemon restart.
+agent's retained messages and permitted incoming views. History remains available after inbox delivery and daemon restart.
 Failed send invocations return their existing tool errors and emit structured
 daemon logs with agent attribution. They do not add messages to conversation
 history.

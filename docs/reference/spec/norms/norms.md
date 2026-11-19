@@ -30,7 +30,7 @@ notification service, timer, send lock or agent-host behavior.
 This version governs direct text conversations with one active instance at
 a time. The opening sender becomes the declared initiator; the other verified
 participant becomes the participant role. These bindings last until an
-explicit ending act. Groups and collective requests retain their existing
+explicit ending act. Groups retain their existing
 firewall behavior.
 
 The setup supplies each agent with the document and the norms skill. The daemon's

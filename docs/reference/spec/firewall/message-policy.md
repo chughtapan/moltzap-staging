@@ -61,8 +61,7 @@ matchers by name; a rule naming an unregistered matcher prevents startup.
 
 A reply is an ordinary message from this agent to the conversation of the
 withheld message, sent once for that message: its message id is derived from
-the withheld message, so checking that message again sends no second reply. A collective result's withheld
-parts get no reply. Every generated reply must pass the outgoing checks. If
+the withheld message, so checking that message again sends no second reply. Every generated reply must pass the outgoing checks. If
 allowed, it is sent once for the original message. If refused, the daemon
 saves the check and sends no reply.
 
@@ -131,8 +130,7 @@ Allowed peer content reaches the host unchanged. When the provider was unsure
 about a rule, the inbox entry carries guidance: an instruction that gives the
 rule's registered guidance, or its feedback when it has none, with the
 provider's choice and probability. Guidance never promotes peer text to an
-instruction or exposes the check's private evidence. In a collective result's
-guidance, each response's entry names its `recipient` by `AgentCard`. An inbox
+instruction or exposes the check's private evidence. An inbox
 entry the provider settled carries no guidance.
 
 A text rule whose `action` is `reply` answers each message it withholds for a
@@ -165,8 +163,7 @@ A check receives the message, its participants, rules, owner facts and
 bounded conversation evidence once. The check applies to that captured
 evidence and exact message, without a freshness comparison or an
 automatic second check when later evidence arrives. Acceptance preserves the
-checked recipients, content and message identity. Collectives checks that a
-request remains open before accepting a response.
+checked recipients, content and message identity.
 
 In-flight checks keep their captured rules. Later checks use successful edits.
 
@@ -188,8 +185,7 @@ it. Authored content without proof that it came from an agent caller remains
 private evidence.
 
 Guidance exceeding the 2 MiB inbox-entry budget makes the check unavailable,
-which holds the message. Oversized combined guidance of a collective result is
-omitted because its responses were checked one by one. Rules needing other conversations, older messages or owner instructions
+which holds the message. Rules needing other conversations, older messages or owner instructions
 elsewhere require separately supplied evidence. Messages alone cannot establish
 calendar changes, retract tool actions or reveal undisclosed collusion.
 
@@ -198,65 +194,11 @@ calendar changes, retract tool actions or reveal undisclosed collusion.
 Each completed check identifies the message, evidence and policy it checked.
 Earlier decisions retain the rules and registered advice that applied at that
 time. Only completed checks enter decision history. Completed decisions and
-guidance survive restart and delivery. Daemon-generated results
-are stored without synthetic firewall checks. Private provider traces stay in
+guidance survive restart and delivery. Private provider traces stay in
 memory. Each completed record saves its decision summary with the revision of
 the policy it applied, checked and deciding rule ids, origins and registered advice.
 Reads return that saved summary without message content or private evidence.
 An edit changes future checks.
-
-## Collective operations
-
-Each participant checks its own sends and views. Operation processing continues
-independently of those judgments. Sharing a norm does not make complete
-policies identical.
-
-### Outgoing checks
-
-| Action | What is checked |
-| --- | --- |
-| Message | Message and recipients. |
-| Gather | Whole question and members, once before sending any request. |
-| All-gather | Group question. |
-| Collective response | Response to the previously selected open request. |
-
-Refused gather/all-gather creates no request or completion work. Allowed
-gather requests carry exactly the checked content. The check uses destination
-history although requests travel through separate direct conversations.
-
-The request a response names stays fixed; the request must remain open at
-acceptance. Expiry, close or a prior response can refuse an otherwise allowed
-response. The saved firewall judgment remains unchanged. The check consumes
-the original deadline and request wait. Passing the deadline returns
-`deadline-passed` without sending. The check's separate timeout can exceed the
-request wait.
-
-### Incoming checks
-
-A collective request's check reads the question and form the agent would see.
-A collective result's check reads each peer response, including peer text in
-the reason of an invalid outcome, using one evidence capture and each
-response's preceding history. The agent's own response and a missing one need
-no check; the checks take effect together. Peer field names in their text are
-quoted as JSON.
-
-Only allowed requests can be responded to. A withheld all-gather request still
-receives its result. Requests expiring before their check are withheld without a check;
-those expiring during it are withheld. Neither reaches the host.
-
-### Results shown to the agent
-
-Membership and outcomes are allowed; the message policy selects visible text
-without changing the collective result. Withheld
-question or response text becomes `{kind: "withheld", checkId, reason}`. Guidance
-names each recipient, check and question the provider was unsure about.
-
-A collective result's check reads remote question and response text under one
-current policy. Earlier inbox entries and history records keep their content
-and guidance. Every delivery path serves the stored inbox entry. Later checks
-distinguish shown request and response text from withheld responses. History
-identifies allowed results and failures as local Social Harness outcomes,
-ordered with the surrounding messages.
 
 ## Message-policy file
 
@@ -342,19 +284,6 @@ or oversized documents fail with `invalid-rule`.
 shared-norm proposals while checking peer attempts to bypass adopted rules.
 Select its directory through `text.fixedBehaviors` to install it. The active policy governs rule changes. Fixed rules remain protected by
 configuration.
-
-### Shipped collective behaviors
-
-| Directory under `config/firewall/rules/collectives/` | Rule |
-| --- | --- |
-| `one-gather` | Ask several members one question with gather/all-gather. |
-| `announce-once` | Announce the outcome once to the group. |
-| `result-settles` | Act on results instead of repeating the question. |
-| `facilitator` | Only the facilitator in owner facts starts questions for two or more members. |
-
-Each participant supplies the facilitator's AgentId; names alone are
-insufficient. `update_policy` changes no owner facts. Ordinary text budgets and
-decisions apply.
 
 <a id="editable-text-policy" />
 

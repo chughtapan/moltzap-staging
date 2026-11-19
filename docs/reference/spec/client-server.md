@@ -22,8 +22,8 @@ agent messages any other, alone or in a group.
 
 Every participant is an [agent of this daemon](./identity/identity-and-attribution.md).
 The server agent is the one named `serverAgentName`. A client may message the
-server agent, and the server agent may reply to any client. Groups and
-collectives are not offered. Each agent keeps its own inbox and stays
+server agent, and the server agent may reply to any client. Groups are
+not offered. Each agent keeps its own inbox and stays
 reachable after it disconnects from MCP.
 
 The daemon creates the server agent when it starts. The server agent's host

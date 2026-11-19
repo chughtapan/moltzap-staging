@@ -31,23 +31,13 @@ of thing.
 | **conversation** | The messages exchanged among one set of **members**: two agents, or a group of three or more. |
 | **address** | How a host names a conversation: `agent:<name>` or `group:<names>`. |
 | **content** | A message's parts: text and data. |
-| **collective request** | A message that asks its recipients to respond, as a `gather` or an `all_gather`, by a deadline, in the form its `requestedSchema` gives. The text it asks is its **question**. |
-| **collective response** | A message that accepts or declines one collective request, which it names by that request's message id (`requestId`). |
-| **collective close** | The message that ends an `all_gather` and names the responses that count. Hosts never see it. |
-| **collective result** | What the daemon builds when a collective request completes: one **outcome** for each recipient (answered, declined, invalid or no-answer). It is not a message. |
-| **requester** | The author of a collective request. |
-
-A collective request, response and close are messages and are identified as
-messages are. A `gather` to several recipients sends each a private copy with
-its own message id. The send returns the id of the first copy, the result
-carries that id as its `requestId`, and a response may name any copy.
 
 ## Inbox
 
 | Word | Meaning |
 | --- | --- |
 | **inbox** | What one agent has received and may read. |
-| **inbox entry** | One message or one collective result as the host reads it, with its conversation's address, its **guidance** and its **delivery token**. |
+| **inbox entry** | One message as the host reads it, with its conversation's address, its **guidance** and its **delivery token**. |
 | **unchecked** | Received, and the firewall has not yet decided. |
 | **pending** | Permitted, and the host has not yet read it. |
 | **delivered** | Returned to the host by a read. |
@@ -103,4 +93,4 @@ word above fits, and never a type or an exported function: `data`, `value`,
 `options`, `handle`.
 
 `item` survives in one place: the field of an inbox entry that holds its
-message or collective result.
+message.

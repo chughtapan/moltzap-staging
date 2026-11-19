@@ -421,9 +421,9 @@ const specAssertionRules = {
   rules: { "agent-code-guard/no-hardcoded-assertion-literals": "off" },
 };
 
-/** The two modules above the line ceiling. */
+/** The module above the line ceiling. */
 const largeModuleRules = {
-  files: ["src/communication/messages.ts", "src/firewall/service.ts"],
+  files: ["src/firewall/service.ts"],
   rules: {
     "max-lines": [
       "error",
