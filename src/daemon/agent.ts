@@ -3,9 +3,11 @@
 import {
   Cause,
   Context,
+  Duration,
   Effect,
   Layer,
   Predicate,
+  PubSub,
   Queue,
   Schedule,
   Schema,
@@ -30,34 +32,29 @@ import {
   type IncomingDecision,
 } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
+import { type Inbox, makeInbox, type Unchecked } from "./inbox.js";
 import {
   addressedAgent,
   addressOf,
-  AgentAddress,
+  type AgentAddress,
+  type Conversations,
   HistoryError,
   type HistoryRecord,
+  type HistoryRecordsPage,
+  type InboxPage,
   SendError,
   type SendRequest,
   type SendResult,
-  type ToolResult,
-} from "../mcp/tools.js";
-import {
-  type CursorError,
-  decodeCursor,
-  encodeCursor,
-  type Inbox,
-  makeInbox,
-  type Unchecked,
-} from "./inbox.js";
-
-const conversationsCursor = Schema.Struct({
-  operation: Schema.Literal("conversations"),
-  address: AgentAddress,
-});
+} from "./values.js";
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: AgentAddress;
+}
+/** One inbox read: the cursor to read after and, in seconds, how long to wait for an entry when none follows it. */
+interface ReceiveRequest {
+  readonly cursor?: string;
+  readonly wait?: number;
 }
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
@@ -73,27 +70,19 @@ interface SocialHarnessService {
   /**
    * A page of the inbox entries after `cursor`, in the order they were
    * allowed, with the cursor that reads on from the last of them. Without a
-   * cursor the read starts from now and returns no entry.
+   * cursor the read starts from now. With `wait` and no entry to return, it
+   * reads once more when an entry becomes readable or `wait` seconds pass.
    */
-  readonly receive: (request: {
-    readonly cursor?: string;
-  }) => Effect.Effect<ToolResult<"receive_messages">>;
+  readonly receive: (request: ReceiveRequest) => Effect.Effect<InboxPage>;
+  /** The address of every conversation of the agent, in order. */
+  readonly listConversations: () => Effect.Effect<Conversations, HistoryError>;
   /**
-   * Lists the addresses of the agent's conversations.
-   * Omitting the cursor starts a live traversal. Follow `nextCursor` until
-   * absent. New conversations before the cursor require a fresh traversal.
-   */
-  readonly listConversations: (
-    request?: PaginatedRequest,
-  ) => Effect.Effect<ToolResult<"list_conversations">, HistoryError>;
-  /**
-   * Pages include only history available at the first read. Rule edits leave
-   * stored inbox entries as they are. Start a new traversal after reconnecting
-   * or restarting.
+   * A page of a conversation's records, oldest first, after the cursor an
+   * earlier page returned. Rule edits leave stored inbox entries as they are.
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
+  ) => Effect.Effect<HistoryRecordsPage, HistoryError>;
 }
 
 /**
@@ -132,6 +121,8 @@ interface Agent {
   readonly inbox: Inbox;
   readonly settings: HarnessSettings;
   readonly historyLimit: number;
+  /** Published to each time an entry of this agent becomes readable, for the reads that wait. */
+  readonly entryReadable: PubSub.PubSub<undefined>;
 }
 
 function makeHarness(settings: HarnessSettings) {
@@ -146,6 +137,7 @@ function makeHarness(settings: HarnessSettings) {
     const capacity =
       settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
     const agent: Agent = {
+      entryReadable: yield* PubSub.sliding<undefined>(1),
       card: identity.me,
       identity,
       firewall,
@@ -201,15 +193,37 @@ function makeHarness(settings: HarnessSettings) {
     );
     return SocialHarness.of({
       send: (request) => send(agent, request),
-      receive: ({ cursor }) =>
-        inbox.listInbox(PAGE_SIZE, cursor).pipe(
-          Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
-          Effect.orDie,
-        ),
-      listConversations: (request = {}) => listConversations(agent, request),
+      receive: (request) => receive(agent, request),
+      listConversations: () => listConversations(agent),
       readHistory: (request) => readHistory(agent, request),
     });
   }).pipe(Effect.withSpan("SocialHarness.layer"));
+}
+
+/**
+ * One read of the inbox. A waiting read subscribes before it reads, so an
+ * entry that becomes readable after the read is not missed.
+ */
+function receive(agent: Agent, { cursor, wait }: ReceiveRequest) {
+  const read = (from: typeof cursor) =>
+    agent.inbox.listInbox(PAGE_SIZE, from).pipe(
+      Effect.map(({ entries, nextCursor }) => ({ entries, nextCursor })),
+      Effect.orDie,
+    );
+  if (wait === undefined) {
+    return read(cursor);
+  }
+  return Effect.gen(function* () {
+    const readable = yield* PubSub.subscribe(agent.entryReadable);
+    const page = yield* read(cursor);
+    if (page.entries.length > 0) {
+      return page;
+    }
+    yield* Queue.take(readable).pipe(
+      Effect.timeoutOption(Duration.seconds(wait)),
+    );
+    return yield* read(page.nextCursor);
+  }).pipe(Effect.scoped);
 }
 
 function send(agent: Agent, input: SendRequest) {
@@ -286,30 +300,15 @@ function outgoingFor(
   });
 }
 
-function listConversations(agent: Agent, request: PaginatedRequest) {
-  return Effect.gen(function* () {
-    const after =
-      request.cursor === undefined
-        ? ""
-        : (yield* decodeCursor(conversationsCursor, request.cursor)).address;
-    const addresses = (yield* agent.communication.listConversations)
-      .map((members) => addressOf(members, agent.card.agentId))
-      .filter((address) => address > after)
-      .sort(compareAscii);
-    const selected = addresses.slice(0, PAGE_SIZE);
-    const last = selected.at(-1);
-    return {
-      addresses: selected,
-      ...(last !== undefined && addresses.length > PAGE_SIZE
-        ? {
-            nextCursor: yield* encodeCursor(conversationsCursor, {
-              operation: "conversations",
-              address: last,
-            }),
-          }
-        : {}),
-    };
-  }).pipe(Effect.catchAll(historyFailure));
+function listConversations(agent: Agent) {
+  return agent.communication.listConversations.pipe(
+    Effect.map((conversations) => ({
+      addresses: conversations
+        .map((members) => addressOf(members, agent.card.agentId))
+        .sort(compareAscii),
+    })),
+    Effect.catchAll(historyFailure),
+  );
 }
 
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
@@ -383,6 +382,11 @@ function checkIncoming(agent: Agent, unchecked: Unchecked) {
       decision.save.pipe(
         Effect.zipRight(reply.save),
         Effect.zipRight(inbox.recordDecision(unchecked, decision)),
+        Effect.tap((readable) =>
+          readable
+            ? afterCommit(PubSub.publish(agent.entryReadable, undefined))
+            : Effect.void,
+        ),
         Effect.tap(() =>
           reply.message === undefined
             ? Effect.void
@@ -603,22 +607,19 @@ function sendFailure(
     return Effect.fail(error);
   }
   return error._tag !== "CommunicationError" ||
-    error.reason === "persistence-failed" ||
-    error.reason === "invalid-cursor"
+    error.reason === "persistence-failed"
     ? Effect.die(error)
     : Effect.fail(new SendError({ reason: error.reason }));
 }
 
 /**
- * Fails with what the reader can correct: a wrong address, an unknown agent
- * or a cursor this read did not return. Any other failure is one of storage
- * and ends the read as a defect.
+ * Fails with what the reader can correct: a wrong address or an unknown
+ * agent. Any other failure is one of storage and ends the read as a defect.
  */
 function historyFailure(
   error:
     | HistoryError
     | SendError
-    | CursorError
     | CommunicationError
     | IdentityError
     | {
@@ -630,12 +631,6 @@ function historyFailure(
   }
   if (error._tag === "SendError") {
     return Effect.fail(new HistoryError({ reason: "invalid-address" }));
-  }
-  if (
-    error._tag === "CursorError" ||
-    (error._tag === "CommunicationError" && error.reason === "invalid-cursor")
-  ) {
-    return Effect.fail(new HistoryError({ reason: "invalid-cursor" }));
   }
   return error._tag === "IdentityError" && error.reason === "unknown-agent"
     ? Effect.fail(new HistoryError({ reason: "unknown-agent" }))

@@ -1,15 +1,6 @@
-/** @file SocialHarness fixtures combine real policy and a real database with controllable identity and communication. */
+/** @file SocialHarness fixtures: one agent's harness over real policy, identity and communication in a test database, with the peers that message it. */
 
-import { SqlClient } from "@effect/sql";
-import {
-  Context,
-  Deferred,
-  Effect,
-  Layer,
-  Queue,
-  Schedule,
-  Schema,
-} from "effect";
+import { Context, Effect, flow, Layer, Schedule, Schema, Scope } from "effect";
 import type {
   CompiledContract,
   DecisionProvider,
@@ -17,24 +8,15 @@ import type {
   DecisionResponse,
   LoadedMessagePolicy,
 } from "../../firewall/index.js";
-import { testAgentCard } from "../../__tests__/agents.js";
+import type { AgentCard } from "../../identity.js";
+import { createTestAgent } from "../../__tests__/agents.js";
 import { CommunicationError, Message } from "../../communication/index.js";
-import {
-  Communication,
-  type HistoryPage,
-  type HistoryQuery,
-} from "../../communication/service.js";
-import { compareAscii } from "../../encoding.js";
+import { Communication } from "../../communication/service.js";
 import { Firewall } from "../../firewall/service.js";
-import {
-  type AgentCard,
-  type AgentName,
-  Identity,
-  IdentityError,
-} from "../../identity.js";
-import { openTestDatabase, type TestDatabase } from "../../test.js";
+import { openTestDatabase } from "../../test.js";
 import { type HarnessSettings, SocialHarness } from "../agent.js";
 import { type Inbox, makeInbox } from "../inbox.js";
+import { identityLayer } from "../owners.js";
 
 type Policy = Context.Tag.Service<typeof Firewall>;
 
@@ -139,25 +121,6 @@ export function waitForInbox(
   );
 }
 
-interface HistoryPosition {
-  readonly messages: readonly Message[];
-  readonly after: number;
-  readonly address: string;
-}
-interface Intake {
-  readonly message: Message;
-  readonly accepted: Deferred.Deferred<undefined>;
-}
-interface Network {
-  readonly self: AgentCard;
-  readonly messages: Message[];
-  readonly submitted: Message[];
-  readonly conversations: Map<string, readonly AgentCard[]>;
-  readonly historyPositions: Map<string, HistoryPosition>;
-  readonly incoming: Queue.Queue<Intake>;
-  cursorId: number;
-  sendFailure?: CommunicationError;
-}
 /** How a harness opens. */
 interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly policy?: TestPolicy;
@@ -165,258 +128,99 @@ interface OpenOptions extends Omit<HarnessSettings, "agentKey"> {
   readonly contracts?: readonly CompiledContract[];
   readonly decorateFirewall?: (firewall: Policy) => Policy;
 }
-/** Every harness a fixture opens stores its rows under this key. */
-const agentKey = "alice";
 
-interface FixtureEnvironment {
-  readonly database: TestDatabase;
-  /** The agents `resolve` finds by name. */
-  readonly cards: Map<AgentName, AgentCard>;
-  readonly network: Network;
-  readonly communication: Context.Tag.Service<typeof Communication>;
-}
-
-/** Each opened harness shares the fixture's communication history; the database keeps the harness's own inbox and decisions. */
+/**
+ * Alice, whose harness a test opens, with Bob, Carol and any peer a test adds,
+ * on one daemon. `submitted` lists what Alice's harness handed to
+ * communication, and after `failSends` communication stores none of it.
+ */
 export const makeHarnessFixture = Effect.gen(function* () {
-  const self = testAgentCard("agent:alice");
-  const network: Network = {
-    self,
-    messages: [],
-    submitted: [],
-    conversations: new Map(),
-    historyPositions: new Map(),
-    cursorId: 0,
-    incoming: yield* Queue.unbounded<Intake>(),
-  };
-  const environment: FixtureEnvironment = {
-    network,
-    database: yield* openTestDatabase(),
-    communication: communicationFor(network),
-    cards: new Map([[self.agentName, self]]),
-  };
-  const bob = addPeer(environment, "bob");
-  const carol = addPeer(environment, "carol");
+  const database = yield* openTestDatabase();
+  const scope = yield* Effect.scope;
+  const consumers = new Map<string, Effect.Latch>();
+  const submitted: Message[] = [];
+  let sendsFail = false;
+  const senders = new Map<string, Context.Tag.Service<typeof Communication>>();
+  /** Creates an agent that sends through a communication service of its own, which closes with the fixture. */
+  const join = Effect.fn(
+    function* (name: string) {
+      const agent = yield* createTestAgent(name);
+      const services = yield* Layer.build(
+        Communication.layer({ ...agent, consumers }),
+      );
+      senders.set(agent.card.agentId, Context.get(services, Communication));
+      return agent;
+    },
+    flow(database.run, Scope.extend(scope)),
+  );
+  const alice = yield* join("alice");
+  const bob = (yield* join("bob")).card;
+  const carol = (yield* join("carol")).card;
+  /** Alice's communication, recording each send and failing it once sends fail. */
+  const communication = Layer.effect(
+    Communication,
+    Effect.map(Communication, (real) => ({
+      ...real,
+      send: (message: Message) =>
+        Effect.suspend(() => {
+          submitted.push(message);
+          return sendsFail
+            ? Effect.fail(
+                new CommunicationError({ reason: "persistence-failed" }),
+              )
+            : real.send(message);
+        }),
+    })),
+  ).pipe(Layer.provide(Communication.layer({ ...alice, consumers })));
+  const open = Effect.fn(function* (options: OpenOptions = {}) {
+    const services = yield* Layer.build(
+      Firewall.layer(
+        alice.agentKey,
+        options.policy?.source,
+        options.contracts,
+        options.policy?.provider,
+      ).pipe(Layer.provideMerge(identityLayer(alice.agentKey))),
+    );
+    const firewall = Context.get(services, Firewall);
+    const context = yield* Layer.build(
+      SocialHarness.layer({ ...options, agentKey: alice.agentKey }).pipe(
+        Layer.provide(communication),
+      ),
+    ).pipe(
+      Effect.provide(
+        options.decorateFirewall === undefined
+          ? services
+          : Context.add(services, Firewall, options.decorateFirewall(firewall)),
+      ),
+    );
+    return {
+      harness: Context.get(context, SocialHarness),
+      inbox: yield* makeInbox(alice.agentKey),
+      firewall,
+    };
+  }, database.run);
   return {
-    self,
+    self: alice.card,
     bob,
     carol,
-    submitted: network.submitted,
-    open: (options: OpenOptions = {}) => openHarness(environment, options),
-    deliver: (message: Message) => deliver(network, message),
-    addPeer: (name: string) => Effect.sync(() => addPeer(environment, name)),
-    retain: (message: Message) =>
-      Effect.sync(() => {
-        retain(network, message);
-      }),
-    addConversation: (members: readonly AgentCard[]) =>
-      Effect.sync(() => {
-        network.conversations.set(addressOf(self, members), members);
-      }),
+    submitted,
+    open,
+    /** Sends `message` as its author, past the author's firewall. */
+    deliver: (message: Message) =>
+      Effect.flatMap(
+        Effect.fromNullable(senders.get(message.author.agentId)),
+        (sender) => sender.send(message),
+      ),
+    addPeer: (name: string) => Effect.map(join(name), (peer) => peer.card),
     failSends: () =>
       Effect.sync(() => {
-        network.sendFailure = new CommunicationError({
-          reason: "persistence-failed",
-        });
+        sendsFail = true;
       }),
     message: (text: string, author: AgentCard = bob) =>
       Message.create({
         author,
-        recipients: [self],
+        recipients: [alice.card],
         content: [{ type: "text", text }],
       }),
   };
 }).pipe(Effect.withSpan("makeHarnessFixture"));
-
-function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
-  return Effect.gen(function* () {
-    const identity = Layer.succeed(Identity, identityFor(environment)).pipe(
-      Layer.provideMerge(
-        Layer.succeed(SqlClient.SqlClient, environment.database.sql),
-      ),
-    );
-    const services = yield* Layer.build(
-      Firewall.layer(
-        agentKey,
-        options.policy?.source,
-        options.contracts,
-        options.policy?.provider,
-      ).pipe(Layer.provideMerge(identity)),
-    );
-    const firewall = Context.get(services, Firewall);
-    const provided =
-      options.decorateFirewall === undefined
-        ? services
-        : Context.add(services, Firewall, options.decorateFirewall(firewall));
-    const context = yield* Layer.build(
-      SocialHarness.layer({
-        agentKey,
-        maximumHistoryRecords: options.maximumHistoryRecords,
-        maximumConcurrentChecks: options.maximumConcurrentChecks,
-        ...(options.withheldReply === undefined
-          ? {}
-          : { withheldReply: options.withheldReply }),
-      }),
-    ).pipe(
-      Effect.provide(provided),
-      Effect.provideService(Communication, environment.communication),
-    );
-    const harness = Context.get(context, SocialHarness);
-    return {
-      harness,
-      inbox: yield* makeInbox(agentKey).pipe(Effect.provide(services)),
-      firewall,
-    };
-  });
-}
-
-/** Resolves the fixture's peers by name. */
-function identityFor(environment: FixtureEnvironment) {
-  return Identity.of({
-    me: environment.network.self,
-    resolve: (names) =>
-      Effect.forEach(
-        names,
-        (agentName) =>
-          Effect.suspend(() => {
-            const found = environment.cards.get(agentName);
-            return found === undefined
-              ? Effect.fail(
-                  new IdentityError({ reason: "unknown-agent", agentName }),
-                )
-              : Effect.succeed(found);
-          }),
-        { concurrency: 1 },
-      ),
-  });
-}
-
-function communicationFor(network: Network) {
-  return Communication.of({
-    send: (message) =>
-      Effect.suspend(() => {
-        network.submitted.push(message);
-        if (network.sendFailure !== undefined) {
-          return Effect.fail(network.sendFailure);
-        }
-        retain(network, message);
-        return Effect.void;
-      }),
-    consume: (handle) =>
-      Queue.take(network.incoming).pipe(
-        Effect.flatMap(({ message, accepted }) =>
-          handle(message).pipe(
-            Effect.zipRight(Deferred.succeed(accepted, undefined)),
-          ),
-        ),
-        Effect.forever,
-      ),
-    listConversations: Effect.sync(() => [...network.conversations.values()]),
-    readHistory: (query) => readHistory(network, query),
-  });
-}
-
-function readHistory(network: Network, query: HistoryQuery) {
-  return Effect.gen(function* () {
-    const address = addressOf(network.self, query.members);
-    const all = network.messages.filter(
-      (message) => addressOf(network.self, membersOf(message)) === address,
-    );
-    if (query.order === "newest") {
-      const before = query.beforeMessage;
-      const position =
-        before === undefined
-          ? all.length
-          : all.findIndex(
-              (message) =>
-                message.author.agentId === before.authorAgentId &&
-                message.msgId === before.msgId,
-            );
-      if (position < 0) {
-        return yield* new CommunicationError({ reason: "content-invalid" });
-      }
-      const available = all.slice(0, position);
-      return historyPage(
-        available.slice(-query.limit),
-        available.length > query.limit,
-      );
-    }
-    const position =
-      query.cursor === undefined
-        ? { messages: all.slice(), after: 0, address }
-        : network.historyPositions.get(query.cursor);
-    if (position === undefined || position.address !== address) {
-      return yield* new CommunicationError({ reason: "invalid-cursor" });
-    }
-    const selected = position.messages.slice(
-      position.after,
-      position.after + 50,
-    );
-    const after = position.after + selected.length;
-    const cursor =
-      after < position.messages.length
-        ? `history-${++network.cursorId}`
-        : undefined;
-    if (cursor !== undefined) {
-      network.historyPositions.set(cursor, { ...position, after });
-    }
-    return historyPage(selected, false, cursor);
-  });
-}
-
-function historyPage(
-  selected: readonly Message[],
-  earlierMessagesOmitted: boolean,
-  nextCursor?: string,
-): HistoryPage {
-  return {
-    entries: selected.map((message) => ({
-      message,
-      messageBytes: new TextEncoder().encode(JSON.stringify(message))
-        .byteLength,
-    })),
-    earlierMessagesOmitted,
-    ...(nextCursor === undefined ? {} : { nextCursor }),
-  };
-}
-
-function deliver(network: Network, message: Message) {
-  return Effect.gen(function* () {
-    retain(network, message);
-    const accepted = yield* Deferred.make<undefined>();
-    yield* Queue.offer(network.incoming, { message, accepted });
-    yield* Deferred.await(accepted);
-  });
-}
-
-function retain(network: Network, message: Message) {
-  if (
-    !network.messages.some(
-      (existing) =>
-        existing.author.agentId === message.author.agentId &&
-        existing.msgId === message.msgId,
-    )
-  ) {
-    network.messages.push(message);
-  }
-  const members = membersOf(message);
-  network.conversations.set(addressOf(network.self, members), members);
-}
-
-function membersOf(
-  message: Pick<Message, "author" | "recipients">,
-): readonly AgentCard[] {
-  return [message.author, ...message.recipients].sort((left, right) =>
-    compareAscii(left.agentName, right.agentName),
-  );
-}
-
-function addressOf(self: AgentCard, members: readonly AgentCard[]) {
-  const other = members.find((member) => member.agentId !== self.agentId);
-  return `agent:${other?.agentName}`;
-}
-
-function addPeer(environment: FixtureEnvironment, name: string) {
-  const card = testAgentCard(`agent:${name}`);
-  environment.cards.set(card.agentName, card);
-  return card;
-}

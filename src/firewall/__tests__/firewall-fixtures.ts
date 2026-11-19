@@ -187,7 +187,6 @@ export const form = {
   starts: false,
   ends: false,
   when: [],
-  unless: [],
   initiates: [],
   terminates: [],
   relations: [],

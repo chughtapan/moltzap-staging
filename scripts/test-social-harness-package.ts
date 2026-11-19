@@ -14,7 +14,7 @@ import {
 
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-/** A host that imports the main entry for its tool contracts and client loads no database driver. */
+/** A host that imports the main entry for the values tool calls carry loads no database driver. */
 const hostEntryScript = `
 import { registerHooks } from "node:module";
 

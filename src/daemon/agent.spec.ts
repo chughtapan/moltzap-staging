@@ -2,14 +2,12 @@
 
 import { scopedLive as it } from "@effect/vitest";
 import {
-  Array as Arr,
   Cause,
   Deferred,
   Effect,
   Exit,
   FastCheck as fc,
   Fiber,
-  Order,
   Schedule,
   Schema,
   Scope,
@@ -29,7 +27,6 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
-import { AgentAddress, type HistoryRecord } from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
@@ -37,6 +34,7 @@ import {
   makeHarnessFixture,
   waitForInbox,
 } from "./__tests__/service-fixtures.js";
+import { AgentAddress } from "./values.js";
 
 const bobAddress = AgentAddress.make("agent:bob");
 const carolAddress = AgentAddress.make("agent:carol");
@@ -92,8 +90,7 @@ function receive(subject: Fixture, text: string, author?: AgentCard) {
 /** Gives alice a conversation with a new peer `name` and returns its address. */
 function hold(subject: Fixture, name: string) {
   return Effect.gen(function* () {
-    const peer = yield* subject.addPeer(name);
-    yield* subject.addConversation([subject.self, peer]);
+    yield* receive(subject, "Hello", yield* subject.addPeer(name));
     return `agent:${name}`;
   });
 }
@@ -443,7 +440,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     for (const text of ["Oldest", "Older", "Recent", "Newest"]) {
-      yield* subject.retain(yield* ordinaryMessage(subject, text));
+      yield* subject.deliver(yield* ordinaryMessage(subject, text));
     }
     const seen: DecisionRequest[] = [];
     const runtime = yield* subject.open({
@@ -469,88 +466,45 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     });
   }));
 
-it("continues history through the boundary its first page fixed", () =>
+it("continues a conversation's history from the cursor a page returned, with what was sent since", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     for (let index = 0; index < 51; index++) {
-      yield* subject.retain(
+      yield* subject.deliver(
         yield* ordinaryMessage(subject, `Message ${index}`),
       );
     }
-    const first = yield* runtime.harness.readHistory({
-      address: bobAddress,
-    });
+    const first = yield* runtime.harness.readHistory({ address: bobAddress });
     expect(first.records).toHaveLength(50);
-    if (first.nextCursor === undefined) {
-      return yield* Effect.dieMessage("Expected history cursor");
-    }
-    yield* subject.retain(yield* ordinaryMessage(subject, "Later message"));
-    const remaining = yield* runtime.harness.readHistory({
+    yield* subject.deliver(yield* ordinaryMessage(subject, "Later message"));
+    const rest = yield* runtime.harness.readHistory({
       address: bobAddress,
       cursor: first.nextCursor,
     });
-    expect(remaining.records.map((record) => record.kind)).toEqual(["sent"]);
-    expect(remaining.nextCursor).toBeUndefined();
     expect(
-      (yield* runtime.harness
-        .readHistory({ address: carolAddress, cursor: first.nextCursor })
-        .pipe(Effect.flip)).reason,
-    ).toBe("invalid-cursor");
-    const records: HistoryRecord[] = [];
-    let page = yield* runtime.harness.readHistory({ address: bobAddress });
-    records.push(...page.records);
-    while (page.nextCursor !== undefined) {
-      page = yield* runtime.harness.readHistory({
-        address: bobAddress,
-        cursor: page.nextCursor,
-      });
-      records.push(...page.records);
-    }
-    expect(records.filter((record) => record.kind === "sent")).toHaveLength(52);
+      rest.records.map((record) => record.message.content[0]),
+    ).toMatchObject([{ text: "Message 50" }, { text: "Later message" }]);
+    expect(rest.nextCursor).toBeUndefined();
   }));
 
-it("lists every conversation once in address order in pages of 50, with one that starts mid-way only when it sorts after the pages already read", () =>
+it("lists every conversation once, in address order", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    const peer = fc.nat({ max: 199 }).map((index) => `peer-${index}`);
-    const held = new Set<string>();
-    for (let index = 0; index < 200; index += 7) {
-      held.add(yield* hold(subject, `peer-${index}`));
-    }
-    yield* forAll(
-      fc.tuple(fc.array(peer, { maxLength: 8 }), peer),
-      Effect.fn(function* ([arrivals, late]) {
-        for (const name of arrivals) {
-          held.add(yield* hold(subject, name));
-        }
-        const before = Arr.sort(held, Order.string);
-        const read = before.slice(0, 50);
-        let page = yield* runtime.harness.listConversations();
-        const pages = [page.addresses];
-        held.add(yield* hold(subject, late));
-        while (page.nextCursor !== undefined) {
-          page = yield* runtime.harness.listConversations({
-            cursor: page.nextCursor,
-          });
-          pages.push(page.addresses);
-        }
-        const unread =
-          before.length > 50
-            ? Arr.sort(held, Order.string).filter((address) =>
-                read.every((earlier) => earlier < address),
-              )
-            : [];
-        expect(pages).toEqual([read, ...Arr.chunksOf(unread, 50)]);
-      }),
+    const held = yield* Effect.forEach(
+      ["peer-2", "peer-10", "peer-1", "peer-10"],
+      (name) => hold(subject, name),
+      { concurrency: 1 },
     );
+    expect(yield* runtime.harness.listConversations()).toEqual({
+      addresses: [...new Set(held)].sort(compareAscii),
+    });
   }));
 
 it("cancels an unaccepted draft and releases assessment capacity", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     let first = true;
     const policy = composedPolicy(
@@ -584,7 +538,6 @@ it("cancels an unaccepted draft and releases assessment capacity", () =>
 it("retains a draft's input while its caller changes the original object", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     const release = yield* Deferred.make<undefined>();
     const runtime = yield* subject.open({
@@ -611,7 +564,7 @@ it("reads a saved conversation's history at its agent's address, and reports an 
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
-    yield* subject.retain(yield* ordinaryMessage(subject, "Hello"));
+    yield* subject.deliver(yield* ordinaryMessage(subject, "Hello"));
     yield* receive(subject, "Hello from carol", subject.carol);
     yield* waitForInbox(runtime);
     const saved: Record<string, unknown> = {

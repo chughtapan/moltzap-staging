@@ -75,17 +75,6 @@
       "reason": "Norm documents and the contracts they compile to for the firewall"
     },
     {
-      "name": "mcp",
-      "roots": [
-        "src/mcp"
-      ],
-      "entrypoints": [
-        "src/mcp/index.ts",
-        "src/mcp/tools.ts"
-      ],
-      "reason": "What crosses MCP between a host and the daemon: the tool contracts and a host's connection"
-    },
-    {
       "name": "daemon",
       "roots": [
         "src/daemon"
@@ -123,13 +112,6 @@
         "daemon"
       ],
       "reason": "Host calls coordinate lower services"
-    },
-    {
-      "name": "mcp",
-      "folders": [
-        "mcp"
-      ],
-      "reason": "The tool contracts name values of the services below and nothing of the daemon"
     },
     {
       "name": "norms",

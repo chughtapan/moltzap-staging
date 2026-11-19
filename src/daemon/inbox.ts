@@ -1,7 +1,7 @@
 /** @file Stores one agent's unchecked messages and its inbox entries in the order they were allowed. */
 
 import { SqlClient } from "@effect/sql";
-import { Data, Effect, Encoding, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import type { IncomingDecision } from "../firewall/service.js";
 import { Message, type MessageReference } from "../communication/index.js";
 import {
@@ -12,12 +12,11 @@ import {
   withAgentRows,
 } from "../database.js";
 import {
-  decodeJson,
   encodeJson,
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { AgentAddress, type InboxCursor, InboxEntry } from "../mcp/tools.js";
+import { AgentAddress, InboxEntry } from "./values.js";
 
 const uncheckedRow = exactStruct({
   address: AgentAddress,
@@ -129,7 +128,8 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
      * An allowed entry takes the agent's next read number. The lock on the
      * agent is held until the transaction that records the decision ends, so
      * entries become readable in read-number order and a reader that has read
-     * to one number has seen every entry before it.
+     * to one number has seen every entry before it. Returns whether the
+     * entry is readable.
      */
     recordDecision: Effect.fn(function* (
       unchecked: Unchecked,
@@ -171,16 +171,14 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           ),
         ),
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      return entry !== null;
     }),
     /**
      * At most `limit` of the entries after `cursor`, in read order, with the
      * cursor to read on from and whether more entries follow. Without a
      * cursor the read starts from the newest entry and returns none.
      */
-    listInbox: Effect.fn(function* (
-      limit: number,
-      cursor?: typeof InboxCursor.Type,
-    ) {
+    listInbox: Effect.fn(function* (limit: number, cursor?: string) {
       const from = Number(
         cursor ?? (yield* run(newest(inboxRows())))[0]?.newest ?? 0,
       );
@@ -231,30 +229,3 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       ),
   };
 });
-
-/** The text is not a cursor the read it was given to returned. */
-export class CursorError extends Data.TaggedError("CursorError") {}
-
-/** A cursor is its position as base64url JSON text. */
-export function encodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  position: NoInfer<A>,
-) {
-  return encodeJson(schema, position).pipe(
-    Effect.map((text) => Encoding.encodeBase64Url(text)),
-  );
-}
-
-/** The position a cursor holds, when it is one `schema` describes. */
-export function decodeCursor<A, I>(
-  schema: Schema.Schema<A, I>,
-  cursor: string,
-) {
-  return Encoding.decodeBase64UrlString(cursor).pipe(
-    Effect.flatMap((text) => decodeJson(schema, text)),
-    Effect.catchTags({
-      DecodeException: () => new CursorError(),
-      JsonRepresentationError: () => new CursorError(),
-    }),
-  );
-}
