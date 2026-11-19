@@ -17,12 +17,10 @@ A norm compiles to configuration for the existing
 The norms layer owns the document grammar and its translation into message
 forms, conversation transitions and English rules. Structural checks validate
 each message, protocol checks validate its place in the conversation, and
-lightweight decision models judge its free text. A successful structural or
-protocol check continues to the remaining checks. Selecting an English rule
+lightweight decision models judge its free text. Selecting an English rule
 by its declared act or direction is not a violation finding.
 
-The transport owns delivery, ordering and retries. The host owns model turns,
-calendar operations and scheduling. A norm adds no delivery acknowledgments,
+A norm adds no delivery acknowledgments,
 notification service, timer, send lock or agent-host behavior.
 
 ## Scope and installation
@@ -33,14 +31,12 @@ participant becomes the participant role. These bindings last until an
 explicit ending act. Groups retain their existing
 firewall behavior.
 
-The setup supplies each agent with the document and the norms skill. The daemon's
+The daemon's
 `normsDirectory` loads the `.lisp` files directly inside that directory and
-compiles them before startup. This requires `messagePolicyFile`; English rules
-require its decision provider. New agents receive those contracts; a retained
+compiles them before startup. New agents receive those contracts; a retained
 policy keeps its installed contracts across restart. `read_norms` returns the
 current documents. No additional rule file or built-in agreement is installed.
-Enforcement also requires an installed document and, for English rules, a
-configured decision provider. An authorized caller installs the exact source:
+An authorized caller installs the exact source:
 
 ```json
 {"add": [{"norm": "<complete Lisp document>"}]}
@@ -63,13 +59,7 @@ an instance. Its declared ending or correction acts still apply.
 <a id="authority" />
 
 Installation follows the existing [policy editing authority](../firewall/message-policy.md#editing-rules).
-A peer message cannot install policy. Ordinary `BEHAVIOR.md` rules remain
-supported through `add: [{behavior: source}]`; their scope is expressed in
-English rather than the structured grammar below.
-
-When no norm is supplied or installed, ordinary chat needs no norm agreement.
-An instructions-only experiment supplies the same document and skill without
-installing enforcement. Neither mode introduces setup messages.
+A peer message cannot install policy.
 
 ## Document grammar
 
@@ -128,12 +118,6 @@ answer their own offer. Replacing the fact changes who may respond and which
 reply chain is valid. A corrected response may reference a withheld descendant
 of that current message. The selector never supplies or changes `replyToMsgId`.
 
-The `alternating-offers` example uses this selector for shared counteroffer and
-acceptance acts. The student opens with candidate slots; each recipient accepts
-one or counteroffers. Acceptance completes the agreement without another
-confirmation. The agreement remains cancellable until an explicit cancellation
-ends the instance.
-
 ### Fields
 
 Fields are required unless `:optional true`. `:description` explains a field.
@@ -171,9 +155,7 @@ the nearest allowed occurrence of the named act in that exchange:
 
 `previous` reads a field. `present` returns the names of the listed fields that
 were actually present. `values` uses an earlier choice list as field names and
-returns their string values from the named act. The subset and selected-values
-examples let a student return all acceptable option identifiers and constrain
-confirmation to one of those exact slots.
+returns their string values from the named act.
 
 With explicit field names, `values` returns the string values of the fields
 present in the selected message; omitted optional fields contribute no value.
@@ -202,10 +184,6 @@ including protocol meaning, malicious content and prompt injection when
 specified. The [text judgment contract](../firewall/message-policy.md#provider-answers)
 owns uncertainty and provider failures. Structural validity supplies no
 semantic exemption.
-
-Messages cannot prove calendar writes or private availability that was never
-supplied as evidence. State such requirements as agent task instructions and
-judge outcomes through the existing experiment grader.
 
 ## Wire messages
 
@@ -266,24 +244,3 @@ act closes the local instance without waiting for the remote firewall to allow i
 rejected ending does not automatically reopen it; recovery beyond that point
 requires an explicitly supported new instance. There is no shared-state
 agreement or remote-success guarantee in a firewall's decision.
-
-## Call paths
-
-```mermaid
-flowchart TD
-  Document[Lisp norm document] --> Compiler[Pure compiler]
-  Compiler --> Configuration[Firewall contract configuration]
-  Configuration --> Structure[Structural check]
-  Message[Message and verified participants] --> Structure
-  Structure --> Protocol[Protocol check]
-  History[Retained messages and local checks] --> Protocol
-  Protocol --> Text[Applicable English rule check]
-  Text --> Decision[Allowed, or refused with recovery detail]
-  Decision --> Save[Save local check]
-  Save --> Boundary[Outgoing send or incoming inbox boundary]
-  Boundary --> Transport[Existing transport owns delivery]
-```
-
-The deferred `save` value is an Effect library operation that persists the
-check in the caller's SQL transaction. Norm facts are projections of
-saved checks and message history; they do not add a workflow service.

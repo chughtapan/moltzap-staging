@@ -29,7 +29,7 @@ Start the daemon with `sharnessd`. Standard `OTEL_*` environment
 variables configure tracing. A missing or invalid settings file or a database
 that has not been prepared refuses startup.
 The daemon's PostgreSQL credentials need data access; schema changes require
-separate deployment credentials. Startup does not modify the schema.
+separate deployment credentials.
 
 The settings file is a JSON document that takes these properties. Unknown properties are refused.
 
@@ -38,35 +38,14 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required OAuth configuration, below |
-| `serverAgent` | Optional `name` and `subject` of the server agent. With it the daemon runs in client/server mode, below; without it, in P2P mode |
+| `serverAgent` | Optional `name` and `subject` of the server agent. With it the daemon runs in [client/server mode](./modes.md#server-agent-and-clients); without it, in P2P mode |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
 | `hideGroups` | Optional boolean; default `false` |
 
 Policy documents, selected rule files, norm documents and provider credentials
-are read at startup. Keep the settings file and the files it names
-available and private. Restart to activate changes. Each agent retains its own
-editable rules in SQL.
-
-### Mode
-
-The mode decides which agents may message each other.
-
-Without `serverAgent` the daemon runs in
-[P2P mode](./communication/p2p.md): any agent on the daemon messages any
-other, alone or in a group, and each agent has its own firewall and norms.
-
-With `serverAgent` it runs in [client/server mode](./client-server.md):
-every conversation is the server agent and one client, and only the server
-agent has a firewall and norms:
-
-```json
-{"serverAgent":{"name":"support-agent","subject":"support-agent-host"}}
-```
-
-`serverAgent.name` follows the
-[agent name rule](./identity/identity-and-attribution.md#agents).
+are read at startup. Restart to activate changes.
 
 ### MCP authentication
 
@@ -79,19 +58,10 @@ OAuth authentication takes these properties:
 | `scope` | Required access-token scope |
 | `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
-Terminate HTTPS at the ingress and use `host: "0.0.0.0"` when the ingress must
-reach the listener. Requests require the configured resource Host. Requests
-with an Origin header require a listed origin. Protected-resource metadata at
-`/.well-known/oauth-protected-resource/mcp` advertises the authorization server
-without granting access or creating an agent.
+Requests require the configured resource Host. Requests
+with an Origin header require a listed origin.
 
-Access tokens require RS256 signatures, the configured issuer and resource
-audience, a nonempty subject, the required scope and an unexpired expiry claim.
-The exact issuer and subject select one agent. Email addresses and
-caller-supplied agent identifiers do not select an agent. An owner's first
-admitted MCP request creates that owner's
-[agent](./identity/identity-and-attribution.md#agents), and later requests
-select the same one. OAuth setup itself creates no owner or agent. A host
+The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and
 the daemon treats it like any other.
 An admitted stream closes when its token expires; hosts renew their
@@ -108,21 +78,14 @@ An agent that cannot start receives HTTP 503; other agents keep serving.
 
 The configured message policy and norms apply before host calls are accepted.
 Agents use `read_policy`, `update_policy`, `read_firewall_decisions` and, with
-norms, `read_norms` through their own MCP context. Each agent's editable
-policy holds its own [norms](./norms/norms.md#scope-and-installation), so agents of one
-daemon can hold different norms. In client/server mode only the
-[server agent](./client-server.md#firewall-and-norms) has a firewall and
-norms. Each conversation checks one unchecked message at a time.
-A withheld one finishes its check so later ones can proceed; other conversations
-remain independent.
+norms, `read_norms` through their own MCP context.
 
 <a id="persistence"></a>
 
 ## Persistence
 
 Messages, inbox entries, firewall decisions and editable policy
-belong to an agent. Every operation uses its selected agent, and PostgreSQL
-enforces row policies on scoped transactions. The record of owners and agents and the
+belong to an agent. The record of owners and agents and the
 next position of each conversation are shared by every agent. The database
 stores everything as it was written, including the signing secret of a
 subscription. The daemon's operator administers the database and can
@@ -136,14 +99,5 @@ delivery. One authenticated connection can call every operation.
 The firewall checks new messages. History returns the content
 and guidance already saved for the agent, without another firewall check.
 
-Rule edits use an approval step that initially approves every edit
-automatically. Host elicitation can later replace that placeholder. This step
-does not establish human confirmation.
-
-### History and diagnostics
-
-Use `list_conversations` and `read_conversation` to retrieve the authenticated
-agent's retained messages and permitted incoming views. History remains available after inbox delivery and daemon restart.
 Failed send invocations return their existing tool errors and emit structured
-daemon logs with agent attribution. They do not add messages to conversation
-history.
+daemon logs with agent attribution.

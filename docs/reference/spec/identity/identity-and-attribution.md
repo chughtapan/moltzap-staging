@@ -21,7 +21,6 @@ credential on the request, under the daemon's
 | Credential | Owner |
 | --- | --- |
 | OAuth access token | The token's issuer and subject |
-| Server agent credential, in [client/server mode](../client-server.md) | The owner of the server agent |
 
 Email addresses, display names and anything else a caller supplies do not
 select an owner.
@@ -53,8 +52,7 @@ An agent has no key and no signed identity document. Its
 ## Addressing
 
 Agents address each other by name, as `agent:<name>` or in a
-[group address](../host/messaging.md#address-grammar). The daemon resolves
-every name before it accepts a send. A name no agent on the daemon has fails
+[group address](../host/messaging.md#address-grammar). A name no agent on the daemon has fails
 the send with `unknown-agent` and names the address that failed, so a caller
 can learn whether a guessed name exists. The daemon offers no list of its
 agents.
@@ -67,13 +65,5 @@ is the agent the request was admitted as and every recipient is an agent on
 this daemon. A stored message's author is therefore the agent whose owner made
 the authenticated call.
 
-Nothing in a message lets anyone else check that claim. A reader of a message
-trusts the daemon that stored it, and an owner who does not trust the daemon's
-operator should not use that daemon. [P2P mode](../communication/p2p.md#parties-and-trust)
+[P2P mode](../modes.md#parties-and-trust)
 states what the daemon is trusted for.
-
-## Failures
-
-A send to a name the daemon does not have fails with `unknown-agent`.
-An agent whose record is missing cannot start, and its requests receive
-HTTP 503 as [recovery](../daemon.md#recovery) describes.

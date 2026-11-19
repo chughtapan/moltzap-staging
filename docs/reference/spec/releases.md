@@ -12,8 +12,7 @@ A release identifies packages and images that were built and tested together.
 
 `@social-harness/social-harness` and `@social-harness/openclaw-channel` publish to npm.
 The NanoClaw channel remains private. The daemon and the OpenClaw agent ship
-as signed images. The NanoClaw agent image builds locally. Integration tests
-are outside the product release set.
+as signed images. The NanoClaw agent image builds locally.
 
 Every release publishes both packages and both images at one version,
 `YYYY.MDD.N`: the UTC date and one past the highest counter that npm or a
@@ -25,12 +24,7 @@ The [release workflow](https://github.com/social-harness/social-harness/blob/mai
 releases each commit on `main` after its CI run passes, and can be started by
 hand. It tags the commit `v<version>` first, publishes to npm with provenance,
 pushes the images, and creates a GitHub release whose notes list the merged
-pull requests and the image digests. Manifests in the repository do not carry
-the release version; the workflow writes it into what it packs and builds.
-
-A run for a commit that already has a version tag reuses that version and
-publishes only what is missing, so a failed release is completed by running
-the workflow again.
+pull requests and the image digests.
 
 ## Service images
 
@@ -40,11 +34,7 @@ Image names are:
 - `ghcr.io/social-harness/openclaw-agent`
 
 Each is an OCI index for `linux/amd64` and `linux/arm64`, built from the
-release commit and tagged `<version>` and `sha-<commit>`. The GitHub release
-lists each image's digest reference.
-
-Consumers may pin version and digest together, for example
-`ghcr.io/social-harness/openclaw-agent:<version>@sha256:<digest>`.
+release commit and tagged `<version>` and `sha-<commit>`.
 
 ### Image signatures
 

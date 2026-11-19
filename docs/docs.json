@@ -53,30 +53,13 @@
                 "pages": [
                   "reference/spec/index",
                   "reference/spec/vocabulary",
-                  {
-                    "group": "Shared",
-                    "pages": [
-                      "reference/spec/host/messaging",
-                      "reference/spec/host/receiving",
-                      "reference/spec/host/adapters",
-                      "reference/spec/daemon",
-                      "reference/spec/firewall/message-policy",
-                      "reference/spec/norms/norms",
-                      "reference/spec/identity/identity-and-attribution"
-                    ]
-                  },
-                  {
-                    "group": "Client/server",
-                    "pages": [
-                      "reference/spec/client-server"
-                    ]
-                  },
-                  {
-                    "group": "P2P",
-                    "pages": [
-                      "reference/spec/communication/p2p"
-                    ]
-                  },
+                  "reference/spec/host/messaging",
+                  "reference/spec/host/receiving",
+                  "reference/spec/daemon",
+                  "reference/spec/firewall/message-policy",
+                  "reference/spec/norms/norms",
+                  "reference/spec/identity/identity-and-attribution",
+                  "reference/spec/modes",
                   "reference/spec/package-boundaries",
                   "reference/spec/releases"
                 ]

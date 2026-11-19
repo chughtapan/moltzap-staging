@@ -27,8 +27,7 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   shared mode uses the configured agent's returned native main session for all
   DMs and groups. Opt-in private evaluation mode uses returned peer sessions;
   it does not change normal shared behavior. Do not invent session keys or
-  build context or checkpoints in the plugin. Follow the
-  [host contract](../../docs/reference/spec/host/adapters.md#openclaw-session-and-output-contract).
+  build context or checkpoints in the plugin.
 - Direct input identifies the sender and `agent:` address. Group input
   identifies `kind: group`, the canonical group address and the sender. A
   group message lists its members from the message's

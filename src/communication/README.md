@@ -12,7 +12,7 @@ Both modes use the same [service](./service.ts). A send finds each recipient
 among the daemon's agents, gives the message the next position in its
 conversation and saves it for every member in one transaction.
 
-- [P2P](../../docs/reference/spec/communication/p2p.md): any agent
+- [P2P](../../docs/reference/spec/modes.md): any agent
   messages any other, alone or in a group.
-- [Client/server](../../docs/reference/spec/client-server.md): every
+- [Client/server](../../docs/reference/spec/modes.md#server-agent-and-clients): every
   conversation is the server agent and one client.

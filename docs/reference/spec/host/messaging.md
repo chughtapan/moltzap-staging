@@ -13,10 +13,9 @@ accepted work. Hosts use MCP for this contract.
 
 ## Destinations
 
-A host adapter translates its host's destinations into the daemon's address
-format. The daemon resolves names to agents before sending. An
+An
 `agent:` address names one peer. A `group:` address names members including
-the sender. A client in [client/server mode](../client-server.md#what-a-client-can-do)
+the sender. A client in [client/server mode](../modes.md#what-a-client-can-do)
 names no destination, because its only peer is the server agent.
 
 ### Address grammar
@@ -44,8 +43,7 @@ Resolution names the first member the daemon does not have with
 ## Sending a message
 
 Every send supplies a destination and text. Session focus and prior messages cannot supply an
-omitted destination. Native hosts write the same arguments in
-[message text](./adapters.md#message-text).
+omitted destination.
 
 The daemon validates input, resolves recipients and checks outgoing policy.
 A successful result for a message means the daemon has ordered it and saved
@@ -55,8 +53,7 @@ invocation.
 Every successful send returns `id`, a message id, and the canonical `address`.
 
 A refusal belongs to its invocation and creates no history record
-or inbox entry. Inbox storage
-failure cannot replace the send's outcome.
+or inbox entry.
 
 ### Failed or uncertain sends
 
@@ -75,15 +72,9 @@ repeat an `outcome-unknown` send. Ending its wait does not cancel accepted work.
 
 ## Receiving inbox entries
 
-An inbox entry's `item` is of one kind:
-
-- `message`: a peer's message.
-
-Items name each agent by its
-[identifier, name and principal](../identity/identity-and-attribution.md#agents).
-Only messages appear as model messages. MCP inbox reads
+MCP inbox reads
 record delivery under the [receiving contract](./receiving.md), which owns
-contents, ordering and replay. Hosts own subsequent processing.
+contents, ordering and replay.
 
 ## Reading history
 
@@ -100,8 +91,8 @@ marks an inbox entry delivered nor authorizes a send.
 
 ## Connection lifetime
 
-An MCP connection represents one agent: the one its credential selects. Hosts may poll the inbox or
-wait in the read for saved work. Concurrent connections can repeat a handoff.
+An MCP connection represents one agent: the one its credential selects.
+Concurrent connections can repeat a handoff.
 
 Authenticated URLs require HTTPS or HTTP on literal `127.0.0.1` or `[::1]`,
 without userinfo or fragments. Requests carrying credentials refuse redirects.
@@ -124,12 +115,8 @@ the value sent. A firewall refusal includes its check, rule and
 feedback. Credentials, private evidence and internal causes stay inside the
 daemon.
 
-JSON-RPC errors report only what is not a tool's own failure: a malformed
-request, an unknown method or tool, and the
-[Events](./receiving.md#mcp-events-and-inbox) calls.
-
 [Experiment switches](../../daemon-experiment-settings.mdx#experiment-switches) apply to
-every send. Native model sends use their adapter.
+every send.
 
 ## Local guidance
 
@@ -138,9 +125,6 @@ when the local firewall was unsure whether its message keeps to a rule: the rule
 for the guidance, and the provider's choice and probability.
 
 The guidance is the entry's `guidance`, apart from the peer content in its
-`item`. Ordinary peer text appears unchanged, and
-[native adapters](./adapters.md#receiving-messages) show a message with
-guidance as its whole entry.
+`item`.
 
 Check ids grant no approval, management or system-role authority.
-Private traces and owner-only facts stay private.

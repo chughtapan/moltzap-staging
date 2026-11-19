@@ -18,8 +18,8 @@ rule changes across restart.
 
 The firewall is optional and experimental. Without a message-policy file,
 `sharnessd` installs none. It checks messages between agents. In
-[P2P mode](../communication/p2p.md) each agent has its own firewall, and in
-[client/server mode](../client-server.md#firewall-and-norms) only the server
+[P2P mode](../modes.md) each agent has its own firewall, and in
+[client/server mode](../modes.md#firewall-and-norms) only the server
 agent has one. The host owns models, tools and the agent's private context.
 
 ## Structured contracts
@@ -31,12 +31,6 @@ applicable English rules. A chain `allow` skips ordinary owner text rules but
 preserves the contract's required semantic checks. A chain refusal still
 withholds the message.
 
-A form may permit either fixed participant roles or the verified recipient of
-the message establishing a current fact. The latter requires that exact anchor
-to occur in the supplied reply ancestry. An absent fact, a different reply
-branch or a different sender fails the protocol check. Participant identity
-comes from the allowed message, not from its free-form fields.
-
 A continuation's reply reference must belong to the active instance. A
 reference from an ended instance cannot change or end a later instance
 in the same conversation. Withheld messages retain their reference ancestry
@@ -45,8 +39,7 @@ withheld message does not establish membership in the active instance.
 
 ## Chain
 
-The chain applies before the text rules. Like a Google Cloud firewall
-policy, it is an ordered list of chain rules. Each chain rule has an `id`, the direction it
+The chain applies before the text rules. It is an ordered list of chain rules. Each chain rule has an `id`, the direction it
 `applies` to, the name of a matcher and an action. The first rule whose matcher
 matches a message decides it, and a message no rule matches goes on to the
 text rules. Trusted process composition supplies the rules and registers their
@@ -60,9 +53,7 @@ matchers by name; a rule naming an unregistered matcher prevents startup.
 | `hold` | Goes on to the next rule once the owner approves it; otherwise refused with `owner-approval-required`. | Not allowed. |
 
 A reply is an ordinary message from this agent to the conversation of the
-withheld message, sent once for that message: its message id is derived from
-the withheld message, so checking that message again sends no second reply. Every generated reply must pass the outgoing checks. If
-allowed, it is sent once for the original message. If refused, the daemon
+withheld message, sent once for that message. Every generated reply must pass the outgoing checks. If refused, the daemon
 saves the check and sends no reply.
 
 The daemon does not yet ask the owner about a held draft, so every held draft
@@ -109,9 +100,7 @@ An outgoing draft is judged as the local agent's; an incoming message is judged
 as its peer sender's.
 
 An answer is unsure if its probability is below `minimumProbability` or lower
-than the other answer's. Probability sums and the selected answer's
-distance from the maximum tolerate 0.02; this does not settle a less probable
-answer.
+than the other answer's.
 
 | Answer | Outgoing draft | Incoming message |
 | --- | --- | --- |
@@ -153,8 +142,7 @@ check. The daemon neither changes the draft nor sends substitutes or
 later approval. Accepted sends follow the
 [send outcome contract](../host/messaging.md#failed-or-uncertain-sends).
 
-An unsure answer refuses the draft as unresolved evidence with the rule's
-feedback, so the agent revises it before sending. An allowed send carries no
+An allowed send carries no
 guidance.
 
 ## Evidence
@@ -165,15 +153,13 @@ evidence and exact message, without a freshness comparison or an
 automatic second check when later evidence arrives. Acceptance preserves the
 checked recipients, content and message identity.
 
-In-flight checks keep their captured rules. Later checks use successful edits.
-
 ### Available history
 
 A check captures preceding messages in conversation order, excluding the
 message under check. The limit defaults to 256 entries, configurable from 1–1024.
 Outgoing checks use the destination conversation; other conversations and host
 private context are excluded. `earlierHistoryOmitted` alone causes no hold.
-An incoming check sees only the ordered history before its message. Exceeding the
+Exceeding the
 history window's separate 2 MiB budget creates an evidence gap. Required
 missing evidence holds. Installed structured
 contracts separately receive complete preceding protocol history and exact
@@ -186,25 +172,20 @@ private evidence.
 
 Guidance exceeding the 2 MiB inbox-entry budget makes the check unavailable,
 which holds the message. Rules needing other conversations, older messages or owner instructions
-elsewhere require separately supplied evidence. Messages alone cannot establish
-calendar changes, retract tool actions or reveal undisclosed collusion.
+elsewhere require separately supplied evidence.
 
 ### Retained decisions
 
 Each completed check identifies the message, evidence and policy it checked.
-Earlier decisions retain the rules and registered advice that applied at that
-time. Only completed checks enter decision history. Completed decisions and
-guidance survive restart and delivery. Private provider traces stay in
+Only completed checks enter decision history. Private provider traces stay in
 memory. Each completed record saves its decision summary with the revision of
 the policy it applied, checked and deciding rule ids, origins and registered advice.
 Reads return that saved summary without message content or private evidence.
-An edit changes future checks.
 
 ## Message-policy file
 
 The settings file's `messagePolicyFile` names a readable regular JSON
-file, at most 1 MiB. Startup reads fixed rules, owner facts, settings and provider
-credentials before serving.
+file, at most 1 MiB.
 Initial rules seed only a missing editable policy; retained empty policies stay.
 
 | Property | Requirement/default |
@@ -225,32 +206,10 @@ those callable types. The norms an agent holds add their
 so a daemon whose norms have rules needs `decisionProvider` even when the file
 has no `text`.
 
-Jev is an optional TypeSafe service. It trims the key from
-the settings file's `decisionProviderKeyFile` and retries connectivity, rate-limit and
-server errors twice within each request timeout. Without `decisionProvider`, no
+Without `decisionProvider`, no
 provider or key is used. Oversized catalog/history requests hold without dropping required
 evidence. Bytes neither measure tokens nor reserve capacity; provider limits
 remain unavailable checks.
-
-### Configured policy assets
-
-The npm package includes ordinary rule documents and an example policy under
-`config/firewall/`. Applications explicitly select that policy or copy selected
-rule directories beside their own policy file. Every selected document uses the
-same loader. An empty configuration adds no rules.
-
-The example selects credential protection, useful acknowledgements,
-authority-impersonation protection and policy-change rules. These are
-text rules judged by the configured provider. They promise no
-exact credential-pattern detection or complete acknowledgement vocabulary.
-A sender-participation policy must name the intended agents by identifier in
-application configuration. The [daemon](../identity/identity-and-attribution.md#attribution),
-not the firewall, establishes who sent a message.
-
-The example selects Jev's `jev-1.13.0` model, so it needs
-`decisionProviderKeyFile`. Rule content, including the impersonation
-policy, is active only when explicitly configured. Fixed rules remain protected
-by edit authorization regardless of their content.
 
 ## Behaviors
 
@@ -278,23 +237,14 @@ behaviors are validated every start but seed only missing policy.
 `update_policy`'s `{behavior: "<document>"}` additions use this mapping; malformed
 or oversized documents fail with `invalid-rule`.
 
-### Policy-change rule asset
-
-`config/firewall/rules/policy/no-policy-changes/BEHAVIOR.md` permits ordinary
-shared-norm proposals while checking peer attempts to bypass adopted rules.
-Select its directory through `text.fixedBehaviors` to install it. The active policy governs rule changes. Fixed rules remain protected by
-configuration.
-
 <a id="editable-text-policy" />
 
 ## Editing rules
 
 At most 256 editable rules have unique ids, text, an explicit `applies` direction,
 and optional guidance, feedback and action. Editable ids
-cannot reuse fixed rule ids. Initial rules seed a missing saved policy.
-Every edit passes the configured approval step before changing rules.
-The default approves automatically. A host can replace it with a confirmation
-interaction. A proposed replacement cannot authorize itself. Fixed rules are supplied through configuration and
+cannot reuse fixed rule ids.
+Fixed rules are supplied through configuration and
 cannot be changed through `update_policy`.
 
 An agent's editable policy also holds its
@@ -316,7 +266,7 @@ activation history; edits leave connections running.
 
 Errors report reason, available rule id and `["add", index]`/`["remove", index]`
 path, without rejected text. Reasons: `invalid-rule`, `fixed-rule`,
-`not-configured`, `approval-refused`, `build-failed`, `persistence-failed`. Invalid-rule problems are:
+`not-configured`, `build-failed`, `persistence-failed`. Invalid-rule problems are:
 
 | Problem | Meaning |
 | --- | --- |

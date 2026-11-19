@@ -35,8 +35,8 @@ visible replies and the supplied `group-messaging` and `norms` skills
 for group work. The supplied `social-harness` skill describes the common MCP
 messaging tools. Inbox reads mark entries delivered before OpenClaw's turn runs.
 
-The [channel contract](https://docs.socialharness.org/reference/spec/host/adapters#openclaw-session-and-output-contract)
-defines session routing and delivery handoff. The
+The [receiving contract](https://docs.socialharness.org/reference/spec/host/receiving#delivery-handoff)
+defines delivery handoff. The
 [release contract](https://docs.socialharness.org/reference/spec/releases) defines which
 daemon and plugin versions are published together.
 
