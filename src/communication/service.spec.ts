@@ -1,72 +1,15 @@
-/** @file Messages and groups between agents on one daemon, with and without a rule on who may share a conversation. */
-import { SqlClient } from "@effect/sql/SqlClient";
+/** @file Messages between a server agent and its clients on one daemon. */
 import { scopedLive as it } from "@effect/vitest";
-import {
-  Array as Arr,
-  Chunk,
-  Context,
-  Effect,
-  FastCheck as fc,
-  Layer,
-  Option,
-  Queue,
-  Record,
-  Schema,
-} from "effect";
+import { Effect, FastCheck as fc, Queue, Record, Schema } from "effect";
 import { expect } from "vitest";
+import type { Conversation } from "./service.js";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { Message } from "./messages.js";
-import { Communication, type Conversation } from "./service.js";
-
-/** Alice, Bob and Carol on one daemon. */
-const peers = Effect.fn("peers")(function* () {
-  const { sql, ...agents } = yield* conversationFixture;
-  const open = (agent: typeof agents.alice) =>
-    Layer.build(Communication.layer(agent)).pipe(
-      Effect.provideService(SqlClient, sql),
-      Effect.map((context) => Context.get(context, Communication)),
-    );
-  const hosted = yield* Effect.all(Record.map(agents, open));
-  const cards = Record.map(agents, (agent) => agent.card);
-  const received = (agent: typeof hosted.alice) =>
-    Effect.gen(function* () {
-      const inbox = yield* Queue.unbounded<Message>();
-      yield* agent
-        .consume((message) => Queue.offer(inbox, message).pipe(Effect.asVoid))
-        .pipe(Effect.forkScoped);
-      return inbox;
-    });
-  /** The newest 1024 messages of a conversation as `agent` reads it, oldest first. */
-  const history = (agent: typeof hosted.alice, members: Conversation) =>
-    agent
-      .readHistory({ members, order: "newest", limit: 1024 })
-      .pipe(Effect.map((page) => page.entries.map((entry) => entry.message)));
-  /** A conversation as each of its members on this daemon reads it. */
-  const histories = (members: Conversation) =>
-    Effect.all(
-      Record.filterMap(hosted, (agent, name) =>
-        members.some((member) => member.agentName === name)
-          ? Option.some(history(agent, members))
-          : Option.none(),
-      ),
-    );
-  return {
-    sql,
-    agents,
-    open,
-    ...hosted,
-    hosted,
-    cards,
-    received,
-    history,
-    histories,
-  };
-});
 
 /** Alice as a server agent and Bob as its client. */
 const fixture = Effect.gen(function* () {
-  const f = yield* peers();
+  const f = yield* conversationFixture;
   const members: Conversation = [f.cards.alice, f.cards.bob];
   const message = (text: string) =>
     Message.create({
@@ -142,42 +85,12 @@ it("hands a message to the next consumer after one fails", () =>
     ).toEqual(message);
   }));
 
-it("carries a group message to every member in one order, between any agents", () =>
+it("appends a message once to the history of the server agent and the client it names, and of no one else, exactly when its author sends it to an agent on the daemon", () =>
   Effect.gen(function* () {
-    const f = yield* peers();
-    const bobInbox = yield* f.received(f.bob);
-    const carolInbox = yield* f.received(f.carol);
-    const first = yield* Message.create({
-      author: f.cards.alice,
-      recipients: [f.cards.bob, f.cards.carol],
-      content: [{ type: "text", text: "to the group" }],
-    });
-    const second = yield* Message.create({
-      author: f.cards.bob,
-      recipients: [f.cards.alice, f.cards.carol],
-      content: [{ type: "text", text: "from another member" }],
-    });
-    yield* f.alice.send(first);
-    yield* f.bob.send(second);
-    expect(yield* Queue.take(bobInbox)).toEqual(first);
-    expect(yield* Queue.takeN(carolInbox, 2)).toEqual(
-      Chunk.make(first, second),
-    );
-    const direct = yield* Message.create({
-      author: f.cards.bob,
-      recipients: [f.cards.carol],
-      content: [{ type: "text", text: "between two members" }],
-    });
-    yield* f.bob.send(direct);
-    expect(yield* Queue.take(carolInbox)).toEqual(direct);
-  }));
-
-it("appends a message once to the history of each member of its conversation, and of no one else, exactly when its author sends it to agents on the daemon", () =>
-  Effect.gen(function* () {
-    const f = yield* peers();
+    const f = yield* conversationFixture;
     const people = { ...f.cards, dave: testAgentCard("dave") };
     const names = Record.keys(people);
-    /** A send through `caller`'s service of a message it wrote, or one `author` wrote when that names an agent. */
+    /** A send through `caller`'s service of a message it wrote, or one `author` wrote when that names an agent. Alice, the server agent, writes it or receives it. */
     const sends = fc
       .record({
         caller: fc.constantFrom(...Record.keys(f.hosted)),
@@ -185,21 +98,23 @@ it("appends a message once to the history of each member of its conversation, an
           { weight: 3, arbitrary: fc.constant(undefined) },
           { weight: 1, arbitrary: fc.constantFrom(...names) },
         ),
-        to: fc.subarray(names).filter(Arr.isNonEmptyArray),
+        to: fc.constantFrom(...names),
       })
-      .filter(({ caller, author = caller, to }) => !to.includes(author));
+      .filter(
+        ({ caller, author = caller, to }) =>
+          to !== author && (to === "alice" || author === "alice"),
+      );
     const property = fc.asyncProperty(
       sends,
       ({ caller, author = caller, to }) =>
         Effect.gen(function* () {
           const message = yield* Message.create({
             author: people[author],
-            recipients: Arr.map(to, (name) => people[name]),
+            recipients: [people[to]],
             content: [{ type: "text", text: "hello" }],
           });
           const members: Conversation = [message.author, ...message.recipients];
-          const admitted =
-            author === caller && to.every((name) => name in f.hosted);
+          const admitted = author === caller && to in f.hosted;
           const before = yield* f.histories(members);
           const refusal = yield* f.hosted[caller].send(message).pipe(
             Effect.as("none"),
@@ -214,7 +129,7 @@ it("appends a message once to the history of each member of its conversation, an
             ),
           );
           const outsiders = Record.keys(f.hosted).filter(
-            (name) => name !== author && !to.includes(name),
+            (name) => name !== author && name !== to,
           );
           for (const outsider of outsiders) {
             expect(
@@ -228,24 +143,20 @@ it("appends a message once to the history of each member of its conversation, an
 
 it("keeps one copy of a message its author sends again, and refuses a different message under the same identifier", () =>
   Effect.gen(function* () {
-    const f = yield* peers();
+    const f = yield* conversationFixture;
     const names = Record.keys(f.hosted);
     type Name = (typeof names)[number];
-    const write = (
-      author: Name,
-      recipients: Arr.NonEmptyReadonlyArray<Name>,
-      text: string,
-    ) =>
+    const write = (author: Name, recipient: Name, text: string) =>
       Message.create({
         author: f.cards[author],
-        recipients: Arr.map(recipients, (name) => f.cards[name]),
+        recipients: [f.cards[recipient]],
         content: [{ type: "text", text }],
       });
-    /** An agent and two choices of the other agents to write to. */
+    /** An agent and two choices of whom it writes to: a client for Alice, the server agent, and Alice for a client. */
     const sends = fc.constantFrom(...names).chain((author) => {
-      const others = fc
-        .subarray(names.filter((name) => name !== author))
-        .filter(Arr.isNonEmptyArray);
+      const others = fc.constantFrom(
+        ...names.filter((name) => (name === "alice") !== (author === "alice")),
+      );
       return fc.record({
         author: fc.constant(author),
         to: others,
@@ -278,7 +189,7 @@ it("keeps one copy of a message its author sends again, and refuses a different 
         }
       }).pipe(Effect.runPromise),
     );
-    /** Sender and recipients combine in 27 ways, and every run lengthens the histories the next one reads. */
+    /** Every run lengthens the histories the next one reads. */
     const numRuns = 30;
     yield* Effect.tryPromise(() => fc.assert(property, { numRuns }));
   }));

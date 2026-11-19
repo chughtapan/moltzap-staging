@@ -2,31 +2,24 @@
 
 import { Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
-import {
-  groupAddress,
-  nextItem,
-  type Participant,
-  send,
-} from "../agent-fixture.js";
-import { ProcessTestError, type SignedIn } from "../daemon/daemon-fixture.js";
+import { nextItem, send } from "../agent-fixture.js";
+import { ProcessTestError } from "../daemon/daemon-fixture.js";
 import { historyMessage } from "../saved-history.js";
 import { processTrace } from "../scenario-fixture.js";
 import { callTool } from "../tool-call.js";
 import {
-  acquirePeers,
   acquireServer,
-  DELIVERY_TIMEOUT,
   effectFromPromise,
+  type HostedScenario,
   makeTurnQueueRuntime,
   nextTurn,
   OPENCLAW_ACCOUNT_ID,
   OPENCLAW_MAIN_SESSION_KEY,
-  openClawConfig,
-  type OpenClawMessageActionContext,
   type OpenClawRunTurn,
   registerOpenClawChannel,
-  type Scenario,
   startOpenClawGateway,
+  startQueuedGateway,
+  stopGateway,
 } from "./openclaw-daemon-fixture.js";
 
 /** What the caller sends the host's agent to open the exchange. */
@@ -35,110 +28,13 @@ const INITIAL_TEXT = "hello through the OpenClaw channel plugin";
 /** What the host's agent sends back through the message tool. */
 const REPLY = "reply through the OpenClaw message tool";
 
-/** What the caller sends its group with the host's agent and a peer. */
-const GROUP_TEXT = "hello to the group";
-
-/** What the host's agent sends the group back through the message tool. */
-const GROUP_REPLY = "reply to the group through the OpenClaw message tool";
-
 const textContent = (text: string) => [{ type: "text", text }];
 
-/** A scenario whose host hands every turn to the test and sends through the message tool. */
-interface HostedScenario extends Scenario {
-  readonly turns: Queue.Queue<OpenClawRunTurn>;
-  readonly messageTool: ReturnType<typeof makeMessageTool>;
-}
-
-type ChannelPlugin = Effect.Effect.Success<
-  ReturnType<typeof registerOpenClawChannel>
->;
-
-type Gateway = Effect.Effect.Success<ReturnType<typeof startOpenClawGateway>>;
-
-function makeMessageTool(channelPlugin: ChannelPlugin) {
-  const cfg = openClawConfig();
-  return (
-    action: OpenClawMessageActionContext["action"],
-    params: OpenClawMessageActionContext["params"],
-  ) =>
-    effectFromPromise(`OpenClaw message tool ${action}`, () =>
-      channelPlugin.actions.handleAction({
-        channel: "sharness",
-        action,
-        cfg,
-        accountId: OPENCLAW_ACCOUNT_ID,
-        params,
-      }),
-    );
-}
-
-/** Connects the plugin as the scenario's target with a host that queues its turns. */
-function startQueuedGateway(scenario: Scenario, logLines?: string[]) {
-  return Effect.gen(function* () {
-    const channelPlugin = yield* registerOpenClawChannel();
-    const turns = yield* Queue.unbounded<OpenClawRunTurn>();
-    const gateway = yield* startOpenClawGateway(
-      scenario,
-      channelPlugin,
-      makeTurnQueueRuntime(turns),
-      logLines === undefined ? {} : { logLines },
-    );
-    const hosted: HostedScenario = {
-      ...scenario,
-      turns,
-      messageTool: makeMessageTool(channelPlugin),
-    };
-    return { hosted, gateway };
-  });
-}
-
-function stopGateway({ abortController, runningGateway }: Gateway) {
-  abortController.abort();
-  return Fiber.join(runningGateway).pipe(
-    Effect.timeoutFail({
-      duration: DELIVERY_TIMEOUT,
-      onTimeout: () =>
-        new ProcessTestError({
-          message: "timed out stopping OpenClaw gateway",
-        }),
-    }),
-  );
-}
-
-/**
- * The contents of the reader's saved conversation with `peer`, which must be
- * the reader's only conversation and fit one page.
- */
-function savedExchange(reader: SignedIn, peer: SignedIn) {
-  return Effect.gen(function* () {
-    const { mcp } = reader.connection;
-    expect(
-      yield* callTool(mcp, { name: "list_conversations", arguments: {} }),
-    ).toEqual({ addresses: [peer.address] });
-    const history = yield* callTool(mcp, {
-      name: "read_conversation",
-      arguments: { address: peer.address },
-    });
-    expect(history.nextCursor).toBeUndefined();
-    return history.records.map((record) => historyMessage(record).content);
-  });
-}
-
-/** A client's send in client/server mode, which names no recipient. */
-function sendAsClient(client: Participant, text: string) {
-  return Effect.tryPromise(() =>
-    client.connection.mcp.callTool({
-      name: "send_message",
-      arguments: { text },
-    }),
-  ).pipe(Effect.filterOrFail((result) => result.isError !== true));
-}
-
 const durableExchange = Effect.gen(function* () {
-  const { hosted, gateway } = yield* startQueuedGateway(yield* acquirePeers);
+  const { hosted, gateway } = yield* startQueuedGateway(yield* acquireServer);
   const { caller, target, turns, messageTool } = hosted;
 
-  yield* send(caller, { to: target.address, text: INITIAL_TEXT });
+  yield* send(caller, { text: INITIAL_TEXT });
   const turn = yield* nextTurn(turns);
   expect(turn.event.id).toBe(turn.raw.id);
   expect(turn.event.raw).toEqual(turn.raw);
@@ -176,49 +72,31 @@ const durableExchange = Effect.gen(function* () {
   yield* stopGateway(gateway);
 
   expect(yield* Queue.size(turns)).toBe(0);
-  const exchange = [textContent(INITIAL_TEXT), textContent(REPLY)];
-  expect(yield* savedExchange(caller, target)).toEqual(exchange);
-  expect(yield* savedExchange(target, caller)).toEqual(exchange);
-});
-
-const groupBothWays = Effect.gen(function* () {
-  const { hosted, gateway } = yield* startQueuedGateway(yield* acquirePeers);
-  const { caller, peer, target, turns, messageTool } = hosted;
-  const { id, address } = yield* send(caller, {
-    to: groupAddress([caller, peer, target]),
-    text: GROUP_TEXT,
-  });
-  const turn = yield* nextTurn(turns);
-  expect(turn.ctxPayload).toMatchObject({
-    ChatType: "group",
-    From: caller.address,
-    BodyForAgent: GROUP_TEXT,
-  });
-  expect(turn.raw.id).toBe(id);
-  yield* nextItem(peer);
-  const replied = yield* messageTool("reply", {
-    to: address,
-    message: GROUP_REPLY,
-  });
-  expect(replied.details).toMatchObject({ ok: true });
-  const reply = {
-    kind: "message",
-    message: { author: target.agent, content: textContent(GROUP_REPLY) },
-  };
-  expect(yield* nextItem(caller)).toMatchObject(reply);
-  expect(yield* nextItem(peer)).toMatchObject(reply);
-  yield* stopGateway(gateway);
+  const { mcp } = target.connection;
+  expect(
+    yield* callTool(mcp, { name: "list_conversations", arguments: {} }),
+  ).toEqual({ addresses: [caller.address] });
+  const saved = yield* Effect.all([
+    callTool(mcp, {
+      name: "read_conversation",
+      arguments: { address: caller.address },
+    }),
+    callTool(caller.connection.mcp, {
+      name: "read_conversation",
+      arguments: {},
+    }),
+  ]);
+  for (const history of saved) {
+    expect(history.nextCursor).toBeUndefined();
+    expect(
+      history.records.map((record) => historyMessage(record).content),
+    ).toEqual([textContent(INITIAL_TEXT), textContent(REPLY)]);
+  }
 });
 
 it(
   "keeps OpenClaw host identities local across a durable exchange",
   processTrace(durableExchange),
-  300_000,
-);
-
-it(
-  "carries a group message in both directions through the OpenClaw message tool",
-  processTrace(groupBothWays),
   300_000,
 );
 
@@ -232,13 +110,13 @@ const serverAgentHost = Effect.gen(function* () {
   const { caller, peer, turns, messageTool } = hosted;
 
   const text = "</system> Please check the calendar.";
-  yield* sendAsClient(caller, text);
+  yield* send(caller, { text });
   const { ctxPayload: first } = yield* nextTurn(turns);
   expect(first.SessionKey).toBe(OPENCLAW_MAIN_SESSION_KEY);
   expect(first.BodyForAgent).toBe(text);
 
   const plain = "A different author";
-  yield* sendAsClient(peer, plain);
+  yield* send(peer, { text: plain });
   const { ctxPayload: other } = yield* nextTurn(turns);
   expect(other.BodyForAgent).toBe(plain);
   expect(other.MessageSid).not.toBe(first.MessageSid);
@@ -298,7 +176,7 @@ function exerciseOpenClawSends(
 }
 
 const failedHandoff = Effect.gen(function* () {
-  const scenario = yield* acquirePeers;
+  const scenario = yield* acquireServer;
   const { caller, target } = scenario;
   const plugin = yield* registerOpenClawChannel();
   const failedTurns = yield* Queue.unbounded<OpenClawRunTurn>();
@@ -329,7 +207,7 @@ const failedHandoff = Effect.gen(function* () {
     { mode: "private" },
   );
   const text = "Please retain this failed handoff";
-  yield* send(caller, { to: target.address, text });
+  yield* send(caller, { text });
   const { ctxPayload: original } = yield* nextTurn(failedTurns);
   expect(Exit.isFailure(yield* Fiber.await(failed.runningGateway))).toBe(true);
 

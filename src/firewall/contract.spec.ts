@@ -14,7 +14,6 @@ import {
 
 const alice = peer("alice", 1);
 const bob = peer("bob", 2);
-const carol = peer("carol", 3);
 
 const name = fc.stringMatching(/^[a-z][a-z0-9-]{0,7}$/u);
 
@@ -36,16 +35,13 @@ const act = fc.record({
   ),
 });
 
-/** A message from Alice with the given text parts, to Bob unless other recipients are given. */
-function message(
-  [first, ...rest]: readonly [string, ...string[]],
-  recipients: Message["recipients"] = [bob],
-) {
+/** A message from Alice to Bob with the given text parts. */
+function message([first, ...rest]: readonly [string, ...string[]]) {
   const part = (text: string) => ({ type: "text" as const, text });
   return Effect.runSync(
     Message.create({
       author: alice,
-      recipients,
+      recipients: [bob],
       content: [part(first), ...rest.map(part)],
     }),
   );
@@ -62,7 +58,7 @@ it("reads back every act it writes", () => {
   );
 });
 
-it("refuses a message that is anything but one act: more text, a comment, another recipient or a data part", () => {
+it("refuses a message that is anything but one act: more text, a comment or a data part", () => {
   fc.assert(
     fc.property(
       act,
@@ -71,7 +67,6 @@ it("refuses a message that is anything but one act: more text, a comment, anothe
         (text) => message([`${text} trailing`]),
         (text) => message([`${text} ; a comment`]),
         (text) => message([text.slice(0, -1)]),
-        (text) => message([text], [bob, carol]),
         (text) =>
           Effect.runSync(
             Message.create({

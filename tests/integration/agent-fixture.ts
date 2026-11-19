@@ -2,6 +2,7 @@
 
 import {
   type InboxEntry,
+  MessageAddressInput,
   type PermittedItem,
   SendRequest,
 } from "@social-harness/social-harness";
@@ -19,7 +20,8 @@ export interface Participant extends SignedIn {
  * Signs in one owner per name on a running `daemon` and queues every delivery
  * each agent receives.
  * @param daemon The daemon the owners sign in to.
- * @param owners The owner of each participant.
+ * @param owners The owner of each participant: `SERVER_AGENT_OWNER` for the
+ *   server agent, any other name for a client.
  * @returns The participants, in `owners` order.
  */
 export const joinParticipants = Effect.fn("joinParticipants")(
@@ -46,14 +48,15 @@ export const nextItem = (participant: Participant) =>
     Effect.map((delivery): PermittedItem => delivery.item),
   );
 
+/** A host's send input. The server agent names its recipient in `to`, and a client names none. */
+const SendInput = Schema.Struct({
+  ...SendRequest.fields,
+  to: Schema.optional(MessageAddressInput),
+});
+
 /** Sends `input`, decoded as a host's send input, from `sender`. */
 export const send = (sender: Pick<SignedIn, "connection">, input: unknown) =>
   callTool(sender.connection.mcp, {
     name: "send_message",
-    arguments: Schema.decodeUnknownSync(SendRequest)(input),
+    arguments: Schema.decodeUnknownSync(SendInput)(input),
   });
-
-/** The fixed-member group address of `members`. */
-export const groupAddress = (
-  members: ReadonlyArray<Pick<SignedIn, "agent">>,
-): string => `group:${members.map(({ agent }) => agent.agentName).join(",")}`;

@@ -191,7 +191,6 @@ describe("Firewall.readDecisions", () => {
             },
           ],
         },
-        { peer: peer("carol", 3) },
       ]);
       const reopened = yield* withFirewall(
         { database },
@@ -260,7 +259,7 @@ describe("Firewall.checkOutgoing", () => {
             expect((yield* firewall.readDecisions({})).decisions).toEqual([]);
             yield* decision.save;
             expect((yield* firewall.readDecisions({})).decisions).toHaveLength(
-              2,
+              1,
             );
           }),
         (agentKey) => Firewall.layer(agentKey, policy([privacy])),
@@ -793,10 +792,7 @@ describe("Firewall text rules scoped by a matcher", () => {
 
               expect(
                 (yield* firewall.readDecisions({})).decisions,
-              ).toMatchObject([
-                { checkedRuleIds: asked },
-                { checkedRuleIds: asked },
-              ]);
+              ).toMatchObject([{ checkedRuleIds: asked }]);
             }),
           (agentKey) =>
             Firewall.layer(agentKey, policy([], rules), {

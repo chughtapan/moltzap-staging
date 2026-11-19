@@ -2,23 +2,19 @@
 
 import { effect as it } from "@effect/vitest";
 import {
-  Array as Arr,
   Effect,
   Either,
   Encoding,
   Exit,
   FastCheck as fc,
-  Order,
   Schema,
   Struct,
 } from "effect";
 import { expect, it as vitestIt } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
-import { GroupAddress } from "./groups.js";
 import {
   Content,
   Message,
-  MessageAddressInput,
   messageWithId,
   MsgId,
   RequestedSchema,
@@ -30,31 +26,21 @@ const alice = testAgentCard("alice");
 
 const bob = testAgentCard("bob");
 
-const carol = testAgentCard("carol");
-
 const msgId = Schema.decodeUnknownSync(MsgId)(digest("msg_", 1));
 
 const content = [{ type: "text", text: "Choose a meeting time." }] as const;
 
-it.each([
-  { reason: "the author as a recipient", recipients: [alice] },
-  { reason: "a repeated recipient", recipients: [bob, bob] },
-  {
-    reason: "one identity under two recipient names",
-    recipients: [bob, { ...carol, agentId: bob.agentId }],
-  },
-])("rejects $reason", ({ recipients }) =>
+it("rejects the author as a recipient", () =>
   Effect.gen(function* () {
     const decoded = yield* Schema.decodeUnknown(Message)({
       msgId,
       author: alice,
-      recipients,
+      recipients: [alice],
       content,
     }).pipe(Effect.exit);
 
     expect(Exit.isFailure(decoded)).toBe(true);
-  }),
-);
+  }));
 
 it("captures nested content independently of the caller's objects", () =>
   Effect.gen(function* () {
@@ -417,31 +403,6 @@ const decodingFails = (
   schema: Schema.Schema.AnyNoContext,
   value: unknown,
 ): boolean => !Schema.is(schema)(value);
-
-vitestIt(
-  "accepts a group address of 3 to 32 members only in name order",
-  () => {
-    fc.assert(
-      fc.property(
-        fc.uniqueArray(fc.stringMatching(/^[a-z0-9]{3,8}$/), {
-          minLength: 2,
-          maxLength: 34,
-        }),
-        (names) => {
-          const ordered = Arr.sort(names, Order.string);
-          const sized = names.length >= 3 && names.length <= 32;
-          const reversed = `group:${ordered.toReversed().join(",")}`;
-
-          expect(
-            decodingFails(GroupAddress, `group:${ordered.join(",")}`),
-          ).toBe(!sized);
-          expect(decodingFails(GroupAddress, reversed)).toBe(true);
-          expect(decodingFails(MessageAddressInput, reversed)).toBe(false);
-        },
-      ),
-    );
-  },
-);
 
 vitestIt(
   "accepts a message identifier exactly when it encodes 32 bytes",

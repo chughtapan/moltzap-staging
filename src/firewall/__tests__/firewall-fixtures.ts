@@ -98,11 +98,11 @@ export function withFirewall<A, E, R>(
   );
 }
 
-/** A draft from `self` to two peers that reveals a private record. */
+/** A draft from `self` to a peer that reveals a private record. */
 export function outgoing(self: AgentCard) {
   return Message.create({
     author: self,
-    recipients: [peer("bob", 2), peer("carol", 3)],
+    recipients: [peer("bob", 2)],
     content: [
       { type: "text", text: "The private record says the owner is away." },
     ],

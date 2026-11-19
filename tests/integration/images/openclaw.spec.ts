@@ -1,4 +1,4 @@
-/** @file Real OpenClaw and daemon containers deliver peer messages to local model stand-ins. */
+/** @file Real OpenClaw and daemon containers deliver a client's message to local model stand-ins. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
@@ -35,7 +35,7 @@ const skip =
   image === undefined || process.env.DAEMON_INTEGRATION_IMAGE === undefined
     ? "set OPENCLAW_INTEGRATION_IMAGE and DAEMON_INTEGRATION_IMAGE to built images"
     : false;
-const text = "peer message through the separate daemon container";
+const text = "client message through the separate daemon container";
 
 async function deliverTurn(
   daemon: DaemonAccess,
@@ -43,9 +43,9 @@ async function deliverTurn(
   provider: { requests: string[] },
 ): Promise<undefined> {
   const { runtime, directory, container } = options;
-  const target = await daemon.signIn("openclaw");
+  const target = await daemon.signIn();
   const caller = await daemon.signIn("caller");
-  await caller.send({ to: target.address, text });
+  await caller.send({ text });
   await startHost({
     container,
     daemon: `sharness-daemon-${target.mcp.port}`,
@@ -57,7 +57,7 @@ async function deliverTurn(
   const logs = await docker("docker", ["logs", container]);
   assert.ok(
     received,
-    `stand-in did not receive peer text\n${logs.stdout}\n${logs.stderr}`,
+    `stand-in did not receive the client's text\n${logs.stdout}\n${logs.stderr}`,
   );
 }
 
@@ -289,7 +289,7 @@ function completion(): string {
 
 for (const runtime of ["provider", "claude-cli"]) {
   test(
-    `OpenClaw delivers a peer turn to the ${runtime} stand-in`,
+    `OpenClaw delivers a client's turn to the ${runtime} stand-in`,
     { skip, timeout: 300_000 },
     async () => {
       const directory = await mkdtemp(join(tmpdir(), "openclaw-container-"));

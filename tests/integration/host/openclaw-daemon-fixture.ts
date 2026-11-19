@@ -4,7 +4,7 @@
  */
 
 import openClawPlugin from "@social-harness/openclaw-channel";
-import { Deferred, Duration, Effect, Queue, type Scope } from "effect";
+import { Deferred, Duration, Effect, Fiber, Queue, type Scope } from "effect";
 import { vi } from "vitest";
 import { joinParticipants, type Participant } from "../agent-fixture.js";
 import {
@@ -182,7 +182,7 @@ interface OpenClawGatewayContext {
 }
 
 /** Carries the host message-tool action at the external plugin boundary. */
-export interface OpenClawMessageActionContext {
+interface OpenClawMessageActionContext {
   readonly channel: string;
   readonly action: "send" | "reply";
   readonly cfg: OpenClawConfig;
@@ -223,7 +223,7 @@ interface StableOpenClawEntry {
 }
 
 /** Bounds waits for daemon delivery and host gateway shutdown. */
-export const DELIVERY_TIMEOUT = Duration.seconds(60);
+const DELIVERY_TIMEOUT = Duration.seconds(60);
 
 /** Keeps the host account identity distinct from daemon agent identities. */
 export const OPENCLAW_ACCOUNT_ID = "adapter-target";
@@ -231,36 +231,30 @@ export const OPENCLAW_ACCOUNT_ID = "adapter-target";
 /** Pins host session routing while daemon addresses stay on the wire. */
 export const OPENCLAW_MAIN_SESSION_KEY = "agent:primary:main";
 
-const acquireScenario = (
+/**
+ * A running daemon prepared with `options`, the agent `signInHost` signs in
+ * for the OpenClaw host, and the agents of the owners `caller` and `peer`.
+ */
+export const acquireScenario = Effect.fn("acquireScenario")(function* (
   options: DaemonOptions,
   signInHost: (
     daemon: Daemon,
   ) => Effect.Effect<SignedIn, ProcessTestError, Scope.Scope>,
-): Effect.Effect<Scenario, ProcessTestError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const daemon = yield* sharedDaemon(options);
-    yield* daemon.start();
-    const target = yield* signInHost(daemon);
-    const [caller, peer] = yield* joinParticipants(daemon, ["caller", "peer"]);
-    if (caller === undefined || peer === undefined) {
-      return yield* Effect.dieMessage("expected two participants");
-    }
-    return { daemon, target, caller, peer };
-  }).pipe(Effect.withSpan("acquireScenario"));
+) {
+  const daemon = yield* sharedDaemon(options);
+  yield* daemon.start();
+  const target = yield* signInHost(daemon);
+  const [caller, peer] = yield* joinParticipants(daemon, ["caller", "peer"]);
+  if (caller === undefined || peer === undefined) {
+    return yield* Effect.dieMessage("expected two participants");
+  }
+  const scenario: Scenario = { daemon, target, caller, peer };
+  return scenario;
+});
 
-/** A P2P daemon, where the host's agent and the two others are peers. */
-export const acquirePeers = acquireScenario({}, (daemon) =>
-  daemon.signInAs("openclaw-host"),
-);
-
-/** A client/server daemon whose server agent is the host's. The two others are clients. */
-export const acquireServer = acquireScenario(
-  {
-    settings: {
-      serverAgent: { name: "openclaw-host", subject: SERVER_AGENT_OWNER },
-    },
-  },
-  (daemon) => daemon.signInAs(SERVER_AGENT_OWNER),
+/** A daemon whose server agent is the host's. The two others are clients. */
+export const acquireServer = acquireScenario({}, (daemon) =>
+  daemon.signInAs(SERVER_AGENT_OWNER),
 );
 
 /** Loads the real plugin and validates its host-facing registration hooks. */
@@ -378,17 +372,51 @@ export const startOpenClawGateway = Effect.fn("startOpenClawGateway")(
   },
 );
 
-/** An OpenClaw configuration with one Social Harness account. */
-export function openClawConfig(mode?: "shared" | "private"): OpenClawConfig {
-  return {
-    channels: {
-      sharness: {
-        accounts: [
-          { id: OPENCLAW_ACCOUNT_ID, ...(mode === undefined ? {} : { mode }) },
-        ],
-      },
-    },
+/** A scenario whose host hands every turn to the test and sends through the message tool. */
+export interface HostedScenario extends Scenario {
+  readonly turns: Queue.Queue<OpenClawRunTurn>;
+  readonly messageTool: ReturnType<typeof makeMessageTool>;
+}
+
+type ChannelPlugin = Effect.Effect.Success<
+  ReturnType<typeof registerOpenClawChannel>
+>;
+
+type Gateway = Effect.Effect.Success<ReturnType<typeof startOpenClawGateway>>;
+
+/** Connects the plugin as the scenario's target with a host that queues its turns. */
+export const startQueuedGateway = Effect.fn("startQueuedGateway")(function* (
+  scenario: Scenario,
+  logLines?: string[],
+) {
+  const channelPlugin = yield* registerOpenClawChannel();
+  const turns = yield* Queue.unbounded<OpenClawRunTurn>();
+  const gateway = yield* startOpenClawGateway(
+    scenario,
+    channelPlugin,
+    makeTurnQueueRuntime(turns),
+    logLines === undefined ? {} : { logLines },
+  );
+  const hosted: HostedScenario = {
+    ...scenario,
+    turns,
+    messageTool: makeMessageTool(channelPlugin),
   };
+  return { hosted, gateway };
+});
+
+/** Stops a started gateway and waits until it has stopped. */
+export function stopGateway({ abortController, runningGateway }: Gateway) {
+  abortController.abort();
+  return Fiber.join(runningGateway).pipe(
+    Effect.timeoutFail({
+      duration: DELIVERY_TIMEOUT,
+      onTimeout: () =>
+        new ProcessTestError({
+          message: "timed out stopping OpenClaw gateway",
+        }),
+    }),
+  );
 }
 
 /**
@@ -456,6 +484,36 @@ export function effectFromPromise<A>(
         cause,
       }),
   });
+}
+
+function makeMessageTool(channelPlugin: ChannelPlugin) {
+  const cfg = openClawConfig();
+  return (
+    action: OpenClawMessageActionContext["action"],
+    params: OpenClawMessageActionContext["params"],
+  ) =>
+    effectFromPromise(`OpenClaw message tool ${action}`, () =>
+      channelPlugin.actions.handleAction({
+        channel: "sharness",
+        action,
+        cfg,
+        accountId: OPENCLAW_ACCOUNT_ID,
+        params,
+      }),
+    );
+}
+
+/** An OpenClaw configuration with one Social Harness account. */
+function openClawConfig(mode?: "shared" | "private"): OpenClawConfig {
+  return {
+    channels: {
+      sharness: {
+        accounts: [
+          { id: OPENCLAW_ACCOUNT_ID, ...(mode === undefined ? {} : { mode }) },
+        ],
+      },
+    },
+  };
 }
 
 /** Fails with the named host event when its bounded wait expires. */

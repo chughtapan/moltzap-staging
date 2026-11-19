@@ -215,7 +215,7 @@ const wait: Argument = {
     seconds(MAXIMUM_WAIT_SECONDS, 2 * MAXIMUM_WAIT_SECONDS),
   ),
 };
-/** Each kind of call a peer makes with arguments. */
+/** Each kind of call the server agent makes with arguments. */
 const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
   { name: "read_conversation", takes: { address: recipient } },
   { name: "receive_messages", takes: { wait } },

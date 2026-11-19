@@ -471,35 +471,16 @@ it.prop(
       ).toEqual([{ candidate: message, now, earlierHistoryOmitted }]);
     }),
 );
-/** Agents named beside the one a case is about. None is the local agent. */
-const otherAgents = fc.array(fc.uuid(), { maxLength: 2 });
 it.prop(
-  "refuses an outgoing draft its agent did not send and an incoming message that does not name its agent as a recipient",
-  [fc.boolean(), fc.uuid(), otherAgents],
-  ([incoming, stranger, others]) =>
+  "refuses an outgoing draft its agent did not send and an incoming message that does not name its agent as the recipient",
+  [fc.boolean(), fc.uuid()],
+  ([incoming, stranger]) =>
     Effect.gen(function* () {
       const refused = yield* check(defaultProvider, {
         incoming,
         message: incoming
-          ? { ...peerMessage, recipients: [stranger, ...others] }
+          ? { ...peerMessage, recipients: [stranger] }
           : { ...draft, sender: stranger },
-      }).pipe(Effect.flip);
-      expect(refused.reason).toBe("message");
-    }),
-);
-it.prop(
-  "refuses a message in either direction that names a recipient twice",
-  [fc.boolean(), fc.uuid(), otherAgents],
-  ([incoming, repeated, others]) =>
-    Effect.gen(function* () {
-      const refused = yield* check(defaultProvider, {
-        incoming,
-        message: incoming
-          ? {
-              ...peerMessage,
-              recipients: [evidence.agentId, repeated, ...others, repeated],
-            }
-          : { ...draft, recipients: [repeated, ...others, repeated] },
       }).pipe(Effect.flip);
       expect(refused.reason).toBe("message");
     }),
@@ -543,14 +524,14 @@ it.prop(
 );
 it.prop(
   "refuses evidence that lists a participant twice",
-  [fc.boolean(), fc.uuid(), otherAgents],
-  ([incoming, repeated, others]) =>
+  [fc.boolean(), fc.uuid()],
+  ([incoming, repeated]) =>
     Effect.gen(function* () {
       const refused = yield* check(defaultProvider, {
         incoming,
         evidence: {
           ...evidence,
-          participants: [repeated, ...others, repeated].map((agentId) => ({
+          participants: [repeated, repeated].map((agentId) => ({
             agentId,
             principal: "participant",
           })),

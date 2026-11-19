@@ -5,7 +5,11 @@ import { chmod } from "node:fs/promises";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { type AgentAccess, openDaemon } from "../promise-fixture.ts";
+import {
+  type AgentAccess,
+  type DaemonAccess,
+  openDaemon,
+} from "../promise-fixture.ts";
 import { startDaemonContainer } from "./daemon-container.ts";
 
 const IMAGE = process.env.NANOCLAW_INTEGRATION_IMAGE ?? "";
@@ -23,17 +27,13 @@ const PROBE = fileURLToPath(new URL("nanoclaw-probe.ts", import.meta.url));
 // eslint-disable-next-line sonarjs/publicly-writable-directories -- a path inside the disposable container, not on the host.
 const PROBE_IN_IMAGE = "/tmp/integration-probe.ts";
 const executeFile = promisify(execFile);
-const DIRECT_REPLY = "direct from NanoClaw send_message";
-const GROUP_REPLY = "group from NanoClaw final output";
+const TOOL_REPLY = "from NanoClaw send_message";
+const FINAL_REPLY = "from NanoClaw final output";
 const INBOUND = "hello through the native NanoClaw inbox";
-/** Native image tests use the same public MCP fixture as other process consumers. */
-type InboundItem = Awaited<ReturnType<AgentAccess["next"]>>[number];
-
-/** A caller, the NanoClaw agent it talks to, and a third group member. */
-interface Trio {
+/** A client and the server agent NanoClaw runs as. */
+interface Pair {
   readonly caller: AgentAccess;
   readonly target: AgentAccess;
-  readonly peer: AgentAccess;
 }
 
 /** The plain message the probe waits for in NanoClaw's native inbox. */
@@ -62,113 +62,50 @@ describe("the NanoClaw agent image on a real daemon", { skip: SKIP }, () => {
   test(
     "routes NanoClaw inbound and outbound through its native host boundaries",
     { timeout: CASE_TIMEOUT_MILLIS },
-    () => withTrio(routesThroughNativeBoundaries),
+    () => withPair(routesThroughNativeBoundaries),
   );
 });
 
 async function routesThroughNativeBoundaries({
   caller,
   target,
-  peer,
-}: Trio): Promise<undefined> {
-  const shared = groupAddress([caller, target, peer]);
-  await caller.send({ to: target.address, text: INBOUND });
+}: Pair): Promise<undefined> {
+  await caller.send({ text: INBOUND });
   const callerReceived = caller.next(2);
-  const peerReceived = peer.next(1);
   await runProbe(
     target,
     [
-      { to: caller.address, text: DIRECT_REPLY },
-      { to: shared, text: GROUP_REPLY, final: true },
+      { to: caller.address, text: TOOL_REPLY },
+      { to: caller.address, text: FINAL_REPLY, final: true },
     ],
     { platformId: caller.address, sender: caller.address, text: INBOUND },
   );
 
-  const group = {
-    kind: "message",
-    messageKind: "group",
-    address: shared,
-    sender: target.agent,
-    content: [{ type: "text", text: GROUP_REPLY }],
-  };
-  const callerItems = (await callerReceived).map(messageSummary);
-  assert.equal(callerItems.length, 2);
+  const replies = [textContent(TOOL_REPLY), textContent(FINAL_REPLY)];
+  const received = await callerReceived;
+  for (const item of received) {
+    assert.equal(item.kind, "message");
+    assert.deepEqual(reported(item.message.author), reported(target.agent));
+  }
   assert.deepEqual(
-    callerItems.find(({ messageKind }) => messageKind === "direct"),
-    {
-      kind: "message",
-      messageKind: "direct",
-      address: target.address,
-      sender: target.agent,
-      content: [{ type: "text", text: DIRECT_REPLY }],
-    },
+    inAnyOrder(received.map((item) => item.message.content)),
+    inAnyOrder(replies),
   );
-  assert.deepEqual(
-    callerItems.find(({ messageKind }) => messageKind === "group"),
-    group,
-  );
-  assert.deepEqual((await peerReceived).map(messageSummary), [group]);
-  await assertRepliesRecorded({ caller, target, peer }, shared);
+  const exchange = inAnyOrder([textContent(INBOUND), ...replies]);
+  assert.deepEqual(inAnyOrder(await caller.history()), exchange);
+  assert.deepEqual(inAnyOrder(await target.history(caller)), exchange);
 }
 
-/**
- * Check each conversation's record: the inbound message and the direct
- * reply between caller and NanoClaw, and the group reply for every member.
- */
-async function assertRepliesRecorded(
-  { caller, target, peer }: Trio,
-  shared: string,
-): Promise<undefined> {
-  const direct = [textContent(INBOUND), textContent(DIRECT_REPLY)];
-  assert.deepEqual(await caller.history(target.address), direct);
-  assert.deepEqual(await target.history(caller.address), direct);
-  for (const endpoint of [caller, target, peer]) {
-    assert.deepEqual(await endpoint.history(shared), [
-      textContent(GROUP_REPLY),
-    ]);
-  }
+/** The values as JSON text, sorted: the two replies arrive in either order. */
+function inAnyOrder(values: readonly unknown[]): readonly string[] {
+  return values
+    .map((value) => JSON.stringify(value))
+    .toSorted((left, right) => left.localeCompare(right));
 }
 
 /** Ordinary messages retain their text parts unchanged. */
 function textContent(text: string): readonly object[] {
   return [{ type: "text", text }];
-}
-
-/** The group address of `members`, their names sorted. */
-function groupAddress(members: readonly AgentAccess[]): string {
-  return groupOf(members.map(({ agent }) => agent.agentName));
-}
-
-function compareCodeUnits(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
-}
-
-/** The kind of an inbound item and its message's kind, address, sender and content. */
-function messageSummary(item: InboundItem): Readonly<Record<string, unknown>> {
-  return {
-    kind: item.kind,
-    messageKind: item.message.recipients.length === 1 ? "direct" : "group",
-    address: conversationAddress(item.message),
-    sender: reported(item.message.author),
-    content: item.message.content,
-  };
-}
-
-/** The address its recipient uses for the conversation `message` is in. */
-function conversationAddress({
-  author,
-  recipients,
-}: Pick<InboundItem["message"], "author" | "recipients">): string {
-  return recipients.length === 1
-    ? `agent:${author.agentName}`
-    : groupOf([author, ...recipients].map(({ agentName }) => agentName));
-}
-
-function groupOf(names: readonly string[]): string {
-  return `group:${names.toSorted(compareCodeUnits).join(",")}`;
 }
 
 /** The fields of an agent's card that `status` reports, which an endpoint holds. */
@@ -233,26 +170,23 @@ function decodeProbeReport(stdout: string): ProbeReport {
   return { delivered, retried };
 }
 
-function withTrio(
-  body: (endpoints: Trio) => Promise<undefined>,
+function withPair(
+  body: (endpoints: Pair) => Promise<undefined>,
 ): Promise<undefined> {
   return withDaemon(async (signIn) => {
-    const [caller, target, peer] = await Promise.all([
-      signIn("caller"),
-      signIn("target"),
-      signIn("peer"),
-    ]);
-    await body({ caller, target, peer });
+    const [target, caller] = await Promise.all([signIn(), signIn("caller")]);
+    await body({ caller, target });
     return undefined;
   });
 }
 
 /**
- * Start a daemon container, run `body` with a function that signs a named
- * owner's agent in to it, and stop the daemon however `body` ends.
+ * Start a daemon container, run `body` with a function that signs the server
+ * agent's owner or a named client's in to it, and stop the daemon however
+ * `body` ends.
  */
 async function withDaemon(
-  body: (signIn: (owner: string) => Promise<AgentAccess>) => Promise<undefined>,
+  body: (signIn: DaemonAccess["signIn"]) => Promise<undefined>,
 ): Promise<undefined> {
   const daemon = await openDaemon(startDaemonContainer);
   try {

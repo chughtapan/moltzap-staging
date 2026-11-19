@@ -23,7 +23,6 @@ import { type Act, formatAct, readAct } from "./contract.js";
 import { Firewall } from "./service.js";
 
 const bob = peer("bob", 2);
-const carol = peer("carol", 3);
 
 const reasonField = {
   type: "object",
@@ -147,32 +146,26 @@ function check(
 const actText = (name: string, norm: string, fields: Act["fields"] = {}) =>
   formatAct({ name, norm, fields });
 
-it("refuses every direct text that is not an act of a held norm, and applies no contract to a group message", () =>
+it("refuses every text that is not an act of a held norm", () =>
   withFirewall(
     {},
     (firewall, self) =>
       Effect.forEach(
-        fc.sample(fc.tuple(fc.string({ minLength: 1 }), fc.boolean()), 60),
-        ([text, toGroup]) =>
+        fc.sample(fc.string({ minLength: 1 }), 60),
+        (text) =>
           Effect.gen(function* () {
-            const message = yield* Message.create({
-              author: self,
-              recipients: toGroup ? [bob, carol] : [bob],
-              content: [{ type: "text", text }],
-            });
-            const decision = yield* firewall.checkOutgoing(message, after([]));
-            expect(decision).toMatchObject(
-              toGroup
-                ? { kind: "allowed" }
-                : {
-                    kind: "refused",
-                    refusal: {
-                      refusal: "rule-violation",
-                      rule: "norm-structural",
-                      detail: { stage: "structural" },
-                    },
-                  },
+            const decision = yield* firewall.checkOutgoing(
+              yield* direct(self, bob, text),
+              after([]),
             );
+            expect(decision).toMatchObject({
+              kind: "refused",
+              refusal: {
+                refusal: "rule-violation",
+                rule: "norm-structural",
+                detail: { stage: "structural" },
+              },
+            });
           }),
         { concurrency: 1, discard: true },
       ),

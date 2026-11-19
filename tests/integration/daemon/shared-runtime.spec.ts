@@ -1,60 +1,31 @@
-/** @file Owners who sign in to one daemon each get their own agent, inbox and history, in both modes and on both databases. */
+/** @file Owners who sign in to one daemon each get their own agent, inbox and history. */
 import { HttpClient } from "@effect/platform";
 import { NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
 import {
   MAXIMUM_WAIT_SECONDS,
-  toolDefinitions,
+  type toolDefinitions,
 } from "@social-harness/social-harness";
 import {
   databaseConnection,
   databaseUrl,
 } from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Redacted,
-  Schema,
-} from "effect";
-import { describe, expect, it } from "vitest";
+import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
+import { expect, it } from "vitest";
 import { send } from "../agent-fixture.js";
 import { processTrace } from "../scenario-fixture.js";
 import { callTool } from "../tool-call.js";
 import {
   type Daemon,
+  SERVER_AGENT_NAME,
   SERVER_AGENT_OWNER,
   sharedDaemon,
   type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
 
-/** In client/server mode Alice is the server agent, which signs in with the daemon's own credential. */
-const SERVER_AGENT_NAME = "alice-server";
-
 const UNAUTHORIZED = 401;
 const AGENT_UNAVAILABLE = 503;
-
-/**
- * Calls a tool the way a client in client/server mode does. Its send_message
- * and read_conversation name no recipient and no conversation.
- */
-function callAsClient<A, I>(
-  agent: SignedIn,
-  name: string,
-  input: Readonly<Record<string, unknown>>,
-  output: Schema.Schema<A, I>,
-) {
-  return Effect.tryPromise(() =>
-    agent.connection.mcp.callTool({ name, arguments: { ...input } }),
-  ).pipe(
-    Effect.filterOrFail((result) => result.isError !== true),
-    Effect.flatMap((result) =>
-      Schema.decodeUnknown(output)(result.structuredContent),
-    ),
-  );
-}
 
 /** Reads one of an agent's conversations. */
 type ReadConversation = (
@@ -64,23 +35,21 @@ type ReadConversation = (
   unknown
 >;
 
-/** The agent's conversation with `peer`, named by the peer's address. */
+/** The server agent's conversation with `client`. */
 const conversationWith =
-  (peer: SignedIn): ReadConversation =>
-  (agent) =>
-    callTool(agent.connection.mcp, {
+  (client: SignedIn): ReadConversation =>
+  (server) =>
+    callTool(server.connection.mcp, {
       name: "read_conversation",
-      arguments: { address: peer.address },
+      arguments: { address: client.address },
     });
 
 /** A client's conversation with the server agent, the only one it has and so not named. */
-const clientConversation: ReadConversation = (agent) =>
-  callAsClient(
-    agent,
-    "read_conversation",
-    {},
-    toolDefinitions.read_conversation.output,
-  );
+const clientConversation: ReadConversation = (client) =>
+  callTool(client.connection.mcp, {
+    name: "read_conversation",
+    arguments: {},
+  });
 
 /**
  * The identifiers of the messages a conversation holds, in order, once it
@@ -165,12 +134,9 @@ function expectClientServerExchange(
               to: client.address,
               text: `concurrent ${index}`,
             }).pipe(Effect.map(({ id }): string => id))
-          : callAsClient(
-              client,
-              "send_message",
-              { text: `concurrent ${index}` },
-              toolDefinitions.send_message.output,
-            ).pipe(Effect.map(({ id }): string => id)),
+          : send(client, { text: `concurrent ${index}` }).pipe(
+              Effect.map(({ id }): string => id),
+            ),
       { concurrency: 6 },
     );
     const count = earlier.length + concurrent.length;
@@ -194,110 +160,81 @@ function expectClientServerExchange(
 }
 
 /**
- * One daemon and two owners, from before the first sign-in to a restart after
- * one owner's agent record is lost. In client/server mode the first owner is
- * the server agent, which exists from startup.
+ * One daemon, its server agent and a client, from before the first sign-in to
+ * a restart after the client's agent record is lost. The server agent exists
+ * from startup.
  */
-const scenario = (clientServer: boolean) =>
-  Effect.gen(function* () {
-    const daemon = yield* sharedDaemon(
-      clientServer
-        ? {
-            settings: {
-              serverAgent: {
-                name: SERVER_AGENT_NAME,
-                subject: SERVER_AGENT_OWNER,
-              },
-            },
-          }
-        : {},
-    );
-    const sql = yield* openDatabase(daemon);
-    const owners = sql`SELECT * FROM owner_bindings`;
-    expect(yield* owners).toHaveLength(0);
-    const original = yield* daemon.start();
-    const atStart = (yield* owners).length;
-    expect(atStart).toBe(clientServer ? 1 : 0);
-    expect(yield* requestStatus(daemon)).toBe(UNAUTHORIZED);
-    expect(yield* owners).toHaveLength(atStart);
+const scenario = Effect.gen(function* () {
+  const daemon = yield* sharedDaemon();
+  const sql = yield* openDatabase(daemon);
+  const owners = sql`SELECT * FROM owner_bindings`;
+  expect(yield* owners).toHaveLength(0);
+  const original = yield* daemon.start();
+  expect(yield* owners).toHaveLength(1);
+  expect(yield* requestStatus(daemon)).toBe(UNAUTHORIZED);
+  expect(yield* owners).toHaveLength(1);
 
-    const aliceBearer = yield* daemon.bearer(
-      clientServer ? SERVER_AGENT_OWNER : "alice",
-    );
-    const bobBearer = yield* daemon.bearer("bob");
-    const sent = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const alice = yield* daemon.signIn(aliceBearer);
-        const bob = yield* daemon.signIn(bobBearer);
-        const bobReads = clientServer
-          ? clientConversation
-          : conversationWith(alice);
-        expect(alice.agent.agentId).not.toBe(bob.agent.agentId);
-        if (clientServer) {
-          expect(alice.agent.agentName).toBe(SERVER_AGENT_NAME);
-        }
-        expect((yield* daemon.signIn(aliceBearer)).agent).toEqual(alice.agent);
-        expect(yield* owners).toHaveLength(2);
+  const serverBearer = yield* daemon.bearer(SERVER_AGENT_OWNER);
+  const clientBearer = yield* daemon.bearer("bob");
+  const sent = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* daemon.signIn(serverBearer);
+      const client = yield* daemon.signIn(clientBearer);
+      expect(server.agent.agentId).not.toBe(client.agent.agentId);
+      expect(server.agent.agentName).toBe(SERVER_AGENT_NAME);
+      expect((yield* daemon.signIn(serverBearer)).agent).toEqual(server.agent);
+      expect(yield* owners).toHaveLength(2);
 
-        const first = yield* send(alice, {
-          to: bob.address,
-          text: "read before the restart",
-        });
-        expect(yield* awaitInbox(bob)).toMatchObject([
-          { item: { message: { msgId: first.id } } },
-        ]);
-        yield* expectEmptyInbox(bob);
-        yield* expectEmptyInbox(alice);
-        expect(yield* awaitMessages(alice, conversationWith(bob), 1)).toEqual([
-          first.id,
-        ]);
-        expect(yield* awaitMessages(bob, bobReads, 1)).toEqual([first.id]);
-        const unread = yield* send(alice, {
-          to: bob.address,
-          text: "unread across the restart",
-        });
-        return { alice: alice.agent, bob: bob.agent, first, unread };
-      }),
-    );
-    yield* stopProcess(original);
-    const restarted = yield* daemon.start();
-
-    const bob = yield* daemon.signIn(bobBearer);
-    const alice = yield* daemon.signIn(aliceBearer);
-    expect(bob.agent).toEqual(sent.bob);
-    expect(alice.agent).toEqual(sent.alice);
-    expect(yield* awaitInbox(bob)).toMatchObject([
-      { item: { message: { msgId: sent.unread.id } } },
-    ]);
-    yield* expectEmptyInbox(bob);
-    const earlier = [sent.first.id, sent.unread.id];
-    expect(
-      yield* awaitMessages(
-        bob,
-        clientServer ? clientConversation : conversationWith(alice),
-        earlier.length,
-      ),
-    ).toEqual(earlier);
-    expect(yield* owners).toHaveLength(2);
-    if (clientServer) {
-      yield* expectClientServerExchange(daemon, alice, bob, earlier);
-    }
-
-    yield* sql`DELETE FROM agent_cards WHERE agent_name = ${bob.agent.agentName}`;
-    yield* stopProcess(restarted);
-    const serving = yield* daemon.start();
-    expect((yield* daemon.signIn(aliceBearer)).agent).toEqual(sent.alice);
-    expect(yield* requestStatus(daemon, bobBearer)).toBe(AGENT_UNAVAILABLE);
-    expect(serving.child.exitCode).toBeNull();
-  });
-
-describe.each([
-  { mode: "P2P", clientServer: false },
-  { mode: "client/server", clientServer: true },
-])("in $mode mode", ({ clientServer }) => {
-  it(
-    "creates no agent before sign-in, keeps each owner's agent, inbox and history across a restart, and serves one owner when another's record is lost",
-    processTrace(scenario(clientServer)),
-    180_000,
+      const first = yield* send(server, {
+        to: client.address,
+        text: "read before the restart",
+      });
+      expect(yield* awaitInbox(client)).toMatchObject([
+        { item: { message: { msgId: first.id } } },
+      ]);
+      yield* expectEmptyInbox(client);
+      yield* expectEmptyInbox(server);
+      expect(yield* awaitMessages(server, conversationWith(client), 1)).toEqual(
+        [first.id],
+      );
+      expect(yield* awaitMessages(client, clientConversation, 1)).toEqual([
+        first.id,
+      ]);
+      const unread = yield* send(server, {
+        to: client.address,
+        text: "unread across the restart",
+      });
+      return { server: server.agent, client: client.agent, first, unread };
+    }),
   );
+  yield* stopProcess(original);
+  const restarted = yield* daemon.start();
+
+  const client = yield* daemon.signIn(clientBearer);
+  const server = yield* daemon.signIn(serverBearer);
+  expect(client.agent).toEqual(sent.client);
+  expect(server.agent).toEqual(sent.server);
+  expect(yield* awaitInbox(client)).toMatchObject([
+    { item: { message: { msgId: sent.unread.id } } },
+  ]);
+  yield* expectEmptyInbox(client);
+  const earlier = [sent.first.id, sent.unread.id];
+  expect(
+    yield* awaitMessages(client, clientConversation, earlier.length),
+  ).toEqual(earlier);
+  expect(yield* owners).toHaveLength(2);
+  yield* expectClientServerExchange(daemon, server, client, earlier);
+
+  yield* sql`DELETE FROM agent_cards WHERE agent_name = ${client.agent.agentName}`;
+  yield* stopProcess(restarted);
+  const serving = yield* daemon.start();
+  expect((yield* daemon.signIn(serverBearer)).agent).toEqual(sent.server);
+  expect(yield* requestStatus(daemon, clientBearer)).toBe(AGENT_UNAVAILABLE);
+  expect(serving.child.exitCode).toBeNull();
 });
+
+it(
+  "creates only the server agent before sign-in, keeps each owner's agent, inbox and history across a restart, and serves the server agent when a client's record is lost",
+  processTrace(scenario),
+  180_000,
+);
