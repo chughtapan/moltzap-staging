@@ -1,34 +1,22 @@
 /** @file Explicit firewall rules, edit contracts and bounded configuration loading. */
 
-import {
-  Data,
-  Effect,
-  Option,
-  ParseResult,
-  Redacted,
-  Schema,
-  Struct,
-} from "effect";
+import { Data, Effect, Option, ParseResult, Redacted, Schema } from "effect";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Nonblocking descriptor opens reject special files before a writer can block startup.
 import { constants } from "node:fs";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Configuration loads before daemon platform services are composed.
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from "node:path";
 import { parseDocument } from "yaml";
-import { exactStruct, plainUrl } from "../encoding.js";
+import { exactStruct } from "../encoding.js";
 import { AgentCard } from "../identity.js";
 
 const identifier = Schema.NonEmptyTrimmedString;
 
-/**
- * Operational holds remain distinct from a settled rule violation. A draft
- * that a rule holds for the owner, who has not approved it, has its own reason.
- */
+/** Operational holds remain distinct from a settled rule violation. */
 const firewallRefusalReasonSchema = Schema.Literal(
   "rule-violation",
   "unresolved-evidence",
   "check-unavailable",
-  "owner-approval-required",
 );
 
 /** Why the firewall refused a message its agent sent, or withheld one it received. */
@@ -62,11 +50,6 @@ export class TextRule extends Schema.Class<TextRule>("TextRule")({
   action: Schema.optional(Schema.Literal("deny", "reply")),
   text: Schema.NonEmptyString,
   applies: Schema.Literal("incoming", "outgoing", "both"),
-  /**
-   * A matcher the daemon registers.
-   * The provider is asked about the rule only for messages it matches.
-   */
-  match: Schema.optional(Schema.NonEmptyTrimmedString),
 }) {}
 
 /** The time and byte limits of one check against the text rules. */
@@ -88,13 +71,8 @@ export class ProviderRequestSettings extends Schema.Class<ProviderRequestSetting
   timeoutMilliseconds: Schema.Positive.pipe(Schema.int()),
 }) {}
 
-/**
- * An editable rule names no matcher: matchers come with the daemon's
- * configuration, so only a fixed rule can be scoped to one.
- */
-export const editableRuleSchema = exactStruct(
-  Struct.omit(TextRule.fields, "match"),
-);
+/** One editable text rule, which admits no field a text rule lacks. */
+export const editableRuleSchema = exactStruct(TextRule.fields);
 
 /** Limits editable rules across startup, saved policy and updates. */
 export const MAXIMUM_EDITABLE_RULES = 256;
@@ -166,9 +144,9 @@ const firewallActivationSchema = exactStruct({
  * Contains one row per peer without message content or provider traces.
  * `judgment` is what the check concluded. `decidedBy[].advice` contains the
  * rule's feedback for a refused or withheld message, or its guidance for an
- * allowed one. `from` identifies a chain rule, or a fixed or editable text
- * rule. `checkedRuleIds` lists the rules the check judged: a rule that does
- * not apply to the message, by its direction or its matcher, is not listed.
+ * allowed one. `from` identifies a contract stage as `chain`, or a fixed or
+ * editable text rule. `checkedRuleIds` lists the rules the check judged: a
+ * rule that does not apply to the message's direction is not listed.
  */
 export const firewallDecisionSummarySchema = exactStruct({
   direction: Schema.Literal("incoming", "outgoing"),
@@ -239,7 +217,6 @@ const policyReasonText: Readonly<
   "invalid-rule": "the update is invalid",
   "fixed-rule":
     "it is a fixed rule of the owner's policy, which update_policy cannot add, remove or replace",
-  "approval-refused": "the host did not approve this policy update",
   "build-failed": "the new rules could not be installed",
   "persistence-failed": "the rules could not be stored",
 };
@@ -261,7 +238,6 @@ export class FirewallPolicyError extends Schema.TaggedError<FirewallPolicyError>
       "not-configured",
       "invalid-rule",
       "fixed-rule",
-      "approval-refused",
       "build-failed",
       "persistence-failed",
     ),
@@ -343,23 +319,10 @@ const failureMessages: Readonly<
 
 const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
-/**
- * Jev judges text rules with the key `decisionProviderKeyFile` holds. The key
- * is sent to `endpoint`, so plaintext HTTP is accepted only for this machine.
- */
+/** Jev judges text rules with the key `decisionProviderKeyFile` holds. */
 const decisionProvider = Schema.Struct({
   kind: Schema.Literal("jev"),
   model: Schema.NonEmptyTrimmedString,
-  endpoint: Schema.optionalWith(
-    Schema.String.pipe(
-      Schema.filter(
-        (value) =>
-          plainUrl(value, ["https:"]) !== undefined ||
-          plainUrl(value, ["http:"])?.hostname === "127.0.0.1",
-      ),
-    ),
-    { default: () => "https://api.typesafe.ai/v1/systemone" },
-  ),
 });
 
 const textRules = Schema.optionalWith(Schema.Array(TextRule), {
@@ -478,7 +441,6 @@ export interface LoadedMessagePolicy {
   readonly provider?: {
     readonly kind: "jev";
     readonly model: string;
-    readonly endpoint: string;
     readonly apiKey: Redacted.Redacted;
   };
 }
@@ -550,15 +512,14 @@ interface BehaviorLoad {
   readonly initialRuleCount: number;
 }
 
-/** Operational evidence limits are part of the installed policy identity. */
+/** The owner facts and the check concurrency limit are part of the installed policy identity. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installing a policy validates fixed settings with the same grammar saved checks decode.
 export const firewallConfigurationSchema = Schema.Struct({
   facts: Schema.Array(OwnerFact),
-  maximumHistoryRecords: Schema.Int.pipe(Schema.between(1, 1024)),
   maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
 });
 
-/** Evidence limits and fixed facts are immutable for a process installation. */
+/** The fixed facts and the concurrency limit are immutable for a process installation. */
 export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
 
 /**
@@ -869,7 +830,6 @@ function loadDecisionProvider(
     Effect.map((apiKey) => ({
       kind: "jev" as const,
       model: setting.model,
-      endpoint: setting.endpoint,
       apiKey,
     })),
   );

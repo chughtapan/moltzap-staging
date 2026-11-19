@@ -235,12 +235,9 @@ function openHarness(environment: FixtureEnvironment, options: OpenOptions) {
       ),
     );
     const services = yield* Layer.build(
-      Firewall.layer(
-        agentKey,
-        options.policy,
-        undefined,
-        options.contracts,
-      ).pipe(Layer.provideMerge(identity)),
+      Firewall.layer(agentKey, options.policy, options.contracts).pipe(
+        Layer.provideMerge(identity),
+      ),
     );
     const firewall = Context.get(services, Firewall);
     const provided =

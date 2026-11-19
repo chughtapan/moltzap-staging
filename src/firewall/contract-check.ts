@@ -2,7 +2,7 @@
 
 import { Clock, Effect, Schema } from "effect";
 import type { Message } from "../communication/index.js";
-import type { FirewallEvidence } from "./chain.js";
+import type { FirewallEvidence } from "./check.js";
 import type { FirewallStore } from "./store.js";
 import { decodeJson, sameJson } from "../encoding.js";
 import {
