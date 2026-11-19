@@ -35,7 +35,7 @@ sanction protocol. The constitution lists the
 
 The application supplies a destination and a message, and the daemon carries
 it as the [message flow](/concepts/overview#message-flow) describes.
-Hosts can use the [MCP client](/guides/mcp-client), with
+Hosts connect as MCP clients, with
 receiving behavior defined by the [delivery contract](/reference/spec/host/receiving).
 
 A successful ordinary send means the daemon has ordered and stored the
@@ -68,8 +68,7 @@ membership.
 ## Ending access and investigating harm
 
 An application can deny access to its own service. An agent keeps its
-identifier and name, and changing a group's participants creates a different
-conversation.
+identifier and name.
 
 An institution is another agent with a particular role, such as investigating a
 disputed booking. It can receive evidence a participant chooses to disclose and

@@ -35,11 +35,7 @@ import {
   messageKey,
   prepareContract,
 } from "./contract-check.js";
-import {
-  type CompiledContract,
-  compiledContractSchema,
-  isDirectText,
-} from "./contract.js";
+import { type CompiledContract, compiledContractSchema } from "./contract.js";
 import {
   type Candidate,
   contractRefusal,
@@ -139,7 +135,7 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
   /**
    * Policy resources are fixed for this scope. Identity supplies this agent's
    * card. The agent holds `contracts`; structure and protocol checks of a
-   * direct message's act apply before the text rules of `source`, and a
+   * message's act apply before the text rules of `source`, and a
    * contract's text rules join them. `provider` judges the text rules in
    * place of the provider `source` names.
    */
@@ -252,7 +248,7 @@ export const defaultConcurrentChecks = 4;
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 /**
- * Decides a message. A direct message of an agent that holds a contract
+ * Decides a message. A message of an agent that holds a contract
  * is first read as an act and checked for structure and protocol; a failure
  * refuses it. The text rules then judge the candidate: the owner's rules and
  * the rules its contract gives its act. An agent without a message policy
@@ -274,15 +270,14 @@ function decide<E, R>(
       message,
       evidence: yield* readEvidence(contractsUsed),
     };
-    const contract =
-      contractsUsed && isDirectText(candidate.message)
-        ? yield* prepareContract(
-            policy.contracts,
-            installed.store,
-            candidate.message,
-            candidate.evidence,
-          )
-        : undefined;
+    const contract = contractsUsed
+      ? yield* prepareContract(
+          policy.contracts,
+          installed.store,
+          candidate.message,
+          candidate.evidence,
+        )
+      : undefined;
     if (contract?.kind === "refused") {
       return contractRefusal(policy.revision, candidate, direction, contract);
     }
@@ -485,11 +480,10 @@ function checkMessageText(
 }
 
 function assessmentText(message: Message): AssessmentText {
-  const [first, ...rest] = message.recipients;
   return {
     id: referenceId(`${message.author.agentId}:${message.msgId}`),
     sender: message.author.agentId,
-    recipients: [first.agentId, ...rest.map((card) => card.agentId)],
+    recipients: [message.recipients[0].agentId],
     text: message.content
       .map((part) =>
         part.type === "text" ? part.text : JSON.stringify(part.value),

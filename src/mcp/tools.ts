@@ -2,7 +2,6 @@
 
 import { Data, Effect, Schema } from "effect";
 import {
-  maximumMembers,
   Message,
   MsgId,
   Page,
@@ -24,7 +23,6 @@ import {
   AgentId,
   AgentName,
 } from "../identity.js";
-import { GroupAddress, groupAddressOf, groupMemberNames } from "./groups.js";
 
 /** The scheme of an address naming one agent. */
 const AGENT_ADDRESS_PREFIX = "agent:";
@@ -40,28 +38,11 @@ const parseAgentAddress = (value: string): AgentName | undefined => {
   return isAgentName(name) ? name : undefined;
 };
 
-/** Either address as a host may write it, with a group's names in any order. */
-export const MessageAddressInput = Schema.String.pipe(
-  Schema.filter(
-    (value) =>
-      parseAgentAddress(value) !== undefined ||
-      groupMemberNames(value) !== undefined,
-    {
-      identifier: "MessageAddressInput",
-      description: `agent:<name>, or group: then agent names separated by commas, with no spaces and no agent: prefix; a name is ${AGENT_NAME_RULE}`,
-    },
-  ),
-  Schema.brand("MessageAddressInput"),
-);
-/**
- * A validated address as a host wrote it.
- * @useDeclaredType
- */
-export type MessageAddressInput = typeof MessageAddressInput.Type;
-
 /** The address of one agent. */
-export const AgentAddress = MessageAddressInput.pipe(
-  Schema.filter((value) => parseAgentAddress(value) !== undefined),
+export const AgentAddress = Schema.String.pipe(
+  Schema.filter((value) => parseAgentAddress(value) !== undefined, {
+    description: `agent:<name>; a name is ${AGENT_NAME_RULE}`,
+  }),
   Schema.brand("AgentAddress"),
   Schema.annotations({ identifier: "AgentAddress" }),
 );
@@ -82,7 +63,7 @@ const addressFailureText = {
  */
 const sendFailureText = {
   ...addressFailureText,
-  "membership-invalid": "the address does not name a valid set of agents",
+  "membership-invalid": "the address names only you",
   "content-invalid": "the message content is invalid",
   "message-conflict":
     "the message id already belongs to different content or recipients",
@@ -105,67 +86,30 @@ export class SendError extends Data.TaggedError("SendError")<{
   }
 }
 
-/** Canonical host address of a direct or group conversation. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
-export const MessageAddress = Schema.Union(AgentAddress, GroupAddress);
-/** @useDeclaredType */
-export type MessageAddress = typeof MessageAddress.Type;
-
-/** A destination's canonical address and the agents it names other than the local one. */
-interface Destination {
-  readonly address: MessageAddress;
-  readonly others: readonly AgentName[];
-}
-
-/**
- * Canonicalizes a destination. A group includes the local agent and names no
- * agent twice, and a group of one other agent is that agent's address. An
- * address that names only the local agent is refused.
- */
-export function canonicalMessageAddress(
-  to: MessageAddressInput,
+/** The agent `to` names. An address that names the local agent is refused. */
+export function addressedAgent(
+  to: AgentAddress,
   localAgentName: AgentName,
-): Effect.Effect<Destination, SendError> {
-  const direct = (other: AgentName): Effect.Effect<Destination, SendError> =>
-    other === localAgentName
-      ? Effect.fail(
-          new SendError({
-            reason: "membership-invalid",
-            detail: "the address names only you",
-          }),
-        )
-      : Effect.succeed({
-          address: AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other}`),
-          others: [other],
-        });
-  const named = parseAgentAddress(to);
-  if (named !== undefined) {
-    return direct(named);
-  }
-  return Effect.flatMap(groupMembers(to, localAgentName), (members) => {
-    const others = members.filter((name) => name !== localAgentName);
-    const [other, ...rest] = others;
-    return other !== undefined && rest.length === 0
-      ? direct(other)
-      : Effect.succeed({ address: groupAddressOf(members), others });
-  });
+): Effect.Effect<AgentName, SendError> {
+  const name = AgentName.make(to.slice(AGENT_ADDRESS_PREFIX.length));
+  return name === localAgentName
+    ? Effect.fail(new SendError({ reason: "membership-invalid" }))
+    : Effect.succeed(name);
 }
 
-/** The canonical address, as the local agent states it, of the conversation among `members`. */
+/** The address, as the local agent states it, of its conversation with the other of `members`. */
 export function addressOf(
   members: readonly AgentCard[],
   localAgentId: AgentCard["agentId"],
-): MessageAddress {
-  const others = members.filter((member) => member.agentId !== localAgentId);
-  return others.length === 1
-    ? AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${others[0]?.agentName}`)
-    : groupAddressOf(members.map((member) => member.agentName));
+): AgentAddress {
+  const other = members.find((member) => member.agentId !== localAgentId);
+  return AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other?.agentName}`);
 }
 
 /** One message as the host reads it. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
-  address: MessageAddress,
+  address: AgentAddress,
   message: Message,
   guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
 });
@@ -182,8 +126,8 @@ export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
 /** Host addresses are resolved by SocialHarness before communication preparation. */
 export const SendRequest = exactStruct({
-  to: Schema.propertySignature(MessageAddressInput).annotations({
-    description: "The recipient: agent:<name>, or group:<members>.",
+  to: Schema.propertySignature(AgentAddress).annotations({
+    description: "The recipient: agent:<name>.",
   }),
   text: Schema.propertySignature(wellFormedString).annotations({
     description: "The message text.",
@@ -199,7 +143,7 @@ export type SendRequest = typeof SendRequest.Type;
 /** What a send returns: the message id and the conversation's canonical address. */
 const SendResultSchema = Schema.Struct({
   id: MsgId,
-  address: MessageAddress,
+  address: AgentAddress,
 }).annotations({ identifier: "SendResult" });
 
 /** Accepted work continues independently of the caller's lifetime. */
@@ -207,7 +151,7 @@ export type SendResult = typeof SendResultSchema.Type;
 
 const historyFailureText = {
   ...addressFailureText,
-  "invalid-address": "the address is not a valid agent: or group: address",
+  "invalid-address": "the address names you, not another agent",
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
 } as const;
@@ -235,7 +179,7 @@ const historyRecordSchema = Schema.Union(
   }),
   Schema.Struct({
     kind: Schema.Literal("received"),
-    address: MessageAddress,
+    address: AgentAddress,
     message: Schema.typeSchema(Message),
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
@@ -260,12 +204,12 @@ const listConversationsInput = exactStruct({
 
 /** At most fifty canonical addresses and an opaque position for the next page. */
 const listConversationsOutput = Schema.Struct({
-  addresses: Schema.Array(MessageAddress).pipe(Schema.maxItems(PAGE_SIZE)),
+  addresses: Schema.Array(AgentAddress).pipe(Schema.maxItems(PAGE_SIZE)),
   ...Page.fields,
 }).pipe(Schema.filter((page) => addressesAreOrdered(page.addresses)));
 
 const readConversationInput = exactStruct({
-  address: MessageAddress,
+  address: AgentAddress,
   ...PaginatedRequest.fields,
 });
 
@@ -332,6 +276,10 @@ const policyFails = {
   toData: (error: FirewallPolicyError) => reasonData(error),
 };
 
+/** How a message states one act of a norm, as every reader of the norms needs it. */
+const ACT_SYNTAX =
+  "A message is one act and nothing else: (act :ontology <norm> :field value ...). Quote text as a JSON string, write a multi-select as a list such as (option1 option3), and send an act without fields as (act :ontology <norm>). The opening act omits replyToMsgId in send_message; every later act supplies the id of the message it answers.";
+
 /**
  * Each tool's contract: its description, its argument and result schemas, and
  * the structured content a failed call's result carries. `unexpected` is the
@@ -393,43 +341,15 @@ export const toolDefinitions = {
   },
   read_norms: {
     failure: policyFails,
-    description:
-      "List the installed communication norms and their complete documents. Participants already share these norms. Start with an opening act from a document; for a continuation, supply replyToMsgId in send_message.",
+    description: `List the installed norms and their complete documents: the roles, when each act may be sent and the fields it takes. ${ACT_SYNTAX}`,
     input: noArguments,
     output: readNormsOutput,
     annotations: readOnlyAnnotations,
   },
 } as const;
 
-/** The address of one agent, on a daemon that offers no groups. */
-const oneAgent = AgentAddress.annotations({
-  description: "agent:<name>",
-  message: () =>
-    "this daemon does not offer groups; address one agent as agent:<name>",
-});
-
 /**
- * How the two tools that take an address read on a daemon that offers no
- * groups: the address names one agent.
- */
-export const directToolDefinitions = {
-  send_message: {
-    ...toolDefinitions.send_message,
-    input: exactStruct({
-      ...SendRequest.fields,
-      to: Schema.propertySignature(oneAgent).annotations({
-        description: "The recipient: agent:<name>.",
-      }),
-    }),
-  },
-  read_conversation: {
-    ...toolDefinitions.read_conversation,
-    input: exactStruct({ ...readConversationInput.fields, address: oneAgent }),
-  },
-} as const;
-
-/**
- * How three tools read for a client in client/server mode. A client talks only
+ * How three tools read for a client. A client talks only
  * to the server agent, so it names no recipient and no conversation.
  */
 export const clientToolDefinitions = {
@@ -452,8 +372,7 @@ export const clientToolDefinitions = {
   },
   read_norms: {
     ...toolDefinitions.read_norms,
-    description:
-      "List the norms the server agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. Send an act as (performative :ontology <norm> :field value ...).",
+    description: `List the norms the server agent holds, each with its complete document: the roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. ${ACT_SYNTAX}`,
   },
 } as const;
 
@@ -477,31 +396,4 @@ export type ToolResult<Name extends ToolName> = Schema.Schema.Type<
 
 function addressesAreOrdered(addresses: readonly string[]): boolean {
   return isStrictlyAscending(addresses, compareAscii);
-}
-
-/**
- * The members a `group:` destination names, with the local agent among them.
- * A name given twice, no agent but the local one, and more than
- * `maximumMembers` members are refused. A validated address that names no
- * single agent is a group address, so `to` always lists names.
- */
-function groupMembers(
-  to: MessageAddressInput,
-  localAgentName: AgentName,
-): Effect.Effect<readonly AgentName[], SendError> {
-  const names = groupMemberNames(to) ?? [];
-  const refused = (detail: string) =>
-    Effect.fail(new SendError({ reason: "membership-invalid", detail }));
-  if (new Set(names).size !== names.length) {
-    return refused("the address names an agent more than once");
-  }
-  const members = names.includes(localAgentName)
-    ? names
-    : [...names, localAgentName];
-  if (members.length === 1) {
-    return refused("the address names only you");
-  }
-  return members.length > maximumMembers
-    ? refused(`a group has at most ${String(maximumMembers)} members`)
-    : Effect.succeed(members);
 }

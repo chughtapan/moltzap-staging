@@ -3,11 +3,7 @@
 import { Effect, FastCheck as fc, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import {
-  canonicalMessageAddress,
-  MessageAddressInput,
-  toolDefinitions,
-} from "./tools.js";
+import { addressedAgent, AgentAddress, toolDefinitions } from "./tools.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;
 
@@ -19,19 +15,17 @@ it("addresses one agent as agent:<name>, and refuses the address that names only
         fc.constant(localAgentName),
       ),
       (name) => {
-        const address = Schema.decodeUnknownSync(MessageAddressInput)(
-          `agent:${name}`,
-        );
+        const address = Schema.decodeUnknownSync(AgentAddress)(`agent:${name}`);
         expect(
           Effect.runSync(
-            canonicalMessageAddress(address, localAgentName).pipe(
+            addressedAgent(address, localAgentName).pipe(
               Effect.match({
                 onFailure: ({ reason }) => reason,
-                onSuccess: (canonical) => canonical.address,
+                onSuccess: (named) => named,
               }),
             ),
           ),
-        ).toBe(name === localAgentName ? "membership-invalid" : address);
+        ).toBe(name === localAgentName ? "membership-invalid" : name);
       },
     ),
   );

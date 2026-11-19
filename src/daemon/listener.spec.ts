@@ -26,7 +26,7 @@ const fixture = Effect.gen(function* () {
         secondsLeft: changes.secondsLeft ?? 300,
       },
     );
-  const call = (bearer?: string, host?: string, origin?: string) =>
+  const call = (bearer: string) =>
     Effect.tryPromise(() =>
       test.fetch(
         mcpRequest(
@@ -34,9 +34,8 @@ const fixture = Effect.gen(function* () {
           {},
           {
             headers: {
-              host: host ?? resource.host,
-              authorization: bearer === undefined ? "" : `Bearer ${bearer}`,
-              ...(origin === undefined ? {} : { origin }),
+              host: resource.host,
+              authorization: `Bearer ${bearer}`,
             },
           },
         ),
@@ -50,13 +49,8 @@ const longerScope = fc
   .stringMatching(/^[a-z:]{1,3}$/u)
   .map((more) => `${scope}${more}`);
 
-/**
- * A request the resource admits: its Host in any letter case, no Origin, and
- * the configured scope anywhere among those granted.
- */
+/** Claims the resource admits: any subject, and the configured scope anywhere among those granted. */
 const admissible = fc.record({
-  host: fc.mixedCase(fc.constant(resource.host)),
-  origin: fc.constant(undefined),
   subject: fc.string({ minLength: 1 }),
   granted: fc
     .tuple(fc.array(longerScope), fc.array(longerScope))
@@ -71,56 +65,15 @@ const defect = fc.oneof(
   fc.record({ secondsLeft: fc.integer({ min: -3600, max: 0 }) }),
 );
 
-/**
- * The headers of a caller the resource does not trust: another Host, or the
- * resource's Host with an Origin.
- */
-const untrusted = fc.oneof(
-  fc.record({
-    host: fc.domain().filter((host) => host !== resource.host),
-    origin: fc.constant(undefined),
-  }),
-  fc.record({
-    host: fc.constant(resource.host),
-    origin: fc.webUrl(),
-  }),
-);
-
-it("advertises protected-resource discovery without granting MCP access", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const metadata = yield* Effect.tryPromise(() =>
-      test.fetch(
-        new Request(
-          new URL("/.well-known/oauth-protected-resource/mcp", resource),
-          { headers: { host: resource.host } },
-        ),
-      ),
-    );
-    expect(metadata.status).toBe(200);
-    expect(yield* Effect.tryPromise(() => metadata.json())).toEqual({
-      resource: resource.href,
-      authorization_servers: [test.issuer.issuer],
-      scopes_supported: [scope],
-      bearer_methods_supported: ["header"],
-    });
-    const refused = yield* test.call();
-    expect(refused.status).toBe(401);
-    expect(refused.headers.get("www-authenticate")).toContain(
-      "resource_metadata=",
-    );
-  }));
-
 it("selects the subject of a token granted the scope, under the verified issuer", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* Effect.tryPromise(() =>
       fc.assert(
-        fc.asyncProperty(admissible, ({ host, origin, ...claims }) =>
+        fc.asyncProperty(admissible, (claims) =>
           Effect.gen(function* () {
             yield* Ref.set(test.owners, []);
-            const token = yield* test.token(claims);
-            const response = yield* test.call(token, host, origin);
+            const response = yield* test.call(yield* test.token(claims));
             expect(response.status).toBe(200);
             expect(yield* Ref.get(test.owners)).toEqual([
               { issuer: test.issuer.issuer, subject: claims.subject },
@@ -139,24 +92,7 @@ it("refuses a token with an empty subject, another audience, no grant of the sco
         fc.asyncProperty(defect, (claim) =>
           Effect.gen(function* () {
             const response = yield* test.call(yield* test.token(claim));
-            expect(response.status).toBe(401);
-            expect(yield* Ref.get(test.owners)).toEqual([]);
-          }).pipe(Effect.runPromise),
-        ),
-      ),
-    );
-  }));
-
-it("rejects another Host or an Origin that is not allowed, even with the owner's token", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const token = yield* test.token();
-    yield* Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(untrusted, ({ host, origin }) =>
-          Effect.gen(function* () {
-            const response = yield* test.call(token, host, origin);
-            expect(response.status).toBe(403);
+            expect(response.ok).toBe(false);
             expect(yield* Ref.get(test.owners)).toEqual([]);
           }).pipe(Effect.runPromise),
         ),

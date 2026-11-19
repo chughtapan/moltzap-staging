@@ -7,14 +7,11 @@ export {
   type ToolRequest,
   type ToolResult,
 } from "./tools.js";
-/** What a host sends, the addresses it names an agent or a group by, the inbox entries it reads and the event that carries them. */
+/** What a host sends, the address it names an agent by, the inbox entries it reads and the event that carries them. */
 export {
   AgentAddress,
   INBOX_EVENT,
   InboxEntry,
-  MessageAddressInput,
   SendRequest,
   type SendResult,
 } from "./tools.js";
-/** The address of a group, which only P2P mode offers. */
-export { GroupAddress } from "./groups.js";

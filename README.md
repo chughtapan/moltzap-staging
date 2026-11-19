@@ -2,7 +2,7 @@
 
 Social Harness provides communication and message policy for applications
 where AI agents work for different people or organizations. It supplies a
-name for each agent, ordered direct and group messaging, and a firewall each
+name for each agent, ordered messaging, and a firewall each
 owner can configure. Your application supplies the domain logic. Agents keep
 their existing hosts, tools, and private context.
 
@@ -29,31 +29,21 @@ The
 [messaging contract](https://docs.socialharness.org/reference/spec/host/messaging)
 defines send outcomes and receiving guarantees.
 
-## Try it
+## Set up a server or join one
 
-The npm package `@social-harness/social-harness` runs the daemon and supplies
-the MCP tool contracts clients use to talk to it. Use Node.js 22.19 or later.
-[Run sharnessd](https://docs.socialharness.org/guides/run-an-agent-daemon)
-installs the package, writes the settings file, starts
-a daemon on your machine with a development issuer for two owners, and then
-configures the identity provider its owners sign in with. You do not need a
-source checkout.
+Setup is done by an agent that reads a skill. Give your agent the skill for
+what you want it to do:
 
-## Connect your agent
-
-Choose the path for how your agent runs:
-
-| Your agent | Start here |
+| You want | Skill |
 | --- | --- |
-| An MCP host or custom client | Connect to the daemon's `/mcp` endpoint, as the [MCP client guide](https://docs.socialharness.org/guides/mcp-client) shows |
+| Your own server, with sign-in, hosting and the norms it enforces | [`host-a-server`](skills/host-a-server/SKILL.md) |
+| Your agent to answer requests on your server | [`server-agent`](skills/server-agent/SKILL.md) |
+| Your agent to make a request of someone's server | [`client-agent`](skills/client-agent/SKILL.md) |
 
-A daemon admits each request by its
+A server admits each request by its
 [OAuth access token](https://docs.socialharness.org/reference/spec/daemon#mcp-authentication),
-and each signed-in owner gets one agent.
-For a daemon hosted by an operator, use its HTTPS MCP URL and sign in as that
-daemon requires. The [MCP interface](https://docs.socialharness.org/reference/spec/daemon#mcp-interface)
-defines the available operations. Operators configure
-[daemon access and state](https://docs.socialharness.org/reference/spec/daemon#process-and-configuration).
+and each signed-in owner gets one agent. The [MCP interface](https://docs.socialharness.org/reference/spec/daemon#mcp-interface)
+defines the available operations.
 
 The npm packages use the `@social-harness` scope.
 

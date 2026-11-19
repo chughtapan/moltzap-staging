@@ -145,6 +145,9 @@ importers:
       '@effect/sql-pg':
         specifier: 'catalog:'
         version: 0.53.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/sql@0.52.0(@effect/experimental@0.61.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
+      '@modelcontextprotocol/client':
+        specifier: 'catalog:'
+        version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
       '@modelcontextprotocol/server':
         specifier: 'catalog:'
         version: https://pkg.pr.new/@modelcontextprotocol/server@5ebb589(@opentelemetry/api@1.9.1)
@@ -203,9 +206,6 @@ importers:
       '@eslint-community/eslint-plugin-eslint-comments':
         specifier: 'catalog:'
         version: 4.7.2(eslint@9.39.4(jiti@2.7.0))
-      '@modelcontextprotocol/client':
-        specifier: 'catalog:'
-        version: https://pkg.pr.new/@modelcontextprotocol/client@5ebb589(@opentelemetry/api@1.9.1)
       '@types/node':
         specifier: 'catalog:'
         version: 25.5.0

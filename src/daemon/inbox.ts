@@ -17,10 +17,10 @@ import {
   exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
-import { type InboxCursor, InboxEntry, MessageAddress } from "../mcp/tools.js";
+import { AgentAddress, type InboxCursor, InboxEntry } from "../mcp/tools.js";
 
 const uncheckedRow = exactStruct({
-  address: MessageAddress,
+  address: AgentAddress,
   unchecked: Schema.parseJson(Message),
 });
 const entryRow = exactStruct({
@@ -30,7 +30,7 @@ const entryRow = exactStruct({
 
 /** A received message the firewall has not yet decided, with the address its inbox entry takes. */
 export interface Unchecked {
-  readonly address: MessageAddress;
+  readonly address: AgentAddress;
   readonly message: Message;
 }
 
@@ -71,7 +71,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     );
   return {
     storeUnchecked: Effect.fn(function* (
-      address: MessageAddress,
+      address: AgentAddress,
       message: Message,
     ) {
       const encodedMessage = yield* encodeJson(Message, message);

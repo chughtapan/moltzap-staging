@@ -68,10 +68,16 @@ and the contract for the area you change:
 - [Message policy](docs/reference/spec/firewall/message-policy.md) and
   [norms](docs/reference/spec/norms/norms.md).
 
-`skills/` contains instructions that every channel installs unchanged.
-`group-messaging` teaches group messages, and `norms`
-teaches the use of pre-agreed communication contracts. Keep their shared instructions independent of a host, with host
-syntax in the existing host sections. Review changes to `config/firewall/` and
+Onboarding is agent-led and lives only in `skills/`: an agent reads a skill
+and does the setup. `host-a-server` sets up an owner's server (Auth0 sign-in,
+a hosted daemon, norms and rules), `server-agent` makes an agent the one that
+answers requests there, and `client-agent` connects an agent to someone's
+server. The repository holds no setup scripts, host plugins or how-to guides;
+when a setup step is hard, change the daemon so the step disappears, or state
+it in the skill. Keep the skills independent of any one agent host: each host
+decides how it signs in, schedules itself and reads its inbox. When code
+changes a tool, setting or variable a skill names, change the skill in the
+same pull request. Review changes to `config/firewall/` and
 `config/norms/` as policy changes: their text determines what the text
 evaluator and the norm checks enforce.
 

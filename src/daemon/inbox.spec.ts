@@ -5,7 +5,7 @@ import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
-import { MessageAddress } from "../mcp/tools.js";
+import { AgentAddress } from "../mcp/tools.js";
 import { openTestDatabase } from "../test.js";
 import { type Inbox, makeInbox } from "./inbox.js";
 
@@ -25,7 +25,7 @@ function arrive(inbox: Inbox, peer: string) {
       content: [{ type: "text", text: "Can we meet tomorrow?" }],
     });
     yield* inbox.storeUnchecked(
-      yield* Schema.decodeUnknown(MessageAddress)(`agent:${peer}`),
+      yield* Schema.decodeUnknown(AgentAddress)(`agent:${peer}`),
       message,
     );
     return message.msgId;

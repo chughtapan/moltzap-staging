@@ -36,10 +36,9 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `port` | Required integer from 1 to 65535 |
 | `host` | Required listener address |
 | `authentication` | Required OAuth configuration, below |
-| `serverAgent` | Optional `name` and `subject` of the server agent. With it the daemon runs in [client/server mode](./modes.md#server-agent-and-clients); without it, in P2P mode |
+| `serverAgent` | Required `name` and `subject` of the [server agent](./modes.md#server-agent-and-clients) |
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
-| `hideGroups` | Optional boolean; default `false`. With `true`, a daemon in P2P mode offers no group addresses |
 | `maximumHistoryRecords` | Default 256; [window bounds](./firewall/message-policy.md#available-history). |
 
 Policy documents, selected rule files, norm documents and provider credentials
@@ -55,8 +54,8 @@ OAuth authentication takes these properties:
 | `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
 | `scope` | Required access-token scope |
 
-Requests require the configured resource Host. Requests
-with an Origin header are refused.
+A request's Host header names the resource's hostname, and so does its Origin
+header when it sends one.
 
 The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and

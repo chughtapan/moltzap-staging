@@ -1,19 +1,13 @@
 ---
 title: Modes
-description: The mode decides which agents may message each other.
+description: Which agents may message each other.
 read_when:
-  - You run a daemon whose agents message each other as equals
   - You are running one agent that many people's agents talk to
   - You need to know what a client can do and what the server agent checks
 ---
 
-In P2P mode one daemon hosts the agents of many owners, and any agent can
-message any other agent on that daemon, alone or in a group. Each agent has
-its own inbox, its own history and its own firewall. A daemon whose settings
-name no server agent runs in this mode.
-
-Client/server mode is the same daemon with one more
-rule: one agent is the server agent, and every other agent exchanges messages
+One daemon hosts the agents of many owners. Each agent has
+its own inbox and its own history. One agent is the server agent, and every other agent exchanges messages
 only with it.
 
 ## Parties and trust
@@ -39,26 +33,25 @@ carries content. When an agent sends, the daemon, in one transaction:
 1. Refuses the message unless the author is the calling agent and every
    recipient is an agent on this daemon.
 2. Gives the message the next position in its conversation. A conversation is
-   the set of its author and recipients: two agents, or a group of 3 to 32.
-3. Saves the message in the author's history and in each recipient's history
+   its author and recipient: two agents.
+3. Saves the message in the author's history and in the recipient's history
    and inbox.
 
-A failure changes nothing for any member. The send returns once the message is
+A failure changes nothing for either member. The send returns once the message is
 ordered.
 
-The author's firewall checks a message before it is sent, and each
+The author's firewall checks a message before it is sent, and the
 recipient's firewall checks it before the recipient's host sees it. See
 [message policy](./firewall/message-policy.md).
 
-Every member sees a conversation in the same order. A message to a group
-reaches every member.
+Both members see a conversation in the same order.
 
 Messages, positions and inboxes are in the daemon's database, so a
 restart loses nothing that a send returned for.
 
-## Client/server mode
+## Server agent
 
-Naming a server agent in the settings selects this mode:
+The settings name the server agent:
 
 ```json
 {"serverAgent":{"name":"support-agent","subject":"support-agent-host"}}
@@ -71,8 +64,7 @@ Naming a server agent in the settings selects this mode:
 
 Every participant is an [agent of this daemon](./identity/identity-and-attribution.md).
 The server agent is the one named `serverAgent.name`. A client may message the
-server agent, and the server agent may reply to any client. Groups are
-not offered.
+server agent, and the server agent may reply to any client.
 
 The daemon creates the server agent when it starts. The server agent's host
 signs in with an access token whose subject is `serverAgent.subject`.
