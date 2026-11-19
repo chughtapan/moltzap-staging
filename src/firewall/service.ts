@@ -121,34 +121,38 @@ export type IncomingDecision = {
       readonly reply?: string;
     }
 );
+/**
+ * Reads the evidence of one check. Only a check under a message policy runs
+ * it. `protocolHistory` asks for every message before the one under check as
+ * well, which the check of an agent that has ever held a contract needs,
+ * since an instance outlives the removal of its contract.
+ */
+type ReadEvidence<E, R> = (
+  protocolHistory: boolean,
+) => Effect.Effect<FirewallEvidence, E, R>;
+
 /** Message checks, policy edits and saved decision summaries. */
 interface FirewallService {
   /** Checks without saving. Refusals expose feedback. */
-  readonly checkOutgoing: (
+  readonly checkOutgoing: <E, R>(
     message: Message,
-    evidence: FirewallEvidence,
-  ) => Effect.Effect<OutgoingDecision>;
+    evidence: ReadEvidence<E, R>,
+  ) => Effect.Effect<OutgoingDecision, E, R>;
   /**
    * Checks a message a peer wrote with its preceding evidence. An allowed
    * message the provider was unsure about carries guidance; a withheld one
    * exposes none.
    */
-  readonly checkIncoming: (
+  readonly checkIncoming: <E, R>(
     message: Message,
-    evidence: FirewallEvidence,
-  ) => Effect.Effect<IncomingDecision>;
+    evidence: ReadEvidence<E, R>,
+  ) => Effect.Effect<IncomingDecision, E, R>;
   readonly readPolicy: () => Effect.Effect<
     typeof policyReadSchema.Type,
     FirewallPolicyError
   >;
   /** The contracts the agent holds in its active revision. */
   readonly readContracts: () => Effect.Effect<readonly CompiledContract[]>;
-  /**
-   * Whether the agent has ever held a contract. A check then needs every
-   * message before the one under check as `protocolHistory`, since an
-   * instance outlives the removal of its contract.
-   */
-  readonly requiresProtocolHistory: () => boolean;
   /** Validates each edit before saving and activating it. */
   readonly updatePolicy: (
     request: PolicyEdit,
@@ -206,7 +210,6 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
                 })),
           readContracts: () =>
             Effect.sync(() => policy?.active.contracts ?? []),
-          requiresProtocolHistory: () => policy?.active.contractsUsed ?? false,
           updatePolicy: (request) =>
             policy === undefined
               ? Effect.fail(
@@ -218,7 +221,8 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
             Effect.gen(function* () {
               const decision = yield* decide(
                 installed,
-                { message, evidence },
+                message,
+                evidence,
                 "outgoing",
               );
               const save = saveRecords(store, decision);
@@ -247,7 +251,8 @@ export class Firewall extends Context.Tag("SocialHarness/Firewall")<
             Effect.gen(function* () {
               const decision = yield* decide(
                 installed,
-                { message, evidence },
+                message,
+                evidence,
                 "incoming",
               );
               const save = saveRecords(store, decision);
@@ -294,8 +299,8 @@ interface Installation {
 
 const storedPolicyFormat = "org.social-harness/editable-policy/v1";
 
-/** How many checks run at once under a policy that sets no `maximumConcurrentChecks`. */
-const defaultConcurrentChecks = 4;
+/** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
+export const defaultConcurrentChecks = 4;
 
 const storedPolicySchema = exactStruct({
   format: Schema.Literal(storedPolicyFormat),
@@ -309,15 +314,16 @@ type ActivePolicy = Effect.Effect.Success<ReturnType<typeof buildPolicy>>;
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 
 /**
- * Decides a candidate. A direct message of an agent that has held a contract
+ * Decides a message. A direct message of an agent that has held a contract
  * is first read as an act and checked for structure and protocol; a failure
  * refuses it. The text rules then judge the candidate: the owner's rules and
  * the rules its contract gives its act. An agent without a message policy
- * allows every candidate.
+ * allows every message without reading its evidence.
  */
-function decide(
+function decide<E, R>(
   installed: Installation,
-  candidate: Candidate,
+  message: Message,
+  readEvidence: ReadEvidence<E, R>,
   direction: Direction,
 ) {
   return Effect.gen(function* () {
@@ -325,6 +331,10 @@ function decide(
     if (policy === undefined) {
       return { kind: "allowed" } satisfies Decision;
     }
+    const candidate: Candidate = {
+      message,
+      evidence: yield* readEvidence(policy.active.contractsUsed),
+    };
     const active = policy.active;
     const contract =
       active.contractsUsed && isDirectText(candidate.message)

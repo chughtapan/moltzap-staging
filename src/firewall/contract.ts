@@ -1,17 +1,14 @@
 /** @file A contract: the forms, turn rules and text rules one norm compiles to, and the reading of a message as one act of it. */
 
 import { Data, Effect, Either, Schema } from "effect";
-import {
-  type Message,
-  RequestedSchema,
-  validateResponseContent,
-} from "../communication/index.js";
+import type { Message } from "../communication/index.js";
 import {
   exactStruct,
   readSExpressions,
   type SExpression,
   writeSExpression,
 } from "../encoding.js";
+import { RequestedSchema, validateResponseContent } from "./forms.js";
 import { TextRule } from "./rules.js";
 
 const name = Schema.String.pipe(

@@ -16,7 +16,7 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
-import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
+import type { FirewallRefusal } from "../firewall/index.js";
 import {
   type CommunicationError,
   Message,
@@ -28,7 +28,11 @@ import {
 import { Communication, type HistoryPage } from "../communication/service.js";
 import { afterCommit, transaction } from "../database.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
-import { Firewall, type IncomingDecision } from "../firewall/service.js";
+import {
+  defaultConcurrentChecks,
+  Firewall,
+  type IncomingDecision,
+} from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
   addressOf,
@@ -158,7 +162,8 @@ function makeHarness(settings: HarnessSettings) {
     const wake = yield* Queue.sliding<undefined>(1);
     const changes = yield* PubSub.sliding<undefined>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
-    const capacity = settings.maximumConcurrentChecks ?? 4;
+    const capacity =
+      settings.maximumConcurrentChecks ?? defaultConcurrentChecks;
     const agent: Agent = {
       card: identity.me,
       identity,
@@ -235,11 +240,15 @@ function send(agent: Agent, input: SendRequest) {
         agent.card.agentName,
       );
       const outgoing = yield* outgoingFor(agent, request, destination.others);
-      const evidence = yield* evidenceFor(agent, [
-        outgoing.author,
-        ...outgoing.recipients,
-      ]);
-      const decision = yield* agent.firewall.checkOutgoing(outgoing, evidence);
+      const decision = yield* agent.firewall.checkOutgoing(
+        outgoing,
+        (protocolHistory) =>
+          evidenceFor(
+            agent,
+            [outgoing.author, ...outgoing.recipients],
+            protocolHistory,
+          ),
+      );
       yield* decision.save;
       if (decision.kind === "refused") {
         return yield* decision.refusal;
@@ -422,14 +431,22 @@ function messageRecords(
   });
 }
 
+/**
+ * Checks one unchecked message and records the decision, with the reply to a
+ * withheld message, in one transaction. The evidence is read at most once and
+ * serves both the check and the check of the reply.
+ */
 function checkIncoming(agent: Agent, unchecked: Unchecked) {
   const { communication, inbox } = agent;
   return Effect.gen(function* () {
     const { message } = unchecked;
-    const evidence = yield* evidenceFor(
-      agent,
-      [message.author, ...message.recipients],
-      message,
+    const evidence = yield* Effect.cachedFunction((protocolHistory: boolean) =>
+      evidenceFor(
+        agent,
+        [message.author, ...message.recipients],
+        protocolHistory,
+        message,
+      ),
     );
     const decision = yield* agent.firewall.checkIncoming(message, evidence);
     const reply = yield* checkedReply(agent, message, decision, evidence);
@@ -461,17 +478,21 @@ function checkedReply(
   agent: Agent,
   withheld: Message,
   decision: IncomingDecision,
-  evidence: FirewallEvidence,
+  evidence: (protocolHistory: boolean) => ReturnType<typeof evidenceFor>,
 ) {
   return Effect.gen(function* () {
     const proposed = yield* replyTo(agent, withheld, decision);
     if (proposed === undefined) {
       return { save: Effect.void };
     }
-    const checked = yield* agent.firewall.checkOutgoing(proposed, {
-      ...evidence,
-      references: [withheld],
-    });
+    const checked = yield* agent.firewall.checkOutgoing(
+      proposed,
+      (protocolHistory) =>
+        Effect.map(evidence(protocolHistory), (read) => ({
+          ...read,
+          references: [withheld],
+        })),
+    );
     return {
       save: checked.save,
       ...(checked.kind === "allowed" ? { message: proposed } : {}),
@@ -522,16 +543,17 @@ function replyTo(agent: Agent, withheld: Message, decision: IncomingDecision) {
 
 /**
  * The evidence a check of a message among `members` reads: the bounded window
- * of history before `before`, or the latest when it is not given, and for an
- * agent that has held a contract every message before it.
+ * of history before `before`, or the latest when it is not given, and with
+ * `withProtocolHistory` every message before it.
  */
 function evidenceFor(
   agent: Agent,
   members: readonly AgentCard[],
+  withProtocolHistory: boolean,
   before?: Message,
 ) {
   return Effect.gen(function* () {
-    const protocolHistory = agent.firewall.requiresProtocolHistory()
+    const protocolHistory = withProtocolHistory
       ? yield* readProtocolHistory(agent, members, before)
       : undefined;
     const page =

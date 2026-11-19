@@ -220,13 +220,13 @@ function startAgent(
     const identity = yield* Layer.build(identityLayer(agentKey));
     const card = Context.get(identity, Identity).me;
     const role = roleOf(settings, agentKey, card.agentName, contractsOf);
-    const policy = settings.messagePolicy?.policy;
     const services = yield* Layer.build(
       SocialHarness.layer({
         agentKey,
         withheldReply: role.withheldReply,
-        maximumHistoryRecords: policy?.maximumHistoryRecords,
-        maximumConcurrentChecks: policy?.maximumConcurrentChecks,
+        maximumHistoryRecords: settings.maximumHistoryRecords,
+        maximumConcurrentChecks:
+          settings.messagePolicy?.policy.maximumConcurrentChecks,
       }).pipe(
         Layer.provideMerge(
           Communication.layer({
