@@ -27,5 +27,4 @@ export {
   policyReadSchema,
   policyRevisionSchema,
   policyUpdateSchema,
-  readPolicyCredential,
 } from "./rules.js";
