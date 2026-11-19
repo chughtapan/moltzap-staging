@@ -2,7 +2,7 @@
 
 import { Context, Effect, Encoding, Layer, Schema } from "effect";
 import { createHash } from "node:crypto";
-import { getOrCreateOwnedAgentKey } from "../daemon/owners.js";
+import { getOrCreateOwnedAgentKey, identityLayer } from "../daemon/owners.js";
 import { AgentCard, AgentName, Identity } from "../identity.js";
 
 /** The same card for the same name on every call; Alice, Bob, Carol and Dave have ids of one repeated byte. */
@@ -47,7 +47,7 @@ export const createTestAgent = Effect.fn("createTestAgent")(
       { issuer: "urn:social-harness:test", subject: name },
       Schema.decodeUnknownSync(AgentName)(name),
     );
-    const identity = yield* Layer.build(Identity.layer(agentKey));
+    const identity = yield* Layer.build(identityLayer(agentKey));
     return { agentKey, card: Context.get(identity, Identity).me };
   },
   Effect.scoped,

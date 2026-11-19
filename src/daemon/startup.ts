@@ -30,6 +30,7 @@ import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
 import {
   getOrCreateOwnedAgentKey,
+  identityLayer,
   listOwnedAgentKeys,
   type Owner,
 } from "./owners.js";
@@ -250,7 +251,7 @@ function startAgent(
   agentKey: string,
 ) {
   return Effect.gen(function* () {
-    const identity = yield* Layer.build(Identity.layer(agentKey));
+    const identity = yield* Layer.build(identityLayer(agentKey));
     const card = Context.get(identity, Identity).me;
     const role = roleOf(daemon, agentKey, card.agentName);
     const policy = daemon.settings.messagePolicy?.policy;

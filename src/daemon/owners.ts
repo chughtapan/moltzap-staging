@@ -1,9 +1,16 @@
-/** @file Binds each owner to one agent and records that agent's card. */
+/** @file Binds each owner to one agent, records that agent's card and names the daemon's agents from their cards. */
 import { SqlClient } from "@effect/sql";
-import { Data, Effect, Schema } from "effect";
+import { Data, Effect, Layer, Schema } from "effect";
 import { randomBytes, randomUUID } from "node:crypto";
 import { executeQuery, makeQueries } from "../database/index.js";
-import { AgentId, AgentName, PrincipalId } from "../identity.js";
+import {
+  AgentCard,
+  AgentId,
+  AgentName,
+  Identity,
+  IdentityError,
+  PrincipalId,
+} from "../identity.js";
 
 /** Authentication supplies both fields; email and host-provided agent selectors are excluded. */
 export interface Owner {
@@ -117,6 +124,29 @@ export const getOrCreateOwnedAgentKey = Effect.fn("getOrCreateOwnedAgentKey")(
   },
 );
 
+/** The identity of the agent stored under `agentKey`, resolving names in the same database. */
+export function identityLayer(
+  agentKey: string,
+): Layer.Layer<Identity, IdentityError, SqlClient.SqlClient> {
+  return Layer.effect(
+    Identity,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const [me] = yield* cards(sql, "agent_key", agentKey);
+      if (me === undefined) {
+        return yield* new IdentityError({ reason: "unknown-agent" });
+      }
+      return Identity.of({
+        me,
+        resolve: (names) =>
+          Effect.forEach(names, (agentName) => named(sql, agentName), {
+            concurrency: 1,
+          }).pipe(Effect.withSpan("Identity.resolve")),
+      });
+    }).pipe(Effect.withSpan("Identity.layer")),
+  );
+}
+
 /** The key of every agent the daemon has created. */
 export const listOwnedAgentKeys = Effect.gen(function* () {
   const queries = yield* makeQueries<OwnershipTables>();
@@ -129,3 +159,41 @@ export const listOwnedAgentKeys = Effect.gen(function* () {
     { concurrency: 1 },
   );
 }).pipe(Effect.withSpan("listOwnedAgentKeys"));
+
+function named(sql: SqlClient.SqlClient, agentName: AgentName) {
+  return cards(sql, "agent_name", agentName).pipe(
+    Effect.flatMap(([card]) =>
+      card === undefined
+        ? Effect.fail(new IdentityError({ reason: "unknown-agent", agentName }))
+        : Effect.succeed(card),
+    ),
+  );
+}
+
+/** The cards of the agents whose `column` holds `value`: one, or none. */
+function cards(
+  sql: SqlClient.SqlClient,
+  column: "agent_key" | "agent_name",
+  value: string,
+) {
+  return makeQueries<OwnershipTables>().pipe(
+    Effect.flatMap((queries) =>
+      executeQuery(
+        queries
+          .selectFrom("agent_cards")
+          .select([
+            "agent_id as agentId",
+            "agent_name as agentName",
+            "principal_id as principalId",
+          ])
+          .where(column, "=", value),
+      ),
+    ),
+    Effect.flatMap(Schema.decodeUnknown(Schema.Array(AgentCard))),
+    Effect.provideService(SqlClient.SqlClient, sql),
+    Effect.catchTags({
+      SqlError: () => new IdentityError({ reason: "persistence-failed" }),
+      ParseError: () => new IdentityError({ reason: "persistence-failed" }),
+    }),
+  );
+}
