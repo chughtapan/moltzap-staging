@@ -11,7 +11,6 @@ import {
   Schema,
 } from "effect";
 import { expect } from "vitest";
-import type { Conversation } from "./service.js";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
 import { Message } from "./messages.js";
@@ -71,7 +70,7 @@ it("appends a message once to the history of each member of its conversation, an
             recipients: Arr.map(to, (name) => people[name]),
             content: [{ type: "text", text: "hello" }],
           });
-          const members: Conversation = [message.author, ...message.recipients];
+          const members = [message.author, ...message.recipients];
           const admitted =
             author === caller && to.every((name) => name in f.hosted);
           const before = yield* f.histories(members);
@@ -133,7 +132,7 @@ it("keeps one copy of a message its author sends again, and refuses a different 
           ...(yield* write(author, elsewhere, "changed")),
           msgId: message.msgId,
         });
-        const members: Conversation = [message.author, ...message.recipients];
+        const members = [message.author, ...message.recipients];
         const before = yield* f.histories(members);
         yield* f.hosted[author].send(message);
         yield* f.hosted[author].send(message);

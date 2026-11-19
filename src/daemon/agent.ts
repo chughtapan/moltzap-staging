@@ -25,11 +25,7 @@ import {
   PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
-import {
-  Communication,
-  type Conversation,
-  type HistoryPage,
-} from "../communication/service.js";
+import { Communication, type HistoryPage } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
 import { Firewall, type IncomingDecision } from "../firewall/service.js";
@@ -396,10 +392,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     }
     const page = yield* messageRecords(
       agent,
-      yield* conversation([
-        card,
-        ...(yield* agent.identity.resolve(destination.others)),
-      ]),
+      [card, ...(yield* agent.identity.resolve(destination.others))],
       position?.communicationCursor,
     );
     return {
@@ -421,7 +414,11 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
  * One page of a conversation's messages as history records: each one this
  * agent sent, and each one it received that its inbox stored an entry for.
  */
-function messageRecords(agent: Agent, members: Conversation, cursor?: string) {
+function messageRecords(
+  agent: Agent,
+  members: readonly AgentCard[],
+  cursor?: string,
+) {
   return Effect.gen(function* () {
     const page = yield* agent.communication.readHistory({
       members,
@@ -554,13 +551,12 @@ function evidenceFor(
   before?: Message,
 ) {
   return Effect.gen(function* () {
-    const selected = yield* conversation(members);
     const protocolHistory = agent.firewall.requiresProtocolHistory()
-      ? yield* readProtocolHistory(agent, selected, before)
+      ? yield* readProtocolHistory(agent, members, before)
       : undefined;
     const page =
       protocolHistory === undefined
-        ? yield* readHistoryBefore(agent, selected, before)
+        ? yield* readHistoryBefore(agent, members, before)
         : {
             entries: protocolHistory.entries.slice(-agent.historyLimit),
             earlierMessagesOmitted:
@@ -607,7 +603,7 @@ function evidenceFor(
  */
 function readProtocolHistory(
   agent: Agent,
-  members: Conversation,
+  members: readonly AgentCard[],
   before?: Message,
 ) {
   return Effect.gen(function* () {
@@ -637,7 +633,7 @@ function readProtocolHistory(
 /** One page of a conversation's messages, in order: the latest before `before`, or the latest of all. */
 function readHistoryBefore(
   agent: Agent,
-  members: Conversation,
+  members: readonly AgentCard[],
   before?: Message,
 ) {
   return agent.communication.readHistory({
@@ -653,17 +649,6 @@ function readHistoryBefore(
           },
         }),
   });
-}
-
-/** The members of a conversation in agent-name order. */
-function conversation(members: readonly AgentCard[]) {
-  const ordered = [...members].sort((left, right) =>
-    compareAscii(left.agentName, right.agentName),
-  );
-  const [first, second, ...rest] = ordered;
-  return first === undefined || second === undefined
-    ? Effect.dieMessage("A conversation has at least two members")
-    : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
 /**

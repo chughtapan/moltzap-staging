@@ -2,50 +2,50 @@
  * @file One agent's communication service on a daemon that hosts every agent.
  *
  * The file opens with what the service accepts, hands to the host and
- * returns, then reads an agent's conversations and their ordered history. A
- * send orders the message in its conversation and saves it for every member
- * in one transaction.
+ * returns, and the queries that store each agent's ordered messages and which
+ * of them it has consumed. It then reads an agent's conversations and their
+ * ordered history. A send orders the message in its conversation and saves
+ * it for every member in one transaction.
  */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Context, Effect, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Layer, Option, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import {
   afterCommit,
   executeQuery,
+  type Generated,
+  makeQueries,
   transaction,
   withAgentRows,
 } from "../database/index.js";
-import { compareAgentIds } from "../encoding.js";
-import { AgentCard } from "../identity.js";
+import {
+  compareAgentIds,
+  compareAscii,
+  decodeJson,
+  encodeJson,
+  sameJson,
+} from "../encoding.js";
+import { AgentCard, type AgentId } from "../identity.js";
 import {
   CommunicationError,
   deriveConversationId,
-  type Message,
+  Message,
   messageMembers,
   type MessageReference,
   type Page,
   PAGE_SIZE,
   type PaginatedRequest,
 } from "./messages.js";
-import {
-  communicationQueries,
-  hasMessage,
-  markMessageConsumed,
-  readMessages,
-  saveMessage,
-} from "./store.js";
 
-/** All conversation members, in ascending agent-name order. */
-export type Conversation = readonly [AgentCard, AgentCard, ...AgentCard[]];
-/** Selects a paged forward traversal or one bounded recent window. */
+/** Selects a paged forward traversal or one bounded recent window of the conversation among `members`, given in any order. */
 export type HistoryQuery =
   | (PaginatedRequest & {
-      readonly members: Conversation;
+      readonly members: readonly AgentCard[];
       readonly order?: "oldest";
     })
   | {
-      readonly members: Conversation;
+      readonly members: readonly AgentCard[];
       readonly order: "newest";
       readonly limit: number;
       readonly beforeMessage?: MessageReference;
@@ -75,9 +75,9 @@ export interface CommunicationService {
   readonly consume: <E, R>(
     handle: (message: Message) => Effect.Effect<void, E, R>,
   ) => Effect.Effect<never, CommunicationError | E, R>;
-  /** Every conversation this agent has a message in, in no order. */
+  /** Every conversation this agent has a message in, in no order, each as its members in agent-name order. */
   readonly listConversations: Effect.Effect<
-    readonly Conversation[],
+    ReadonlyArray<readonly AgentCard[]>,
     CommunicationError
   >;
   /** Reads a conversation's messages in order. Continuation cursors require this service instance. */
@@ -98,12 +98,6 @@ export interface CommunicationSettings {
   readonly consumers: Map<string, Effect.Latch>;
 }
 
-/** The agent whose history is read, and the session its cursors belong to. */
-interface HistoryAgent {
-  readonly agentKey: string;
-  readonly card: AgentCard;
-  readonly session: string;
-}
 interface HistoryWindow {
   readonly conversationId: string;
   readonly after: number;
@@ -120,27 +114,169 @@ const cursorSchema = Schema.Struct({
 const refused = (reason: CommunicationError["reason"]) =>
   new CommunicationError({ reason });
 
-/** Conversation lookup, listing and paged history for one agent. */
-function messageHistory(input: Omit<HistoryAgent, "session">) {
-  const agent = {
-    ...input,
-    session: randomBytes(16).toString("base64url"),
-  };
-  return {
-    listConversations: historyFailure(listConversations(agent)).pipe(
-      Effect.withSpan("listConversations"),
-    ),
-    readHistory: (query: HistoryQuery) =>
-      historyFailure(readHistory(agent, query)).pipe(
-        Effect.withSpan("readHistory"),
-      ),
-  };
-}
+type CommunicationTables = Record<
+  "message_log",
+  Record<
+    "agent_key" | "conversation_id" | "author_agent_id" | "msg_id" | "message",
+    string
+  > &
+    Record<"ordinal", number> &
+    Record<"sequence" | "consumed", Generated<number>>
+> &
+  Record<
+    "message_sequences",
+    Record<"conversation_id", string> & Record<"next_ordinal", number>
+  > &
+  Record<
+    "agent_cards",
+    Record<"agent_key" | "agent_id" | "agent_name" | "principal_id", string>
+  >;
 
-function readHistory(agent: HistoryAgent, query: HistoryQuery) {
+/** Builds queries over the tables that hold messages and the agents they name. */
+const communicationQueries = makeQueries<CommunicationTables>();
+
+/**
+ * Whether this agent's history holds the message. A saved message with the
+ * same author and identifier but another conversation or content is a
+ * conflict.
+ */
+const hasMessage = Effect.fn("hasMessage")(function* (
+  agentKey: string,
+  conversationId: string,
+  message: Message,
+) {
+  const db = yield* communicationQueries;
+  const [row] = yield* executeQuery(
+    db
+      .selectFrom("message_log")
+      .select(["conversation_id", "message"])
+      .where("agent_key", "=", agentKey)
+      .where("author_agent_id", "=", message.author.agentId)
+      .where("msg_id", "=", message.msgId),
+  );
+  if (row === undefined) {
+    return false;
+  }
+  if (
+    row.conversation_id !== conversationId ||
+    !sameJson(row.message, yield* encodeJson(Message, message))
+  ) {
+    return yield* refused("message-conflict");
+  }
+  return true;
+}, withAgentLock);
+
+/**
+ * Adds a message to one agent's history at its position. It takes no lock on
+ * the agent, so an author can save for every member while holding only its own
+ * agent's lock and the conversation's.
+ */
+const saveMessage = Effect.fn("saveMessage")(
+  function* (
+    agentKey: string,
+    conversationId: string,
+    ordinal: number,
+    message: Message,
+  ) {
+    const db = yield* communicationQueries;
+    yield* executeQuery(
+      db.insertInto("message_log").values({
+        agent_key: agentKey,
+        conversation_id: conversationId,
+        ordinal,
+        author_agent_id: message.author.agentId,
+        msg_id: message.msgId,
+        message: yield* encodeJson(Message, message),
+      }),
+    );
+  },
+  (work, agentKey) => withAgentRows(agentKey, work),
+);
+
+/**
+ * A bounded range of one agent's messages, in conversation order or in the
+ * order they were saved, each with its position in its conversation and the
+ * size of its stored JSON text. A row whose message names another author or
+ * identifier than the row does is a conflict.
+ */
+const readMessages = Effect.fn("readMessages")(function* (
+  agentKey: string,
+  range: {
+    readonly conversationId?: string;
+    readonly after?: number;
+    readonly through?: number;
+    readonly newestFirst?: boolean;
+    /** Selects messages this agent has not consumed and did not write. */
+    readonly unconsumedBy?: AgentId;
+    readonly limit: number;
+  },
+) {
+  const db = yield* communicationQueries;
+  let query = db
+    .selectFrom("message_log")
+    .select(["ordinal", "author_agent_id", "msg_id", "message"])
+    .where("agent_key", "=", agentKey)
+    .limit(range.limit);
+  if (range.conversationId !== undefined) {
+    query = query.where("conversation_id", "=", range.conversationId);
+  }
+  if (range.after !== undefined) {
+    query = query.where("ordinal", ">", range.after);
+  }
+  if (range.through !== undefined) {
+    query = query.where("ordinal", "<=", range.through);
+  }
+  if (range.unconsumedBy !== undefined) {
+    query = query
+      .where("consumed", "=", 0)
+      .where("author_agent_id", "<>", range.unconsumedBy);
+  }
+  const ascending = range.conversationId === undefined ? "sequence" : "ordinal";
+  const rows = yield* executeQuery(
+    range.newestFirst
+      ? query.orderBy("ordinal", "desc")
+      : query.orderBy(ascending),
+  );
+  return yield* Effect.forEach(
+    rows,
+    (row) =>
+      decodeJson(Message, row.message).pipe(
+        Effect.filterOrFail(
+          (message) =>
+            message.author.agentId === row.author_agent_id &&
+            message.msgId === row.msg_id,
+          () => refused("message-conflict"),
+        ),
+        Effect.map((message) => ({
+          ordinal: row.ordinal,
+          message,
+          bytes: Buffer.byteLength(row.message),
+        })),
+      ),
+    { concurrency: 1 },
+  );
+}, withAgentLock);
+
+/** Marks a message consumed, so that it is not handed to the consumer again. */
+const markMessageConsumed = Effect.fn("markMessageConsumed")(function* (
+  agentKey: string,
+  reference: MessageReference,
+) {
+  const db = yield* communicationQueries;
+  yield* executeQuery(
+    db
+      .updateTable("message_log")
+      .set({ consumed: 1 })
+      .where("agent_key", "=", agentKey)
+      .where("author_agent_id", "=", reference.authorAgentId)
+      .where("msg_id", "=", reference.msgId),
+  );
+}, withAgentLock);
+
+function readHistory(agent: HostedAgent, query: HistoryQuery) {
   return Effect.gen(function* () {
     const window = yield* historyWindow(agent, query);
-    const selected = yield* read(agent, {
+    const selected = yield* readMessages(agent.settings.agentKey, {
       conversationId: window.conversationId,
       after: window.after,
       through: window.through,
@@ -175,43 +311,45 @@ function readHistory(agent: HistoryAgent, query: HistoryQuery) {
   });
 }
 
-function listConversations(agent: HistoryAgent) {
+function listConversations(agent: HostedAgent) {
   return Effect.gen(function* () {
+    const { agentKey } = agent.settings;
     const db = yield* communicationQueries;
     const rows = yield* withAgentRows(
-      agent.agentKey,
+      agentKey,
       executeQuery(
         db
           .selectFrom("message_log")
           .select("conversation_id as conversationId")
           .distinct()
-          .where("agent_key", "=", agent.agentKey),
+          .where("agent_key", "=", agentKey),
       ),
     );
-    const conversations: Conversation[] = [];
+    const conversations: Array<readonly AgentCard[]> = [];
     for (const row of rows) {
-      const [stored] = yield* read(agent, {
+      const [stored] = yield* readMessages(agentKey, {
         conversationId: row.conversationId,
         limit: 1,
       });
       if (stored !== undefined) {
-        conversations.push(yield* membersOf(stored.message));
+        conversations.push(messageMembers(stored.message));
       }
     }
     return conversations;
   });
 }
 
-function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
+function historyWindow(agent: HostedAgent, query: HistoryQuery) {
   return Effect.gen(function* () {
-    const conversationId = yield* historyConversation(agent, query.members);
-    const [newestStored] = yield* read(agent, {
+    const { agentKey, card } = agent.settings;
+    const conversationId = yield* conversationOf(card, query.members);
+    const [newestStored] = yield* readMessages(agentKey, {
       conversationId,
       newestFirst: true,
       limit: 1,
     });
     const orderedMembers = [...query.members].sort((a, b) =>
-      compareText(a.agentName, b.agentName),
+      compareAscii(a.agentName, b.agentName),
     );
     if (
       newestStored !== undefined &&
@@ -230,8 +368,11 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
         through:
           query.beforeMessage === undefined
             ? through
-            : (yield* ordinalOf(agent, conversationId, query.beforeMessage)) -
-              1,
+            : (yield* ordinalOf(
+                agentKey,
+                conversationId,
+                query.beforeMessage,
+              )) - 1,
         newestFirst: true,
         limit: query.limit,
       };
@@ -245,21 +386,23 @@ function historyWindow(agent: HistoryAgent, query: HistoryQuery) {
     };
     return query.cursor === undefined
       ? window
-      : yield* continueWindow(agent, window, query.cursor);
+      : yield* continueWindow(agent.session, window, query.cursor);
   });
 }
 
-function historyConversation(agent: HistoryAgent, members: Conversation) {
+/**
+ * The conversation among `members`, in any order: at least two distinct
+ * agents, `self` among them.
+ */
+function conversationOf(self: AgentCard, members: readonly AgentCard[]) {
   return Effect.gen(function* () {
-    if (!members.some((member) => member.agentId === agent.card.agentId)) {
-      return yield* refused("membership-invalid");
-    }
     const ids = members.map((member) => member.agentId).sort(compareAgentIds);
     const [first, second, ...rest] = ids;
     if (
       first === undefined ||
       second === undefined ||
-      new Set(ids).size !== ids.length
+      new Set(ids).size !== ids.length ||
+      !ids.includes(self.agentId)
     ) {
       return yield* refused("membership-invalid");
     }
@@ -269,19 +412,19 @@ function historyConversation(agent: HistoryAgent, members: Conversation) {
 
 /** The ordinal of a message this agent's history holds in the conversation. */
 function ordinalOf(
-  agent: HistoryAgent,
+  agentKey: string,
   conversationId: string,
   reference: MessageReference,
 ) {
   return Effect.gen(function* () {
     const db = yield* communicationQueries;
     const [row] = yield* withAgentRows(
-      agent.agentKey,
+      agentKey,
       executeQuery(
         db
           .selectFrom("message_log")
           .select("ordinal")
-          .where("agent_key", "=", agent.agentKey)
+          .where("agent_key", "=", agentKey)
           .where("conversation_id", "=", conversationId)
           .where("author_agent_id", "=", reference.authorAgentId)
           .where("msg_id", "=", reference.msgId),
@@ -292,7 +435,7 @@ function ordinalOf(
 }
 
 function continueWindow(
-  agent: HistoryAgent,
+  session: string,
   window: HistoryWindow,
   encodedCursor: string,
 ) {
@@ -301,7 +444,7 @@ function continueWindow(
       encodedCursor,
     ).pipe(Effect.mapError(() => refused("invalid-cursor")));
     const sameRequest =
-      cursor.session === agent.session &&
+      cursor.session === session &&
       cursor.conversation === window.conversationId;
     const validBounds =
       cursor.after >= window.after &&
@@ -314,41 +457,14 @@ function continueWindow(
   });
 }
 
-function read(agent: HistoryAgent, query: Parameters<typeof readMessages>[1]) {
-  return readMessages(agent.agentKey, query);
-}
-
-function compareText(a: string, b: string) {
-  if (a < b) {
-    return -1;
-  }
-  return a > b ? 1 : 0;
-}
-
-function membersOf(message: Message) {
-  const [first, second, ...rest] = messageMembers(message);
-  return first === undefined || second === undefined
-    ? Effect.fail(refused("persistence-failed"))
-    : Effect.succeed<Conversation>([first, second, ...rest]);
-}
-
-/** Reports any failure of a history read that is not already the service's as `persistence-failed`. */
-function historyFailure<A, E, R>(work: Effect.Effect<A, E, R>) {
-  return work.pipe(
-    Effect.mapError((error) =>
-      error instanceof CommunicationError
-        ? error
-        : refused("persistence-failed"),
-    ),
-  );
-}
-
-/** One hosted agent's database client, settings and arrival latch. */
+/** One hosted agent's database client, settings, arrival latch and cursor session. */
 interface HostedAgent {
   readonly sql: SqlClient;
   readonly settings: CommunicationSettings;
   /** Opened when a message is saved for this agent. */
   readonly arrived: Effect.Latch;
+  /** Names this service instance in the history cursors it returns. */
+  readonly session: string;
 }
 const agentRow = Schema.Struct({
   agentKey: Schema.String,
@@ -361,11 +477,12 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
 ) {
   const arrived = yield* Effect.makeLatch();
   settings.consumers.set(settings.agentKey, arrived);
-  const agent = { sql: yield* SqlClient, settings, arrived };
-  const history = messageHistory({
-    agentKey: settings.agentKey,
-    card: settings.card,
-  });
+  const agent = {
+    sql: yield* SqlClient,
+    settings,
+    arrived,
+    session: randomBytes(16).toString("base64url"),
+  };
   const oneConsumer = yield* Effect.makeSemaphore(1);
   return {
     send: (message) =>
@@ -373,10 +490,12 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
     consume: (handle) => oneConsumer.withPermits(1)(consume(agent, handle)),
     listConversations: withSqlAndServiceErrors(
       agent,
-      history.listConversations,
-    ),
+      listConversations(agent),
+    ).pipe(Effect.withSpan("listConversations")),
     readHistory: (query) =>
-      withSqlAndServiceErrors(agent, history.readHistory(query)),
+      withSqlAndServiceErrors(agent, readHistory(agent, query)).pipe(
+        Effect.withSpan("readHistory"),
+      ),
   } satisfies CommunicationService;
 });
 
@@ -429,7 +548,10 @@ function sendMessage({ settings }: HostedAgent, message: Message) {
       if (!Schema.equivalence(AgentCard)(message.author, settings.card)) {
         return yield* refused("membership-invalid");
       }
-      const conversationId = yield* messageConversation(settings, message);
+      const conversationId = yield* conversationOf(settings.card, [
+        message.author,
+        ...message.recipients,
+      ]);
       const recipientKeys = yield* Effect.forEach(
         message.recipients,
         recipientKey,
@@ -471,34 +593,6 @@ function sendMessage({ settings }: HostedAgent, message: Message) {
 }
 
 /**
- * The conversation a message belongs to: its author and recipients, who must
- * be distinct, include this agent and be permitted to share a conversation.
- */
-function messageConversation(
-  settings: CommunicationSettings,
-  message: Message,
-) {
-  return Effect.gen(function* () {
-    const members = [message.author, ...message.recipients];
-    const [first, second, ...rest] = members
-      .map((member) => member.agentId)
-      .sort(compareAgentIds);
-    if (first === undefined || second === undefined) {
-      return yield* refused("membership-invalid");
-    }
-    const memberIds = [first, second, ...rest] as const;
-    const distinct = new Set(memberIds).size === memberIds.length;
-    const local = members.some((member) =>
-      Schema.equivalence(AgentCard)(member, settings.card),
-    );
-    if (!distinct || !local) {
-      return yield* refused("membership-invalid");
-    }
-    return yield* deriveConversationId(memberIds);
-  });
-}
-
-/**
  * Hands each message this agent has not consumed to `handle` in the order
  * they were saved, and marks each consumed only after `handle` succeeds. With
  * nothing to consume it waits until a message is saved for this agent.
@@ -533,9 +627,9 @@ function consume<E, R>(
 }
 
 /**
- * Gives `work` the agent's database client and reports its failures as the
- * service's: a conflict as `message-conflict`, anything else that is not
- * already the service's as `persistence-failed`.
+ * Gives `work` the agent's database client and reports as `persistence-failed`
+ * every way it ends, a defect included, other than success, interruption and a
+ * failure that is already the service's.
  */
 function withSqlAndServiceErrors<A, E, R>(
   { sql }: HostedAgent,
@@ -543,16 +637,42 @@ function withSqlAndServiceErrors<A, E, R>(
 ) {
   return work.pipe(
     Effect.provideService(SqlClient, sql),
-    Effect.mapError((error) => {
-      if (error instanceof CommunicationError) {
-        return error;
+    Effect.catchAllCause((cause) => {
+      if (Cause.isInterruptedOnly(cause)) {
+        return Effect.failCause(Cause.stripFailures(cause));
       }
-      const conflict =
-        typeof error === "object" &&
-        error !== null &&
-        "reason" in error &&
-        error.reason === "conflict";
-      return refused(conflict ? "message-conflict" : "persistence-failed");
+      const failure = Cause.failureOption(cause);
+      return Effect.fail(
+        Option.isSome(failure) && failure.value instanceof CommunicationError
+          ? failure.value
+          : refused("persistence-failed"),
+      );
     }),
   );
+}
+
+/**
+ * Locking the agent's own row serializes one agent's transactions, so a
+ * transaction that reads before it writes sees every earlier write of the same
+ * agent. Nested calls retain the lock until the enclosing transaction commits;
+ * other agents use their own rows.
+ */
+function withAgentLock<A, E, R>(
+  work: Effect.Effect<A, E, R>,
+  agentKey: string,
+) {
+  return withAgentRows(
+    agentKey,
+    Effect.gen(function* () {
+      const db = yield* communicationQueries;
+      yield* executeQuery(
+        db
+          .selectFrom("agent_cards")
+          .select("agent_key")
+          .where("agent_key", "=", agentKey)
+          .forUpdate(),
+      );
+      return yield* work;
+    }),
+  ).pipe(Effect.withSpan("withAgentLock"));
 }
