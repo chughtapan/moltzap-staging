@@ -24,7 +24,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect } from "vitest";
 import {
-  decodeMessagePolicy,
   loadMessagePolicy,
   MAXIMUM_DOCUMENT_BYTES,
   type PolicyFilePaths,
@@ -257,28 +256,6 @@ describe("policy documents", () => {
           : Redacted.value(installed.provider.apiKey),
       ).toBe("key-value");
     }));
-
-  it("decodes the example policy the message firewall guide documents", () =>
-    Effect.gen(function* () {
-      const policy = yield* decodeMessagePolicy(guideExample());
-      expect(policy.text?.fixedBehaviors?.length).toBeGreaterThan(0);
-    }));
-
-  /** The JSON policy between the example markers of the message firewall guide. */
-  function guideExample(): string {
-    const guide = readFileSync(
-      fileURLToPath(
-        new URL("../../docs/guides/message-firewall.mdx", import.meta.url),
-      ),
-      "utf8",
-    );
-    const example =
-      /message-policy-example:start[\s\S]*?```json\n([\s\S]*?)```/u.exec(
-        guide,
-      )?.[1];
-    expect(example).toBeDefined();
-    return example ?? "";
-  }
 
   /** A file holding `content`, JSON-encoded unless it is already text. */
   function file(content: unknown): string {

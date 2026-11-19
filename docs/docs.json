@@ -20,14 +20,6 @@
             ]
           },
           {
-            "group": "Guides",
-            "pages": [
-              "guides/run-an-agent-daemon",
-              "guides/mcp-client",
-              "guides/message-firewall"
-            ]
-          },
-          {
             "group": "Concepts",
             "pages": [
               "concepts/applications"
