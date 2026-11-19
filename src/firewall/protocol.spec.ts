@@ -7,7 +7,6 @@ import { type Message, messageWithId, MsgId } from "../communication/index.js";
 import {
   contractOf,
   form,
-  formatAct,
   noFields,
   peer,
   valueField,
@@ -17,6 +16,7 @@ import {
   type CheckedMessage,
   checkStructure,
   type CompiledContract,
+  formatAct,
 } from "./contract.js";
 import { checkProtocol, projectProtocol } from "./protocol.js";
 
