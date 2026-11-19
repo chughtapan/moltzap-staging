@@ -71,12 +71,6 @@ const authentication = exactStruct({
   ),
   issuer: oauthIssuer,
   scope: Schema.String.pipe(Schema.pattern(/^[\x21\x23-\x5B\x5D-\x7E]+$/u)),
-  allowedOrigins: Schema.optionalWith(
-    Schema.Array(
-      httpsUrl.pipe(Schema.filter((value) => new URL(value).origin === value)),
-    ),
-    { default: () => [] },
-  ),
 });
 /** The settings file as an operator writes it. */
 const settingsFile = exactStruct({

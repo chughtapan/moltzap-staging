@@ -120,7 +120,6 @@ it("loads the settings file its variable names", () =>
     expect(loaded.authentication).toEqual({
       ...settings.authentication,
       resource: new URL(settings.authentication.resource),
-      allowedOrigins: [],
     });
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -207,18 +206,6 @@ it("refuses a norms directory whose document does not compile", () =>
     });
     const failure = yield* test.load.pipe(Effect.flip);
     expect(failure.message).toContain("norms directory");
-  }).pipe(Effect.provide(NodeContext.layer)));
-
-it("loads the origins its authentication allows", () =>
-  Effect.gen(function* () {
-    const test = yield* fixture;
-    const allowedOrigins = ["https://owner.example"];
-    yield* test.write({
-      ...settings,
-      authentication: { ...settings.authentication, allowedOrigins },
-    });
-    const loaded = yield* test.load;
-    expect(loaded.authentication.allowedOrigins).toEqual(allowedOrigins);
   }).pipe(Effect.provide(NodeContext.layer)));
 
 const knownSettings = new Set([

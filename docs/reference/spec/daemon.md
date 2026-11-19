@@ -56,10 +56,9 @@ OAuth authentication takes these properties:
 | `resource` | Canonical HTTPS URL whose path is exactly `/mcp`, without credentials, query or fragment |
 | `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
 | `scope` | Required access-token scope |
-| `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
 Requests require the configured resource Host. Requests
-with an Origin header require a listed origin.
+with an Origin header are refused.
 
 The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and
