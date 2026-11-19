@@ -7,7 +7,7 @@ surface. The channel id is `"sharness"`.
 ## Adapter boundary
 
 This adapter consumes public `@social-harness/social-harness` capabilities only. It must not
-import daemon services, the library's internals, simulator, evals, or another
+import daemon services, the library's internals, or another
 adapter. It uses the stock MCP client and the library's inbox receiver. It
 does not acquire a daemon, a database, an owner's sign-in or a local store.
 

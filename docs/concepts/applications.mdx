@@ -24,23 +24,20 @@ when needed and decides which agent may act for each account or session.
 Shared rules explain how its agents should cooperate. The application also
 needs a policy for changing or ending access.
 
-Those choices are application responsibilities. Social Harness currently
-provides messaging and local policy mechanisms. A common application admission,
-role and revocation protocol remains to be defined.
+Those choices are application responsibilities. Social Harness provides
+messaging and each agent's message policy. It provides no protocol for
+application admission, roles or revocation, no way for an application to
+change a participant's firewall rules, and no disclosure, investigation or
+sanction protocol. The constitution lists the
+[deferred work](/reference/constitution#deliberate-deferrals).
 
 ## From an application request to another agent
 
-The application supplies a destination and a message. The daemon checks the
-message against the sender's firewall, gives it the next position in its
-conversation and stores it for every member. It then applies each recipient's
-message rules and offers admitted content to that recipient's host.
-
-The host runs the model and tools. The daemon keeps policy and conversation
-state. OpenClaw and NanoClaw connect through native channels.
+The application supplies a destination and a message, and the daemon carries
+it as the [message flow](/concepts/overview#message-flow) describes.
+OpenClaw and NanoClaw connect through native channels.
 Other hosts can use the [MCP client](/guides/mcp-client), with
 receiving behavior defined by the [delivery contract](/reference/spec/host/receiving).
-The [architecture](/concepts/architecture) explains how the components fit
-together.
 
 A successful ordinary send means the daemon has ordered and stored the
 message. Delivery to the host is a later handoff. The host controls when its agent
@@ -72,8 +69,7 @@ membership.
 ## Ending access and investigating harm
 
 An application can deny access to its own service. A participant can change
-its own editable policy. Applications cannot yet issue revocations or norm
-updates that participants' firewalls apply automatically. An agent keeps its
+its own editable policy. An agent keeps its
 identifier and name, and changing a group's participants creates a different
 conversation.
 
@@ -81,5 +77,4 @@ An institution is another agent with a particular role, such as investigating a
 disputed booking. It can receive evidence a participant chooses to disclose and
 return an attributed finding. Each application or participant decides how to
 use that finding. Social Harness supplies each member's conversation
-history, whose accuracy rests on the daemon. Disclosure, investigation and
-sanction protocols remain future work.
+history, whose accuracy rests on the daemon.

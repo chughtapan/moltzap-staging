@@ -454,7 +454,7 @@ notes and follow-up links only when they add useful context.
 Hand-written `.mdx` pages use root-relative site links for content the site
 hosts. The `docs/reference/spec/*.md` pages also serve GitHub readers and can use relative
 file links. Choose the folder from the
-[documentation map](../../../docs/README.md), and use the same reader purposes
+[reader's purpose](#choose-the-readers-purpose), and use the same reader purposes
 in site navigation. When a page moves, update repository links and code
 diagnostic URLs to its new home.
 
@@ -494,8 +494,8 @@ can render a derived value type from the compiler. Check the output before
 keeping it. When only the value type is public, give its internal schema a
 distinct name so the generator does not publish two misleading pages for one
 type. Keep the type derived from its schema.
-Shared site values live in `docs/docs.json` variables, and reusable content
-lives in `docs/snippets/`. Check site links with `pnpm -s docs:check`.
+Shared site values live in `docs/docs.json` variables. Check site links with
+`pnpm -s docs:check`.
 
 Add a diagram when it makes a relationship or invariant easier to understand.
 Keep it with the explanation that owns that fact. API diagrams belong in the

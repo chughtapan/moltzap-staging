@@ -8,7 +8,7 @@ read_when:
 
 These specifications define Social Harness's required behavior and boundaries.
 The [constitution](../constitution.md#the-constitution) governs them. The
-[architecture](../../concepts/architecture.mdx) explains their composition.
+[overview](../../concepts/overview.mdx#message-flow) explains their composition.
 
 | Subject | Contract |
 | --- | --- |

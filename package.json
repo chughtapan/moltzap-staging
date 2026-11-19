@@ -48,7 +48,7 @@
     "test": "nx run-many -t test",
     "test:integration": "nx run-many -t test:integration",
     "lint": "nx run-many -t lint,arch:check,typecheck,lint:dead-code,lint:agent-files",
-    "arch:check": "NODE_OPTIONS=--max-old-space-size=8192 nx run-many -t arch:check",
+    "arch:check": "nx run-many -t arch:check",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "typecheck": "nx run-many -t build && nx run-many -t typecheck",
@@ -87,9 +87,7 @@
         "inputs": [
           "default",
           "^production",
-          "{workspaceRoot}/eslint.config.ts",
-          "{workspaceRoot}/knip.json",
-          "{workspaceRoot}/tsconfig.check.json",
+          "lintConfiguration",
           "{workspaceRoot}/*.ts",
           "{workspaceRoot}/images/*.ts",
           "{workspaceRoot}/scripts/**/*.ts"

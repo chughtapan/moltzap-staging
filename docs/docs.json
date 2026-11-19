@@ -38,7 +38,6 @@
           {
             "group": "Concepts",
             "pages": [
-              "concepts/architecture",
               "concepts/applications"
             ]
           },
@@ -46,7 +45,6 @@
             "group": "Reference",
             "pages": [
               "reference/constitution",
-              "reference/services/daemon",
               {
                 "group": "Specifications",
                 "pages": [

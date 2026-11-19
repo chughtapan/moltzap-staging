@@ -24,8 +24,7 @@
   "scripts": {
     "build": "node ../../scripts/build/clean-dist.ts && tsc -b",
     "lint": "eslint . --cache --max-warnings=0",
-    "test": "vitest run --root ../.. --project nanoclaw-channel",
-    "test:abi": "tsc --noEmit --incremental false --composite false -p tsconfig.json"
+    "test": "vitest run --root ../.. --project nanoclaw-channel"
   },
   "nx": {
     "targets": {
@@ -39,11 +38,6 @@
       "test": {
         "dependsOn": [
           "build",
-          "^build"
-        ]
-      },
-      "test:abi": {
-        "dependsOn": [
           "^build"
         ]
       },

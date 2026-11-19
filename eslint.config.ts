@@ -35,12 +35,6 @@ const DEFAULT_MAX_LINES = 1050;
 
 const PACKAGE_SOURCE_FILES = ["src/**/*.ts", "*.ts"];
 
-const TEST_SUPPORT_FILES = [
-  "src/**/*.spec.ts",
-  "src/__tests__/**/*.ts",
-  "src/**/__tests__/**/*.ts",
-];
-
 /** Signatures describe parameters and returns; prose adds caller obligations. */
 const documentationRules = {
   "jsdoc/require-param": "off",
@@ -139,39 +133,27 @@ const disableCommentRules = {
 
 /**
  * A package's sections, with paths relative to the package: the strict preset
- * on its sources and root modules, plus the test and barrel-documentation
- * presets.
+ * on its sources and root modules, plus the barrel-documentation preset.
  */
 function packageSections() {
-  const strictRules = makeStrictRules();
   return [
-    {
-      ...makeStrictBlock(PACKAGE_SOURCE_FILES, strictRules),
-      ignores: ["**/*.spec.ts"],
-    },
-    makeStrictBlock(TEST_SUPPORT_FILES, strictRules),
+    makeStrictBlock(PACKAGE_SOURCE_FILES, makeStrictRules()),
     {
       ...makePresetBlock(["src/**/index.ts"], guard.configs.documentation),
       rules: { ...guard.configs.documentation.rules, ...documentationRules },
     },
-    disableCommentRules,
-    configModuleRules,
   ];
 }
 
 /**
- * Sections for the root modules, the `images/` helper, and the Node-run
- * scripts under `scripts/`.
+ * The strict preset on the root modules, the `images/` helper, and the
+ * Node-run scripts under `scripts/`.
  */
-function rootSections() {
-  return [
-    makeStrictBlock(
-      ["*.ts", "images/*.ts", "scripts/**/*.ts"],
-      makeStrictRules(),
-    ),
-    disableCommentRules,
-    configModuleRules,
-  ];
+function rootSection() {
+  return makeStrictBlock(
+    ["*.ts", "images/*.ts", "scripts/**/*.ts"],
+    makeStrictRules(),
+  );
 }
 
 /**
@@ -220,8 +202,6 @@ function integrationSections() {
       files: ["**/*.spec.ts"],
       rules: { "agent-code-guard/no-example-only-tests": "off" },
     },
-    disableCommentRules,
-    configModuleRules,
   ];
 }
 
@@ -406,7 +386,8 @@ const integrationTestSections = [
 
 export default [
   globalIgnores,
-  ...rootSections(),
+  rootSection(),
+  disableCommentRules,
   ...packageSections(),
   {
     files: ["src/firewall/rules.spec.ts"],
@@ -441,5 +422,6 @@ export default [
   ...at("images/openclaw-agent", agentImageSections()),
   ...at("images/nanoclaw-agent", agentImageSections()),
   ...at("tests/integration", integrationTestSections),
+  configModuleRules,
   specAssertionRules,
 ];
