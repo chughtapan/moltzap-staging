@@ -83,6 +83,7 @@ export const runDaemon = Effect.gen(function* () {
               : Context.get(firewall, Firewall).readContracts(),
         })),
         Effect.provideService(SqlClient.SqlClient, sql),
+        Effect.orDie,
       );
     const app = yield* makeMcpHttpApp(
       settings.authentication,
