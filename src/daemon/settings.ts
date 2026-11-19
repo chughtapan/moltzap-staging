@@ -27,6 +27,7 @@ import {
   loadNorms,
   type NormsConfigurationError,
 } from "../norms/index.js";
+import { packageVersion } from "../version.js";
 
 /**
  * Messages identify the failed operation without disclosing documents or credentials.
@@ -186,6 +187,30 @@ const otelVariable = (name: string) =>
     ),
   );
 
+const otelVariables = Config.all({
+  endpoint: otelVariable("OTEL_EXPORTER_OTLP_ENDPOINT"),
+  serviceName: otelVariable("OTEL_SERVICE_NAME"),
+  resourceAttributes: otelVariable("OTEL_RESOURCE_ATTRIBUTES"),
+});
+
+type OtelVariables = Config.Config.Success<typeof otelVariables>;
+
+/**
+ * Uses `OTEL_SERVICE_NAME`, then the last `service.name` resource attribute,
+ * then `sharnessd`, matching OpenTelemetry's resource precedence.
+ */
+function spanServiceName(otel: OtelVariables): string {
+  const attributed = Option.getOrElse(otel.resourceAttributes, () => "")
+    .split(",")
+    .map((attribute) => attribute.split("="))
+    .filter(
+      (parts) => parts.length === 2 && parts[0]?.trim() === "service.name",
+    )
+    .at(-1)?.[1]
+    ?.trim();
+  return Option.getOrElse(otel.serviceName, () => attributed ?? "sharnessd");
+}
+
 /**
  * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
  * The logger remains installed after export closes.
@@ -207,13 +232,15 @@ const exportDiagnostics = Layer.effectDiscard(
 // eslint-disable-next-line agent-code-guard/require-span-on-exported-effect -- The exporter installs tracing; tracing its acquisition changes the daemon's exported spans.
 export const spanExport = Layer.unwrapEffect(
   Effect.gen(function* () {
-    const endpoint = yield* otelVariable("OTEL_EXPORTER_OTLP_ENDPOINT").pipe(
-      Effect.orDie,
-    );
-    if (Option.isNone(endpoint)) {
+    const otel = yield* otelVariables.pipe(Effect.orDie);
+    if (Option.isNone(otel.endpoint)) {
       return Layer.empty;
     }
     return NodeSdk.layer(() => ({
+      resource: {
+        serviceName: spanServiceName(otel),
+        serviceVersion: packageVersion,
+      },
       spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
     })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
   }),

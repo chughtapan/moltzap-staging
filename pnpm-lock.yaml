@@ -308,9 +308,6 @@ importers:
       '@social-harness/social-harness':
         specifier: workspace:*
         version: link:../..
-      '@types/node':
-        specifier: 'catalog:'
-        version: 25.5.0
       effect:
         specifier: 3.22.1
         version: 3.22.1
@@ -318,6 +315,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 'catalog:'
         version: 2.4.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.5.0
       '@typescript/native':
         specifier: 'catalog:'
         version: typescript@7.0.2

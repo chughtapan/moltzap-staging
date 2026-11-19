@@ -22,8 +22,8 @@ import {
   databaseConnection,
   prepareDatabase,
   withAgentRows,
-} from "./index.js";
-import { openTestDatabase, restrictedLogin } from "./testing.js";
+} from "./database.js";
+import { openTestDatabase, restrictedLogin } from "./test.js";
 
 /**
  * One row for each table whose rows belong to an agent, without its agent

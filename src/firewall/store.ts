@@ -11,7 +11,7 @@ import {
   type Generated,
   makeQueries,
   withAgentRows,
-} from "../database/index.js";
+} from "../database.js";
 import {
   type Direction,
   firewallDecisionSummarySchema,

@@ -4,7 +4,6 @@ import { SqlClient } from "@effect/sql";
 import { type Context, Effect, Encoding, Layer, Schema } from "effect";
 import type { DecisionProvider, FirewallEvidence } from "../check.js";
 import { Message } from "../../communication/index.js";
-import { openTestDatabase, type TestDatabase } from "../../database/testing.js";
 import {
   AgentCard,
   AgentId,
@@ -12,6 +11,7 @@ import {
   Identity,
   PrincipalId,
 } from "../../identity.js";
+import { openTestDatabase, type TestDatabase } from "../../test.js";
 import { type CompiledContract, compiledContractSchema } from "../contract.js";
 import {
   decodeMessagePolicy,
