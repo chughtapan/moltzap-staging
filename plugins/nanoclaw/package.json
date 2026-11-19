@@ -4,23 +4,7 @@
   "private": true,
   "description": "NanoClaw channel adapter for Social Harness messaging",
   "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/social-harness/social-harness.git"
-  },
   "type": "module",
-  "files": [
-    "dist",
-    "!dist/tsconfig.tsbuildinfo"
-  ],
-  "main": "./dist/channels/sharness.js",
-  "types": "./dist/channels/sharness.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/channels/sharness.d.ts",
-      "import": "./dist/channels/sharness.js"
-    }
-  },
   "scripts": {
     "build": "node ../../scripts/build/clean-dist.ts && tsc -b",
     "lint": "eslint . --cache --max-warnings=0",
@@ -52,11 +36,11 @@
   },
   "dependencies": {
     "@social-harness/social-harness": "workspace:*",
-    "@types/node": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "catalog:",
+    "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
     "typescript": "catalog:",

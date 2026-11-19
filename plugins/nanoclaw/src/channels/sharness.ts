@@ -86,7 +86,7 @@ interface OutboundText {
 
 /**
  * What NanoClaw receives for one inbox entry or one refused send. `id` is the
- * entry's delivery token, or a fresh id for a refused send. `address` is the
+ * message id, or a fresh id for a refused send. `address` is the
  * conversation replies go to. `members` lists a group message's author and
  * recipients. `text` is what the model reads.
  */
@@ -495,14 +495,6 @@ class HarnessChannelAdapter {
     address: string,
     inbound: InboundMessage,
   ): Effect.Effect<void, ChannelError> {
-    const content = JSON.stringify(inbound.content);
-    if (content === undefined) {
-      return Effect.fail(
-        new ChannelError({
-          reason: `NanoClaw could not serialize inbound content for ${address}`,
-        }),
-      );
-    }
     return Effect.tryPromise({
       try: () => {
         host.onMetadata(address, address, inbound.isGroup === true);
@@ -514,7 +506,7 @@ class HarnessChannelAdapter {
             threadId: null,
             message: {
               ...inbound,
-              content,
+              content: JSON.stringify(inbound.content),
             },
             replyTo: {
               channelType: CHANNEL_ID,
