@@ -21,7 +21,6 @@
     "plugins/*/*.ts",
     "plugins/*/src/**/*.ts",
     "scripts/**/*.ts",
-    "images/*.ts",
     "images/*/*.ts",
     "tests/integration/**/*.ts"
   ],

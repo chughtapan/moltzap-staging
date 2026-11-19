@@ -69,7 +69,7 @@ jobs:
           if [ -z "$version" ]; then
             taken=$(awk '{ print $2 }' <<<"$tags" | tr '\n' ' ')
             # shellcheck disable=SC2086 # PACKAGES is a list of directories.
-            version=$(TAKEN_VERSIONS="$taken" scripts/release/compute-next-version.sh $PACKAGES)
+            version=$(TAKEN_VERSIONS="$taken" scripts/compute-next-version.sh $PACKAGES)
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
               -f ref="refs/tags/v$version" -f sha="$commit" >/dev/null
           fi

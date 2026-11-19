@@ -38,9 +38,7 @@ jobs:
         run: pnpm lint
         timeout-minutes: 30
       - run: pnpm format:check
-      - run: pnpm docs:api
       - run: pnpm docs:check
-      - run: pnpm docs:check:mermaid
       - run: pnpm nx run @social-harness/social-harness:test:release
 
   test:

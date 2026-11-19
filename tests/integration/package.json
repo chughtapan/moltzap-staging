@@ -14,7 +14,6 @@
         "inputs": [
           "sources",
           "!{projectRoot}/images/**",
-          "!{projectRoot}/README.md",
           "^production",
           {
             "runtime": "node --version"

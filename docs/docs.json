@@ -20,19 +20,13 @@
             ]
           },
           {
-            "group": "Tutorials",
-            "pages": [
-              "tutorials/first-messages"
-            ]
-          },
-          {
             "group": "Guides",
             "pages": [
               "guides/run-an-agent-daemon",
               "guides/mcp-client",
               "guides/openclaw",
-              "guides/message-firewall",
-              "guides/contributing"
+              "guides/dot",
+              "guides/message-firewall"
             ]
           },
           {
