@@ -118,7 +118,7 @@ interface EntrySender {
 
 /**
  * What OpenClaw receives for one inbox entry, which it runs as one turn. `id`
- * is the entry's delivery token. `address` is the conversation replies go to.
+ * is the message id. `address` is the conversation replies go to.
  * `members` lists a group message's author and recipients. `text` is what the
  * model reads.
  */
@@ -146,15 +146,13 @@ interface TextSend {
   readonly text: unknown;
 }
 
-class OpenClawInboundError extends Data.TaggedError("OpenClawInboundError")<{
-  readonly accountId: string;
-  readonly turnId: string;
-  readonly detail: string;
-}> {
-  override get message(): string {
-    return `Social Harness inbound delivery failed for ${this.accountId}/${this.turnId}: turn-failed: ${this.detail}`;
-  }
-}
+/**
+ * Why a host callback's Promise rejects. `message` is all the host reads: for
+ * a refused or failed send, the text its model reads as the tool error.
+ */
+class OpenClawChannelError extends Data.TaggedError("OpenClawChannelError")<{
+  readonly message: string;
+}> {}
 
 /** What each refused host send means, in words its model reads as the tool error. */
 const outboundFailureText: Readonly<Record<OpenClawOutboundFailure, string>> = {
@@ -165,39 +163,6 @@ const outboundFailureText: Readonly<Record<OpenClawOutboundFailure, string>> = {
   "text-missing": "the message has no text",
   "unsupported-action": "Social Harness supports only send and reply",
 };
-
-class OpenClawOutboundError extends Data.TaggedError("OpenClawOutboundError")<{
-  readonly reason: OpenClawOutboundFailure;
-}> {
-  override get message(): string {
-    return `send failed: ${outboundFailureText[this.reason]}`;
-  }
-}
-
-/** A send the daemon answered as failed. `message` is the result's text, which the model reads as the tool error. */
-class OpenClawSendFailed extends Data.TaggedError("OpenClawSendFailed")<{
-  readonly message: string;
-}> {}
-
-class OpenClawConfigurationError extends Data.TaggedError(
-  "OpenClawConfigurationError",
-)<{
-  readonly detail: string;
-}> {
-  override get message(): string {
-    return `Social Harness configuration is invalid: ${this.detail}`;
-  }
-}
-
-class OpenClawRuntimeError extends Data.TaggedError("OpenClawRuntimeError")<{
-  readonly reason: "abort-wait-failed" | "channel-runtime-unavailable";
-  readonly accountId: string;
-  readonly detail: string;
-}> {
-  override get message(): string {
-    return `Social Harness account ${this.accountId} runtime failed: ${this.reason}: ${this.detail}`;
-  }
-}
 
 const isMessageAddressInput = Schema.is(MessageAddressInput);
 
@@ -244,7 +209,6 @@ function createPluginMeta() {
     docsLabel: "sharness",
     blurb: "Agent-to-agent messaging through Social Harness MCP.",
     detailLabel: "Social Harness",
-    aliases: ["mz"],
     order: 200,
   };
 }
@@ -339,9 +303,7 @@ function handleMessageAction(
 ) {
   const action = ctx.action;
   if (!isMessageAction(action)) {
-    return Effect.fail(
-      new OpenClawOutboundError({ reason: "unsupported-action" }),
-    );
+    return Effect.fail(refusedSend("unsupported-action"));
   }
   return refuseTargets(ctx).pipe(
     Effect.andThen(() =>
@@ -369,9 +331,9 @@ function isMessageAction(action: string): action is MessageAction {
  */
 function refuseTargets(
   ctx: ChannelMessageActionContext,
-): Effect.Effect<void, OpenClawOutboundError> {
+): Effect.Effect<void, OpenClawChannelError> {
   return carriesTargets(ctx.params.targets)
-    ? Effect.fail(new OpenClawOutboundError({ reason: "targets-unsupported" }))
+    ? Effect.fail(refusedSend("targets-unsupported"))
     : Effect.void;
 }
 
@@ -450,7 +412,7 @@ function startAccountConnection(
  */
 function requireChannelServices(
   task: ChannelGatewayContext<Account>,
-): Effect.Effect<ChannelServices, OpenClawRuntimeError> {
+): Effect.Effect<ChannelServices, OpenClawChannelError> {
   if (
     task.channelRuntime !== undefined &&
     hasChannelServices(task.channelRuntime)
@@ -458,10 +420,8 @@ function requireChannelServices(
     return Effect.succeed(task.channelRuntime);
   }
   return Effect.fail(
-    new OpenClawRuntimeError({
-      reason: "channel-runtime-unavailable",
-      accountId: task.accountId,
-      detail: "the account task did not receive OpenClaw channel services",
+    new OpenClawChannelError({
+      message: `Social Harness account ${task.accountId} runtime failed: channel-runtime-unavailable: the account task did not receive OpenClaw channel services`,
     }),
   );
 }
@@ -496,7 +456,11 @@ function connectToDaemon() {
     version: packageVersion,
   }).pipe(
     Effect.catchTag("McpSettingsError", ({ message }) =>
-      Effect.fail(new OpenClawConfigurationError({ detail: message })),
+      Effect.fail(
+        new OpenClawChannelError({
+          message: `Social Harness configuration is invalid: ${message}`,
+        }),
+      ),
     ),
   );
 }
@@ -516,9 +480,7 @@ function runAccountConnection(
   }).pipe(
     Effect.zipRight(reportConnected(task)),
     Effect.zipRight(handleInboxEntries(task, services, connection)),
-    Effect.ensuring(
-      clearConnectedAccount(accountSlot, task.accountId, connection),
-    ),
+    Effect.ensuring(clearConnectedAccount(accountSlot, connection)),
     Effect.ensuring(
       Effect.sync(() => {
         task.setStatus({
@@ -553,10 +515,8 @@ function handleInboxEntries(
     Effect.tryPromise({
       try: () => waitUntilAbort(task.abortSignal),
       catch: (cause) =>
-        new OpenClawRuntimeError({
-          reason: "abort-wait-failed",
-          accountId: task.accountId,
-          detail: String(cause),
+        new OpenClawChannelError({
+          message: `Social Harness account ${task.accountId} runtime failed: abort-wait-failed: ${String(cause)}`,
         }),
     }),
   );
@@ -651,7 +611,7 @@ function runOpenClawTurn(
   task: ChannelGatewayContext<Account>,
   services: ChannelServices,
   projected: ProjectedEntry,
-): Effect.Effect<void, OpenClawInboundError> {
+): Effect.Effect<void, OpenClawChannelError> {
   return Effect.tryPromise({
     try: () =>
       services.inbound.run({
@@ -670,10 +630,8 @@ function runOpenClawTurn(
         },
       }),
     catch: (cause) =>
-      new OpenClawInboundError({
-        accountId: task.accountId,
-        turnId: projected.id,
-        detail: String(cause),
+      new OpenClawChannelError({
+        message: `Social Harness inbound delivery failed for ${task.accountId}/${projected.id}: turn-failed: ${String(cause)}`,
       }),
   });
 }
@@ -811,14 +769,10 @@ function withholdFinalText(
 
 function clearConnectedAccount(
   accountSlot: ConnectedAccountSlot,
-  accountId: string,
   connection: McpConnection,
 ): Effect.Effect<void> {
   return Effect.sync(() => {
-    if (
-      accountSlot.current?.accountId === accountId &&
-      accountSlot.current.connection === connection
-    ) {
+    if (accountSlot.current?.connection === connection) {
       accountSlot.current = undefined;
     }
   });
@@ -858,7 +812,7 @@ function sendText(
       sendArguments(to, text, params.replyToMsgId),
     );
     if (result.isError === true) {
-      return yield* new OpenClawSendFailed({
+      return yield* new OpenClawChannelError({
         message: result.content
           .flatMap((part) => (part.type === "text" ? [part.text] : []))
           .join("\n"),
@@ -917,12 +871,10 @@ function logOutbound(
 function requireConnection(
   accountSlot: ConnectedAccountSlot,
   params: TextSend,
-): Effect.Effect<McpConnection, OpenClawOutboundError> {
+): Effect.Effect<McpConnection, OpenClawChannelError> {
   const connection = connectionFor(accountSlot, params.accountId);
   return connection === undefined
-    ? Effect.fail(
-        new OpenClawOutboundError({ reason: "account-not-connected" }),
-      )
+    ? Effect.fail(refusedSend("account-not-connected"))
     : Effect.succeed(connection);
 }
 
@@ -931,17 +883,21 @@ function readTextSend({
   text,
 }: TextSend): Effect.Effect<
   { readonly to: MessageAddressInput; readonly text: string },
-  OpenClawOutboundError
+  OpenClawChannelError
 > {
   if (!isMessageAddressInput(to)) {
-    return Effect.fail(
-      new OpenClawOutboundError({ reason: "invalid-address" }),
-    );
+    return Effect.fail(refusedSend("invalid-address"));
   }
   if (typeof text !== "string") {
-    return Effect.fail(new OpenClawOutboundError({ reason: "text-missing" }));
+    return Effect.fail(refusedSend("text-missing"));
   }
   return Effect.succeed({ to, text });
+}
+
+function refusedSend(reason: OpenClawOutboundFailure): OpenClawChannelError {
+  return new OpenClawChannelError({
+    message: `send failed: ${outboundFailureText[reason]}`,
+  });
 }
 
 /**
@@ -949,17 +905,14 @@ function readTextSend({
  * delivery token of an inbox entry.
  */
 function makeMessageSendResult(sent: SendResult): ChannelMessageSendResult {
-  const messageId = sent.id;
   return {
-    ...(messageId === undefined ? {} : { messageId }),
+    messageId: sent.id,
     receipt: createMessageReceiptFromOutboundResults({
       results: [
         {
           channel: CHANNEL_ID,
-          ...(messageId === undefined ? {} : { messageId }),
-          ...(sent.address === undefined
-            ? {}
-            : { conversationId: sent.address }),
+          messageId: sent.id,
+          conversationId: sent.address,
         },
       ],
       kind: "text",
