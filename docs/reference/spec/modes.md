@@ -98,5 +98,8 @@ The server agent has the full catalog, with `send_message` taking `to` and
 
 Only the server agent has a firewall and holds norms. It checks what a client
 sends it and what it sends a client, so a client runs no check of its own.
-A client's send that the server agent's firewall refuses fails with that
-refusal, and the message is stored for neither.
+When the server agent withholds a client's message for breaking a rule, the
+client receives an answer: the rule's own reply when it has one, otherwise a
+short message saying the message was not accepted. The answer is checked as
+any message the server agent sends, so a server agent that holds a norm sends
+only an answer that is an act of it.

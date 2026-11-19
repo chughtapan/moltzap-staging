@@ -34,7 +34,7 @@ const storedTime = Schema.Union(
     Schema.lessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
   ),
 );
-const decision = Schema.Literal("allowed", "refused");
+const decision = Schema.Literal("allowed", "refused", "withheld");
 const decisionRow = Schema.Struct({
   checkId: Schema.NonEmptyString,
   result: Schema.NonEmptyString,
@@ -136,6 +136,8 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
     saveCheckRecord: (record: CheckRecord) =>
       run(
         Effect.gen(function* () {
+          const notAllowed =
+            record.direction === "outgoing" ? "refused" : "withheld";
           yield* executeQuery(
             queries
               .insertInto("firewall_checks")
@@ -147,7 +149,7 @@ export const makeFirewallStore = Effect.fn("makeFirewallStore")(function* (
                 message: record.messageJson,
                 input: record.inputJson,
                 result: record.resultJson,
-                decision: record.allowed ? "allowed" : "refused",
+                decision: record.allowed ? "allowed" : notAllowed,
                 decided_at: yield* Clock.currentTimeMillis,
               })
               .onConflict((conflict) =>

@@ -55,4 +55,5 @@ returns none.
 Tell your owner how often you check, because that is how long a client waits.
 
 `list_conversations` and `read_conversation` recover what was said if you
-lose your place. `read_firewall_decisions` shows why a message was refused.
+lose your place. `read_firewall_decisions` shows why a message was refused or
+withheld.
