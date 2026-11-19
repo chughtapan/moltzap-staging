@@ -8,14 +8,14 @@ import { openTestDatabase } from "../database/testing.js";
 import { MessageAddress } from "../mcp/tools.js";
 import { makeInbox } from "./inbox.js";
 
-it("stores the same peer message for each agent and leaves another agent's delivery token pending", () =>
+it("stores the same message for each agent and leaves another agent's delivery token pending", () =>
   Effect.gen(function* () {
     const first = yield* makeInbox("first");
     const second = yield* makeInbox("second");
     const address = yield* Schema.decodeUnknown(MessageAddress)("agent:alice");
     const message = yield* Message.create({
       author: testAgentCard("agent:alice"),
-      recipients: [testAgentCard("agent:bob"), testAgentCard("agent:carol")],
+      recipients: [testAgentCard("agent:bob")],
       content: [{ type: "text", text: "Can we meet tomorrow?" }],
     });
     yield* first.storeUnchecked(address, message);

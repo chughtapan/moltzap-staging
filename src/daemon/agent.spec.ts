@@ -140,70 +140,39 @@ function forAll<Value>(
   );
 }
 
-/**
- * One or more peers an address names, in name order: bob and carol, whom the
- * fixture knows, and nobody, whom it does not. `canonical` is the one address
- * of alice's conversation with them. `variant` lists the same agents as a
- * group, with or without alice and in either order. `address` is one of the two.
- */
-const membership = fc
-  .tuple(
-    fc.subarray(["bob", "carol", "nobody"], { minLength: 1 }),
-    fc.boolean(),
-    fc.boolean(),
-    fc.boolean(),
-  )
-  .map(([others, namesItself, reversed, asVariant]) => {
-    const members = ["alice", ...others];
-    const listed = namesItself ? members : others;
-    const canonical = MessageAddressInput.make(
-      others.length === 1
-        ? `agent:${others.join("")}`
-        : `group:${members.join(",")}`,
-    );
-    const variant = MessageAddressInput.make(
-      `group:${(reversed ? Arr.reverse(listed) : listed).join(",")}`,
-    );
-    return {
-      others,
-      canonical,
-      variant,
-      address: asVariant ? variant : canonical,
-    };
-  });
+/** An agent an address names: bob and carol, whom the fixture knows, and nobody, whom it does not. */
+const named = fc.constantFrom("bob", "carol", "nobody");
 
-it("sends each call as new work to exactly the agents its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
+it("sends each call as new work to the agent its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const { harness } = yield* subject.open();
     const receipts: string[] = [];
     yield* forAll(
       fc.tuple(
-        membership,
+        named,
         fc.option(fc.integer({ min: 0, max: 255 }), { nil: undefined }),
       ),
-      Effect.fn(function* ([{ others, canonical, address }, byte]) {
+      Effect.fn(function* ([name, byte]) {
         const replyToMsgId =
           byte === undefined
             ? undefined
             : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
-        const request = { to: address, text: "Hello", replyToMsgId };
+        const to = MessageAddressInput.make(`agent:${name}`);
+        const request = { to, text: "Hello", replyToMsgId };
         const dispatched = subject.submitted.length;
-        if (others.includes("nobody")) {
+        if (name === "nobody") {
           expect(yield* harness.send(request).pipe(Effect.flip)).toMatchObject({
             reason: "unknown-agent",
           });
           expect(subject.submitted).toHaveLength(dispatched);
         } else {
           const receipt = yield* harness.send(request);
-          expect(receipt.address).toBe(canonical);
+          expect(receipt.address).toBe(to);
           expect(receipts).not.toContain(receipt.id);
           receipts.push(receipt.id);
           expect(subject.submitted.slice(dispatched)).toMatchObject([
-            {
-              msgId: receipt.id,
-              recipients: others.map((agentName) => ({ agentName })),
-            },
+            { msgId: receipt.id, recipients: [{ agentName: name }] },
           ]);
           const submitted = subject.submitted.at(-1);
           expect(
@@ -216,15 +185,16 @@ it("sends each call as new work to exactly the agents its address names, with th
     );
   }));
 
-it("refuses every group address before dispatch on a daemon without groups, and still sends to one agent", () =>
+it("refuses every group address before dispatch, and still sends to one agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const { harness } = yield* subject.open({ hideGroups: true });
+    const { harness } = yield* subject.open();
     yield* forAll(
-      membership,
-      Effect.fn(function* ({ variant }) {
+      fc.subarray(["alice", "bob", "carol", "nobody"], { minLength: 1 }),
+      Effect.fn(function* (members) {
+        const to = MessageAddressInput.make(`group:${members.join(",")}`);
         expect(
-          yield* harness.send({ to: variant, text: "Hello" }).pipe(Effect.flip),
+          yield* harness.send({ to, text: "Hello" }).pipe(Effect.flip),
         ).toMatchObject({ reason: "invalid-address" });
       }),
     );
@@ -751,41 +721,30 @@ it("retains a draft's input while its caller changes the original object", () =>
     ]);
   }));
 
-it("reads a saved conversation's history at its canonical address, reports an unknown agent at a canonical address that names one, and refuses every other spelling as invalid", () =>
+it("reads a saved conversation's history at its agent's address, and reports an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     yield* subject.retain(yield* ordinaryMessage(subject, "Hello"));
-    yield* subject.retain(
-      yield* Message.create({
-        author: subject.self,
-        recipients: [subject.bob, subject.carol],
-        content: [{ type: "text", text: "Hello both" }],
-      }),
-    );
     yield* receive(subject, "Hello from carol", subject.carol);
     yield* acknowledgeNext(runtime);
-    const saved: Record<string, readonly string[]> = {
-      "agent:bob": ["sent"],
-      "agent:carol": ["received"],
-      "group:alice,bob,carol": ["sent"],
+    const saved: Record<string, unknown> = {
+      bob: ["sent"],
+      carol: ["received"],
+      nobody: "unknown-agent",
     };
-    const read = (address: MessageAddressInput) =>
-      runtime.harness.readHistory({ address }).pipe(
-        Effect.match({
-          onFailure: ({ reason }) => reason,
-          onSuccess: ({ records }) => records.map((record) => record.kind),
-        }),
-      );
     yield* forAll(
-      membership,
-      Effect.fn(function* ({ others, canonical, variant }) {
-        expect(yield* read(canonical)).toEqual(
-          others.includes("nobody") ? "unknown-agent" : saved[canonical],
-        );
-        if (variant !== canonical) {
-          expect(yield* read(variant)).toBe("invalid-address");
-        }
+      named,
+      Effect.fn(function* (name) {
+        const read = yield* runtime.harness
+          .readHistory({ address: MessageAddressInput.make(`agent:${name}`) })
+          .pipe(
+            Effect.match({
+              onFailure: ({ reason }) => reason,
+              onSuccess: ({ records }) => records.map((record) => record.kind),
+            }),
+          );
+        expect(read).toEqual(saved[name]);
       }),
     );
   }));

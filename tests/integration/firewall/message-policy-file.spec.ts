@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type Daemon,
+  SERVER_AGENT_OWNER,
   sharedDaemon,
   stopProcess,
 } from "../daemon/daemon-fixture.js";
@@ -98,11 +99,11 @@ describe("stock sharnessd with a message-policy file", () => {
   );
 });
 
-/** Connects as the owner `alice` with a client that negotiates as `negotiation` says. */
+/** Connects as the server agent's owner with a client that negotiates as `negotiation` says. */
 function connect(daemon: Daemon, negotiation: ClientOptions) {
   return Effect.acquireRelease(
     Effect.gen(function* () {
-      const bearer = yield* daemon.bearer("alice");
+      const bearer = yield* daemon.bearer(SERVER_AGENT_OWNER);
       const client = new Client(
         { name: "message-policy-file", version: "1" },
         { capabilities: {}, ...negotiation },

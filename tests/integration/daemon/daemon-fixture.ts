@@ -13,13 +13,13 @@
  *   listens, and returns its exit code and output.
  * - `configure(changes)`: changes the settings the next start reads.
  * - `bearer(owner)`: what the host of a named owner presents. The owner
- *   `SERVER_AGENT_OWNER` is the server agent's in client/server mode.
+ *   `SERVER_AGENT_OWNER` is the server agent's, and any other is a client's.
  * - `signIn(bearer)` and `signInAs(owner)`: an MCP connection, and the agent
  *   `status` reports for it.
  *
- * The options are settings that replace the fixture's, such as the mode, the
- * firewall variant of the daemon. `managedProcess`, `awaitReady` and `daemonListening` start and
- * await a daemon that runs some other way, such as in a container.
+ * The options are settings that replace the fixture's, and the firewall
+ * variant of the daemon. `managedProcess`, `awaitReady` and `daemonListening`
+ * start and await a daemon that runs some other way, such as in a container.
  */
 
 import { FileSystem } from "@effect/platform";
@@ -68,6 +68,9 @@ export class ProcessTestError extends Data.TaggedError("ProcessTestError")<{
 /** The owner whose token signs the server agent in, as the `serverAgent` setting names it. */
 export const SERVER_AGENT_OWNER = "server-agent-owner";
 
+/** The name of the server agent of a daemon whose settings name no other. */
+export const SERVER_AGENT_NAME = "server-agent";
+
 /** A child process and everything it has printed. */
 export interface RunningProcess {
   readonly child: ChildProcess;
@@ -76,10 +79,7 @@ export interface RunningProcess {
 
 /** What `sharedDaemon` prepares differently from its defaults. */
 export interface DaemonOptions {
-  /**
-   * Settings that replace the fixture's: `serverAgent` for client/server
-   * mode, a message policy, norms.
-   */
+  /** Settings that replace the fixture's: a message policy, norms. */
   readonly settings?: Readonly<Record<string, unknown>>;
   /**
    * Gives the daemon the marked message policy, whose text rules the marked
@@ -92,7 +92,7 @@ export interface DaemonOptions {
 export interface SignedIn {
   /** The agent as `status` reports it and as messages name it. */
   readonly agent: { readonly agentId: AgentId; readonly agentName: AgentName };
-  /** How other agents address this one. */
+  /** How the server agent addresses this one. */
   readonly address: AgentAddress;
   readonly connection: McpConnection;
   /** A file holding the bearer the agent signed in with, for a host to read. */
@@ -383,9 +383,9 @@ const prepare = (environment: Readonly<Record<string, string>>) =>
   );
 
 /**
- * Prepares one daemon in P2P mode whose owners sign in with tokens from its
- * own test issuer. The scope removes its directory and stops its issuer and
- * every process and connection it started.
+ * Prepares one daemon whose server agent's owner and clients' owners sign in
+ * with tokens from its own test issuer. The scope removes its directory and
+ * stops its issuer and every process and connection it started.
  */
 export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   options: DaemonOptions = {},
@@ -414,6 +414,7 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
       issuer: issuer.issuer,
       scope: requiredScope,
     },
+    serverAgent: { name: SERVER_AGENT_NAME, subject: SERVER_AGENT_OWNER },
     ...(options.firewall === true &&
     options.settings?.messagePolicyFile === undefined
       ? yield* writeMessagePolicy(directory, markedPolicy()).pipe(

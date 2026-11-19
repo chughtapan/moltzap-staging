@@ -1,10 +1,8 @@
-/** @file One daemon process delivers between its owners' agents, alone and in a group, and keeps their messages across restarts. */
+/** @file One daemon process delivers between its server agent and a client, and keeps the name its database gave the server agent. */
 
-import { AgentAddress, GroupAddress } from "@social-harness/social-harness";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { expect, it } from "vitest";
 import {
-  groupAddress,
   joinParticipants,
   nextItem,
   type Participant,
@@ -16,7 +14,6 @@ import { callTool } from "../tool-call.js";
 import {
   SERVER_AGENT_OWNER,
   sharedDaemon,
-  type SignedIn,
   stopProcess,
 } from "./daemon-fixture.js";
 
@@ -24,23 +21,6 @@ import {
 const PROCESS_TEST_TIMEOUT_MS = 120_000;
 
 const textContent = (text: string) => [{ type: "text", text }];
-
-/** The agent's saved conversation at `address`, which is not paged in these traces. */
-const readConversation = (reader: SignedIn, address: string) =>
-  callTool(reader.connection.mcp, {
-    name: "read_conversation",
-    arguments: {
-      address: Schema.decodeUnknownSync(
-        Schema.Union(AgentAddress, GroupAddress),
-      )(address),
-    },
-  }).pipe(Effect.map((page) => page.records));
-
-/** The identifiers of the messages in the agent's saved conversation, in order. */
-const savedOrder = (reader: SignedIn, address: string) =>
-  readConversation(reader, address).pipe(
-    Effect.map((records) => records.map((record) => record.message.msgId)),
-  );
 
 /** The identifiers of the next `count` messages the participant receives, in order. */
 const receivedOrder = (participant: Participant, count: number) =>
@@ -53,199 +33,103 @@ const receivedOrder = (participant: Participant, count: number) =>
 /** The settings a refused start tells the operator to change. */
 const serverNameSetting = "serverAgent.name";
 
-const greeting = "hello from the first owner";
-const reply = "reply from the second owner";
+/** The server agent and one client of a running daemon. */
+const serverAndClient = Effect.gen(function* () {
+  const daemon = yield* sharedDaemon();
+  yield* daemon.start();
+  const [server, client] = yield* joinParticipants(daemon, [
+    SERVER_AGENT_OWNER,
+    "bob",
+  ]);
+  if (server === undefined || client === undefined) {
+    return yield* Effect.dieMessage("Expected two participants");
+  }
+  return { server, client };
+});
+
+const greeting = "hello from the server agent";
+const reply = "reply from the client";
 
 it(
-  "delivers between two owners in both directions and saves one history for both",
+  "delivers between the server agent and a client in both directions and saves one history for both",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const [alice, bob] = yield* joinParticipants(daemon, ["alice", "bob"]);
-      if (alice === undefined || bob === undefined) {
-        return yield* Effect.dieMessage("Expected two participants");
-      }
+      const { server, client } = yield* serverAndClient;
 
-      const sent = yield* send(alice, { to: bob.address, text: greeting });
-      expect(sent).toMatchObject({ address: bob.address });
-      expect(yield* nextItem(bob)).toMatchObject({
+      const sent = yield* send(server, { to: client.address, text: greeting });
+      expect(sent).toMatchObject({ address: client.address });
+      expect(yield* nextItem(client)).toMatchObject({
         kind: "message",
         message: {
           msgId: sent.id,
-          author: alice.agent,
-          recipients: [bob.agent],
+          author: server.agent,
+          recipients: [client.agent],
           content: textContent(greeting),
         },
       });
-      yield* send(bob, { to: alice.address, text: reply });
-      expect(yield* nextItem(alice)).toMatchObject({
+      yield* send(client, { text: reply });
+      expect(yield* nextItem(server)).toMatchObject({
         kind: "message",
         message: {
-          author: bob.agent,
-          recipients: [alice.agent],
+          author: client.agent,
+          recipients: [server.agent],
           content: textContent(reply),
         },
       });
 
-      const aliceHistory = yield* readConversation(alice, bob.address);
-      const bobHistory = yield* readConversation(bob, alice.address);
-      expect(aliceHistory.map(({ kind }) => kind)).toEqual([
+      const serverHistory = (yield* callTool(server.connection.mcp, {
+        name: "read_conversation",
+        arguments: { address: client.address },
+      })).records;
+      const clientHistory = (yield* callTool(client.connection.mcp, {
+        name: "read_conversation",
+        arguments: {},
+      })).records;
+      expect(serverHistory.map(({ kind }) => kind)).toEqual([
         "sent",
         "received",
       ]);
-      expect(bobHistory.map(({ kind }) => kind)).toEqual(["received", "sent"]);
+      expect(clientHistory.map(({ kind }) => kind)).toEqual([
+        "received",
+        "sent",
+      ]);
       expect(
-        aliceHistory.map((record) => historyMessage(record).content),
+        serverHistory.map((record) => historyMessage(record).content),
       ).toEqual([textContent(greeting), textContent(reply)]);
-      expect(bobHistory.map(historyMessage)).toEqual(
-        aliceHistory.map(historyMessage),
+      expect(clientHistory.map(historyMessage)).toEqual(
+        serverHistory.map(historyMessage),
       );
       expect(
-        yield* callTool(alice.connection.mcp, {
+        yield* callTool(server.connection.mcp, {
           name: "list_conversations",
           arguments: {},
         }),
-      ).toEqual({ addresses: [bob.address] });
+      ).toEqual({ addresses: [client.address] });
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
 );
 
-it(
-  "gives every member of a group of three the same order",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const members = yield* joinParticipants(daemon, [
-        "alice",
-        "bob",
-        "carol",
-      ]);
-      const rounds = 3;
-      const authors = Array.from({ length: rounds }).flatMap(() => members);
-
-      const sent = yield* Effect.forEach(
-        authors,
-        (author, index) =>
-          send(author, {
-            to: groupAddress(members),
-            text: `concurrent ${index}`,
-          }).pipe(Effect.map(({ id, address }) => ({ id, address, author }))),
-        { concurrency: authors.length },
-      );
-      const received = yield* Effect.forEach(
-        members,
-        (participant) =>
-          receivedOrder(participant, rounds * (members.length - 1)),
-        { concurrency: members.length },
-      );
-      const saved = yield* Effect.forEach(
-        members,
-        (participant) => savedOrder(participant, sent[0]?.address ?? ""),
-        { concurrency: 1 },
-      );
-
-      const order = saved[0] ?? [];
-      expect(new Set(order)).toEqual(new Set(sent.map(({ id }) => id)));
-      expect(saved).toEqual(members.map(() => order));
-      expect(received).toEqual(
-        members.map((participant) =>
-          order.filter(
-            (id) =>
-              sent.find((message) => message.id === id)?.author !== participant,
-          ),
-        ),
-      );
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-/** How many times each agent sends the other two messages at once. */
+/** How many times the server agent and the client send each other two messages at once. */
 const CROSSING_ROUNDS = 8;
 
 it(
-  "completes the messages two agents send each other at once",
+  "completes the messages the server agent and a client send each other at once",
   processTrace(
     Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const [alice, bob] = yield* joinParticipants(daemon, ["alice", "bob"]);
-      if (alice === undefined || bob === undefined) {
-        return yield* Effect.dieMessage("Expected two participants");
-      }
-      const tell = (from: Participant, to: Participant) =>
-        send(from, { to: to.address, text: "a crossing message" });
+      const { server, client } = yield* serverAndClient;
+      const text = "a crossing message";
+      const toClient = send(server, { to: client.address, text });
+      const toServer = send(client, { text });
       for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
-        yield* Effect.all(
-          [
-            tell(alice, bob),
-            tell(bob, alice),
-            tell(alice, bob),
-            tell(bob, alice),
-          ],
-          { concurrency: 4 },
-        );
+        yield* Effect.all([toClient, toServer, toClient, toServer], {
+          concurrency: 4,
+        });
       }
-      for (const participant of [alice, bob]) {
+      for (const participant of [server, client]) {
         expect(
           new Set(yield* receivedOrder(participant, 2 * CROSSING_ROUNDS)).size,
         ).toBe(2 * CROSSING_ROUNDS);
-      }
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-const firstUnread = "sent before the restart";
-const secondUnread = "also sent before the restart";
-const afterRestart = "sent after the restart";
-
-it(
-  "keeps messages a group's members have not read across a restart",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      const running = yield* daemon.start();
-      const unread = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const alice = yield* daemon.signInAs("alice");
-          const bob = yield* daemon.signInAs("bob");
-          const carol = yield* daemon.signInAs("carol");
-          const to = groupAddress([alice, bob, carol]);
-          const first = yield* send(alice, { to, text: firstUnread });
-          const second = yield* send(alice, { to, text: secondUnread });
-          return { address: first.address, ids: [first.id, second.id] };
-        }),
-      );
-      yield* stopProcess(running);
-      yield* daemon.start();
-
-      const [alice, bob, carol] = yield* joinParticipants(daemon, [
-        "alice",
-        "bob",
-        "carol",
-      ]);
-      if (alice === undefined || bob === undefined || carol === undefined) {
-        return yield* Effect.dieMessage("Expected three participants");
-      }
-      expect(yield* receivedOrder(bob, unread.ids.length)).toEqual(unread.ids);
-      expect(yield* receivedOrder(carol, unread.ids.length)).toEqual(
-        unread.ids,
-      );
-      const third = yield* send(carol, {
-        to: unread.address,
-        text: afterRestart,
-      });
-      expect(yield* receivedOrder(alice, 1)).toEqual([third.id]);
-      expect(yield* receivedOrder(bob, 1)).toEqual([third.id]);
-      for (const participant of [alice, bob, carol]) {
-        expect(yield* savedOrder(participant, unread.address)).toEqual([
-          ...unread.ids,
-          third.id,
-        ]);
       }
     }),
   ),
@@ -256,13 +140,12 @@ it(
   "refuses another server agent name on a database started with one, naming the setting",
   processTrace(
     Effect.gen(function* () {
-      const named = (name: string) => ({
-        serverAgent: { name, subject: SERVER_AGENT_OWNER },
-      });
-      const daemon = yield* sharedDaemon({ settings: named("front-desk") });
+      const daemon = yield* sharedDaemon();
       yield* stopProcess(yield* daemon.start());
 
-      yield* daemon.configure(named("back-office"));
+      yield* daemon.configure({
+        serverAgent: { name: "back-office", subject: SERVER_AGENT_OWNER },
+      });
       const renamed = yield* daemon.startupFailure();
       expect(renamed.exitCode).not.toBe(0);
       expect(renamed.logs).toContain(`Set ${serverNameSetting}`);

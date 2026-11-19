@@ -1,15 +1,11 @@
 /** @file Promise access to one daemon and its agents for node:test suites. */
-import {
-  AgentAddress,
-  GroupAddress,
-  type PermittedItem,
-  type SendResult,
-} from "@social-harness/social-harness";
-import { Chunk, Effect, Exit, Option, Schema, Scope, Stream } from "effect";
+import type { PermittedItem, SendResult } from "@social-harness/social-harness";
+import { Chunk, Effect, Exit, Option, Scope, Stream } from "effect";
 import { send } from "./agent-fixture.js";
 import {
   type Daemon,
   ProcessTestError,
+  SERVER_AGENT_OWNER,
   sharedDaemon,
   type SignedIn,
 } from "./daemon/daemon-fixture.ts";
@@ -26,17 +22,19 @@ import { callTool } from "./tool-call.js";
  */
 export interface AgentAccess {
   readonly agent: SignedIn["agent"];
-  readonly address: string;
+  readonly address: SignedIn["address"];
   readonly mcp: URL;
   readonly mcpCredentialFile: string;
   readonly send: (input: unknown) => Promise<SendResult>;
   readonly next: (count: number) => Promise<readonly PermittedItem[]>;
-  readonly history: (address: string) => Promise<readonly unknown[]>;
+  /** The contents of the server agent's conversation with `client`, or of a client's one conversation. */
+  readonly history: (client?: AgentAccess) => Promise<readonly unknown[]>;
 }
 
 /** One scope owns the daemon and every agent's connection. */
 export interface DaemonAccess {
-  readonly signIn: (owner: string) => Promise<AgentAccess>;
+  /** Signs in the server agent's owner, or the named owner of a client. */
+  readonly signIn: (owner?: string) => Promise<AgentAccess>;
   readonly close: () => Promise<undefined>;
 }
 
@@ -58,7 +56,7 @@ export async function openDaemon(
       sharedDaemon().pipe(Effect.tap(startDaemon)),
     );
     return {
-      signIn: async (owner) =>
+      signIn: async (owner = SERVER_AGENT_OWNER) =>
         agentAccess(daemon, await runInScope(scope, daemon.signInAs(owner))),
       close,
     };
@@ -76,15 +74,11 @@ function agentAccess(daemon: Daemon, signedIn: SignedIn): AgentAccess {
     mcpCredentialFile: signedIn.credentialFile,
     send: (input) => Effect.runPromise(send(signedIn, input)),
     next: (count) => Effect.runPromise(nextItems(signedIn, count)),
-    history: (address) =>
+    history: (client) =>
       Effect.runPromise(
         callTool(signedIn.connection.mcp, {
           name: "read_conversation",
-          arguments: {
-            address: Schema.decodeUnknownSync(
-              Schema.Union(AgentAddress, GroupAddress),
-            )(address),
-          },
+          arguments: client === undefined ? {} : { address: client.address },
         }).pipe(
           Effect.map((page) =>
             page.records.map((record) => historyMessage(record).content),

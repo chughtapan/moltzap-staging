@@ -26,7 +26,8 @@ const mcpTestHeaders = { host: "127.0.0.1" };
 
 /**
  * The daemon's HTTP app over a database, serving one agent whose `harness`
- * operations a test replaces one by one. Its issuer signs the token of the one
+ * operations a test replaces one by one. The agent is the server agent unless
+ * the options name another. Its issuer signs the token of the one
  * owner, which `fetch` presents for a request that carries no authorization.
  */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
@@ -77,10 +78,10 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
   const role = roleOf(
     {
       settings: {
-        serverAgent:
-          options.serverAgentName === undefined
-            ? undefined
-            : { name: options.serverAgentName, subject: "server" },
+        serverAgent: {
+          name: options.serverAgentName ?? card.agentName,
+          subject: "server",
+        },
         hideGroups: false,
       },
       serverAgentHeldNorms: yield* Ref.make(

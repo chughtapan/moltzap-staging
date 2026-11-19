@@ -13,9 +13,18 @@ const fields = Schema.decodeUnknownSync(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
 );
 
+/**
+ * A tool's arguments as the server agent or a client passes them: a client
+ * names no recipient and no conversation.
+ */
+type Arguments<Name extends ToolName> =
+  ToolRequest<Name>["arguments"] extends infer Named
+    ? Omit<Named, "to" | "address"> & Partial<Named>
+    : never;
+
 export function callTool<Name extends ToolName>(
   mcp: Pick<Client, "callTool">,
-  request: ToolRequest & { readonly name: Name },
+  request: { readonly name: Name; readonly arguments: Arguments<Name> },
 ): Effect.Effect<ToolResult<Name>, Readonly<Record<string, unknown>>>;
 /**
  * Calls the named tool once. A result is decoded with the tool's published
@@ -25,7 +34,7 @@ export function callTool<Name extends ToolName>(
  */
 export function callTool(
   mcp: Pick<Client, "callTool">,
-  request: ToolRequest,
+  request: { readonly name: ToolName; readonly arguments: object },
 ): Effect.Effect<unknown, Readonly<Record<string, unknown>>> {
   const output: Schema.Schema.AnyNoContext =
     toolDefinitions[request.name].output;

@@ -18,8 +18,8 @@ permission to bind sockets. Image scenarios require Docker.
 | `pnpm nx run @social-harness/integration-tests:lint` | ESLint for this workspace |
 
 A suite gets its daemon from `sharedDaemon` in `daemon/daemon-fixture.ts`. The
-daemon runs in P2P mode unless the suite's settings choose client/server mode,
-and each named owner signs in with a token from the fixture's own OAuth
+owner `SERVER_AGENT_OWNER` signs in as the daemon's server agent and every
+other named owner as a client, each with a token from the fixture's own OAuth
 issuer. The file's header lists what the fixture offers.
 
 Every daemon keeps its agents on the PostgreSQL server that
