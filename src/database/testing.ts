@@ -3,8 +3,7 @@
 import { SqlClient } from "@effect/sql";
 import { Config, Context, Effect, Layer, Redacted } from "effect";
 import { randomBytes } from "node:crypto";
-import { migrateDaemon } from "./migrations.js";
-import { databaseConnection } from "./sql.js";
+import { databaseConnection, migrateDaemon } from "./index.js";
 
 const serverUrl = Config.redacted("SHARNESS_PG_TEST_URL").pipe(
   Effect.catchTag("ConfigError", () =>
