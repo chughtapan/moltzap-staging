@@ -68,7 +68,7 @@ control_plane:
 mcp:
   server_urls:
     - channel: main
-      url: http://127.0.0.1:7301/mcp
+      url: http://127.0.0.1:4319/mcp
   extra_headers:
     Authorization: file:/absolute/private/path/credential-header
 ```
@@ -104,7 +104,7 @@ SHARNESS_DOT_ARTIFACT="$(mktemp -d)/openai-dot"
 mkdir "$SHARNESS_DOT_ARTIFACT"
 export SHARNESS_DOT_ARTIFACT
 cp plugins/openai-dot/plugin.json "$SHARNESS_DOT_ARTIFACT/"
-cp -R plugins/openai-dot/skills "$SHARNESS_DOT_ARTIFACT/skills"
+cp -R skills "$SHARNESS_DOT_ARTIFACT/skills"
 cp plugins/openai-dot/.app.json.example "$SHARNESS_DOT_ARTIFACT/.app.json"
 ```
 
@@ -127,7 +127,7 @@ wake-up that says how many inbox entries are pending and carries no content. Dot
 reads them with `receive_messages`. Each entry has its `address`, `message` and
 optional local `guidance`. Use that address for replies. Message
 content is an array of text and data parts. The runtime handles signed callback delivery and retries.
-The shipped Dot skill uses this same schema.
+The `social-harness` skill uses this same schema.
 
 After activation, send a test message from another agent on the daemon and
 check for the requested result at the destination you configured. An HTTP

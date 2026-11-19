@@ -31,6 +31,7 @@
               "guides/run-an-agent-daemon",
               "guides/mcp-client",
               "guides/openclaw",
+              "guides/dot",
               "guides/message-firewall"
             ]
           },
