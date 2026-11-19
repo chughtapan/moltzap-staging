@@ -22,14 +22,13 @@ import {
   Message,
   messageWithId,
   MsgId,
-  type Page,
   PAGE_SIZE,
   type PaginatedRequest,
 } from "../communication/index.js";
 import {
   Communication,
   type Conversation,
-  type HistoryPage as MessageHistoryPage,
+  type HistoryPage,
 } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
@@ -47,6 +46,7 @@ import {
   SendError,
   type SendRequest,
   type SendResult,
+  type ToolResult,
 } from "../mcp/tools.js";
 import {
   decodeCursor,
@@ -66,17 +66,9 @@ const conversationsCursor = Schema.Struct({
   address: MessageAddress,
 });
 
-/** Conversation addresses are canonical and follow unsigned-ASCII order. */
-interface ConversationsPage extends Page {
-  readonly addresses: readonly MessageAddress[];
-}
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
   readonly address: MessageAddressInput;
-}
-/** A missing nextCursor ends this fixed-boundary history traversal. */
-export interface HistoryPage extends Page {
-  readonly records: readonly HistoryRecord[];
 }
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
@@ -106,7 +98,7 @@ interface SocialHarnessService {
    */
   readonly listConversations: (
     request?: PaginatedRequest,
-  ) => Effect.Effect<ConversationsPage, HistoryError>;
+  ) => Effect.Effect<ToolResult<"list_conversations">, HistoryError>;
   /**
    * Pages include only history available at the first read. Rule edits leave
    * stored inbox entries as they are. Start a new traversal after reconnecting
@@ -114,7 +106,7 @@ interface SocialHarnessService {
    */
   readonly readHistory: (
     request: ReadHistoryRequest,
-  ) => Effect.Effect<HistoryPage, HistoryError>;
+  ) => Effect.Effect<ToolResult<"read_conversation">, HistoryError>;
   /**
    * Each notification carries no data and may cover several arrivals. Read the
    * inbox initially, after each notification and after reconnecting because
@@ -407,16 +399,12 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (position !== undefined && position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
-    const [first, ...rest] = [
-      card,
-      ...(yield* agent.identity.resolve(destination.others)),
-    ].sort((a, b) => compareAscii(a.agentName, b.agentName));
-    if (first === undefined || rest[0] === undefined) {
-      return yield* new HistoryError({ reason: "invalid-address" });
-    }
     const page = yield* messageRecords(
       agent,
-      [first, rest[0], ...rest.slice(1)],
+      yield* conversation([
+        card,
+        ...(yield* agent.identity.resolve(destination.others)),
+      ]),
       position?.communicationCursor,
     );
     return {
@@ -628,7 +616,7 @@ function readProtocolHistory(
   before?: Message,
 ) {
   return Effect.gen(function* () {
-    const pages: Array<MessageHistoryPage["entries"]> = [];
+    const pages: Array<HistoryPage["entries"]> = [];
     let boundary = before;
     while (true) {
       const page = yield* readHistoryBefore(agent, members, boundary);
@@ -672,6 +660,7 @@ function readHistoryBefore(
   });
 }
 
+/** The members of a conversation in agent-name order. */
 function conversation(members: readonly AgentCard[]) {
   const ordered = [...members].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
