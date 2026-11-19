@@ -1,7 +1,7 @@
 /** @file One daemon process delivers between its server agent and a client, in one order for both. */
 
 import { INBOX_EVENT } from "@social-harness/social-harness";
-import { Effect, Stream } from "effect";
+import { Effect, Fiber, Stream } from "effect";
 import { expect, it } from "vitest";
 import {
   callTool,
@@ -115,6 +115,35 @@ it(
         first.id,
         second.id,
       ]);
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+it(
+  "holds a waiting receive_messages until an entry becomes readable after its cursor, and returns none when the wait ends",
+  processTrace(
+    Effect.gen(function* () {
+      const { server, client } = yield* serverAndClient;
+      const receive = (cursor: string, wait: number) =>
+        callTool(client.connection.mcp, {
+          name: "receive_messages",
+          arguments: { cursor, wait },
+        });
+      const start = yield* callTool(client.connection.mcp, {
+        name: "receive_messages",
+        arguments: {},
+      });
+      const waiting = yield* Effect.fork(receive(start.nextCursor, 50));
+      const sent = yield* send(server, { to: client.address, text: greeting });
+      const woken = yield* Fiber.join(waiting);
+      expect(woken.entries.map((entry) => entry.message.msgId)).toEqual([
+        sent.id,
+      ]);
+      expect(yield* receive(woken.nextCursor, 0.2)).toEqual({
+        entries: [],
+        nextCursor: woken.nextCursor,
+      });
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,
