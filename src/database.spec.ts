@@ -203,9 +203,9 @@ it("prepares a fresh database and leaves a prepared one as it is", () =>
     const test = yield* fixture;
     expect(yield* test.tables).toEqual([]);
     yield* test.prepare;
-    yield* test.sql`INSERT INTO owner_bindings (issuer, subject, agent_key) VALUES ('i', 's', 'k')`;
+    yield* test.sql`INSERT INTO agent_cards (issuer, subject, agent_key, agent_id, agent_name, principal_id) VALUES ('i', 's', 'k', 'a', 'n', 'p')`;
     yield* test.prepare;
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(1);
+    expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(1);
   }));
 
 it("prepares a fresh database whose migration ledger already exists but is empty", () =>
@@ -215,7 +215,7 @@ it("prepares a fresh database whose migration ledger already exists but is empty
       Effect.provideService(SqlClient.SqlClient, test.sql),
     );
     yield* test.prepare;
-    expect(yield* test.sql`SELECT * FROM owner_bindings`).toHaveLength(0);
+    expect(yield* test.sql`SELECT * FROM agent_cards`).toHaveLength(0);
   }));
 
 it("rejects a database that holds other tables without changing their records", () =>
