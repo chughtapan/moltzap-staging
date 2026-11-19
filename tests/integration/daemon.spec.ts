@@ -1,24 +1,14 @@
-/** @file How the `sharnessd` binary starts and refuses to start, what it keeps across a restart, and how the `sharness-mcp` command reaches it. */
+/** @file How the `sharnessd` binary starts and refuses to start and what it keeps across a restart. */
 
 import { FileSystem, HttpClient } from "@effect/platform";
 import { NodeContext, NodeHttpClient } from "@effect/platform-node";
 import { SqlClient } from "@effect/sql";
-import {
-  MAXIMUM_WAIT_SECONDS,
-  toolDefinitions,
-} from "@social-harness/social-harness";
+import { MAXIMUM_WAIT_SECONDS } from "@social-harness/social-harness";
 import {
   databaseConnection,
   databaseUrl,
 } from "@social-harness/social-harness/test";
-import {
-  ConfigProvider,
-  Context,
-  Effect,
-  Layer,
-  Redacted,
-  Schema,
-} from "effect";
+import { ConfigProvider, Context, Effect, Layer, Redacted } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -36,11 +26,9 @@ import {
 } from "./daemon-fixture.js";
 
 const BINARY = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
-const CLI = fileURLToPath(new URL("../../dist/call-tool.js", import.meta.url));
 const DATABASE_VARIABLE = "SHARNESS_DATABASE_URL";
 const SECRET = "secret-path-value";
 const AGENT_UNAVAILABLE = 503;
-const CLEARTEXT_REFUSAL = "MCP URL must use HTTPS or literal HTTP loopback";
 
 /** Each trace starts one daemon, and some of them start it more than once. */
 const PROCESS_TEST_TIMEOUT_MS = 180_000;
@@ -249,59 +237,6 @@ it(
         AGENT_UNAVAILABLE,
       );
       expect(serving.child.exitCode).toBeNull();
-    }),
-  ),
-  PROCESS_TEST_TIMEOUT_MS,
-);
-
-/** Runs the built `sharness-mcp` command against one daemon as the owner of one credential. */
-function operator(
-  target: { readonly endpoint: URL; readonly credentialFile: string },
-  args: readonly string[],
-) {
-  return runProcess(process.execPath, [CLI, ...args], {
-    env: {
-      SHARNESS_MCP_URL: target.endpoint.href,
-      SHARNESS_MCP_CREDENTIAL_FILE: target.credentialFile,
-    },
-  }).pipe(Effect.provide(NodeContext.layer));
-}
-
-it(
-  "lets the sharness-mcp command report the agent of the owner whose credential it reads, and refuses to send one to an HTTP endpoint named by DNS",
-  processTrace(
-    Effect.gen(function* () {
-      const daemon = yield* sharedDaemon();
-      yield* daemon.start();
-      const alice = yield* daemon.signInAs("alice");
-      const bob = yield* daemon.signInAs("bob");
-      const status = (credentialFile: string) =>
-        operator({ endpoint: daemon.endpoint, credentialFile }, [
-          "call",
-          "status",
-        ]).pipe(
-          Effect.flatMap(({ stdout }) =>
-            Schema.decode(Schema.parseJson(toolDefinitions.status.output))(
-              stdout,
-            ),
-          ),
-        );
-      expect((yield* status(alice.credentialFile)).agentName).toBe(
-        alice.agent.agentName,
-      );
-      expect((yield* status(bob.credentialFile)).agentName).toBe(
-        bob.agent.agentName,
-      );
-
-      const refused = yield* operator(
-        {
-          endpoint: new URL("http://localhost:1/mcp"),
-          credentialFile: alice.credentialFile,
-        },
-        ["call", "status"],
-      );
-      expect(refused.exitCode).not.toBe(0);
-      expect(refused.stderr).toContain(CLEARTEXT_REFUSAL);
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

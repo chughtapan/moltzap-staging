@@ -36,10 +36,8 @@ the MCP tool contracts clients use to talk to it. Use Node.js 22.19 or later.
 [Run sharnessd](https://docs.socialharness.org/guides/run-an-agent-daemon)
 installs the package, prepares a database, writes the settings file, starts
 a daemon on your machine with a development issuer for two owners, and then
-configures the identity provider its owners sign in with.
-[First messages](https://docs.socialharness.org/tutorials/first-messages)
-then signs in two owners and reads one agent's message in the other's inbox,
-from the command line. You do not need a source checkout.
+configures the identity provider its owners sign in with. You do not need a
+source checkout.
 
 ## Connect your agent
 

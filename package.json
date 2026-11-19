@@ -41,8 +41,7 @@
     }
   },
   "bin": {
-    "sharnessd": "./dist/main.js",
-    "sharness-mcp": "./dist/call-tool.js"
+    "sharnessd": "./dist/main.js"
   },
   "scripts": {
     "build": "nx run-many -t build",

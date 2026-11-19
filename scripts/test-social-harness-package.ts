@@ -1,4 +1,4 @@
-/** @file Verifies packed service entries, the installed `sharnessd` and `sharness-mcp` commands and explicit firewall assets in an isolated consumer. */
+/** @file Verifies packed service entries, the installed `sharnessd` command and explicit firewall assets in an isolated consumer. */
 import { Effect } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,8 +79,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
         env: { NODE_PATH: "" },
       },
     );
-    yield* verifyCommand(consumerRoot, "sharnessd");
-    yield* verifyCommand(consumerRoot, "sharness-mcp");
+    yield* verifyCommand(consumerRoot);
     yield* runCommand(
       process.execPath,
       ["--input-type=module", "-e", hostEntryScript],
@@ -108,17 +107,17 @@ function publicImports() {
   );
 }
 
-/** A command the package installs runs from the consumer and prints its usage. */
-function verifyCommand(consumerRoot: string, name: string) {
+/** The command the package installs runs from the consumer and prints its usage. */
+function verifyCommand(consumerRoot: string) {
   return runCommand(
-    join(consumerRoot, "node_modules", ".bin", name),
+    join(consumerRoot, "node_modules", ".bin", "sharnessd"),
     ["--help"],
     { cwd: consumerRoot, env: { NODE_PATH: "" } },
   ).pipe(
     Effect.flatMap((printed) =>
       requireCondition(
-        printed.includes(`Usage: ${name}`),
-        `expected the installed ${name} --help to print its usage, got:\n${printed}`,
+        printed.includes("Usage: sharnessd"),
+        `expected the installed sharnessd --help to print its usage, got:\n${printed}`,
       ),
     ),
   );

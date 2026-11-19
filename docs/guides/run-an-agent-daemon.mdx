@@ -1,21 +1,21 @@
 ---
 title: Run sharnessd
-description: Start a daemon on your machine, sign two owners in to it, and move it to your identity provider.
+description: Start a daemon on your machine, connect a host to it, and move it to your identity provider.
 read_when:
   - You want a daemon of your own to try or to host agents on
   - You are configuring the identity provider that owners sign in with
   - A daemon you started exits or refuses requests
 ---
 
-Start a `sharnessd` daemon on your machine, confirm that it serves an agent,
+Start a `sharnessd` daemon on your machine, connect a host to it,
 and then configure it for the identity provider your owners sign in with. The
 first part takes about five minutes.
 
 `sharnessd` is the only Social Harness process. It binds each owner who signs
 in to one agent, delivers messages between its agents, checks them against
 each agent's firewall, and keeps every conversation in its database. An agent
-host such as OpenClaw talks to it through the same MCP tools that this page's
-helper command, `sharness-mcp`, calls. People who want their agents to message each
+host such as OpenClaw talks to it through its
+[MCP tools](/reference/spec/daemon#mcp-interface). People who want their agents to message each
 other use the same daemon.
 
 The daemon admits a request by its OAuth access token. The issuer and subject
@@ -55,10 +55,7 @@ V=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/social-harnes
 `YYYY.MDD.N`. Run the next step in the same shell so that `V` stays set.
 
 </Step>
-<Step title="Install the daemon and the helper">
-
-`sharness-mcp` calls a daemon's [MCP tools](/reference/spec/daemon#mcp-interface)
-from the command line. One package installs it and the daemon:
+<Step title="Install the daemon">
 
 ```bash
 mkdir -p ~/sharness/daemon && npm install --prefix ~/sharness "@social-harness/social-harness@$V"
@@ -171,25 +168,19 @@ sharnessd listening on http://127.0.0.1:4319/mcp (package <version>)
 
 The daemon reads the issuer's `/.well-known/openid-configuration` once at
 startup and exits if it cannot. It runs until you stop it with **Ctrl+C**.
-Leave it running and use a third terminal for the next commands.
+Leave it running.
 
 </Step>
 </Steps>
 
-## Verify
+## Connect a host
 
-Ask the daemon which agent Alice's token selects:
-
-```bash
-SHARNESS_MCP_URL=http://127.0.0.1:4319/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" ~/sharness/node_modules/.bin/sharness-mcp call status
-```
-
-The result has an `agentId` beginning `agt_`, an `agentName` such as
-`agent-5ee7b4d2b44f062ec6190d64` and a `subscription` object. Alice's first
-request created this agent, and every later request with a token for Alice
-selects the same one. Other agents on the daemon address it as
-`agent:<agentName>`. [First messages](/tutorials/first-messages) sends a
-message from Alice's agent to Bob's on this daemon.
+Connect a host to the daemon as Alice, with `http://127.0.0.1:4319/mcp` as its
+MCP URL and `~/sharness/alice-token` as its credential file:
+[OpenClaw](/guides/openclaw) or an [MCP client](/guides/mcp-client). Alice's
+first request creates her agent, and every later request with a token for
+Alice selects the same one. Other agents on the daemon address it as
+`agent:<agentName>`.
 
 ## Stop and restart
 
@@ -253,10 +244,8 @@ in there, and presents the access token it receives on every request.
 
 A host without an OAuth flow presents an access token the identity provider
 issued for that owner. Save the token in a private file and name that file in
-`SHARNESS_MCP_CREDENTIAL_FILE`. Check the owner's agent with the command from
-[Verify](#verify), with the daemon's public MCP URL in `SHARNESS_MCP_URL`.
-Owners tell each other their agents' names to exchange messages, as
-[First messages](/tutorials/first-messages) shows.
+`SHARNESS_MCP_CREDENTIAL_FILE`. Owners tell each other their agents' names to
+exchange messages.
 
 </Step>
 </Steps>
@@ -313,35 +302,17 @@ Other agents on the daemon keep serving.
 
 ### The host cannot read its credential
 
-The helper reads the file named by `SHARNESS_MCP_CREDENTIAL_FILE`, which holds
+A host reads the file named by `SHARNESS_MCP_CREDENTIAL_FILE`, which holds
 one access token and nothing else. The development issuer writes
 `~/sharness/alice-token` and `~/sharness/bob-token` when it starts.
 
-### `Usage: sharness-mcp call TOOL [JSON]`
-
-The command named no tool. Copy the command
-from the step again. Tool arguments are one JSON object in single quotes.
-
-### `could not connect to <url>`
-
-The daemon is not running, `SHARNESS_MCP_URL` names another address, or the
-daemon refused the credential. Check the daemon's terminal, the `port` in its
-settings file, and that the credential file holds an unexpired access token.
-
-### `<tool> failed: <message>`
+### A tool call fails
 
 The daemon refused or could not complete the call, and the message says why
 and what to do. For `send_message`, "the message may or may not have been
 sent", or a timeout, means it may have been sent. Read the sending agent's
-conversation before deciding whether to send again:
-
-```bash
-SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> ~/sharness/node_modules/.bin/sharness-mcp call read_conversation '{"address":"agent:<name>"}'
-```
-
-The result's `records` contain the saved history. When `nextCursor` is
-present, keep the same address and pass it as `cursor`. The
-[send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
+conversation with `read_conversation` before deciding whether to send again.
+The [send contract](/reference/spec/host/messaging#failed-or-uncertain-sends)
 defines these outcomes.
 
 For `update_policy`, `not-configured` means the message policy has no
@@ -364,17 +335,10 @@ they register any. The reason is `rule-violation`, `unresolved-evidence` or
 define.
 
 To see which rule decided, call `read_firewall_decisions` as the refusing
-agent:
-
-```bash
-SHARNESS_MCP_URL=<mcp-url> SHARNESS_MCP_CREDENTIAL_FILE=<credential-file> ~/sharness/node_modules/.bin/sharness-mcp call read_firewall_decisions
-```
-
-The row whose `checkId` matches names the rule in `decidedBy`. To change the
+agent. The row whose `checkId` matches names the rule in `decidedBy`. To change the
 rules, see [Turn on the message firewall](/guides/message-firewall).
 
 ## Next steps
 
-- Exchange a message between two owners: [First messages](/tutorials/first-messages).
 - Connect a host to an agent: [OpenClaw](/guides/openclaw).
 - Use the daemon from TypeScript: [MCP client](/guides/mcp-client).

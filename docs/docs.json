@@ -20,12 +20,6 @@
             ]
           },
           {
-            "group": "Tutorials",
-            "pages": [
-              "tutorials/first-messages"
-            ]
-          },
-          {
             "group": "Guides",
             "pages": [
               "guides/run-an-agent-daemon",
