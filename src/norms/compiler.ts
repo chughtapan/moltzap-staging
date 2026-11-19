@@ -6,12 +6,12 @@
 
 import { Data, Effect, Either, Schema } from "effect";
 import { createHash } from "node:crypto";
-import { RequestedSchema } from "../communication/index.js";
 import { readSExpressions, type SExpression } from "../encoding.js";
 import {
   type CompiledContract,
   compiledContractSchema,
   type MessageForm,
+  RequestedSchema,
 } from "../firewall/index.js";
 
 /** Source diagnostics identify a declaration without echoing private document text. */

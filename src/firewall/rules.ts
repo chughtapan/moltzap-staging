@@ -308,9 +308,6 @@ const document = Schema.Struct({
   facts: Schema.optionalWith(Schema.Array(OwnerFact), {
     default: () => [],
   }),
-  maximumHistoryRecords: Schema.optional(
-    Schema.Int.pipe(Schema.between(1, 1024)),
-  ),
   maximumConcurrentChecks: Schema.optional(
     Schema.Int.pipe(Schema.between(1, 32)),
   ),

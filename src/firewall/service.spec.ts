@@ -181,6 +181,26 @@ describe("Firewall.readDecisions", () => {
 });
 
 describe("Firewall.checkOutgoing", () => {
+  it("allows every message of an agent without a message policy without reading its evidence", () =>
+    withFirewall(
+      {},
+      (firewall, self) =>
+        Effect.gen(function* () {
+          const unread = () => Effect.dieMessage("Evidence was read");
+          const sent = yield* firewall.checkOutgoing(
+            yield* outgoing(self),
+            unread,
+          );
+          const received = yield* firewall.checkIncoming(
+            yield* incoming(self),
+            unread,
+          );
+
+          expect([sent.kind, received.kind]).toEqual(["allowed", "allowed"]);
+        }),
+      (agentKey) => Firewall.layer(agentKey),
+    ));
+
   it("rolls back a completed decision with the enclosing handoff transaction", () =>
     Effect.gen(function* () {
       yield* withFirewall(
