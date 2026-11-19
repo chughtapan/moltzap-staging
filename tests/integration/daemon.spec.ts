@@ -226,7 +226,11 @@ it(
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
       expect(client.agent).toEqual(sent.client);
       expect(server.agent).toEqual(sent.server);
-      expect((yield* awaitInbox(client)).entries).toMatchObject([
+      const pending = yield* awaitInbox(client).pipe(
+        Effect.delay("50 millis"),
+        Effect.repeat({ until: (page) => page.entries.length > 1 }),
+      );
+      expect(pending.entries).toMatchObject([
         { message: { msgId: sent.ids[1] } },
         { message: { msgId: sent.ids[2] } },
       ]);
