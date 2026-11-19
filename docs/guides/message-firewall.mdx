@@ -62,8 +62,8 @@ copied `message-policy.json` to select the rules and provider you want:
 {/* message-policy-example:end */}
 
 - `text.fixedBehaviors` selects rule directories relative to this policy file.
-  The rules cover credential disclosure, empty acknowledgements, readable peer
-  messages, impersonation and attempts to bypass adopted policy. A model judges
+  The rules cover credential disclosure, empty acknowledgements,
+  impersonation and attempts to bypass adopted policy. A model judges
   them, so test their quality for your application before your agent
   relies on them.
   Each rule's body and frontmatter state its policy, guidance and feedback.
@@ -104,105 +104,22 @@ hidden rule.
 
 ## If this does not work
 
-<a id="message-policy-file" />
-
-### Policy file cannot be read
+### Policy or provider credential is invalid
 
 ```text
-messagePolicyFile must name a readable regular file of at most 1 MiB
+The configured message policy or provider credential is invalid
 ```
 
-The setting names no file, a directory or special file, or a file larger than
-1 MiB. Point it at the `message-policy.json` you wrote, then run configure again and restart the
-daemon.
+The daemon could not load the policy or the provider key at startup. Check
+each of these, then restart the daemon:
 
-<a id="message-policy-document" />
-
-### Policy document is invalid
-
-```text
-messagePolicyFile must contain a valid org.social-harness/message-policy/v2 document
-```
-
-The file is not a valid policy. Check the document against the policy format:
-
-- A property path, such as `mode`, names a property the format does not
-  accept. The file takes only the properties the format names, so check
-  spelling against the specification's
-  [property table](/reference/spec/firewall/message-policy#message-policy-file).
-- `(document)` names a rule about the whole file. Text rules need
-  a `decisionProvider`, and a text rule id can appear only once across
-  `fixedRules` and `initialRules`. Add the provider or rename the repeated id.
-- `text.initialRules` names initial rules the daemon cannot install: a
-  rule without a valid `applies` direction, or more than 256 rules. Set its
-  direction to `incoming`, `outgoing` or `both`, or trim the list.
-
-<a id="rules-not-installed" />
-
-### Rules could not be installed
-
-The error includes `its rules could not be installed (<reason>)`.
-
-The file is valid, but the daemon could not install its rules beside the
-editable rules its SQL database holds. `invalid-rule` means an initial or
-stored rule is invalid, such as one id given twice. `fixed-rule` means an
-initial or stored rule reuses the id of a fixed rule. Rename the
-initial rule in the file. A stored rule, such as one the agent added with
-`update_policy`, keeps its id: take the colliding fixed rule out of the file,
-start the daemon, remove the stored rule with `update_policy`
-`{"remove": ["<id>"]}`, then put the fixed rule back and restart.
-
-For `build-failed`, check the
-[request budget](/reference/spec/firewall/message-policy#editable-text-policy).
-A reduced `textSettings.maximumRequestBytes` can reject stored rules. Restore
-the previous budget to start the daemon, then shorten or remove rules through
-`update_policy` before reducing it again.
-
-<a id="stored-text-rules" />
-
-### Stored rules need a natural-language policy
-
-The error begins:
-
-```text
-messagePolicyFile configures no natural-language policy, but the SQL database holds natural-language rules
-```
-
-The daemon retains initial rules and rules added through `update_policy`
-across restarts. Restore the `text` block and a decision provider, then
-restart.
-
-To remove the rules, use the owner tools:
-
-1. Read the editable rule ids from `read_policy`.
-2. Remove them with `update_policy`, using `{"remove": ["<id>"]}` for each id.
-3. Remove the `text` block and restart.
-
-Keep the SQL database. Replacing it loses the daemon's agents and their
-conversations.
-
-<a id="decision-provider-key-file" />
-
-### Decision-provider key cannot be read
-
-```text
-decisionProviderKeyFile must name a readable file
-```
-
-The policy has text rules, and the setting is unset or names a
-file the daemon cannot read. Set it to a readable file that holds only the
-provider's API key.
-
-<a id="decision-provider-key" />
-
-### Key file contains extra text
-
-```text
-decisionProviderKeyFile must contain one key without inner whitespace
-```
-
-The key file holds more than the key, such as a label or a second line. Leave
-only the key in the file; a trailing newline is fine.
+- `messagePolicyFile` names a readable regular file of at most 1 MiB.
+- The file is a valid policy. It takes only the properties in the
+  specification's
+  [property table](/reference/spec/firewall/message-policy#message-policy-file),
+  and text rules need a `decisionProvider`.
+- `decisionProviderKeyFile` names a readable file that holds only the
+  provider's API key; a trailing newline is fine.
 
 To add your own rules, follow the
 [editable policy contract](/reference/spec/firewall/message-policy#editable-text-policy).

@@ -85,7 +85,7 @@ pnpm arch:check
 ```
 
 Analysis exits with status 0 when it succeeds, 1 for findings, or 2 when it
-cannot analyze a project. Each package's hand-maintained
+cannot analyze a project. The root package's hand-maintained
 `safer-architecture.config.json` owns its budgets, domains, and entrypoints.
 Explain changes to those constraints or `safer-arch-ignore` directives in the
 PR description so reviewers can assess them.
@@ -95,14 +95,6 @@ PR description so reviewers can assess them.
 CI builds every image a release publishes. See the
 [image contract](/reference/spec/releases#service-images) for published names,
 architectures, and signature requirements.
-
-### Unsupported Dockerfile form
-
-If the command reports an unsupported instruction, it names the file, line,
-and form it cannot interpret. Follow the existing two-stage recipe in
-`images/daemon/Dockerfile`. A new form needs support in the input-key
-calculator and its behavior checks in the same change. For an unsupported
-`.dockerignore` pattern, use the supported `*`, `**`, `?`, and `!` forms.
 
 ## Documentation
 

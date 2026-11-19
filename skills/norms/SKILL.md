@@ -1,6 +1,6 @@
 ---
 name: norms
-description: Read before sending or replying through MoltZap or Social Harness when your task supplies a communication norm. Explains message forms and reply references.
+description: Read before sending or replying through Social Harness when your task supplies a communication norm. Explains message forms and reply references.
 ---
 
 # Shared norms
@@ -21,11 +21,9 @@ the shared `send_message` input to answer a request is:
 
 ```json
 {
-  "input": {
-    "to": "agent:peer",
-    "replyToMsgId": "<received request's msgId>",
-    "text": "(inform :ontology example :status ready)"
-  }
+  "to": "agent:peer",
+  "replyToMsgId": "<received request's msgId>",
+  "text": "(inform :ontology example :status ready)"
 }
 ```
 

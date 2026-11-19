@@ -32,7 +32,7 @@ incoming policy checks, and Bob answers the same way.
 
 Bob calls `receive_messages` with no arguments to read allowed messages and
 any firewall guidance. Reading marks returned entries delivered. Their saved
-content remains available through history and event lookup.
+content remains available through history.
 
 Each call to `send_message` creates new work. Retrying a send whose outcome
 is unknown can create another message. The
@@ -86,7 +86,7 @@ once and answers `outcome-unknown` when the daemon gives no readable answer.
 A failed call returns a result marked as an error, whose text is for the model
 and whose structured content names a `reason`. Reading the MCP
 inbox records delivery before host callbacks run. Callback failures stop
-reception; retained event lookup and history remain available. Closing the
+reception; history remains available. Closing the
 connection interrupts active reception and pending callbacks.
 
 OpenClaw and NanoClaw supply the access token the daemon admits. The connection

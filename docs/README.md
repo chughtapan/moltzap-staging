@@ -13,10 +13,9 @@ The [specifications](./reference/spec/index.md) are manually maintained
 contracts, organized by the responsibility that owns each guarantee. Their
 index maps reader questions to the contract that answers them.
 API reference is generated from TypeScript and JSDoc into
-`dist/api`. Follow the [documentation instructions](./guides/contributing.mdx#documentation)
+`out/api`. Follow the [documentation instructions](./guides/contributing.mdx#documentation)
 to build it. Keep bugfix rationale and investigation history in issues, pull
-requests, and commits. Internal decisions belong in the maintainer records
-linked from [CONTRIBUTING.md](../CONTRIBUTING.md#maintainer-records).
+requests, and commits. Internal decisions belong in the maintainer records.
 
 Keep each fact with its owning document and link to it from other pages.
 Create a page when a reader needs it. Use the
