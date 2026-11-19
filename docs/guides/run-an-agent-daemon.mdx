@@ -321,8 +321,8 @@ started is no longer accepted.
 ### MCP returns HTTP 403
 
 The request's `Host` header is not the daemon's. The daemon accepts only the
-host of its `resource`, port included, and a request with an `Origin` header
-needs that origin in `allowedOrigins`.
+host of its `resource`, port included, and refuses a request with an `Origin`
+header.
 
 ### MCP returns HTTP 503
 

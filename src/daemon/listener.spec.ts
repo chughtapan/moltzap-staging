@@ -7,13 +7,9 @@ import { mcpFixture, mcpRequest } from "./__tests__/mcp-fixtures.js";
 const resource = new URL("https://mcp.example.test/mcp");
 const owner = "owner-subject";
 const scope = "use:mcp";
-const allowedOrigin = "https://owner.example.test";
 
 const fixture = Effect.gen(function* () {
-  const test = yield* mcpFixture({
-    resource,
-    allowedOrigins: [allowedOrigin],
-  });
+  const test = yield* mcpFixture({ resource });
   const token = (
     changes: {
       readonly audience?: string;
@@ -55,12 +51,12 @@ const longerScope = fc
   .map((more) => `${scope}${more}`);
 
 /**
- * A request the resource admits: its Host in any letter case, no Origin or the
- * allowed one, and the configured scope anywhere among those granted.
+ * A request the resource admits: its Host in any letter case, no Origin, and
+ * the configured scope anywhere among those granted.
  */
 const admissible = fc.record({
   host: fc.mixedCase(fc.constant(resource.host)),
-  origin: fc.constantFrom(undefined, allowedOrigin),
+  origin: fc.constant(undefined),
   subject: fc.string({ minLength: 1 }),
   granted: fc
     .tuple(fc.array(longerScope), fc.array(longerScope))
@@ -77,7 +73,7 @@ const defect = fc.oneof(
 
 /**
  * The headers of a caller the resource does not trust: another Host, or the
- * resource's Host with an Origin that is not allowed.
+ * resource's Host with an Origin.
  */
 const untrusted = fc.oneof(
   fc.record({
@@ -86,7 +82,7 @@ const untrusted = fc.oneof(
   }),
   fc.record({
     host: fc.constant(resource.host),
-    origin: fc.webUrl().filter((origin) => origin !== allowedOrigin),
+    origin: fc.webUrl(),
   }),
 );
 

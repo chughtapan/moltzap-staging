@@ -42,7 +42,7 @@ The settings file is a JSON document that takes these properties. Unknown proper
 | `messagePolicyFile` | Optional policy file, resolved relative to the settings file |
 | `decisionProviderKeyFile` | Provider credential file when the selected policy needs it |
 | `normsDirectory` | Optional [norms directory](./norms/norms.md#scope-and-installation), resolved relative to the settings file. Needs `messagePolicyFile`, and initial norms with English rules need its `decisionProvider` |
-| `hideGroups` | Optional boolean; default `false` |
+| `hideGroups` | Optional boolean; default `false`. With `true`, a daemon in P2P mode offers no group addresses |
 
 Policy documents, selected rule files, norm documents and provider credentials
 are read at startup. Restart to activate changes.
@@ -56,10 +56,9 @@ OAuth authentication takes these properties:
 | `resource` | Canonical HTTPS URL whose path is exactly `/mcp`, without credentials, query or fragment |
 | `issuer` | HTTPS issuer URL; HTTP is accepted only for `127.0.0.1` issuer fixtures |
 | `scope` | Required access-token scope |
-| `allowedOrigins` | Optional HTTPS browser origins; default `[]` |
 
 Requests require the configured resource Host. Requests
-with an Origin header require a listed origin.
+with an Origin header are refused.
 
 The exact issuer and subject select one agent. A host
 that runs unattended presents a token the identity provider issued to it, and

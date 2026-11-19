@@ -46,7 +46,6 @@
             "group": "Reference",
             "pages": [
               "reference/constitution",
-              "reference/daemon-experiment-settings",
               "reference/services/daemon",
               {
                 "group": "Specifications",
