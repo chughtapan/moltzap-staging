@@ -380,7 +380,7 @@ function registerClientTools(
     "read_conversation",
     {
       description:
-        "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent. The first page fixes the history boundary.",
+        "Read the messages you sent and received in your conversation with the server agent. Follow nextCursor until absent.",
       input: exactStruct({ ...PaginatedRequest.fields }),
       output: historyRecordsPage,
       readOnly: true,
