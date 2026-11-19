@@ -23,7 +23,7 @@ import {
 } from "../database/index.js";
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
-import { type AgentCard, type AgentName, Identity } from "../identity.js";
+import { type AgentName, Identity } from "../identity.js";
 import { clientToolDefinitions, toolDefinitions } from "../mcp/tools.js";
 import {
   compiledPolicyEdit,
@@ -92,18 +92,15 @@ export function roleOf(
   if (serverAgentName === undefined) {
     return {
       hideGroups: settings.hideGroups,
-      permits: undefined,
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,
       tools: peerTools(),
     };
   }
-  const permits = serverAgentAndOne(serverAgentName);
   if (agentName === serverAgentName) {
     return {
       hideGroups: true,
-      permits,
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       firewall: checked(),
       started: (services: Context.Context<never>) =>
@@ -114,7 +111,6 @@ export function roleOf(
   const unchecked = Firewall.layer(agentKey);
   return {
     hideGroups: true,
-    permits,
     withheldReply: undefined,
     firewall:
       norms === undefined
@@ -181,13 +177,6 @@ export const runDaemon = Effect.gen(function* () {
   Effect.withSpan("runDaemon"),
   Effect.provide(Layer.merge(fileSystem, spanExport)),
 );
-
-/** Whether `members` are the server agent and one other agent. */
-function serverAgentAndOne(serverAgentName: AgentName) {
-  return (members: readonly AgentCard[]) =>
-    members.length === 2 &&
-    members.some((member) => member.agentName === serverAgentName);
-}
 
 /** Norms a client reads: the ones the server agent holds, once it has started. */
 function serverAgentNormsLayer(
@@ -413,7 +402,6 @@ function startAgent(
             card,
             consumers,
             maximumHistoryRecords: policy?.maximumHistoryRecords,
-            permits: role.permits,
           }),
         ),
         Layer.provideMerge(

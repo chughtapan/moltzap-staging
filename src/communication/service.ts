@@ -102,8 +102,6 @@ export interface CommunicationSettings {
   readonly card: AgentCard;
   /** The most messages one newest-first history read may ask for. */
   readonly maximumHistoryRecords?: number;
-  /** Whether these agents may share a conversation. Without it any may. */
-  readonly permits?: (members: readonly AgentCard[]) => boolean;
   /**
    * The latch each agent's consumer waits on, by agent key. Every agent of a
    * daemon is given the same map, so a send opens its recipients' latches.
@@ -605,7 +603,7 @@ function messageConversation(
     const local = members.some((member) =>
       Schema.equivalence(AgentCard)(member, settings.card),
     );
-    if (!distinct || !local || settings.permits?.(members) === false) {
+    if (!distinct || !local) {
       return yield* refused("membership-invalid");
     }
     return yield* deriveConversationId(memberIds);
