@@ -51,7 +51,7 @@ import {
 } from "./messages.js";
 
 /** Selects a paged forward traversal or one bounded recent window of the conversation among `members`, given in any order. */
-export type HistoryQuery =
+type HistoryQuery =
   | (PaginatedRequest & {
       readonly members: readonly AgentCard[];
       readonly order?: "oldest";
