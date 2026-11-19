@@ -340,11 +340,11 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
         decide: (request) => Effect.succeed(decisionResponse(request)),
       }),
     });
-    const plain = yield* subject.message("Hello, can you help?");
-    yield* subject.deliver(plain);
-    const outOfTurn = yield* subject.message("(close :ontology exchange)");
-    yield* subject.deliver(outOfTurn);
-    const { decisions } = yield* waitForDecisions(runtime, 4);
+    const plain = yield* subject.sendFrom({ text: "Hello, can you help?" });
+    const outOfTurn = yield* subject.sendFrom({
+      text: "(close :ontology exchange)",
+    });
+    const { decisions } = yield* runtime.firewall.readDecisions({});
     expect(
       decisions
         .map(({ direction, decision }) => `${direction} ${decision}`)
@@ -358,27 +358,25 @@ it("answers what an agent that holds norms withholds, plain text and an act out 
     expect(subject.submitted).toMatchObject(
       [plain, outOfTurn].map((withheld) => ({
         recipients: [subject.bob],
-        replyToMsgId: withheld.msgId,
+        replyToMsgId: withheld.id,
         content: [{ type: "text", text: withheldReply }],
       })),
     );
-    yield* subject.deliver(yield* subject.message("(open :ontology exchange)"));
-    expect((yield* waitForInbox(runtime)).entries).toHaveLength(1);
+    yield* subject.sendFrom({ text: "(open :ontology exchange)" });
+    expect(yield* runtime.inbox).toHaveLength(1);
   }));
 
 it("answers an act its text rule withholds with that rule's feedback when it holds norms", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
-    const runtime = yield* subject.open({
+    yield* subject.open({
       contracts: [exchange],
       policy: composedPolicy(incomingViolation, "reply"),
     });
-    const act = yield* subject.message("(open :ontology exchange)");
-    yield* subject.deliver(act);
-    yield* waitForDecisions(runtime, 2);
+    const act = yield* subject.sendFrom({ text: "(open :ontology exchange)" });
     expect(subject.submitted).toMatchObject([
       {
-        replyToMsgId: act.msgId,
+        replyToMsgId: act.id,
         content: [{ type: "text", text: "Keep private information private." }],
       },
     ]);
