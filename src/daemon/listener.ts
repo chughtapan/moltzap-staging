@@ -50,14 +50,12 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
 >(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
   const admit = yield* tokenAdmission(authentication);
-  const trusted = trustedCallers(authentication);
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const { host, origin } = request.headers;
     if (
-      host === undefined ||
-      !trusted.host(host) ||
-      (origin !== undefined && !trusted.origin(origin))
+      host?.toLowerCase() !== authentication.resource.host.toLowerCase() ||
+      origin !== undefined
     ) {
       return HttpServerResponse.text("Forbidden", { status: 403 });
     }
@@ -136,18 +134,6 @@ function limitResponseStream(
     ),
     Match.orElse(() => response),
   );
-}
-
-/**
- * The Host and Origin headers a request may carry: the daemon is reached at
- * its resource and from its allowed origins.
- */
-function trustedCallers(authentication: McpAuthentication) {
-  return {
-    host: (host: string) =>
-      host.toLowerCase() === authentication.resource.host.toLowerCase(),
-    origin: (origin: string) => authentication.allowedOrigins.includes(origin),
-  };
 }
 
 /** Metadata and bearer challenges derive from the same fixed resource. */

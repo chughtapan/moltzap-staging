@@ -36,7 +36,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readonly serverAgentName?: AgentName;
     /** The daemon's resource, whose host requests name. */
     readonly resource?: URL;
-    readonly allowedOrigins?: readonly string[];
     readonly harness?: Partial<Context.Tag.Service<typeof SocialHarness>>;
   } = {},
 ) {
@@ -116,7 +115,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
       resource,
       issuer: issuer.issuer,
       scope: requiredScope,
-      allowedOrigins: options.allowedOrigins ?? [],
     },
     (admitted) =>
       Ref.update(owners, (values) => [...values, admitted]).pipe(
