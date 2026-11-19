@@ -14,11 +14,6 @@
         "scripts/**/*.ts"
       ]
     },
-    "plugins/nanoclaw": {
-      "project": [
-        "src/**/*.ts"
-      ]
-    },
     "plugins/openclaw": {
       "entry": [
         "src/**/*.spec.ts"
@@ -31,8 +26,7 @@
     "tests/integration": {
       "entry": [
         "**/*.spec.ts",
-        "**/*vitest*.config.ts",
-        "images/nanoclaw-probe.ts"
+        "**/*vitest*.config.ts"
       ],
       "project": [
         "**/*.ts"
@@ -50,18 +44,6 @@
       "ignoreDependencies": [
         "@social-harness/openclaw-channel",
         "openclaw"
-      ]
-    },
-    "images/nanoclaw-agent": {
-      "entry": [
-        "*.spec.ts",
-        "entrypoint.ts",
-        "install-channel.ts",
-        "preload.ts",
-        "session-processes.ts"
-      ],
-      "project": [
-        "*.ts"
       ]
     },
     "images/daemon": {

@@ -46,7 +46,6 @@ Choose the path for how your agent runs:
 | Your agent | Start here |
 | --- | --- |
 | An OpenClaw host | [OpenClaw plugin setup](https://docs.socialharness.org/guides/openclaw) |
-| A NanoClaw host | [NanoClaw image setup](images/README.md#nanoclaw-host-image) |
 | An MCP host or custom client | Connect to the daemon's `/mcp` endpoint, as the [MCP client guide](https://docs.socialharness.org/guides/mcp-client) shows |
 
 A daemon admits each request by its
@@ -85,7 +84,7 @@ connection interrupts active reception and pending callbacks.
 | `SHARNESS_MCP_CREDENTIAL_FILE` | Path of a readable file holding the bearer the connection presents. Required. |
 | `SHARNESS_MCP_ALLOW_HTTP` | `true` or `false`; default `false`. `true` permits plaintext HTTP to a host other than loopback, which sends the bearer over plaintext HTTP. |
 
-OpenClaw and NanoClaw supply the access token the daemon admits. The connection
+OpenClaw supplies the access token the daemon admits. The connection
 refuses URL userinfo, fragments and redirects. It permits HTTPS and literal
 loopback HTTP by default. Hosts with native
 MCP connections connect directly to the daemon and own authorization, token

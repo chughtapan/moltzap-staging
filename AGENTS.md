@@ -39,7 +39,7 @@ and delivers their messages. npm packages use the `@social-harness` scope.
 Executables use `sharness*`, environment variables use `SHARNESS_*`, and
 protocol namespaces use `org.social-harness/*`.
 
-Generic OpenClaw and NanoClaw images and their stand-in live tests live under
+The daemon and OpenClaw images live under
 `images/`; private product overlays stay in deployment. Image publication follows
 [Publication and versions](docs/reference/spec/releases.md#publication-and-versions).
 
