@@ -8,7 +8,6 @@ import {
   Config,
   Data,
   Effect,
-  Either,
   Layer,
   Option,
   Redacted,
@@ -31,7 +30,11 @@ import {
 } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 
-/** Messages identify the failed operation without disclosing documents or credentials. */
+/**
+ * Messages identify the failed operation without disclosing documents or credentials.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
@@ -230,9 +233,6 @@ const otelVariable = (name: string) =>
 
 const otelVariables = Config.all({
   endpoint: otelVariable("OTEL_EXPORTER_OTLP_ENDPOINT"),
-  tracesEndpoint: otelVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
-  tracesProtocol: otelVariable("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
-  protocol: otelVariable("OTEL_EXPORTER_OTLP_PROTOCOL"),
   serviceName: otelVariable("OTEL_SERVICE_NAME"),
   resourceAttributes: otelVariable("OTEL_RESOURCE_ATTRIBUTES"),
 });
@@ -256,51 +256,6 @@ function spanServiceName(otel: OtelVariables): string {
 }
 
 /**
- * Appends `v1/traces` while preserving the query. Invalid endpoints pass through
- * to URL validation.
- */
-function tracesUnder(endpoint: string): string {
-  if (!URL.canParse(endpoint)) {
-    return endpoint;
-  }
-  const url = new URL(endpoint);
-  url.pathname = `${url.pathname.replace(/\/$/u, "")}/v1/traces`;
-  return url.href;
-}
-
-/**
- * Selects the traces endpoint or appends `v1/traces` to the base endpoint.
- * Rejects non-HTTP(S) URLs and protocols other than `http/protobuf` before the
- * exporter can substitute a default.
- */
-function spanExportUrl(
-  endpoint: string,
-  otel: OtelVariables,
-): Either.Either<string, DaemonConfigurationError> {
-  const protocol = otel.tracesProtocol.pipe(
-    Option.orElse(() => otel.protocol),
-    Option.getOrElse(() => "http/protobuf"),
-  );
-  if (protocol !== "http/protobuf") {
-    return Either.left(
-      refused(
-        "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
-      ),
-    );
-  }
-  const url = Option.getOrElse(otel.tracesEndpoint, () =>
-    tracesUnder(endpoint),
-  );
-  return URL.canParse(url) && /^https?:$/u.test(new URL(url).protocol)
-    ? Either.right(url)
-    : Either.left(
-        refused(
-          "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
-        ),
-      );
-}
-
-/**
  * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
  * The logger remains installed after export closes.
  */
@@ -315,24 +270,22 @@ const exportDiagnostics = Layer.effectDiscard(
 
 /**
  * Exports spans as OTLP/HTTP protobuf when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
- * Invalid endpoints and unsupported protocols fail startup. OpenTelemetry reads
- * its remaining exporter, batch and resource settings from standard variables.
+ * OpenTelemetry reads the endpoint and its remaining exporter, batch and
+ * resource settings from the standard variables, and warns of one it cannot use.
  */
 // eslint-disable-next-line agent-code-guard/require-span-on-exported-effect -- The exporter installs tracing; tracing its acquisition changes the daemon's exported spans.
-export const spanExport: Layer.Layer<never, DaemonConfigurationError> =
-  Layer.unwrapEffect(
-    Effect.gen(function* () {
-      const otel = yield* otelVariables.pipe(Effect.orDie);
-      if (Option.isNone(otel.endpoint)) {
-        return Layer.empty;
-      }
-      const url = yield* spanExportUrl(otel.endpoint.value, otel);
-      return NodeSdk.layer(() => ({
-        resource: {
-          serviceName: spanServiceName(otel),
-          serviceVersion: packageVersion,
-        },
-        spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter({ url })),
-      })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
-    }),
-  );
+export const spanExport = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const otel = yield* otelVariables.pipe(Effect.orDie);
+    if (Option.isNone(otel.endpoint)) {
+      return Layer.empty;
+    }
+    return NodeSdk.layer(() => ({
+      resource: {
+        serviceName: spanServiceName(otel),
+        serviceVersion: packageVersion,
+      },
+      spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+    })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
+  }),
+);

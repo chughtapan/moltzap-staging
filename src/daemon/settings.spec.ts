@@ -2,18 +2,11 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import {
-  ConfigProvider,
-  Effect,
-  Either,
-  FastCheck as fc,
-  Layer,
-  Redacted,
-} from "effect";
+import { ConfigProvider, Effect, FastCheck as fc, Redacted } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { loadDaemonSettings, spanExport } from "./settings.js";
+import { loadDaemonSettings } from "./settings.js";
 
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
@@ -294,83 +287,3 @@ it("refuses a server agent without its credential and names the variable to set"
     const failure = yield* test.load.pipe(Effect.flip);
     expect(failure.message).toContain(serverCredentialVariable);
   }).pipe(Effect.provide(NodeContext.layer)));
-
-const collector = "http://127.0.0.1:4318";
-const protocolVariables = [
-  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
-  "OTEL_EXPORTER_OTLP_PROTOCOL",
-];
-const endpointVariables = [
-  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_ENDPOINT",
-];
-
-/** What span export does with standard OTLP variables: the variables a refusal's message names, or none when it starts. */
-const spanExportRules: ReadonlyArray<{
-  readonly rule: string;
-  readonly variables: Readonly<Record<string, string>>;
-  readonly refusal?: readonly string[];
-}> = [
-  {
-    rule: "refuses a general protocol other than http/protobuf",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-    refusal: protocolVariables,
-  },
-  {
-    rule: "refuses a traces protocol other than http/protobuf",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc",
-    },
-    refusal: protocolVariables,
-  },
-  {
-    rule: "lets the traces protocol replace the general one",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-  },
-  {
-    rule: "refuses an endpoint that is not an http or https URL",
-    variables: { OTEL_EXPORTER_OTLP_ENDPOINT: "collector:4318" },
-    refusal: endpointVariables,
-  },
-  {
-    rule: "refuses a traces endpoint that is not an http or https URL",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "collector:4318/v1/traces",
-    },
-    refusal: endpointVariables,
-  },
-  {
-    rule: "reads no other exporter variable while the endpoint is blank",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: " ",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-  },
-];
-
-it.each(spanExportRules)("span export $rule", ({ variables, refusal }) =>
-  Effect.gen(function* () {
-    const started = yield* Layer.build(spanExport).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(variables))),
-      ),
-      Effect.either,
-    );
-
-    expect(
-      Either.match(started, {
-        onLeft: ({ message }) => message.match(/OTEL_[A-Z_]+/gu),
-        onRight: () => undefined,
-      }),
-    ).toEqual(refusal);
-  }),
-);
