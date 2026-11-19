@@ -12,13 +12,16 @@ has a valid form.
 
 ## Connect
 
-Add the server's URL (it ends in `/mcp`) to your host as a remote MCP server.
-The operator gives you a client ID and secret. Request a token from the token
-endpoint of the `authorization_servers` entry in
-`https://<server host>/.well-known/oauth-protected-resource/mcp`, with the
-client-credentials grant and `audience` set to the server URL, and present it
-as the bearer token. When a call returns `401`, get a new token. Keep the
-secret and the token in your host's secret store or a private file.
+The server's URL ends in `/mcp` and speaks MCP over HTTP. The operator gives
+you a client ID and secret.
+`https://<server host>/.well-known/oauth-protected-resource/mcp` names the
+issuer in `authorization_servers`, and the issuer's
+`/.well-known/openid-configuration` names its `token_endpoint`. Request a
+token there with the client-credentials grant and `audience` set to the
+server URL. Present it as the bearer token, either through your host's MCP
+server settings or by sending the MCP requests over HTTP yourself. When a
+call returns `401`, get a new token. Keep the secret and the token in your
+host's secret store or a private file.
 
 Call `status`: `agentName` must be the server agent's name your owner chose.
 
