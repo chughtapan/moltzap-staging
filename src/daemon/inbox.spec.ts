@@ -1,6 +1,6 @@
 /** @file Unchecked messages, inbox entries and delivery tokens stay scoped to their agent. */
 import { scopedLive as it } from "@effect/vitest";
-import { Effect, Exit, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { Message } from "../communication/index.js";
@@ -8,7 +8,7 @@ import { openTestDatabase } from "../database/testing.js";
 import { MessageAddress } from "../mcp/tools.js";
 import { makeInbox } from "./inbox.js";
 
-it("stores the same peer message for each agent and refuses another agent's delivery token", () =>
+it("stores the same peer message for each agent and leaves another agent's delivery token pending", () =>
   Effect.gen(function* () {
     const first = yield* makeInbox("first");
     const second = yield* makeInbox("second");
@@ -49,12 +49,10 @@ it("stores the same peer message for each agent and refuses another agent's deli
     expect(
       (yield* second.visibleMessages([message]))[0]?.visibleToAgent,
     ).toBeFalsy();
-    const foreignAck = yield* second
-      .acknowledgeDelivery(firstUnchecked.token)
-      .pipe(Effect.exit);
-    expect(Exit.isFailure(foreignAck)).toBeTruthy();
+    yield* second.markDelivered([firstUnchecked.token]);
+    expect((yield* first.listInbox()).entries).toHaveLength(1);
     yield* second.recordDecision(secondUnchecked, decision);
-    yield* first.acknowledgeDelivery(firstUnchecked.token);
+    yield* first.markDelivered([firstUnchecked.token]);
     const reopened = yield* makeInbox("second");
     const pending = yield* reopened.listInbox();
     expect(pending.entries.map((entry) => entry.deliveryToken)).toEqual([

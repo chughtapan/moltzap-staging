@@ -2,18 +2,11 @@
 import { FileSystem } from "@effect/platform";
 import { NodeContext } from "@effect/platform-node";
 import { scopedLive as it } from "@effect/vitest";
-import {
-  ConfigProvider,
-  Effect,
-  Either,
-  FastCheck as fc,
-  Layer,
-  Redacted,
-} from "effect";
+import { ConfigProvider, Effect, FastCheck as fc, Redacted } from "effect";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
-import { loadDaemonSettings, spanExport } from "./settings.js";
+import { loadDaemonSettings } from "./settings.js";
 
 const settingsVariable = "SHARNESS_CONFIG_FILE";
 const serverCredentialVariable = "SHARNESS_SERVER_AGENT_CREDENTIAL";
@@ -119,7 +112,6 @@ it("names the missing settings-file variable", () =>
     Effect.withConfigProvider(ConfigProvider.fromMap(new Map())),
     Effect.flip,
     Effect.tap((failure) => {
-      expect(failure).toMatchObject({ reason: "environment" });
       expect(failure.message).toContain(settingsVariable);
     }),
     Effect.provide(NodeContext.layer),
@@ -141,9 +133,9 @@ it("refuses a settings file that does not exist", () =>
   Effect.gen(function* () {
     const test = yield* fixture;
     yield* test.filesystem.remove(test.filename);
-    expect(yield* test.load.pipe(Effect.flip)).toMatchObject({
-      reason: "settings-file",
-    });
+    expect((yield* test.load.pipe(Effect.flip)).message).toContain(
+      "settings file",
+    );
   }).pipe(Effect.provide(NodeContext.layer)));
 
 it.prop(
@@ -208,7 +200,7 @@ it.each([
 
     const failure = yield* test.load.pipe(Effect.flip);
 
-    expect(failure).toMatchObject({ reason: "norms" });
+    expect(failure.message).toContain("configured norms");
   }).pipe(Effect.provide(NodeContext.layer)),
 );
 
@@ -222,7 +214,6 @@ it("refuses a norms directory without its rule file, naming the file", () =>
       normsDirectory: "norms",
     });
     const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "norms" });
     expect(failure.message).toContain(rulesFile);
   }).pipe(Effect.provide(NodeContext.layer)));
 
@@ -281,7 +272,7 @@ it.prop(
 
       const failure = yield* test.load.pipe(Effect.flip);
 
-      expect(failure).toMatchObject({ reason: "settings-file" });
+      expect(failure.message).toContain("settings file");
     }).pipe(Effect.provide(NodeContext.layer)),
   { fastCheck: { numRuns: 40 } },
 );
@@ -294,89 +285,5 @@ it("refuses a server agent without its credential and names the variable to set"
       serverAgentName: "server-agent",
     });
     const failure = yield* test.load.pipe(Effect.flip);
-    expect(failure).toMatchObject({ reason: "environment" });
     expect(failure.message).toContain(serverCredentialVariable);
   }).pipe(Effect.provide(NodeContext.layer)));
-
-const collector = "http://127.0.0.1:4318";
-const protocolVariables = [
-  "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
-  "OTEL_EXPORTER_OTLP_PROTOCOL",
-];
-const endpointVariables = [
-  "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-  "OTEL_EXPORTER_OTLP_ENDPOINT",
-];
-
-/** What span export does with standard OTLP variables: the variables a refusal's message names, or none when it starts. */
-const spanExportRules: ReadonlyArray<{
-  readonly rule: string;
-  readonly variables: Readonly<Record<string, string>>;
-  readonly refusal?: readonly string[];
-}> = [
-  {
-    rule: "refuses a general protocol other than http/protobuf",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-    refusal: protocolVariables,
-  },
-  {
-    rule: "refuses a traces protocol other than http/protobuf",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc",
-    },
-    refusal: protocolVariables,
-  },
-  {
-    rule: "lets the traces protocol replace the general one",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-  },
-  {
-    rule: "refuses an endpoint that is not an http or https URL",
-    variables: { OTEL_EXPORTER_OTLP_ENDPOINT: "collector:4318" },
-    refusal: endpointVariables,
-  },
-  {
-    rule: "refuses a traces endpoint that is not an http or https URL",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: collector,
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "collector:4318/v1/traces",
-    },
-    refusal: endpointVariables,
-  },
-  {
-    rule: "reads no other exporter variable while the endpoint is blank",
-    variables: {
-      OTEL_EXPORTER_OTLP_ENDPOINT: " ",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-    },
-  },
-];
-
-it.each(spanExportRules)("span export $rule", ({ variables, refusal }) =>
-  Effect.gen(function* () {
-    const started = yield* Layer.build(spanExport).pipe(
-      Effect.withConfigProvider(
-        ConfigProvider.fromMap(new Map(Object.entries(variables))),
-      ),
-      Effect.either,
-    );
-
-    expect(
-      Either.match(started, {
-        onLeft: ({ reason, message }) => ({
-          reason,
-          variablesToFix: message.match(/OTEL_[A-Z_]+/gu),
-        }),
-        onRight: () => undefined,
-      }),
-    ).toEqual(refusal && { reason: "environment", variablesToFix: refusal });
-  }),
-);

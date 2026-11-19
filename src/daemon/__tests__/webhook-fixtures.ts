@@ -16,15 +16,9 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { digest, testAgentCard } from "../../__tests__/agents.js";
+import { digest } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../database/testing.js";
-import { PermittedItem } from "../../firewall/index.js";
-import {
-  DeliveryToken,
-  INBOX_PENDING_EVENT,
-  InboxError,
-  StoredInboxEntry,
-} from "../../mcp/tools.js";
+import { DeliveryToken, INBOX_PENDING_EVENT } from "../../mcp/tools.js";
 import { SocialHarness } from "../agent.js";
 import { makeWebhookEvents } from "../subscriptions.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
@@ -103,17 +97,6 @@ const callbackResponse = (
 const token = (byte: number) =>
   Schema.decodeUnknownSync(DeliveryToken)(digest("dlv_", byte));
 
-/** A message from Alice to Bob, as the inbox holds it. */
-const item = Schema.decodeUnknownSync(PermittedItem)({
-  kind: "message",
-  message: {
-    author: testAgentCard("agent:alice"),
-    recipients: [testAgentCard("agent:bob")],
-    msgId: digest("msg_", 1),
-    content: [{ type: "text", text: "hello" }],
-  },
-});
-
 /**
  * Put the scripted inbox entry `byte` into `store`.
  * @param store The store wake-ups are counted from.
@@ -121,7 +104,7 @@ const item = Schema.decodeUnknownSync(PermittedItem)({
  * @returns The store's mutation.
  */
 export const enqueue = (store: InboxFixture, byte: number) =>
-  store.save(token(byte), item);
+  store.save(token(byte));
 
 /**
  * Webhook events over `store` whose callback is scripted: it records each
@@ -178,82 +161,31 @@ export const scriptedWebhook = Effect.fn("scriptedWebhook")(function* (
 export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* () {
   const database = yield* openTestDatabase();
   const sql = database.sql;
-  yield* sql.unsafe(
-    "CREATE TABLE callback_fixture (token TEXT PRIMARY KEY, payload TEXT NOT NULL, delivered INTEGER NOT NULL DEFAULT 0)",
-  );
-  const payload = Schema.parseJson(Schema.typeSchema(StoredInboxEntry));
+  yield* sql.unsafe("CREATE TABLE callback_fixture (token TEXT PRIMARY KEY)");
   const changes = yield* PubSub.unbounded<undefined>();
-  const save = (
-    deliveryToken: DeliveryToken,
-    item: typeof PermittedItem.Type,
-  ) =>
-    Schema.encode(payload)({
-      address: Schema.decodeUnknownSync(StoredInboxEntry.fields.address)(
-        "agent:bob",
-      ),
-      item,
-    }).pipe(
-      Effect.flatMap(
-        (bytes) =>
-          sql`INSERT INTO callback_fixture(token,payload) VALUES (${deliveryToken},${bytes})`,
-      ),
+  const save = (deliveryToken: DeliveryToken) =>
+    sql`INSERT INTO callback_fixture(token) VALUES (${deliveryToken})`.pipe(
       Effect.zipRight(PubSub.publish(changes, undefined)),
       Effect.asVoid,
     );
-  const acknowledgeDelivery = (deliveryToken: DeliveryToken) =>
-    sql`UPDATE callback_fixture SET delivered=1 WHERE token=${deliveryToken}`.pipe(
-      Effect.asVoid,
-      Effect.orDie,
-    );
-  const decodeRow = (row: {
+  const pendingTokens = sql<{
     readonly token: string;
-    readonly payload: string;
-  }) =>
-    Schema.decodeUnknown(payload)(row.payload).pipe(
-      Effect.map((stored) => ({
-        ...stored,
-        deliveryToken: Schema.decodeUnknownSync(DeliveryToken)(row.token),
-      })),
-    );
-  const listInbox = (request: { readonly cursor?: string } = {}) =>
-    sql<{
-      readonly token: string;
-      readonly payload: string;
-    }>`SELECT token,payload FROM callback_fixture WHERE delivered=0 AND token>${request.cursor ?? ""} ORDER BY token LIMIT 51`.pipe(
-      Effect.flatMap((rows) =>
-        Effect.forEach(rows.slice(0, 50), decodeRow, { concurrency: 1 }),
-      ),
-      Effect.map((entries) => ({
-        entries,
-        ...(entries.length === 50
-          ? { nextCursor: entries.at(-1)?.deliveryToken }
-          : {}),
-      })),
-      Effect.catchTags({
-        SqlError: () =>
-          Effect.fail(new InboxError({ reason: "persistence-failed" })),
-        ParseError: () =>
-          Effect.fail(new InboxError({ reason: "persistence-failed" })),
-      }),
-    );
+  }>`SELECT token FROM callback_fixture`.pipe(
+    Effect.map((rows) =>
+      rows.map((row) => Schema.decodeUnknownSync(DeliveryToken)(row.token)),
+    ),
+  );
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
-    listInbox,
-    receive: (request) =>
-      Effect.tap(listInbox(request), ({ entries }) =>
-        Effect.forEach(
-          entries,
-          (entry) => acknowledgeDelivery(entry.deliveryToken),
-          { concurrency: 1 },
-        ),
-      ),
+    pendingTokens,
+    receive: () => Effect.dieMessage("Unexpected receive"),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
     inboxChanged: Stream.fromPubSub(changes),
   });
   const pending = sql<{
     readonly total: number;
-  }>`SELECT COUNT(*)::int AS total FROM callback_fixture WHERE delivered=0`.pipe(
+  }>`SELECT COUNT(*)::int AS total FROM callback_fixture`.pipe(
     Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
   );
   return { ...database, harness, save, pending };

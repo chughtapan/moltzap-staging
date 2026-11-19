@@ -77,7 +77,7 @@ const objectSchema = Schema.decodeUnknownSync(
  * answers the current request from `agent`; the SDK parses the request,
  * negotiates the protocol revision, dispatches the method and frames the
  * response, and no MCP server outlives a request. The app is interruptible so
- * that a stopped agent or an aborted request ends a call in flight.
+ * that an aborted request ends a call in flight.
  */
 export function makeMcpHandler(implementation: {
   readonly name: string;
@@ -236,6 +236,7 @@ function run<A>(
  * input and the result is encoded with its output. A call that fails is
  * answered with a result marked as an error, whose text is the failure's
  * message and whose structured content is what the definition writes for it.
+ * A call that ends any other way is logged and answered as unexpected.
  */
 function handler<A, I, B, J, E extends { readonly message: string }>(
   definition: Definition<A, I, B, J, E>,
@@ -265,9 +266,13 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
       };
     }).pipe(
       Effect.catchAllCause((cause) =>
-        Effect.succeed(
-          Option.getOrElse(Cause.failureOption(cause), () => unexpected),
-        ),
+        Option.match(Cause.failureOption(cause), {
+          onSome: Effect.succeed,
+          onNone: () =>
+            Effect.logError("A tool call ended unexpectedly", cause).pipe(
+              Effect.as(unexpected),
+            ),
+        }),
       ),
     );
 }
@@ -337,7 +342,7 @@ function jsonSchema<A, I>(schema: Schema.Schema<A, I>) {
   };
 }
 
-/** Equivalent single-item tuple notation also supports hosts whose validators use draft-07. */
+/** The schema without `additionalProperties: false`, so a host accepts fields a result gains. */
 function openObjects(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(openObjects);
@@ -345,27 +350,11 @@ function openObjects(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  const entries = Object.entries(value);
-  const prefixItems: unknown = entries.find(
-    ([key]) => key === "prefixItems",
-  )?.[1];
-  const singleTuple =
-    Array.isArray(prefixItems) &&
-    prefixItems.length === 1 &&
-    entries.some(([key, nested]) => key === "items" && nested === false);
-  return Object.fromEntries([
-    ...entries.flatMap(([key, nested]) => {
-      if (key === "additionalProperties" && nested === false) {
-        return [];
-      }
-      if (singleTuple && (key === "items" || key === "maxItems")) {
-        return [];
-      }
-      if (singleTuple && key === "prefixItems") {
-        return [["items", openObjects(prefixItems[0])]];
-      }
-      return [[key, openObjects(nested)]];
-    }),
-    ...(singleTuple ? [["maxItems", 1]] : []),
-  ]);
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(
+        ([key, nested]) => key !== "additionalProperties" || nested !== false,
+      )
+      .map(([key, nested]) => [key, openObjects(nested)]),
+  );
 }

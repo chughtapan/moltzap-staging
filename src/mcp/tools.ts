@@ -137,25 +137,16 @@ export type InboxPage = typeof InboxPage.Type;
 const inboxFailureText = {
   "invalid-cursor":
     "the cursor is not one this inbox returned; call again without a cursor",
-  "persistence-failed": "the inbox could not be read; try again",
 } as const;
 
 /** An inbox read rejects a cursor it did not return. */
 export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
-  reason: Schema.Literal("invalid-cursor", "persistence-failed"),
+  reason: Schema.Literal("invalid-cursor"),
 }) {
   override get message(): string {
     return `receiving failed: ${inboxFailureText[this.reason]}`;
   }
 }
-
-/** Acknowledging a delivery moves a pending inbox entry to delivered and leaves its content as stored. */
-export class DeliveryAcknowledgeError extends Schema.TaggedError<DeliveryAcknowledgeError>()(
-  "DeliveryAcknowledgeError",
-  {
-    reason: Schema.Literal("unknown-delivery", "persistence-failed"),
-  },
-) {}
 
 const collectiveRequest = exactStruct({
   op: CollectiveOp,
@@ -264,7 +255,6 @@ const historyFailureText = {
   "unknown-agent": "an agent the address names is not a known agent",
   "invalid-cursor":
     "the cursor is not one this conversation returned; call again without a cursor",
-  "persistence-failed": "the conversation could not be read; try again",
 } as const;
 
 /** History failure never exposes private protocol or persistence diagnostics. */
@@ -275,7 +265,6 @@ export class HistoryError extends Schema.TaggedError<HistoryError>()(
       "invalid-address",
       "unknown-agent",
       "invalid-cursor",
-      "persistence-failed",
     ),
   },
 ) {

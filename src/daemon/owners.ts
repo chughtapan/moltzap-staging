@@ -121,7 +121,6 @@ export const getOrCreateOwnedAgentKey = Effect.fn("getOrCreateOwnedAgentKey")(
       }),
     );
   },
-  Effect.withSpan("getOrCreateOwnedAgentKey"),
 );
 
 /** The key of every agent the daemon has created. */

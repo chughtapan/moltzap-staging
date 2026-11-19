@@ -8,7 +8,6 @@ import {
   Config,
   Data,
   Effect,
-  Either,
   Layer,
   Option,
   Redacted,
@@ -16,7 +15,7 @@ import {
   Struct,
 } from "effect";
 import { dirname, resolve } from "node:path";
-import { exactStruct } from "../encoding.js";
+import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
@@ -31,44 +30,23 @@ import {
 } from "../norms/index.js";
 import { packageVersion } from "../version.js";
 
-/** Messages identify the failed operation without disclosing documents or credentials. */
+/**
+ * Messages identify the failed operation without disclosing documents or credentials.
+ * Exported so dependent declarations can name the inferred Effect failure.
+ * @public
+ */
 export class DaemonConfigurationError extends Data.TaggedError(
   "DaemonConfigurationError",
 )<{
-  readonly reason:
-    | "environment"
-    | "settings-file"
-    | "policy"
-    | "norms"
-    | "database"
-    | "issuer"
-    | "listener";
   readonly message: string;
 }> {}
 
 /** A startup refusal whose message names the setting to change. */
-export const refused = (
-  reason: DaemonConfigurationError["reason"],
-  message: string,
-) =>
-  new DaemonConfigurationError({
-    reason,
-    message,
-  });
+export const refused = (message: string) =>
+  new DaemonConfigurationError({ message });
 
 const httpsUrl = Schema.String.pipe(
-  Schema.filter((value) => {
-    if (!URL.canParse(value)) {
-      return false;
-    }
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      [url.username, url.password, url.search, url.hash].every(
-        (part) => part === "",
-      )
-    );
-  }),
+  Schema.filter((value) => plainUrl(value, ["https:"])?.search === ""),
 );
 
 /** Plaintext discovery is limited to local issuer fixtures; hosted providers require HTTPS. */
@@ -76,17 +54,8 @@ const oauthIssuer = Schema.Union(
   httpsUrl,
   Schema.String.pipe(
     Schema.filter((value) => {
-      if (!URL.canParse(value)) {
-        return false;
-      }
-      const url = new URL(value);
-      return (
-        url.protocol === "http:" &&
-        url.hostname === "127.0.0.1" &&
-        [url.username, url.password, url.search, url.hash].every(
-          (part) => part === "",
-        )
-      );
+      const url = plainUrl(value, ["http:"]);
+      return url?.search === "" && url.hostname === "127.0.0.1";
     }),
   ),
 );
@@ -151,24 +120,14 @@ export type DaemonSettings = Omit<
 export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   const settingsPath = yield* Config.string("SHARNESS_CONFIG_FILE").pipe(
     Effect.mapError(() =>
-      refused(
-        "environment",
-        "Set SHARNESS_CONFIG_FILE to the daemon settings file",
-      ),
+      refused("Set SHARNESS_CONFIG_FILE to the daemon settings file"),
     ),
   );
   const filesystem = yield* FileSystem.FileSystem;
   const file = yield* filesystem.readFileString(settingsPath).pipe(
-    Effect.flatMap(
-      Schema.decodeUnknown(Schema.parseJson(settingsFile), {
-        onExcessProperty: "error",
-      }),
-    ),
+    Effect.flatMap(Schema.decodeUnknown(Schema.parseJson(settingsFile))),
     Effect.mapError(() =>
-      refused(
-        "settings-file",
-        "The daemon settings file is unreadable or invalid",
-      ),
+      refused("The daemon settings file is unreadable or invalid"),
     ),
   );
   const settingsDirectory = dirname(resolve(settingsPath));
@@ -178,7 +137,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       : yield* configuredNorms(resolve(settingsDirectory, file.normsDirectory));
   if (norms !== undefined && file.messagePolicyFile === undefined) {
     return yield* refused(
-      "norms",
       "The configured norms need a messagePolicyFile: each agent holds its norms in its editable message policy",
     );
   }
@@ -199,7 +157,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
   ).pipe(
     Effect.mapError(() =>
       refused(
-        "policy",
         "The configured message policy or provider credential is invalid",
       ),
     ),
@@ -210,7 +167,6 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     Option.getOrUndefined(messagePolicy)?.provider === undefined
   ) {
     return yield* refused(
-      "norms",
       "The configured norms have English rules, which need a messagePolicyFile with a decisionProvider to check them",
     );
   }
@@ -228,7 +184,7 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
     settings,
     serverAgentCredential: yield* readServerAgentCredential(settings),
   };
-}, Effect.withSpan("loadDaemonSettings"));
+});
 
 /**
  * The secret the server agent signs in with, from the environment so that it
@@ -245,14 +201,12 @@ function readServerAgentCredential(settings: DaemonSettings) {
     }
     if (Option.isNone(configured)) {
       return yield* refused(
-        "environment",
         "Set SHARNESS_SERVER_AGENT_CREDENTIAL to the secret the server agent signs in with: 32 to 512 letters, digits or -._~+/ characters",
       );
     }
     return Schema.is(bearerSecret)(Redacted.value(configured.value))
       ? configured
       : yield* refused(
-          "environment",
           "SHARNESS_SERVER_AGENT_CREDENTIAL must be 32 to 512 letters, digits or -._~+/ characters",
         );
   });
@@ -262,10 +216,7 @@ function readServerAgentCredential(settings: DaemonSettings) {
 function configuredNorms(directory: string) {
   return loadNorms(directory).pipe(
     Effect.mapError((error: NormsConfigurationError) =>
-      refused(
-        "norms",
-        `The configured norms directory is invalid: ${error.reason}`,
-      ),
+      refused(`The configured norms directory is invalid: ${error.reason}`),
     ),
   );
 }
@@ -282,9 +233,6 @@ const otelVariable = (name: string) =>
 
 const otelVariables = Config.all({
   endpoint: otelVariable("OTEL_EXPORTER_OTLP_ENDPOINT"),
-  tracesEndpoint: otelVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
-  tracesProtocol: otelVariable("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
-  protocol: otelVariable("OTEL_EXPORTER_OTLP_PROTOCOL"),
   serviceName: otelVariable("OTEL_SERVICE_NAME"),
   resourceAttributes: otelVariable("OTEL_RESOURCE_ATTRIBUTES"),
 });
@@ -308,53 +256,6 @@ function spanServiceName(otel: OtelVariables): string {
 }
 
 /**
- * Appends `v1/traces` while preserving the query. Invalid endpoints pass through
- * to URL validation.
- */
-function tracesUnder(endpoint: string): string {
-  if (!URL.canParse(endpoint)) {
-    return endpoint;
-  }
-  const url = new URL(endpoint);
-  url.pathname = `${url.pathname.replace(/\/$/u, "")}/v1/traces`;
-  return url.href;
-}
-
-/**
- * Selects the traces endpoint or appends `v1/traces` to the base endpoint.
- * Rejects non-HTTP(S) URLs and protocols other than `http/protobuf` before the
- * exporter can substitute a default.
- */
-function spanExportUrl(
-  endpoint: string,
-  otel: OtelVariables,
-): Either.Either<string, DaemonConfigurationError> {
-  const protocol = otel.tracesProtocol.pipe(
-    Option.orElse(() => otel.protocol),
-    Option.getOrElse(() => "http/protobuf"),
-  );
-  if (protocol !== "http/protobuf") {
-    return Either.left(
-      refused(
-        "environment",
-        "The OTLP trace protocol, OTEL_EXPORTER_OTLP_TRACES_PROTOCOL or else OTEL_EXPORTER_OTLP_PROTOCOL, must be http/protobuf",
-      ),
-    );
-  }
-  const url = Option.getOrElse(otel.tracesEndpoint, () =>
-    tracesUnder(endpoint),
-  );
-  return URL.canParse(url) && /^https?:$/u.test(new URL(url).protocol)
-    ? Either.right(url)
-    : Either.left(
-        refused(
-          "environment",
-          "The OTLP traces URL, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or else OTEL_EXPORTER_OTLP_ENDPOINT, must be an http or https URL",
-        ),
-      );
-}
-
-/**
  * Installs a process-global stderr logger for OpenTelemetry warnings and failures.
  * The logger remains installed after export closes.
  */
@@ -369,24 +270,22 @@ const exportDiagnostics = Layer.effectDiscard(
 
 /**
  * Exports spans as OTLP/HTTP protobuf when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
- * Invalid endpoints and unsupported protocols fail startup. OpenTelemetry reads
- * its remaining exporter, batch and resource settings from standard variables.
+ * OpenTelemetry reads the endpoint and its remaining exporter, batch and
+ * resource settings from the standard variables, and warns of one it cannot use.
  */
 // eslint-disable-next-line agent-code-guard/require-span-on-exported-effect -- The exporter installs tracing; tracing its acquisition changes the daemon's exported spans.
-export const spanExport: Layer.Layer<never, DaemonConfigurationError> =
-  Layer.unwrapEffect(
-    Effect.gen(function* () {
-      const otel = yield* otelVariables.pipe(Effect.orDie);
-      if (Option.isNone(otel.endpoint)) {
-        return Layer.empty;
-      }
-      const url = yield* spanExportUrl(otel.endpoint.value, otel);
-      return NodeSdk.layer(() => ({
-        resource: {
-          serviceName: spanServiceName(otel),
-          serviceVersion: packageVersion,
-        },
-        spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter({ url })),
-      })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
-    }),
-  );
+export const spanExport = Layer.unwrapEffect(
+  Effect.gen(function* () {
+    const otel = yield* otelVariables.pipe(Effect.orDie);
+    if (Option.isNone(otel.endpoint)) {
+      return Layer.empty;
+    }
+    return NodeSdk.layer(() => ({
+      resource: {
+        serviceName: spanServiceName(otel),
+        serviceVersion: packageVersion,
+      },
+      spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+    })).pipe(Layer.discard, Layer.provide(exportDiagnostics));
+  }),
+);

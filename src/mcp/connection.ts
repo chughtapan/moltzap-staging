@@ -22,6 +22,7 @@ import {
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- Native host plugins read one credential without requiring a platform service from the host.
 import { readFile } from "node:fs/promises";
 import { SendError } from "../communication/index.js";
+import { plainUrl } from "../encoding.js";
 import {
   type InboxEntry,
   MAXIMUM_WAIT_SECONDS,
@@ -303,12 +304,12 @@ function receiveInbox<E, R>(
 
 /** TLS, literal loopback or host-approved HTTP can carry the private bearer. */
 function safeCredentialEndpoint(endpoint: URL, allowHttp = false): boolean {
-  const noUserinfoOrFragment =
-    !endpoint.username && !endpoint.password && !endpoint.hash;
   const local =
     endpoint.hostname === "127.0.0.1" || endpoint.hostname === "[::1]";
-  const secure =
-    endpoint.protocol === "https:" ||
-    (endpoint.protocol === "http:" && (local || allowHttp));
-  return noUserinfoOrFragment && secure;
+  return (
+    plainUrl(
+      endpoint,
+      local || allowHttp ? ["https:", "http:"] : ["https:"],
+    ) !== undefined
+  );
 }

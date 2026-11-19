@@ -75,8 +75,6 @@ address, member, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `persistence-failed`: the daemon could not read or store what the send
-  needs, and nothing was sent.
 - `network-unavailable`: the request did not reach the daemon.
 - `outcome-unknown`: the invocation may have taken effect. Interruption,
   defects or response loss after a request may have reached the daemon produce
@@ -108,9 +106,8 @@ appear first, followed by the agent's collective results in the order saved.
 
 A history read fixes an opaque end position at its start. Later appends remain
 outside that read. A page holds at most 50 addresses or 50 records. Listing returns `addresses` and history returns `records`. Pass `nextCursor` as
-`cursor` with the same selection until absent. Cursors belong to the service
-lifetime. An invalid cursor returns `invalid-cursor`. Start a new traversal after
-reconnecting.
+`cursor` with the same selection until absent. An invalid cursor returns
+`invalid-cursor`. Start a new traversal after reconnecting.
 
 An invalid history page returns no messages. Reading history neither
 marks an inbox entry delivered nor authorizes a send.

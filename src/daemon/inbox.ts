@@ -1,8 +1,8 @@
 /** @file Stores one agent's unchecked messages and collective results, its inbox entries and which of them are delivered. */
 
-import { SqlClient, SqlSchema } from "@effect/sql";
+import { SqlClient } from "@effect/sql";
 import { Effect, Encoding, Schema } from "effect";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type {
   Message,
   MessageReference,
@@ -21,10 +21,10 @@ import {
 import {
   decodeJson,
   encodeJson,
+  exactStruct,
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
 import {
-  DeliveryAcknowledgeError,
   DeliveryToken,
   type InboxEntry,
   InboxError,
@@ -34,17 +34,18 @@ import {
   StoredInboxEntry,
 } from "../mcp/tools.js";
 
-const uncheckedRow = Schema.Struct({
+const uncheckedRow = exactStruct({
   sequence: Schema.Number,
   delivery_token: DeliveryToken,
   address: MessageAddress,
-  unchecked: Schema.String,
+  unchecked: Schema.parseJson(Incoming),
 });
-const entryRow = Schema.Struct({
-  sequence: Schema.Number,
-  delivery_token: DeliveryToken,
-  address: MessageAddress,
-  entry: Schema.String,
+const position = { sequence: Schema.Number, delivery_token: DeliveryToken };
+/** A pending entry as stored text, whose size counts toward a page's bytes. */
+const pendingRow = exactStruct({ ...position, entry: Schema.String });
+const entryRow = exactStruct({
+  ...position,
+  entry: Schema.parseJson(StoredInboxEntry),
 });
 const inboxCursor = Schema.Struct({
   operation: Schema.Literal("inbox"),
@@ -83,7 +84,7 @@ type InboxTables = Record<
 /** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
 export type Inbox = Effect.Effect.Success<ReturnType<typeof makeInbox>>;
 
-/** Captures the database and scopes opaque cursors to this inbox instance. */
+/** Captures the database. */
 export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   agentKey: string,
 ) {
@@ -93,6 +94,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     withAgentRows(agentKey, executeQuery(query)).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
+  /** The rows of a query, each read through `row`. */
+  const read = <A, I, Row extends object>(
+    row: Schema.Schema<A, I>,
+    query: Compilable<Row>,
+  ) => run(query).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(row))));
   const inboxRows = () =>
     queries.selectFrom("inbox_entries").where("agent_key", "=", agentKey);
   const head = (rows: ReturnType<typeof inboxRows>) =>
@@ -101,7 +107,6 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         eb.fn.coalesce(eb.fn.max<number>("sequence"), eb.val(0)).as("head"),
       ),
     ).pipe(Effect.map((found) => found[0]?.head ?? 0));
-  const cursorKey = randomBytes(32);
   return {
     storeUnchecked: Effect.fn(function* (
       address: MessageAddress,
@@ -136,58 +141,46 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             conflict.columns(["agent_key", "dedupe_key"]).doNothing(),
           ),
       );
-    }, Effect.mapError(persistenceFailure)),
+    }),
     unchecked: (limit: number) =>
-      SqlSchema.findAll({
-        Request: Schema.Number,
-        Result: uncheckedRow,
-        execute: (limit) =>
-          run(
-            queries
-              .selectFrom("inbox_entries as candidate")
-              .select([
-                "candidate.sequence",
-                "candidate.delivery_token",
-                "candidate.address",
-                "candidate.unchecked",
-              ])
-              .where("candidate.agent_key", "=", agentKey)
-              .where("candidate.status", "=", "unchecked")
-              .where((eb) =>
-                eb.not(
-                  eb.exists(
-                    eb
-                      .selectFrom("inbox_entries as earlier")
-                      .select("earlier.sequence")
-                      .whereRef("earlier.agent_key", "=", "candidate.agent_key")
-                      .whereRef("earlier.address", "=", "candidate.address")
-                      .where("earlier.status", "=", "unchecked")
-                      .whereRef("earlier.sequence", "<", "candidate.sequence"),
-                  ),
-                ),
-              )
-              .orderBy("candidate.sequence")
-              .limit(limit),
-          ),
-      })(limit).pipe(
-        Effect.flatMap((rows) =>
-          Effect.forEach(
-            rows,
-            (row) =>
-              decodeJson(Incoming, row.unchecked).pipe(
-                Effect.map(
-                  (incoming): Unchecked => ({
-                    sequence: row.sequence,
-                    token: row.delivery_token,
-                    address: row.address,
-                    incoming,
-                  }),
-                ),
+      read(
+        uncheckedRow,
+        queries
+          .selectFrom("inbox_entries as candidate")
+          .select([
+            "candidate.sequence",
+            "candidate.delivery_token",
+            "candidate.address",
+            "candidate.unchecked",
+          ])
+          .where("candidate.agent_key", "=", agentKey)
+          .where("candidate.status", "=", "unchecked")
+          .where((eb) =>
+            eb.not(
+              eb.exists(
+                eb
+                  .selectFrom("inbox_entries as earlier")
+                  .select("earlier.sequence")
+                  .whereRef("earlier.agent_key", "=", "candidate.agent_key")
+                  .whereRef("earlier.address", "=", "candidate.address")
+                  .where("earlier.status", "=", "unchecked")
+                  .whereRef("earlier.sequence", "<", "candidate.sequence"),
               ),
-            { concurrency: 1 },
+            ),
+          )
+          .orderBy("candidate.sequence")
+          .limit(limit),
+      ).pipe(
+        Effect.map((rows) =>
+          rows.map(
+            (row): Unchecked => ({
+              sequence: row.sequence,
+              token: row.delivery_token,
+              address: row.address,
+              incoming: row.unchecked,
+            }),
           ),
         ),
-        Effect.mapError(persistenceFailure),
       ),
     recordDecision: Effect.fn(function* (
       unchecked: Unchecked,
@@ -259,7 +252,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             ),
         );
       }
-    }, Effect.mapError(persistenceFailure)),
+    }),
     withholdExpired: (token: DeliveryToken) =>
       run(
         queries
@@ -268,165 +261,122 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("agent_key", "=", agentKey)
           .where("delivery_token", "=", token)
           .where("status", "=", "unchecked"),
-      ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
-    listInbox: Effect.fn(
-      function* (request: typeof PaginatedRequest.Type = {}) {
-        const position =
-          request.cursor === undefined
-            ? { after: 0, through: yield* head(inboxRows()) }
-            : yield* decodeCursor(inboxCursor, request.cursor, cursorKey);
-        const rows = yield* SqlSchema.findAll({
-          Request: Schema.Void,
-          Result: entryRow,
-          execute: () =>
-            run(
-              inboxRows()
-                .select(["sequence", "delivery_token", "address", "entry"])
-                .where("status", "=", "pending")
-                .where("sequence", ">", position.after)
-                .where("sequence", "<=", position.through)
-                .orderBy("sequence")
-                .limit(PAGE_SIZE + 1),
-            ),
-        })(undefined);
-        const entries: InboxEntry[] = [];
-        let bytes = 0;
-        let after = position.after;
-        for (const row of rows.slice(0, PAGE_SIZE)) {
-          const size = Buffer.byteLength(row.entry);
-          if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
-            break;
-          }
-          const stored = yield* decodeJson(StoredInboxEntry, row.entry);
-          entries.push({ ...stored, deliveryToken: row.delivery_token });
-          bytes += size;
-          after = row.sequence;
+      ).pipe(Effect.asVoid),
+    listInbox: Effect.fn(function* (
+      request: typeof PaginatedRequest.Type = {},
+    ) {
+      const position =
+        request.cursor === undefined
+          ? { after: 0, through: yield* head(inboxRows()) }
+          : yield* decodeCursor(inboxCursor, request.cursor);
+      const rows = yield* read(
+        pendingRow,
+        inboxRows()
+          .select(["sequence", "delivery_token", "entry"])
+          .where("status", "=", "pending")
+          .where("sequence", ">", position.after)
+          .where("sequence", "<=", position.through)
+          .orderBy("sequence")
+          .limit(PAGE_SIZE + 1),
+      );
+      const entries: InboxEntry[] = [];
+      let bytes = 0;
+      let after = position.after;
+      for (const row of rows.slice(0, PAGE_SIZE)) {
+        const size = Buffer.byteLength(row.entry);
+        if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
+          break;
         }
-        return {
-          entries,
-          ...(rows.length > entries.length
-            ? {
-                nextCursor: yield* encodeCursor(
-                  inboxCursor,
-                  { operation: "inbox", after, through: position.through },
-                  cursorKey,
-                ),
-              }
-            : {}),
-        } satisfies InboxPage;
-      },
-      Effect.mapError((error) =>
-        error instanceof InboxError ? error : persistenceFailure(),
-      ),
-    ),
-    acknowledgeDelivery: Effect.fn(
-      function* (token: DeliveryToken) {
-        const rows = yield* run(
-          inboxRows()
-            .select("status")
-            .where("delivery_token", "=", token)
-            .where("entry", "is not", null),
-        );
-        if (rows[0] === undefined) {
-          return yield* new DeliveryAcknowledgeError({
-            reason: "unknown-delivery",
-          });
-        }
-        yield* run(
-          queries
-            .updateTable("inbox_entries")
-            .set({ status: "delivered" })
-            .where("agent_key", "=", agentKey)
-            .where("delivery_token", "=", token)
-            .where("status", "=", "pending"),
-        );
-      },
-      Effect.mapError((error) =>
-        error instanceof DeliveryAcknowledgeError
-          ? error
-          : new DeliveryAcknowledgeError({ reason: "persistence-failed" }),
-      ),
-    ),
+        const stored = yield* decodeJson(StoredInboxEntry, row.entry);
+        entries.push({ ...stored, deliveryToken: row.delivery_token });
+        bytes += size;
+        after = row.sequence;
+      }
+      return {
+        entries,
+        ...(rows.length > entries.length
+          ? {
+              nextCursor: yield* encodeCursor(inboxCursor, {
+                operation: "inbox",
+                after,
+                through: position.through,
+              }),
+            }
+          : {}),
+      } satisfies InboxPage;
+    }),
+    /** The delivery token of each pending entry. */
+    pendingTokens: read(
+      Schema.Struct({ delivery_token: DeliveryToken }),
+      inboxRows().select("delivery_token").where("status", "=", "pending"),
+    ).pipe(Effect.map((rows) => rows.map((row) => row.delivery_token))),
+    /** Marks the pending entries carrying these delivery tokens delivered, all or none. */
+    markDelivered: (tokens: readonly DeliveryToken[]) =>
+      tokens.length === 0
+        ? Effect.void
+        : run(
+            queries
+              .updateTable("inbox_entries")
+              .set({ status: "delivered" })
+              .where("agent_key", "=", agentKey)
+              .where("delivery_token", "in", tokens)
+              .where("status", "=", "pending"),
+          ).pipe(Effect.asVoid),
     storedEntry: (reference: MessageReference) =>
-      run(
+      read(
+        exactStruct({ entry: entryRow.fields.entry }),
         inboxRows()
           .select("entry")
           .where("author", "=", reference.authorAgentId)
           .where("message_id", "=", reference.msgId)
           .where("entry", "is not", null)
           .limit(1),
-      ).pipe(
-        Effect.flatMap((rows) =>
-          rows[0]?.entry == null
-            ? Effect.succeed(undefined)
-            : decodeJson(StoredInboxEntry, rows[0].entry),
-        ),
-        Effect.mapError(persistenceFailure),
-      ),
+      ).pipe(Effect.map((rows) => rows[0]?.entry)),
     collectiveResultHead: (address: string) =>
       head(
         inboxRows()
           .where("address", "=", address)
           .where("kind", "=", "collectiveResult")
           .where("entry", "is not", null),
-      ).pipe(Effect.mapError(persistenceFailure)),
+      ),
     collectiveResultPage: (
       address: string,
       after: number,
       through: number,
       limit: number,
     ) =>
-      SqlSchema.findAll({
-        Request: Schema.Void,
-        Result: entryRow,
-        execute: () =>
-          run(
-            inboxRows()
-              .select(["sequence", "delivery_token", "address", "entry"])
-              .where("address", "=", address)
-              .where("sequence", ">", after)
-              .where("sequence", "<=", through)
-              .where("kind", "=", "collectiveResult")
-              .where("entry", "is not", null)
-              .orderBy("sequence")
-              .limit(limit + 1),
-          ),
-      })(undefined).pipe(
-        Effect.flatMap((rows) =>
-          Effect.forEach(
-            rows,
-            (row) =>
-              decodeJson(StoredInboxEntry, row.entry).pipe(
-                Effect.map((entry) => ({
-                  sequence: row.sequence,
-                  token: row.delivery_token,
-                  entry,
-                })),
-              ),
-            { concurrency: 1 },
-          ),
+      read(
+        entryRow,
+        inboxRows()
+          .select(["sequence", "delivery_token", "entry"])
+          .where("address", "=", address)
+          .where("sequence", ">", after)
+          .where("sequence", "<=", through)
+          .where("kind", "=", "collectiveResult")
+          .where("entry", "is not", null)
+          .orderBy("sequence")
+          .limit(limit + 1),
+      ).pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            sequence: row.sequence,
+            token: row.delivery_token,
+            entry: row.entry,
+          })),
         ),
-        Effect.mapError(persistenceFailure),
       ),
     collectiveResultAddresses: (after = "") =>
-      SqlSchema.findAll({
-        Request: Schema.Void,
-        Result: Schema.Struct({ address: MessageAddress }),
-        execute: () =>
-          run(
-            inboxRows()
-              .select("address")
-              .distinct()
-              .where("address", ">", after)
-              .where("kind", "=", "collectiveResult")
-              .where("entry", "is not", null)
-              .orderBy("address")
-              .limit(PAGE_SIZE + 1),
-          ),
-      })(undefined).pipe(
-        Effect.map((rows) => rows.map((row) => row.address)),
-        Effect.mapError(persistenceFailure),
-      ),
+      read(
+        Schema.Struct({ address: MessageAddress }),
+        inboxRows()
+          .select("address")
+          .distinct()
+          .where("address", ">", after)
+          .where("kind", "=", "collectiveResult")
+          .where("entry", "is not", null)
+          .orderBy("address")
+          .limit(PAGE_SIZE + 1),
+      ).pipe(Effect.map((rows) => rows.map((row) => row.address))),
     isCollectiveRequestVisible: (requestId: MsgId) =>
       run(
         inboxRows()
@@ -435,10 +385,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("message_id", "=", requestId)
           .where("entry", "is not", null)
           .limit(1),
-      ).pipe(
-        Effect.map((rows) => rows.length !== 0),
-        Effect.mapError(persistenceFailure),
-      ),
+      ).pipe(Effect.map((rows) => rows.length !== 0)),
     visibleMessages: (messages: readonly Message[]) =>
       Effect.forEach(
         messages,
@@ -457,62 +404,31 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             })),
           ),
         { concurrency: 1 },
-      ).pipe(Effect.mapError(persistenceFailure)),
-    encodeCursor: <A, I>(schema: Schema.Schema<A, I>, position: NoInfer<A>) =>
-      encodeCursor(schema, position, cursorKey),
-    decodeCursor: <A, I>(schema: Schema.Schema<A, I>, cursor: string) =>
-      decodeCursor(schema, cursor, cursorKey),
+      ),
   };
 });
 
-function persistenceFailure() {
-  return new InboxError({ reason: "persistence-failed" });
-}
-
-/** Binds cursor integrity and lifetime to this inbox independently of access control. */
-function encodeCursor<A, I>(
+/** A cursor is its position as base64url JSON text. */
+export function encodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   position: NoInfer<A>,
-  key: Uint8Array,
 ) {
   return encodeJson(schema, position).pipe(
-    Effect.map((text) => {
-      const payload = Encoding.encodeBase64Url(text);
-      const signature = createHmac("sha256", key)
-        .update(payload)
-        .digest("base64url");
-      return `${payload}.${signature}`;
-    }),
-    Effect.mapError(persistenceFailure),
+    Effect.map((text) => Encoding.encodeBase64Url(text)),
   );
 }
 
-function decodeCursor<A, I>(
+/** The position a cursor holds, when it is one `schema` describes. */
+export function decodeCursor<A, I>(
   schema: Schema.Schema<A, I>,
   cursor: string,
-  key: Uint8Array,
 ) {
-  return Effect.gen(function* () {
-    const [payload, signature, extra] = cursor.split(".");
-    if (
-      payload === undefined ||
-      signature === undefined ||
-      extra !== undefined
-    ) {
-      return yield* new InboxError({ reason: "invalid-cursor" });
-    }
-    const supplied = yield* Encoding.decodeBase64Url(signature);
-    const expected = createHmac("sha256", key).update(payload).digest();
-    if (
-      supplied.byteLength !== expected.byteLength ||
-      !timingSafeEqual(supplied, expected)
-    ) {
-      return yield* new InboxError({ reason: "invalid-cursor" });
-    }
-    const text = yield* Encoding.decodeBase64UrlString(payload);
-    return yield* decodeJson(schema, text);
-  }).pipe(
-    // eslint-disable-next-line agent-code-guard/no-effect-error-coalescing -- Malformed, expired and foreign cursor diagnostics share the public invalid-cursor failure.
-    Effect.mapError(() => new InboxError({ reason: "invalid-cursor" })),
+  return Encoding.decodeBase64UrlString(cursor).pipe(
+    Effect.flatMap((text) => decodeJson(schema, text)),
+    Effect.catchTags({
+      DecodeException: () => new InboxError({ reason: "invalid-cursor" }),
+      JsonRepresentationError: () =>
+        new InboxError({ reason: "invalid-cursor" }),
+    }),
   );
 }
