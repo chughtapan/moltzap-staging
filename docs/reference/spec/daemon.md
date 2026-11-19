@@ -63,10 +63,6 @@ the daemon treats it like any other.
 An admitted stream closes when its token expires; hosts renew their
 authorization before reconnecting.
 
-### Recovery
-
-A request whose agent cannot be read from SQL receives HTTP 503.
-
 ## Firewalls
 
 The configured message policy and norms apply before host calls are accepted.
