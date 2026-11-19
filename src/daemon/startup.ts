@@ -10,9 +10,9 @@ import {
   Exit,
   Fiber,
   Layer,
+  PubSub,
   ScopedCache,
 } from "effect";
-import type { CompiledContract } from "../firewall/index.js";
 import { Communication } from "../communication/service.js";
 import {
   databaseConnection,
@@ -42,8 +42,8 @@ import { AgentAddress } from "./values.js";
 /**
  * One agent's role, and everything that follows from it. Every conversation
  * is the server agent and one client: the server agent checks its messages and holds the
- * contracts, and a client checks nothing of its own, reads the server agent's
- * norms through `contractsOf` and talks only to it.
+ * contracts, and a client checks nothing of its own, has what it sends
+ * checked by `serverAgent`, reads that agent's norms and talks only to it.
  */
 function roleOf(
   settings: Pick<
@@ -52,10 +52,10 @@ function roleOf(
   >,
   agentKey: string,
   agentName: AgentName,
-  contractsOf: ContractsOf,
+  serverAgent: ServerAgent,
 ) {
-  const { norms, serverAgent } = settings;
-  if (agentName === serverAgent.name) {
+  const { norms } = settings;
+  if (agentName === settings.serverAgent.name) {
     return {
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
       firewall: Firewall.layer(
@@ -63,6 +63,7 @@ function roleOf(
         settings.messagePolicy,
         norms?.contracts,
       ),
+      checkedBy: undefined,
       serverAgent: undefined,
       serverAgentContracts: undefined,
     };
@@ -70,16 +71,19 @@ function roleOf(
   return {
     withheldReply: undefined,
     firewall: Firewall.layer(agentKey),
-    serverAgent: AgentAddress.make(`agent:${serverAgent.name}`),
-    serverAgentContracts: contractsOf({
-      issuer: settings.authentication.issuer,
-      subject: serverAgent.subject,
-    }),
+    checkedBy: Effect.map(serverAgent, ({ harness }) => harness),
+    serverAgent: AgentAddress.make(`agent:${settings.serverAgent.name}`),
+    serverAgentContracts: Effect.flatMap(serverAgent, ({ firewall }) =>
+      firewall.readContracts(),
+    ),
   };
 }
 
-/** The contracts an owner's running agent holds, starting the agent if it is not running. */
-type ContractsOf = (owner: Owner) => Effect.Effect<readonly CompiledContract[]>;
+/** The running server agent as its clients reach it, started if it is not running. */
+type ServerAgent = Effect.Effect<{
+  readonly harness: Context.Tag.Service<typeof SocialHarness>;
+  readonly firewall: Context.Tag.Service<typeof Firewall>;
+}>;
 
 /** The Node file system, typed by the interface the daemon reads files through. */
 const fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeFileSystem.layer;
@@ -143,15 +147,18 @@ function runningAgents(settings: DaemonSettings) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
-    const consumers = new Map<string, Effect.Latch>();
+    const readable = yield* PubSub.unbounded<string>();
     const events = yield* makeInboxEvents;
     /** An agent that fails to start is not kept, so the next request for it starts it again. */
     const cache = yield* ScopedCache.makeWith({
       capacity: Number.MAX_SAFE_INTEGER,
       lookup: (agentKey: string) =>
-        startAgent(settings, consumers, agentKey, contractsOf).pipe(
-          Effect.map((agent) => ({ ...agent, events })),
-        ),
+        startAgent(
+          settings,
+          readable,
+          agentKey,
+          Effect.suspend(serverAgent),
+        ).pipe(Effect.map((agent) => ({ ...agent, events }))),
       timeToLive: (exit) =>
         Exit.isSuccess(exit) ? Duration.infinity : Duration.zero,
     });
@@ -177,14 +184,12 @@ function runningAgents(settings: DaemonSettings) {
         Effect.forkIn(daemonScope),
         Effect.flatMap((fiber) => Fiber.join(fiber).pipe(Effect.interruptible)),
       );
-    /** An agent that cannot start ends the read as a call the daemon could not complete. */
-    function contractsOf(
-      owner: Owner,
-    ): Effect.Effect<readonly CompiledContract[]> {
-      return agentOfOwner(owner).pipe(
-        Effect.flatMap((agent) => agent.firewall.readContracts()),
-        Effect.orDie,
-      );
+    /** A server agent that cannot start ends its client's call as one the daemon could not complete. */
+    function serverAgent(): ServerAgent {
+      return agentOfOwner({
+        issuer: settings.authentication.issuer,
+        subject: settings.serverAgent.subject,
+      }).pipe(Effect.orDie);
     }
     return agentOfOwner;
   }).pipe(Effect.withSpan("runningAgents"));
@@ -193,32 +198,31 @@ function runningAgents(settings: DaemonSettings) {
 /**
  * Starts one agent: its services, which run until the scope closes, and what
  * its role gives its tools.
- * `consumers` holds the latch each agent's consumer waits on, which a send to
- * that agent opens.
+ * A send publishes its recipient's key to `readable` once the recipient may
+ * read the message, which wakes that agent's waiting reads.
  */
 function startAgent(
   settings: DaemonSettings,
-  consumers: Map<string, Effect.Latch>,
+  readable: PubSub.PubSub<string>,
   agentKey: string,
-  contractsOf: ContractsOf,
+  serverAgent: ServerAgent,
 ) {
   return Effect.gen(function* () {
     const identity = yield* Layer.build(identityLayer(agentKey));
     const card = Context.get(identity, Identity).me;
-    const role = roleOf(settings, agentKey, card.agentName, contractsOf);
+    const role = roleOf(settings, agentKey, card.agentName, serverAgent);
     const services = yield* Layer.build(
       SocialHarness.layer({
         agentKey,
         withheldReply: role.withheldReply,
         maximumHistoryRecords: settings.maximumHistoryRecords,
-        maximumConcurrentChecks:
-          settings.messagePolicy?.policy.maximumConcurrentChecks,
+        checkedBy: role.checkedBy,
       }).pipe(
         Layer.provideMerge(
           Communication.layer({
             agentKey,
             card,
-            consumers,
+            readable,
           }),
         ),
         Layer.provideMerge(

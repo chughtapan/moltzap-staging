@@ -87,8 +87,8 @@ A text rule whose `action` is `reply` answers each message it withholds for a
 rule violation: the sender receives the rule's registered feedback text.
 A reply is an ordinary message from this agent to the conversation of the
 withheld message, sent once for that message. Every generated reply must pass the outgoing checks. If refused, the daemon
-saves the check and sends no reply. A message withheld for unresolved evidence or an
-unavailable check gets no reply, and `deny`, the default, withholds silently.
+saves the check and sends no reply. A message withheld for unresolved evidence
+gets no reply, and `deny`, the default, withholds silently.
 
 ## Outgoing messages
 

@@ -5,7 +5,6 @@ export {
   CommunicationError,
   Cursor,
   Message,
-  MessageReference,
   messageWithId,
   MsgId,
   Page,

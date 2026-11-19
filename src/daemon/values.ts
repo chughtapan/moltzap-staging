@@ -52,8 +52,6 @@ const sendFailureText = {
   ...addressFailureText,
   "membership-invalid": "the address names only you",
   "content-invalid": "the message content is invalid",
-  "message-conflict":
-    "the message id already belongs to different content or recipients",
   "network-unavailable": "Social Harness is unavailable (network unavailable)",
   "outcome-unknown":
     "the send did not complete; the message may or may not have been sent",

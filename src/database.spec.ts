@@ -23,12 +23,6 @@ import { openTestDatabase, restrictedLogin } from "./test.js";
 const rows: Readonly<
   Record<string, Readonly<Record<string, string | number>>>
 > = {
-  inbox_entries: {
-    address: "agent:alice",
-    author: "author",
-    message_id: "message",
-    status: "unchecked",
-  },
   firewall_checks: {
     check_id: "check",
     message_key: "author/message",

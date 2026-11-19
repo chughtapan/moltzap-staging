@@ -243,7 +243,7 @@ interface Installation {
 }
 
 /** How many checks run at once when no policy sets `maximumConcurrentChecks`. */
-export const defaultConcurrentChecks = 4;
+const defaultConcurrentChecks = 4;
 
 type DecisionSummary = typeof firewallDecisionSummarySchema.Type;
 

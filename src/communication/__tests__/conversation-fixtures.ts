@@ -1,23 +1,22 @@
 /** @file Alice, Bob and Carol on one daemon, each with its communication service. */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Context, Effect, Layer, Option, Queue, Record } from "effect";
+import { Context, Effect, Layer, Option, PubSub, Record } from "effect";
 import type { AgentCard } from "../../identity.js";
-import type { Message } from "../messages.js";
 import { createTestAgent } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../test.js";
-import { Communication } from "../service.js";
+import { Communication, readInbox } from "../service.js";
 
 /**
  * Alice, Bob and Carol in one database: each one's key, card and service,
- * the consumer latches the three share, and what a test reads of them.
+ * and what a test reads of them.
  */
 export const conversationFixture = Effect.gen(function* () {
   const { sql, run } = yield* openTestDatabase();
-  const consumers = new Map<string, Effect.Latch>();
+  const readable = yield* PubSub.unbounded<string>();
   const agent = (name: string) =>
     run(createTestAgent(name)).pipe(
-      Effect.map((created) => ({ ...created, consumers })),
+      Effect.map((created) => ({ ...created, readable })),
     );
   const agents = {
     alice: yield* agent("alice"),
@@ -31,14 +30,15 @@ export const conversationFixture = Effect.gen(function* () {
     );
   const hosted = yield* Effect.all(Record.map(agents, open));
   const cards = Record.map(agents, (agent) => agent.card);
-  const received = (agent: typeof hosted.alice) =>
-    Effect.gen(function* () {
-      const inbox = yield* Queue.unbounded<Message>();
-      yield* agent
-        .consume((message) => Queue.offer(inbox, message).pipe(Effect.asVoid))
-        .pipe(Effect.forkScoped);
-      return inbox;
-    });
+  /** The ids of the messages `agent` may read after `cursor`, in read order, with the cursor to read on from. */
+  const inbox = (agent: typeof agents.alice, cursor?: string) =>
+    readInbox(agent.agentKey, { limit: 100, cursor }).pipe(
+      Effect.provideService(SqlClient, sql),
+      Effect.map(({ messages, nextCursor }) => ({
+        ids: messages.map(({ message }) => message.msgId),
+        nextCursor,
+      })),
+    );
   /** The newest 1024 messages of a conversation as `agent` reads it, oldest first. */
   const history = (agent: typeof hosted.alice, members: readonly AgentCard[]) =>
     agent
@@ -60,7 +60,7 @@ export const conversationFixture = Effect.gen(function* () {
     ...hosted,
     hosted,
     cards,
-    received,
+    inbox,
     history,
     histories,
   };
