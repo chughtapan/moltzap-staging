@@ -15,15 +15,10 @@ const name = Schema.String.pipe(
   Schema.pattern(/^[a-zA-Z][a-zA-Z0-9-]{0,63}$/u),
 );
 const names = Schema.Array(name);
-const actReference = Schema.Union(
-  name,
-  Schema.NonEmptyArray(name),
-  exactStruct({ fact: name }),
-);
+const actReference = Schema.Union(name, exactStruct({ fact: name }));
 const fieldValue = Schema.Union(
   Schema.String,
   Schema.Number.pipe(Schema.finite()),
-  Schema.Boolean,
   Schema.Array(Schema.String),
 );
 const actSchema = exactStruct({
@@ -76,17 +71,10 @@ const formSchema = exactStruct({
   starts: Schema.Boolean,
   ends: Schema.Boolean,
   when: names,
-  unless: names,
   initiates: names,
   terminates: names,
   maximum: Schema.optional(Schema.Positive.pipe(Schema.int())),
-  delay: Schema.optional(
-    exactStruct({
-      fact: name,
-      field: name,
-      millisecondsPerUnit: Schema.Positive,
-    }),
-  ),
+  delay: Schema.optional(exactStruct({ fact: name, field: name })),
   relations: Schema.Array(relationSchema),
 });
 
@@ -294,9 +282,6 @@ function readValue(
       { concurrency: 1 },
     );
   }
-  if (node.value === "true" || node.value === "false") {
-    return Effect.succeed(node.value === "true");
-  }
   if (!/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u.test(node.value)) {
     return Effect.succeed(node.value);
   }
@@ -309,7 +294,7 @@ function valueExpression(value: Act["fields"][string]): SExpression {
   if (typeof value === "string") {
     return { kind: "string", value };
   }
-  if (typeof value === "number" || typeof value === "boolean") {
+  if (typeof value === "number") {
     return { kind: "symbol", value: String(value) };
   }
   return {

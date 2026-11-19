@@ -155,7 +155,6 @@
     "@opentelemetry/sdk-trace-node": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "ajv": "catalog:",
-    "ajv-formats": "catalog:",
     "effect": "catalog:",
     "jose": "catalog:",
     "kysely": "catalog:",

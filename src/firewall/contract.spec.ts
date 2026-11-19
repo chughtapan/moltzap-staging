@@ -20,12 +20,11 @@ const name = fc.stringMatching(/^[a-z][a-z0-9-]{0,7}$/u);
 /** Any act: a performative, a norm and fields of every type a form admits. */
 const act = fc.record({
   name,
-  norm: name.filter((norm) => norm !== "true" && norm !== "false"),
+  norm: name,
   fields: fc.dictionary(
     name.filter((field) => field !== "ontology"),
     fc.oneof(
       fc.string(),
-      fc.boolean(),
       fc
         .double({ noNaN: true, noDefaultInfinity: true })
         .map((value) => (value === 0 ? 0 : value)),
@@ -107,15 +106,16 @@ const contract = Schema.decodeUnknownSync(compiledContractSchema)({
         properties: {
           topic: { type: "string", minLength: 1 },
           count: { type: "integer" },
-          urgent: { type: "boolean" },
-          day: { type: "string", enum: ["mon", "tue"] },
+          day: {
+            type: "array",
+            items: { type: "string", enum: ["mon", "tue"] },
+          },
         },
         required: ["topic", "day"],
       },
       starts: true,
       ends: true,
       when: [],
-      unless: [],
       initiates: [],
       terminates: [],
       relations: [],
@@ -134,18 +134,17 @@ const stated = fc.constantFrom<"absent" | "valid" | "invalid">(
 const values = {
   topic: { valid: "Thesis", invalid: 7 },
   count: { valid: 3, invalid: "three" },
-  urgent: { valid: true, invalid: "yes" },
-  day: { valid: "mon", invalid: "fri" },
+  day: { valid: ["mon"], invalid: ["fri"] },
 } as const;
 
-const declared = ["topic", "count", "urgent", "day"] as const;
+const declared = ["topic", "count", "day"] as const;
 
 const required: readonly string[] = ["topic", "day"];
 
 it("fits an act to its form exactly when every required field is stated, every stated field is declared and each value has its field's type", () => {
   fc.assert(
     fc.property(
-      fc.record({ topic: stated, count: stated, urgent: stated, day: stated }),
+      fc.record({ topic: stated, count: stated, day: stated }),
       fc.boolean(),
       (statement, undeclared) => {
         const fields: Record<string, Act["fields"][string]> = {};
