@@ -33,7 +33,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build/clean-dist.ts && tsc -b && node ../../scripts/build/copy-social-harness-skills.ts",
+    "build": "node ../../scripts/clean-dist.ts && tsc -b && node ../../scripts/copy-social-harness-skills.ts",
     "lint": "eslint . --cache --max-warnings=0",
     "test": "vitest run --root ../.. --project openclaw-channel"
   },
@@ -43,8 +43,8 @@
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts",
-          "{workspaceRoot}/scripts/build/copy-social-harness-skills.ts"
+          "{workspaceRoot}/scripts/clean-dist.ts",
+          "{workspaceRoot}/scripts/copy-social-harness-skills.ts"
         ]
       },
       "test": {

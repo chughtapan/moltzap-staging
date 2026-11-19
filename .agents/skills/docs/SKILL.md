@@ -2,7 +2,7 @@
 name: docs
 description: |
   Write, review, and maintain Social Harness documentation. Covers reader
-  purpose, system descriptions, organization, distillation, and generated API reference.
+  purpose, system descriptions, organization, and distillation.
   Load before editing documentation or flow diagrams.
 ---
 
@@ -58,11 +58,6 @@ available workflow from a proposed one before giving instructions.
 
 ## Choose the source of truth
 
-Reader purpose and source ownership are separate choices. A manually maintained
-wire specification and a generated API reference both serve reference needs.
-An explanation can discuss either one's concepts. Generation does not supply
-the tutorials, how-to guides, or explanations readers also need.
-
 Maintain specifications by hand, one level above the implementation. Describe
 the participants, exchanges and guarantees so a reader can predict an
 interaction and judge a different implementation without opening code.
@@ -87,17 +82,14 @@ module should rely on the public input and output contract, not follow links
 into its protocol or storage machinery. Audit that dependency before adding
 another link or creating a smaller page.
 
-Generate API reference from the declarations and schemas that own the API.
-Derive types, validators, and language bindings from those definitions wherever
-they would otherwise repeat the same contract. TypeDoc generates documentation
-from TypeScript and JSDoc. Polish that source prose with the same care as a
-hand-written page. Explain what callers need beyond the signature, such as
-preconditions, ownership, lifetime, effects, and failures. Link to the owning
-specification for protocol guarantees. Keep export inventories and copied
-signatures out of hand-written specs. Put caller obligations on service methods
-and public overload declarations. Comments on private helpers or implementation
-bodies may disappear from the generated reference. Verify that a generated page
-exists before removing its only useful explanation elsewhere.
+Derive types, validators, and language bindings from the declarations and
+schemas that own an API wherever they would otherwise repeat the same
+contract. Polish JSDoc prose with the same care as a hand-written page.
+Explain what callers need beyond the signature, such as preconditions,
+ownership, lifetime, effects, and failures. Link to the owning specification
+for protocol guarantees. Keep export inventories and copied signatures out of
+hand-written specs. Put caller obligations on service methods and public
+overload declarations.
 
 Explain the actor, event and evidence behind a value when its type leaves
 those unclear. A timestamp needs the event and clock it records. A signed
@@ -156,7 +148,7 @@ state changes, and failure conditions where they affect that contract.
 
 Apply this reasoning across technical writing. Tutorials and how-to guides
 connect a starting point to an observable result through actions. API prose
-explains the caller's obligations and effects beyond the generated signature.
+explains the caller's obligations and effects beyond the signature.
 Explanations develop the relationships that account for the behavior. Keep
 each page at its chosen level of abstraction and link to deeper detail when
 the reader needs it.
@@ -297,10 +289,9 @@ author's explanation out of that reader's context.
 
 Read the affected documents together. For each folder, follow the paths
 readers use to learn, complete tasks, look up facts, and understand concepts.
-Review the applicable guides, explanations, specifications, generated
-reference, and source comments together. Check that useful material has a
-clear home at the right level of detail and that links help readers continue.
-Regenerate the reference after source edits and read the result.
+Review the applicable guides, explanations, specifications, and source
+comments together. Check that useful material has a clear home at the right
+level of detail and that links help readers continue.
 
 Review correctness separately from readability. Check implementation claims
 against source and public contracts, including guarantees affected by cuts or
@@ -313,7 +304,7 @@ Load the installed Google guides that address the area under review:
 - `google-technical-writing` for audience, organization, and examples.
 - `google-api-documentation` for caller-facing descriptions. Follow
   [Google's API documentation guidance](https://google.aip.dev/192) where it
-  fits the interface and our TypeDoc conventions.
+  fits the interface.
 - The relevant API design guide for resource names, methods, data models,
   pagination, asynchronous work, errors, retries, or compatibility. Apply it
   to the actual interface. A resource-oriented HTTP convention does not by
@@ -364,10 +355,6 @@ and what remains unverified. Use context the owner already supplied.
   member's history belongs with that guarantee.
 - A package README summarized a linked guide's setup, health checks, and
   storage caveat. Keep the task link and let the guide carry the procedure.
-- TypeDoc showed a tool's inputs as unlinked type names. Its native
-  [`@inline` tag](https://typedoc.org/documents/Tags._inline.html) now renders
-  their fields from the source types. Keep caller constraints in JSDoc and
-  let the generator produce the field lists.
 - Daemon setup and first messages serve different needs. Keep installation,
   registration, recovery, and diagnostics in the how-to. Put the guided
   send-and-read exercise in a tutorial that links to that setup.
@@ -481,23 +468,9 @@ only in PRs, issues, and reviews, which describe a fixed revision.
 
 ## Source ownership and checks
 
-Build the API reference with `pnpm docs:api`. TypeDoc writes `out/api`.
-The [missing-exports plugin](https://github.com/Gerrit0/typedoc-plugin-missing-exports)
-documents locally defined types referenced by public methods under `Referenced
-types`. Check their links and descriptions without broadening package exports
-to satisfy the generator. Exclude dependency build outputs so each package's
-source owns its reference.
-Inspect derived type pages as well as their links. A page that exposes schema
-construction types can hide the value callers receive. TypeDoc's
-[`@useDeclaredType`](https://typedoc.org/documents/Tags._useDeclaredType.html)
-can render a derived value type from the compiler. Check the output before
-keeping it. When only the value type is public, give its internal schema a
-distinct name so the generator does not publish two misleading pages for one
-type. Keep the type derived from its schema.
 Shared site values live in `docs/docs.json` variables. Check site links with
 `pnpm -s docs:check`.
 
 Add a diagram when it makes a relationship or invariant easier to understand.
 Keep it with the explanation that owns that fact. API diagrams belong in the
-owning symbol's JSDoc. `pnpm docs:check:mermaid` checks the Mermaid dialect
-GitHub accepts. TypeDoc displays these diagrams as code blocks.
+owning symbol's JSDoc.

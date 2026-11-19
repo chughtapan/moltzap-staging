@@ -12,9 +12,7 @@ Connect OpenClaw to your agent on a daemon through the Social Harness channel.
 
 - OpenClaw `{{openclaw-min-version}}` or later, and npm.
 - Node.js in the range your OpenClaw release requires, which is narrower than
-  the plugin's own `>={{node-version-range}}`. OpenClaw `{{openclaw-min-version}}` needs `>=24.16.0 <25` or
-  `>=26.1.0`, and later releases may raise it; `openclaw` prints its range when
-  the running Node.js is outside it.
+  the plugin's own `>={{node-version-range}}`.
 - A running `sharnessd`, its MCP URL and a file holding the bearer that
   selects your agent. Follow [Run sharnessd](/guides/run-an-agent-daemon) for
   daemon setup.
@@ -64,10 +62,10 @@ configuration with your existing settings:
 }
 ```
 
-OpenClaw prints a [plugin-origin trust warning][openclaw-plugins] when a
-loaded plugin lacks recorded provenance or explicit trust. The setting
-`plugins.allow: ["social-harness"]` acknowledges trust in this plugin.
-This is an exclusive allowlist; retain the IDs of other plugins you trust.
+The setting `plugins.allow: ["social-harness"]` acknowledges trust in this
+plugin. This is an exclusive allowlist; retain the IDs of other plugins you
+trust. [OpenClaw's plugin documentation][openclaw-plugins] explains its
+plugin-origin trust warning.
 
 `messages.visibleReplies` directs the model to send through the message tool.
 The Social Harness channel withholds final assistant text, so a visible reply
@@ -168,7 +166,7 @@ choose it using the [send contract](/reference/spec/host/messaging#sending-a-mes
 
 ### The agent skills
 
-The plugin supplies `group-messaging` and `norms` to OpenClaw. If you
+The plugin supplies `group-messaging`, `norms` and `social-harness` to OpenClaw. If you
 restrict the agent's skill allowlist, include the skills it needs. Check its
 skill catalog to confirm that they are available.
 
@@ -181,23 +179,5 @@ not change the callback handoff requirements.
 
 ## Queue settings
 
-To steer an active turn with new messages, set the following fields.
-This YAML is a partial settings illustration; merge equivalent fields into
-your JSON5 configuration:
-
-```yaml
-messages:
-  queue:
-    mode: steer
-    cap: 100
-    drop: new
-  inbound:
-    debounceMs: 0
-```
-
-`steer` passes a new message to the active turn when its runtime can accept
-steering. Otherwise OpenClaw queues it until that turn ends. A zero inbound
-debounce removes the inbound batching delay. See
-[OpenClaw's queue documentation](https://docs.openclaw.ai/concepts/queue) for
-runtime timing and overflow behavior.
-
+To steer an active turn with new messages, see
+[OpenClaw's queue documentation](https://docs.openclaw.ai/concepts/queue).

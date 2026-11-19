@@ -7,10 +7,9 @@ import {
 } from "@effect/platform";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Cause, Data, Effect, type ParseResult, Schema, Stream } from "effect";
-import { join, relative, resolve } from "node:path";
+import { join, posix, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { workspacePackages } from "../repo/packages.ts";
 
 /** Services every pack gate step runs against. */
 export type GateServices =
@@ -162,6 +161,58 @@ export function runGate(
 }
 
 /**
+ * The workspace root package and the tracked packages `pnpm-workspace.yaml`
+ * selects: the root, and each `package.json` directory that a `packages` glob
+ * includes and no `!` glob excludes.
+ * @param workspaceRoot Source workspace root.
+ * @returns Each package's directory, name, dependencies and exports.
+ */
+export const workspacePackages = Effect.fn("packedWorkspace.workspacePackages")(
+  function* (workspaceRoot: string) {
+    const stringKeyed = Schema.optionalWith(
+      Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+      { default: () => ({}) },
+    );
+    const { packages: globs } = yield* readWorkspaceSettings(
+      workspaceRoot,
+      Schema.Struct({ packages: Schema.Array(Schema.String) }),
+    );
+    const selected = (directory: string, excluded: boolean) =>
+      globs.some(
+        (glob) =>
+          glob.startsWith("!") === excluded &&
+          posix.matchesGlob(directory, glob.replace(/^!/u, "")),
+      );
+    const tracked = yield* runCommand(
+      "git",
+      ["ls-files", "-z", "--", ":(glob)**/package.json"],
+      { cwd: workspaceRoot },
+    );
+    return yield* Effect.forEach(
+      tracked
+        .split("\0")
+        .filter(Boolean)
+        .map((file) => posix.dirname(file))
+        .filter(
+          (directory) =>
+            directory === "." ||
+            (selected(directory, false) && !selected(directory, true)),
+        ),
+      (dir) =>
+        readJsonFile(
+          join(workspaceRoot, dir, "package.json"),
+          Schema.Struct({
+            name: Schema.optionalWith(Schema.String, { default: () => "" }),
+            dependencies: stringKeyed,
+            exports: stringKeyed,
+          }),
+        ).pipe(Effect.map((manifest) => ({ dir, ...manifest }))),
+      { concurrency: 8 },
+    );
+  },
+);
+
+/**
  * Derive the packages to pack from the source dependency graph.
  * @param workspaceRoot Source workspace root.
  * @param entry Repository-relative directory of the product whose
@@ -169,17 +220,13 @@ export function runGate(
  * @param temporaryRoot Scratch directory owned by the caller.
  * @returns Package names mapped to tarball paths.
  */
-export function packProductClosure(
-  workspaceRoot: string,
-  entry: string,
-  temporaryRoot: string,
-) {
-  const products = workspacePackages(workspaceRoot);
+export const packProductClosure = Effect.fn(
+  "packedWorkspace.packProductClosure",
+)(function* (workspaceRoot: string, entry: string, temporaryRoot: string) {
+  const products = yield* workspacePackages(workspaceRoot);
   const initial = products.find(({ dir }) => dir === entry);
   if (initial === undefined) {
-    return Effect.fail(
-      new PackGateError({ message: `Unknown product ${entry}` }),
-    );
+    return yield* new PackGateError({ message: `Unknown product ${entry}` });
   }
   const closure = new Map<string, (typeof products)[number]>();
   function visit(product: (typeof products)[number]): void {
@@ -194,7 +241,7 @@ export function packProductClosure(
     }
   }
   visit(initial);
-  return packWorkspaceClosure(
+  return yield* packWorkspaceClosure(
     Object.fromEntries(
       [...closure.values()].map(({ dir, name }) => [
         name,
@@ -203,7 +250,7 @@ export function packProductClosure(
     ),
     temporaryRoot,
   );
-}
+});
 
 /**
  * Consumer installs use the workspace's Effect override and its TypeScript and
@@ -214,15 +261,8 @@ export function packProductClosure(
  */
 export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
   function* (workspaceRoot: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(
-      join(workspaceRoot, "pnpm-workspace.yaml"),
-    );
-    const value = yield* Effect.try({
-      try: (): unknown => parse(text),
-      catch: (cause) => new PackGateError({ message: String(cause) }),
-    });
-    const workspace = yield* Schema.decodeUnknown(
+    const workspace = yield* readWorkspaceSettings(
+      workspaceRoot,
       Schema.Struct({
         catalog: Schema.Struct({
           openclaw: Schema.String,
@@ -230,7 +270,7 @@ export const readConsumerPins = Effect.fn("packedWorkspace.readConsumerPins")(
         }),
         overrides: Schema.Struct({ effect: Schema.String }),
       }),
-    )(value);
+    );
     return {
       effect: workspace.overrides.effect,
       openclaw: workspace.catalog.openclaw,
@@ -417,7 +457,7 @@ function writeConsumerProject(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const { packageManager } = yield* readJsonFile(
-      fileURLToPath(new URL("../../package.json", import.meta.url)),
+      fileURLToPath(new URL("../package.json", import.meta.url)),
       Schema.Struct({ packageManager: Schema.String }),
     );
     yield* fs.writeFileString(
@@ -428,5 +468,23 @@ function writeConsumerProject(
       join(consumerRoot, "pnpm-workspace.yaml"),
       workspace,
     );
+  });
+}
+
+/** Reads `pnpm-workspace.yaml` and decodes the settings `schema` names. */
+function readWorkspaceSettings<A, I>(
+  workspaceRoot: string,
+  schema: Schema.Schema<A, I>,
+): Effect.Effect<A, GateError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString(
+      join(workspaceRoot, "pnpm-workspace.yaml"),
+    );
+    const value = yield* Effect.try({
+      try: (): unknown => parse(text),
+      catch: (cause) => new PackGateError({ message: String(cause) }),
+    });
+    return yield* Schema.decodeUnknown(schema)(value);
   });
 }
