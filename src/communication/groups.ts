@@ -6,7 +6,7 @@ import { AgentName } from "../identity.js";
 import { SendError } from "./errors.js";
 
 /** The scheme of an address listing a group's members. */
-export const GROUP_ADDRESS_PREFIX = "group:";
+const GROUP_ADDRESS_PREFIX = "group:";
 
 /** The largest membership of one conversation. */
 export const maximumMembers = 32;

@@ -17,7 +17,6 @@ export {
 } from "./messages.js";
 /** Group addresses, which only P2P mode offers. */
 export {
-  GROUP_ADDRESS_PREFIX,
   GroupAddress,
   groupAddressOf,
   groupMembers,
