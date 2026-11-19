@@ -9,16 +9,16 @@ import {
   ParseResult,
   Schema,
 } from "effect";
-import { type Message, RequestedSchema } from "../communication/index.js";
-import { exactStruct } from "../encoding.js";
-import {
-  type CheckLimits,
-  type Direction,
-  type FirewallRefusalReason,
+import type { Message, RequestedSchema } from "../communication/index.js";
+import type {
+  CheckLimits,
+  Direction,
+  FirewallRefusalReason,
   OwnerFact,
-  type ProviderRequestSettings,
-  type TextRule,
+  ProviderRequestSettings,
+  TextRule,
 } from "./rules.js";
+import { exactStruct } from "../encoding.js";
 
 /** The evidence a check may read: bounded preceding history and each message's visibility to the agent. */
 export interface FirewallEvidence {
@@ -46,19 +46,21 @@ export interface FirewallEvidence {
 }
 
 /**
- * The text rules, limits and revision one check captures, without storage or
- * provider setup. `limits` bound the whole check and `providerSettings` the
- * request to the decision provider inside it.
+ * The text rules and revision one check captures, without storage or provider
+ * setup. `providerSettings` bound the request to the decision provider.
  */
 export interface CheckConfiguration {
   readonly textRules: readonly TextRule[];
-  readonly limits: CheckLimits;
   readonly providerSettings?: ProviderRequestSettings;
   readonly revision: string;
 }
 
-/** The text rules one check applies, with their decision provider. */
+/**
+ * The text rules one check applies, with the limits of the whole check and
+ * the decision provider that judges the rules.
+ */
 export interface CheckPolicy extends CheckConfiguration {
+  readonly limits: CheckLimits;
   readonly provider?: DecisionProvider;
 }
 
@@ -86,25 +88,17 @@ const probability = Schema.Number.pipe(Schema.between(0, 1));
  * A message as the decision provider reads it. Requires verified attribution
  * from the caller.
  */
-export class AssessmentText extends Schema.Class<AssessmentText>(
-  "AssessmentText",
-)({
-  id: identifier,
-  sender: identifier,
-  recipients: Schema.NonEmptyArray(identifier),
-  text: Schema.String,
-}) {}
+export interface AssessmentText {
+  readonly id: string;
+  readonly sender: string;
+  readonly recipients: readonly [string, ...string[]];
+  readonly text: string;
+}
 
-/**
- * Earlier message text and whether the local agent may read it.
- */
-export const HistoryEntry = Schema.Struct({
-  ...AssessmentText.fields,
-  visibleToAgent: Schema.Boolean,
-}).annotations({ identifier: "HistoryEntry" });
-
-/** One validated message of earlier history. */
-export type HistoryEntry = typeof HistoryEntry.Type;
+/** Earlier message text and whether the local agent may read it. */
+export interface HistoryEntry extends AssessmentText {
+  readonly visibleToAgent: boolean;
+}
 
 /**
  * The evidence one check of the text rules reads: verified participants, the
@@ -112,48 +106,43 @@ export type HistoryEntry = typeof HistoryEntry.Type;
  * test labels and another agent's private state. Visibility tells the
  * decision provider which earlier messages the agent has read.
  */
-export class CheckEvidence extends Schema.Class<CheckEvidence>("CheckEvidence")(
-  {
-    agentId: identifier,
-    principal: identifier,
-    participants: Schema.Array(
-      Schema.Struct({
-        agentId: identifier,
-        principal: identifier,
-      }),
-    ),
-    history: Schema.Array(HistoryEntry),
-    /** Older messages outside the configured window are not an evidence gap. */
-    earlierHistoryOmitted: Schema.optional(Schema.Boolean),
-    /** Epoch milliseconds when the caller captured the evidence. */
-    now: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
-    facts: Schema.Array(OwnerFact),
-    gaps: Schema.Array(Schema.NonEmptyString),
-    /**
-     * For an act a contract governs: its norm and that norm's description, the
-     * digest of its norm document, the act's performative and form, and the
-     * facts that hold in the instance.
-     */
-    protocol: Schema.optional(
-      Schema.Struct({
-        norm: Schema.String,
-        digest: Schema.String,
-        act: Schema.String,
-        description: Schema.String,
-        state: Schema.Array(Schema.String),
-        form: Schema.typeSchema(RequestedSchema),
-      }),
-    ),
-  },
-) {}
+export interface CheckEvidence {
+  readonly agentId: string;
+  readonly principal: string;
+  readonly participants: ReadonlyArray<{
+    readonly agentId: string;
+    readonly principal: string;
+  }>;
+  readonly history: readonly HistoryEntry[];
+  /** Older messages outside the configured window are not an evidence gap. */
+  readonly earlierHistoryOmitted?: boolean;
+  /** Epoch milliseconds when the caller captured the evidence. */
+  readonly now?: number;
+  readonly facts: readonly OwnerFact[];
+  readonly gaps: readonly string[];
+  /**
+   * For an act a contract governs: its norm and that norm's description, the
+   * digest of its norm document, the act's performative and form, and the
+   * facts that hold in the instance.
+   */
+  readonly protocol?: {
+    readonly norm: string;
+    readonly digest: string;
+    readonly act: string;
+    readonly description: string;
+    readonly state: readonly string[];
+    readonly form: typeof RequestedSchema.Type;
+  };
+}
 
 /**
  * A received message or a draft not yet sent. The boundary method assigns the
  * direction, not a peer's payload.
  */
-type MessageEvent =
-  | { readonly direction: "incoming"; readonly message: AssessmentText }
-  | { readonly direction: "outgoing"; readonly message: AssessmentText };
+interface MessageEvent {
+  readonly direction: Direction;
+  readonly message: AssessmentText;
+}
 
 /**
  * What a check found for one text rule. An answer the provider was unsure of
@@ -190,21 +179,21 @@ export interface CapturedMessage {
 }
 
 /** Reports invalid settings, rules, messages or evidence before a judgment exists. */
-export class InvalidCheckError extends Data.TaggedError("InvalidCheckError")<{
-  readonly reason: "settings" | "rules" | "message" | "evidence";
-}> {}
+class InvalidCheckError extends Data.TaggedError("InvalidCheckError") {}
 
 /**
  * What one check of the text rules concludes. Provider failure produces a hold
  * judgment. Findings and traces stay private. The host receives the feedback
  * of a refusal, and as guidance the instructions of an allowed incoming
- * message the provider was unsure about.
+ * message the provider was unsure about. `decidedBy` names the rules that
+ * gave the reason.
  */
 export interface FirewallCheck extends TextAssessment {
   readonly judgment: "allow" | "reject" | "hold";
   readonly reason: Reason;
   readonly feedback: ReadonlyArray<{ readonly text: string }>;
   readonly instructions: ReadonlyArray<typeof uncertainInstructionSchema.Type>;
+  readonly decidedBy: readonly DecidingRule[];
 }
 
 /**
@@ -242,12 +231,11 @@ export class DecisionResponse extends Schema.Class<DecisionResponse>(
   raw: Schema.String,
 }) {}
 
-/** The adapter scrubs credentials before retaining optional private diagnostics. */
+/** Why the decision provider gave no usable answer, with the HTTP status of a refused request. */
 export class DecisionProviderError extends Data.TaggedError(
   "DecisionProviderError",
 )<{
   readonly reason:
-    | "configuration"
     | "transport"
     | "http"
     | "timeout"
@@ -255,7 +243,6 @@ export class DecisionProviderError extends Data.TaggedError(
     | "budget"
     | "defect";
   readonly status?: number;
-  readonly response?: string;
 }> {}
 
 /** Injected providers receive frozen requests and return validated responses. */
@@ -283,15 +270,7 @@ type TextTrace = {
       readonly request?: DecisionRequest;
       readonly failure: DecisionProviderError;
     }
-  | { readonly status: "empty" }
 );
-
-interface TextCheck {
-  readonly event: MessageEvent;
-  readonly evidence: CheckEvidence;
-  readonly revision: string;
-  readonly rules: readonly TextRule[];
-}
 
 /** An opaque check id conveys no approval or lookup authority. */
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
@@ -317,18 +296,21 @@ const judgments: Readonly<Record<Reason, FirewallCheck["judgment"]>> = {
 };
 
 /**
- * Identifies a rule that gave the check's reason. `finding` records whether
- * the provider's answer for it was settled, uncertain or unavailable. `advice`
- * contains the rule's guidance for an allowed message, or its feedback for a
- * refusal.
+ * Identifies a rule that gave the check's reason. `advice` contains the rule's
+ * guidance for an allowed message, or its feedback for a refusal.
  */
-export interface DecidingRule {
+interface DecidingRule {
   readonly ruleId: string;
-  readonly finding: "settled" | "uncertain" | "unavailable";
   readonly advice?: string;
 }
 
 type QuestionEntry = readonly [string, DecisionRequest["questions"][string]];
+
+/** The rules a request asks about, with the revision of the policy they belong to. */
+interface RevisionRules {
+  readonly rules: readonly TextRule[];
+  readonly revision: string;
+}
 
 /** One unescaped UTF-8 byte is the minimum required identifier size for budgeting. */
 const minimumIdentifier = "x";
@@ -369,9 +351,9 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
         findings: selected.skipped,
       });
     }
-    const providerSettings = policy.providerSettings;
-    if (providerSettings === undefined) {
-      return yield* new InvalidCheckError({ reason: "settings" });
+    const { providerSettings, provider } = policy;
+    if (providerSettings === undefined || provider === undefined) {
+      return yield* new InvalidCheckError();
     }
     const attempt = yield* captureResult(
       Effect.suspend(() => {
@@ -385,7 +367,7 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
           captured,
           { ...selected, revision: policy.revision },
           providerSettings,
-          policy.provider,
+          provider,
         );
       }).pipe(
         Effect.flatMap((assessment) =>
@@ -402,7 +384,7 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
       () => new DecisionProviderError({ reason: "defect" }),
     );
     const assessment = Either.match(attempt, {
-      onLeft: (failure): TextAssessment => ({
+      onLeft: (): TextAssessment => ({
         findings: [
           ...selected.rules.map(
             (rule): PolicyFinding => ({
@@ -413,10 +395,6 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
           ),
           ...selected.skipped,
         ],
-        trace: {
-          format: "text-policy/v2",
-          data: JSON.stringify({ failure: { reason: failure.reason } }),
-        },
       }),
       onRight: (completed) => completed,
     });
@@ -425,11 +403,29 @@ export const checkCapturedMessage = Effect.fn("Firewall.checkCapturedMessage")(
 );
 
 /** Startup and edits reject text rules that cannot form a bounded request. */
-export const validateChecks = Effect.fn("Firewall.validateChecks")(function* (
-  configuration: CheckConfiguration,
-) {
-  yield* validateTextRules(configuration);
-});
+export function validateTextRules({
+  textRules,
+  providerSettings,
+  revision,
+}: CheckConfiguration) {
+  if (new Set(textRules.map((rule) => rule.id)).size !== textRules.length) {
+    return Effect.fail(new InvalidCheckError());
+  }
+  if (textRules.length === 0) {
+    return Effect.void;
+  }
+  if (providerSettings === undefined) {
+    return Effect.fail(new InvalidCheckError());
+  }
+  const fits = (["incoming", "outgoing"] as const).every((direction) =>
+    textPolicyFitsBudget(
+      { rules: forDirection(textRules, direction).rules, revision },
+      providerSettings.maximumRequestBytes,
+      direction,
+    ),
+  );
+  return fits ? Effect.void : Effect.fail(new InvalidCheckError());
+}
 
 /** Decodes and deeply freezes a copy so caller mutations cannot alter a check. */
 export function decodeFrozen<A, I>(
@@ -458,35 +454,6 @@ export function decodeFrozen<A, I>(
       }),
     ),
   );
-}
-
-/** One rule contributes one attribution entry even when several judgments select it. */
-export function decidingRules(
-  reason: Reason,
-  rules: readonly TextRule[],
-  assessment: TextAssessment,
-): readonly DecidingRule[] {
-  const selected = new Map<string, DecidingRule["finding"]>();
-  for (const finding of assessment.findings) {
-    const kind = decidingFinding(finding, reason);
-    if (kind !== undefined && !selected.has(finding.ruleId)) {
-      selected.set(finding.ruleId, kind);
-    }
-  }
-  return rules.flatMap((rule) => {
-    const finding = selected.get(rule.id);
-    if (finding === undefined) {
-      return [];
-    }
-    const advice = registeredAdvice(reason, rule);
-    return [
-      {
-        ruleId: rule.id,
-        finding,
-        ...(advice === undefined ? {} : { advice }),
-      },
-    ];
-  });
 }
 
 /** Freezes an object and everything it holds. Call it only on newly decoded objects that no caller owns. */
@@ -541,61 +508,73 @@ function validateEvidence({ event, evidence }: CapturedMessage) {
     !attributed ||
     new Set(message.recipients).size !== message.recipients.length
   ) {
-    return Effect.fail(new InvalidCheckError({ reason: "message" }));
+    return Effect.fail(new InvalidCheckError());
   }
   if (
     new Set(references).size !== references.length ||
     new Set(evidence.participants.map((participant) => participant.agentId))
       .size !== evidence.participants.length
   ) {
-    return Effect.fail(new InvalidCheckError({ reason: "evidence" }));
+    return Effect.fail(new InvalidCheckError());
   }
   return Effect.void;
 }
 
-/** The judgment and reason the findings give, with the feedback or guidance of the rules that gave the reason. */
+/**
+ * The judgment and reason the findings give. Each rule with a finding that
+ * gives the reason decides, once and in rule order: an unsure answer for an
+ * allowed message, and otherwise a violation or a hold for that reason. A
+ * refusal's feedback is each deciding rule's registered feedback, or its
+ * guidance when it has none, so a refused agent learns which rule to revise
+ * against. An allowed message's instructions are each deciding rule's
+ * guidance, or its feedback when it has none, with the provider's choice and
+ * probability.
+ */
 function concludeCheck(
   evidence: CheckEvidence,
   rules: readonly TextRule[],
   assessment: TextAssessment,
 ): FirewallCheck {
   const reason = selectReason(evidence, assessment);
+  const deciding = rules.flatMap((rule) => {
+    const finding = assessment.findings.find(
+      (candidate) => candidate.ruleId === rule.id && decides(candidate, reason),
+    );
+    const advice =
+      reason === "eligible"
+        ? (rule.guidance ?? rule.feedback?.text)
+        : (rule.feedback?.text ?? rule.guidance);
+    return finding === undefined ? [] : [{ ruleId: rule.id, finding, advice }];
+  });
   return {
     ...assessment,
     judgment: judgments[reason],
     reason,
-    feedback: projectFeedback(rules, assessment.findings, reason),
-    instructions:
+    feedback:
       reason === "eligible"
-        ? uncertainInstructions(rules, assessment.findings)
-        : [],
+        ? []
+        : deciding.flatMap(({ advice }) =>
+            advice === undefined ? [] : [{ text: advice }],
+          ),
+    instructions: deciding.flatMap(({ ruleId, finding, advice }) =>
+      advice === undefined || !("choice" in finding)
+        ? []
+        : [
+            {
+              ruleId,
+              instruction: advice,
+              uncertain: {
+                choice: finding.choice,
+                probability: finding.probability,
+              },
+            },
+          ],
+    ),
+    decidedBy: deciding.map(({ ruleId, advice }) => ({
+      ruleId,
+      ...(advice === undefined ? {} : { advice }),
+    })),
   };
-}
-
-/**
- * The registered feedback of each rule whose finding gives the final reason,
- * or its guidance when it has no feedback, so a refused agent learns which
- * rule to revise against.
- */
-function projectFeedback(
-  rules: readonly TextRule[],
-  findings: readonly PolicyFinding[],
-  reason: Reason,
-): FirewallCheck["feedback"] {
-  const selected = new Set(
-    findings
-      .filter((finding) => matchesReason(finding, reason))
-      .map((finding) => finding.ruleId),
-  );
-  return rules.flatMap((rule) => {
-    if (!selected.has(rule.id)) {
-      return [];
-    }
-    if (rule.feedback !== undefined) {
-      return [{ ...rule.feedback }];
-    }
-    return rule.guidance === undefined ? [] : [{ text: rule.guidance }];
-  });
 }
 
 function selectReason(
@@ -623,81 +602,22 @@ function selectReason(
   return "eligible";
 }
 
-function decidingFinding(
-  finding: PolicyFinding,
-  reason: Reason,
-): DecidingRule["finding"] | undefined {
+/** Whether a finding gives the check's reason. */
+function decides(finding: PolicyFinding, reason: Reason): boolean {
   if (reason === "eligible") {
-    return "choice" in finding ? "uncertain" : undefined;
-  }
-  if (!matchesReason(finding, reason)) {
-    return undefined;
-  }
-  if (reason === "check-unavailable") {
-    return "unavailable";
-  }
-  return finding.kind === "hold" ? "uncertain" : "settled";
-}
-
-function registeredAdvice(reason: Reason, rule: TextRule): string | undefined {
-  return reason === "eligible"
-    ? (rule.guidance ?? rule.feedback?.text)
-    : (rule.feedback?.text ?? rule.guidance);
-}
-
-function matchesReason(finding: PolicyFinding, reason: Reason): boolean {
-  const findingReasons = {
-    pass: "eligible",
-    "not-applicable": "eligible",
-    violation: "rule-violation",
-  } satisfies Record<Exclude<PolicyFinding["kind"], "hold">, Reason>;
-  if (reason === "eligible") {
-    return false;
+    return "choice" in finding;
   }
   return finding.kind === "hold"
     ? finding.reason === reason
-    : findingReasons[finding.kind] === reason;
-}
-
-/**
- * The instruction for each rule the provider could not settle for an allowed
- * incoming message: the rule's guidance, or its feedback when it has none,
- * with the provider's choice and probability.
- */
-function uncertainInstructions(
-  rules: readonly TextRule[],
-  findings: readonly PolicyFinding[],
-): FirewallCheck["instructions"] {
-  return findings.flatMap((finding) => {
-    if (!("choice" in finding)) {
-      return [];
-    }
-    const rule = rules.find((candidate) => candidate.id === finding.ruleId);
-    const instruction = rule?.guidance ?? rule?.feedback?.text;
-    return instruction === undefined
-      ? []
-      : [
-          {
-            ruleId: finding.ruleId,
-            instruction,
-            uncertain: {
-              choice: finding.choice,
-              probability: finding.probability,
-            },
-          },
-        ];
-  });
+    : finding.kind === "violation" && reason === "rule-violation";
 }
 
 function decideWithinBudget(
   request: DecisionRequest,
   settings: ProviderRequestSettings,
-  provider?: DecisionProvider,
+  provider: DecisionProvider,
 ) {
   return Effect.gen(function* () {
-    if (provider === undefined) {
-      return yield* new DecisionProviderError({ reason: "configuration" });
-    }
     const received = yield* provider.decide(request).pipe(
       Effect.timeoutFail({
         duration: settings.timeoutMilliseconds,
@@ -710,10 +630,7 @@ function decideWithinBudget(
       ),
     );
     if (!validAnswers(request, response)) {
-      return yield* new DecisionProviderError({
-        reason: "invalid-response",
-        response: response.raw,
-      });
+      return yield* new DecisionProviderError({ reason: "invalid-response" });
     }
     return response;
   }).pipe(Effect.withSpan("TextPolicy.decideWithinBudget"));
@@ -758,18 +675,15 @@ function validAnswers(
 }
 
 function assessQuestions(
-  preparation: ReturnType<typeof makeTextRequest>,
+  preparation: ReturnType<typeof prepareRequest>,
   settings: ProviderRequestSettings,
-  provider?: DecisionProvider,
+  provider: DecisionProvider,
 ) {
   return Effect.gen(function* (): Effect.fn.Return<TextTrace> {
     if ("status" in preparation) {
       return preparation;
     }
     const request = preparation;
-    if (Object.keys(request.questions).length === 0) {
-      return { status: "empty", elapsedMilliseconds: 0 };
-    }
     const started = yield* Clock.currentTimeMillis;
     const response = yield* captureResult(
       decideWithinBudget(request, settings, provider),
@@ -813,21 +727,17 @@ function unsettled(
 /** Asks the provider whether the candidate breaks each rule, in one request. */
 function checkText(
   captured: CapturedMessage,
-  selected: Pick<TextCheck, "rules" | "revision"> & {
-    readonly skipped: readonly PolicyFinding[];
-  },
+  selected: RevisionRules & { readonly skipped: readonly PolicyFinding[] },
   settings: ProviderRequestSettings,
-  provider?: DecisionProvider,
+  provider: DecisionProvider,
 ) {
   return Effect.gen(function* (): Effect.fn.Return<TextAssessment> {
-    const check: TextCheck = {
-      event: captured.event,
-      evidence: captured.evidence,
-      rules: selected.rules,
-      revision: selected.revision,
-    };
     const trace = yield* assessQuestions(
-      makeTextRequest(check, settings.maximumRequestBytes),
+      prepareRequest(
+        providerState(selected, captured),
+        allQuestions(selected.rules),
+        settings.maximumRequestBytes,
+      ),
       settings,
       provider,
     );
@@ -873,8 +783,6 @@ function traceFindings(
   direction: Direction,
 ): PolicyFinding[] {
   switch (trace.status) {
-    case "empty":
-      return [];
     case "failed":
       return rules.map((rule) => ({
         ruleId: rule.id,
@@ -926,23 +834,12 @@ function questionFinding(
   };
 }
 
-function makeTextRequest(
-  check: TextCheck,
-  maximumBytes: number,
-): DecisionRequest | Extract<TextTrace, { readonly status: "failed" }> {
-  return prepareRequest(
-    policyState(check, requestEvidence(check)),
-    allQuestions(check.rules),
-    maximumBytes,
-  );
-}
-
 /**
  * Checks the minimum catalog, state and questions against the request budget.
  * Variable candidate and evidence still need space.
  */
 function textPolicyFitsBudget(
-  policy: Pick<TextCheck, "rules" | "revision">,
+  policy: RevisionRules,
   maximumBytes: number,
   direction: Direction,
 ): boolean {
@@ -950,7 +847,7 @@ function textPolicyFitsBudget(
     return true;
   }
   const request = prepareRequest(
-    policyState(policy, minimumEvidence(direction)),
+    providerState(policy, minimumCaptured(direction)),
     allQuestions(policy.rules),
     maximumBytes,
   );
@@ -987,88 +884,59 @@ function prepareRequest(
   return Object.freeze(request);
 }
 
-function policyState(
-  policy: Pick<TextCheck, "rules" | "revision">,
-  evidence: ReturnType<typeof requestEvidence>,
+/** The state the provider reads: its instructions, the candidate and its evidence, and the text of the rules asked about. */
+function providerState(
+  policy: RevisionRules,
+  { event, evidence }: CapturedMessage,
 ): string {
-  const { policy: catalog, ...common } = catalogState(policy);
-  const {
-    history,
-    earlierHistoryOmitted,
-    now,
-    facts,
-    gaps,
-    protocol,
-    ...event
-  } = evidence;
   return JSON.stringify({
-    ...common,
-    ...event,
-    policy: catalog,
-    history,
-    earlierHistoryOmitted,
-    now,
-    facts,
-    gaps,
-    protocol,
+    questionEdition: textQuestionEdition,
+    instructions: providerInstructions,
+    agentId: evidence.agentId,
+    principal: evidence.principal,
+    participants: evidence.participants,
+    direction: event.direction,
+    candidate: event.message,
+    policy: {
+      digest: policy.revision,
+      rules: policy.rules.map(({ id, text }) => ({ id, text })),
+    },
+    history: evidence.history,
+    earlierHistoryOmitted: evidence.earlierHistoryOmitted,
+    now: evidence.now,
+    facts: evidence.facts,
+    gaps: evidence.gaps,
+    protocol: evidence.protocol,
   });
-}
-
-function requestEvidence(check: TextCheck) {
-  return {
-    agentId: check.evidence.agentId,
-    principal: check.evidence.principal,
-    participants: check.evidence.participants,
-    direction: check.event.direction,
-    candidate: check.event.message,
-    history: check.evidence.history,
-    earlierHistoryOmitted: check.evidence.earlierHistoryOmitted,
-    now: check.evidence.now,
-    facts: check.evidence.facts,
-    gaps: check.evidence.gaps,
-    protocol: check.evidence.protocol,
-  };
 }
 
 /**
  * Sizes serialized slots using one recipient and one byte per required id.
  * Unrestricted text and arrays are empty. No synthetic evidence reaches a provider.
  */
-function minimumEvidence(
-  direction: Direction,
-): ReturnType<typeof requestEvidence> {
+function minimumCaptured(direction: Direction): CapturedMessage {
   return {
-    agentId: minimumIdentifier,
-    principal: minimumIdentifier,
-    participants: [],
-    direction,
-    candidate: {
-      id: minimumIdentifier,
-      sender: minimumIdentifier,
-      recipients: [minimumIdentifier],
-      text: "",
+    event: {
+      direction,
+      message: {
+        id: minimumIdentifier,
+        sender: minimumIdentifier,
+        recipients: [minimumIdentifier],
+        text: "",
+      },
     },
-    history: [],
-    earlierHistoryOmitted: undefined,
-    now: undefined,
-    facts: [],
-    gaps: [],
-    protocol: undefined,
-  };
-}
-
-function catalogState(policy: Pick<TextCheck, "rules" | "revision">) {
-  return {
-    questionEdition: textQuestionEdition,
-    instructions: providerInstructions,
-    policy: {
-      digest: policy.revision,
-      rules: policy.rules.map(({ id, text }) => ({ id, text })),
+    evidence: {
+      agentId: minimumIdentifier,
+      principal: minimumIdentifier,
+      participants: [],
+      history: [],
+      facts: [],
+      gaps: [],
     },
   };
 }
 
-function* allQuestions(rules: TextCheck["rules"]): Iterable<QuestionEntry> {
+function* allQuestions(rules: readonly TextRule[]): Iterable<QuestionEntry> {
   for (const [index, rule] of rules.entries()) {
     yield [
       `q${index}`,
@@ -1079,32 +947,6 @@ function* allQuestions(rules: TextCheck["rules"]): Iterable<QuestionEntry> {
       },
     ];
   }
-}
-
-function validateTextRules({
-  textRules,
-  providerSettings,
-  revision,
-}: CheckConfiguration) {
-  if (new Set(textRules.map((rule) => rule.id)).size !== textRules.length) {
-    return Effect.fail(new InvalidCheckError({ reason: "rules" }));
-  }
-  if (textRules.length === 0) {
-    return Effect.void;
-  }
-  if (providerSettings === undefined) {
-    return Effect.fail(new InvalidCheckError({ reason: "settings" }));
-  }
-  const fits = (["incoming", "outgoing"] as const).every((direction) =>
-    textPolicyFitsBudget(
-      { rules: forDirection(textRules, direction).rules, revision },
-      providerSettings.maximumRequestBytes,
-      direction,
-    ),
-  );
-  return fits
-    ? Effect.void
-    : Effect.fail(new InvalidCheckError({ reason: "rules" }));
 }
 
 const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {

@@ -447,16 +447,6 @@ interface BehaviorLoad {
   readonly initialRuleCount: number;
 }
 
-/** The owner facts and the check concurrency limit are part of the installed policy identity. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Installing a policy validates fixed settings with the same grammar saved checks decode.
-export const firewallConfigurationSchema = Schema.Struct({
-  facts: Schema.Array(OwnerFact),
-  maximumConcurrentChecks: Schema.Int.pipe(Schema.between(1, 32)),
-});
-
-/** The fixed facts and the concurrency limit are immutable for a process installation. */
-export type FirewallConfiguration = typeof firewallConfigurationSchema.Type;
-
 /**
  * Maps a `BEHAVIOR.md` to an editable rule. Callers must bound `bytes` by
  * {@link MAXIMUM_DOCUMENT_BYTES}. Only a closed failure category reaches

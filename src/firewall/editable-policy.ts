@@ -190,14 +190,6 @@ export const editedContracts = Effect.fn("editedContracts")(function* (
   ]);
 });
 
-/** An `invalid-rule` failure for `problem`, at the addition or removal `at` locates. */
-export function invalidRule(
-  problem: PolicyProblem,
-  at: { readonly path?: PolicyEditPath; readonly ruleId?: string } = {},
-) {
-  return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
-}
-
 /**
  * One requested addition: an inline rule, a behavior's rule or a contract.
  * An inline rule is decoded, so its members are in its schema's order like
@@ -243,4 +235,12 @@ function behaviorRule(text: string, path: PolicyEditPath) {
       }),
     ),
   );
+}
+
+/** An `invalid-rule` failure for `problem`, at the addition or removal `at` locates. */
+function invalidRule(
+  problem: PolicyProblem,
+  at: { readonly path?: PolicyEditPath; readonly ruleId?: string } = {},
+) {
+  return new FirewallPolicyError({ reason: "invalid-rule", problem, ...at });
 }
