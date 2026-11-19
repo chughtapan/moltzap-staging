@@ -65,10 +65,13 @@ it("applies no contract to a group message, whatever its text", () =>
                 recipients: group,
                 content: [{ type: "text", text }],
               }),
-              {
-                ...evidence,
-                protocolHistory: { messages: [], complete: true },
-              },
+              () =>
+                Effect.succeed({
+                  history: [],
+                  earlierHistoryOmitted: false,
+                  gaps: [],
+                  protocolHistory: { messages: [], complete: true },
+                }),
             );
             expect(decision.kind).toBe("allowed");
           }),

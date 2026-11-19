@@ -1,11 +1,10 @@
 /** @file The message firewall's values: message-policy loading and what a host reads of a check. Its service is `service.ts`. */
 
-/** The evidence a check may read, guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
+/** Guidance read with a checked message, what a check permits or refuses, and the decision provider that judges text rules. */
 export {
   type DecisionProvider,
   type DecisionRequest,
   type DecisionResponse,
-  type FirewallEvidence,
   FirewallRefusal,
   LocalGuidance,
 } from "./check.js";

@@ -61,7 +61,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     readPolicy: () =>
       Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
     readContracts: () => Effect.succeed([]),
-    requiresProtocolHistory: () => false,
     updatePolicy: unused,
     readDecisions: unused,
   });

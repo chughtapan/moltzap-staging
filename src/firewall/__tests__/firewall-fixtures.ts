@@ -27,12 +27,13 @@ export const privacy = {
   text: "Do not reveal the owner's private records.",
   feedback: "Keep private records private.",
 } satisfies TextRule;
-/** Complete evidence with no history or gaps. */
-export const evidence: FirewallEvidence = {
-  history: [],
-  earlierHistoryOmitted: false,
-  gaps: [],
-};
+/** Reads complete evidence with no history or gaps. */
+export const evidence = () =>
+  Effect.succeed<FirewallEvidence>({
+    history: [],
+    earlierHistoryOmitted: false,
+    gaps: [],
+  });
 /** Finds `privacy` broken and every other rule followed, with certainty. */
 export const certainProvider: DecisionProvider = {
   decide: (request) =>

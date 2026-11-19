@@ -135,8 +135,10 @@ function check(
   return Effect.gen(function* () {
     const decision =
       message.author.agentId === self.agentId
-        ? yield* firewall.checkOutgoing(message, evidence)
-        : yield* firewall.checkIncoming(message, evidence);
+        ? yield* firewall.checkOutgoing(message, () => Effect.succeed(evidence))
+        : yield* firewall.checkIncoming(message, () =>
+            Effect.succeed(evidence),
+          );
     yield* decision.save;
     return decision;
   });
@@ -155,7 +157,7 @@ it("refuses every text that is not an act of a held norm", () =>
           Effect.gen(function* () {
             const decision = yield* firewall.checkOutgoing(
               yield* direct(self, bob, text),
-              after([]),
+              () => Effect.succeed(after([])),
             );
             expect(decision).toMatchObject({
               kind: "refused",
@@ -194,7 +196,7 @@ it.prop(
             const unchecked = yield* direct(bob, self, "Hello");
             const decision = yield* firewall.checkOutgoing(
               yield* direct(self, bob, actText("open", "exchange", { value })),
-              evidenceOf(unchecked),
+              () => Effect.succeed(evidenceOf(unchecked)),
             );
             expect(decision).toMatchObject({
               kind: "refused",
@@ -363,10 +365,9 @@ it.prop(
             const act = yield* readAct(reply);
             expect(act).toMatchObject({ name: "reject", norm: "exchange" });
             expect(Object.keys(act.fields)).toEqual(["reason"]);
-            const sent = yield* firewall.checkOutgoing(reply, {
-              ...after([open]),
-              references: [withheld],
-            });
+            const sent = yield* firewall.checkOutgoing(reply, () =>
+              Effect.succeed({ ...after([open]), references: [withheld] }),
+            );
             expect(sent.kind).toBe(repliesIntoInstance ? "allowed" : "refused");
           }),
         (agentKey) => firewallLayer(agentKey, policy(), [exchange]),
