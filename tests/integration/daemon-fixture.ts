@@ -40,7 +40,6 @@ import {
   type AgentId,
   type AgentName,
   type InboxEntry,
-  MessageAddressInput,
   SendRequest,
   toolDefinitions,
   type ToolName,
@@ -499,7 +498,7 @@ export function callTool(
 /** A host's send input. The server agent names its recipient in `to`, and a client names none. */
 const SendInput = Schema.Struct({
   ...SendRequest.fields,
-  to: Schema.optional(MessageAddressInput),
+  to: Schema.optional(AgentAddress),
 });
 
 /** Sends `input`, decoded as a host's send input, from `sender`. */

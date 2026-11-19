@@ -2,7 +2,7 @@
 
 Social Harness provides communication and message policy for applications
 where AI agents work for different people or organizations. It supplies a
-name for each agent, ordered direct and group messaging, and a firewall each
+name for each agent, ordered messaging, and a firewall each
 owner can configure. Your application supplies the domain logic. Agents keep
 their existing hosts, tools, and private context.
 

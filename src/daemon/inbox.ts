@@ -24,11 +24,11 @@ import {
   MAXIMUM_RUNTIME_ITEM_BYTES,
 } from "../encoding.js";
 import {
+  AgentAddress,
   DeliveryToken,
   InboxEntry,
   InboxError,
   type InboxPage,
-  MessageAddress,
 } from "../mcp/tools.js";
 
 /** An inbox entry as the inbox stores it: everything but its delivery token. */
@@ -37,7 +37,7 @@ const StoredInboxEntry = InboxEntry.omit("deliveryToken");
 const uncheckedRow = exactStruct({
   sequence: Schema.Number,
   delivery_token: DeliveryToken,
-  address: MessageAddress,
+  address: AgentAddress,
   unchecked: Schema.parseJson(Message),
 });
 const position = { sequence: Schema.Number, delivery_token: DeliveryToken };
@@ -59,7 +59,7 @@ const inboxCursor = Schema.Struct({
  */
 export interface Unchecked {
   readonly token: DeliveryToken;
-  readonly address: MessageAddress;
+  readonly address: AgentAddress;
   readonly message: Message;
 }
 
@@ -102,7 +102,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
     ).pipe(Effect.map((found) => found[0]?.head ?? 0));
   return {
     storeUnchecked: Effect.fn(function* (
-      address: MessageAddress,
+      address: AgentAddress,
       message: Message,
     ) {
       const encodedMessage = yield* encodeJson(Message, message);

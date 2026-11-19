@@ -15,10 +15,8 @@ The firewall owns the message policy in force and its checks. The daemon supplie
 sending or delivery, and saves the check. Storage preserves those records across restart.
 
 The firewall is optional and experimental. Without a message-policy file,
-`sharnessd` installs none. It checks messages between agents. In
-[P2P mode](../modes.md) each agent has its own firewall, and in
-[client/server mode](../modes.md#firewall-and-norms) only the server
-agent has one. The host owns models, tools and the agent's private context.
+`sharnessd` installs none. It checks messages between agents.
+[Only the server agent](../modes.md#firewall-and-norms) has one. The host owns models, tools and the agent's private context.
 
 ## Structured contracts
 

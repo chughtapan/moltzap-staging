@@ -21,7 +21,7 @@ import {
 } from "../database.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentName, Identity } from "../identity.js";
-import { MessageAddressInput } from "../mcp/tools.js";
+import { AgentAddress } from "../mcp/tools.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
@@ -38,47 +38,40 @@ import {
   spanExport,
 } from "./settings.js";
 import { makeWebhookEvents, webhookHttpClientLayer } from "./subscriptions.js";
-import { clientTools, peerTools } from "./tool-server.js";
+import { clientTools, serverAgentTools } from "./tool-server.js";
 
 /**
- * One agent's role, and everything that follows from it. In P2P mode every
- * agent is a peer: it messages any agent, alone or in a group, and checks its
- * own messages. In client/server mode every conversation is the server agent
- * and one client: the server agent checks its messages and holds the
+ * One agent's role, and everything that follows from it. Every conversation
+ * is the server agent and one client: the server agent checks its messages and holds the
  * contracts, and a client checks nothing of its own, reads the server agent's
  * norms through `contractsOf` and talks only to it.
  */
 function roleOf(
   settings: Pick<
     DaemonSettings,
-    "authentication" | "serverAgent" | "hideGroups" | "messagePolicy" | "norms"
+    "authentication" | "serverAgent" | "messagePolicy" | "norms"
   >,
   agentKey: string,
   agentName: AgentName,
   contractsOf: ContractsOf,
 ) {
   const { norms, serverAgent } = settings;
-  const checked = () =>
-    Firewall.layer(agentKey, settings.messagePolicy, norms?.contracts);
-  if (serverAgent === undefined) {
-    return {
-      withheldReply: undefined,
-      firewall: checked(),
-      tools: peerTools(!settings.hideGroups, norms !== undefined),
-    };
-  }
   if (agentName === serverAgent.name) {
     return {
       withheldReply: `Your message was not accepted: it breaks a rule this agent applies to incoming messages.${norms === undefined ? "" : " Call read_norms to see which messages it accepts."}`,
-      firewall: checked(),
-      tools: peerTools(false, norms !== undefined),
+      firewall: Firewall.layer(
+        agentKey,
+        settings.messagePolicy,
+        norms?.contracts,
+      ),
+      tools: serverAgentTools(norms !== undefined),
     };
   }
   return {
     withheldReply: undefined,
     firewall: Firewall.layer(agentKey),
     tools: clientTools(
-      MessageAddressInput.make(`agent:${serverAgent.name}`),
+      AgentAddress.make(`agent:${serverAgent.name}`),
       norms === undefined
         ? undefined
         : contractsOf({
@@ -104,21 +97,19 @@ export const runDaemon = Effect.gen(function* () {
   const settings = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* prepareDatabase;
-    if (settings.serverAgent !== undefined) {
-      yield* getOrCreateOwnedAgentKey(
-        {
-          issuer: settings.authentication.issuer,
-          subject: settings.serverAgent.subject,
-        },
-        settings.serverAgent.name,
-      ).pipe(
-        Effect.catchTag("OwnershipError", () =>
-          refused(
-            "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
-          ),
+    yield* getOrCreateOwnedAgentKey(
+      {
+        issuer: settings.authentication.issuer,
+        subject: settings.serverAgent.subject,
+      },
+      settings.serverAgent.name,
+    ).pipe(
+      Effect.catchTag("OwnershipError", () =>
+        refused(
+          "This database's server agent has another name than serverAgent.name in the settings, or another agent has that name. Set serverAgent.name to the name the database was first started with, or prepare a new database.",
         ),
-      );
-    }
+      ),
+    );
     const agentOfOwner = yield* runningAgents(settings);
     const app = yield* makeMcpHttpApp(
       settings.authentication,

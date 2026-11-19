@@ -35,14 +35,13 @@ import {
 } from "../firewall/service.js";
 import { type AgentCard, Identity, type IdentityError } from "../identity.js";
 import {
+  addressedAgent,
   addressOf,
-  canonicalMessageAddress,
+  AgentAddress,
   HistoryError,
   type HistoryRecord,
   type InboxError,
   type InboxPage,
-  MessageAddress,
-  type MessageAddressInput,
   SendError,
   type SendRequest,
   type SendResult,
@@ -59,12 +58,12 @@ import {
 
 const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
-  address: MessageAddress,
+  address: AgentAddress,
 });
 
 /** Keep address unchanged when supplying the next cursor. */
 interface ReadHistoryRequest extends PaginatedRequest {
-  readonly address: MessageAddressInput;
+  readonly address: AgentAddress;
 }
 /** Sending, inbox and history operations for one agent. */
 interface SocialHarnessService {
@@ -88,7 +87,7 @@ interface SocialHarnessService {
     request: PaginatedRequest & { readonly wait?: number },
   ) => Effect.Effect<InboxPage, InboxError>;
   /**
-   * Lists live canonical addresses, direct conversations before groups.
+   * Lists the addresses of the agent's conversations.
    * Omitting the cursor starts a live traversal. Follow `nextCursor` until
    * absent. New conversations before the cursor require a fresh traversal.
    */
@@ -235,11 +234,11 @@ function send(agent: Agent, input: SendRequest) {
   return Effect.suspend(() => {
     const request = structuredClone(input);
     return Effect.gen(function* () {
-      const destination = yield* canonicalMessageAddress(
-        request.to,
-        agent.card.agentName,
+      const outgoing = yield* outgoingFor(
+        agent,
+        request,
+        yield* addressedAgent(request.to, agent.card.agentName),
       );
-      const outgoing = yield* outgoingFor(agent, request, destination.others);
       const decision = yield* agent.firewall.checkOutgoing(
         outgoing,
         (protocolHistory) =>
@@ -254,7 +253,7 @@ function send(agent: Agent, input: SendRequest) {
         return yield* decision.refusal;
       }
       yield* agent.communication.send(outgoing);
-      return { id: outgoing.msgId, address: destination.address };
+      return { id: outgoing.msgId, address: request.to };
     }).pipe(
       Effect.catchAll(sendFailure),
       Effect.tapError((error) =>
@@ -270,14 +269,14 @@ function send(agent: Agent, input: SendRequest) {
   });
 }
 
-/** The message a send request amounts to, addressed to the agents `names` other than this one. */
+/** The message a send request amounts to, addressed to the agent `name`. */
 function outgoingFor(
   agent: Agent,
   request: SendRequest,
-  names: ReadonlyArray<AgentCard["agentName"]>,
+  name: AgentCard["agentName"],
 ) {
   return Effect.gen(function* () {
-    const recipients = yield* agent.identity.resolve(names).pipe(
+    const [recipient] = yield* agent.identity.resolve([name]).pipe(
       Effect.catchTag("IdentityError", (error) =>
         error.reason === "unknown-agent"
           ? Effect.fail(
@@ -293,13 +292,12 @@ function outgoingFor(
           : Effect.die(error),
       ),
     );
-    const [first, ...rest] = recipients;
-    if (first === undefined) {
-      return yield* new SendError({ reason: "membership-invalid" });
+    if (recipient === undefined) {
+      return yield* new SendError({ reason: "unknown-agent" });
     }
     return yield* Message.create({
       author: agent.card,
-      recipients: [first, ...rest],
+      recipients: [recipient],
       content: [{ type: "text", text: request.text }],
       replyToMsgId: request.replyToMsgId,
     });
@@ -380,16 +378,10 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
   const { card } = agent;
   return Effect.gen(function* () {
-    const destination = yield* canonicalMessageAddress(
-      request.address,
-      card.agentName,
-    );
-    if (destination.address !== request.address) {
-      return yield* new HistoryError({ reason: "invalid-address" });
-    }
+    const other = yield* addressedAgent(request.address, card.agentName);
     return yield* messageRecords(
       agent,
-      [card, ...(yield* agent.identity.resolve(destination.others))],
+      [card, ...(yield* agent.identity.resolve([other]))],
       request.cursor,
     );
   }).pipe(Effect.catchAll(historyFailure));

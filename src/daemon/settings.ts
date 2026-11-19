@@ -67,10 +67,7 @@ const settingsFile = exactStruct({
   port: Schema.Int.pipe(Schema.between(1, 65535)),
   host: Schema.NonEmptyString,
   authentication,
-  serverAgent: Schema.optional(
-    exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
-  ),
-  hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  serverAgent: exactStruct({ name: AgentName, subject: Schema.NonEmptyString }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),
   maximumHistoryRecords: Schema.optional(

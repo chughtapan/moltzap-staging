@@ -21,9 +21,6 @@ export class CommunicationError extends Data.TaggedError("CommunicationError")<{
     | "invalid-cursor";
 }> {}
 
-/** The largest membership of one conversation. */
-export const maximumMembers = 32;
-
 /** The byte limit of one message's content as JSON text. */
 const maximumContentBytes = 32_768;
 const utf8Encoder = new TextEncoder();
@@ -131,27 +128,15 @@ export type Page = typeof Page.Type;
 /** The most inbox entries, history records or conversation addresses one page holds. */
 export const PAGE_SIZE = 50;
 
-/** Recipients exclude the author and appear once each in agent-name order. */
+/** The one recipient is another agent than the author. */
 const AuthorAndRecipients = exactStruct({
   author: AgentCard,
-  recipients: Schema.NonEmptyArray(AgentCard).pipe(
-    Schema.maxItems(maximumMembers - 1),
-  ),
+  recipients: Schema.Tuple(AgentCard),
 }).pipe(
   Schema.filter(
-    (message) =>
-      message.recipients.every(
-        (recipient, index) =>
-          recipient.agentId !== message.author.agentId &&
-          recipient.agentName !== message.author.agentName &&
-          (index === 0 ||
-            compareAscii(
-              message.recipients[index - 1]?.agentName ?? "",
-              recipient.agentName,
-            ) < 0),
-      ) &&
-      new Set(message.recipients.map((recipient) => recipient.agentId)).size ===
-        message.recipients.length,
+    ({ author, recipients }) =>
+      recipients[0].agentId !== author.agentId &&
+      recipients[0].agentName !== author.agentName,
   ),
   Schema.annotations({ identifier: "AuthorAndRecipients" }),
 );

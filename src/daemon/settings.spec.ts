@@ -23,6 +23,7 @@ const settings = {
     issuer: "https://issuer.example/",
     scope: "use:mcp",
   },
+  serverAgent: { name: "front-desk", subject: "server" },
 };
 
 /**
@@ -229,8 +230,6 @@ it.prop(
 
 const knownSettings = new Set([
   ...Object.keys(settings),
-  "serverAgent",
-  "hideGroups",
   "messagePolicyFile",
   "normsDirectory",
   "maximumHistoryRecords",
