@@ -10,7 +10,6 @@ import {
   sendMessage,
 } from "@social-harness/social-harness";
 import {
-  absurd,
   Config,
   ConfigProvider,
   Data,
@@ -107,18 +106,15 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * The `send_message` arguments an outbound row amounts to. Text that is a
- * JSON object with a `collectiveRequest` or `collectiveResponse` property is
- * the tool's own arguments for a collective request or response, which the
- * daemon validates. Any other text is a message's text.
+ * JSON object with a `replyToMsgId` property is the tool's own arguments for
+ * a reply, which the daemon validates. Any other text is a message's text.
  */
 function sendArguments({
   to,
   text,
 }: OutboundText): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
-  return written !== undefined &&
-    (Object.hasOwn(written, "collectiveRequest") ||
-      Object.hasOwn(written, "collectiveResponse"))
+  return written !== undefined && Object.hasOwn(written, "replyToMsgId")
     ? { ...written, to }
     : { to, text };
 }
@@ -199,7 +195,6 @@ const FINAL_REFUSALS: ReadonlySet<string> = new Set([
   "unknown-agent",
   "membership-invalid",
   "content-invalid",
-  "collective-failed",
   "firewall-refused",
   "outcome-unknown",
 ]);
@@ -209,10 +204,7 @@ const failureReason = Schema.decodeUnknownOption(
   Schema.Struct({ reason: Schema.String }),
 );
 
-/**
- * The sender NanoClaw records for what no agent authored: a collective result
- * or a refused send.
- */
+/** The sender NanoClaw records for what no agent authored: a refused send. */
 const HARNESS_SENDER_NAME = "Social Harness";
 
 /**
@@ -221,7 +213,7 @@ const HARNESS_SENDER_NAME = "Social Harness";
  * `receive_messages` returns it.
  */
 function entryText(entry: InboxEntry): string {
-  if (entry.item.kind === "message" && entry.guidance === undefined) {
+  if (entry.guidance === undefined) {
     const [part, ...rest] = entry.item.message.content;
     if (part.type === "text" && rest.length === 0) {
       return part.text;
@@ -230,29 +222,15 @@ function entryText(entry: InboxEntry): string {
   return JSON.stringify(entry);
 }
 
-/**
- * Who an entry is from and, for a group message or collective request, who is
- * in the group. A collective result is from Social Harness and names only the
- * request's recipients, so it lists no members.
- */
+/** Who an entry is from and, for a group message, who is in the group. */
 function entryParticipants(
   entry: InboxEntry,
 ): Pick<ProjectedEntry, "sender" | "members"> {
-  const { item } = entry;
-  switch (item.kind) {
-    case "message":
-    case "collectiveRequest": {
-      const { author, recipients } = item.message;
-      const sender = agentAddress(author);
-      return isGroup(entry.address)
-        ? { sender, members: [sender, ...recipients.map(agentAddress)] }
-        : { sender };
-    }
-    case "collectiveResult":
-      return { sender: HARNESS_SENDER_NAME };
-    default:
-      return absurd(item);
-  }
+  const { author, recipients } = entry.item.message;
+  const sender = agentAddress(author);
+  return isGroup(entry.address)
+    ? { sender, members: [sender, ...recipients.map(agentAddress)] }
+    : { sender };
 }
 
 /** NanoClaw's inbox shape, with the native group flag for a group address. */
@@ -501,7 +479,7 @@ class HarnessChannelAdapter {
       host,
       entry.address,
       hostMessage({
-        id: entry.deliveryToken,
+        id: entry.item.message.msgId,
         address: entry.address,
         ...entryParticipants(entry),
         text: entryText(entry),

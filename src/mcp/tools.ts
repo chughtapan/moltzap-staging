@@ -4,9 +4,6 @@ import { Effect, Schema } from "effect";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  CollectiveOp,
-  CollectiveResponse,
-  DeadlineSeconds,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
@@ -16,8 +13,6 @@ import {
   MsgId,
   Page,
   PaginatedRequest,
-  RequestedSchema,
-  type RequestError,
   SendError,
   wellFormedString,
 } from "../communication/index.js";
@@ -116,7 +111,7 @@ export const StoredInboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type StoredInboxEntry = typeof StoredInboxEntry.Type;
 
-/** One message or collective result as the host reads it. It keeps its delivery token once delivered. */
+/** One message as the host reads it. It keeps its delivery token once delivered. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxEntry = Schema.Struct({
   ...StoredInboxEntry.fields,
@@ -148,78 +143,23 @@ export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
   }
 }
 
-const collectiveRequest = exactStruct({
-  op: CollectiveOp,
-  deadline: DeadlineSeconds,
-  requestedSchema: RequestedSchema,
-});
-
-const MessageSend = exactStruct({
-  to: MessageAddressInput,
-  text: wellFormedString,
-});
-const CollectiveRequestSend = exactStruct({
-  to: MessageAddressInput,
-  text: wellFormedString,
-  collectiveRequest,
-});
-const CollectiveResponseSend = exactStruct({
-  to: MessageAddressInput,
-  collectiveResponse: CollectiveResponse,
-});
 /** Host addresses are resolved by SocialHarness before communication preparation. */
-export const SendRequest = Schema.Union(
-  MessageSend,
-  CollectiveRequestSend,
-  CollectiveResponseSend,
-).annotations({ identifier: "SendRequest" });
-/** A collective request's deadline includes policy assessment time.
- * @useDeclaredType
- */
-export type SendRequest = typeof SendRequest.Type;
-
-/**
- * One send written as a single object, which is the shape a tool's arguments
- * must have. Decoding yields the {@link SendRequest} the fields amount to and
- * refuses any other combination of them.
- */
-const SendArguments = exactStruct({
-  to: Schema.propertySignature(MessageAddressInput).annotations({
-    description: "The recipient: agent:<name>, or group:<members>.",
-  }),
-  text: Schema.optionalWith(wellFormedString, { exact: true }).annotations({
-    description:
-      "The message text. Required unless collectiveResponse is given.",
-  }),
-  collectiveRequest: Schema.optionalWith(collectiveRequest, {
-    exact: true,
-  }).annotations({
-    description:
-      "With text: makes the message a collective request, and text its question. gather asks each agent the address names in a private message and returns one result to you. all_gather asks a group in one message and returns the same result to every member. deadline is seconds from now, and requestedSchema is the form each response fills in. The result arrives as a collectiveResult inbox entry whose requestId is the id this send returned.",
-  }),
-  collectiveResponse: Schema.optionalWith(CollectiveResponse, {
-    exact: true,
-  }).annotations({
-    description:
-      "In place of text: your one response to a collective request, which arrives as a collectiveRequest inbox entry. Send it to that entry's address. requestId is that entry's item.message.msgId. accept takes content that fits item.message.collectiveRequest.requestedSchema. decline takes none.",
-  }),
-}).pipe(Schema.compose(Schema.typeSchema(SendRequest), { strict: false }));
-
-/** The arguments of a send when collective requests are turned off: text to a recipient. */
-const TextSendArguments = exactStruct({
+export const SendRequest = exactStruct({
   to: Schema.propertySignature(MessageAddressInput).annotations({
     description: "The recipient: agent:<name>, or group:<members>.",
   }),
   text: Schema.propertySignature(wellFormedString).annotations({
     description: "The message text.",
   }),
-});
+  replyToMsgId: Schema.optional(MsgId).annotations({
+    description:
+      "The ID of the message this replies to. Omit when starting a new norm interaction.",
+  }),
+}).annotations({ identifier: "SendRequest" });
+/** @useDeclaredType */
+export type SendRequest = typeof SendRequest.Type;
 
-/**
- * What a send returns: the message id and the conversation's canonical
- * address. For a gather to several recipients the id is that of the private
- * copy sent to the first recipient in agent-name order.
- */
+/** What a send returns: the message id and the conversation's canonical address. */
 const SendResultSchema = Schema.Struct({
   id: MsgId,
   address: MessageAddress,
@@ -232,9 +172,8 @@ export type SendResult = typeof SendResultSchema.Type;
 export const PAGE_SIZE = 50;
 
 /**
- * One record of a conversation's history: a message this agent sent, the
- * stored inbox entry of a message it received, or the stored inbox entry of a
- * collective result.
+ * One record of a conversation's history: a message this agent sent, or the
+ * stored inbox entry of a message it received.
  */
 export type HistoryRecord =
   | { readonly kind: "sent"; readonly message: Message }
@@ -244,10 +183,6 @@ export type HistoryRecord =
         readonly authorAgentId: Message["author"]["agentId"];
         readonly msgId: Message["msgId"];
       };
-    } & StoredInboxEntry)
-  | ({
-      readonly kind: "collectiveResult";
-      readonly deliveryToken: DeliveryToken;
     } & StoredInboxEntry);
 
 const historyFailureText = {
@@ -299,8 +234,6 @@ export type SubscriptionStatus = typeof subscriptionStatusSchema.Type;
 /** A wake-up to read the pending inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
-const savedItemSchema = Schema.typeSchema(PermittedItem);
-
 const historyRecordSchema = Schema.Union(
   Schema.Struct({
     kind: Schema.Literal("sent"),
@@ -310,14 +243,7 @@ const historyRecordSchema = Schema.Union(
     kind: Schema.Literal("received"),
     address: MessageAddress,
     message: MessageReference,
-    item: savedItemSchema,
-    guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("collectiveResult"),
-    address: MessageAddress,
-    deliveryToken: DeliveryToken,
-    item: savedItemSchema,
+    item: Schema.typeSchema(PermittedItem),
     guidance: Schema.optionalWith(LocalGuidance, { exact: true }),
   }),
 );
@@ -368,11 +294,8 @@ const receiveMessagesInput = exactStruct({
   ),
 });
 const receiveMessagesOutput = Schema.typeSchema(InboxPage);
-/**
- * Writes the typed refusal's details, the collective request's message id and
- * failing members or fields as the structured content of a failed send.
- */
-function sendErrorData(error: SendError | RequestError | FirewallRefusal) {
+/** Writes the typed refusal's details as the structured content of a failed send. */
+function sendErrorData(error: SendError | FirewallRefusal) {
   if (error._tag === "FirewallRefusal") {
     return {
       reason: "firewall-refused",
@@ -381,13 +304,6 @@ function sendErrorData(error: SendError | RequestError | FirewallRefusal) {
       ...(error.rule === undefined ? {} : { rule: error.rule }),
       feedback: error.feedback,
       ...(error.detail === undefined ? {} : { detail: error.detail }),
-    };
-  }
-  if (error._tag === "RequestError") {
-    return {
-      reason: "collective-failed",
-      ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-      failure: error.failure,
     };
   }
   if (error.detail === undefined) {
@@ -412,13 +328,12 @@ const readOnlyAnnotations = {
   openWorldHint: false,
 } as const;
 
-/** Each held norm's name, description and protocol, and the document that states its acts. */
+/** Each held norm's name and description, and the document that states its acts. */
 const readNormsOutput = exactStruct({
   norms: Schema.Array(
     exactStruct({
       name: Schema.String,
       description: Schema.String,
-      protocol: Schema.optionalWith(Schema.String, { exact: true }),
       document: Schema.String,
     }),
   ),
@@ -443,15 +358,15 @@ export const toolDefinitions = {
       unexpected: new SendError({ reason: "outcome-unknown" }),
     },
     description:
-      "Send a message. With collectiveRequest the message is a collective request, which asks its recipients to respond in a form by a deadline; with collectiveResponse it is your response to one you received. Returns id, the message id, and address, the canonical conversation address. For a collective request, id is the requestId of the collectiveResult you will receive. A refusal names the argument or rule to correct: a collective-failed refusal carries failure.kind, one of schema-invalid, deadline-passed, request-none, request-responded, request-expired or response-invalid, and the requestId when the request is known. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
-    input: SendArguments,
+      "Send a message. Returns id, the message id, and address, the canonical conversation address. A refusal names the argument or rule to correct. An outcome-unknown failure must not be retried as a new send. Use receive_messages to read what others send.",
+    input: SendRequest,
     output: SendResultSchema,
     annotations: { readOnlyHint: false, openWorldHint: true },
   },
   receive_messages: {
     failure: { toData: (error: InboxError) => reasonData(error) },
     description:
-      "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.kind is message for a message, collectiveRequest for a message that asks you to respond, or collectiveResult for the outcome of each recipient of a collective request. A collectiveRequest's item.message.collectiveRequest holds its op, question, requestedSchema and deadlineAt; respond with send_message, naming item.message.msgId as requestId. A collectiveResult's requestId is the id the request's send returned. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive pending inbox entries, each with its conversation address, its item and any guidance. item.message is the message received. Follow nextCursor until absent. Returned entries are marked delivered. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
     annotations: {
@@ -471,7 +386,7 @@ export const toolDefinitions = {
   list_conversations: {
     failure: historyFails,
     description:
-      "List canonical conversation addresses with completed messages or collective results. Follow nextCursor until absent. Use read_conversation to read one address.",
+      "List canonical conversation addresses with completed messages. Follow nextCursor until absent. Use read_conversation to read one address.",
     input: listConversationsInput,
     output: listConversationsOutput,
     annotations: readOnlyAnnotations,
@@ -479,7 +394,7 @@ export const toolDefinitions = {
   read_conversation: {
     failure: historyFails,
     description:
-      "Read one conversation's records: the messages you sent, the inbox entries of the messages you received, and your collective results. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
+      "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
     input: readConversationInput,
     output: readConversationOutput,
     annotations: readOnlyAnnotations,
@@ -516,7 +431,7 @@ export const toolDefinitions = {
   read_norms: {
     failure: policyFails,
     description:
-      "List the norms this agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. Send an act as (performative :ontology <norm> :field value ...) in the conversation it belongs to. Agree on a norm through norm-agreement before its first act; ask a member for a norm you lack through norm-discovery.",
+      "List the installed communication norms and their complete documents. Participants already share these norms. Start with an opening act from a document; for a continuation, supply replyToMsgId in send_message.",
     input: noArguments,
     output: readNormsOutput,
     annotations: readOnlyAnnotations,
@@ -536,6 +451,7 @@ export const clientToolDefinitions = {
       text: Schema.propertySignature(wellFormedString).annotations({
         description: "The message text.",
       }),
+      replyToMsgId: Schema.optional(MsgId),
     }),
   },
   read_conversation: {
@@ -548,16 +464,6 @@ export const clientToolDefinitions = {
     ...toolDefinitions.read_norms,
     description:
       "List the norms the server agent holds, each with its document: the norm's roles, when each act may be sent and the fields it takes. The server agent checks your messages against them. Send an act as (performative :ontology <norm> :field value ...).",
-  },
-} as const;
-
-/** How `send_message` reads for an agent that sends text only, with no collective requests or responses. */
-export const textOnlyToolDefinitions = {
-  send_message: {
-    ...toolDefinitions.send_message,
-    description:
-      "Send a message. Returns the message id and canonical conversation address. An outcome-unknown failure must not be retried as a new send.",
-    input: TextSendArguments,
   },
 } as const;
 

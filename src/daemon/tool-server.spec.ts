@@ -191,14 +191,6 @@ it("answers 401 unless the bearer is the server agent's credential or an owner's
     );
   }));
 
-const slotForm = {
-  type: "object",
-  properties: { slot: { type: "string", enum: ["mon", "tue"] } },
-  required: ["slot"],
-};
-const filledForm = fc.constant({ slot: "mon" });
-const requestId = digest("msg_", 1);
-const thirtyDays = 30 * 24 * 60 * 60;
 /** Seconds above `min`, up to `max`. */
 const seconds = (min: number, max: number) =>
   fc.double({ min, max, minExcluded: true, noNaN: true });
@@ -208,7 +200,7 @@ interface Argument {
   readonly accepts: fc.Arbitrary<unknown>;
   readonly refuses: fc.Arbitrary<unknown>;
 }
-/** The arguments a call takes, each by its dotted path. */
+/** The arguments a call takes, each by its name. */
 type Arguments = Readonly<Record<string, Argument>>;
 const absent = fc.constant(undefined);
 const absentOrUnacceptable = fc.oneof(absent, unacceptable);
@@ -234,67 +226,11 @@ const wait: Argument = {
     seconds(MAXIMUM_WAIT_SECONDS, 2 * MAXIMUM_WAIT_SECONDS),
   ),
 };
-/**
- * What makes a message a collective request. Its deadline is whole seconds, from 1 to
- * thirty days: the refused ones are the nearest whole numbers outside that
- * range and a fraction inside it.
- */
-const collectiveRequest: Arguments = {
-  "collectiveRequest.op": {
-    accepts: fc.constantFrom("gather", "all_gather"),
-    refuses: unacceptable,
-  },
-  "collectiveRequest.deadline": {
-    accepts: fc.integer({ min: 1, max: thirtyDays }),
-    refuses: fc.oneof(
-      absent,
-      fc.constant(0),
-      fc.constant(thirtyDays + 1),
-      fc.integer({ min: 1, max: thirtyDays - 1 }).map((whole) => whole + 0.5),
-    ),
-  },
-  "collectiveRequest.requestedSchema": {
-    accepts: fc.constant(slotForm),
-    refuses: absentOrUnacceptable,
-  },
-};
-/** A collective response takes no text. `content` says whether its action carries a filled form. */
-const collectiveResponse = (action: string, content: Argument): Arguments => ({
-  to: recipient,
-  text: { accepts: absent, refuses: fc.string() },
-  "collectiveResponse.action": {
-    accepts: fc.constant(action),
-    refuses: unacceptable,
-  },
-  "collectiveResponse.requestId": {
-    accepts: fc.constant(requestId),
-    refuses: absentOrUnacceptable,
-  },
-  "collectiveResponse.content": content,
-});
 /** Each kind of call a peer makes with arguments. */
 const calls: ReadonlyArray<{ name: string; takes: Arguments }> = [
   { name: "read_conversation", takes: { address: recipient } },
   { name: "receive_messages", takes: { wait } },
   { name: "send_message", takes: { to: recipient, text } },
-  {
-    name: "send_message",
-    takes: { to: recipient, text, ...collectiveRequest },
-  },
-  {
-    name: "send_message",
-    takes: collectiveResponse("accept", {
-      accepts: filledForm,
-      refuses: absent,
-    }),
-  },
-  {
-    name: "send_message",
-    takes: collectiveResponse("decline", {
-      accepts: absent,
-      refuses: filledForm,
-    }),
-  },
 ];
 /** A call of any kind, with one value each of its arguments accepts and one value each refuses. */
 const toolCalls = fc.constantFrom(...calls).chain(({ name, takes }) =>
@@ -304,22 +240,6 @@ const toolCalls = fc.constantFrom(...calls).chain(({ name, takes }) =>
     refused: fc.record(Rec.map(takes, (argument) => argument.refuses)),
   }),
 );
-/** The arguments that dotted paths stand for: `{ "a.b": 1, c: 2 }` is `{ a: { b: 1 }, c: 2 }`. */
-const nested = (flat: Readonly<Record<string, unknown>>) => {
-  const whole: Record<string, unknown> = {};
-  const groups: Record<string, Record<string, unknown>> = {};
-  for (const [path, value] of Object.entries(flat)) {
-    const [head = path, leaf] = path.split(".");
-    if (leaf === undefined) {
-      whole[head] = value;
-    } else {
-      groups[head] = { ...groups[head], [leaf]: value };
-      whole[head] = groups[head];
-    }
-  }
-  return whole;
-};
-
 it("runs a call when every argument holds a value its tool accepts, and refuses it when any one argument does not, naming that argument without repeating its value", () =>
   Effect.gen(function* () {
     const returned = yield* Ref.make<readonly unknown[]>([]);
@@ -339,7 +259,7 @@ it("runs a call when every argument holds a value its tool accepts, and refuses 
       Effect.fnUntraced(function* ({ name, accepted, refused }) {
         const reply = yield* toolCall(fixture, {
           name,
-          arguments: nested(accepted),
+          arguments: accepted,
         });
         expect(yield* Ref.getAndSet(returned, [])).toEqual([
           reply.result?.structuredContent,
@@ -347,7 +267,7 @@ it("runs a call when every argument holds a value its tool accepts, and refuses 
         for (const wrong of Object.keys(refused)) {
           const refusal = yield* toolCall(fixture, {
             name,
-            arguments: nested({ ...accepted, [wrong]: refused[wrong] }),
+            arguments: { ...accepted, [wrong]: refused[wrong] },
           });
           expect(refusal.result?.isError).toBe(true);
           expect(refusal.result?.content?.[0]?.text).toContain(`${wrong}: `);
@@ -569,38 +489,9 @@ const clientTools = [
 ];
 const sendTool = "send_message";
 const missingField = "text";
-const collectiveField = "collectiveRequest";
-const textFields = ["to", missingField];
+const replyField = "replyToMsgId";
 
 describe("send_message arguments", () => {
-  it("offers only a recipient and text when collectives are turned off", () =>
-    Effect.gen(function* () {
-      const fixture = yield* mcpFixture({ hideCollectives: true });
-      const client = yield* connectInProcessClient((input, init) =>
-        fixture.fetch(new Request(input, init)),
-      );
-      const { tools } = yield* Effect.tryPromise(() => client.listTools());
-      const send = tools.find((tool) => tool.name === sendTool);
-      expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual(
-        textFields,
-      );
-      const reply = yield* Effect.tryPromise(() =>
-        fixture.fetch(
-          mcpRequest("tools/call", {
-            name: sendTool,
-            arguments: {
-              to: "agent:bob",
-              text: "hello",
-              collectiveRequest: {},
-            },
-          }),
-        ),
-      );
-      expect(
-        JSON.stringify((yield* json(reply)).result?.structuredContent),
-      ).toContain(collectiveField);
-    }));
-
   it("gives a client in client/server mode tools that name no recipient", () =>
     Effect.gen(function* () {
       const sent: unknown[] = [];
@@ -630,6 +521,7 @@ describe("send_message arguments", () => {
       const send = tools.find((tool) => tool.name === sendTool);
       expect(Object.keys(send?.inputSchema.properties ?? {})).toEqual([
         missingField,
+        replyField,
       ]);
       yield* Effect.tryPromise(() =>
         client.callTool({ name: sendTool, arguments: { text: clientText } }),

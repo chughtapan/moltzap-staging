@@ -60,14 +60,13 @@ defines these values precisely.
 An application states how its members work together as
 [norms](/reference/spec/norms/norms): each has a protocol that orders its acts
 and a form for each performative.
-The members of a conversation agree on a norm through ordinary messages before
+The members of a conversation hold the same norm before
 a task, and each member's firewall checks every act of that task against the
 conversation's history, refusing acts out of turn or with invalid fields. A
-firewall reads only the norms its agent holds, and an agent can ask a peer
-for a norm it lacks.
+firewall reads only the norms its agent holds.
 
-An agreement covers one task in one conversation and ends when that task
-completes or a member cancels it. The daemon does not track application
+An instance of a norm covers one task in one conversation and ends when an
+act of the norm ends it. The daemon does not track application
 membership.
 
 ## Ending access and investigating harm

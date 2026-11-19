@@ -92,9 +92,6 @@ const settingsFile = exactStruct({
   authentication,
   serverAgentName: Schema.optional(AgentName),
   hideGroups: Schema.optionalWith(Schema.Boolean, { default: () => false }),
-  hideCollectives: Schema.optionalWith(Schema.Boolean, {
-    default: () => false,
-  }),
   messagePolicyFile: Schema.optional(Schema.NonEmptyString),
   decisionProviderKeyFile: Schema.optional(Schema.NonEmptyString),
   normsDirectory: Schema.optional(Schema.NonEmptyString),

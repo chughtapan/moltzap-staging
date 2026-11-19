@@ -18,16 +18,14 @@ import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
 import type { InboxEntry } from "../mcp/tools.js";
 import type { HistoryPage } from "./agent.js";
-import {
-  CollectiveRequest,
-  CollectiveRequestMessage,
-  CollectiveResponse,
-  encodeCollectiveContent,
-  Message,
-  MessageAddressInput,
-  messageWithId,
-} from "../communication/index.js";
+import { digest } from "../__tests__/agents.js";
+import { Message, MessageAddressInput, MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
+import {
+  contractOf,
+  form,
+  noFields,
+} from "../firewall/__tests__/firewall-fixtures.js";
 import {
   type DecisionProvider,
   type DecisionRequest,
@@ -50,6 +48,19 @@ type Runtime = Effect.Effect.Success<ReturnType<Fixture["open"]>>;
 /** A decision service that finds every message in violation of its rule. */
 const violation: DecisionProvider = {
   decide: (request) => Effect.succeed(decisionResponse(request, "violation")),
+};
+
+/** A decision service that finds every message a peer sent in violation, and every message this agent sends compliant. */
+const incomingViolation: DecisionProvider = {
+  decide: (request) =>
+    Effect.succeed(
+      decisionResponse(
+        request,
+        decisionState(request.state).direction === "incoming"
+          ? "violation"
+          : "compliant",
+      ),
+    ),
 };
 
 function waitForDecisions(runtime: Runtime, count = 1) {
@@ -76,9 +87,7 @@ function ordinaryMessage(subject: Fixture, text: string) {
 /** Delivers a text message to alice from `author`, bob unless given. */
 function receive(subject: Fixture, text: string, author?: AgentCard) {
   const sender = author ?? subject.bob;
-  return Effect.flatMap(subject.message(text, sender), (message) =>
-    subject.deliver({ kind: "message", message }),
-  );
+  return Effect.flatMap(subject.message(text, sender), subject.deliver);
 }
 
 /** Waits for a pending inbox entry, then receives the pending ones. */
@@ -110,84 +119,11 @@ function readInbox(runtime: Runtime) {
   });
 }
 
-/** The result of a collective request this agent sent and nobody responded to. */
-function unanswered(subject: Fixture, recipient?: AgentCard) {
-  const asked = recipient ?? subject.bob;
-  return collectiveRequest(subject, subject.self, [asked]).pipe(
-    Effect.map(
-      ({ request }) =>
-        ({
-          kind: "collectiveResult",
-          result: {
-            request,
-            closedAt: request.deadlineAt,
-            closedBy: "deadline",
-            outcomes: [{ recipient: asked, outcome: { kind: "no-answer" } }],
-          },
-          sources: { responses: [] },
-        }) as const,
-    ),
-  );
-}
-
-/** A collective request as its requester states it, and the message its recipients receive. */
-function collectiveRequest(
-  subject: Fixture,
-  author?: AgentCard,
-  recipients?: readonly [AgentCard, ...AgentCard[]],
-  op: "gather" | "all_gather" = "gather",
-) {
-  return Effect.gen(function* () {
-    const participants: Pick<Message, "author" | "recipients"> = {
-      author: author ?? subject.bob,
-      recipients: recipients ?? [subject.self],
-    };
-    const request = yield* CollectiveRequest.create({
-      ...participants,
-      op,
-      question: "Which day works?",
-      requestedSchema: {
-        type: "object",
-        properties: { day: { type: "string" } },
-      },
-      deadline: 3600,
-    });
-    const message = yield* messageWithId(
-      participants.author,
-      participants.recipients,
-      request.msgId,
-      yield* encodeCollectiveContent(
-        {
-          kind: "request",
-          op,
-          requestedSchema: request.requestedSchema,
-          deadlineAt: request.deadlineAt,
-        },
-        request.question,
-      ),
-    );
-    return {
-      request,
-      message: yield* Schema.validate(CollectiveRequestMessage)(message),
-    };
-  });
-}
-
-/**
- * Gives alice a conversation with a new peer `name` and returns its address.
- * A `live` conversation is one communication lists; a `collectiveResult`
- * conversation holds only a collective result.
- */
-function hold(
-  subject: Fixture,
-  name: string,
-  holding: "live" | "collectiveResult",
-) {
+/** Gives alice a conversation with a new peer `name` and returns its address. */
+function hold(subject: Fixture, name: string) {
   return Effect.gen(function* () {
     const peer = yield* subject.addPeer(name);
-    yield* holding === "live"
-      ? subject.addConversation([subject.self, peer])
-      : subject.deliver(yield* unanswered(subject, peer));
+    yield* subject.addConversation([subject.self, peer]);
     return `agent:${name}`;
   });
 }
@@ -236,15 +172,22 @@ const membership = fc
     };
   });
 
-it("sends each call as new work to exactly the agents its address names, and refuses an address that names an unknown agent", () =>
+it("sends each call as new work to exactly the agents its address names, with the reply reference it gives, and refuses an address that names an unknown agent", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const { harness } = yield* subject.open();
     const receipts: string[] = [];
     yield* forAll(
-      membership,
-      Effect.fn(function* ({ others, canonical, address }) {
-        const request = { to: address, text: "Hello" };
+      fc.tuple(
+        membership,
+        fc.option(fc.integer({ min: 0, max: 255 }), { nil: undefined }),
+      ),
+      Effect.fn(function* ([{ others, canonical, address }, byte]) {
+        const replyToMsgId =
+          byte === undefined
+            ? undefined
+            : Schema.decodeUnknownSync(MsgId)(digest("msg_", byte));
+        const request = { to: address, text: "Hello", replyToMsgId };
         const dispatched = subject.submitted.length;
         if (others.includes("nobody")) {
           expect(yield* harness.send(request).pipe(Effect.flip)).toMatchObject({
@@ -262,6 +205,12 @@ it("sends each call as new work to exactly the agents its address names, and ref
               recipients: others.map((agentName) => ({ agentName })),
             },
           ]);
+          const submitted = subject.submitted.at(-1);
+          expect(
+            submitted !== undefined && "replyToMsgId" in submitted
+              ? submitted.replyToMsgId
+              : undefined,
+          ).toBe(replyToMsgId);
         }
       }),
     );
@@ -348,7 +297,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
       })
       .pipe(Scope.extend(scope));
     const message = yield* subject.message("Can we meet Tuesday?");
-    yield* subject.deliver({ kind: "message", message });
+    yield* subject.deliver(message);
     yield* Deferred.await(entered);
     yield* Scope.close(scope, Exit.void);
     const resumedScope = yield* Scope.make();
@@ -382,7 +331,7 @@ it("recovers an interrupted check and keeps its inbox entry after edits, deliver
     expect(
       (yield* reopened.harness.readHistory({ address: bobAddress })).records,
     ).toMatchObject([{ kind: "received", ...stored }]);
-    yield* subject.deliver({ kind: "message", message });
+    yield* subject.deliver(message);
     expect((yield* reopened.inbox.listInbox()).entries).toEqual([]);
   }));
 
@@ -391,7 +340,7 @@ it("keeps an inbox page boundary while arrivals and deliveries change what is pe
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     for (let index = 0; index < 57; index++) {
-      yield* subject.deliver(yield* unanswered(subject));
+      yield* receive(subject, "Hello", yield* subject.addPeer(`peer-${index}`));
     }
     yield* waitForPending(runtime, 57);
     const first = yield* runtime.inbox.listInbox();
@@ -407,8 +356,7 @@ it("keeps an inbox page boundary while arrivals and deliveries change what is pe
       return yield* Effect.dieMessage("Expected remaining delivery");
     }
     yield* runtime.inbox.markDelivered([delivered.deliveryToken]);
-    const later = yield* unanswered(subject);
-    yield* subject.deliver(later);
+    yield* receive(subject, "Hello", yield* subject.addPeer("later"));
     yield* waitForPending(runtime, 57);
     const remainder = yield* runtime.inbox.listInbox({
       cursor: first.nextCursor,
@@ -446,17 +394,42 @@ it("answers a message that broke a rule with the configured reply when no rule g
     const withheldReply = "Your message was not accepted.";
     const runtime = yield* subject.open({
       withheldReply,
-      policy: composedPolicy(violation),
+      policy: composedPolicy(incomingViolation),
     });
     yield* receive(subject, "Private peer content");
-    yield* waitForDecisions(runtime);
+    yield* waitForDecisions(runtime, 2);
     expect(subject.submitted).toMatchObject([
       { content: [{ type: "text", text: withheldReply }] },
     ]);
     expect((yield* runtime.inbox.listInbox()).entries).toEqual([]);
   }));
 
-it("answers a message its rule withholds with that rule's feedback, as an ordinary message", () =>
+it("answers a message its rule withholds with that rule's feedback, as an ordinary message that names the withheld one", () =>
+  Effect.gen(function* () {
+    const subject = yield* makeHarnessFixture;
+    const runtime = yield* subject.open({
+      policy: composedPolicy(incomingViolation, "reply"),
+    });
+
+    const withheld = yield* subject.message(
+      "Private peer content",
+      subject.bob,
+    );
+    yield* subject.deliver(withheld);
+    yield* waitForDecisions(runtime, 2);
+
+    expect(subject.submitted).toMatchObject([
+      {
+        author: subject.self,
+        recipients: [subject.bob],
+        replyToMsgId: withheld.msgId,
+        content: [{ type: "text", text: "Keep private information private." }],
+      },
+    ]);
+    expect((yield* runtime.inbox.listInbox()).entries).toEqual([]);
+  }));
+
+it("sends no reply that its own message policy refuses, and saves that refusal", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open({
@@ -464,16 +437,12 @@ it("answers a message its rule withholds with that rule's feedback, as an ordina
     });
 
     yield* receive(subject, "Private peer content");
-    yield* waitForDecisions(runtime);
+    const { decisions } = yield* waitForDecisions(runtime, 2);
 
-    expect(subject.submitted).toMatchObject([
-      {
-        author: subject.self,
-        recipients: [subject.bob],
-        content: [{ type: "text", text: "Keep private information private." }],
-      },
-    ]);
-    expect((yield* runtime.inbox.listInbox()).entries).toEqual([]);
+    expect(
+      decisions.map(({ decision }) => decision).sort(compareAscii),
+    ).toEqual(["refused", "withheld"]);
+    expect(subject.submitted).toEqual([]);
   }));
 
 it("returns a waiting read at once when an entry is already pending", () =>
@@ -557,6 +526,60 @@ it("rolls back a check whose decision cannot be saved, then checks the message a
     );
   }));
 
+/** `open` starts an instance and `close`, from the other agent, ends it. */
+const exchange = contractOf("exchange", [
+  {
+    ...form,
+    act: "open",
+    by: ["Sender"],
+    fields: noFields,
+    starts: true,
+    initiates: ["opened"],
+  },
+  {
+    ...form,
+    act: "close",
+    by: ["Receiver"],
+    fields: noFields,
+    when: ["opened"],
+    ends: true,
+  },
+]);
+
+it.prop(
+  "checks each act of a contract against the whole conversation, however short the history window",
+  [fc.integer({ min: 1, max: 3 }), fc.integer({ min: 1, max: 4 })],
+  ([window, instances]) =>
+    Effect.gen(function* () {
+      const subject = yield* makeHarnessFixture;
+      const runtime = yield* subject.open({
+        maximumHistoryRecords: window,
+        contracts: [exchange],
+        policy: composedPolicy({
+          decide: (request) =>
+            Effect.succeed(decisionResponse(request, "compliant")),
+        }),
+      });
+      for (let instance = 1; instance <= instances; instance += 1) {
+        const opened = yield* runtime.harness.send({
+          to: bobAddress,
+          text: "(open :ontology exchange)",
+        });
+        yield* subject.deliver(
+          yield* Message.create({
+            author: subject.bob,
+            recipients: [subject.self],
+            content: [{ type: "text", text: "(close :ontology exchange)" }],
+            replyToMsgId: opened.id,
+          }),
+        );
+        yield* waitForInbox(runtime, instance);
+      }
+      expect((yield* readInbox(runtime)).length).toBe(instances);
+    }),
+  { fastCheck: { numRuns: 6 } },
+);
+
 it("assesses the latest bounded preceding history without the candidate", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
@@ -587,7 +610,7 @@ it("assesses the latest bounded preceding history without the candidate", () =>
     });
   }));
 
-it("continues history through a fixed message and collective-result boundary", () =>
+it("continues history through the boundary its first page fixed", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
@@ -596,8 +619,6 @@ it("continues history through a fixed message and collective-result boundary", (
         yield* ordinaryMessage(subject, `Message ${index}`),
       );
     }
-    yield* subject.deliver(yield* unanswered(subject));
-    yield* waitForInbox(runtime);
     const first = yield* runtime.harness.readHistory({
       address: bobAddress,
     });
@@ -606,16 +627,11 @@ it("continues history through a fixed message and collective-result boundary", (
       return yield* Effect.dieMessage("Expected history cursor");
     }
     yield* subject.retain(yield* ordinaryMessage(subject, "Later message"));
-    yield* subject.deliver(yield* unanswered(subject));
-    yield* waitForInbox(runtime, 2);
     const remaining = yield* runtime.harness.readHistory({
       address: bobAddress,
       cursor: first.nextCursor,
     });
-    expect(remaining.records.map((record) => record.kind)).toEqual([
-      "sent",
-      "collectiveResult",
-    ]);
+    expect(remaining.records.map((record) => record.kind)).toEqual(["sent"]);
     expect(remaining.nextCursor).toBeUndefined();
     expect(
       (yield* runtime.harness
@@ -638,9 +654,6 @@ it("continues history through a fixed message and collective-result boundary", (
       records.push(...page.records);
     }
     expect(records.filter((record) => record.kind === "sent")).toHaveLength(52);
-    expect(
-      records.filter((record) => record.kind === "collectiveResult"),
-    ).toHaveLength(2);
   }));
 
 it("lists every conversation once in address order in pages of 50, with one that starts mid-way only when it sorts after the pages already read", () =>
@@ -650,20 +663,19 @@ it("lists every conversation once in address order in pages of 50, with one that
     const peer = fc.nat({ max: 199 }).map((index) => `peer-${index}`);
     const held = new Set<string>();
     for (let index = 0; index < 200; index += 7) {
-      held.add(yield* hold(subject, `peer-${index}`, "collectiveResult"));
+      held.add(yield* hold(subject, `peer-${index}`));
     }
-    yield* waitForInbox(runtime, held.size);
     yield* forAll(
       fc.tuple(fc.array(peer, { maxLength: 8 }), peer),
       Effect.fn(function* ([arrivals, late]) {
         for (const name of arrivals) {
-          held.add(yield* hold(subject, name, "live"));
+          held.add(yield* hold(subject, name));
         }
         const before = Arr.sort(held, Order.string);
         const read = before.slice(0, 50);
         let page = yield* runtime.harness.listConversations();
         const pages = [page.addresses];
-        held.add(yield* hold(subject, late, "live"));
+        held.add(yield* hold(subject, late));
         while (page.nextCursor !== undefined) {
           page = yield* runtime.harness.listConversations({
             cursor: page.nextCursor,
@@ -679,152 +691,6 @@ it("lists every conversation once in address order in pages of 50, with one that
         expect(pages).toEqual([read, ...Arr.chunksOf(unread, 50)]);
       }),
     );
-  }));
-
-it("uses one captured policy for peer-controlled result text and trusts the local response", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const entered = yield* Deferred.make<undefined>();
-    const release = yield* Deferred.make<undefined>();
-    const assessed: string[] = [];
-    let completing = false;
-    const options = composedPolicy({
-      decide: (request) =>
-        Effect.gen(function* () {
-          if (completing) {
-            assessed.push(decisionState(request.state).candidate.sender);
-            yield* Deferred.succeed(entered, undefined);
-            yield* Deferred.await(release);
-          }
-          return decisionResponse(
-            request,
-            completing ? "violation" : "compliant",
-          );
-        }),
-    });
-    const runtime = yield* subject.open({
-      policy: { ...options, maximumConcurrentChecks: 1 },
-    });
-    const original = yield* collectiveRequest(
-      subject,
-      subject.bob,
-      [subject.self, subject.carol],
-      "all_gather",
-    );
-    yield* subject.deliver({
-      kind: "collectiveRequest",
-      message: original.message,
-    });
-    yield* acknowledgeNext(runtime);
-    completing = true;
-    const requestId = original.message.msgId;
-    const own = yield* CollectiveResponse.create({
-      author: subject.self,
-      request: original.message,
-      response: { requestId, action: "accept", content: { day: "Tuesday" } },
-    });
-    const remote = yield* CollectiveResponse.create({
-      author: subject.carol,
-      request: original.message,
-      response: { requestId, action: "accept", content: { day: "Wednesday" } },
-    });
-    const before = yield* runtime.firewall.readPolicy();
-    yield* subject.deliver({
-      kind: "collectiveResult",
-      result: {
-        request: original.request,
-        closedAt: Date.now(),
-        closedBy: "settled",
-        outcomes: [
-          {
-            recipient: subject.self,
-            outcome: { kind: "answered", content: { day: "Tuesday" } },
-          },
-          {
-            recipient: subject.carol,
-            outcome: { kind: "answered", content: { day: "Wednesday" } },
-          },
-        ],
-      },
-      sources: { request: original.message, responses: [own, remote] },
-    });
-    yield* Deferred.await(entered);
-    yield* runtime.firewall.updatePolicy({ remove: ["privacy"] });
-    yield* Deferred.succeed(release, undefined);
-    const [entry] = (yield* waitForInbox(runtime)).entries;
-    expect(entry?.item).toMatchObject({
-      kind: "collectiveResult",
-      question: { kind: "withheld", reason: "rule-violation" },
-      outcomes: [
-        { outcome: { kind: "answered", content: { day: "Tuesday" } } },
-        { outcome: { kind: "withheld", reason: "rule-violation" } },
-      ],
-    });
-    const ordered = assessed.slice().sort(compareAscii);
-    expect(ordered).toEqual(
-      [subject.bob.agentId, subject.carol.agentId].sort(compareAscii),
-    );
-    expect(
-      new Set(
-        (yield* runtime.firewall.readDecisions({})).decisions.map(
-          (decision) => decision.activeRevision,
-        ),
-      ),
-    ).toEqual(new Set([before.activeRevision]));
-  }));
-
-it("can respond to a presented collective request after delivery and restart", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const scope = yield* Scope.make();
-    const runtime = yield* subject.open().pipe(Scope.extend(scope));
-    const original = yield* collectiveRequest(subject);
-    yield* subject.deliver({
-      kind: "collectiveRequest",
-      message: original.message,
-    });
-    yield* acknowledgeNext(runtime);
-    expect(subject.submitted).toEqual([]);
-    yield* Scope.close(scope, Exit.void);
-    const reopened = yield* subject.open();
-    yield* reopened.harness.send({
-      to: bobAddress,
-      collectiveResponse: {
-        requestId: original.message.msgId,
-        action: "accept",
-        content: { day: "Tuesday" },
-      },
-    });
-    expect(subject.submitted).toMatchObject([
-      { collectiveResponse: { requestId: original.message.msgId } },
-    ]);
-  }));
-
-it("cannot respond to a collective request withheld from the agent", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-
-    const runtime = yield* subject.open({
-      policy: composedPolicy(violation),
-    });
-    const original = yield* collectiveRequest(subject);
-    yield* subject.deliver({
-      kind: "collectiveRequest",
-      message: original.message,
-    });
-    yield* waitForDecisions(runtime);
-    expect(
-      yield* runtime.harness
-        .send({
-          to: bobAddress,
-          collectiveResponse: {
-            requestId: original.message.msgId,
-            action: "decline",
-          },
-        })
-        .pipe(Effect.flip),
-    ).toMatchObject({ failure: { kind: "request-none" } });
-    expect(subject.submitted).toEqual([]);
   }));
 
 it("cancels an unaccepted draft and releases assessment capacity", () =>
@@ -897,11 +763,11 @@ it("reads a saved conversation's history at its canonical address, reports an un
         content: [{ type: "text", text: "Hello both" }],
       }),
     );
-    yield* subject.deliver(yield* unanswered(subject, subject.carol));
+    yield* receive(subject, "Hello from carol", subject.carol);
     yield* acknowledgeNext(runtime);
     const saved: Record<string, readonly string[]> = {
       "agent:bob": ["sent"],
-      "agent:carol": ["collectiveResult"],
+      "agent:carol": ["received"],
       "group:alice,bob,carol": ["sent"],
     };
     const read = (address: MessageAddressInput) =>
@@ -922,66 +788,4 @@ it("reads a saved conversation's history at its canonical address, reports an un
         }
       }),
     );
-  }));
-
-it("uses the public reason of an invalid outcome without exposing the original response", () =>
-  Effect.gen(function* () {
-    const subject = yield* makeHarnessFixture;
-    const seen: DecisionRequest[] = [];
-    const runtime = yield* subject.open({
-      policy: composedPolicy({
-        decide: (request) =>
-          Effect.sync(() => {
-            seen.push(request);
-            return decisionResponse(request, "compliant", 0.6);
-          }),
-      }),
-    });
-    const original = yield* collectiveRequest(subject, subject.self, [
-      subject.bob,
-    ]);
-    yield* subject.retain(original.message);
-    const privateAnswer = "private invalid answer sentinel";
-    const invalid = yield* Message.create({
-      author: subject.bob,
-      recipients: [subject.self],
-      content: yield* encodeCollectiveContent({
-        kind: "response",
-        requestId: original.message.msgId,
-        action: "accept",
-        content: { day: [privateAnswer] },
-      }),
-    });
-    yield* subject.deliver({
-      kind: "collectiveResult",
-      result: {
-        request: original.request,
-        closedAt: Date.now(),
-        closedBy: "settled",
-        outcomes: [
-          {
-            recipient: subject.bob,
-            outcome: { kind: "invalid", reason: "Expected a day" },
-          },
-        ],
-      },
-      sources: { request: original.message, responses: [invalid] },
-    });
-    const [entry] = (yield* waitForInbox(runtime)).entries;
-    expect(entry?.item).toMatchObject({
-      kind: "collectiveResult",
-      outcomes: [{ outcome: { kind: "invalid", reason: "Expected a day" } }],
-    });
-    expect(
-      seen.some((request) =>
-        decisionState(request.state).candidate.text.includes("Expected a day"),
-      ),
-    ).toBe(true);
-    expect(JSON.stringify(seen)).not.toContain(privateAnswer);
-    expect(JSON.stringify(entry)).not.toContain(privateAnswer);
-    expect(
-      JSON.stringify(
-        yield* runtime.harness.readHistory({ address: bobAddress }),
-      ),
-    ).not.toContain(privateAnswer);
   }));

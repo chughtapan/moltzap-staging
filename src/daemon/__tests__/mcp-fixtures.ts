@@ -31,7 +31,6 @@ const mcpTestHeaders = { host: "127.0.0.1" };
  */
 export const mcpFixture = Effect.fn("mcpFixture")(function* (
   options: {
-    readonly hideCollectives?: boolean;
     /** Makes the agent a client of the server agent with this name. */
     readonly serverAgentName?: AgentName;
     readonly serverAgentCredential?: Redacted.Redacted;
@@ -62,8 +61,8 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
     checkOutgoing: unused,
     readPolicy: () =>
       Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
-    readNorms: () =>
-      Effect.fail(new FirewallPolicyError({ reason: "not-configured" })),
+    readContracts: () => Effect.succeed([]),
+    requiresProtocolHistory: () => false,
     updatePolicy: unused,
     readDecisions: unused,
   });
@@ -81,7 +80,6 @@ export const mcpFixture = Effect.fn("mcpFixture")(function* (
       settings: {
         serverAgentName: options.serverAgentName,
         hideGroups: false,
-        hideCollectives: options.hideCollectives ?? false,
       },
       serverAgentHeldNorms: yield* Ref.make(
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),

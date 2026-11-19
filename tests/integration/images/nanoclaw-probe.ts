@@ -32,8 +32,7 @@ const REPORT_PREFIX = "nanoclaw probe report: ";
 /**
  * The agent runner's script that queues each destination in order: one
  * marked `final` through the agent's final output, and any other as
- * `send_message` tool arguments `to` and `text`, whose text may be the
- * JSON of a collective request or a collective response.
+ * `send_message` tool arguments `to` and `text`.
  */
 const OUTBOUND_SOURCE = `
   import '${RUNNER_ROOT}/modules/index.ts';
@@ -66,16 +65,11 @@ const OUTBOUND_SOURCE = `
 
 type ModuleRecord = Readonly<Record<string, unknown>>;
 
-/**
- * The item the probe waits for in the native inbox: its conversation,
- * sender, and either a plain message's exact text or the message id of the
- * collective request whose inbox entry the text holds as JSON.
- */
+/** The plain message the probe waits for in the native inbox: its conversation, sender and exact text. */
 interface ExpectedInbound {
   readonly platformId: string;
   readonly sender: string;
-  readonly text?: string;
-  readonly requestId?: string;
+  readonly text: string;
 }
 
 /** The NanoClaw host modules the probe drives. */
@@ -140,21 +134,17 @@ function decodeDestinations(value: unknown): readonly unknown[] {
 }
 
 function decodeInbound(value: unknown): ExpectedInbound {
-  const { platformId, sender, text, requestId } = asRecord(value);
+  const { platformId, sender, text } = asRecord(value);
   if (
     typeof platformId !== "string" ||
     typeof sender !== "string" ||
-    !optionalString(text) ||
-    !optionalString(requestId)
+    typeof text !== "string"
   ) {
-    throw new Error("NANOCLAW_INBOUND_JSON must name a platformId and sender");
+    throw new Error(
+      "NANOCLAW_INBOUND_JSON must name a platformId, sender and text",
+    );
   }
-  return {
-    platformId,
-    sender,
-    ...(text === undefined ? {} : { text }),
-    ...(requestId === undefined ? {} : { requestId }),
-  };
+  return { platformId, sender, text };
 }
 
 /**
@@ -326,34 +316,12 @@ function historyHolds(history: unknown, expected: ExpectedInbound): boolean {
 
 function matchesInbound(value: unknown, expected: ExpectedInbound): boolean {
   const { text, address, sender, senderId } = asRecord(value);
-  if (typeof text !== "string") {
-    return false;
-  }
-  const textMatches =
-    expected.requestId === undefined
-      ? text === expected.text
-      : requestIdIn(text, expected.platformId) === expected.requestId;
   return (
-    textMatches &&
+    text === expected.text &&
     address === expected.platformId &&
     sender === expected.sender &&
     senderId === expected.sender
   );
-}
-
-/**
- * The message id of the collective request whose inbox entry `text` holds as
- * JSON, when that entry is in the conversation `address`.
- */
-function requestIdIn(text: string, address: string): unknown {
-  if (!text.startsWith("{")) {
-    return undefined;
-  }
-  const entry = asRecord(JSON.parse(text));
-  const item = asRecord(entry.item);
-  return entry.address === address && item.kind === "collectiveRequest"
-    ? asRecord(item.message).msgId
-    : undefined;
 }
 
 async function replaceWorkspace(target: string): Promise<undefined> {
@@ -456,10 +424,6 @@ function call(target: ModuleRecord, name: string, ...args: unknown[]): unknown {
   }
   const result: unknown = Reflect.apply(member, target, args);
   return result;
-}
-
-function optionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === "string";
 }
 
 /** `value` as a record; anything else reads as one with no fields. */

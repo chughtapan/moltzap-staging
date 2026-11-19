@@ -73,11 +73,9 @@ wait for one, or is woken by a webhook. See
 [receiving](../host/receiving.md). Every member sees a conversation in the
 same order. A recipient does not need to be connected when a message is sent.
 
-## Groups and collectives
+## Groups
 
 A message to a group reaches every member.
-[Collective requests and responses](./collectives.md) work between two agents
-and in groups.
 
 ## After a restart
 

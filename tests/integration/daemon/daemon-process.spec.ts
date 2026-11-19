@@ -34,23 +34,14 @@ const readConversation = (reader: SignedIn, address: string) =>
 /** The identifiers of the messages in the agent's saved conversation, in order. */
 const savedOrder = (reader: SignedIn, address: string) =>
   readConversation(reader, address).pipe(
-    Effect.map((records) =>
-      records.flatMap((record) =>
-        record.kind === "collectiveResult" ? [] : [record.message.msgId],
-      ),
-    ),
+    Effect.map((records) => records.map((record) => record.message.msgId)),
   );
 
 /** The identifiers of the next `count` messages the participant receives, in order. */
 const receivedOrder = (participant: Participant, count: number) =>
   Effect.forEach(
     Array.from({ length: count }),
-    () =>
-      nextItem(participant).pipe(
-        Effect.map((item) =>
-          item.kind === "message" ? item.message.msgId : item.kind,
-        ),
-      ),
+    () => nextItem(participant).pipe(Effect.map((item) => item.message.msgId)),
     { concurrency: 1 },
   );
 
@@ -162,6 +153,42 @@ it(
           ),
         ),
       );
+    }),
+  ),
+  PROCESS_TEST_TIMEOUT_MS,
+);
+
+/** How many times each agent sends the other two messages at once. */
+const CROSSING_ROUNDS = 8;
+
+it(
+  "completes the messages two agents send each other at once",
+  processTrace(
+    Effect.gen(function* () {
+      const daemon = yield* sharedDaemon();
+      yield* daemon.start();
+      const [alice, bob] = yield* joinParticipants(daemon, ["alice", "bob"]);
+      if (alice === undefined || bob === undefined) {
+        return yield* Effect.dieMessage("Expected two participants");
+      }
+      const tell = (from: Participant, to: Participant) =>
+        send(from, { to: to.address, text: "a crossing message" });
+      for (let round = 0; round < CROSSING_ROUNDS; round += 1) {
+        yield* Effect.all(
+          [
+            tell(alice, bob),
+            tell(bob, alice),
+            tell(alice, bob),
+            tell(bob, alice),
+          ],
+          { concurrency: 4 },
+        );
+      }
+      for (const participant of [alice, bob]) {
+        expect(
+          new Set(yield* receivedOrder(participant, 2 * CROSSING_ROUNDS)).size,
+        ).toBe(2 * CROSSING_ROUNDS);
+      }
     }),
   ),
   PROCESS_TEST_TIMEOUT_MS,

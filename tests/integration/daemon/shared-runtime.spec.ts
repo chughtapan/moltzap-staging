@@ -88,11 +88,7 @@ const clientConversation: ReadConversation = (agent) =>
  */
 function awaitMessages(agent: SignedIn, read: ReadConversation, count: number) {
   const ids = read(agent).pipe(
-    Effect.map((page) =>
-      page.records.flatMap((record) =>
-        record.kind === "collectiveResult" ? [] : [record.message.msgId],
-      ),
-    ),
+    Effect.map((page) => page.records.map((record) => record.message.msgId)),
   );
   return ids.pipe(
     Effect.delay("20 millis"),

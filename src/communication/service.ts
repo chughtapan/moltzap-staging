@@ -4,12 +4,11 @@
  * The file opens with what the service accepts, hands to the host and
  * returns, then reads an agent's conversations and their ordered history. A
  * send orders the message in its conversation and saves it for every member
- * in one transaction. Collective requests and responses are messages that
- * `collectives.ts` interprets.
+ * in one transaction.
  */
 
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import { Context, Effect, Layer, Predicate, Schedule, Schema } from "effect";
 import { randomBytes } from "node:crypto";
 import {
   afterCommit,
@@ -17,25 +16,17 @@ import {
   transaction,
   withAgentRows,
 } from "../database/index.js";
-import { compareAgentIds, exactStruct } from "../encoding.js";
+import { compareAgentIds } from "../encoding.js";
 import { AgentCard, type AgentName } from "../identity.js";
-import { makeCollectives } from "./collectives.js";
 import { CommunicationError } from "./errors.js";
 import {
-  collectivePartOf,
-  CollectiveRequest,
-  CollectiveRequestMessage,
-  CollectiveResult,
-  CollectiveResultSources,
   conversationNameKey,
   deriveConversationId,
-  Message,
+  type Message,
   messageMembers,
   type MessageReference,
-  type MsgId,
   type Page,
   type PaginatedRequest,
-  RequestError,
 } from "./messages.js";
 import {
   communicationQueries,
@@ -43,7 +34,6 @@ import {
   markMessageConsumed,
   readMessages,
   saveMessage,
-  type StoredMessage,
 } from "./store.js";
 
 /** All conversation members, in ascending agent-name order. */
@@ -75,58 +65,22 @@ export interface HistoryPage extends Page {
   readonly earlierMessagesOmitted: boolean;
 }
 
-/** What Communication sends: a message, or a collective request with every recipient. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
-export const Outgoing = Schema.Union(Message, CollectiveRequest);
-/** What an agent sends, fixed before policy assessment. */
-export type Outgoing = typeof Outgoing.Type;
-/** What an agent consumes: a message, a collective request, or a collective result with its sources. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The owning handoff grammar lets Main persist Message values through their encoder.
-export const Incoming = Schema.Union(
-  exactStruct({ kind: Schema.Literal("message"), message: Message }),
-  exactStruct({
-    kind: Schema.Literal("collectiveRequest"),
-    message: CollectiveRequestMessage,
-  }),
-  exactStruct({
-    kind: Schema.Literal("collectiveResult"),
-    result: CollectiveResult,
-    sources: CollectiveResultSources,
-  }),
-);
-/** What an agent consumes, before local policy decides what its host reads. */
-export type Incoming = typeof Incoming.Type;
-
 /** One agent's sends, what it consumes and its history. */
 export interface CommunicationService {
   /**
-   * Returns once a message is ordered and saved for every member, or a
-   * collective request is saved with its copies. Sending the same `Message`
-   * or `CollectiveRequest` again, with its `msgId`, changes nothing.
+   * Returns once the message is ordered and saved for every member. Sending
+   * the same `Message` again, with its `msgId`, changes nothing.
    */
-  readonly send: (
-    outgoing: Outgoing,
-  ) => Effect.Effect<void, CommunicationError | RequestError>;
+  readonly send: (message: Message) => Effect.Effect<void, CommunicationError>;
   /**
-   * The collective request with this message id that this agent received and
-   * may still respond to. Looking it up reserves nothing.
-   */
-  readonly getCollectiveRequest: (
-    requestId: MsgId,
-  ) => Effect.Effect<
-    CollectiveRequestMessage,
-    CommunicationError | RequestError
-  >;
-  /**
-   * Calls the handler for each message, collective request and collective
-   * result, and marks it consumed after success. Failed or interrupted
-   * handling leaves it to be handed over again. One that was handled can also
-   * be handed over again when marking it fails, so handlers must tolerate
-   * repeats.
+   * Calls the handler for each message this agent receives and marks it
+   * consumed after success. Failed or interrupted handling leaves it to be
+   * handed over again. One that was handled can also be handed over again
+   * when marking it fails, so handlers must tolerate repeats.
    */
   readonly consume: <E, R>(
-    handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
-  ) => Effect.Effect<never, CommunicationError | RequestError | E, R>;
+    handle: (message: Message) => Effect.Effect<void, E, R>,
+  ) => Effect.Effect<never, CommunicationError | E, R>;
   /** Finds a retained conversation by all member names, including self. */
   readonly getConversation: (
     names: readonly AgentName[],
@@ -155,6 +109,32 @@ export interface CommunicationSettings {
    * daemon is given the same map, so a send opens its recipients' latches.
    */
   readonly consumers: Map<string, Effect.Latch>;
+}
+
+/**
+ * Keeps a background loop of one agent running. A failure is logged and the
+ * loop starts again after a pause that doubles from one second up to thirty.
+ */
+export function restarting(agentKey: string, loop: string) {
+  return <E, R>(work: Effect.Effect<never, E, R>) =>
+    work.pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`The ${loop} failed and will start again`).pipe(
+          Effect.annotateLogs({
+            agentKey,
+            failure: Predicate.hasProperty(error, "_tag")
+              ? String(error._tag)
+              : "unknown",
+          }),
+        ),
+      ),
+      Effect.retry(
+        Schedule.union(
+          Schedule.exponential("1 second"),
+          Schedule.spaced("30 seconds"),
+        ),
+      ),
+    );
 }
 
 /** The agent whose history is read, and the session its cursors belong to. */
@@ -257,7 +237,13 @@ function listConversations(agent: HistoryAgent, query: ConversationQuery) {
 function readHistory(agent: HistoryAgent, query: HistoryQuery) {
   return Effect.gen(function* () {
     const window = yield* historyWindow(agent, query);
-    const selected = yield* scanWindow(agent, window);
+    const selected = yield* read(agent, {
+      conversationId: window.conversationId,
+      after: window.after,
+      through: window.through,
+      newestFirst: window.newestFirst,
+      limit: window.limit + 1,
+    });
     const page = selected.slice(0, window.limit);
     const last = page.at(-1);
     const nextCursor =
@@ -434,54 +420,6 @@ function continueWindow(
   });
 }
 
-/** The window's messages in its order, without collective closes, up to one past its limit. */
-function scanWindow(agent: HistoryAgent, window: HistoryWindow) {
-  return Effect.gen(function* () {
-    const selected: StoredMessage[] = [];
-    let { after, through } = window;
-    while (after < through) {
-      const rows = yield* read(agent, {
-        conversationId: window.conversationId,
-        after,
-        through,
-        newestFirst: window.newestFirst,
-        limit: 50,
-      });
-      const last = rows.at(-1);
-      if (last === undefined) {
-        break;
-      }
-      for (const row of rows) {
-        if (yield* hostReadable(row.message)) {
-          selected.push(row);
-        }
-        if (selected.length > window.limit) {
-          return selected;
-        }
-      }
-      if (window.newestFirst) {
-        through = last.ordinal - 1;
-      } else {
-        after = last.ordinal;
-      }
-    }
-    return selected;
-  });
-}
-
-/** Whether a host may read the message: every message but a collective close or one whose collective part is unreadable. */
-function hostReadable(message: Message) {
-  return collectivePartOf(message).pipe(
-    Effect.map(
-      Option.match({
-        onNone: () => true,
-        onSome: (part) => part.kind !== "close",
-      }),
-    ),
-    Effect.catchAll(() => Effect.succeed(false)),
-  );
-}
-
 function read(agent: HistoryAgent, query: Parameters<typeof readMessages>[1]) {
   return readMessages(agent.agentKey, query);
 }
@@ -518,14 +456,11 @@ function historyFailure<A, E, R>(work: Effect.Effect<A, E, R>) {
   );
 }
 
-/** Keeps a background loop of one agent running after a failure. */
-export { restarting } from "./collectives.js";
-
 /** One hosted agent's database client, settings and arrival latch. */
 interface HostedAgent {
   readonly sql: SqlClient;
   readonly settings: CommunicationSettings;
-  /** Opened when a message or a collective result is saved for this agent. */
+  /** Opened when a message is saved for this agent. */
   readonly arrived: Effect.Latch;
 }
 const agentRow = Schema.Struct({
@@ -545,26 +480,11 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
     card: settings.card,
     maximumHistoryRecords: settings.maximumHistoryRecords ?? 1024,
   });
-  const collectives = yield* makeCollectives(settings.agentKey, {
-    card: settings.card,
-    send: (message) =>
-      withSqlAndServiceErrors(agent, sendMessage(agent, message)).pipe(
-        Effect.mapError((error) =>
-          error instanceof CommunicationError
-            ? error
-            : refused("persistence-failed"),
-        ),
-      ),
-    resultSaved: arrived.open,
-  });
   const oneConsumer = yield* Effect.makeSemaphore(1);
   return {
-    send: (outgoing) =>
-      withSqlAndServiceErrors(agent, send(agent, collectives, outgoing)),
-    getCollectiveRequest: (requestId) =>
-      withSqlAndServiceErrors(agent, collectives.getRequest(requestId)),
-    consume: (handle) =>
-      oneConsumer.withPermits(1)(consume(agent, collectives, handle)),
+    send: (message) =>
+      withSqlAndServiceErrors(agent, sendMessage(agent, message)),
+    consume: (handle) => oneConsumer.withPermits(1)(consume(agent, handle)),
     getConversation: (names) =>
       withSqlAndServiceErrors(agent, history.getConversation(names)),
     listConversations: (query = {}) =>
@@ -574,7 +494,7 @@ const makeCommunication = Effect.fn("makeCommunication")(function* (
   } satisfies CommunicationService;
 });
 
-/** Carries one agent's messages, completes its collective requests and reads its ordered history. */
+/** Carries one agent's messages and reads its ordered history. */
 export class Communication extends Context.Tag("SocialHarness/Communication")<
   Communication,
   CommunicationService
@@ -582,29 +502,6 @@ export class Communication extends Context.Tag("SocialHarness/Communication")<
   /** The service of the agent `settings` names. */
   static readonly layer = (settings: CommunicationSettings) =>
     Layer.scoped(Communication, makeCommunication(settings));
-}
-
-type Collectives = Effect.Effect.Success<ReturnType<typeof makeCollectives>>;
-
-/** A collective request and a collective response go through the collective layer; any other message is sent as it is. */
-function send(
-  agent: HostedAgent,
-  collectives: Collectives,
-  outgoing: Outgoing,
-) {
-  if ("kind" in outgoing) {
-    return collectives.sendRequest(outgoing);
-  }
-  return Effect.gen(function* () {
-    const part = yield* collectivePartOf(outgoing).pipe(
-      Effect.catchTag("CollectivePartInvalidError", () =>
-        Effect.succeed(Option.none()),
-      ),
-    );
-    return yield* Option.isSome(part) && part.value.kind === "response"
-      ? collectives.sendResponse(outgoing, part.value)
-      : sendMessage(agent, outgoing);
-  });
 }
 
 /** The key of the agent on this daemon that `recipient` names, which must match its stored card. */
@@ -716,49 +613,31 @@ function messageConversation(
 }
 
 /**
- * Hands each message and collective request this agent has not consumed to
- * `handle` in the order they were saved, and each collective result as soon
- * as it is complete, so a result precedes any message saved after the
- * response that completed it. Each is marked consumed only after `handle`
- * succeeds. With nothing to consume it waits until a message or a result is
- * saved for this agent.
+ * Hands each message this agent has not consumed to `handle` in the order
+ * they were saved, and marks each consumed only after `handle` succeeds. With
+ * nothing to consume it waits until a message is saved for this agent.
  */
 function consume<E, R>(
   agent: HostedAgent,
-  collectives: Collectives,
-  handle: (incoming: Incoming) => Effect.Effect<void, E, R>,
+  handle: (message: Message) => Effect.Effect<void, E, R>,
 ) {
   const { agentKey, card } = agent.settings;
-  const consumeCompletedResults = withSqlAndServiceErrors(
-    agent,
-    collectives.consumeNextResult((completed) =>
-      handle({ kind: "collectiveResult", ...completed }),
-    ),
-  ).pipe(Effect.repeat({ while: (consumed) => consumed }));
   return Effect.gen(function* () {
     while (true) {
       yield* agent.arrived.close;
-      yield* consumeCompletedResults;
       const unconsumed = yield* withSqlAndServiceErrors(
         agent,
         readMessages(agentKey, { unconsumedBy: card.agentId, limit: 50 }),
       );
-      for (const stored of unconsumed) {
-        const received = yield* withSqlAndServiceErrors(
-          agent,
-          collectives.receive(stored.message),
-        );
-        if (Option.isSome(received)) {
-          yield* handle(received.value);
-        }
+      for (const { message } of unconsumed) {
+        yield* handle(message);
         yield* withSqlAndServiceErrors(
           agent,
           markMessageConsumed(agentKey, {
-            authorAgentId: stored.message.author.agentId,
-            msgId: stored.message.msgId,
+            authorAgentId: message.author.agentId,
+            msgId: message.msgId,
           }),
         );
-        yield* consumeCompletedResults;
       }
       if (unconsumed.length === 0) {
         yield* agent.arrived.await;
@@ -779,10 +658,7 @@ function withSqlAndServiceErrors<A, E, R>(
   return work.pipe(
     Effect.provideService(SqlClient, sql),
     Effect.mapError((error) => {
-      if (
-        error instanceof CommunicationError ||
-        error instanceof RequestError
-      ) {
+      if (error instanceof CommunicationError) {
         return error;
       }
       const conflict =

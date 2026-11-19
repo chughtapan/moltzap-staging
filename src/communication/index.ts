@@ -1,17 +1,9 @@
-/** @file Messages, collective requests and collective responses as values, and their failures. The service that carries them between agents is `service.ts`. */
+/** @file Messages as values, and their failures. The service that carries them between agents is `service.ts`. */
 
-/** Messages, addresses, collective requests, responses and results as validated values. */
+/** Messages and addresses as validated values, and the form a filled set of fields is checked against. */
 export {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  CollectiveOp,
-  CollectiveOutcome,
-  CollectiveRequest,
-  CollectiveRequestMessage,
-  CollectiveResponse,
-  type CollectiveResultSources,
-  DeadlineSeconds,
-  encodeCollectiveContent,
   GROUP_ADDRESS_PREFIX,
   GroupAddress,
   maximumMembers,
@@ -23,14 +15,10 @@ export {
   Page,
   PaginatedRequest,
   RequestedSchema,
-  RequestError,
-  type ResponseContent,
-  type ResponseFieldFailures,
-  responseFieldsText,
   validateResponseContent,
   wellFormedString,
 } from "./messages.js";
-/** Why a send, a read, a collective request or a collective response was refused. */
+/** Why a send or a read was refused. */
 export {
   CommunicationError,
   issuesText,

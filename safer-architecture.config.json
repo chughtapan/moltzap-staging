@@ -72,7 +72,7 @@
       "entrypoints": [
         "src/norms/index.ts"
       ],
-      "reason": "Agreed norms: FIPA acts, protocols and the checks firewall rules name"
+      "reason": "Norm documents and the contracts they compile to for the firewall"
     },
     {
       "name": "mcp",
@@ -138,7 +138,7 @@
       "folders": [
         "norms"
       ],
-      "reason": "Norms check acts through matchers the firewall's rules name"
+      "reason": "Norms compile documents into contracts the firewall checks"
     },
     {
       "name": "firewall",

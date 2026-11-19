@@ -449,26 +449,16 @@ const statedTimeAndCandidate = Schema.parseJson(
   }),
 );
 it.prop(
-  "gives the provider the candidate, its collective operation, the capture time and any omission of earlier history as captured, and holds nothing for an omission",
+  "gives the provider the candidate, the capture time and any omission of earlier history as captured, and holds nothing for an omission",
   [
     fc.string(),
-    fc.constantFrom<AssessmentText["operation"]>(
-      undefined,
-      {
-        kind: "request",
-        op: "gather",
-        requestId: "msg_question",
-        deadlineAt: 2000,
-      },
-      { kind: "answer", op: "all_gather", requestId: "msg_question" },
-    ),
     fc.option(fc.nat(), { nil: undefined }),
     fc.option(fc.boolean(), { nil: undefined }),
   ],
-  ([text, operation, now, earlierHistoryOmitted]) =>
+  ([text, now, earlierHistoryOmitted]) =>
     Effect.gen(function* () {
       const requests: DecisionRequest[] = [];
-      const message = { ...draft, text, operation };
+      const message = { ...draft, text };
       const result = yield* check(provider({}, requests), {
         message,
         evidence: { ...evidence, now, earlierHistoryOmitted },

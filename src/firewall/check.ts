@@ -10,19 +10,14 @@ import {
   Schema,
 } from "effect";
 import {
-  CollectiveOp,
-  CollectiveOutcome,
-  CollectiveRequestMessage,
   Message as CommunicationMessage,
-  MsgId,
+  RequestedSchema,
 } from "../communication/index.js";
 import { exactStruct } from "../encoding.js";
-import { AgentCard } from "../identity.js";
 import {
   type CheckLimits,
   type Direction,
   type FirewallRefusalReason,
-  firewallRefusalReasonSchema,
   OwnerFact,
   type ProviderRequestSettings,
   type TextRule,
@@ -73,30 +68,9 @@ const identifier = Schema.NonEmptyTrimmedString;
 
 const probability = Schema.Number.pipe(Schema.between(0, 1));
 
-const collectingOp = Schema.Literal("gather", "all_gather");
-
-/**
- * Request deadlines use epoch milliseconds. This metadata lets a text rule tell
- * collective requests and responses apart without interpreting message text.
- * `requestId` is the request's message id.
- */
-const messageOperation = Schema.Union(
-  Schema.Struct({
-    kind: Schema.Literal("request"),
-    op: collectingOp,
-    requestId: identifier,
-    deadlineAt: Schema.Int.pipe(Schema.positive()),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("answer"),
-    op: collectingOp,
-    requestId: identifier,
-  }),
-);
-
 /**
  * A message as the decision provider reads it. Requires verified attribution
- * from the caller. Plain messages omit `operation`.
+ * from the caller.
  */
 export class AssessmentText extends Schema.Class<AssessmentText>(
   "AssessmentText",
@@ -105,7 +79,6 @@ export class AssessmentText extends Schema.Class<AssessmentText>(
   sender: identifier,
   recipients: Schema.NonEmptyArray(identifier),
   text: Schema.String,
-  operation: Schema.optional(messageOperation),
 }) {}
 
 /**
@@ -142,6 +115,21 @@ export class CheckEvidence extends Schema.Class<CheckEvidence>("CheckEvidence")(
     now: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
     facts: Schema.Array(OwnerFact),
     gaps: Schema.Array(Schema.NonEmptyString),
+    /**
+     * For an act a contract governs: its norm and that norm's description, the
+     * digest of its norm document, the act's performative and form, and the
+     * facts that hold in the instance.
+     */
+    protocol: Schema.optional(
+      Schema.Struct({
+        norm: Schema.String,
+        digest: Schema.String,
+        act: Schema.String,
+        description: Schema.String,
+        state: Schema.Array(Schema.String),
+        form: Schema.typeSchema(RequestedSchema),
+      }),
+    ),
   },
 ) {}
 
@@ -294,17 +282,16 @@ interface TextCheck {
 /** An opaque check id conveys no approval or lookup authority. */
 const checkIdSchema = Schema.String.pipe(Schema.pattern(/^chk_[a-f0-9]{64}$/u));
 
-/** One check's guidance: an instruction for each rule the provider could not settle for an allowed incoming message. */
-const checkedGuidance = {
+/**
+ * The guidance a host reads with one message: its check, and an instruction
+ * for each rule the provider could not settle for the allowed incoming message.
+ */
+export const LocalGuidance = exactStruct({
   checkId: checkIdSchema,
   instructions: Schema.Array(uncertainInstructionSchema),
-};
-
-/** Exact decoding of one check's guidance, wherever a host receives it. */
-const checkedGuidanceSchema = exactStruct(checkedGuidance);
-
-/** The guidance a host reads with one checked text. */
-export type CheckedGuidance = typeof checkedGuidanceSchema.Type;
+});
+/** @useDeclaredType */
+export type LocalGuidance = typeof LocalGuidance.Type;
 
 const utf8 = new TextEncoder();
 
@@ -1000,8 +987,15 @@ function policyState(
   evidence: ReturnType<typeof requestEvidence>,
 ): string {
   const { policy: catalog, ...common } = catalogState(policy);
-  const { history, earlierHistoryOmitted, now, facts, gaps, ...event } =
-    evidence;
+  const {
+    history,
+    earlierHistoryOmitted,
+    now,
+    facts,
+    gaps,
+    protocol,
+    ...event
+  } = evidence;
   return JSON.stringify({
     ...common,
     ...event,
@@ -1011,6 +1005,7 @@ function policyState(
     now,
     facts,
     gaps,
+    protocol,
   });
 }
 
@@ -1026,6 +1021,7 @@ function requestEvidence(check: TextCheck) {
     now: check.evidence.now,
     facts: check.evidence.facts,
     gaps: check.evidence.gaps,
+    protocol: check.evidence.protocol,
   };
 }
 
@@ -1052,6 +1048,7 @@ function minimumEvidence(
     now: undefined,
     facts: [],
     gaps: [],
+    protocol: undefined,
   };
 }
 
@@ -1105,66 +1102,11 @@ function validateTextRules({
     : Effect.fail(new InvalidCheckError({ reason: "rules" }));
 }
 
-/** A part of a collective result that the message policy keeps the agent from reading. */
-export const Withheld = exactStruct({
-  kind: Schema.Literal("withheld"),
-  checkId: checkedGuidanceSchema.fields.checkId,
-  reason: firewallRefusalReasonSchema,
+/** The message the message policy permits the agent to read. */
+export const PermittedItem = exactStruct({
+  kind: Schema.Literal("message"),
+  message: CommunicationMessage,
 });
-/** @useDeclaredType */
-export type Withheld = typeof Withheld.Type;
-
-const collectiveResultGuidance = exactStruct({
-  question: Schema.optionalWith(checkedGuidanceSchema, { exact: true }),
-  responses: Schema.Array(
-    exactStruct({ recipient: AgentCard, ...checkedGuidanceSchema.fields }),
-  ),
-});
-
-/** The guidance of one message, or of the question and each recipient's response in a collective result. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const LocalGuidance = Schema.Union(
-  checkedGuidanceSchema,
-  collectiveResultGuidance,
-);
-/** @useDeclaredType */
-export type LocalGuidance = typeof LocalGuidance.Type;
-
-/**
- * A collective result after applying the message policy to each part a peer
- * wrote. `requestId` is the message id the requester's send returned, which is
- * also the id of the request message an all_gather's members received.
- */
-export const CollectiveResult = exactStruct({
-  kind: Schema.Literal("collectiveResult"),
-  op: CollectiveOp,
-  requestId: MsgId,
-  closedAt: Schema.Number,
-  closedBy: Schema.Literal("settled", "deadline"),
-  question: Schema.Union(Schema.String, Withheld),
-  outcomes: Schema.NonEmptyArray(
-    exactStruct({
-      recipient: AgentCard,
-      outcome: Schema.Union(CollectiveOutcome, Withheld),
-    }),
-  ),
-});
-/** @useDeclaredType */
-export type CollectiveResult = typeof CollectiveResult.Type;
-
-/** The message or collective result the message policy permits the agent to read. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Inbox persistence and MCP discovery compose this owning semantic schema.
-export const PermittedItem = Schema.Union(
-  exactStruct({
-    kind: Schema.Literal("message"),
-    message: CommunicationMessage,
-  }),
-  exactStruct({
-    kind: Schema.Literal("collectiveRequest"),
-    message: CollectiveRequestMessage,
-  }),
-  CollectiveResult,
-);
 /** @useDeclaredType */
 export type PermittedItem = typeof PermittedItem.Type;
 
@@ -1178,9 +1120,11 @@ const refusalText: Readonly<Record<FirewallRefusalReason, string>> = {
 
 /**
  * The sender can act on registered feedback without seeing the check's evidence.
- * `rule` names the chain rule that refused, and `detail` is that rule's matcher
- * report. The message states the reason, each deciding rule's registered
- * feedback and the detail.
+ * `rule` names the chain rule or contract stage that refused, and `detail` is
+ * a chain rule's matcher report or a contract's diagnostics: its norm, the
+ * digest of its norm document, the stage that failed and the field at fault.
+ * The message states each deciding rule's registered feedback as an error, or
+ * the reason when there is none, then the check, and a matcher's detail.
  */
 export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
   readonly reason: "firewall-refused";
@@ -1192,11 +1136,20 @@ export class FirewallRefusal extends Data.TaggedError("FirewallRefusal")<{
 }> {
   override get message(): string {
     const rule = this.rule === undefined ? "" : `, rule ${this.rule}`;
+    const contractDetail =
+      typeof this.detail === "object" &&
+      this.detail !== null &&
+      "stage" in this.detail;
     return [
-      `Message refused by the message policy (${this.refusal}${rule}, check ${this.checkId}).`,
-      refusalText[this.refusal],
-      ...this.feedback.map((entry) => entry.text),
-      ...(this.detail === undefined
+      ...(this.feedback.length === 0
+        ? [`Error: ${refusalText[this.refusal]}`]
+        : this.feedback.map((entry) =>
+            entry.text.startsWith("Error:")
+              ? entry.text
+              : `Error: ${entry.text}`,
+          )),
+      `Check: ${this.checkId}${rule}; ${this.refusal}.`,
+      ...(this.detail === undefined || contractDetail
         ? []
         : [`Details: ${JSON.stringify(this.detail)}`]),
     ].join(" ");

@@ -21,7 +21,7 @@ import {
   type SendResult,
   toolDefinitions,
 } from "@social-harness/social-harness";
-import { absurd, Data, Effect, Option, Schema } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 import { jsonResult } from "openclaw/plugin-sdk/channel-actions";
 import {
   buildChannelOutboundSessionRoute,
@@ -39,9 +39,6 @@ import {
   defineChannelMessageAdapter,
   waitUntilAbort,
 } from "openclaw/plugin-sdk/channel-outbound";
-
-/** The sender OpenClaw records for an entry no agent authored: a collective result. */
-const HARNESS_SENDER_NAME = "Social Harness";
 
 const CHANNEL_ID = "sharness";
 const TARGET_HINT =
@@ -144,6 +141,7 @@ interface InboundTurn {
 
 /** One host send as the host supplies it, each field unchecked. */
 interface TextSend {
+  readonly replyToMsgId?: string;
   readonly accountId?: string | null;
   readonly to: unknown;
   readonly text: unknown;
@@ -353,6 +351,9 @@ function handleMessageAction(
         accountId: ctx.accountId,
         to: ctx.params.to,
         text: ctx.params.message,
+        ...(ctx.reply?.source === "explicit"
+          ? { replyToMsgId: ctx.reply.replyToId }
+          : {}),
       }),
     ),
     Effect.map(({ to }) => jsonResult({ ok: true, to })),
@@ -585,7 +586,7 @@ function handleInboxEntry(
 ) {
   const kind = entry.address.startsWith("group:") ? "group" : "direct";
   const projected: ProjectedEntry = {
-    id: entry.deliveryToken,
+    id: entry.item.message.msgId,
     kind,
     address: entry.address,
     ...entryParticipants(entry, kind),
@@ -602,7 +603,7 @@ function handleInboxEntry(
  * `receive_messages` returns it.
  */
 function entryText(entry: InboxEntry): string {
-  if (entry.item.kind === "message" && entry.guidance === undefined) {
+  if (entry.guidance === undefined) {
     const [part, ...rest] = entry.item.message.content;
     if (part.type === "text" && rest.length === 0) {
       return part.text;
@@ -611,35 +612,16 @@ function entryText(entry: InboxEntry): string {
   return JSON.stringify(entry);
 }
 
-/**
- * Who an entry is from and, for a group message or collective request, who is
- * in the group. A collective result is from Social Harness and names only the
- * request's recipients, so it lists no members.
- */
+/** Who an entry is from and, for a group message, who is in the group. */
 function entryParticipants(
   entry: InboxEntry,
   kind: ProjectedEntry["kind"],
 ): Pick<ProjectedEntry, "sender" | "members"> {
-  const { item } = entry;
-  switch (item.kind) {
-    case "message":
-    case "collectiveRequest": {
-      const { author, recipients } = item.message;
-      const sender = agentSender(author);
-      return kind === "direct"
-        ? { sender }
-        : { sender, members: [author, ...recipients].map(agentAddress) };
-    }
-    case "collectiveResult":
-      return {
-        sender: {
-          id: `sharness:${entry.deliveryToken}`,
-          name: HARNESS_SENDER_NAME,
-        },
-      };
-    default:
-      return absurd(item);
-  }
+  const { author, recipients } = entry.item.message;
+  const sender = agentSender(author);
+  return kind === "direct"
+    ? { sender }
+    : { sender, members: [author, ...recipients].map(agentAddress) };
 }
 
 function agentSender(agent: AgentCard): EntrySender {
@@ -853,6 +835,9 @@ function sendCoreText(
     accountId: ctx.accountId,
     text: ctx.text,
     to: ctx.to,
+    ...(ctx.replyToIdSource === "explicit" && ctx.replyToId != null
+      ? { replyToMsgId: ctx.replyToId }
+      : {}),
   }).pipe(Effect.map(({ sent }) => makeMessageSendResult(sent)));
 }
 
@@ -871,7 +856,10 @@ function sendText(
   return Effect.gen(function* () {
     const { to, text } = yield* readTextSend(params);
     const connection = yield* requireConnection(accountSlot, params);
-    const result = yield* sendMessage(connection.mcp, sendArguments(to, text));
+    const result = yield* sendMessage(
+      connection.mcp,
+      sendArguments(to, text, params.replyToMsgId),
+    );
     if (result.isError === true) {
       return yield* new OpenClawSendFailed({
         message: result.content
@@ -894,20 +882,19 @@ function sendText(
 
 /**
  * The `send_message` arguments a host send amounts to. Text that is a JSON
- * object with a `collectiveRequest` or `collectiveResponse` property is the
- * tool's own arguments for a collective request or response, which the daemon
- * validates. Any other text is a message's text.
+ * object with a `replyToMsgId` property is the tool's own arguments for a
+ * reply, which the daemon validates. Any other text is a message's text, sent
+ * with the reply reference the host gave.
  */
 function sendArguments(
   to: MessageAddressInput,
   text: string,
+  replyToMsgId?: string,
 ): Readonly<Record<string, unknown>> {
   const written = Option.getOrUndefined(decodeJsonObject(text));
-  return written !== undefined &&
-    (Object.hasOwn(written, "collectiveRequest") ||
-      Object.hasOwn(written, "collectiveResponse"))
+  return written !== undefined && Object.hasOwn(written, "replyToMsgId")
     ? { ...written, to }
-    : { to, text };
+    : { to, text, ...(replyToMsgId === undefined ? {} : { replyToMsgId }) };
 }
 
 function logOutboundFailure(

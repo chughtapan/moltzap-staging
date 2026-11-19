@@ -24,12 +24,12 @@ import {
 import { FirewallPolicyError } from "../firewall/index.js";
 import { Firewall } from "../firewall/service.js";
 import { type AgentCard, type AgentName, Identity } from "../identity.js";
+import { clientToolDefinitions, toolDefinitions } from "../mcp/tools.js";
 import {
-  clientToolDefinitions,
-  textOnlyToolDefinitions,
-  toolDefinitions,
-} from "../mcp/tools.js";
-import { type DaemonNorms, daemonNorms, HeldNorms } from "../norms/index.js";
+  compiledPolicyEdit,
+  HeldNorms,
+  type InstalledNorms,
+} from "../norms/index.js";
 import { packageVersion } from "../version.js";
 import { SocialHarness } from "./agent.js";
 import { makeMcpHttpApp, serveMcp } from "./listener.js";
@@ -56,9 +56,9 @@ import { bind } from "./tool-server.js";
  * One agent's role, and everything that follows from it. In P2P mode every
  * agent is a peer: it messages any agent, alone or in a group, and checks its
  * own messages. In client/server mode every conversation is the server agent
- * and one client: the server agent checks its messages and holds the norms,
- * and a client checks nothing of its own, reads the server agent's norms and
- * talks only to it.
+ * and one client: the server agent checks its messages and holds the
+ * contracts, and a client checks nothing of its own, reads the server agent's
+ * norms and talks only to it.
  *
  * @internal
  */
@@ -66,9 +66,9 @@ export function roleOf(
   daemon: {
     readonly settings: Pick<
       DaemonSettings,
-      "serverAgentName" | "hideGroups" | "hideCollectives" | "messagePolicy"
+      "serverAgentName" | "hideGroups" | "messagePolicy"
     >;
-    readonly norms?: DaemonNorms;
+    readonly norms?: InstalledNorms;
     /** The norms the server agent holds, once it has started; clients read them. */
     readonly serverAgentHeldNorms: Ref.Ref<
       Option.Option<Context.Tag.Service<typeof HeldNorms>>
@@ -83,12 +83,12 @@ export function roleOf(
     const firewall = Firewall.layer(
       agentKey,
       settings.messagePolicy,
-      norms?.chain,
-      norms?.normDocuments,
+      undefined,
+      norms?.contracts,
     );
     return norms === undefined
       ? firewall
-      : HeldNorms.layer(norms).pipe(Layer.provideMerge(firewall));
+      : HeldNorms.layer.pipe(Layer.provideMerge(firewall));
   };
   if (serverAgentName === undefined) {
     return {
@@ -97,7 +97,7 @@ export function roleOf(
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,
-      tools: peerTools(settings.hideCollectives),
+      tools: peerTools(),
     };
   }
   const permits = serverAgentAndOne(serverAgentName);
@@ -109,7 +109,7 @@ export function roleOf(
       firewall: checked(),
       started: (services: Context.Context<never>) =>
         Ref.set(serverAgentHeldNorms, Context.getOption(services, HeldNorms)),
-      tools: peerTools(true),
+      tools: peerTools(),
     };
   }
   const unchecked = Firewall.layer(agentKey);
@@ -140,10 +140,6 @@ export const runDaemon = Effect.gen(function* () {
   const { settings, serverAgentCredential } = yield* loadDaemonSettings();
   return yield* Effect.gen(function* () {
     yield* checkDatabase;
-    const norms =
-      settings.norms === undefined
-        ? undefined
-        : yield* daemonNorms(settings.norms);
     if (settings.serverAgentName !== undefined) {
       yield* getOrCreateOwnedAgentKey(
         serverAgentOwner,
@@ -156,7 +152,7 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
     }
-    const agentOfOwner = yield* runningAgents(settings, norms);
+    const agentOfOwner = yield* runningAgents(settings);
     const app = yield* makeMcpHttpApp(
       settings.authentication,
       agentOfOwner,
@@ -217,10 +213,9 @@ function serverAgentNormsLayer(
 
 /**
  * The tools of a peer and of the server agent: each addresses any agent and
- * owns its message policy. `hideCollectives` leaves collective requests and
- * responses out of send_message, which then sends text only.
+ * owns its message policy.
  */
-function peerTools(hideCollectives: boolean) {
+function peerTools() {
   return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
@@ -229,13 +224,7 @@ function peerTools(hideCollectives: boolean) {
       .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
     return [
       yield* statusTool(subscription),
-      hideCollectives
-        ? bind(
-            "send_message",
-            textOnlyToolDefinitions.send_message,
-            harness.send,
-          )
-        : bind("send_message", toolDefinitions.send_message, harness.send),
+      bind("send_message", toolDefinitions.send_message, harness.send),
       bind(
         "receive_messages",
         toolDefinitions.receive_messages,
@@ -260,7 +249,10 @@ function peerTools(hideCollectives: boolean) {
       bind(
         "update_policy",
         toolDefinitions.update_policy,
-        firewall.updatePolicy,
+        (update) =>
+          compiledPolicyEdit(update).pipe(
+            Effect.flatMap(firewall.updatePolicy),
+          ),
         policyConfigured,
       ),
       bind(
@@ -282,8 +274,8 @@ function clientTools(serverAgentAddress: MessageAddressInput) {
     const harness = yield* SocialHarness;
     return [
       yield* statusTool(subscription),
-      bind("send_message", clientToolDefinitions.send_message, ({ text }) =>
-        harness.send({ to: serverAgentAddress, text }),
+      bind("send_message", clientToolDefinitions.send_message, (message) =>
+        harness.send({ ...message, to: serverAgentAddress }),
       ),
       bind(
         "receive_messages",
@@ -332,10 +324,7 @@ function normsTool(
         norms: held.map((norm) => ({
           name: norm.name,
           description: norm.description,
-          ...(norm.protocolName === undefined
-            ? {}
-            : { protocol: norm.protocolName }),
-          document: norm.document,
+          document: norm.source,
         })),
       })),
     );
@@ -348,13 +337,13 @@ function normsTool(
  * the returned function gives an owner's agent, starting it on that owner's
  * first request.
  */
-function runningAgents(settings: DaemonSettings, norms?: DaemonNorms) {
+function runningAgents(settings: DaemonSettings) {
   return Effect.gen(function* () {
     const daemonScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
     const daemon = {
       settings,
-      norms,
+      norms: settings.norms,
       serverAgentHeldNorms: yield* Ref.make(
         Option.none<Context.Tag.Service<typeof HeldNorms>>(),
       ),

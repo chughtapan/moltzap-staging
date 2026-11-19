@@ -1,7 +1,7 @@
 /** @file Shared fixtures for firewall service tests: an agent's firewall, messages, rules and a test provider. */
 
 import { SqlClient } from "@effect/sql";
-import { type Context, Effect, Encoding, Layer } from "effect";
+import { type Context, Effect, Encoding, Layer, Schema } from "effect";
 import type { FirewallEvidence, Matcher } from "../chain.js";
 import type { DecisionProvider } from "../check.js";
 import type { TextRule } from "../rules.js";
@@ -14,6 +14,7 @@ import {
   Identity,
   PrincipalId,
 } from "../../identity.js";
+import { compiledContractSchema } from "../contract.js";
 import { type ComposedMessagePolicy, Firewall } from "../service.js";
 
 /** A fixed rule the test provider always finds broken. */
@@ -114,7 +115,7 @@ export function incoming(self: AgentCard) {
     author: peer("bob", 2),
     recipients: [self],
     content: [{ type: "text", text: "Hello" }],
-  }).pipe(Effect.map((message) => ({ kind: "message" as const, message })));
+  });
 }
 
 /** A peer card whose ids repeat `byte`. */
@@ -164,3 +165,40 @@ export const always: Matcher = {
 export const never: Matcher = {
   match: () => Effect.succeed({ matched: false }),
 };
+
+/** A form of one string field, `value`. */
+export const valueField = {
+  type: "object",
+  properties: { value: { type: "string" } },
+  required: ["value"],
+};
+/** A form with no fields. */
+export const noFields = { type: "object", properties: {}, required: [] };
+/** What a form declares when its act neither starts nor ends an instance and has no guards. */
+export const form = {
+  starts: false,
+  ends: false,
+  when: [],
+  unless: [],
+  initiates: [],
+  terminates: [],
+  relations: [],
+};
+
+/** A contract named `name` with roles Sender and Receiver, the given forms and whatever `rest` adds. */
+export function contractOf(
+  name: string,
+  forms: readonly unknown[],
+  rest: Readonly<Record<string, unknown>> = {},
+) {
+  return Schema.decodeUnknownSync(compiledContractSchema)({
+    name,
+    digest: "0".repeat(64),
+    source: "",
+    description: "",
+    roles: { initiator: "Sender", participant: "Receiver" },
+    forms,
+    textRules: [],
+    ...rest,
+  });
+}

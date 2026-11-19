@@ -1,9 +1,7 @@
 /** @file Coordinates identity, message policy, communication and the agent's inbox. */
 
 import {
-  absurd,
   Cause,
-  Clock,
   Context,
   Duration,
   Effect,
@@ -18,8 +16,6 @@ import {
 import { createHash } from "node:crypto";
 import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
-  CollectiveRequest,
-  CollectiveResponse,
   type CommunicationError,
   GROUP_ADDRESS_PREFIX,
   Message,
@@ -28,22 +24,17 @@ import {
   MsgId,
   type Page,
   type PaginatedRequest,
-  RequestError,
   SendError,
 } from "../communication/index.js";
 import {
   Communication,
   type Conversation,
-  type Incoming,
+  type HistoryPage as MessageHistoryPage,
   restarting,
 } from "../communication/service.js";
 import { afterCommit, transaction } from "../database/index.js";
 import { compareAscii, MAXIMUM_RUNTIME_ITEM_BYTES } from "../encoding.js";
-import {
-  type CollectiveResultEvidence,
-  Firewall,
-  type IncomingDecision,
-} from "../firewall/service.js";
+import { Firewall, type IncomingDecision } from "../firewall/service.js";
 import { type AgentCard, Identity } from "../identity.js";
 import {
   addressOf,
@@ -68,11 +59,8 @@ import {
 
 const historyCursor = Schema.Struct({
   operation: Schema.Literal("history"),
-  phase: Schema.Literal("messages", "collectiveResults"),
   address: MessageAddress,
-  communicationCursor: Schema.optional(Schema.String),
-  after: Schema.NonNegativeInt,
-  through: Schema.NonNegativeInt,
+  communicationCursor: Schema.String,
 });
 const conversationsCursor = Schema.Struct({
   operation: Schema.Literal("conversations"),
@@ -102,14 +90,13 @@ interface SocialHarnessService {
    */
   readonly send: (
     request: SendRequest,
-  ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
+  ) => Effect.Effect<SendResult, SendError | FirewallRefusal>;
   /** The delivery token of each pending inbox entry. */
   readonly pendingTokens: Inbox["pendingTokens"];
   /**
-   * Hands over a page of pending inbox entries and marks each delivered, which
-   * does not respond to a collective request. With `wait`, a read that finds
-   * nothing waits up to that many seconds, and returns as soon as an entry is
-   * pending or empty when the wait ends.
+   * Hands over a page of pending inbox entries and marks each delivered. With
+   * `wait`, a read that finds nothing waits up to that many seconds, and
+   * returns as soon as an entry is pending or empty when the wait ends.
    */
   readonly receive: (
     request: PaginatedRequest & { readonly wait?: number },
@@ -205,11 +192,14 @@ function makeHarness(settings: HarnessSettings) {
       Effect.forkIn(Effect.interruptible(work), scope);
     yield* fork(
       communication
-        .consume((incoming) =>
+        .consume((message) =>
           inbox
             .storeUnchecked(
-              addressOf(incomingMembers(incoming), agent.card.agentId),
-              incoming,
+              addressOf(
+                [message.author, ...message.recipients],
+                agent.card.agentId,
+              ),
+              message,
             )
             .pipe(Effect.zipRight(afterCommit(Queue.offer(wake, undefined)))),
         )
@@ -310,44 +300,13 @@ function send(agent: Agent, input: SendRequest) {
   });
 }
 
-/**
- * The outgoing message a send request amounts to, addressed to the agents
- * `names` other than this one: a response to a collective request this agent
- * was shown, a collective request, or a message.
- */
+/** The message a send request amounts to, addressed to the agents `names` other than this one. */
 function outgoingFor(
   agent: Agent,
   request: SendRequest,
   names: ReadonlyArray<AgentCard["agentName"]>,
 ) {
   return Effect.gen(function* () {
-    if ("collectiveResponse" in request) {
-      if (
-        !(yield* agent.inbox.isCollectiveRequestVisible(
-          request.collectiveResponse.requestId,
-        ))
-      ) {
-        return yield* new RequestError({ failure: { kind: "request-none" } });
-      }
-      const collectiveRequest = yield* agent.communication.getCollectiveRequest(
-        request.collectiveResponse.requestId,
-      );
-      const expected = [
-        collectiveRequest.author,
-        ...collectiveRequest.recipients,
-      ]
-        .filter((member) => member.agentId !== agent.card.agentId)
-        .map((member) => member.agentName)
-        .sort(compareAscii);
-      if (expected.join(",") !== [...names].sort(compareAscii).join(",")) {
-        return yield* new SendError({ reason: "invalid-address" });
-      }
-      return yield* CollectiveResponse.create({
-        author: agent.card,
-        request: collectiveRequest,
-        response: request.collectiveResponse,
-      });
-    }
     const recipients = yield* agent.identity.resolve(names).pipe(
       Effect.catchTag("IdentityError", (error) =>
         error.reason === "unknown-agent"
@@ -368,18 +327,12 @@ function outgoingFor(
     if (first === undefined) {
       return yield* new SendError({ reason: "membership-invalid" });
     }
-    return "collectiveRequest" in request
-      ? yield* CollectiveRequest.create({
-          author: agent.card,
-          recipients: [first, ...rest],
-          question: request.text,
-          ...request.collectiveRequest,
-        })
-      : yield* Message.create({
-          author: agent.card,
-          recipients: [first, ...rest],
-          content: [{ type: "text", text: request.text }],
-        });
+    return yield* Message.create({
+      author: agent.card,
+      recipients: [first, ...rest],
+      content: [{ type: "text", text: request.text }],
+      replyToMsgId: request.replyToMsgId,
+    });
   });
 }
 
@@ -429,16 +382,13 @@ function waitForInbox(
 }
 
 function listConversations(agent: Agent, request: PaginatedRequest) {
-  const { inbox } = agent;
   return Effect.gen(function* () {
     const position =
       request.cursor === undefined
         ? undefined
         : yield* decodeCursor(conversationsCursor, request.cursor);
     const afterAddress = position?.address ?? "";
-    const addresses = new Set(
-      yield* inbox.collectiveResultAddresses(afterAddress),
-    );
+    const addresses = new Set<MessageAddress>();
     let nextPageCursor = position?.communicationCursor;
     let lastPageCursor = nextPageCursor;
     let morePages = true;
@@ -486,7 +436,7 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
 }
 
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
-  const { card, communication, inbox } = agent;
+  const { card, communication } = agent;
   return Effect.gen(function* () {
     const destination = yield* canonicalMessageAddress(
       request.address,
@@ -495,94 +445,41 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
     if (destination.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-address" });
     }
-    const initial: typeof historyCursor.Type = {
-      operation: "history",
-      phase: "messages",
-      address: destination.address,
-      after: 0,
-      through: yield* inbox.collectiveResultHead(request.address),
-    };
     const position =
       request.cursor === undefined
-        ? initial
+        ? undefined
         : yield* decodeCursor(historyCursor, request.cursor);
-    if (position.address !== request.address) {
+    if (position !== undefined && position.address !== request.address) {
       return yield* new HistoryError({ reason: "invalid-cursor" });
     }
     const names = otherMemberNames(destination, card.agentName);
-    const records: HistoryRecord[] = [];
-    const members =
-      position.phase === "messages"
-        ? yield* communication.getConversation([card.agentName, ...names])
-        : undefined;
-    if (position.phase === "messages" && members === undefined) {
-      if (position.communicationCursor !== undefined) {
+    const members = yield* communication.getConversation([
+      card.agentName,
+      ...names,
+    ]);
+    if (members === undefined) {
+      if (position !== undefined) {
         return yield* new HistoryError({ reason: "invalid-cursor" });
       }
-      if (position.through === 0) {
-        yield* agent.identity.resolve(names);
-        return yield* new HistoryError({ reason: "invalid-address" });
-      }
+      yield* agent.identity.resolve(names);
+      return yield* new HistoryError({ reason: "invalid-address" });
     }
-    if (members !== undefined) {
-      const page = yield* messageRecords(
-        agent,
-        members,
-        position.communicationCursor,
-      );
-      records.push(...page.records);
-      if (page.nextCursor !== undefined) {
-        return {
-          records,
-          nextCursor: yield* encodeCursor(historyCursor, {
-            ...position,
-            operation: "history",
-            communicationCursor: page.nextCursor,
-          }),
-        };
-      }
-    }
-    const available = PAGE_SIZE - records.length;
-    if (available === 0 && position.through > 0) {
-      return {
-        records,
-        nextCursor: yield* encodeCursor(historyCursor, {
-          operation: "history",
-          phase: "collectiveResults",
-          address: destination.address,
-          after: position.after,
-          through: position.through,
-        }),
-      };
-    }
-    const collectiveResults = yield* inbox.collectiveResultPage(
-      request.address,
-      position.after,
-      position.through,
-      available,
+    const page = yield* messageRecords(
+      agent,
+      members,
+      position?.communicationCursor,
     );
-    const selected = collectiveResults.slice(0, available);
-    for (const collectiveResult of selected) {
-      records.push({
-        kind: "collectiveResult",
-        deliveryToken: collectiveResult.token,
-        ...collectiveResult.entry,
-      });
-    }
-    const last = selected[selected.length - 1];
     return {
-      records,
-      ...(collectiveResults.length > selected.length && last !== undefined
-        ? {
+      records: page.records,
+      ...(page.nextCursor === undefined
+        ? {}
+        : {
             nextCursor: yield* encodeCursor(historyCursor, {
               operation: "history",
-              phase: "collectiveResults",
               address: destination.address,
-              after: last.sequence,
-              through: position.through,
+              communicationCursor: page.nextCursor,
             }),
-          }
-        : {}),
+          }),
     };
   }).pipe(Effect.catchAll(historyFailure));
 }
@@ -623,78 +520,26 @@ function messageRecords(agent: Agent, members: Conversation, cursor?: string) {
 }
 
 function checkIncoming(agent: Agent, unchecked: Unchecked) {
-  const { card, communication, inbox } = agent;
+  const { communication, inbox } = agent;
   return Effect.gen(function* () {
-    const incoming = unchecked.incoming;
-    if (
-      incoming.kind === "collectiveRequest" &&
-      (yield* Clock.currentTimeMillis) >=
-        incoming.message.collectiveRequest.deadlineAt
-    ) {
-      return yield* inbox.withholdExpired(unchecked.token);
-    }
-    let evidence: FirewallEvidence | CollectiveResultEvidence | undefined;
-    if (incoming.kind === "message" || incoming.kind === "collectiveRequest") {
-      evidence = yield* evidenceFor(
-        agent,
-        [incoming.message.author, ...incoming.message.recipients],
-        incoming.message,
-      );
-    } else if (incoming.kind === "collectiveResult") {
-      const collectiveRequest =
-        incoming.sources.request?.author.agentId === card.agentId
-          ? undefined
-          : incoming.sources.request;
-      const responses = yield* Effect.forEach(
-        incoming.sources.responses.filter(
-          (message) => message.author.agentId !== card.agentId,
-        ),
-        (message) =>
-          evidenceFor(
-            agent,
-            [message.author, ...message.recipients],
-            message,
-          ).pipe(
-            Effect.map((evidence) => ({
-              message: {
-                authorAgentId: message.author.agentId,
-                msgId: message.msgId,
-              },
-              evidence,
-            })),
-          ),
-        { concurrency: 1 },
-      );
-      evidence = {
-        responses,
-        ...(collectiveRequest === undefined
-          ? {}
-          : {
-              question: yield* evidenceFor(
-                agent,
-                [collectiveRequest.author, ...collectiveRequest.recipients],
-                collectiveRequest,
-              ),
-            }),
-      };
-    }
-    const decision = yield* agent.firewall.checkIncoming(incoming, evidence);
-    const reply = yield* replyTo(agent, incoming, decision);
-    const expired =
-      incoming.kind === "collectiveRequest" &&
-      (yield* Clock.currentTimeMillis) >=
-        incoming.message.collectiveRequest.deadlineAt;
+    const { message } = unchecked;
+    const evidence = yield* evidenceFor(
+      agent,
+      [message.author, ...message.recipients],
+      message,
+    );
+    const decision = yield* agent.firewall.checkIncoming(message, evidence);
+    const reply = yield* checkedReply(agent, message, decision, evidence);
     yield* transaction(
       decision.save.pipe(
-        Effect.zipRight(inbox.recordDecision(unchecked, decision, { expired })),
+        Effect.zipRight(reply.save),
+        Effect.zipRight(inbox.recordDecision(unchecked, decision)),
         Effect.tap(() =>
-          reply === undefined
+          reply.message === undefined
             ? Effect.void
-            : communication.send(reply).pipe(
+            : communication.send(reply.message).pipe(
                 Effect.catchIf(
-                  (error) =>
-                    error._tag === "CommunicationError" &&
-                    error.reason === "message-conflict",
+                  (error) => error.reason === "message-conflict",
                   () => Effect.void,
                 ),
               ),
@@ -705,15 +550,44 @@ function checkIncoming(agent: Agent, unchecked: Unchecked) {
 }
 
 /**
- * The reply to a message the firewall withheld: an ordinary message from this
- * agent to the same conversation. A rule's own reply is used when it gave one;
- * otherwise `withheldReply` answers a message that broke a rule. Its id derives
- * from the withheld message, so checking that message again sends at most one
- * reply. A reply that is not a valid message is not sent, and the message
- * stays withheld.
+ * The reply to a withheld message once this agent's own firewall has checked
+ * it as a message it sends, with the withheld message as one the reply may
+ * name: the reply when it is allowed, and the saving of that check either way.
  */
-function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
-  if (decision.kind !== "withheld" || !("message" in incoming)) {
+function checkedReply(
+  agent: Agent,
+  withheld: Message,
+  decision: IncomingDecision,
+  evidence: FirewallEvidence,
+) {
+  return Effect.gen(function* () {
+    const proposed = yield* replyTo(agent, withheld, decision);
+    if (proposed === undefined) {
+      return { save: Effect.void };
+    }
+    const checked = yield* agent.firewall.checkOutgoing(proposed, {
+      ...evidence,
+      references: [withheld],
+    });
+    return {
+      save: checked.save,
+      ...(checked.kind === "allowed" ? { message: proposed } : {}),
+    };
+  });
+}
+
+/**
+ * The reply proposed for a message the firewall withheld: an ordinary message
+ * from this agent to the same conversation that names the withheld message as
+ * the one it answers. A rule's own reply is used when it gave one; otherwise
+ * `withheldReply` answers a message that broke a rule. Its id derives from
+ * the withheld message, so checking that message again sends at most one
+ * reply. The reply is checked as any message this agent sends, and is sent
+ * only if allowed. A reply that is not a valid message is not sent, and the
+ * message stays withheld.
+ */
+function replyTo(agent: Agent, withheld: Message, decision: IncomingDecision) {
+  if (decision.kind !== "withheld") {
     return Effect.succeed(undefined);
   }
   const text =
@@ -724,7 +598,6 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   if (text === undefined) {
     return Effect.succeed(undefined);
   }
-  const withheld = incoming.message;
   return Schema.decodeUnknown(MsgId)(
     `msg_${createHash("sha256")
       .update(`reply\n${withheld.author.agentId}\n${withheld.msgId}`)
@@ -736,7 +609,7 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
         [withheld.author, ...withheld.recipients].filter(
           (member) => member.agentId !== agent.card.agentId,
         ),
-        msgId,
+        { msgId, replyToMsgId: withheld.msgId },
         [{ type: "text", text }],
       ),
     ),
@@ -744,6 +617,11 @@ function replyTo(agent: Agent, incoming: Incoming, decision: IncomingDecision) {
   );
 }
 
+/**
+ * The evidence a check of a message among `members` reads: the bounded window
+ * of history before `before`, or the latest when it is not given, and for an
+ * agent that has held a contract every message before it.
+ */
 function evidenceFor(
   agent: Agent,
   members: readonly AgentCard[],
@@ -751,19 +629,18 @@ function evidenceFor(
 ) {
   return Effect.gen(function* () {
     const selected = yield* conversation(members);
-    const page = yield* agent.communication.readHistory({
-      members: selected,
-      order: "newest",
-      limit: agent.historyLimit,
-      ...(before === undefined
-        ? {}
+    const protocolHistory = agent.firewall.requiresProtocolHistory()
+      ? yield* readProtocolHistory(agent, selected, before)
+      : undefined;
+    const page =
+      protocolHistory === undefined
+        ? yield* readHistoryBefore(agent, selected, before)
         : {
-            beforeMessage: {
-              authorAgentId: before.author.agentId,
-              msgId: before.msgId,
-            },
-          }),
-    });
+            entries: protocolHistory.entries.slice(-agent.historyLimit),
+            earlierMessagesOmitted:
+              !protocolHistory.complete ||
+              protocolHistory.entries.length > agent.historyLimit,
+          };
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
     for (const earlier of [...page.entries].reverse()) {
@@ -785,7 +662,70 @@ function evidenceFor(
         recent.length < page.entries.length
           ? ["The preceding history exceeds the evidence byte limit."]
           : [],
+      ...(protocolHistory === undefined
+        ? {}
+        : {
+            protocolHistory: {
+              messages: protocolHistory.entries.map(({ message }) => message),
+              complete: protocolHistory.complete,
+            },
+          }),
     };
+  });
+}
+
+/**
+ * Every message of a conversation before `before`, in order, read a page at
+ * a time from the newest. `complete` is false when a page that reports
+ * earlier messages gives none to continue from.
+ */
+function readProtocolHistory(
+  agent: Agent,
+  members: Conversation,
+  before?: Message,
+) {
+  return Effect.gen(function* () {
+    const pages: Array<MessageHistoryPage["entries"]> = [];
+    let boundary = before;
+    while (true) {
+      const page = yield* readHistoryBefore(agent, members, boundary);
+      pages.push(page.entries);
+      const oldest = page.entries[0]?.message;
+      const advanced =
+        oldest !== undefined &&
+        !(
+          oldest.author.agentId === boundary?.author.agentId &&
+          oldest.msgId === boundary.msgId
+        );
+      if (!page.earlierMessagesOmitted || !advanced) {
+        return {
+          entries: [...pages].reverse().flat(),
+          complete: !page.earlierMessagesOmitted,
+        };
+      }
+      boundary = oldest;
+    }
+  });
+}
+
+/** One page of a conversation's messages, in order: the latest before `before`, or the latest of all. */
+function readHistoryBefore(
+  agent: Agent,
+  members: Conversation,
+  before?: Message,
+) {
+  return agent.communication.readHistory({
+    members,
+    order: "newest",
+    limit: agent.historyLimit,
+    ...(before === undefined
+      ? {}
+      : {
+          beforeMessage: {
+            authorAgentId: before.author.agentId,
+            msgId: before.msgId,
+          },
+        }),
   });
 }
 
@@ -799,21 +739,6 @@ function conversation(members: readonly AgentCard[]) {
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
-function incomingMembers(incoming: Incoming): readonly AgentCard[] {
-  switch (incoming.kind) {
-    case "message":
-    case "collectiveRequest":
-      return [incoming.message.author, ...incoming.message.recipients];
-    case "collectiveResult":
-      return [
-        incoming.result.request.author,
-        ...incoming.result.request.recipients,
-      ];
-    default:
-      return absurd(incoming);
-  }
-}
-
 /**
  * Fails with what the sender can correct. Any other failure is one of storage
  * and ends the send as a defect, which the tool reports as an unknown outcome.
@@ -821,7 +746,6 @@ function incomingMembers(incoming: Incoming): readonly AgentCard[] {
 function sendFailure(
   error:
     | SendError
-    | RequestError
     | FirewallRefusal
     | CommunicationError
     | {
@@ -832,11 +756,7 @@ function sendFailure(
           | "FirewallPolicyError";
       },
 ) {
-  if (
-    error._tag === "SendError" ||
-    error._tag === "RequestError" ||
-    error._tag === "FirewallRefusal"
-  ) {
+  if (error._tag === "SendError" || error._tag === "FirewallRefusal") {
     return Effect.fail(error);
   }
   return error._tag !== "CommunicationError" ||

@@ -1,4 +1,4 @@
-/** @file Messages, groups and collective requests between agents on one daemon, with and without a rule on who may share a conversation. */
+/** @file Messages and groups between agents on one daemon, with and without a rule on who may share a conversation. */
 import { SqlClient } from "@effect/sql/SqlClient";
 import { scopedLive as it } from "@effect/vitest";
 import {
@@ -16,9 +16,8 @@ import {
 import { expect } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
 import { conversationFixture } from "./__tests__/conversation-fixtures.js";
-import { form } from "./__tests__/requests-fixtures.js";
-import { CollectiveRequest, CollectiveResponse, Message } from "./messages.js";
-import { Communication, type Conversation, type Incoming } from "./service.js";
+import { Message } from "./messages.js";
+import { Communication, type Conversation } from "./service.js";
 
 type Rule = Pick<Parameters<typeof Communication.layer>[0], "permits">;
 
@@ -34,9 +33,9 @@ const peers = Effect.fn("peers")(function* (rule: Rule = {}) {
   const cards = Record.map(agents, (agent) => agent.card);
   const received = (agent: typeof hosted.alice) =>
     Effect.gen(function* () {
-      const inbox = yield* Queue.unbounded<Incoming>();
+      const inbox = yield* Queue.unbounded<Message>();
       yield* agent
-        .consume((incoming) => Queue.offer(inbox, incoming).pipe(Effect.asVoid))
+        .consume((message) => Queue.offer(inbox, message).pipe(Effect.asVoid))
         .pipe(Effect.forkScoped);
       return inbox;
     });
@@ -90,10 +89,7 @@ it("retains a client/server exchange and hands each message only to its recipien
     const request = yield* f.message("hello");
     yield* f.client.send(request);
     const inbox = yield* f.received(f.server);
-    expect(yield* Queue.take(inbox)).toEqual({
-      kind: "message",
-      message: request,
-    });
+    expect(yield* Queue.take(inbox)).toEqual(request);
     const reply = yield* Message.create({
       author: request.recipients[0],
       recipients: [request.author],
@@ -147,9 +143,9 @@ it("hands a message to the next consumer after one fails", () =>
     const reopened = yield* f.open(f.agents.alice);
     expect(
       yield* reopened
-        .consume((incoming) => Effect.fail(incoming))
+        .consume((received) => Effect.fail(received))
         .pipe(Effect.flip),
-    ).toEqual({ kind: "message", message });
+    ).toEqual(message);
   }));
 
 it("carries a group message to every member in one order, between any agents", () =>
@@ -169,15 +165,9 @@ it("carries a group message to every member in one order, between any agents", (
     });
     yield* f.alice.send(first);
     yield* f.bob.send(second);
-    expect(yield* Queue.take(bobInbox)).toEqual({
-      kind: "message",
-      message: first,
-    });
+    expect(yield* Queue.take(bobInbox)).toEqual(first);
     expect(yield* Queue.takeN(carolInbox, 2)).toEqual(
-      Chunk.make(
-        { kind: "message", message: first },
-        { kind: "message", message: second },
-      ),
+      Chunk.make(first, second),
     );
     const direct = yield* Message.create({
       author: f.cards.bob,
@@ -185,64 +175,7 @@ it("carries a group message to every member in one order, between any agents", (
       content: [{ type: "text", text: "between two members" }],
     });
     yield* f.bob.send(direct);
-    expect(yield* Queue.take(carolInbox)).toEqual({
-      kind: "message",
-      message: direct,
-    });
-  }));
-
-it("carries a collective request to its recipient and the response back as a result, before the recipient's next message", () =>
-  Effect.gen(function* () {
-    const f = yield* peers();
-    const bobInbox = yield* f.received(f.bob);
-    const content = { slot: "tue" };
-    const request = yield* CollectiveRequest.create({
-      author: f.cards.alice,
-      recipients: [f.cards.bob],
-      question: "Which day works?",
-      op: "gather",
-      requestedSchema: form,
-      deadline: 60,
-    });
-    yield* f.alice.send(request);
-    const asked = yield* Queue.take(bobInbox);
-    if (asked.kind !== "collectiveRequest") {
-      return yield* Effect.dieMessage(
-        "Expected Bob to receive the collective request",
-      );
-    }
-    expect(asked.message.msgId).toBe(request.msgId);
-    yield* f.bob.send(
-      yield* CollectiveResponse.create({
-        author: f.cards.bob,
-        request: asked.message,
-        response: { requestId: asked.message.msgId, action: "accept", content },
-      }),
-    );
-    const later = yield* Message.create({
-      author: f.cards.bob,
-      recipients: [f.cards.alice],
-      content: [{ type: "text", text: "sent after the response" }],
-    });
-    yield* f.bob.send(later);
-    const aliceInbox = yield* f.received(f.alice);
-    expect(yield* Queue.take(aliceInbox)).toMatchObject({
-      kind: "collectiveResult",
-      result: {
-        request,
-        closedBy: "settled",
-        outcomes: [
-          {
-            recipient: f.cards.bob,
-            outcome: { kind: "answered", content },
-          },
-        ],
-      },
-    });
-    expect(yield* Queue.take(aliceInbox)).toEqual({
-      kind: "message",
-      message: later,
-    });
+    expect(yield* Queue.take(carolInbox)).toEqual(direct);
   }));
 
 it("appends a message once to the history of each member of its conversation, and of no one else, exactly when its author sends it to agents on the daemon that the rule lets share a conversation", () =>

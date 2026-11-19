@@ -74,8 +74,7 @@
                   {
                     "group": "P2P",
                     "pages": [
-                      "reference/spec/communication/p2p",
-                      "reference/spec/communication/collectives"
+                      "reference/spec/communication/p2p"
                     ]
                   },
                   "reference/spec/package-boundaries",

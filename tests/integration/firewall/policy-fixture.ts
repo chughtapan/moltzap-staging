@@ -13,8 +13,7 @@ import type {
 } from "@social-harness/social-harness/test";
 import { FileSystem } from "@effect/platform";
 import { Effect, Schema } from "effect";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 /** The marker an incoming text carries to break the rules it is checked against. */
 const INCOMING_BREACH = "[in]";
@@ -89,14 +88,32 @@ export const writeMessagePolicy = Effect.fn("writeMessagePolicy")(function* (
   return { messagePolicyFile, decisionProviderKeyFile };
 });
 
-const shippedNorms = fileURLToPath(
-  new URL("../../../config/norms/", import.meta.url),
-);
+/** The name of the norm `exchangeDocument` defines. */
+export const exchangeName = "exchange";
+
+/** The feedback of the exchange norm's English rule. */
+export const exchangeFeedback = "Correct the act's text.";
 
 /**
- * Copies the shipped rule file and the shipped `documents` into a norms
- * directory under `directory`, and returns the setting that names it. Each
- * new agent of a daemon with that setting holds the norms of `documents`.
+ * A norm document for two agents. `ask` opens an instance, the other agent
+ * may `answer`, either may `cancel`, and a withheld act is answered with
+ * `not-understood`. Its English rule is the marked rule, for every act.
+ */
+export const exchangeDocument = `(norm ${exchangeName} :initiator Sender :participant Receiver
+  :on-refusal not-understood)
+(content ask :by Sender :starts true :initiates open
+  (field text :type string))
+(content answer :by Receiver :when open
+  (field text :type string))
+(content cancel :when open :ends true)
+(content not-understood :when open
+  (field reason :type string))
+(rule :feedback "${exchangeFeedback}" "Reject incoming [in] and outgoing [out].")`;
+
+/**
+ * Writes `documents` as the norm documents of a norms directory under
+ * `directory`, and returns the setting that names it. Each new agent of a
+ * daemon with that setting holds their contracts.
  */
 export const writeNorms = Effect.fn("writeNorms")(function* (
   directory: string,
@@ -106,11 +123,11 @@ export const writeNorms = Effect.fn("writeNorms")(function* (
   const normsDirectory = join(directory, "norms");
   yield* fs.makeDirectory(normsDirectory);
   yield* Effect.forEach(
-    [...documents, "rules.json"],
-    (document) =>
-      fs.copyFile(
-        join(shippedNorms, document),
-        join(normsDirectory, basename(document)),
+    documents,
+    (document, index) =>
+      fs.writeFileString(
+        join(normsDirectory, `norm-${String(index)}.lisp`),
+        document,
       ),
     { concurrency: 1 },
   );

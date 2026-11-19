@@ -8,7 +8,6 @@
 
 import { Effect, Schema } from "effect";
 import type { Message } from "../communication/index.js";
-import type { Outgoing } from "../communication/service.js";
 import type { AgentCard } from "../identity.js";
 import { exactStruct } from "../encoding.js";
 import {
@@ -20,6 +19,20 @@ import {
 
 /** The evidence a check may read: bounded preceding history and each message's visibility to the agent. */
 export interface FirewallEvidence {
+  /**
+   * Messages the conversation's history does not hold yet that a reply may
+   * name: the incoming message a reply to it answers.
+   */
+  readonly references?: readonly Message[];
+  /**
+   * Every message before the one under check, for a contract's protocol,
+   * apart from the bounded window the text rules read. `complete` is false
+   * when some of it could not be read.
+   */
+  readonly protocolHistory?: {
+    readonly messages: readonly Message[];
+    readonly complete: boolean;
+  };
   readonly history: ReadonlyArray<{
     readonly message: Message;
     readonly visibleToAgent: boolean;
@@ -68,7 +81,7 @@ export const chainRuleFileSchema = exactStruct({
 /** What a matcher sees: the message, its direction, its evidence and this agent. */
 export interface MessageToMatch {
   readonly direction: Direction;
-  readonly message: Outgoing;
+  readonly message: Message;
   readonly evidence: FirewallEvidence;
   readonly self: AgentCard;
 }
@@ -107,7 +120,7 @@ export interface Chain {
   readonly matchers: Readonly<Record<string, Matcher>>;
   readonly approveHeld?: (
     rule: ChainRule,
-    message: Outgoing,
+    message: Message,
   ) => Effect.Effect<boolean>;
 }
 
@@ -220,7 +233,7 @@ function applyRule(
   });
 }
 
-function approved(chain: Chain, rule: ChainRule, message: Outgoing) {
+function approved(chain: Chain, rule: ChainRule, message: Message) {
   return chain.approveHeld === undefined
     ? Effect.succeed(true)
     : chain.approveHeld(rule, message);

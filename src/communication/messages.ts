@@ -1,12 +1,10 @@
-/** @file Messages, collective requests and collective responses as validated values, with their content grammar and constructors. */
+/** @file Messages and their addresses as validated values, with their content grammar and constructors, and the form a filled set of fields is checked against. */
 
 import type { ParseOptions } from "effect/SchemaAST";
 import { Ajv } from "ajv";
 import { fullFormats } from "ajv-formats/dist/formats.js";
 import {
   Array as Arr,
-  Clock,
-  Data,
   Effect,
   Either,
   JSONSchema,
@@ -14,7 +12,6 @@ import {
   ParseResult,
   Predicate,
   Schema,
-  SchemaAST,
 } from "effect";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -240,16 +237,9 @@ const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>
     Effect.mapError(representationFailure),
   );
 
-/** A gather keeps responses private to the requester; an all_gather shares them with the group. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Collective request and result schemas share this closed pair.
-export const CollectiveOp = Schema.Literal("gather", "all_gather");
-/** How a collective request asks its recipients, fixed for its lifetime. */
-export type CollectiveOp = typeof CollectiveOp.Type;
-
 /**
- * What an accepting collective response carries, field by field. Its value
- * space is MCP `ElicitResult` content's; the request's schema decides which
- * fields apply.
+ * What a filled form carries, field by field. Its value space is MCP
+ * `ElicitResult` content's; the form's schema decides which fields apply.
  */
 export const ResponseContent = Schema.Record({
   key: Schema.String,
@@ -260,93 +250,14 @@ export const ResponseContent = Schema.Record({
     Schema.Array(Schema.String),
   ),
 }).annotations({
-  description: "The response, one field per requestedSchema property",
+  description: "The filled form, one field per property of its schema",
 });
-/** Structurally valid content of an accepting collective response. */
+/** Structurally valid content of a filled form. */
 export type ResponseContent = typeof ResponseContent.Type;
 
-/** The longest deadline a collective request may state: 30 days, in seconds. */
-const MAXIMUM_DEADLINE_SECONDS = 2_592_000;
-
-/** A collective request's relative deadline: whole seconds, up to 30 days. */
-export const DeadlineSeconds = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(1, MAXIMUM_DEADLINE_SECONDS),
-);
-
-/** The latest instant a `Date` represents, in epoch milliseconds. */
-const MAXIMUM_EPOCH_MILLIS = 8_640_000_000_000_000;
-
-/** Positive Unix milliseconds within the range a `Date` can render. */
-const EpochMillis = Schema.Int.pipe(Schema.between(1, MAXIMUM_EPOCH_MILLIS));
-
-/** An absolute deadline on the daemon's clock. */
-type EpochMillis = typeof EpochMillis.Type;
-
-/** The requester's first completion decision, fixed before its close is sent or its result is consumed. */
-export const collectiveClosure = exactStruct({
-  closedAt: Schema.Int.pipe(
-    Schema.between(0, MAXIMUM_EPOCH_MILLIS),
-  ).annotations({
-    description: "Unix milliseconds when the requester first froze completion",
-  }),
-  closedBy: Schema.Literal("settled", "deadline").annotations({
-    description:
-      "Whether every recipient had an outcome or the deadline left recipients without one",
-  }),
-});
-
-/** An accepting collective response, the only one that carries content. */
-const acceptFields = {
-  requestId: MsgId,
-  action: Schema.Literal("accept"),
-  content: ResponseContent,
-};
-
-const declineFields = {
-  requestId: MsgId,
-  action: Schema.Literal("decline"),
-};
-
 /**
- * A recipient's one response to a collective request open in the conversation
- * it is sent to: the requester's direct conversation for a gather, the group
- * for an all_gather. `requestId` is the message id of the request the
- * recipient received. Only `accept` carries content, which must satisfy that
- * request's `requestedSchema`.
- */
-const collectiveResponseSchema = Schema.Union(
-  exactStruct(acceptFields),
-  exactStruct(declineFields),
-);
-/** A validated collective response. */
-export type CollectiveResponse = typeof collectiveResponseSchema.Type;
-
-/**
- * Why a collective send was refused, discriminated by `kind`: a collective
- * request whose schema is outside the form-mode grammar or whose deadline
- * passed while its check ran; or a collective response its author cannot send.
- */
-export type CollectiveFailure =
-  | { readonly kind: "schema-invalid"; readonly detail: string }
-  | {
-      readonly kind: "response-invalid";
-      readonly fields: readonly [
-        ResponseFieldFailure,
-        ...ResponseFieldFailure[],
-      ];
-    }
-  | {
-      readonly kind:
-        | "request-none"
-        | "request-responded"
-        | "request-expired"
-        | "deadline-passed";
-    };
-
-/**
- * Why one response field failed its request's schema; `detail` names each
- * keyword an `invalid` field fails.
+ * Why one field of a filled form failed the form's schema; `detail` names
+ * each keyword an `invalid` field fails.
  */
 interface ResponseFieldFailure {
   readonly field: string;
@@ -364,58 +275,11 @@ interface ResponseFieldFailure {
 const describeIssues = (error: ParseResult.ParseError): string =>
   issuesText(ParseResult.ArrayFormatter.formatErrorSync(error));
 
-/** What each response-field problem means. */
-const responseFieldText = {
-  missing: "is missing",
-  unexpected: "is not in the form",
-  invalid: "is invalid",
-} as const;
-
-/** Every field of a collective response that fails its request's schema. */
-export type ResponseFieldFailures = Extract<
-  CollectiveFailure,
-  { readonly kind: "response-invalid" }
->["fields"];
-
-/** A failure that carries nothing beyond its kind. */
-type FixedFailureKind = Exclude<
-  CollectiveFailure["kind"],
-  "schema-invalid" | "response-invalid"
->;
-
-/** The text of each failure that carries nothing beyond its kind. */
-const fixedFailureText: Record<FixedFailureKind, string> = {
-  "request-none":
-    "response failed: no collective request is open in this conversation",
-  "request-responded":
-    "response failed: you already responded to the collective request",
-  "request-expired":
-    "response failed: the collective request's deadline has passed",
-  "deadline-passed":
-    "send failed: the deadline passed before the collective request was sent",
-};
-
-/** A collective request or response failed before it could be sent. `requestId` is the request's message id. */
-export class RequestError extends Data.TaggedError("RequestError")<{
-  readonly requestId?: MsgId;
-  readonly failure: CollectiveFailure;
-}> {
-  override get message(): string {
-    return describeCollectiveFailure(this.failure);
-  }
-}
-
-/** Content carries a collective part that is duplicated or does not decode. */
-export class CollectivePartInvalidError extends Data.TaggedError(
-  "CollectivePartInvalidError",
-)<{
-  readonly reason: "duplicate" | "malformed";
-}> {}
-
-/** A collective part and its text do not form content within the 32,768-byte limit. */
-export class CollectiveContentError extends Data.TaggedError(
-  "CollectiveContentError",
-) {}
+/** Every field of a filled form that fails the form's schema. */
+type ResponseFieldFailures = readonly [
+  ResponseFieldFailure,
+  ...ResponseFieldFailure[],
+];
 
 /**
  * A keyword whose failure, ill-typed or missing, names what it expects.
@@ -653,12 +517,9 @@ const FormFieldSchema = Schema.transformOrFail(
   },
 );
 
-/** The key of the `data` part that makes a message a collective request, response or close. */
-const COLLECTIVE_DATA_KEY = "org.social-harness/collective";
-
 /**
  * The MCP form-mode `requestedSchema`: a flat object of primitive properties.
- * Every `required` name must be a declared property, since a response can
+ * Every `required` name must be a declared property, since a filled form can
  * carry no other field.
  */
 export const RequestedSchema = exactStruct({
@@ -686,68 +547,13 @@ export const RequestedSchema = exactStruct({
   ),
 );
 
-/** A validated form-mode schema for one collective request. */
+/** A validated form-mode schema. */
 export type RequestedSchema = typeof RequestedSchema.Type;
-
-/**
- * What a collective request's content says beside its question text. The
- * request is identified by its message id. `deadlineAt` is absolute epoch
- * milliseconds: the daemon converts the requester's relative deadline when
- * the request is created.
- */
-const requestPart = exactStruct({
-  kind: Schema.Literal("request"),
-  op: CollectiveOp,
-  deadlineAt: EpochMillis,
-  requestedSchema: RequestedSchema,
-});
-
-const responseKind = { kind: Schema.Literal("response") };
-
-/** A collective response as content carries it. */
-const responsePart = Schema.Union(
-  exactStruct({ ...responseKind, ...acceptFields }),
-  exactStruct({ ...responseKind, ...declineFields }),
-);
-
-/**
- * What a collective close's content says: when and why the requester
- * completed the all_gather `requestId` names, and the responses that count.
- */
-const CollectiveClose = exactStruct({
-  kind: Schema.Literal("close"),
-  requestId: MsgId,
-  included: Schema.Array(MessageReference),
-  ...collectiveClosure.fields,
-});
-/** A validated collective close. */
-export type CollectiveClose = typeof CollectiveClose.Type;
-
-/** The collective part of a message's content, discriminated by `kind`. */
-const CollectivePart = Schema.Union(requestPart, responsePart, CollectiveClose);
-
-/** A validated collective part. */
-export type CollectivePart = typeof CollectivePart.Type;
-
-/**
- * Any object value that carries the collective key; other keys are ignored.
- * `exact` keeps a missing key from decoding as `undefined`.
- */
-const CollectiveCarrier = Schema.Struct({
-  [COLLECTIVE_DATA_KEY]: Schema.Unknown,
-}).annotations({ parseOptions: { exact: true } });
-
-/**
- * Decode one untrusted collective part.
- * @param value The value found under `COLLECTIVE_DATA_KEY`.
- * @returns The validated part.
- */
-const decodeCollectivePart = Schema.decodeUnknown(CollectivePart);
 
 type ResponseFieldValue = ResponseContent[string];
 
 /**
- * Judges a response field's value against its field as JSON Schema, reporting
+ * Judges a filled field's value against its field as JSON Schema, reporting
  * every failing keyword. Formats are the full `ajv-formats` definitions. A
  * field is admitted by `RequestedSchema` before it reaches this validator,
  * which therefore does not check the field against the JSON Schema
@@ -807,82 +613,33 @@ const AuthorAndRecipients = exactStruct({
   Schema.annotations({ identifier: "AuthorAndRecipients" }),
 );
 
-/** Adds the message id to the author and recipients. */
-const MessageHeader = AuthorAndRecipients.pipe(
-  Schema.extend(exactStruct({ msgId: MsgId })),
-);
-
-/** What a collective request asks: its `op`, question, form and deadline. */
-const requestTerms = {
-  op: CollectiveOp,
-  question: wellFormedString,
-  requestedSchema: RequestedSchema,
-  deadlineAt: EpochMillis,
-};
-
-const encodedMessage = MessageHeader.pipe(
-  Schema.extend(exactStruct({ content: Content })),
-);
-const decodedMessage = encodedMessage.pipe(
+/** `replyToMsgId` is the id of the message this one answers, when its sender named one. */
+const messageSchema = AuthorAndRecipients.pipe(
   Schema.extend(
     exactStruct({
-      collectiveRequest: Schema.optional(exactStruct(requestTerms)),
-      collectiveResponse: Schema.optional(collectiveResponseSchema),
+      msgId: MsgId,
+      replyToMsgId: Schema.optional(MsgId),
+      content: Content,
     }),
   ),
+  Schema.annotations({ identifier: "Message" }),
 );
 /**
  * Authorship, recipients and content remain fixed through delivery and
- * restart. A collective request or response also carries what its content
- * means, decoded, as `collectiveRequest` or `collectiveResponse`.
+ * restart.
  */
-export type Message = typeof decodedMessage.Type;
+export type Message = typeof messageSchema.Type;
 
-type DecodedCollectivePart = Either.Either<
-  Option.Option<CollectivePart>,
-  CollectivePartInvalidError
->;
-
-/** The collective part read from each decoded message's content, or why it could not be read. */
-const collectivePartByMessage = new WeakMap<Message, DecodedCollectivePart>();
-
-const messageSchema = Schema.transformOrFail(
-  encodedMessage,
-  Schema.declare<Message>(Schema.is(decodedMessage), {
-    [SchemaAST.SurrogateAnnotationId]: Schema.typeSchema(decodedMessage).ast,
-  }),
-  {
-    strict: true,
-    decode: (message) =>
-      readCollectivePart(message.content).pipe(
-        Effect.either,
-        Effect.map((part) => {
-          const decoded: Message = {
-            ...message,
-            ...collectiveMeaning(part, message.content),
-          };
-          collectivePartByMessage.set(decoded, part);
-          return decoded;
-        }),
-      ),
-    encode: (message) =>
-      ParseResult.succeed({
-        author: message.author,
-        recipients: message.recipients,
-        msgId: message.msgId,
-        content: message.content,
-      }),
-  },
-).annotations({ identifier: "Message" });
-
-/** Owns construction of a message and the one decoding of its collective part. */
+/** Owns construction of a message. */
 export const Message = Object.assign(messageSchema, {
-  create(input: Pick<Message, "author" | "recipients" | "content">) {
+  create(
+    input: Pick<Message, "author" | "recipients" | "content" | "replyToMsgId">,
+  ) {
     return Effect.gen(function* () {
       return yield* messageWithId(
         input.author,
         input.recipients,
-        yield* mintMsgId(),
+        { msgId: yield* mintMsgId(), replyToMsgId: input.replyToMsgId },
         input.content,
       );
     }).pipe(
@@ -897,258 +654,9 @@ export const Message = Object.assign(messageSchema, {
 });
 
 /**
- * A collective request as its requester states it, captured before policy
- * assessment: every recipient, the question and the absolute deadline. An
- * all_gather is sent as one group message with this `msgId`. A gather is sent
- * as one private copy per recipient, and `msgId` is the id of the copy sent to
- * the first recipient in agent-name order.
- */
-const collectiveRequestSchema = MessageHeader.pipe(
-  Schema.extend(
-    exactStruct({
-      kind: Schema.Literal("collectiveRequest"),
-      ...requestTerms,
-    }),
-  ),
-);
-/** A validated collective request with every recipient. */
-export type CollectiveRequest = typeof collectiveRequestSchema.Type;
-
-/** Captures a complete collective request and its deadline before policy assessment. */
-export const CollectiveRequest = Object.assign(collectiveRequestSchema, {
-  create(
-    input: Pick<
-      CollectiveRequest,
-      "author" | "recipients" | "question" | "op" | "requestedSchema"
-    > & { readonly deadline: number },
-  ) {
-    return Effect.gen(function* () {
-      const seconds = yield* Schema.decodeUnknown(DeadlineSeconds)(
-        input.deadline,
-      );
-      const request = yield* Schema.validate(collectiveRequestSchema)({
-        kind: "collectiveRequest",
-        msgId: yield* mintMsgId(),
-        author: input.author,
-        recipients: [...input.recipients].sort((left, right) =>
-          compareAscii(left.agentName, right.agentName),
-        ),
-        op: input.op,
-        question: input.question,
-        requestedSchema: input.requestedSchema,
-        deadlineAt: (yield* Clock.currentTimeMillis) + seconds * 1000,
-      });
-      yield* collectiveRequestContent(request);
-      if (request.op === "all_gather" && request.recipients.length < 2) {
-        return yield* new CommunicationError({ reason: "membership-invalid" });
-      }
-      return request;
-    }).pipe(
-      Effect.withSpan("CollectiveRequest.create"),
-      Effect.catchTags({
-        ParseError: () => new CommunicationError({ reason: "content-invalid" }),
-        JsonRepresentationError: () =>
-          new CommunicationError({ reason: "content-invalid" }),
-        CollectiveContentError: () =>
-          new CommunicationError({ reason: "content-invalid" }),
-      }),
-    );
-  },
-});
-
-/** A message that is a collective request: its content decoded as `collectiveRequest`. */
-export const CollectiveRequestMessage = Message.pipe(
-  Schema.filter(
-    (
-      message,
-    ): message is Message & {
-      readonly collectiveRequest: NonNullable<Message["collectiveRequest"]>;
-    } => message.collectiveRequest !== undefined,
-  ),
-);
-/** A collective request as one of its recipients received it. */
-export type CollectiveRequestMessage = typeof CollectiveRequestMessage.Type;
-
-/** What one recipient contributes to a collective result: its counted response, or none. */
-// eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- Firewall extends complete raw outcomes with its local disclosure decision.
-export const CollectiveOutcome = Schema.Union(
-  exactStruct({ kind: Schema.Literal("answered"), content: ResponseContent }),
-  exactStruct({ kind: Schema.Literal("declined") }),
-  exactStruct({ kind: Schema.Literal("invalid"), reason: Schema.String }),
-  exactStruct({ kind: Schema.Literal("no-answer") }),
-);
-/** A complete outcome precedes local disclosure policy. */
-export type CollectiveOutcome = typeof CollectiveOutcome.Type;
-
-/** A completed collective request with one outcome for each recipient, before policy or host addressing. */
-export const CollectiveResult = exactStruct({
-  request: collectiveRequestSchema,
-  closedAt: Schema.Int.pipe(Schema.nonNegative()),
-  closedBy: Schema.Literal("settled", "deadline"),
-  outcomes: Schema.NonEmptyArray(
-    exactStruct({ recipient: AgentCard, outcome: CollectiveOutcome }),
-  ),
-});
-/** Every recipient of the request has exactly one outcome. */
-export type CollectiveResult = typeof CollectiveResult.Type;
-
-/** Validates a collective response and fixes its recipients and message id before assessment. */
-export const CollectiveResponse = Object.assign(collectiveResponseSchema, {
-  create(input: {
-    readonly author: AgentCard;
-    readonly request: CollectiveRequestMessage;
-    readonly response: CollectiveResponse;
-  }) {
-    return Effect.gen(function* () {
-      if (
-        !input.request.recipients.some(
-          (recipient) => recipient.agentId === input.author.agentId,
-        )
-      ) {
-        return yield* new CommunicationError({ reason: "membership-invalid" });
-      }
-      if (input.response.action === "accept") {
-        const fields = yield* validateResponseContent(
-          input.request.collectiveRequest.requestedSchema,
-          input.response.content,
-        ).pipe(Effect.flip, Effect.option);
-        if (Option.isSome(fields)) {
-          return yield* new RequestError({
-            requestId: input.request.msgId,
-            failure: { kind: "response-invalid", fields: fields.value },
-          });
-        }
-      }
-      const [first, ...rest] = messageMembers(input.request).filter(
-        (member) => member.agentId !== input.author.agentId,
-      );
-      if (first === undefined) {
-        return yield* new CommunicationError({ reason: "membership-invalid" });
-      }
-      return yield* Message.create({
-        author: input.author,
-        recipients: [first, ...rest],
-        content: yield* encodeCollectiveContent({
-          kind: "response",
-          ...input.response,
-          requestId: input.request.msgId,
-        }),
-      });
-    }).pipe(
-      Effect.withSpan("CollectiveResponse.create"),
-      Effect.catchTag(
-        "CollectiveContentError",
-        () => new CommunicationError({ reason: "content-invalid" }),
-      ),
-    );
-  },
-});
-
-/** The request and counted response messages that supply a collective result's peer-controlled text. */
-export const CollectiveResultSources = exactStruct({
-  responses: Schema.Array(Message).pipe(Schema.maxItems(maximumMembers - 1)),
-  request: Schema.optionalWith(CollectiveRequestMessage, { exact: true }),
-});
-/** This agent's own response remains a source but needs no inbound policy check. */
-export type CollectiveResultSources = typeof CollectiveResultSources.Type;
-
-/**
- * Build the content of a collective request: its question, then its
- * collective part. Fails when the two exceed the content size limit.
- */
-export function collectiveRequestContent(
-  request: Pick<CollectiveRequest, keyof typeof requestTerms>,
-): Effect.Effect<Content, CollectiveContentError> {
-  return encodeCollectiveContent(
-    {
-      kind: "request",
-      op: request.op,
-      deadlineAt: request.deadlineAt,
-      requestedSchema: request.requestedSchema,
-    },
-    request.question,
-  );
-}
-
-/**
- * Build message content from a collective part and optional message text. The
- * public `Content` schema applies the one canonical size limit.
- * @param part The collective part to carry in the data part.
- * @param text The message text; for a collective request, its question.
- * @returns Content with the text first and the collective part last.
- */
-export function encodeCollectiveContent(
-  part: CollectivePart,
-  text?: string,
-): Effect.Effect<Content, CollectiveContentError> {
-  return Schema.encode(CollectivePart)(part).pipe(
-    Effect.flatMap((encoded) =>
-      Schema.decodeUnknown(Content)([
-        ...(text === undefined ? [] : [{ type: "text", text }]),
-        { type: "data", value: { [COLLECTIVE_DATA_KEY]: encoded } },
-      ]),
-    ),
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new CollectiveContentError()),
-    ),
-  );
-}
-
-/**
- * The outcome a counted response gives its author. An `accept` whose content
- * fails the request's schema is an invalid outcome rather than a refusal.
- * @param requestedSchema The schema the request carried.
- * @param response The recipient's decoded response.
- * @returns The recipient's outcome.
- */
-export function outcomeOfResponse(
-  requestedSchema: RequestedSchema,
-  response: CollectiveResponse,
-): Effect.Effect<CollectiveOutcome> {
-  switch (response.action) {
-    case "accept":
-      return validateResponseContent(requestedSchema, response.content).pipe(
-        Effect.match({
-          onFailure: (fields): CollectiveOutcome => ({
-            kind: "invalid",
-            reason: responseFieldsText(fields),
-          }),
-          onSuccess: (content): CollectiveOutcome => ({
-            kind: "answered",
-            content,
-          }),
-        }),
-      );
-    case "decline":
-      return Effect.succeed({ kind: "declined" });
-    default: {
-      const exhaustive: never = response;
-      return exhaustive;
-    }
-  }
-}
-
-/**
- * Name each failing response field, such as `field "slot" is invalid (enum)`.
- * A refused response and a recipient's `invalid` outcome read the same. Field
- * names come from peers, so each is quoted as JSON: no name can close its
- * quotes or start a new line of the text a model reads.
- * @param fields The failing fields, in validation order.
- * @returns One clause per field, joined by `; `.
- */
-export function responseFieldsText(fields: ResponseFieldFailures): string {
-  return fields
-    .map(({ field, reason, detail }) => {
-      const named = `field ${JSON.stringify(field)} ${responseFieldText[reason]}`;
-      return detail === undefined ? named : `${named} (${detail})`;
-    })
-    .join("; ");
-}
-
-/**
- * Check a response's content against the schema its request carried.
- * @param requestedSchema The request's form-mode schema.
- * @param content The content of the recipient's accepting response.
+ * Check a filled form against its form-mode schema.
+ * @param requestedSchema The form-mode schema.
+ * @param content The filled form.
  * @returns The content unchanged, or every failing field.
  */
 export function validateResponseContent(
@@ -1168,36 +676,14 @@ export function validateResponseContent(
     : Effect.fail([first, ...rest]);
 }
 
-/** The collective part a message's content carries, read once for each decoded message. */
-export function collectivePartOf(
-  message: Message,
-): Effect.Effect<Option.Option<CollectivePart>, CollectivePartInvalidError> {
-  const retained = collectivePartByMessage.get(message);
-  if (retained !== undefined) {
-    return Either.match(retained, {
-      onLeft: Effect.fail,
-      onRight: Effect.succeed,
-    });
-  }
-  return readCollectivePart(message.content).pipe(
-    Effect.tapBoth({
-      onFailure: (error) =>
-        Effect.sync(() =>
-          collectivePartByMessage.set(message, Either.left(error)),
-        ),
-      onSuccess: (part) =>
-        Effect.sync(() =>
-          collectivePartByMessage.set(message, Either.right(part)),
-        ),
-    }),
-  );
-}
-
-/** A message with a message id its caller chose, to recipients in any order. */
+/**
+ * A message with a message id its caller chose, to recipients in any order.
+ * `replyToMsgId` names the message it answers.
+ */
 export function messageWithId(
   author: AgentCard,
   recipients: readonly AgentCard[],
-  msgId: MsgId,
+  { msgId, replyToMsgId }: Pick<Message, "msgId" | "replyToMsgId">,
   content: Content,
 ) {
   return Effect.try({
@@ -1208,6 +694,7 @@ export function messageWithId(
           compareAscii(left.agentName, right.agentName),
         ),
         msgId,
+        ...(replyToMsgId === undefined ? {} : { replyToMsgId }),
         content,
       }),
     catch: () =>
@@ -1241,80 +728,6 @@ export function conversationNameKey(
   return ordered.length === 2
     ? "0:" + ordered.filter((name) => name !== localName).join(",")
     : "1:" + ordered.join(",");
-}
-
-/** Whether a message is a collective request. */
-export function isCollectiveRequestMessage(
-  message: Message,
-): message is CollectiveRequestMessage {
-  return message.collectiveRequest !== undefined;
-}
-
-/**
- * The fields a decoded message gains from its collective part: a request with
- * its question, which is the content's text, or a response. A close, an
- * unreadable part or none adds nothing.
- */
-function collectiveMeaning(
-  decoded: DecodedCollectivePart,
-  content: Content,
-): Pick<Message, "collectiveRequest" | "collectiveResponse"> {
-  const part = Either.match(decoded, {
-    onLeft: () => undefined,
-    onRight: Option.getOrUndefined,
-  });
-  if (part?.kind === "request") {
-    return {
-      collectiveRequest: {
-        op: part.op,
-        question: content
-          .flatMap((contentPart) =>
-            contentPart.type === "text" ? [contentPart.text] : [],
-          )
-          .join("\n"),
-        requestedSchema: part.requestedSchema,
-        deadlineAt: part.deadlineAt,
-      },
-    };
-  }
-  if (part?.kind === "response") {
-    return {
-      collectiveResponse:
-        part.action === "accept"
-          ? {
-              requestId: part.requestId,
-              action: part.action,
-              content: part.content,
-            }
-          : { requestId: part.requestId, action: part.action },
-    };
-  }
-  return {};
-}
-
-/**
- * Find and decode the collective part in one message's content.
- * @param content Message content.
- * @returns The decoded part, or none when the content carries no collective part.
- */
-function readCollectivePart(
-  content: Content,
-): Effect.Effect<Option.Option<CollectivePart>, CollectivePartInvalidError> {
-  const [only, ...rest] = content.flatMap((part) =>
-    Option.toArray(collectivePartValue(part)),
-  );
-  if (only === undefined) {
-    return Effect.succeed(Option.none());
-  }
-  if (rest.length > 0) {
-    return Effect.fail(new CollectivePartInvalidError({ reason: "duplicate" }));
-  }
-  return decodeCollectivePart(only).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("ParseError", () =>
-      Effect.fail(new CollectivePartInvalidError({ reason: "malformed" })),
-    ),
-  );
 }
 
 function hasWellFormedUnicode(value: string): boolean {
@@ -1365,28 +778,6 @@ function isCanonicalGroupAddress(value: string): boolean {
     return false;
   }
   return isStrictlyAscending(names, compareAscii);
-}
-
-function describeCollectiveFailure(failure: CollectiveFailure): string {
-  if (isFixedFailure(failure)) {
-    return fixedFailureText[failure.kind];
-  }
-  switch (failure.kind) {
-    case "schema-invalid":
-      return `send failed: the form is invalid (${failure.detail})`;
-    case "response-invalid":
-      return `response failed: ${responseFieldsText(failure.fields)}`;
-    default: {
-      const exhaustive: never = failure;
-      return exhaustive;
-    }
-  }
-}
-
-function isFixedFailure(
-  failure: CollectiveFailure,
-): failure is Extract<CollectiveFailure, { readonly kind: FixedFailureKind }> {
-  return Object.hasOwn(fixedFailureText, failure.kind);
 }
 
 function keyword<A, I>(schema: Schema.Schema<A, I>, expected: string) {
@@ -1476,14 +867,6 @@ function expectedText(expected: string): string {
   return `Invalid input: expected ${expected}`;
 }
 
-function collectivePartValue(part: ContentPart): Option.Option<unknown> {
-  return part.type === "data"
-    ? Schema.decodeUnknownOption(CollectiveCarrier)(part.value).pipe(
-        Option.map((carrier) => carrier[COLLECTIVE_DATA_KEY]),
-      )
-    : Option.none();
-}
-
 function fieldFailure(
   requestedSchema: RequestedSchema,
   content: ResponseContent,
@@ -1507,7 +890,7 @@ function fieldFailure(
 
 /**
  * Field names come from peers, so a lookup ignores the prototype chain: a
- * response field named `constructor` must not find `Object.prototype.constructor`.
+ * field named `constructor` must not find `Object.prototype.constructor`.
  */
 function ownValue<Value>(
   record: Readonly<Record<string, Value>>,
@@ -1517,7 +900,7 @@ function ownValue<Value>(
 }
 
 /**
- * Every failing keyword of one response field's value, as `keyword:
+ * Every failing keyword of one filled field's value, as `keyword:
  * requirement`, with a selected item's keyword led by its position, such as
  * `items[1].enum`. A titled single-select's value must equal exactly one
  * option.
