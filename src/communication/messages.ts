@@ -9,14 +9,11 @@ import {
   type JsonRepresentationError,
   representationFailure,
 } from "../encoding.js";
-import { AgentCard, AgentId } from "../identity.js";
+import { AgentCard } from "../identity.js";
 
 /** A refused send or read names one of these reasons. */
 export class CommunicationError extends Data.TaggedError("CommunicationError")<{
-  readonly reason:
-    | "membership-invalid"
-    | "content-invalid"
-    | "persistence-failed";
+  readonly reason: "content-invalid";
 }> {}
 
 /** The byte limit of one message's content as JSON text. */
@@ -33,17 +30,6 @@ export const MsgId = canonicalIdentifier("MsgId", "msg_", 32);
  * @useDeclaredType
  */
 export type MsgId = typeof MsgId.Type;
-
-/** The author and its message id identify the same message through retries and recovery. */
-export const MessageReference = exactStruct({
-  authorAgentId: AgentId,
-  msgId: MsgId,
-});
-/**
- * An author's message id identifies the same message through delivery and restart.
- * @useDeclaredType
- */
-export type MessageReference = typeof MessageReference.Type;
 
 /** A string without lone surrogates, so it survives UTF-8. */
 export const wellFormedString = Schema.String.pipe(

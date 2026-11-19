@@ -24,7 +24,7 @@ import { Data, Effect, Match, type Scope, Stream } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 // eslint-disable-next-line agent-code-guard/prefer-effect-platform -- NodeHttpServer accepts the native server constructor.
 import { createServer } from "node:http";
-import type { Owner } from "./owners.js";
+import type { Owner } from "./agent.js";
 import type { DaemonSettings } from "./settings.js";
 import { packageVersion } from "../version.js";
 import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
@@ -40,7 +40,7 @@ type McpAuthentication = DaemonSettings["authentication"];
 /** The issuer's metadata could not be read, names another issuer or names no key set. */
 class AuthenticationRefused extends Data.TaggedError("AuthenticationRefused") {}
 
-/** The running agent of an owner: its tools and its Events calls. */
+/** The agent of an owner: its tools and its Events calls. */
 type AgentOfOwner<E> = (
   owner: Owner,
 ) => Effect.Effect<AgentCalls, E, Scope.Scope>;
@@ -53,8 +53,8 @@ type AgentOfOwner<E> = (
  * signed for the resource with a subject, verified against the key set the
  * issuer's metadata names. The MCP handler answers an admitted request from
  * the agent of the token's subject, on a stream that ends when the token
- * expires. An agent that cannot start answers 503, and the log names what
- * failed.
+ * expires. A request whose agent cannot be read answers 503, and the log
+ * names what failed.
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
   E extends { readonly _tag: string },
