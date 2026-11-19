@@ -4,9 +4,9 @@ import { Effect, Schema } from "effect";
 import {
   AGENT_ADDRESS_PREFIX,
   AgentAddress,
-  GROUP_ADDRESS_PREFIX,
   GroupAddress,
-  maximumMembers,
+  groupAddressOf,
+  groupMembers,
   Message,
   MessageAddressInput,
   MessageReference,
@@ -88,12 +88,7 @@ export function addressOf(
   const others = members.filter((member) => member.agentId !== localAgentId);
   return others.length === 1
     ? AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${others[0]?.agentName}`)
-    : GroupAddress.make(
-        `${GROUP_ADDRESS_PREFIX}${members
-          .map((member) => member.agentName)
-          .sort(compareAscii)
-          .join(",")}`,
-      );
+    : groupAddressOf(members.map((member) => member.agentName));
 }
 
 /** Identifies one inbox entry: what a host names to mark that entry delivered. */
@@ -522,40 +517,20 @@ function canonicalGroup(
   localAgentName: AgentName,
 ): Effect.Effect<CanonicalMessageAddress, SendError> {
   return Effect.gen(function* () {
-    const explicitNames = yield* Effect.forEach(
-      to.slice(GROUP_ADDRESS_PREFIX.length).split(","),
-      decodeAgentName,
-      { concurrency: 1 },
+    const memberNames = yield* groupMembers(to, localAgentName);
+    const [other, ...rest] = memberNames.filter(
+      (name) => name !== localAgentName,
     );
-    if (new Set(explicitNames).size !== explicitNames.length) {
-      return yield* invalidMembership(
-        "the address names an agent more than once",
-      );
-    }
-    const memberNames = explicitNames.includes(localAgentName)
-      ? explicitNames.slice()
-      : [...explicitNames, localAgentName];
-    const others = memberNames.filter((name) => name !== localAgentName);
-    const [onlyOther] = others;
-    if (onlyOther === undefined) {
-      return yield* invalidMembership("the address names only you");
-    }
-    if (others.length === 1) {
-      const address = yield* Schema.decodeUnknown(AgentAddress)(
-        `${AGENT_ADDRESS_PREFIX}${onlyOther}`,
-      ).pipe(Effect.mapError(invalidAddress));
-      return { kind: "direct", address, remoteName: onlyOther };
-    }
-    if (memberNames.length > maximumMembers) {
-      return yield* invalidMembership(
-        `a group has at most ${String(maximumMembers)} members`,
-      );
-    }
-    const names = [...memberNames].sort(compareAscii);
-    const address = yield* Schema.decodeUnknown(GroupAddress)(
-      `${GROUP_ADDRESS_PREFIX}${names.join(",")}`,
-    ).pipe(Effect.mapError(invalidAddress));
-    return { kind: "group", address, memberNames: names };
+    return other !== undefined && rest.length === 0
+      ? yield* canonicalDirect(
+          MessageAddressInput.make(`${AGENT_ADDRESS_PREFIX}${other}`),
+          localAgentName,
+        )
+      : {
+          kind: "group" as const,
+          address: groupAddressOf(memberNames),
+          memberNames: [...memberNames].sort(compareAscii),
+        };
   });
 }
 
