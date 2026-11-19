@@ -179,7 +179,7 @@ it("answers a failed call with the failure's message and its fields", () =>
     const failing = yield* Ref.make<
       Effect.Effect<never, SendError | FirewallRefusal>
     >(Effect.never);
-    const history = new HistoryError({ reason: "invalid-cursor" });
+    const history = new HistoryError({ reason: "unknown-agent" });
     const fixture = yield* mcpFixture({
       harness: {
         send: () => Effect.flatten(Ref.get(failing)),
@@ -233,7 +233,7 @@ it("answers a failed call with the failure's message and its fields", () =>
     expect(yield* toolCall(fixture, read)).toEqual({
       isError: true,
       content: [{ text: history.message }],
-      structuredContent: { reason: "invalid-cursor" },
+      structuredContent: { reason: "unknown-agent" },
     });
   }));
 

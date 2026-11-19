@@ -24,6 +24,7 @@ import {
 import type { Firewall } from "../firewall/service.js";
 import type { SocialHarness } from "./agent.js";
 import {
+  Cursor,
   Message,
   MsgId,
   Page,
@@ -43,7 +44,6 @@ import { makeInbox } from "./inbox.js";
 import {
   AgentAddress,
   INBOX_EVENT,
-  InboxCursor,
   InboxEntry,
   SendError,
   SendRequest,
@@ -151,9 +151,7 @@ export const makeInboxEvents = Effect.gen(function* () {
           const inbox = yield* makeInbox(yield* Effect.fromNullable(principal));
           const page = yield* inbox.listInbox(
             Math.min(maxEvents ?? PAGE_SIZE, PAGE_SIZE),
-            cursor === null
-              ? undefined
-              : yield* Schema.decode(InboxCursor)(cursor),
+            cursor === null ? undefined : yield* Schema.decode(Cursor)(cursor),
           );
           return {
             events: (yield* Schema.encode(Schema.Array(InboxEntry))(
@@ -241,10 +239,10 @@ function requestServer(
     {
       description:
         "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries.",
-      input: exactStruct({ cursor: Schema.optional(InboxCursor) }),
+      input: exactStruct({ ...PaginatedRequest.fields }),
       output: Schema.Struct({
         entries: Schema.Array(InboxEntry).pipe(Schema.maxItems(PAGE_SIZE)),
-        nextCursor: InboxCursor,
+        nextCursor: Cursor,
       }),
       readOnly: true,
     },
@@ -312,11 +310,10 @@ function registerServerAgentTools(
     "list_conversations",
     {
       description:
-        "List canonical conversation addresses with completed messages. Follow nextCursor until absent. Use read_conversation to read one address.",
-      input: exactStruct({ ...PaginatedRequest.fields }),
+        "List the address of every conversation with a message. Use read_conversation to read one address.",
+      input: noArguments,
       output: Schema.Struct({
-        addresses: Schema.Array(AgentAddress).pipe(Schema.maxItems(PAGE_SIZE)),
-        ...Page.fields,
+        addresses: Schema.Array(AgentAddress),
       }).pipe(
         Schema.filter((page) =>
           isStrictlyAscending(page.addresses, compareAscii),
@@ -331,7 +328,7 @@ function registerServerAgentTools(
     "read_conversation",
     {
       description:
-        "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. Keep address unchanged while following nextCursor. The first page fixes the history boundary.",
+        "Read one conversation's records: the messages you sent and the inbox entries of the messages you received. A page holds the oldest records after cursor; pass nextCursor as cursor, with the same address, until it is absent.",
       input: exactStruct({
         address: AgentAddress,
         ...PaginatedRequest.fields,

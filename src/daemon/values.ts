@@ -103,11 +103,6 @@ export const InboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/** A place in an inbox's read order: the count of entries allowed before it, as decimal text. */
-export const InboxCursor = Schema.String.pipe(
-  Schema.pattern(/^\d{1,15}$/u),
-).annotations({ description: "the nextCursor of an earlier result" });
-
 /** The name of the event whose occurrences are an agent's inbox entries, in read order. */
 export const INBOX_EVENT = "org.social-harness/inbox.pending";
 
@@ -141,19 +136,13 @@ export type SendResult = typeof SendResult.Type;
 const historyFailureText = {
   ...addressFailureText,
   "invalid-address": "the address names you, not another agent",
-  "invalid-cursor":
-    "the cursor is not one this conversation returned; call again without a cursor",
 } as const;
 
 /** History failure never exposes private protocol or persistence diagnostics. */
 export class HistoryError extends Schema.TaggedError<HistoryError>()(
   "HistoryError",
   {
-    reason: Schema.Literal(
-      "invalid-address",
-      "unknown-agent",
-      "invalid-cursor",
-    ),
+    reason: Schema.Literal("invalid-address", "unknown-agent"),
   },
 ) {
   override get message(): string {
@@ -175,8 +164,8 @@ export interface InboxPage {
   readonly nextCursor: string;
 }
 
-/** Canonical addresses in ascending order. */
-export interface ConversationsPage extends Page {
+/** Every conversation's address, in order. */
+export interface Conversations {
   readonly addresses: readonly AgentAddress[];
 }
 
