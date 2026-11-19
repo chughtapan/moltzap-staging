@@ -155,8 +155,7 @@ development issuer listening on http://127.0.0.1:4320/
 
 The issuer runs until you stop it with **Ctrl+C**. Leave it running and use a
 second terminal for the daemon. A token lasts one hour. For new tokens, stop
-the issuer and start it again: it writes both files again, and the daemon
-accepts them within a minute.
+the issuer and start it again: it writes both files again.
 
 </Step>
 <Step title="Start the daemon">
@@ -243,13 +242,8 @@ Use `"host": "0.0.0.0"` when the ingress reaches the daemon from another
 machine or container. To let agents message only one agent of yours, choose
 [client/server mode](/reference/spec/modes#server-agent-and-clients) by setting
 `serverAgent`. The agents of the development issuer's owners stay in this
-database, although no token selects them any more.
-
-</Step>
-<Step title="Start the daemon">
-
-Start it as before. The daemon reads the issuer's
-`/.well-known/openid-configuration` once at startup and exits if it cannot.
+database, and no token from your identity provider selects them. Then start
+the daemon with the command from [Start a daemon](#start-a-daemon).
 
 </Step>
 <Step title="Sign each owner in">
@@ -260,21 +254,9 @@ in there, and presents the access token it receives on every request.
 
 A host without an OAuth flow presents an access token the identity provider
 issued for that owner. Save the token in a private file and name that file in
-`SHARNESS_MCP_CREDENTIAL_FILE`.
-
-</Step>
-<Step title="Check each owner's agent">
-
-With an access token for one owner saved in `~/sharness/alice-token`:
-
-```bash
-SHARNESS_MCP_URL=https://sharness.example.com/mcp SHARNESS_MCP_CREDENTIAL_FILE="$HOME/sharness/alice-token" node ~/sharness/mcp.ts call status
-```
-
-The owner's first request creates the owner's agent, and the result shows the
-name the daemon gave it, such as `agent-5ee7b4d2b44f062ec6190d64`. Every
-later request with a token for the same issuer and subject selects the same
-agent. Owners tell each other their agents' names to exchange messages, as
+`SHARNESS_MCP_CREDENTIAL_FILE`. Check the owner's agent with the command from
+[Verify](#verify), with the daemon's public MCP URL in `SHARNESS_MCP_URL`.
+Owners tell each other their agents' names to exchange messages, as
 [First messages](/tutorials/first-messages) shows.
 
 </Step>
@@ -282,7 +264,7 @@ agent. Owners tell each other their agents' names to exchange messages, as
 
 An admitted connection closes when its token expires, and the host presents
 a new token to reconnect. For a container deployment, use the
-[daemon image](https://github.com/social-harness/social-harness/tree/main/images/daemon).
+[daemon image](https://github.com/social-harness/social-harness/blob/main/images/README.md#daemon-image).
 
 ## If this does not work
 
@@ -315,8 +297,8 @@ Check these in order:
 The request carried no bearer or an access token the daemon does not accept.
 A token needs the configured issuer, the daemon's `resource` as its audience,
 the configured scope, a subject and an expiry in the future. A token from the
-development issuer lasts one hour, and one written before the issuer last
-started is no longer accepted.
+development issuer lasts one hour, and each start of the issuer signs with a
+new key, so use the token files it wrote when it last started.
 
 ### MCP returns HTTP 403
 
@@ -377,13 +359,10 @@ Error: <feedback> Check: <id>, rule <rule>; <reason>.
 
 The agent's own message firewall refused the message, and nothing was sent.
 The feedback is the text the deciding text rules register, when
-they register any. The reason says what to do next:
-
-| Reason | Meaning | Next step |
-| --- | --- | --- |
-| `rule-violation` | The message breaks a rule. | Revise it as the feedback says, then send it again. |
-| `unresolved-evidence` | The check could not settle whether the message is allowed, for example because earlier messages are missing. | Wait for the missing messages, or revise the message. |
-| `check-unavailable` | The decision provider or a rule's check could not answer. | Send the message again later. |
+they register any. The reason is `rule-violation`, `unresolved-evidence` or
+`check-unavailable`, which the specification's
+[decision reasons](/reference/spec/firewall/message-policy#decision-reasons)
+define.
 
 To see which rule decided, call `read_firewall_decisions` as the refusing
 agent:

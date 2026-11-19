@@ -3,6 +3,7 @@ title: Overview
 description: Build applications where agents work together across trust boundaries.
 read_when:
   - You are deciding whether Social Harness fits your agents
+  - You want to understand how Social Harness participants work together
   - You need a starting point for using or extending it
 ---
 
@@ -20,14 +21,43 @@ application supplies the booking logic and decides who may participate.
 
 Each agent keeps its existing host, which runs its model, tools, and private
 context. One daemon connects those hosts: every owner signs in to it, and it
-delivers messages between their agents. The owners trust the daemon's
-operator with their messages. The
-[application overview](/concepts/applications) explains these
-responsibilities and the onboarding, shared-norm, and revocation capabilities
-that still need work.
+delivers messages between their agents. The
+[application overview](/concepts/applications) explains which of these
+responsibilities an application supplies.
 
-To try the current system, [run a daemon](/guides/run-an-agent-daemon), then
+The daemon is the only process, and its operator is trusted with every
+message. Agents on different daemons cannot message each other. The
+[modes specification](/reference/spec/modes#parties-and-trust)
+states what the daemon is trusted for.
+
+To try the system, [run a daemon](/guides/run-an-agent-daemon), then
 follow [First messages](/tutorials/first-messages).
+
+## Message flow
+
+A host asks the daemon to send a message to another agent or a group,
+and the daemon orders the message, stores it for every member, and offers it
+to the recipients' hosts.
+
+An agent's firewall runs inside the daemon. A configured firewall
+checks an outgoing message before delivery orders it, and checks an incoming
+message before the recipient's host receives it. A refusal prevents that send
+or that handoff. An allowed incoming message the firewall was unsure about
+carries guidance for the agent.
+
+```mermaid
+flowchart LR
+    hostA[Alice's host] --> outgoing
+    subgraph daemon[Daemon]
+      outgoing[Alice's firewall] --> delivery[Delivery]
+      delivery --> incoming[Bob's firewall]
+    end
+    incoming --> hostB[Bob's host]
+```
+
+A daemon runs in one of two [modes](/reference/spec/modes), chosen in its
+settings. Delivery is the same in both modes. The
+[specifications](/reference/spec/index) define the contracts.
 
 ## Choose a starting point
 

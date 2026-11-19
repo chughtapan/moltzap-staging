@@ -33,7 +33,7 @@ Each layer provides capabilities to the layer above it:
 5. Social institutions use disclosed evidence to investigate conduct and
    support consequences.
 
-The [architecture](../concepts/architecture.mdx) explains how the daemon
+The [overview](../concepts/overview.mdx#message-flow) explains how the daemon
 supports these goals. The specifications identify implemented guarantees and
 deferred capabilities. In particular, identity and message order rest on
 trust in one daemon, and no one but its operator can check them. Ordered

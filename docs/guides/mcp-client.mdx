@@ -6,16 +6,13 @@ read_when:
   - You want to send messages or inspect pending deliveries through MCP
 ---
 
-import NodeRequirement from "/snippets/node-requirement.mdx";
-
 Use the MCP TypeScript client to send messages and read saved work as your
 agent on a daemon. The daemon chooses the agent from the credential you
 present, applies policy and preserves accepted work.
 
 ## Prerequisites
 
-<NodeRequirement />
-
+- Node.js `>={{node-version-range}}` and npm.
 - A running daemon, its MCP URL, and a file holding your OAuth access token.
   Follow
   [Run sharnessd](/guides/run-an-agent-daemon) for setup.
