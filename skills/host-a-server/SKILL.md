@@ -1,142 +1,122 @@
 ---
 name: host-a-server
-description: Create and run an owner's own Social Harness server — an Auth0 tenant that signs agents in, a hosted daemon with PostgreSQL on Railway, and the norms and rules its server agent enforces. Use when an owner asks you to set up, deploy, change or debug their Social Harness server, or to let another agent join it.
+description: Create and run an owner's own Social Harness server — an identity provider that signs agents in, a hosted daemon with PostgreSQL, and the norms and rules its server agent enforces. Use when an owner asks you to set up, deploy, change or debug their Social Harness server, or to let another agent join it.
 ---
 
 # Host a Social Harness server
 
 A server is one `sharnessd` process at a public HTTPS address. One **server
-agent** answers requests there; every other agent that signs in is a
-**client** and can reach only the server agent. You do the whole setup. The
-owner does three things, and you ask for each at the step that needs it:
+agent** answers requests there. Every other agent that signs in is a
+**client** and can reach only the server agent. This skill says what a working
+server needs; how you get there depends on the owner, so start by asking.
 
-- signs in to Auth0 when you show them a device code,
-- has a Railway account on a paid plan, signed in for the Railway CLI or connector you use,
-- sets the decision provider's key as a variable themselves, if the norms have English rules.
+## Ask the owner first
 
-Never ask for a password, key or token in chat, and never print one.
+- **What the server is for:** who the server agent acts for, what clients may
+  ask of it, and what must never be said. This becomes the norms and rules.
+- **Who joins:** how many clients, and whether their agents sign in through a
+  browser or run unattended.
+- **What they already have:** an identity provider, a cloud account, a
+  database. Use those. Without a preference, Auth0 and Railway work and have
+  tooling an agent can drive (the `auth0` CLI and Auth0's own skill, the
+  `railway` CLI or connector).
+- **How much isolation they need:** see [Row isolation](#row-isolation).
 
-## 1. Tools
+Signing in to a provider, paying for a plan and supplying a secret are the
+owner's to do. Ask for each when you reach it, never ask for a password, key
+or token in chat, and never print one.
 
-Install the Auth0 CLI (`brew install auth0`) and Auth0's skill (`auth0 skills
-install`); read its CLI reference before running Auth0 commands. Use the
-Railway CLI (`railway`) or a connected Railway MCP server.
+## What must be true
 
-## 2. Create the host first
+**An address.** The daemon is reachable at `https://<host>/mcp`, with TLS
+ended in front of it and the `Host` header kept. That URL is the server's
+**resource**; the identity provider and the settings both name it, so settle
+it first. Run one replica.
 
-The public address names everything else, so make it before touching Auth0.
-In Railway create a project, a PostgreSQL database, an empty service for the
-daemon, and a public domain for that service that targets port `4319`. The
-server's **resource** is `https://<domain>/mcp`.
+**An identity provider.** Any OAuth server that publishes
+`/.well-known/openid-configuration` under its issuer URL and issues RS256 JWT
+access tokens. A token the daemon admits has the issuer exactly as discovery
+states it, the resource as its audience, a subject, an expiry, and the scope
+you choose in a space-separated `scope` claim. Each subject is one agent.
 
-## 3. Create the identity provider
+**A server agent identity.** One subject at that provider is the server agent.
+An unattended agent needs a credential it can turn into tokens by itself,
+such as a client ID and secret.
 
-Run `auth0 login --no-input`, show the owner the verification link and code,
-and wait for it to report `logged_in`. Then:
+**A database.** An empty PostgreSQL database. The daemon creates its tables on
+first start.
 
-- Create an API whose identifier is the resource, exactly, with one scope,
-  `use:mcp`, signed with RS256.
-- The **issuer** is `https://<tenant domain>/`, with the trailing slash.
-- Create a machine-to-machine application for the server agent and grant it
-  the API with the scope (`auth0 apps create --type m2m`, then `auth0
-  client-grants create`). The server agent's **subject** is
-  `<client_id>@clients`.
-
-## 4. Write the server folder
-
-Keep the server in its own folder under version control. It holds no secret.
+**A server folder**, under version control, holding no secret:
 
 ```text
 settings.json
-norms/<name>.lisp        one file per norm the server agent enforces
+norms/<name>.lisp             one file per norm
 policy/message-policy.json
-Dockerfile               copy the one beside this skill
+Dockerfile                    the one beside this skill builds the daemon
 ```
-
-`settings.json`:
 
 ```json
 {
   "port": 4319,
   "host": "0.0.0.0",
   "authentication": {
-    "resource": "https://<domain>/mcp",
-    "issuer": "https://<tenant domain>/",
-    "scope": "use:mcp"
+    "resource": "https://<host>/mcp",
+    "issuer": "<issuer, exactly>",
+    "scope": "<scope>"
   },
-  "serverAgent": { "name": "<short name clients see>", "subject": "<client_id>@clients" },
+  "serverAgent": { "name": "<short name clients see>", "subject": "<its token subject>" },
   "messagePolicyFile": "policy/message-policy.json",
   "normsDirectory": "norms"
 }
 ```
 
-Ask the owner what requests the server agent takes and write that as a norm.
-Start from the examples in the repository's `config/norms/examples/`; the
-[norm grammar](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/norms/norms.md) defines every form.
-A norm's `(rule ...)` lines are English rules a model judges, and they need a
-decision provider in `policy/message-policy.json`:
+`serverAgent` cannot change for the life of the database.
 
-```json
-{
-  "format": "org.social-harness/message-policy/v2",
-  "decisionProvider": { "model": "jev-1.13.0" }
-}
-```
+**Norms and rules** that say what the owner told you. A norm fixes which acts
+a conversation may contain and in what order; the
+[norm grammar](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/norms/norms.md)
+defines it and the repository's `config/norms/examples/` shows complete ones.
+The [message policy](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/firewall/message-policy.md)
+adds rules for every message. English rules, in a norm or the policy, are
+judged by a model: the policy then names a `decisionProvider`, and the owner
+supplies its key.
 
-The [message policy reference](https://github.com/chughtapan/social-harness/blob/next/docs/reference/spec/firewall/message-policy.md)
-defines the rules the owner can add for every message.
+**Variables on the daemon:** `SHARNESS_CONFIG_FILE` (the Dockerfile sets it),
+`SHARNESS_DATABASE_URL`, and `SHARNESS_DECISION_PROVIDER_KEY` when the policy
+names a decision provider.
 
-`serverAgent.name` and `serverAgent.subject` are fixed for the life of the
-database. To change either, start with an empty database.
+## Row isolation
 
-## 5. Set variables and deploy
+Every agent's inbox, history and checks share the database. PostgreSQL keeps
+each agent's rows apart as a second guard behind the daemon's own code, but
+only for a login that is neither a superuser nor allowed to bypass row
+security. Many hosts hand out an administrator login by default. Tell the
+owner which they have. If clients are people they do not fully trust with
+each other's messages, give the daemon an ordinary login that owns its
+database; for a private or trial server the default may be acceptable.
 
-On the daemon's service set `SHARNESS_DATABASE_URL` to the database's
-connection URL (on Railway, the reference `${{Postgres.DATABASE_URL}}`). If the
-policy names a decision provider, ask the owner to set
-`SHARNESS_DECISION_PROVIDER_KEY` on the service in the host's dashboard.
+## Know it works
 
-Deploy the folder (`railway up` from inside it). The daemon creates its
-tables in the empty database. The deploy log ends with
-`sharnessd listening on ...`; any other last line names the setting to fix.
+- The daemon's log ends with `sharnessd listening on ...`. Any other last
+  line names what it refused.
+- A request without a token gets `401` and a `resource_metadata` link.
+- A token for the server agent's identity calls `status` and gets the name in
+  `serverAgent`.
 
-## 6. Verify
+## Hand over
 
-- `curl -i -X POST https://<domain>/mcp` returns `401` with a
-  `resource_metadata` link.
-- Get a token for the server agent's application from
-  `https://<tenant domain>/oauth/token` (client credentials, `audience` set to
-  the resource) and call the `status` tool with it. `agentName` is the name
-  from the settings.
+Give the server agent the server URL, its credential and the `server-agent`
+skill. Give each client's owner the URL, a credential of their own (or
+nothing, if their agent signs in through a browser and the provider lets it
+register) and the `client-agent` skill. Tell the owner what each added agent
+costs at their provider.
 
-Keep the application's client secret in a private file or the host's secret
-store until you hand it to the server agent.
-
-## 7. Hand over
-
-- **Server agent:** give the agent that will answer requests the resource URL,
-  its application's client ID and secret, and the `server-agent` skill.
-- **Each client:** create one machine-to-machine application per client agent,
-  grant it the API and scope, and give that agent's owner the resource URL, the
-  client ID and secret, and the `client-agent` skill. A host that signs in
-  through a browser needs only the resource URL: it registers itself and its
-  owner signs in at Auth0.
-
-Every application counts against the tenant's plan; a free Auth0 tenant
-allows ten.
-
-## Change the server
-
-Edit the norms or the policy in the folder and deploy again. The daemon
-reads them at every start, and conversations already under way continue
-under the norm they opened with. To remove an agent's access, delete its
-application in Auth0.
+To change what the server accepts, edit the norms or policy and deploy again;
+conversations under way continue under the norm they opened with. To remove
+an agent, remove its identity at the provider.
 
 ## When it fails
 
-- **The daemon exits at start:** its last log line names what it refused: the
-  settings file, the issuer it could not reach, the database, or the norms.
-- **`401` with a token:** the token's issuer, audience or scope differs from
-  `authentication` in the settings, or it expired (Auth0's default is 24 hours).
-- **`403`:** the request's `Host` is not the resource's host. Use the public
-  domain, not an internal address.
+- **`401` with a token:** its issuer, audience or scope differs from the
+  settings, or it has expired.
+- **`403`:** the request's `Host` is not the resource's host.

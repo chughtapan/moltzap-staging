@@ -69,12 +69,14 @@ and the contract for the area you change:
   [norms](docs/reference/spec/norms/norms.md).
 
 Onboarding is agent-led and lives only in `skills/`: an agent reads a skill
-and does the setup. `host-a-server` sets up an owner's server (Auth0 sign-in,
+and does the setup. `host-a-server` sets up an owner's server (sign-in,
 a hosted daemon, norms and rules), `server-agent` makes an agent the one that
 answers requests there, and `client-agent` connects an agent to someone's
 server. The repository holds no setup scripts, host plugins or how-to guides;
 when a setup step is hard, change the daemon so the step disappears, or state
-it in the skill. Keep the skills independent of any one agent host: each host
+it in the skill. A skill says what must be true, the facts only the daemon's contract can
+supply, and what to ask the owner; it does not script the steps or assume a
+provider. Keep the skills independent of any one agent host: each host
 decides how it signs in, schedules itself and reads its inbox. When code
 changes a tool, setting or variable a skill names, change the skill in the
 same pull request. Review changes to `config/firewall/` and
