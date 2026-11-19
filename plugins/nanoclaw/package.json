@@ -22,7 +22,7 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/build/clean-dist.ts && tsc -b",
+    "build": "node ../../scripts/clean-dist.ts && tsc -b",
     "lint": "eslint . --cache --max-warnings=0",
     "test": "vitest run --root ../.. --project nanoclaw-channel"
   },
@@ -32,7 +32,7 @@
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts"
+          "{workspaceRoot}/scripts/clean-dist.ts"
         ]
       },
       "test": {

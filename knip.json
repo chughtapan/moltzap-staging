@@ -5,7 +5,7 @@
       "entry": [
         "src/**/*.spec.ts",
         "vitest*.config.ts",
-        "scripts/build/*.ts",
+        "scripts/copy-social-harness-skills.ts",
         "scripts/test-*-package.ts",
         "images/*.ts"
       ],

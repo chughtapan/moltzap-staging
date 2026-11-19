@@ -73,11 +73,11 @@
     },
     "targets": {
       "build": {
-        "command": "node scripts/build/clean-dist.ts && tsc -b",
+        "command": "node scripts/clean-dist.ts && tsc -b",
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts"
+          "{workspaceRoot}/scripts/clean-dist.ts"
         ]
       },
       "lint": {
@@ -133,14 +133,14 @@
         ]
       },
       "lint:agent-files": {
-        "command": "node scripts/repo/check-agent-files.ts",
+        "command": "node scripts/check-agent-files.ts",
         "cache": true,
         "inputs": [
           "workspaceFiles"
         ]
       },
       "test:release": {
-        "command": "bash scripts/release/compute-next-version.test.sh",
+        "command": "bash scripts/compute-next-version.test.sh",
         "cache": false
       }
     }

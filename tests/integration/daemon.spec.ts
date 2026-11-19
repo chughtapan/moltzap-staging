@@ -22,7 +22,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { runProcess } from "../../scripts/test/packed-workspace.js";
+import { runProcess } from "../../scripts/packed-workspace.js";
 import {
   callTool,
   type Daemon,
