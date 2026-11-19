@@ -21,7 +21,6 @@ import { CommunicationError, Message } from "../../communication/index.js";
 import {
   Communication,
   type Conversation,
-  type ConversationQuery,
   type HistoryPage,
   type HistoryQuery,
 } from "../../communication/service.js";
@@ -155,7 +154,6 @@ interface Network {
   readonly submitted: Message[];
   readonly conversations: Map<string, Conversation>;
   readonly historyPositions: Map<string, HistoryPosition>;
-  readonly conversationPositions: Map<string, string>;
   readonly incoming: Queue.Queue<Intake>;
   cursorId: number;
   sendFailure?: CommunicationError;
@@ -187,7 +185,6 @@ export const makeHarnessFixture = Effect.gen(function* () {
     submitted: [],
     conversations: new Map(),
     historyPositions: new Map(),
-    conversationPositions: new Map(),
     cursorId: 0,
     incoming: yield* Queue.unbounded<Intake>(),
   };
@@ -296,13 +293,6 @@ function identityFor(environment: FixtureEnvironment) {
 
 function communicationFor(network: Network) {
   return Communication.of({
-    getConversation: (names) =>
-      Effect.sync(() =>
-        [...network.conversations.values()].find(
-          (members) =>
-            members.length === names.length && sameNames(members, names),
-        ),
-      ),
     send: (message) =>
       Effect.suspend(() => {
         network.submitted.push(message);
@@ -321,36 +311,8 @@ function communicationFor(network: Network) {
         ),
         Effect.forever,
       ),
-    listConversations: (query = {}) => listConversations(network, query),
+    listConversations: Effect.sync(() => [...network.conversations.values()]),
     readHistory: (query) => readHistory(network, query),
-  });
-}
-
-function listConversations(network: Network, query: ConversationQuery) {
-  return Effect.suspend(() => {
-    const after =
-      query.cursor === undefined
-        ? ""
-        : network.conversationPositions.get(query.cursor);
-    if (after === undefined) {
-      return Effect.fail(new CommunicationError({ reason: "invalid-cursor" }));
-    }
-    const available = [...network.conversations]
-      .filter(([address]) => address > after)
-      .sort(([left], [right]) => compareAscii(left, right));
-    const selected = available.slice(0, 50);
-    const cursor =
-      available.length > selected.length
-        ? `conversations-${++network.cursorId}`
-        : undefined;
-    const last = selected.at(-1);
-    if (cursor !== undefined && last !== undefined) {
-      network.conversationPositions.set(cursor, last[0]);
-    }
-    return Effect.succeed({
-      conversations: selected.map(([, members]) => members),
-      ...(cursor === undefined ? {} : { nextCursor: cursor }),
-    });
   });
 }
 
@@ -467,8 +429,4 @@ function addPeer(environment: FixtureEnvironment, name: string) {
   const card = testAgentCard(`agent:${name}`);
   environment.cards.set(card.agentName, card);
   return card;
-}
-
-function sameNames(members: Conversation, names: readonly AgentName[]) {
-  return members.every((member) => names.includes(member.agentName));
 }

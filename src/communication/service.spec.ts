@@ -33,9 +33,7 @@ it("retains a client/server exchange and hands each message only to its recipien
       content: [{ type: "text", text: "reply" }],
     });
     yield* f.server.send(reply);
-    expect((yield* f.client.listConversations()).conversations).toEqual([
-      f.members,
-    ]);
+    expect(yield* f.client.listConversations).toEqual([f.members]);
     const reopened = yield* f.open(f.agents.bob);
     expect(yield* f.history(reopened, f.members)).toEqual([request, reply]);
   }));
