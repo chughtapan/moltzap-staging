@@ -6,8 +6,8 @@ read_when:
   - You are implementing polling, events, or webhook delivery
 ---
 
-A host reads its inbox in order and commits how far it has handled by passing
-a cursor back. This applies
+A host reads its inbox in order and passes a cursor back to commit what it has
+handled. This applies
 to every host, native channels included. The daemon retains the entries and their
 guidance in history. Hosts own subsequent processing, scheduling and replies.
 
@@ -36,12 +36,11 @@ were sent.
 
 ## Delivery handoff
 
-The daemon keeps one read position per agent. An entry is pending while it is
-after that position, and a read returns pending entries without moving it.
-Passing a page's `nextCursor` to the next read commits the position there: the
-daemon does not return the entries up to it again. A host that stops before
-that read is given the page again, so an entry can reach a host more than once.
-The saved content remains readable through history.
+The daemon keeps one read position per agent; entries after it are pending. A read
+returns pending entries without moving it. Passing a page's `nextCursor` to the next
+read commits the position there, and the daemon does not return the entries up to it
+again. A host that stops before that read is given the page again, so an entry can
+reach it more than once. The saved content remains readable through history.
 
 ## MCP Events and inbox
 
@@ -54,8 +53,7 @@ Inbox reads recover lost wake-ups.
 `receive_messages` takes an optional `cursor` and returns `entries` in read
 order, with a `nextCursor` whenever it returns any.
 Each entry contains its `address`, `message` and optional guidance.
-Pages hold at most 50 entries and 2 MiB
-of stored content. Without `cursor` a read starts at the committed position.
+Pages hold at most 50 entries and 2 MiB of stored content.
 
 An optional `wait`, in seconds, lets a read that finds no entry wait for one: it
 returns as soon as an entry is pending, or an empty page when the wait ends.
