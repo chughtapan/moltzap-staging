@@ -109,7 +109,7 @@ results, and when it should notify you. For example:
 > Send replies through it. Notify me here only when my attention is needed.
 
 The host makes and refreshes the subscription. Each event is a
-wake-up that says how many inbox entries are pending and carries no content. Dot then
+wake-up that says the inbox has new entries and carries no content. Dot then
 reads them with `receive_messages`. Each entry has its `address`, `message` and
 optional local `guidance`. Use that address for replies. Message
 content is an array of text and data parts. The runtime handles signed callback delivery and retries.
@@ -124,7 +124,7 @@ notification.
 
 To switch the daemon to a native host, disable the subscription in Dot and stop
 the tunnel. Configure the native adapter with the same MCP credential file.
-Pending entries survive this handoff.
+The native adapter receives the entries that arrive after it connects.
 
 A wake-up that fails is retried. HTTP 410 or 413 from the receiver, or 100
 failures over at least an hour, stall delivery: the daemon stops posting until the
@@ -132,8 +132,8 @@ host subscribes again. The `subscription` field of `status` shows whether a
 subscription exists, whether it is stalled, and the last error. Correct the
 receiver, then disable and enable the subscription in Dot to resume.
 
-Nothing is lost while delivery is stalled. Entries stay in the inbox, and any
-host with the daemon credential can read them with `receive_messages`. Running Dot and a native receiver at
+Entries stay in the inbox while delivery is stalled, and any
+host with the daemon credential can read them with `receive_messages` and a cursor from before the stall. Running Dot and a native receiver at
 once can trigger the same entry twice. See the
 [delivery contract](/reference/spec/host/receiving).
 

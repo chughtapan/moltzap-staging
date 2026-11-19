@@ -175,24 +175,21 @@ export const InboxEntry = Schema.Struct({
 /** @useDeclaredType */
 export type InboxEntry = typeof InboxEntry.Type;
 
-/**
- * Pending entries in read order. `nextCursor` is present whenever entries
- * are: passed to the next read, it commits the read position after them.
- */
+/** Entries in read order, with the cursor that reads on from the last of them. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
 export const InboxPage = Schema.Struct({
-  ...Page.fields,
   entries: Schema.Array(InboxEntry),
+  nextCursor: Schema.String,
 });
 /** @useDeclaredType */
 export type InboxPage = typeof InboxPage.Type;
 
 const inboxFailureText = {
   "invalid-cursor":
-    "the cursor is not the nextCursor of this inbox's latest page; call again without a cursor",
+    "the cursor is not one this inbox returned; call again without a cursor to start from now",
 } as const;
 
-/** An inbox read rejects a cursor that is malformed, behind the committed read position or ahead of the newest entry. */
+/** An inbox read rejects a cursor that is malformed or past the newest entry. */
 export class InboxError extends Schema.TaggedError<InboxError>()("InboxError", {
   reason: Schema.Literal("invalid-cursor"),
 }) {
@@ -332,7 +329,7 @@ const receiveMessagesInput = exactStruct({
       Schema.positive(),
       Schema.lessThanOrEqualTo(MAXIMUM_WAIT_SECONDS),
     ).annotations({
-      description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for a message when none is pending. Call receive_messages again to keep waiting. Without wait the call returns at once.`,
+      description: `a number of seconds, at most ${String(MAXIMUM_WAIT_SECONDS)}, to wait for a message when there is none to return. Call receive_messages again to keep waiting. Without wait the call returns at once.`,
     }),
   ),
 });
@@ -409,7 +406,7 @@ export const toolDefinitions = {
   receive_messages: {
     failure: { toData: (error: InboxError) => reasonData(error) },
     description:
-      "Receive pending inbox entries in order, each with its conversation address, its message and any guidance. Once you have handled a page, pass its nextCursor as cursor on the next call: the entries up to it are then not returned again. Without cursor the call returns the same pending entries as before. Pass wait to wait up to that many seconds when nothing is pending; the call returns as soon as an entry arrives, or empty when the wait ends.",
+      "Receive inbox entries in order, each with its conversation address, its message and any guidance. Keep the nextCursor of every result and pass it as cursor on the next call to receive the entries after it. Without cursor the call starts from now: it returns no earlier entries. Pass wait to wait up to that many seconds when there is nothing after the cursor; the call returns as soon as an entry arrives, or empty when the wait ends.",
     input: receiveMessagesInput,
     output: receiveMessagesOutput,
     annotations: {

@@ -250,7 +250,7 @@ it("runs a call when every argument holds a value its tool accepts, and refuses 
     const fixture = yield* mcpFixture({
       harness: {
         send: returns(sendReceipt),
-        receive: returns({ entries: [] }),
+        receive: returns({ entries: [], nextCursor: "start" }),
         readHistory: returns({ records: [] }),
       },
     });

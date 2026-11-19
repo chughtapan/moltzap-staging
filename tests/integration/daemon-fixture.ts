@@ -23,7 +23,7 @@
  *
  * A suite drives the signed-in agents as their hosts do, through the official
  * MCP client: `callTool` calls one tool, `send` sends a message,
- * `inboxStream` reads an inbox, and `joinParticipants` signs owners in and
+ * `inboxCursor` marks a place in an inbox, and `joinParticipants` signs owners in and
  * queues what each agent receives for `nextItem` and `receivedOrder`.
  * `processTrace` makes a trace a vitest test whose children stop with it.
  */
@@ -461,25 +461,11 @@ export const sharedDaemon = Effect.fn("sharedDaemon")(function* (
   return daemon;
 }, Effect.provide(NodeFileSystem.layer));
 
-/** The agent's inbox entries as they arrive, each once: every read commits the page before it. */
-export function inboxStream(connection: McpConnection) {
-  return Stream.paginateChunkEffect(
-    undefined,
-    Effect.fn(function* (cursor?: string) {
-      const page = yield* callTool(connection.mcp, {
-        name: "receive_messages",
-        arguments: cursor === undefined ? {} : { cursor },
-      });
-      if (page.entries.length === 0) {
-        yield* Effect.sleep("50 millis");
-      }
-      return [
-        Chunk.fromIterable(page.entries),
-        Option.some(page.nextCursor ?? cursor),
-      ];
-    }),
+/** The cursor at the end of the agent's inbox: a read from it returns the entries that become readable afterwards. */
+export const inboxCursor = (connection: McpConnection) =>
+  callTool(connection.mcp, { name: "receive_messages", arguments: {} }).pipe(
+    Effect.map((page) => page.nextCursor),
   );
-}
 
 const fields = Schema.decodeUnknownSync(
   Schema.Record({ key: Schema.String, value: Schema.Unknown }),
@@ -552,22 +538,30 @@ export interface Participant extends SignedIn {
 }
 
 /**
- * Signs in one owner per name on a running `daemon` and queues every delivery
- * each agent receives.
+ * Signs in one owner per name on a running `daemon` and queues every inbox
+ * entry each agent receives from then on, or after the cursor `cursors`
+ * gives for its owner.
  * @param daemon The daemon the owners sign in to.
  * @param owners The owner of each participant: `SERVER_AGENT_OWNER` for the
  *   server agent, any other name for a client.
+ * @param cursors An inbox cursor by owner, taken with `inboxCursor`.
  * @returns The participants, in `owners` order.
  */
 export const joinParticipants = Effect.fn("joinParticipants")(
-  (daemon: Daemon, owners: readonly string[]) =>
+  (
+    daemon: Daemon,
+    owners: readonly string[],
+    cursors: Readonly<Record<string, string>> = {},
+  ) =>
     Effect.forEach(
       owners,
       (owner) =>
         Effect.gen(function* () {
           const signedIn = yield* daemon.signInAs(owner);
           const inbox = yield* Queue.unbounded<InboxEntry>();
-          yield* inboxStream(signedIn.connection).pipe(
+          const cursor =
+            cursors[owner] ?? (yield* inboxCursor(signedIn.connection));
+          yield* inboxStream(signedIn.connection, cursor).pipe(
             Stream.runForEach((delivery) => Queue.offer(inbox, delivery)),
             Effect.forkScoped,
           );
@@ -619,4 +613,19 @@ export function processTrace<E>(
     );
     return Effect.runPromise(Fiber.join(fiber));
   };
+}
+
+/** The agent's inbox entries after `cursor` as they arrive, each once. */
+function inboxStream(connection: McpConnection, cursor: string) {
+  return Stream.paginateChunkEffect(cursor, (after) =>
+    callTool(connection.mcp, {
+      name: "receive_messages",
+      arguments: { cursor: after, wait: 1 },
+    }).pipe(
+      Effect.map((page) => [
+        Chunk.fromIterable(page.entries),
+        Option.some(page.nextCursor),
+      ]),
+    ),
+  );
 }

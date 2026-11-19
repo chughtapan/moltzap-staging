@@ -97,16 +97,16 @@ const scenario = <A, E>(
     return yield* body({ store, callback, events });
   }).pipe(Effect.scoped);
 
-/** With `count` entries pending, the first wake-up reports exactly `count`. */
-const reportsPendingCount = (count: number) =>
+/** With `count` entries in the inbox, subscribing posts one wake-up that carries no data. */
+const wakesOnce = (count: number) =>
   scenario(({ store, callback, events }) =>
     Effect.gen(function* () {
       yield* Effect.replicateEffect(enqueue(store), count, { discard: true });
       yield* events.subscribe(subscribeRequest);
       yield* awaitWakeUps(callback, 1);
-      expect(decodeWakeUp(wakeUps(callback)[0]?.body).data).toEqual({
-        pendingCount: count,
-      });
+      yield* advance();
+      expect(wakeUps(callback)).toHaveLength(1);
+      expect(decodeWakeUp(wakeUps(callback)[0]?.body).data).toEqual({});
     }),
   ).pipe(Effect.provide(TestContext.TestContext), Effect.runPromise);
 
@@ -140,7 +140,7 @@ describe("a subscribed callback", () => {
           const event = decodeWakeUp(post?.body);
           expect(event.name).toBe(INBOX_PENDING_EVENT);
           expect(event.eventId).toBe(post?.headers["webhook-id"]);
-          expect(event.data).toEqual(yield* store.pending);
+          expect(event.data).toEqual({});
           yield* advance();
           yield* advance();
           expect(wakeUps(callback)).toHaveLength(1);
@@ -159,9 +159,9 @@ describe("a subscribed callback", () => {
           ...store,
           harness: {
             ...store.harness,
-            inboxPosition: store.harness.inboxPosition.pipe(
-              Effect.tap(({ newest }) =>
-                newest === 0
+            inboxEnd: store.harness.inboxEnd.pipe(
+              Effect.tap((end) =>
+                end === 0
                   ? Effect.void
                   : Ref.getAndSet(signalled, true).pipe(
                       Effect.flatMap((already) =>
@@ -188,13 +188,15 @@ describe("a subscribed callback", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live("is told how many entries are pending, for any number of them", () =>
-    Effect.tryPromise(() =>
-      fc.assert(
-        fc.asyncProperty(fc.integer({ min: 1, max: 60 }), reportsPendingCount),
-        { numRuns: 5 },
+  it.live(
+    "is woken once, without data, for any number of entries the inbox holds when it subscribes",
+    () =>
+      Effect.tryPromise(() =>
+        fc.assert(
+          fc.asyncProperty(fc.integer({ min: 1, max: 60 }), wakesOnce),
+          { numRuns: 5 },
+        ),
       ),
-    ),
   );
 
   it.effect("is woken again when a later entry arrives", () =>
@@ -209,7 +211,6 @@ describe("a subscribed callback", () => {
         expect(second?.headers["webhook-id"]).not.toBe(
           first?.headers["webhook-id"],
         );
-        expect(decodeWakeUp(second?.body).data).toEqual(yield* store.pending);
       }),
     ),
   );
@@ -291,7 +292,7 @@ describe("a callback that fails", () => {
 
 describe("a callback across restarts and leases", () => {
   it.effect(
-    "is woken after a restart while entries are still pending, with its subscription kept",
+    "is woken after a restart while the inbox holds entries, with its subscription kept",
     () =>
       scenario(({ store, callback, events }) =>
         Effect.gen(function* () {

@@ -45,6 +45,7 @@ const entry = Schema.decodeUnknownSync(toolDefinitions.receive_messages.output)(
         },
       },
     ],
+    nextCursor: "after-entry",
   },
 ).entries[0];
 if (entry === undefined) {
@@ -56,9 +57,9 @@ afterEach(() => {
 });
 
 /**
- * A daemon whose first inbox read returns one entry with a cursor and whose
- * later reads wait. `cursors` holds the cursor each read presented, and
- * `returned` completes when a second read arrives.
+ * A daemon whose first inbox read returns the cursor a reader starts from,
+ * whose second returns one entry with a cursor and whose later reads wait. `cursors` holds the cursor each read presented, and
+ * `returned` completes when a third read arrives.
  */
 const inboxFixture = Effect.gen(function* () {
   const cursors = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
@@ -67,13 +68,16 @@ const inboxFixture = Effect.gen(function* () {
     harness: {
       receive: ({ cursor }: { readonly cursor?: string }) =>
         Ref.getAndUpdate(cursors, (earlier) => [...earlier, cursor]).pipe(
-          Effect.flatMap((earlier) =>
-            earlier.length === 0
+          Effect.flatMap((earlier) => {
+            if (earlier.length === 0) {
+              return Effect.succeed({ entries: [], nextCursor: "start" });
+            }
+            return earlier.length === 1
               ? Effect.succeed({ entries: [entry], nextCursor: "after-entry" })
               : Deferred.succeed(returned, undefined).pipe(
                   Effect.zipRight(Effect.never),
-                ),
-          ),
+                );
+          }),
         ),
     },
   });
@@ -86,7 +90,7 @@ const inboxFixture = Effect.gen(function* () {
 });
 
 describe("shared inbox reception", () => {
-  it("commits a page by presenting its cursor on the next read, once the host has accepted every entry in it", () =>
+  it("takes its starting cursor from a read without one, and presents a page's cursor on the next read once the host has accepted every entry in it", () =>
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
@@ -104,17 +108,18 @@ describe("shared inbox reception", () => {
         })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(entered);
-      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined, "start"]);
       yield* Deferred.succeed(accepted, undefined);
       yield* Deferred.await(fixture.returned);
       yield* Fiber.interrupt(receiver);
       expect(yield* Ref.get(fixture.cursors)).toEqual([
         undefined,
+        "start",
         "after-entry",
       ]);
     }).pipe(Effect.scoped, Effect.runPromise));
 
-  it("stops at a failed callback without committing its page", () =>
+  it("stops at a failed callback, and the next consumer on the connection reads that page again", () =>
     Effect.gen(function* () {
       const fixture = yield* inboxFixture;
       const connection = yield* acquireMcpConnection(
@@ -127,7 +132,13 @@ describe("shared inbox reception", () => {
           .consumeInbox(() => Effect.fail(refusal))
           .pipe(Effect.flip),
       ).toBe(refusal);
-      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
+      yield* connection.consumeInbox(() => Effect.void).pipe(Effect.forkScoped);
+      yield* Deferred.await(fixture.returned);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([
+        undefined,
+        "start",
+        "start",
+      ]);
     }).pipe(Effect.scoped, Effect.runPromise));
 
   it("interrupts a pending callback when its connection closes", () =>
@@ -152,7 +163,7 @@ describe("shared inbox reception", () => {
       yield* Scope.close(scope, Exit.void);
       yield* Deferred.await(interrupted);
       yield* Fiber.await(receiver);
-      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined]);
+      expect(yield* Ref.get(fixture.cursors)).toEqual([undefined, "start"]);
     }).pipe(Effect.scoped, Effect.runPromise));
 });
 

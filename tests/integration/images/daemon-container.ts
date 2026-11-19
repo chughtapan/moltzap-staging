@@ -1,14 +1,19 @@
 /** @file One daemon in the daemon image under test, and promise access to its agents for node:test suites. */
-import type { Message, SendResult } from "@social-harness/social-harness";
-import { Chunk, Duration, Effect, Exit, Option, Scope, Stream } from "effect";
+import {
+  MAXIMUM_WAIT_SECONDS,
+  type Message,
+  type SendResult,
+} from "@social-harness/social-harness";
+import { Duration, Effect, Exit, Scope } from "effect";
 import { execFile } from "node:child_process";
 import { chmod } from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   awaitReady,
+  callTool,
   type Daemon,
   daemonListening,
-  inboxStream,
+  inboxCursor,
   managedProcess,
   ProcessTestError,
   send,
@@ -24,9 +29,8 @@ const CONTAINER_READINESS_TIMEOUT = Duration.seconds(60);
 
 /**
  * One owner's agent: what a host container needs to connect as it, and the
- * test's own connection. `next` reads the inbox only while it waits, so a host
- * connected as the same agent receives every delivery the test does not ask
- * for.
+ * test's own connection. `next` reads the entries that became readable after
+ * the sign-in, each once; a host connected as the same agent reads them too.
  */
 export interface AgentAccess {
   readonly agent: SignedIn["agent"];
@@ -70,13 +74,17 @@ export async function openDaemon(): Promise<DaemonAccess> {
       signIn: async (owner = SERVER_AGENT_OWNER) => {
         const signedIn = await inScope(daemon.signInAs(owner));
         await chmod(signedIn.credentialFile, 0o644);
+        const position = {
+          cursor: await Effect.runPromise(inboxCursor(signedIn.connection)),
+        };
         return {
           agent: signedIn.agent,
           address: signedIn.address,
           mcp: daemon.endpoint,
           mcpCredentialFile: signedIn.credentialFile,
           send: (input) => Effect.runPromise(send(signedIn, input)),
-          next: (count) => Effect.runPromise(nextItems(signedIn, count)),
+          next: (count) =>
+            Effect.runPromise(nextItems(signedIn, position, count)),
         };
       },
       close,
@@ -87,18 +95,25 @@ export async function openDaemon(): Promise<DaemonAccess> {
   }
 }
 
-/** The next `count` deliveries, read by a subscription opened for this call. */
-function nextItems(signedIn: SignedIn, count: number) {
-  return inboxStream(signedIn.connection).pipe(
-    Stream.grouped(count),
-    Stream.runHead,
-    Effect.map(
-      Option.match({
-        onNone: (): readonly Message[] => [],
-        onSome: (batch) =>
-          Chunk.toReadonlyArray(batch).map(({ message }) => message),
-      }),
-    ),
+/** The next `count` inbox entries after `position`, which moves past every entry read. */
+function nextItems(
+  signedIn: SignedIn,
+  position: { cursor: string },
+  count: number,
+) {
+  return Effect.gen(function* () {
+    const messages: Message[] = [];
+    while (messages.length < count) {
+      const page = yield* callTool(signedIn.connection.mcp, {
+        name: "receive_messages",
+        arguments: { cursor: position.cursor, wait: MAXIMUM_WAIT_SECONDS },
+      });
+      messages.push(...page.entries.map(({ message }) => message));
+      // eslint-disable-next-line require-atomic-updates -- One `next` call reads at a time.
+      position.cursor = page.nextCursor;
+    }
+    return messages.slice(0, count);
+  }).pipe(
     Effect.timeoutFail({
       duration: "60 seconds",
       onTimeout: () =>

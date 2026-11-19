@@ -170,7 +170,7 @@ export const withAgentRows = Effect.fn("withAgentRows")(
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const rowSecuredTables = [
   "inbox_entries",
-  "inbox_positions",
+  "inbox_read_numbers",
   "subscriptions",
   "firewall_checks",
   "firewall_policy",
@@ -213,11 +213,7 @@ const inboxAndFirewallSchema = Effect.gen(function* () {
   )`;
   yield* sql`CREATE INDEX inbox_entries_status ON inbox_entries(agent_key,status,sequence)`;
   yield* sql`CREATE INDEX inbox_entries_address ON inbox_entries(agent_key,address,sequence)`;
-  yield* sql`CREATE TABLE inbox_positions (
-    agent_key TEXT PRIMARY KEY,
-    newest INTEGER NOT NULL,
-    committed INTEGER NOT NULL
-  )`;
+  yield* sql`CREATE TABLE inbox_read_numbers (agent_key TEXT PRIMARY KEY, newest INTEGER NOT NULL)`;
   yield* sql`CREATE TABLE subscriptions (agent_key TEXT PRIMARY KEY, subscription TEXT NOT NULL)`;
   yield* sql`CREATE TABLE firewall_checks (
     agent_key TEXT NOT NULL,

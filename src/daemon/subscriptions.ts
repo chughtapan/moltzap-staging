@@ -2,13 +2,13 @@
  * @file Wakes a subscribed callback when the inbox has something to read.
  *
  * A host subscribes a callback URL through the MCP Events calls. While the
- * subscription is active and the inbox holds pending entries, the daemon
- * posts a signed {@link INBOX_PENDING_EVENT} to that URL. The event carries
- * only a count; the host reads the entries with the inbox tool, exactly as a
- * host that polls does.
+ * subscription is active and the inbox gains entries, the daemon posts a
+ * signed {@link INBOX_PENDING_EVENT} to that URL. The event carries no data;
+ * the host reads the entries with the inbox tool, exactly as a host that
+ * polls does.
  *
- * One wake-up is posted each time the inbox gains an entry, and again after a
- * restart if entries are still pending. A failed post is retried with growing
+ * One wake-up is posted each time the inbox gains an entry, and once after a
+ * subscription or a restart if the inbox holds any entry. A failed post is retried with growing
  * delays. After 100 failures over at least an hour, or a response that says
  * the callback is gone, the subscription stalls and nothing more is posted
  * until the host subscribes again.
@@ -53,7 +53,7 @@ import { callbackReasons, type SubscriptionStatus } from "../mcp/tools.js";
 import { SocialHarness } from "./agent.js";
 import { JsonRpcError } from "./tool-server.js";
 
-/** A wake-up to read the pending inbox. It carries no content. */
+/** A wake-up to read the inbox. It carries no content. */
 export const INBOX_PENDING_EVENT = "org.social-harness/inbox.pending";
 
 /** Closed callback diagnostics, never an upstream body, header or network address. */
@@ -302,8 +302,8 @@ interface AgentWebhook {
   saved: SavedSubscription;
   /** The inbox may hold entries the callback has not been told about. */
   inboxChangedSinceLastWakeUp: boolean;
-  /** The newest read number among the pending entries the last wake-up counted. */
-  newestInLastWakeUp: number;
+  /** The end of the inbox when the last wake-up was prepared. */
+  endInLastWakeUp: number;
   wakeUp: WakeUp | null;
   /** Receives a value whenever there may be a wake-up to post. */
   readonly wakeUpSignal: Queue.Queue<undefined>;
@@ -336,7 +336,7 @@ const restartWakeUps = (webhook: AgentWebhook) =>
   Effect.suspend(() => {
     webhook.generation += 1;
     webhook.wakeUp = null;
-    webhook.newestInLastWakeUp = 0;
+    webhook.endInLastWakeUp = 0;
     return noteInboxChanged(webhook);
   });
 const clearSubscription = (webhook: AgentWebhook) =>
@@ -465,13 +465,13 @@ const subscribe = (
     );
   });
 
-/** The event that tells a host how many inbox entries are pending. */
-const inboxPendingEvent = (pendingCount: number, timestamp: number) =>
+/** The event that tells a host its inbox has entries it has not been woken for. */
+const inboxPendingEvent = (timestamp: number) =>
   ({
     eventId: `wake_${randomUUID()}`,
     name: INBOX_PENDING_EVENT,
     timestamp: new Date(timestamp).toISOString(),
-    data: { pendingCount },
+    data: {},
     cursor: null,
   }) as const;
 
@@ -486,16 +486,16 @@ const prepareWakeUp = (webhook: AgentWebhook) =>
       return webhook.wakeUp;
     }
     webhook.inboxChangedSinceLastWakeUp = false;
-    const { newest, committed } = yield* webhook.harness.inboxPosition.pipe(
+    const end = yield* webhook.harness.inboxEnd.pipe(
       Effect.mapError(persistenceFailure),
     );
-    const newestInLastWakeUp = webhook.newestInLastWakeUp;
-    webhook.newestInLastWakeUp = newest;
-    if (newest === committed || newest <= newestInLastWakeUp) {
+    const endInLastWakeUp = webhook.endInLastWakeUp;
+    webhook.endInLastWakeUp = end;
+    if (end <= endInLastWakeUp) {
       return null;
     }
     const timestamp = now(webhook);
-    const event = inboxPendingEvent(newest - committed, timestamp);
+    const event = inboxPendingEvent(timestamp);
     webhook.wakeUp = {
       id: event.eventId,
       body: JSON.stringify(event),
@@ -673,19 +673,15 @@ const eventUnsubscribeRequest = Schema.Struct({
 /** How the event catalogue lists the wake-up. */
 const inboxPendingCatalogEntry = {
   name: INBOX_PENDING_EVENT,
-  description: "A wake-up to read the pending inbox.",
+  description: "A wake-up to read the inbox.",
   delivery: ["webhook"],
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
-  payloadSchema: {
-    type: "object",
-    properties: { pendingCount: { type: "integer", minimum: 0 } },
-    required: ["pendingCount"],
-  },
+  payloadSchema: { type: "object", properties: {} },
 };
 
 /**
- * The one event a host can follow: a wake-up saying how many inbox entries
- * are pending. A host subscribes a callback URL for it, and reads the entries
+ * The one event a host can follow: a wake-up saying the inbox has gained
+ * entries. A host subscribes a callback URL for it, and reads the entries
  * themselves with `receive_messages`.
  */
 function inboxEvents(webhook: AgentWebhook) {
@@ -812,7 +808,7 @@ export const makeWebhookEvents = Effect.fn("Mcp.makeWebhookEvents")(function* (
     subscriptionLock: yield* Effect.makeSemaphore(1),
     generation: 0,
     inboxChangedSinceLastWakeUp: true,
-    newestInLastWakeUp: 0,
+    endInLastWakeUp: 0,
     wakeUp: null,
     wakeUpSignal: yield* Queue.sliding<undefined>(1),
   };

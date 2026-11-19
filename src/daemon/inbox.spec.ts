@@ -1,4 +1,4 @@
-/** @file An agent's inbox hands over allowed entries in the order they became readable, from the position its host committed, and stays scoped to its agent. */
+/** @file An agent's inbox hands over the allowed entries after a cursor in the order they became readable, and stays scoped to its agent. */
 import { scopedLive as it } from "@effect/vitest";
 import { Array as Arr, Effect, FastCheck as fc, Schema } from "effect";
 import { expect } from "vitest";
@@ -61,8 +61,8 @@ const steps = fc.array(
     }),
     fc.record({
       step: fc.constant("read" as const),
-      /** Which earlier page's cursor the read presents, counted back from the latest; none when absent. */
-      cursor: fc.option(fc.nat({ max: 3 }), { nil: undefined }),
+      /** Which earlier read's cursor the read presents, counted back from the latest; none when absent. */
+      cursor: fc.option(fc.nat({ max: 5 }), { nil: undefined }),
     }),
   ),
   { maxLength: 40 },
@@ -74,44 +74,29 @@ type Step =
 interface Expected {
   /** The ids of the allowed messages, in the order they were allowed. */
   readonly readable: string[];
-  /** Each cursor a read returned, with the count of readable entries it commits. */
+  /** Each cursor a read returned, with the count of entries readable when it did. */
   readonly cursors: Array<{ cursor: string; through: number }>;
-  committed: number;
 }
 
-/** Presents the cursor `back` pages before the latest and expects it committed, or refused when the position is already past it. */
-function commit(inbox: Inbox, expected: Expected, back: number) {
+/**
+ * Reads with the cursor `back` reads before the latest, or with none, and
+ * expects every entry allowed since that cursor was returned, in order, and
+ * none for a read without a cursor.
+ */
+function read(inbox: Inbox, expected: Expected, back?: number) {
   return Effect.gen(function* () {
-    const presented = expected.cursors.at(-1 - back);
-    if (presented === undefined) {
-      return;
-    }
-    const outcome = yield* inbox
-      .commitPosition(presented.cursor)
-      .pipe(Effect.either);
-    if (presented.through < expected.committed) {
-      expect(outcome).toMatchObject({ left: { reason: "invalid-cursor" } });
-    } else {
-      expect(outcome._tag).toBe("Right");
-      expected.committed = presented.through;
-    }
-  });
-}
-
-/** Reads a page and expects every readable entry after the committed position, in order, with a cursor exactly when there are any. */
-function read(inbox: Inbox, expected: Expected) {
-  return Effect.gen(function* () {
-    const page = yield* inbox.listInbox();
-    expect(page.entries.map((entry) => entry.message.msgId)).toEqual(
-      expected.readable.slice(expected.committed),
+    const presented =
+      back === undefined ? undefined : expected.cursors.at(-1 - back);
+    const { entries, nextCursor } = yield* inbox
+      .positionOf(presented?.cursor)
+      .pipe(Effect.flatMap(inbox.listInbox));
+    expect(entries.map((entry) => entry.message.msgId)).toEqual(
+      expected.readable.slice(presented?.through ?? expected.readable.length),
     );
-    expect(page.nextCursor !== undefined).toBe(page.entries.length > 0);
-    if (page.nextCursor !== undefined) {
-      expected.cursors.push({
-        cursor: page.nextCursor,
-        through: expected.readable.length,
-      });
-    }
+    expected.cursors.push({
+      cursor: nextCursor,
+      through: expected.readable.length,
+    });
   });
 }
 
@@ -125,15 +110,12 @@ function take(inbox: Inbox, expected: Expected, step: Step) {
         expected.readable.push(decided);
       }
     } else {
-      if (step.cursor !== undefined) {
-        yield* commit(inbox, expected, step.cursor);
-      }
-      yield* read(inbox, expected);
+      yield* read(inbox, expected, step.cursor);
     }
   });
 }
 
-it("returns every allowed entry, in the order the entries were allowed, on each read until a cursor at or past it is committed, never after, and refuses a cursor behind the committed position", () =>
+it("returns, for any cursor a read gave, every entry allowed since that read in the order the entries were allowed, and none for a read without a cursor", () =>
   Effect.gen(function* () {
     const database = yield* openTestDatabase();
     let agents = 0;
@@ -141,7 +123,7 @@ it("returns every allowed entry, in the order the entries were allowed, on each 
       Effect.gen(function* () {
         agents += 1;
         const inbox = yield* makeInbox(`agent-${String(agents)}`);
-        const expected: Expected = { readable: [], cursors: [], committed: 0 };
+        const expected: Expected = { readable: [], cursors: [] };
         yield* Effect.forEach(sequence, (step) => take(inbox, expected, step), {
           concurrency: 1,
           discard: true,
@@ -163,38 +145,34 @@ it("gives entries allowed at the same time distinct places in the read order, an
       (message) => inbox.recordDecision(message, allowed),
       { concurrency: names.length },
     );
-    const first = yield* inbox.listInbox();
+    const first = yield* inbox.listInbox(0);
     expect(
       first.entries.map((entry) => entry.message.msgId).sort(compareAscii),
     ).toEqual([...sent].sort(compareAscii));
-    expect(yield* inbox.position).toEqual({
-      newest: names.length,
-      committed: 0,
-    });
+    expect(yield* inbox.end).toBe(names.length);
   }).pipe((test) =>
     Effect.flatMap(openTestDatabase(), (database) => database.run(test)),
   ));
 
-it("refuses a cursor that is malformed or ahead of the newest entry, and leaves the committed position where it was", () =>
+it("refuses a cursor that is malformed or past the newest entry", () =>
   Effect.gen(function* () {
     const inbox = yield* makeInbox("bob");
     yield* arrive(inbox, "alice");
     yield* decide(inbox, "alice", allowed);
-    const ahead = yield* encodeCursor(
+    const past = yield* encodeCursor(
       Schema.Struct({ operation: Schema.String, after: Schema.Number }),
       { operation: "inbox", after: 2 },
     );
-    for (const cursor of ["invalid", ahead]) {
-      expect(
-        yield* inbox.commitPosition(cursor).pipe(Effect.flip),
-      ).toMatchObject({ reason: "invalid-cursor" });
+    for (const cursor of ["invalid", past]) {
+      expect(yield* inbox.positionOf(cursor).pipe(Effect.flip)).toMatchObject({
+        reason: "invalid-cursor",
+      });
     }
-    expect((yield* inbox.listInbox()).entries).toHaveLength(1);
   }).pipe((test) =>
     Effect.flatMap(openTestDatabase(), (database) => database.run(test)),
   ));
 
-it("stores the same message for each agent, and one agent's decision and committed position leave the other's as they were", () =>
+it("stores the same message for each agent, and one agent's decision leaves the other's inbox as it was", () =>
   Effect.gen(function* () {
     const first = yield* makeInbox("first");
     const second = yield* makeInbox("second");
@@ -213,16 +191,11 @@ it("stores the same message for each agent, and one agent's decision and committ
     expect(
       (yield* second.visibleMessages([message]))[0]?.visibleToAgent,
     ).toBeFalsy();
-    expect((yield* second.listInbox()).entries).toEqual([]);
+    expect((yield* second.listInbox(0)).entries).toEqual([]);
     yield* decide(second, "alice", allowed);
-    const { nextCursor } = yield* first.listInbox();
-    if (nextCursor === undefined) {
-      return yield* Effect.dieMessage("Expected a cursor with the entry");
-    }
-    yield* first.commitPosition(nextCursor);
-    expect((yield* first.listInbox()).entries).toEqual([]);
     const reopened = yield* makeInbox("second");
-    expect((yield* reopened.listInbox()).entries).toHaveLength(1);
+    expect((yield* reopened.listInbox(0)).entries).toHaveLength(1);
+    expect((yield* first.listInbox(0)).entries).toHaveLength(1);
   }).pipe((test) =>
     Effect.flatMap(openTestDatabase(), (database) => database.run(test)),
   ));

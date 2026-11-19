@@ -38,7 +38,7 @@ const rows: Readonly<
     message_id: "message",
     status: "unchecked",
   },
-  inbox_positions: { newest: 0, committed: 0 },
+  inbox_read_numbers: { newest: 0 },
   subscriptions: { subscription: "{}" },
   firewall_checks: {
     check_id: "check",

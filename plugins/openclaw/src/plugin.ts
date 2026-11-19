@@ -176,8 +176,8 @@ const decodeJsonObject = Schema.decodeUnknownOption(
 
 /**
  * Each account retains its own channel services and daemon connection until
- * reception ends or OpenClaw aborts it. A page of inbox entries is committed after
- * the host's turn for each. OpenClaw owns processing and retries. Final assistant text stays
+ * reception ends or OpenClaw aborts it. Inbox entries that arrive while it is
+ * connected become the host's turns. OpenClaw owns processing and retries. Final assistant text stays
  * private.
  *
  * @internal

@@ -38,9 +38,9 @@ does not acquire a daemon, a database, an owner's sign-in or a local store.
   completes that queue item; any other
   failed call fails that queue item.
   Project metadata before content, route through the bootstrap-owned main
-  session with NanoClaw's native reply override. The library commits a page of
-  inbox entries after the host callback has returned for each; an entry whose
-  page was not committed is handed to NanoClaw again. Do not add `accepted`/`pending` results or inspect NanoClaw persistence.
+  session with NanoClaw's native reply override. The library reads the inbox
+  from the entries that arrive after it connects and keeps its cursor in
+  memory. Do not add `accepted`/`pending` results or inspect NanoClaw persistence.
 - NanoClaw owns sessions, implicit replies, prompt and final-text behavior
   beyond the explicit-address capability and route, inbox replay, scheduling,
   and runtime isolation.

@@ -27,7 +27,7 @@ export const secret = `whsec_${Buffer.alloc(32, 1).toString("base64")}`;
 /** The callback address of the scripted subscription. */
 const url = "https://callback.example/events";
 
-/** The request that subscribes the scripted callback to wake-ups for pending inbox entries. */
+/** The request that subscribes the scripted callback to wake-ups for inbox entries. */
 export const subscribeRequest = {
   name: INBOX_PENDING_EVENT,
   arguments: {},
@@ -46,7 +46,7 @@ const wakeUp = Schema.Struct({
   eventId: Schema.String,
   name: Schema.String,
   timestamp: Schema.String,
-  data: Schema.Struct({ pendingCount: Schema.Number }),
+  data: Schema.Struct({}),
   cursor: Schema.Null,
 });
 
@@ -87,7 +87,7 @@ const callbackResponse = (
     ),
   );
 
-/** Puts one more pending entry into `store`, the inbox wake-ups are counted from. */
+/** Puts one more entry into `store`, the inbox wake-ups follow. */
 export const enqueue = (store: InboxFixture) => store.save;
 
 /**
@@ -151,23 +151,17 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* () {
     Effect.zipRight(PubSub.publish(changes, undefined)),
     Effect.asVoid,
   );
-  const pending = sql<{
-    readonly total: number;
-  }>`SELECT COUNT(*)::int AS total FROM callback_fixture`.pipe(
-    Effect.map((rows) => ({ pendingCount: rows[0]?.total ?? 0 })),
-  );
   const harness = SocialHarness.of({
     send: () => Effect.dieMessage("Unexpected send"),
-    inboxPosition: pending.pipe(
-      Effect.map(({ pendingCount }) => ({
-        newest: pendingCount,
-        committed: 0,
-      })),
+    inboxEnd: sql<{
+      readonly total: number;
+    }>`SELECT COUNT(*)::int AS total FROM callback_fixture`.pipe(
+      Effect.map((rows) => rows[0]?.total ?? 0),
     ),
     receive: () => Effect.dieMessage("Unexpected receive"),
     listConversations: () => Effect.succeed({ addresses: [] }),
     readHistory: () => Effect.succeed({ records: [] }),
     inboxChanged: Stream.fromPubSub(changes),
   });
-  return { ...database, harness, save, pending };
+  return { ...database, harness, save };
 });

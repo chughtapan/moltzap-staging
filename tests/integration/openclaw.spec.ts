@@ -4,6 +4,7 @@ import { Effect, Exit, Fiber, Queue } from "effect";
 import { expect, it } from "vitest";
 import {
   callTool,
+  inboxCursor,
   nextItem,
   processTrace,
   send,
@@ -121,7 +122,7 @@ it(
 );
 
 it(
-  "fails the gateway when the host fails a turn, leaving the message pending, and runs the turn in the peer's own session in private mode",
+  "fails the gateway when the host fails a turn, leaving the message readable, and runs the turn in the peer's own session in private mode",
   processTrace(
     Effect.gen(function* () {
       const hosted = yield* startQueuedGateway(yield* acquireServer, {
@@ -130,6 +131,7 @@ it(
       });
       const { caller, target, gateway } = hosted;
       const text = "Please retain this failed handoff";
+      const cursor = yield* inboxCursor(target.connection);
       yield* send(caller, { text });
       const { ctxPayload: original } = yield* nextTurn(hosted);
       expect(Exit.isFailure(yield* Fiber.await(gateway.runningGateway))).toBe(
@@ -142,7 +144,7 @@ it(
       expect(
         (yield* callTool(target.connection.mcp, {
           name: "receive_messages",
-          arguments: {},
+          arguments: { cursor },
         })).entries,
       ).toHaveLength(1);
     }),

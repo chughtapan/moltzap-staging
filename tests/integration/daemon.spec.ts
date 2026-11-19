@@ -16,6 +16,7 @@ import { runProcess } from "../../scripts/packed-workspace.js";
 import {
   callTool,
   type Daemon,
+  inboxCursor,
   processTrace,
   send,
   SERVER_AGENT_NAME,
@@ -142,14 +143,11 @@ it(
   PROCESS_TEST_TIMEOUT_MS,
 );
 
-/** A page of the agent's pending inbox entries, waiting for one to arrive. `cursor` commits the page it came with first. */
-const awaitInbox = (agent: SignedIn, cursor?: string) =>
+/** A page of the agent's inbox entries after `cursor`, waiting for one to arrive. */
+const awaitInbox = (agent: SignedIn, cursor: string) =>
   callTool(agent.connection.mcp, {
     name: "receive_messages",
-    arguments: {
-      wait: MAXIMUM_WAIT_SECONDS,
-      ...(cursor === undefined ? {} : { cursor }),
-    },
+    arguments: { cursor, wait: MAXIMUM_WAIT_SECONDS },
   });
 
 /** The daemon's database, opened as the daemon opens it. */
@@ -181,7 +179,7 @@ function requestStatus(daemon: Daemon, bearer: Redacted.Redacted) {
 }
 
 it(
-  "keeps each owner's agent, history and the inbox entries it has not committed across a restart, and serves the server agent when a client's record is lost",
+  "keeps each owner's agent, history and inbox across a restart, where a cursor from before it reads the same entries, and serves the server agent when a client's record is lost",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon();
@@ -193,21 +191,15 @@ it(
           expect(server.agent.agentId).not.toBe(client.agent.agentId);
           expect(server.agent.agentName).toBe(SERVER_AGENT_NAME);
 
+          const start = yield* inboxCursor(client.connection);
           const first = yield* send(server, {
             to: client.address,
-            text: "read and committed before the restart",
+            text: "read before the restart",
           });
-          const committed = yield* awaitInbox(client);
-          expect(committed.entries).toMatchObject([
+          const read = yield* awaitInbox(client, start);
+          expect(read.entries).toMatchObject([
             { message: { msgId: first.id } },
           ]);
-          const second = yield* send(server, {
-            to: client.address,
-            text: "read before the restart and not committed",
-          });
-          expect(
-            (yield* awaitInbox(client, committed.nextCursor)).entries,
-          ).toMatchObject([{ message: { msgId: second.id } }]);
           const unread = yield* send(server, {
             to: client.address,
             text: "unread across the restart",
@@ -215,7 +207,8 @@ it(
           return {
             server: server.agent,
             client: client.agent,
-            ids: [first.id, second.id, unread.id],
+            ids: [first.id, unread.id],
+            cursors: { start, afterFirst: read.nextCursor },
           };
         }),
       );
@@ -226,13 +219,13 @@ it(
       const server = yield* daemon.signInAs(SERVER_AGENT_OWNER);
       expect(client.agent).toEqual(sent.client);
       expect(server.agent).toEqual(sent.server);
-      const pending = yield* awaitInbox(client).pipe(
-        Effect.delay("50 millis"),
-        Effect.repeat({ until: (page) => page.entries.length > 1 }),
-      );
-      expect(pending.entries).toMatchObject([
+      const { start, afterFirst } = sent.cursors;
+      expect((yield* awaitInbox(client, afterFirst)).entries).toMatchObject([
         { message: { msgId: sent.ids[1] } },
-        { message: { msgId: sent.ids[2] } },
+      ]);
+      expect((yield* awaitInbox(client, start)).entries).toMatchObject([
+        { message: { msgId: sent.ids[0] } },
+        { message: { msgId: sent.ids[1] } },
       ]);
       const history = yield* callTool(client.connection.mcp, {
         name: "read_conversation",

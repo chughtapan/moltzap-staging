@@ -86,8 +86,8 @@ outside that read. A page holds at most 50 addresses or 50 records. Listing retu
 `cursor` with the same selection until absent. An invalid cursor returns
 `invalid-cursor`.
 
-An invalid history page returns no messages. Reading history neither
-moves the inbox's read position nor authorizes a send.
+An invalid history page returns no messages. Reading history does not
+authorize a send.
 
 ## Connection lifetime
 

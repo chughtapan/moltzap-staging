@@ -47,9 +47,9 @@ release, so the channel needs a new release only when the plugin SDK breaks.
   no guidance as its text, and any other entry as its JSON. Add no prose.
 - Leave outbound queue and retry policy to OpenClaw. Every plugin callback is
   one tool call; do not pass queue identity or add provider-owned retries.
-- The library commits a page of inbox entries after the native inbound
-  callback has returned for each. Propagate callback failures; the entries of
-  that page are handed to OpenClaw again. OpenClaw owns
+- The library reads the inbox from the entries that arrive after it connects
+  and keeps its cursor in memory; do not persist it. Propagate callback
+  failures. OpenClaw owns
   processing, notification and task recovery.
 - History and status use the MCP catalog.
 - Keep host failures typed at the boundary. A failed send is the result the

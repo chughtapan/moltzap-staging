@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { groupAddress, P2P } from "./agent-fixture.p2p.js";
 import {
   callTool,
+  inboxCursor,
   joinParticipants,
   nextItem,
   processTrace,
@@ -130,7 +131,7 @@ const secondUnread = "also sent before the restart";
 const afterRestart = "sent after the restart";
 
 it(
-  "keeps messages a group's members have not read across a restart",
+  "keeps messages a group's members have not read across a restart, for the cursors they held before it",
   processTrace(
     Effect.gen(function* () {
       const daemon = yield* sharedDaemon({ settings: P2P });
@@ -141,19 +142,28 @@ it(
           const bob = yield* daemon.signInAs("bob");
           const carol = yield* daemon.signInAs("carol");
           const to = groupAddress([alice, bob, carol]);
+          const cursors = {
+            alice: yield* inboxCursor(alice.connection),
+            bob: yield* inboxCursor(bob.connection),
+            carol: yield* inboxCursor(carol.connection),
+          };
           const first = yield* send(alice, { to, text: firstUnread });
           const second = yield* send(alice, { to, text: secondUnread });
-          return { address: first.address, ids: [first.id, second.id] };
+          return {
+            address: first.address,
+            ids: [first.id, second.id],
+            cursors,
+          };
         }),
       );
       yield* stopProcess(running);
       yield* daemon.start();
 
-      const [alice, bob, carol] = yield* joinParticipants(daemon, [
-        "alice",
-        "bob",
-        "carol",
-      ]);
+      const [alice, bob, carol] = yield* joinParticipants(
+        daemon,
+        ["alice", "bob", "carol"],
+        unread.cursors,
+      );
       if (alice === undefined || bob === undefined || carol === undefined) {
         return yield* Effect.dieMessage("Expected three participants");
       }

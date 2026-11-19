@@ -53,10 +53,12 @@ export interface McpConnectionSettings {
 }
 
 /**
- * Allows one inbox consumer at a time. A page is committed when the reader
- * comes back for the next one, after the callback has accepted every entry in
- * it. Callback failure stops reception; the entries of that page are read
- * again by the next consumer.
+ * Allows one inbox consumer at a time. The connection keeps the cursor it
+ * has read to in memory and holds nothing else: its first consumer starts
+ * from the entries that become readable after it begins, and a new
+ * connection does not receive what became readable while none was reading. Callback failure
+ * stops reception; the next consumer on the connection is given that page
+ * again.
  */
 export interface McpConnection {
   /** The MCP SDK's connected `Client`, which a host calls tools on. */
@@ -114,12 +116,13 @@ export function acquireMcpConnection(
       () => close,
     );
     const receiving = yield* Ref.make(false);
+    const cursor = yield* Ref.make<string | undefined>(undefined);
     const scope = yield* Scope.Scope;
     return {
       mcp,
       consumeInbox: (accept) =>
         Effect.acquireUseRelease(
-          receiveInbox(mcp, receiving, accept).pipe(
+          receiveInbox(mcp, receiving, cursor, accept).pipe(
             Effect.interruptible,
             Effect.forkIn(scope),
           ),
@@ -228,9 +231,9 @@ function requestNotSent(cause: unknown): boolean {
 }
 
 /**
- * One page of the pending inbox, waiting for a message when it is empty.
- * `cursor` is the `nextCursor` of the page before it, which the daemon then
- * does not return again.
+ * One page of the inbox entries after `cursor`, waiting for a message when
+ * there is none. Without a cursor the daemon answers at once with no entries
+ * and the cursor at the end of its log, which is where a connection starts.
  */
 function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
   const unreadable = () =>
@@ -239,10 +242,8 @@ function receivePage(mcp: Pick<Client, "callTool">, cursor?: string) {
     mcp.callTool(
       {
         name: "receive_messages",
-        arguments: {
-          wait: MAXIMUM_WAIT_SECONDS,
-          ...(cursor === undefined ? {} : { cursor }),
-        },
+        arguments:
+          cursor === undefined ? {} : { cursor, wait: MAXIMUM_WAIT_SECONDS },
       },
       { signal, timeout: CALL_TIMEOUT_MILLISECONDS },
     ),
@@ -271,6 +272,7 @@ function connectionRefused(cause: unknown): boolean {
 function receiveInbox<E, R>(
   mcp: Pick<Client, "callTool">,
   receiving: Ref.Ref<boolean>,
+  cursor: Ref.Ref<string | undefined>,
   accept: (entry: InboxEntry) => Effect.Effect<void, E, R>,
 ) {
   return Effect.scoped(
@@ -284,13 +286,12 @@ function receiveInbox<E, R>(
         ),
         () => Ref.set(receiving, false),
       );
-      let cursor: string | undefined;
       while (true) {
-        const page = yield* receivePage(mcp, cursor);
+        const page = yield* receivePage(mcp, yield* Ref.get(cursor));
         for (const entry of page.entries) {
           yield* accept(entry);
         }
-        cursor = page.nextCursor ?? cursor;
+        yield* Ref.set(cursor, page.nextCursor);
       }
     }),
   );

@@ -41,7 +41,7 @@ carries content. When an agent sends, the daemon, in one transaction:
 2. Gives the message the next position in its conversation. A conversation is
    the set of its author and recipients: two agents, or a group of 3 to 32.
 3. Saves the message in the author's history and in each recipient's history
-   and pending inbox.
+   and inbox.
 
 A failure changes nothing for any member. The send returns once the message is
 ordered.
@@ -53,7 +53,7 @@ recipient's firewall checks it before the recipient's host sees it. See
 Every member sees a conversation in the same order. A message to a group
 reaches every member.
 
-Messages, positions and pending inboxes are in the daemon's database, so a
+Messages, positions and inboxes are in the daemon's database, so a
 restart loses nothing that a send returned for.
 
 ## Client/server mode
@@ -95,7 +95,7 @@ A client's tools name no other agent, so it cannot address another client:
 | --- | --- |
 | `status` | Its identifier and name |
 | `send_message` | Takes no `to`; the recipient is the server agent |
-| `receive_messages` | Its pending messages, with an optional `wait` |
+| `receive_messages` | The messages after a cursor, with an optional `wait` |
 | `read_conversation` | Takes no `address`; its conversation with the server agent |
 | `read_norms` | The server agent's norms, when norms are configured |
 

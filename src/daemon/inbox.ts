@@ -1,4 +1,4 @@
-/** @file Stores one agent's unchecked messages, its inbox entries in the order they became readable, and the position its host has read to. */
+/** @file Stores one agent's unchecked messages and its inbox entries in the order they became readable. */
 
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Encoding, Schema } from "effect";
@@ -32,14 +32,10 @@ const uncheckedRow = exactStruct({
   address: MessageAddress,
   unchecked: Schema.parseJson(Message),
 });
-/** A pending entry as stored text, whose size counts toward a page's bytes. */
-const pendingRow = exactStruct({
+/** An allowed entry as stored text, whose size counts toward a page's bytes. */
+const entryRow = exactStruct({
   read_number: Schema.Number,
   entry: Schema.String,
-});
-const positionRow = exactStruct({
-  newest: Schema.Number,
-  committed: Schema.Number,
 });
 const inboxCursor = Schema.Struct({
   operation: Schema.Literal("inbox"),
@@ -54,8 +50,8 @@ export interface Unchecked {
 
 /**
  * `read_number` orders an agent's allowed entries by when each became
- * readable, counting from one. `inbox_positions` holds, for one agent, the
- * newest read number given out and the one its host has read to.
+ * readable, counting from one. `inbox_read_numbers` holds the newest one
+ * given out for each agent.
  */
 type InboxTables = Record<
   "inbox_entries",
@@ -66,8 +62,8 @@ type InboxTables = Record<
     Record<"status", "unchecked" | "withheld" | "allowed">
 > &
   Record<
-    "inbox_positions",
-    Record<"agent_key", string> & Record<"newest" | "committed", number>
+    "inbox_read_numbers",
+    Record<"agent_key", string> & Record<"newest", number>
   >;
 
 /** One agent's inbox: its operations in the order an entry lives through them, then the reads of what was stored. */
@@ -90,17 +86,14 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   ) => run(query).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(row))));
   const inboxRows = () =>
     queries.selectFrom("inbox_entries").where("agent_key", "=", agentKey);
-  /**
-   * The newest read number an entry holds and the one the host has read to.
-   * The entries between them are the pending ones.
-   */
-  const position = read(
-    positionRow,
+  /** The newest read number an entry holds: the end of the log. */
+  const end = read(
+    exactStruct({ newest: Schema.Number }),
     queries
-      .selectFrom("inbox_positions")
-      .select(["newest", "committed"])
+      .selectFrom("inbox_read_numbers")
+      .select("newest")
       .where("agent_key", "=", agentKey),
-  ).pipe(Effect.map((rows) => rows[0] ?? { newest: 0, committed: 0 }));
+  ).pipe(Effect.map((rows) => rows[0]?.newest ?? 0));
   return {
     storeUnchecked: Effect.fn(function* (
       address: MessageAddress,
@@ -159,7 +152,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
       ),
     /**
      * An allowed entry takes the agent's next read number in the transaction
-     * that stores it. Taking the number holds the agent's position row until
+     * that stores it. Taking the number holds the agent's counter row until
      * that transaction ends, so entries become readable in read-number order
      * and a reader that has read to one number has seen every entry before
      * it. A message that is no longer unchecked takes no number.
@@ -206,11 +199,11 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             queries
               .with("position", (db) =>
                 db
-                  .insertInto("inbox_positions")
-                  .values({ agent_key: agentKey, newest: 1, committed: 0 })
+                  .insertInto("inbox_read_numbers")
+                  .values({ agent_key: agentKey, newest: 1 })
                   .onConflict((conflict) =>
                     conflict.column("agent_key").doUpdateSet((eb) => ({
-                      newest: eb("inbox_positions.newest", "+", 1),
+                      newest: eb("inbox_read_numbers.newest", "+", 1),
                     })),
                   )
                   .returning("newest"),
@@ -224,44 +217,35 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         }),
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
     }),
-    position,
+    end,
     /**
-     * Records that the host has handled every entry up to the one `cursor`
-     * names. A cursor behind the committed position or ahead of the newest
-     * entry is refused.
+     * The read number a read starts after: the one `cursor` holds, or the end
+     * of the log when there is none. A cursor past the end is refused.
      */
-    commitPosition: Effect.fn(function* (cursor: string) {
+    positionOf: Effect.fn(function* (cursor?: string) {
+      const newest = yield* end;
+      if (cursor === undefined) {
+        return newest;
+      }
       const refused = new InboxError({ reason: "invalid-cursor" });
       const { after } = yield* decodeCursor(inboxCursor, cursor).pipe(
         Effect.catchTag("CursorError", () => refused),
       );
-      const committed = yield* run(
-        queries
-          .updateTable("inbox_positions")
-          .set({ committed: after })
-          .where("agent_key", "=", agentKey)
-          .where("committed", "<=", after)
-          .where("newest", ">=", after)
-          .returning("committed"),
-      );
-      if (committed.length === 0) {
-        return yield* refused;
-      }
+      return after > newest ? yield* refused : after;
     }),
-    /** One page of the pending entries in read order, with the cursor that commits them. */
-    listInbox: Effect.fn(function* () {
-      const { committed } = yield* position;
+    /** One page of the entries after the read number `after`, in read order, with the cursor to read on from. */
+    listInbox: Effect.fn(function* (after: number) {
       const rows = yield* read(
-        pendingRow,
+        entryRow,
         inboxRows()
           .select(["read_number", "entry"])
-          .where("read_number", ">", committed)
+          .where("read_number", ">", after)
           .orderBy("read_number")
           .limit(PAGE_SIZE),
       );
       const entries: InboxEntry[] = [];
       let bytes = 0;
-      let after: number | undefined;
+      let last = after;
       for (const row of rows) {
         const size = Buffer.byteLength(row.entry);
         if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
@@ -269,18 +253,14 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
         }
         entries.push(yield* decodeJson(InboxEntry, row.entry));
         bytes += size;
-        after = row.read_number;
+        last = row.read_number;
       }
       return {
         entries,
-        ...(after === undefined
-          ? {}
-          : {
-              nextCursor: yield* encodeCursor(inboxCursor, {
-                operation: "inbox",
-                after,
-              }),
-            }),
+        nextCursor: yield* encodeCursor(inboxCursor, {
+          operation: "inbox",
+          after: last,
+        }),
       } satisfies InboxPage;
     }),
     storedEntry: (reference: MessageReference) =>
