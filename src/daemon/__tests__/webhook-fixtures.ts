@@ -18,11 +18,7 @@ import {
 } from "effect";
 import { digest } from "../../__tests__/agents.js";
 import { openTestDatabase } from "../../database/testing.js";
-import {
-  DeliveryToken,
-  INBOX_PENDING_EVENT,
-  InboxError,
-} from "../../mcp/tools.js";
+import { DeliveryToken, INBOX_PENDING_EVENT } from "../../mcp/tools.js";
 import { SocialHarness } from "../agent.js";
 import { makeWebhookEvents } from "../subscriptions.js";
 type InboxFixture = Effect.Effect.Success<ReturnType<typeof openCallbackInbox>>;
@@ -177,9 +173,6 @@ export const openCallbackInbox = Effect.fn("openCallbackInbox")(function* () {
   }>`SELECT token FROM callback_fixture`.pipe(
     Effect.map((rows) =>
       rows.map((row) => Schema.decodeUnknownSync(DeliveryToken)(row.token)),
-    ),
-    Effect.catchTag("SqlError", () =>
-      Effect.fail(new InboxError({ reason: "persistence-failed" })),
     ),
   );
   const harness = SocialHarness.of({

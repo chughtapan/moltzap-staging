@@ -74,7 +74,6 @@ states what the daemon is trusted for.
 
 ## Failures
 
-A send to a name the daemon does not have fails with `unknown-agent`. A send
-whose name lookup cannot read the database fails with `persistence-failed`.
+A send to a name the daemon does not have fails with `unknown-agent`.
 An agent whose record is missing cannot start, and its requests receive
 HTTP 503 as [recovery](../daemon.md#recovery) describes.

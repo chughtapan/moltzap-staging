@@ -20,7 +20,7 @@ import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   CollectiveRequest,
   CollectiveResponse,
-  CommunicationError,
+  type CommunicationError,
   GROUP_ADDRESS_PREFIX,
   Message,
   type MessageAddressInput,
@@ -44,14 +44,13 @@ import {
   Firewall,
   type IncomingDecision,
 } from "../firewall/service.js";
-import { type AgentCard, Identity, IdentityError } from "../identity.js";
+import { type AgentCard, Identity } from "../identity.js";
 import {
   addressOf,
   canonicalMessageAddress,
-  type DeliveryToken,
   HistoryError,
   type HistoryRecord,
-  InboxError,
+  type InboxError,
   type InboxPage,
   MessageAddress,
   otherMemberNames,
@@ -105,7 +104,7 @@ interface SocialHarnessService {
     request: SendRequest,
   ) => Effect.Effect<SendResult, SendError | RequestError | FirewallRefusal>;
   /** The delivery token of each pending inbox entry. */
-  readonly pendingTokens: Effect.Effect<readonly DeliveryToken[], InboxError>;
+  readonly pendingTokens: Inbox["pendingTokens"];
   /**
    * Hands over a page of pending inbox entries and marks each delivered, which
    * does not respond to a collective request. With `wait`, a read that finds
@@ -290,23 +289,14 @@ function send(agent: Agent, input: SendRequest) {
             Effect.fail(new SendError({ reason: "content-invalid" })),
           ),
         );
-      yield* decision.save.pipe(
-        Effect.catchTag("FirewallPolicyError", () =>
-          Effect.fail(new SendError({ reason: "persistence-failed" })),
-        ),
-      );
+      yield* decision.save;
       if (decision.kind === "refused") {
         return yield* decision.refusal;
       }
       yield* agent.communication.send(outgoing);
       return { id: outgoing.msgId, address: destination.address };
     }).pipe(
-      Effect.catchTag("CommunicationError", (error) =>
-        Effect.fail(sendFailure(error)),
-      ),
-      Effect.catchTag("InboxError", () =>
-        Effect.fail(new SendError({ reason: "persistence-failed" })),
-      ),
+      Effect.catchAll(sendFailure),
       Effect.tapError((error) =>
         Effect.logWarning("Send failed").pipe(
           Effect.annotateLogs({
@@ -360,20 +350,18 @@ function outgoingFor(
     }
     const recipients = yield* agent.identity.resolve(names).pipe(
       Effect.catchTag("IdentityError", (error) =>
-        Effect.fail(
-          new SendError({
-            reason:
-              error.reason === "unknown-agent"
-                ? "unknown-agent"
-                : "persistence-failed",
-            ...(error.reason === "unknown-agent" &&
-            error.agentName !== undefined
-              ? {
-                  detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
-                }
-              : {}),
-          }),
-        ),
+        error.reason === "unknown-agent"
+          ? Effect.fail(
+              new SendError({
+                reason: "unknown-agent",
+                ...(error.agentName === undefined
+                  ? {}
+                  : {
+                      detail: `This daemon has no agent named agent:${error.agentName}. Check the name with its owner.`,
+                    }),
+              }),
+            )
+          : Effect.die(error),
       ),
     );
     const [first, ...rest] = recipients;
@@ -407,7 +395,11 @@ function receive(
       page.entries.map((entry) => entry.deliveryToken),
     );
     return page;
-  });
+  }).pipe(
+    Effect.catchAll((error) =>
+      error._tag === "InboxError" ? Effect.fail(error) : Effect.die(error),
+    ),
+  );
 }
 
 /**
@@ -490,7 +482,7 @@ function listConversations(agent: Agent, request: PaginatedRequest) {
           }
         : {}),
     };
-  }).pipe(Effect.mapError(historyFailure));
+  }).pipe(Effect.catchAll(historyFailure));
 }
 
 function readHistory(agent: Agent, request: ReadHistoryRequest) {
@@ -592,7 +584,7 @@ function readHistory(agent: Agent, request: ReadHistoryRequest) {
           }
         : {}),
     };
-  }).pipe(Effect.mapError(historyFailure));
+  }).pipe(Effect.catchAll(historyFailure));
 }
 
 /**
@@ -756,29 +748,22 @@ function evidenceFor(
   agent: Agent,
   members: readonly AgentCard[],
   before?: Message,
-): Effect.Effect<FirewallEvidence, InboxError> {
+) {
   return Effect.gen(function* () {
     const selected = yield* conversation(members);
-    const page = yield* agent.communication
-      .readHistory({
-        members: selected,
-        order: "newest",
-        limit: agent.historyLimit,
-        ...(before === undefined
-          ? {}
-          : {
-              beforeMessage: {
-                authorAgentId: before.author.agentId,
-                msgId: before.msgId,
-              },
-            }),
-      })
-      .pipe(
-        Effect.catchTag(
-          "CommunicationError",
-          () => new InboxError({ reason: "persistence-failed" }),
-        ),
-      );
+    const page = yield* agent.communication.readHistory({
+      members: selected,
+      order: "newest",
+      limit: agent.historyLimit,
+      ...(before === undefined
+        ? {}
+        : {
+            beforeMessage: {
+              authorAgentId: before.author.agentId,
+              msgId: before.msgId,
+            },
+          }),
+    });
     let bytes = 0;
     const recent: Array<(typeof page.entries)[number]> = [];
     for (const earlier of [...page.entries].reverse()) {
@@ -804,15 +789,13 @@ function evidenceFor(
   });
 }
 
-function conversation(
-  members: readonly AgentCard[],
-): Effect.Effect<Conversation, InboxError> {
+function conversation(members: readonly AgentCard[]) {
   const ordered = [...members].sort((left, right) =>
     compareAscii(left.agentName, right.agentName),
   );
   const [first, second, ...rest] = ordered;
   return first === undefined || second === undefined
-    ? Effect.fail(new InboxError({ reason: "persistence-failed" }))
+    ? Effect.dieMessage("A conversation has at least two members")
     : Effect.succeed<Conversation>([first, second, ...rest]);
 }
 
@@ -831,49 +814,54 @@ function incomingMembers(incoming: Incoming): readonly AgentCard[] {
   }
 }
 
-function sendFailure(error: CommunicationError): SendError {
-  switch (error.reason) {
-    case "membership-invalid":
-    case "content-invalid":
-    case "persistence-failed":
-    case "message-conflict":
-      return new SendError({ reason: error.reason });
-    case "invalid-cursor":
-      return new SendError({ reason: "persistence-failed" });
-    default:
-      return absurd(error.reason);
+/**
+ * Fails with what the sender can correct. Any other failure is one of storage
+ * and ends the send as a defect, which the tool reports as an unknown outcome.
+ */
+function sendFailure(
+  error:
+    | SendError
+    | RequestError
+    | FirewallRefusal
+    | CommunicationError
+    | {
+        readonly _tag:
+          | "SqlError"
+          | "ParseError"
+          | "JsonRepresentationError"
+          | "FirewallPolicyError";
+      },
+) {
+  if (
+    error._tag === "SendError" ||
+    error._tag === "RequestError" ||
+    error._tag === "FirewallRefusal"
+  ) {
+    return Effect.fail(error);
   }
+  return error._tag !== "CommunicationError" ||
+    error.reason === "persistence-failed" ||
+    error.reason === "invalid-cursor"
+    ? Effect.die(error)
+    : Effect.fail(new SendError({ reason: error.reason }));
 }
 
-function historyFailure(error: unknown): HistoryError {
+/**
+ * Fails with what the reader can correct: a wrong address, an unknown agent
+ * or a cursor this read did not return. Any other failure is one of storage
+ * and ends the read as a defect.
+ */
+function historyFailure(error: object) {
   if (error instanceof HistoryError) {
-    return error;
+    return Effect.fail(error);
   }
-  if (error instanceof InboxError) {
-    return new HistoryError({
-      reason:
-        error.reason === "invalid-cursor"
-          ? "invalid-cursor"
-          : "persistence-failed",
-    });
+  if (error instanceof SendError) {
+    return Effect.fail(new HistoryError({ reason: "invalid-address" }));
   }
-  if (error instanceof IdentityError) {
-    return new HistoryError({
-      reason:
-        error.reason === "unknown-agent"
-          ? "unknown-agent"
-          : "persistence-failed",
-    });
-  }
-  if (error instanceof CommunicationError) {
-    return new HistoryError({
-      reason:
-        error.reason === "invalid-cursor"
-          ? "invalid-cursor"
-          : "persistence-failed",
-    });
-  }
-  return new HistoryError({ reason: "invalid-address" });
+  const reason = "reason" in error ? error.reason : undefined;
+  return reason === "invalid-cursor" || reason === "unknown-agent"
+    ? Effect.fail(new HistoryError({ reason }))
+    : Effect.die(error);
 }
 
 /**

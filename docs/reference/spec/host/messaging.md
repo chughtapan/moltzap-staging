@@ -75,8 +75,6 @@ address, member, field or schema path to correct. Firewall refusals supply a
 check reference and permitted feedback. A corrected draft receives a fresh
 assessment.
 
-- `persistence-failed`: the daemon could not read or store what the send
-  needs, and nothing was sent.
 - `network-unavailable`: the request did not reach the daemon.
 - `outcome-unknown`: the invocation may have taken effect. Interruption,
   defects or response loss after a request may have reached the daemon produce

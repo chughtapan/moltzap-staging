@@ -236,6 +236,7 @@ function run<A>(
  * input and the result is encoded with its output. A call that fails is
  * answered with a result marked as an error, whose text is the failure's
  * message and whose structured content is what the definition writes for it.
+ * A call that ends any other way is logged and answered as unexpected.
  */
 function handler<A, I, B, J, E extends { readonly message: string }>(
   definition: Definition<A, I, B, J, E>,
@@ -265,9 +266,13 @@ function handler<A, I, B, J, E extends { readonly message: string }>(
       };
     }).pipe(
       Effect.catchAllCause((cause) =>
-        Effect.succeed(
-          Option.getOrElse(Cause.failureOption(cause), () => unexpected),
-        ),
+        Option.match(Cause.failureOption(cause), {
+          onSome: Effect.succeed,
+          onNone: () =>
+            Effect.logError("A tool call ended unexpectedly", cause).pipe(
+              Effect.as(unexpected),
+            ),
+        }),
       ),
     );
 }

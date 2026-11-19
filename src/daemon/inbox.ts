@@ -98,11 +98,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
   const read = <A, I, Row extends object>(
     row: Schema.Schema<A, I>,
     query: Compilable<Row>,
-  ) =>
-    run(query).pipe(
-      Effect.flatMap(Schema.decodeUnknown(Schema.Array(row))),
-      Effect.mapError(persistenceFailure),
-    );
+  ) => run(query).pipe(Effect.flatMap(Schema.decodeUnknown(Schema.Array(row))));
   const inboxRows = () =>
     queries.selectFrom("inbox_entries").where("agent_key", "=", agentKey);
   const head = (rows: ReturnType<typeof inboxRows>) =>
@@ -145,7 +141,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             conflict.columns(["agent_key", "dedupe_key"]).doNothing(),
           ),
       );
-    }, Effect.mapError(persistenceFailure)),
+    }),
     unchecked: (limit: number) =>
       read(
         uncheckedRow,
@@ -256,7 +252,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             ),
         );
       }
-    }, Effect.mapError(persistenceFailure)),
+    }),
     withholdExpired: (token: DeliveryToken) =>
       run(
         queries
@@ -265,53 +261,50 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("agent_key", "=", agentKey)
           .where("delivery_token", "=", token)
           .where("status", "=", "unchecked"),
-      ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
-    listInbox: Effect.fn(
-      function* (request: typeof PaginatedRequest.Type = {}) {
-        const position =
-          request.cursor === undefined
-            ? { after: 0, through: yield* head(inboxRows()) }
-            : yield* decodeCursor(inboxCursor, request.cursor);
-        const rows = yield* read(
-          pendingRow,
-          inboxRows()
-            .select(["sequence", "delivery_token", "entry"])
-            .where("status", "=", "pending")
-            .where("sequence", ">", position.after)
-            .where("sequence", "<=", position.through)
-            .orderBy("sequence")
-            .limit(PAGE_SIZE + 1),
-        );
-        const entries: InboxEntry[] = [];
-        let bytes = 0;
-        let after = position.after;
-        for (const row of rows.slice(0, PAGE_SIZE)) {
-          const size = Buffer.byteLength(row.entry);
-          if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
-            break;
-          }
-          const stored = yield* decodeJson(StoredInboxEntry, row.entry);
-          entries.push({ ...stored, deliveryToken: row.delivery_token });
-          bytes += size;
-          after = row.sequence;
+      ).pipe(Effect.asVoid),
+    listInbox: Effect.fn(function* (
+      request: typeof PaginatedRequest.Type = {},
+    ) {
+      const position =
+        request.cursor === undefined
+          ? { after: 0, through: yield* head(inboxRows()) }
+          : yield* decodeCursor(inboxCursor, request.cursor);
+      const rows = yield* read(
+        pendingRow,
+        inboxRows()
+          .select(["sequence", "delivery_token", "entry"])
+          .where("status", "=", "pending")
+          .where("sequence", ">", position.after)
+          .where("sequence", "<=", position.through)
+          .orderBy("sequence")
+          .limit(PAGE_SIZE + 1),
+      );
+      const entries: InboxEntry[] = [];
+      let bytes = 0;
+      let after = position.after;
+      for (const row of rows.slice(0, PAGE_SIZE)) {
+        const size = Buffer.byteLength(row.entry);
+        if (bytes + size > MAXIMUM_RUNTIME_ITEM_BYTES) {
+          break;
         }
-        return {
-          entries,
-          ...(rows.length > entries.length
-            ? {
-                nextCursor: yield* encodeCursor(inboxCursor, {
-                  operation: "inbox",
-                  after,
-                  through: position.through,
-                }),
-              }
-            : {}),
-        } satisfies InboxPage;
-      },
-      Effect.mapError((error) =>
-        error instanceof InboxError ? error : persistenceFailure(),
-      ),
-    ),
+        const stored = yield* decodeJson(StoredInboxEntry, row.entry);
+        entries.push({ ...stored, deliveryToken: row.delivery_token });
+        bytes += size;
+        after = row.sequence;
+      }
+      return {
+        entries,
+        ...(rows.length > entries.length
+          ? {
+              nextCursor: yield* encodeCursor(inboxCursor, {
+                operation: "inbox",
+                after,
+                through: position.through,
+              }),
+            }
+          : {}),
+      } satisfies InboxPage;
+    }),
     /** The delivery token of each pending entry. */
     pendingTokens: read(
       Schema.Struct({ delivery_token: DeliveryToken }),
@@ -328,7 +321,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
               .where("agent_key", "=", agentKey)
               .where("delivery_token", "in", tokens)
               .where("status", "=", "pending"),
-          ).pipe(Effect.asVoid, Effect.mapError(persistenceFailure)),
+          ).pipe(Effect.asVoid),
     storedEntry: (reference: MessageReference) =>
       read(
         exactStruct({ entry: entryRow.fields.entry }),
@@ -345,7 +338,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("address", "=", address)
           .where("kind", "=", "collectiveResult")
           .where("entry", "is not", null),
-      ).pipe(Effect.mapError(persistenceFailure)),
+      ),
     collectiveResultPage: (
       address: string,
       after: number,
@@ -392,10 +385,7 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
           .where("message_id", "=", requestId)
           .where("entry", "is not", null)
           .limit(1),
-      ).pipe(
-        Effect.map((rows) => rows.length !== 0),
-        Effect.mapError(persistenceFailure),
-      ),
+      ).pipe(Effect.map((rows) => rows.length !== 0)),
     visibleMessages: (messages: readonly Message[]) =>
       Effect.forEach(
         messages,
@@ -414,13 +404,9 @@ export const makeInbox = Effect.fn("SocialHarness.inbox")(function* (
             })),
           ),
         { concurrency: 1 },
-      ).pipe(Effect.mapError(persistenceFailure)),
+      ),
   };
 });
-
-function persistenceFailure() {
-  return new InboxError({ reason: "persistence-failed" });
-}
 
 /** A cursor is its position as base64url JSON text. */
 export function encodeCursor<A, I>(
@@ -429,7 +415,6 @@ export function encodeCursor<A, I>(
 ) {
   return encodeJson(schema, position).pipe(
     Effect.map((text) => Encoding.encodeBase64Url(text)),
-    Effect.mapError(persistenceFailure),
   );
 }
 

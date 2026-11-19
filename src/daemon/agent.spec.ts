@@ -3,6 +3,7 @@
 import { scopedLive as it } from "@effect/vitest";
 import {
   Array as Arr,
+  Cause,
   Deferred,
   Effect,
   Exit,
@@ -283,16 +284,15 @@ it("refuses every group address before dispatch on a daemon without groups, and 
     expect(subject.submitted).toHaveLength(1);
   }));
 
-it("reports a failed send once without sending it again", () =>
+it("ends a send that could not be stored as a defect without sending it again", () =>
   Effect.gen(function* () {
     const subject = yield* makeHarnessFixture;
     const runtime = yield* subject.open();
     yield* subject.failSends();
-    expect(
-      yield* runtime.harness
-        .send({ to: bobAddress, text: "Not stored" })
-        .pipe(Effect.flip),
-    ).toMatchObject({ reason: "persistence-failed" });
+    const sent = yield* runtime.harness
+      .send({ to: bobAddress, text: "Not stored" })
+      .pipe(Effect.exit);
+    expect(Exit.isFailure(sent) && Cause.isDie(sent.cause)).toBe(true);
     expect(subject.submitted).toHaveLength(1);
   }));
 
