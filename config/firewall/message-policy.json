@@ -9,7 +9,6 @@
     ]
   },
   "decisionProvider": {
-    "kind": "jev",
     "model": "jev-1.13.0"
   }
 }

@@ -147,7 +147,7 @@ export function policy(
         decodeMessagePolicy(
           JSON.stringify({
             format: "org.social-harness/message-policy/v2",
-            decisionProvider: { kind: "jev", model: "test" },
+            decisionProvider: { model: "test" },
             text: { fixedRules, initialRules },
             textSettings: {
               minimumProbability: 0.5,

@@ -52,7 +52,6 @@ const evidence: CheckEvidence = {
       id: "private-calendar",
       source: "owner-calendar",
       text: privateEvidence,
-      visibility: "assessor",
     },
   ],
   gaps: [],
@@ -482,7 +481,6 @@ it.prop(
             id: held(reference),
             source: "owner-calendar",
             text: privateEvidence,
-            visibility: "assessor",
           })),
         },
       }).pipe(Effect.flip);

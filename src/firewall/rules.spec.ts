@@ -60,7 +60,7 @@ function loadConfigured(configuration: PolicyFilePaths) {
 describe("policy documents", () => {
   const jevDocument = {
     format: policyFormat,
-    decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+    decisionProvider: { model: "jev-1.13.0" },
   };
 
   const ownerRule = {
@@ -313,7 +313,7 @@ describe("policy documents", () => {
       expect(loaded.policy.text?.fixedRules).toHaveLength(
         shipped.text.fixedBehaviors.length,
       );
-      expect(loaded.provider?.kind).toBe("jev");
+      expect(loaded.provider?.model).toBe("jev-1.13.0");
     }));
 });
 
@@ -424,7 +424,7 @@ ${behaviorBody}
       path,
       JSON.stringify({
         format: policyFormat,
-        decisionProvider: { kind: "jev", model: "jev-1.13.0" },
+        decisionProvider: { model: "jev-1.13.0" },
         text: {
           fixedRules: [fixedInlineRule],
           initialRules: [initialInlineRule],

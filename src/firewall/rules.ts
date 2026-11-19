@@ -25,12 +25,11 @@ export type FirewallRefusalReason = typeof firewallRefusalReasonSchema.Type;
 /** Whether the agent received the message under check or is sending it. */
 export type Direction = "incoming" | "outgoing";
 
-/** Trusted callers supply facts. Visibility limits what guidance may reference. */
+/** A fact the owner states for every check, with where it comes from. */
 export class OwnerFact extends Schema.Class<OwnerFact>("OwnerFact")({
   id: identifier,
   source: identifier,
   text: Schema.NonEmptyString,
-  visibility: Schema.Literal("runtime", "assessor"),
 }) {}
 
 /**
@@ -275,7 +274,6 @@ const messagePolicyFormat = "org.social-harness/message-policy/v2";
 
 /** Jev judges text rules with the key `decisionProviderKeyFile` holds. */
 const decisionProvider = Schema.Struct({
-  kind: Schema.Literal("jev"),
   model: Schema.NonEmptyTrimmedString,
 });
 
@@ -384,7 +382,6 @@ const decisionProviderKey = Schema.Trim.pipe(
 export interface LoadedMessagePolicy {
   readonly policy: MessagePolicy;
   readonly provider?: {
-    readonly kind: "jev";
     readonly model: string;
     readonly apiKey: Redacted.Redacted;
   };
@@ -419,7 +416,7 @@ export const loadMessagePolicy = Effect.fn("loadMessagePolicy")(function* (
   const apiKey = yield* readDecisionProviderKey(paths.decisionProviderKeyFile);
   return Option.some<LoadedMessagePolicy>({
     policy: resolved,
-    provider: { kind: "jev", model: setting.model, apiKey },
+    provider: { model: setting.model, apiKey },
   });
 });
 
