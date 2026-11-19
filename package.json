@@ -60,7 +60,6 @@
     "docs:check": "cd docs && mint broken-links",
     "docs:check:mermaid": "nx run @social-harness/social-harness:docs:check:mermaid",
     "prepare": "husky",
-    "effect:source": "./scripts/setup/prepare-effect.sh",
     "test:affected": "nx affected -t test",
     "docs:api": "nx run @social-harness/social-harness:docs:api"
   },

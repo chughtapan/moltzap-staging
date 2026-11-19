@@ -138,10 +138,8 @@ function entryInText(content: Readonly<Record<string, unknown>>): unknown {
 
 function host() {
   return {
-    onInbound: vi.fn<ChannelSetup["onInbound"]>(),
     onInboundEvent: vi.fn<ChannelSetup["onInboundEvent"]>(),
     onMetadata: vi.fn<ChannelSetup["onMetadata"]>(),
-    onAction: vi.fn<ChannelSetup["onAction"]>(),
   };
 }
 function connection() {

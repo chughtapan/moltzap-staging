@@ -17,7 +17,6 @@ jobs:
     env:
       NX_DAEMON: "false"
       NX_NO_CLOUD: "true"
-      OPENCLAW_INTEGRATION_IMAGE: social-harness-openclaw:local
       DAEMON_INTEGRATION_IMAGE: social-harness-daemon:local
       NANOCLAW_INTEGRATION_IMAGE: social-harness-nanoclaw:local
       SHARNESS_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/postgres

@@ -21,13 +21,7 @@ type GuardPreset = typeof guard.configs.documentation;
 
 /** Build outputs, dependencies and agent state are not linted. */
 const globalIgnores = {
-  ignores: [
-    "**/dist/**",
-    "**/node_modules/**",
-    "**/*.d.ts",
-    ".claude/**",
-    ".repos/**",
-  ],
+  ignores: ["**/dist/**", "**/node_modules/**", "**/*.d.ts", ".claude/**"],
 };
 
 /** ESLint and Vitest load a configuration module through its default export. */
@@ -39,59 +33,19 @@ const configModuleRules = {
 /** Per-file line ceiling, counting neither blanks nor comments. */
 const DEFAULT_MAX_LINES = 1050;
 
-const PACKAGE_SOURCE_FILES = [
-  "src/**/*.ts",
-  "src/**/*.cts",
-  "src/**/*.mts",
-  "*.ts",
-  "*.cts",
-  "*.mts",
-];
+const PACKAGE_SOURCE_FILES = ["src/**/*.ts", "*.ts"];
 
 const TEST_SUPPORT_FILES = [
   "src/**/*.spec.ts",
   "src/__tests__/**/*.ts",
   "src/**/__tests__/**/*.ts",
-  "src/testing/**/*.ts",
-  "src/test-utils/**/*.ts",
 ];
-
-/**
- * `@failure` is the project-wide convention for Effect error-channel
- * documentation, registered here rather than in prose.
- */
-const CUSTOM_JSDOC_TAGS = ["failure"];
 
 /** Signatures describe parameters and returns; prose adds caller obligations. */
 const documentationRules = {
   "jsdoc/require-param": "off",
   "jsdoc/require-returns": "off",
 };
-
-/**
- * The `max-non-trivial-classes-per-file` default exemption list covers
- * Effect's own tag-class factories (`Context.Tag`, `Data.TaggedError`, ...) but
- * not `@effect/rpc`'s `RpcMiddleware.Tag`, which is the same kind of factory:
- * `class X extends RpcMiddleware.Tag&lt;X&gt;()(name, opts) {}` declares a zero-body
- * Tag, not a real implementation. The per-method `AuthMiddleware` descriptors
- * are one such Tag per method, co-located by design, so the factory is added to
- * the exemption list workspace-wide.
- */
-const TAG_CLASS_FACTORIES = [
-  "Data.TaggedError",
-  "Data.TaggedClass",
-  "Data.Class",
-  "Data.Error",
-  "Schema.Class",
-  "Schema.TaggedClass",
-  "Schema.TaggedError",
-  "Schema.TaggedRequest",
-  "Context.Tag",
-  "Context.Reference",
-  "Effect.Service",
-  "Effect.Tag",
-  "RpcMiddleware.Tag",
-];
 
 /**
  * Effect.gen abandons its generator when a yielded effect fails, so a
@@ -175,7 +129,7 @@ const languageOptions = {
 
 /** Rules for `// eslint-disable` comments in every TypeScript file. */
 const disableCommentRules = {
-  files: ["**/*.ts", "**/*.cts", "**/*.mts"],
+  files: ["**/*.ts"],
   languageOptions,
   plugins: { "eslint-comments": comments },
   rules: {
@@ -194,10 +148,6 @@ function packageSections() {
     {
       ...makeStrictBlock(PACKAGE_SOURCE_FILES, strictRules),
       ignores: ["**/*.spec.ts"],
-      rules: {
-        ...strictRules,
-        "jsdoc/check-tag-names": ["error", { definedTags: CUSTOM_JSDOC_TAGS }],
-      },
     },
     makeStrictBlock(TEST_SUPPORT_FILES, strictRules),
     {
@@ -329,10 +279,6 @@ function makeStrictRules() {
           "Fiber.RuntimeFiber",
         ],
       },
-    ],
-    "agent-code-guard/max-non-trivial-classes-per-file": [
-      "error",
-      { max: 1, factories: TAG_CLASS_FACTORIES },
     ],
     "max-lines": [
       "error",
