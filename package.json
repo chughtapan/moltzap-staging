@@ -57,8 +57,7 @@
     "docs:open": "cd docs && mint dev",
     "docs:check": "cd docs && mint broken-links",
     "prepare": "husky",
-    "test:affected": "nx affected -t test",
-    "docs:api": "nx run @social-harness/social-harness:docs:api"
+    "test:affected": "nx affected -t test"
   },
   "nx": {
     "includedScripts": [],
@@ -143,32 +142,6 @@
       "test:release": {
         "command": "bash scripts/release/compute-next-version.test.sh",
         "cache": false
-      },
-      "docs:api": {
-        "command": "pnpm exec typedoc --options scripts/docs/typedoc.json",
-        "cache": true,
-        "dependsOn": [
-          {
-            "projects": [
-              "@social-harness/social-harness",
-              "@social-harness/openclaw-channel",
-              "@social-harness/nanoclaw-channel"
-            ],
-            "target": "build"
-          }
-        ],
-        "inputs": [
-          "{workspaceRoot}/typedoc.json",
-          "{workspaceRoot}/scripts/docs/typedoc.json",
-          "{workspaceRoot}/scripts/docs/api.css",
-          "{workspaceRoot}/src/**/*.ts",
-          "sharedGlobals",
-          "{workspaceRoot}/plugins/**/*.ts",
-          "{workspaceRoot}/plugins/**/*.json"
-        ],
-        "outputs": [
-          "{workspaceRoot}/out/api"
-        ]
       }
     }
   },
@@ -212,8 +185,6 @@
     "mint": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
-    "typedoc": "catalog:",
-    "typedoc-plugin-missing-exports": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

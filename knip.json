@@ -13,13 +13,7 @@
         "src/**/*.ts",
         "*.ts",
         "scripts/**/*.ts"
-      ],
-      "typedoc": {
-        "config": [
-          "typedoc.json",
-          "scripts/docs/typedoc.json"
-        ]
-      }
+      ]
     },
     "plugins/nanoclaw": {
       "project": [

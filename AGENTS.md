@@ -212,8 +212,7 @@ Writing or regenerating public docs uses the `docs` skill at
 Keep repository-owned skills under `.agents/skills/` with a matching Claude
 link.
 Generated files come from their source and must not be edited by hand.
-The API reference uses native TypeDoc output (`pnpm docs:api`); shared site
-content uses Mintlify snippets and `docs.json` variables.
+Shared site content uses Mintlify snippets and `docs.json` variables.
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->
