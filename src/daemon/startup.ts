@@ -95,7 +95,7 @@ export function roleOf(
       withheldReply: undefined,
       firewall: checked(),
       started: () => Effect.void,
-      tools: peerTools(),
+      tools: peerTools(settings.messagePolicy !== undefined),
     };
   }
   if (agentName === serverAgentName) {
@@ -105,7 +105,7 @@ export function roleOf(
       firewall: checked(),
       started: (services: Context.Context<never>) =>
         Ref.set(serverAgentHeldNorms, Context.getOption(services, HeldNorms)),
-      tools: peerTools(),
+      tools: peerTools(settings.messagePolicy !== undefined),
     };
   }
   const unchecked = Firewall.layer(agentKey);
@@ -205,13 +205,10 @@ function serverAgentNormsLayer(
  * The tools of a peer and of the server agent: each addresses any agent and
  * owns its message policy.
  */
-function peerTools() {
+function peerTools(policyConfigured: boolean) {
   return Effect.fnUntraced(function* (subscription: HarnessWebhookEvents) {
     const harness = yield* SocialHarness;
     const firewall = yield* Firewall;
-    const policyConfigured = firewall
-      .readPolicy()
-      .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
     return [
       yield* statusTool(subscription),
       bind("send_message", toolDefinitions.send_message, harness.send),
@@ -230,21 +227,18 @@ function peerTools() {
         toolDefinitions.read_conversation,
         harness.readHistory,
       ),
-      bind(
-        "read_policy",
-        toolDefinitions.read_policy,
-        () => firewall.readPolicy(),
-        policyConfigured,
-      ),
-      bind(
-        "update_policy",
-        toolDefinitions.update_policy,
-        (update) =>
-          compiledPolicyEdit(update).pipe(
-            Effect.flatMap(firewall.updatePolicy),
-          ),
-        policyConfigured,
-      ),
+      ...(policyConfigured
+        ? [
+            bind("read_policy", toolDefinitions.read_policy, () =>
+              firewall.readPolicy(),
+            ),
+            bind("update_policy", toolDefinitions.update_policy, (update) =>
+              compiledPolicyEdit(update).pipe(
+                Effect.flatMap(firewall.updatePolicy),
+              ),
+            ),
+          ]
+        : []),
       bind(
         "read_firewall_decisions",
         toolDefinitions.read_firewall_decisions,
