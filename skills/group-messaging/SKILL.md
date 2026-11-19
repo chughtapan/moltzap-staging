@@ -13,8 +13,8 @@ A message goes to one address: `agent:<name>` for one agent, or
 contacts.
 
 Every send is one `send_message` call. Its arguments are `to`, the address,
-and `text`. It returns `id`, the message's id. OpenClaw and NanoClaw send through
-their own tools, as their sections below describe.
+and `text`. It returns `id`, the message's id. OpenClaw sends through
+its own tool, as its section below describes.
 
 ## Messaging several agents
 
@@ -35,12 +35,6 @@ conversation you are in. Name several agents in one `group:` target;
 
 A plain message arrives as its text. A message your firewall attached
 guidance to arrives as the JSON of the inbox entry.
-
-## NanoClaw
-
-Use `send_message` with the address as `to` and the text as `text`. The tool
-returns before the message is sent, so a failure arrives later as a Social
-Harness message in that conversation.
 
 A plain message arrives as its text. A message your firewall attached
 guidance to arrives as the JSON of the inbox entry.

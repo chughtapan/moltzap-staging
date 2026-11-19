@@ -56,10 +56,8 @@
     "docs:dev": "cd docs && mint dev --no-open",
     "docs:open": "cd docs && mint dev",
     "docs:check": "cd docs && mint broken-links",
-    "docs:check:mermaid": "nx run @social-harness/social-harness:docs:check:mermaid",
     "prepare": "husky",
-    "test:affected": "nx affected -t test",
-    "docs:api": "nx run @social-harness/social-harness:docs:api"
+    "test:affected": "nx affected -t test"
   },
   "nx": {
     "includedScripts": [],
@@ -75,32 +73,29 @@
     },
     "targets": {
       "build": {
-        "command": "node scripts/build/clean-dist.ts && tsc -b",
+        "command": "node scripts/clean-dist.ts && tsc -b",
         "inputs": [
           "production",
           "^production",
-          "{workspaceRoot}/scripts/build/clean-dist.ts"
+          "{workspaceRoot}/scripts/clean-dist.ts"
         ]
       },
       "lint": {
-        "command": "eslint src '*.ts' 'images/*.ts' 'scripts/**/*.ts' --cache --max-warnings=0",
+        "command": "eslint src '*.ts' 'scripts/**/*.ts' --cache --max-warnings=0",
         "inputs": [
           "default",
           "^production",
           "lintConfiguration",
           "{workspaceRoot}/*.ts",
-          "{workspaceRoot}/images/*.ts",
           "{workspaceRoot}/scripts/**/*.ts"
         ]
       },
       "test": {
-        "command": "vitest run --project social-harness --project docs-tooling",
+        "command": "vitest run --project social-harness",
         "inputs": [
           "sources",
           "^production",
           "{workspaceRoot}/vitest.config.ts",
-          "{workspaceRoot}/scripts/docs/**/*.ts",
-          "{workspaceRoot}/scripts/docs/mermaid-puppeteer.json",
           {
             "env": "SHARNESS_PG_TEST_URL"
           }
@@ -129,21 +124,6 @@
       "arch:check": {
         "command": "safer-architecture-lsp check ."
       },
-      "docs:check:mermaid": {
-        "cache": true,
-        "inputs": [
-          "workspaceFiles"
-        ],
-        "executor": "nx:run-commands",
-        "options": {
-          "cwd": ".",
-          "parallel": false,
-          "commands": [
-            "pnpm exec puppeteer browsers install chrome-headless-shell",
-            "node scripts/docs/check-mermaid.ts"
-          ]
-        }
-      },
       "lint:dead-code": {
         "command": "agent-code-guard-knip --treat-config-hints-as-errors",
         "cache": true,
@@ -152,41 +132,15 @@
         ]
       },
       "lint:agent-files": {
-        "command": "node scripts/repo/check-agent-files.ts",
+        "command": "node scripts/check-agent-files.ts",
         "cache": true,
         "inputs": [
           "workspaceFiles"
         ]
       },
       "test:release": {
-        "command": "bash scripts/release/compute-next-version.test.sh",
+        "command": "bash scripts/compute-next-version.test.sh",
         "cache": false
-      },
-      "docs:api": {
-        "command": "pnpm exec typedoc --options scripts/docs/typedoc.json",
-        "cache": true,
-        "dependsOn": [
-          {
-            "projects": [
-              "@social-harness/social-harness",
-              "@social-harness/openclaw-channel",
-              "@social-harness/nanoclaw-channel"
-            ],
-            "target": "build"
-          }
-        ],
-        "inputs": [
-          "{workspaceRoot}/typedoc.json",
-          "{workspaceRoot}/scripts/docs/typedoc.json",
-          "{workspaceRoot}/scripts/docs/api.css",
-          "{workspaceRoot}/src/**/*.ts",
-          "sharedGlobals",
-          "{workspaceRoot}/plugins/**/*.ts",
-          "{workspaceRoot}/plugins/**/*.json"
-        ],
-        "outputs": [
-          "{workspaceRoot}/out/api"
-        ]
       }
     }
   },
@@ -219,7 +173,6 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "@eslint-community/eslint-plugin-eslint-comments": "catalog:",
-    "@mermaid-js/mermaid-cli": "catalog:",
     "@types/node": "catalog:",
     "@typescript/native": "catalog:",
     "eslint": "catalog:",
@@ -230,9 +183,6 @@
     "mint": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
-    "puppeteer": "catalog:",
-    "typedoc": "catalog:",
-    "typedoc-plugin-missing-exports": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

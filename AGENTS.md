@@ -39,7 +39,7 @@ and delivers their messages. npm packages use the `@social-harness` scope.
 Executables use `sharness*`, environment variables use `SHARNESS_*`, and
 protocol namespaces use `org.social-harness/*`.
 
-Generic OpenClaw and NanoClaw images and their stand-in live tests live under
+The daemon and OpenClaw images live under
 `images/`; private product overlays stay in deployment. Image publication follows
 [Publication and versions](docs/reference/spec/releases.md#publication-and-versions).
 
@@ -212,8 +212,7 @@ Writing or regenerating public docs uses the `docs` skill at
 Keep repository-owned skills under `.agents/skills/` with a matching Claude
 link.
 Generated files come from their source and must not be edited by hand.
-The API reference uses native TypeDoc output (`pnpm docs:api`); shared site
-content uses Mintlify snippets and `docs.json` variables.
+Shared site content uses Mintlify snippets and `docs.json` variables.
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->

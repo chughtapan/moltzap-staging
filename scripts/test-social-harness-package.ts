@@ -2,7 +2,6 @@
 import { Effect } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { workspacePackages } from "./repo/packages.ts";
 import {
   installPackedConsumer,
   packProductClosure,
@@ -10,7 +9,8 @@ import {
   requireCondition,
   runCommand,
   runGate,
-} from "./test/packed-workspace.ts";
+  workspacePackages,
+} from "./packed-workspace.ts";
 
 const workspaceRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -70,7 +70,7 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
       archives,
       dependencies: { effect: pins.effect },
     });
-    const imports = publicImports();
+    const imports = yield* publicImports();
     yield* runCommand(
       process.execPath,
       ["--input-type=module", "-e", imports],
@@ -91,16 +91,20 @@ runGate("sharness-social-harness-pack-", (temporaryRoot) =>
 );
 
 /** Every entry the source manifest names, as a consumer imports it. */
-function publicImports(): string {
-  return workspacePackages(workspaceRoot)
-    .filter(({ name }) => name === "@social-harness/social-harness")
-    .flatMap(({ name, exports }) =>
-      Object.keys(exports).map((subpath) =>
-        subpath === "." ? name : `${name}/${subpath.slice(2)}`,
-      ),
-    )
-    .map((specifier) => `await import(${JSON.stringify(specifier)});`)
-    .join("\n");
+function publicImports() {
+  return workspacePackages(workspaceRoot).pipe(
+    Effect.map((packages) =>
+      packages
+        .filter(({ name }) => name === "@social-harness/social-harness")
+        .flatMap(({ name, exports }) =>
+          Object.keys(exports).map((subpath) =>
+            subpath === "." ? name : `${name}/${subpath.slice(2)}`,
+          ),
+        )
+        .map((specifier) => `await import(${JSON.stringify(specifier)});`)
+        .join("\n"),
+    ),
+  );
 }
 
 /** The command the package installs runs from the consumer and prints its usage. */

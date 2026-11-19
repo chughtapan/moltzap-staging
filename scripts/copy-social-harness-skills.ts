@@ -6,6 +6,6 @@
 import { cpSync } from "node:fs";
 import { resolve } from "node:path";
 
-cpSync(new URL("../../skills", import.meta.url), resolve("dist/skills"), {
+cpSync(new URL("../skills", import.meta.url), resolve("dist/skills"), {
   recursive: true,
 });

@@ -17,7 +17,6 @@ Production dependencies among the three product packages are:
 |---|---|---|
 | `@social-harness/social-harness` | none | Identity, communication, history, firewalls, norms, daemon MCP and `sharnessd` |
 | `@social-harness/openclaw-channel` | `@social-harness/social-harness` | OpenClaw host integration |
-| `@social-harness/nanoclaw-channel` | `@social-harness/social-harness` | NanoClaw host integration |
 
 The private `@social-harness/integration-tests` workspace consumes products as development
 dependencies, outside the product graph and release set. Products cannot depend

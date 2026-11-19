@@ -4,7 +4,7 @@ FROM node:24.18.0-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd3
 WORKDIR /build
 ENV HUSKY=0 NX_DAEMON=false NX_NO_CLOUD=true
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc .node-version nx.json tsconfig.json LICENSE NOTICE README.md ./
-COPY scripts/build/clean-dist.ts scripts/build/clean-dist.ts
+COPY scripts/clean-dist.ts scripts/clean-dist.ts
 COPY src/ src/
 COPY config/ config/
 COPY skills/ skills/

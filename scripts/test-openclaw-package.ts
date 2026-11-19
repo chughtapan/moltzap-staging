@@ -28,7 +28,7 @@ import {
   requireCondition,
   runCommand,
   runGate,
-} from "./test/packed-workspace.ts";
+} from "./packed-workspace.ts";
 
 /** Runs one OpenClaw CLI command that prints JSON and decodes its output. */
 type OpenClawCli = <A, I>(

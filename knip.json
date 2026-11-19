@@ -5,29 +5,13 @@
       "entry": [
         "src/**/*.spec.ts",
         "vitest*.config.ts",
-        "scripts/build/*.ts",
-        "scripts/test-*-package.ts",
-        "images/*.ts",
-        "scripts/docs/*.spec.ts"
+        "scripts/copy-social-harness-skills.ts",
+        "scripts/test-*-package.ts"
       ],
       "project": [
         "src/**/*.ts",
         "*.ts",
         "scripts/**/*.ts"
-      ],
-      "typedoc": {
-        "config": [
-          "typedoc.json",
-          "scripts/docs/typedoc.json"
-        ]
-      },
-      "ignoreDependencies": [
-        "@mermaid-js/mermaid-cli"
-      ]
-    },
-    "plugins/nanoclaw": {
-      "project": [
-        "src/**/*.ts"
       ]
     },
     "plugins/openclaw": {
@@ -42,8 +26,7 @@
     "tests/integration": {
       "entry": [
         "**/*.spec.ts",
-        "**/*vitest*.config.ts",
-        "images/nanoclaw-probe.ts"
+        "**/*vitest*.config.ts"
       ],
       "project": [
         "**/*.ts"
@@ -61,18 +44,6 @@
       "ignoreDependencies": [
         "@social-harness/openclaw-channel",
         "openclaw"
-      ]
-    },
-    "images/nanoclaw-agent": {
-      "entry": [
-        "*.spec.ts",
-        "entrypoint.ts",
-        "install-channel.ts",
-        "preload.ts",
-        "session-processes.ts"
-      ],
-      "project": [
-        "*.ts"
       ]
     },
     "images/daemon": {
