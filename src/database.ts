@@ -170,20 +170,17 @@ export const withAgentRows = Effect.fn("withAgentRows")(
 /** Rows of these tables are visible only to the agent whose key they carry. */
 const rowSecuredTables = ["firewall_checks", "message_log"];
 
-/** Owners and the cards of the agents the daemon has created for them. */
+/** Each owner and the card of the agent the daemon has created for them. */
 const identitySchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE owner_bindings (
+  yield* sql`CREATE TABLE agent_cards (
     agent_key TEXT PRIMARY KEY,
     issuer TEXT NOT NULL,
     subject TEXT NOT NULL,
-    UNIQUE(issuer, subject)
-  )`;
-  yield* sql`CREATE TABLE agent_cards (
-    agent_key TEXT PRIMARY KEY REFERENCES owner_bindings(agent_key),
     agent_id TEXT NOT NULL UNIQUE,
     agent_name TEXT NOT NULL UNIQUE,
-    principal_id TEXT NOT NULL
+    principal_id TEXT NOT NULL,
+    UNIQUE(issuer, subject)
   )`;
 });
 
@@ -316,7 +313,7 @@ function alreadyPrepared() {
     const tables = yield* sql<{
       name: string;
     }>`SELECT tablename AS name FROM pg_tables WHERE schemaname=current_schema()`;
-    if (tables.some((table) => table.name === "owner_bindings")) {
+    if (tables.some((table) => table.name === "agent_cards")) {
       return true;
     }
     if (tables.some((table) => table.name !== migrationsTable)) {
