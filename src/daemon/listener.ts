@@ -12,15 +12,13 @@ import {
 import { NodeHttpServer } from "@effect/platform-node";
 import { discoverAuthorizationServerMetadata } from "@modelcontextprotocol/client";
 import {
-  bearerAuthChallengeResponse,
   getOAuthProtectedResourceMetadataUrl,
   hostHeaderValidationResponse,
   OAuthError,
   OAuthErrorCode,
   oauthMetadataResponse,
-  type OAuthTokenVerifier,
   originValidationResponse,
-  verifyBearerToken,
+  requireBearerAuth,
 } from "@modelcontextprotocol/server";
 import { Data, Effect, Match, type Scope, Stream } from "effect";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -35,12 +33,6 @@ import { type AgentCalls, makeMcpHandler } from "./tool-server.js";
 const agentUnavailable = HttpServerResponse.text("Agent unavailable", {
   status: 503,
 });
-
-/** What the SDK refuses a token with when the daemon's verifier rejects it. */
-const invalidToken = new OAuthError(
-  OAuthErrorCode.InvalidToken,
-  "Invalid access token",
-);
 
 /** Request admission uses the validated authentication settings without translating them. */
 type McpAuthentication = DaemonSettings["authentication"];
@@ -57,38 +49,60 @@ type AgentOfOwner<E> = (
  * The app the listener serves. The MCP SDK validates the Host and Origin
  * headers against the resource's hostname, serves the OAuth discovery
  * documents, and checks the bearer token's scope and expiry; a refusal is the
- * SDK's response. Any path but `/mcp` answers 404. The MCP handler answers an
- * admitted request from the agent of the token's owner, on a stream that ends
- * when the token expires. An agent that cannot start answers 503, and the log
- * names what failed.
+ * SDK's response. Any path but `/mcp` answers 404. A token is a JWT the issuer
+ * signed for the resource with a subject, verified against the key set the
+ * issuer's metadata names. The MCP handler answers an admitted request from
+ * the agent of the token's subject, on a stream that ends when the token
+ * expires. An agent that cannot start answers 503, and the log names what
+ * failed.
  */
 export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
   E extends { readonly _tag: string },
 >(authentication: McpAuthentication, agentOfOwner: AgentOfOwner<E>) {
+  const { issuer, resource, scope } = authentication;
   const mcp = makeMcpHandler({ name: "sharnessd", version: packageVersion });
-  const issuer = yield* Effect.tryPromise({
-    try: () => discoverAuthorizationServerMetadata(authentication.issuer),
+  const metadata = yield* Effect.tryPromise({
+    try: () => discoverAuthorizationServerMetadata(issuer),
     catch: () => new AuthenticationRefused(),
   });
-  if (typeof issuer?.jwks_uri !== "string") {
+  if (typeof metadata?.jwks_uri !== "string") {
     return yield* new AuthenticationRefused();
   }
-  const hostnames = [authentication.resource.hostname];
+  const keys = createRemoteJWKSet(new URL(metadata.jwks_uri));
+  const hostnames = [resource.hostname];
   const discovery = {
-    oauthMetadata: issuer,
-    resourceServerUrl: authentication.resource,
-    scopesSupported: [authentication.scope],
+    oauthMetadata: metadata,
+    resourceServerUrl: resource,
+    scopesSupported: [scope],
   };
-  const bearer = {
-    verifier: tokenVerifier(authentication, new URL(issuer.jwks_uri)),
-    requiredScopes: [authentication.scope],
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(
-      authentication.resource,
-    ),
-  };
+  const bearer = requireBearerAuth({
+    requiredScopes: [scope],
+    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource),
+    verifier: {
+      // eslint-disable-next-line agent-code-guard/async-keyword -- The MCP SDK's authorization API is promise-based.
+      verifyAccessToken: async (token) => {
+        const verified = await jwtVerify(token, keys, {
+          issuer,
+          audience: resource.href,
+          algorithms: ["RS256"],
+        }).catch(() => undefined);
+        if (!verified?.payload.sub) {
+          throw new OAuthError(OAuthErrorCode.InvalidToken, "Invalid token");
+        }
+        const { sub, scope: granted, exp } = verified.payload;
+        return {
+          token,
+          clientId: "",
+          scopes: typeof granted === "string" ? granted.split(" ") : [],
+          expiresAt: exp,
+          extra: { subject: sub },
+        };
+      },
+    },
+  });
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const web = new Request(new URL(request.url, authentication.resource), {
+    const web = new Request(new URL(request.url, resource), {
       method: request.method,
       headers: request.headers,
     });
@@ -102,39 +116,30 @@ export const makeMcpHttpApp = Effect.fn("makeMcpHttpApp")(function* <
     if (new URL(web.url).pathname !== "/mcp") {
       return HttpServerResponse.empty({ status: 404 });
     }
-    return yield* Effect.tryPromise({
-      try: () => verifyBearerToken(request.headers.authorization, bearer),
-      catch: (error) =>
-        bearerAuthChallengeResponse(
-          error instanceof OAuthError ? error : invalidToken,
-          bearer,
-        ),
+    // eslint-disable-next-line agent-code-guard/effect-promise -- The SDK's gate resolves to its refusal and does not reject.
+    const admitted = yield* Effect.promise(() => bearer(web));
+    if (admitted instanceof Response) {
+      return HttpServerResponse.fromWeb(admitted);
+    }
+    return yield* agentOfOwner({
+      issuer,
+      subject: String(admitted.extra?.subject),
     }).pipe(
-      Effect.matchEffect({
-        onFailure: (challenge) =>
-          Effect.succeed(HttpServerResponse.fromWeb(challenge)),
-        onSuccess: (admitted) =>
-          agentOfOwner({
-            issuer: authentication.issuer,
-            subject: String(admitted.extra?.subject),
-          }).pipe(
-            Effect.flatMap(mcp),
-            Effect.flatMap((response) =>
-              limitResponseStream(
-                response,
-                Stream.interruptAfter(
-                  Math.max(0, (admitted.expiresAt ?? 0) * 1000 - Date.now()),
-                ),
-              ),
-            ),
-            Effect.catchAll((error) =>
-              Effect.logWarning("Agent unavailable").pipe(
-                Effect.annotateLogs({ failure: error._tag }),
-                Effect.as(agentUnavailable),
-              ),
-            ),
+      Effect.flatMap(mcp),
+      Effect.flatMap((response) =>
+        limitResponseStream(
+          response,
+          Stream.interruptAfter(
+            Math.max(0, (admitted.expiresAt ?? 0) * 1000 - Date.now()),
           ),
-      }),
+        ),
+      ),
+      Effect.catchAll((error) =>
+        Effect.logWarning("Agent unavailable").pipe(
+          Effect.annotateLogs({ failure: error._tag }),
+          Effect.as(agentUnavailable),
+        ),
+      ),
     );
   });
 });
@@ -169,37 +174,4 @@ function limitResponseStream(
     ),
     Match.orElse(() => response),
   );
-}
-
-/**
- * Verifies an access token as a JWT the issuer signed for the resource, and
- * reports its non-empty subject as `extra.subject`. One cached key set serves
- * every request. The promise of a token that fails rejects.
- */
-function tokenVerifier(
-  oauth: McpAuthentication,
-  keySet: URL,
-): OAuthTokenVerifier {
-  const keys = createRemoteJWKSet(keySet);
-  return {
-    verifyAccessToken: (token) =>
-      Effect.tryPromise(() =>
-        jwtVerify(token, keys, {
-          issuer: oauth.issuer,
-          audience: oauth.resource.href,
-          algorithms: ["RS256"],
-        }),
-      ).pipe(
-        Effect.filterOrFail(({ payload }) => Boolean(payload.sub)),
-        Effect.map(({ payload }) => ({
-          token,
-          clientId: "",
-          scopes:
-            typeof payload.scope === "string" ? payload.scope.split(" ") : [],
-          expiresAt: payload.exp,
-          extra: { subject: payload.sub },
-        })),
-        Effect.runPromise,
-      ),
-  };
 }
