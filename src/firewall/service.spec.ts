@@ -22,6 +22,7 @@ import { openTestDatabase } from "../database/testing.js";
 import {
   certainProvider,
   evidence,
+  firewallLayer,
   incoming,
   outgoing,
   peer,
@@ -84,7 +85,7 @@ it("isolates saved decisions and editable policy between agents sharing a databa
           expect((yield* firewall.readPolicy()).rules).toEqual([]);
           return yield* firewall.readDecisions({});
         }),
-      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+      (agentKey) => firewallLayer(agentKey, policy([privacy])),
     );
     yield* withFirewall(
       second,
@@ -96,7 +97,7 @@ it("isolates saved decisions and editable policy between agents sharing a databa
             activations: [],
           });
         }),
-      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+      (agentKey) => firewallLayer(agentKey, policy([privacy])),
     );
     yield* withFirewall(
       first,
@@ -105,7 +106,7 @@ it("isolates saved decisions and editable policy between agents sharing a databa
           expect((yield* firewall.readPolicy()).rules).toEqual([]);
           expect(yield* firewall.readDecisions({})).toEqual(saved);
         }),
-      (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+      (agentKey) => firewallLayer(agentKey, policy([privacy])),
     );
   }));
 
@@ -125,7 +126,7 @@ describe("Firewall.readDecisions", () => {
             yield* decision.save;
             return (yield* firewall.readDecisions({})).decisions;
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+        (agentKey) => firewallLayer(agentKey, policy([privacy])),
       );
       expect(saved).toMatchObject([
         {
@@ -176,7 +177,7 @@ describe("Firewall.readDecisions", () => {
             yield* decision.save;
             expect(yield* firewall.readDecisions({})).toEqual(before);
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+        (agentKey) => firewallLayer(agentKey, policy([privacy])),
       );
     }));
 });
@@ -211,7 +212,7 @@ describe("Firewall.checkOutgoing", () => {
               1,
             );
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+        (agentKey) => firewallLayer(agentKey, policy([privacy])),
       );
     }));
 
@@ -245,7 +246,7 @@ describe("Firewall.checkOutgoing", () => {
               { addedRuleIds: [privacy.id], removedRuleIds: [] },
             ]);
           }),
-        (agentKey) => Firewall.layer(agentKey, policy()),
+        (agentKey) => firewallLayer(agentKey, policy()),
       );
     }));
 });
@@ -278,7 +279,7 @@ describe("Firewall.updatePolicy", () => {
               }),
             );
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([initial], [privacy])),
+        (agentKey) => firewallLayer(agentKey, policy([initial], [privacy])),
       ),
     { fastCheck: { numRuns: 24 } },
   );
@@ -305,7 +306,7 @@ describe("Firewall.updatePolicy", () => {
               new Set((yield* firewall.readPolicy()).rules.map(({ id }) => id)),
             ).toEqual(new Set(ids));
           }),
-        (agentKey) => Firewall.layer(agentKey, policy()),
+        (agentKey) => firewallLayer(agentKey, policy()),
       ),
     { fastCheck: { numRuns: 12 } },
   );
@@ -338,7 +339,7 @@ describe("Firewall.updatePolicy", () => {
               "refused",
             );
           }),
-        (agentKey) => Firewall.layer(agentKey, waitsForEdit),
+        (agentKey) => firewallLayer(agentKey, waitsForEdit),
       );
     }));
 });
@@ -358,7 +359,7 @@ describe("Firewall.layer", () => {
           { database },
           (firewall) =>
             firewall.updatePolicy({ remove: [initial.id], add: [replacement] }),
-          (agentKey) => Firewall.layer(agentKey, policy([initial])),
+          (agentKey) => firewallLayer(agentKey, policy([initial])),
         );
         yield* withFirewall(
           { database },
@@ -374,7 +375,7 @@ describe("Firewall.layer", () => {
               ]);
             }),
           (agentKey) =>
-            Firewall.layer(agentKey, policy([{ ...initial, id: "new-seed" }])),
+            firewallLayer(agentKey, policy([{ ...initial, id: "new-seed" }])),
         );
       }),
     { fastCheck: { numRuns: 24 } },
@@ -401,7 +402,7 @@ describe("Firewall.layer", () => {
             ).toBe("refused");
             return installed;
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([privacy])),
+        (agentKey) => firewallLayer(agentKey, policy([privacy])),
       );
       yield* withFirewall(
         { database },
@@ -410,7 +411,7 @@ describe("Firewall.layer", () => {
             expect(yield* firewall.readPolicy()).toEqual(before);
             expect((yield* firewall.readDecisions({})).activations).toEqual([]);
           }),
-        (agentKey) => Firewall.layer(agentKey, policy([initial])),
+        (agentKey) => firewallLayer(agentKey, policy([initial])),
       );
     }));
 });
@@ -435,7 +436,7 @@ describe("Firewall check activity", () => {
               (direction) => check(firewall, self, direction),
               { concurrency: 1 },
             ).pipe(Effect.map(() => exporter.getFinishedSpans())),
-          (agentKey) => Firewall.layer(agentKey, policy([], [privacy])),
+          (agentKey) => firewallLayer(agentKey, policy([], [privacy])),
         ).pipe(
           Effect.provide(
             NodeSdk.layer(() => ({
@@ -483,7 +484,7 @@ describe("Firewall text rule replies", () => {
             );
           }),
         (agentKey) =>
-          Firewall.layer(agentKey, policy([], [{ ...privacy, action }])),
+          firewallLayer(agentKey, policy([], [{ ...privacy, action }])),
       ),
   );
 });

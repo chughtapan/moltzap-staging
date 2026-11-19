@@ -19,7 +19,6 @@ import { exactStruct, plainUrl } from "../encoding.js";
 import {
   type LoadedMessagePolicy,
   loadMessagePolicy,
-  readPolicyCredential,
 } from "../firewall/index.js";
 import { AgentName } from "../identity.js";
 import {
@@ -126,21 +125,18 @@ export const loadDaemonSettings = Effect.fn("loadDaemonSettings")(function* () {
       "The configured norms need a messagePolicyFile: each agent holds its norms in its editable message policy",
     );
   }
-  const messagePolicy = yield* loadMessagePolicy(
-    {
-      messagePolicyFile:
-        file.messagePolicyFile === undefined
-          ? undefined
-          : resolve(settingsDirectory, file.messagePolicyFile),
-      decisionProviderKeyFile:
-        file.decisionProviderKeyFile === undefined
-          ? undefined
-          : Redacted.make(
-              resolve(settingsDirectory, file.decisionProviderKeyFile),
-            ),
-    },
-    readPolicyCredential,
-  ).pipe(
+  const messagePolicy = yield* loadMessagePolicy({
+    messagePolicyFile:
+      file.messagePolicyFile === undefined
+        ? undefined
+        : resolve(settingsDirectory, file.messagePolicyFile),
+    decisionProviderKeyFile:
+      file.decisionProviderKeyFile === undefined
+        ? undefined
+        : Redacted.make(
+            resolve(settingsDirectory, file.decisionProviderKeyFile),
+          ),
+  }).pipe(
     Effect.mapError(() =>
       refused(
         "The configured message policy or provider credential is invalid",

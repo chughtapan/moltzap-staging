@@ -649,21 +649,23 @@ it("cancels an unaccepted draft and releases assessment capacity", () =>
     yield* subject.addConversation([subject.self, subject.bob]);
     const entered = yield* Deferred.make<undefined>();
     let first = true;
-    const policy = composedPolicy({
-      decide: (request) =>
-        Effect.suspend(() => {
-          if (first) {
-            first = false;
-            return Deferred.succeed(entered, undefined).pipe(
-              Effect.zipRight(Effect.never),
-            );
-          }
-          return Effect.succeed(decisionResponse(request));
-        }),
-    });
-    const runtime = yield* subject.open({
-      policy: { ...policy, maximumConcurrentChecks: 1 },
-    });
+    const policy = composedPolicy(
+      {
+        decide: (request) =>
+          Effect.suspend(() => {
+            if (first) {
+              first = false;
+              return Deferred.succeed(entered, undefined).pipe(
+                Effect.zipRight(Effect.never),
+              );
+            }
+            return Effect.succeed(decisionResponse(request));
+          }),
+      },
+      undefined,
+      1,
+    );
+    const runtime = yield* subject.open({ policy });
     const cancelled = yield* runtime.harness
       .send({ to: bobAddress, text: "Cancelled draft" })
       .pipe(Effect.forkScoped);

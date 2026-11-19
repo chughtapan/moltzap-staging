@@ -1,6 +1,6 @@
 /** @file A conversation's protocol as this firewall saw it: the instance its allowed acts leave running, and whether a further act may follow. */
 
-import { Effect, Either } from "effect";
+import { Effect } from "effect";
 import {
   type Act,
   type CheckedMessage,
@@ -80,12 +80,9 @@ export const checkProtocol = Effect.fn("checkProtocol")(function* (
   yield* checkReference(view, contract, form, candidate);
   const instance = view.instance;
   if (instance === undefined) {
-    yield* checkOpening(contract, form).pipe(
-      Effect.mapError((error) =>
-        error.reason === "rule-violation" ? transitionError() : error,
-      ),
-    );
-    return { act, digest: contract.digest, opening: contract };
+    return form.starts
+      ? { act, digest: contract.digest, opening: contract }
+      : yield* transitionError();
   }
   if (instance.contract.digest !== contract.digest || form.starts) {
     return yield* transitionError();
@@ -203,7 +200,7 @@ function replayRecord(
         "The retained interaction does not contain a consistent opening contract.",
       );
     }
-    const checked = yield* checkStructure(contract, protocol.act).pipe(
+    return yield* checkStructure(contract, protocol.act).pipe(
       Effect.flatMap((shape) =>
         checkProtocol(view, contract, shape, {
           act: protocol.act,
@@ -214,12 +211,11 @@ function replayRecord(
           now: entry.at,
         }),
       ),
-      Effect.either,
+      Effect.match({
+        onFailure: () => view,
+        onSuccess: () => advance(view, contract, form, entry),
+      }),
     );
-    return yield* Either.match(checked, {
-      onLeft: () => Effect.succeed(view),
-      onRight: () => advance(view, contract, form, entry),
-    });
   });
 }
 
@@ -258,30 +254,6 @@ function checkReference(
       return yield* invalidTransition(view, contract, candidate);
     }
   });
-}
-
-function checkOpening(
-  contract: CompiledContract,
-  form: MessageForm,
-): Effect.Effect<void, ContractProblem> {
-  if (
-    !form.starts ||
-    "recipient" in form.by ||
-    !form.by.includes(contract.roles.initiator)
-  ) {
-    return Effect.fail(
-      violation(`Error: ${form.act} is not valid for ${contract.name}.`),
-    );
-  }
-  const needsHistory =
-    form.when.length !== 0 ||
-    form.delay !== undefined ||
-    form.relations.length !== 0;
-  return needsHistory
-    ? Effect.fail(
-        violation("This opening act requires earlier interaction evidence."),
-      )
-    : Effect.void;
 }
 
 function checkDelay(
@@ -327,30 +299,20 @@ function checkRelations(
   });
 }
 
+/** The view once `entry`, an act the protocol permits, is applied: it opens an instance, changes the one in progress or ends it. */
 function advance(
   view: ProtocolView,
   contract: CompiledContract,
   form: MessageForm,
   entry: CheckedMessage,
-): Effect.Effect<ProtocolView, ContractProblem> {
-  const peer = entry.message.recipients[0];
-  const act = entry.protocol?.act;
-  if (
-    peer === undefined ||
-    act === undefined ||
-    (!form.starts && view.instance === undefined)
-  ) {
-    return Effect.fail(
-      unavailable("The retained interaction has no opening participants."),
-    );
-  }
+): ProtocolView {
   if (form.ends) {
-    return Effect.succeed({ ...view, instance: undefined });
+    return { ...view, instance: undefined };
   }
   const prior: Instance = view.instance ?? {
     contract,
     initiator: entry.message.author.agentId,
-    participant: peer.agentId,
+    participant: entry.message.recipients[0].agentId,
     facts: new Map(),
     counts: new Map(),
     acts: [],
@@ -365,10 +327,10 @@ function advance(
     facts.set(fact, entry);
   }
   counts.set(form.act, (counts.get(form.act) ?? 0) + 1);
-  return Effect.succeed({
+  return {
     ...view,
     instance: { ...prior, facts, counts, acts: [...prior.acts, entry] },
-  });
+  };
 }
 
 function roleOf(instance: Instance, author: string) {

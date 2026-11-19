@@ -24,7 +24,7 @@ import {
   DecisionProviderError,
   type DecisionRequest,
   type DecisionResponse,
-  validateChecks,
+  validateTextRules,
 } from "./check.js";
 
 const privateEvidence = "PRIVATE: unrelated medical appointment at 14:00";
@@ -32,13 +32,13 @@ const repair =
   "Ask for acceptance of the chosen proposal. Do not claim agreement yet.";
 const registeredGuidance =
   "After proposing a time, wait for every required participant to accept that proposal.";
-const draft: typeof AssessmentText.Encoded = {
+const draft: AssessmentText = {
   id: "draft",
   sender: "organizer-agent",
   recipients: ["participant-agent"],
   text: "The meeting is confirmed; everyone agreed.",
 };
-const evidence: typeof CheckEvidence.Encoded = {
+const evidence: CheckEvidence = {
   agentId: "organizer-agent",
   principal: "organizer",
   participants: [{ agentId: "participant-agent", principal: "participant" }],
@@ -138,7 +138,7 @@ function provider(
 }
 const defaultProvider = provider();
 /** A peer's message to the local agent. */
-const peerMessage: typeof AssessmentText.Encoded = {
+const peerMessage: AssessmentText = {
   id: "proposal",
   sender: "participant-agent",
   recipients: [evidence.agentId],
@@ -166,7 +166,7 @@ function check(
       providerSettings: options.providerSettings ?? providerSettings,
       revision: "a".repeat(64),
     };
-    yield* validateChecks(configuration);
+    yield* validateTextRules(configuration);
     return yield* checkCapturedMessage(
       { ...configuration, provider: decisionProvider },
       {
@@ -482,7 +482,7 @@ it.prop(
           ? { ...peerMessage, recipients: [stranger] }
           : { ...draft, sender: stranger },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("message");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 /** The references of a candidate, two earlier messages and two owner facts. */
@@ -519,7 +519,7 @@ it.prop(
           })),
         },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("evidence");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 it.prop(
@@ -537,7 +537,7 @@ it.prop(
           })),
         },
       }).pipe(Effect.flip);
-      expect(refused.reason).toBe("evidence");
+      expect(refused._tag).toBe("InvalidCheckError");
     }),
 );
 it.prop(
@@ -762,10 +762,12 @@ it.prop(
         textRules,
       ).pipe(
         Effect.match({
-          onFailure: (rejected) => rejected.reason,
+          onFailure: (rejected) => rejected._tag,
           onSuccess: (results) => results.map((result) => result.judgment),
         }),
       );
-      expect(judgments).toEqual(spare >= 0 ? ["allow", "allow"] : "rules");
+      expect(judgments).toEqual(
+        spare >= 0 ? ["allow", "allow"] : "InvalidCheckError",
+      );
     }),
 );

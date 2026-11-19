@@ -22,7 +22,6 @@ interface JevOptions {
 
 const jevVendorName = "typesafe";
 const jevUrl = "https://api.typesafe.ai/v1/systemone";
-const maximumChoices = 255;
 /** Bounds response bodies retained in audits. */
 const maximumResponseBytes = 1_048_576;
 const wireResponse = Schema.Struct({
@@ -106,19 +105,13 @@ const parseJevResponse = Effect.fn("MessagePolicy.Jev.parseResponse")(
       return yield* new DecisionProviderError({
         reason: "http",
         status: response.status,
-        response: raw,
       });
     }
     const wire = yield* Schema.decodeUnknown(Schema.parseJson(wireResponse), {
       onExcessProperty: "error",
     })(raw).pipe(
       Effect.catchTag("ParseError", () =>
-        Effect.fail(
-          new DecisionProviderError({
-            reason: "invalid-response",
-            response: raw,
-          }),
-        ),
+        Effect.fail(new DecisionProviderError({ reason: "invalid-response" })),
       ),
     );
     return new DecisionResponse({
@@ -143,20 +136,6 @@ const requestJev = Effect.fn("MessagePolicy.Jev.decide")(function* (
   request: DecisionRequest,
   options: JevOptions,
 ) {
-  if (
-    Redacted.value(options.apiKey).length === 0 ||
-    options.model.trim().length === 0 ||
-    options.model !== options.model.trim()
-  ) {
-    return yield* new DecisionProviderError({ reason: "configuration" });
-  }
-  if (
-    Object.values(request.questions).some(
-      (question) => Object.keys(question.criteria).length > maximumChoices,
-    )
-  ) {
-    return yield* new DecisionProviderError({ reason: "budget" });
-  }
   const client = yield* HttpClient.HttpClient;
   const httpRequest = yield* prepareJevRequest(request, options);
   const response = yield* client.execute(httpRequest).pipe(

@@ -1,26 +1,32 @@
-/** @file Compiles declarative norms into the firewall's immutable contract grammar. */
+/**
+ * @file Compiles declarative norms into the firewall's immutable contract
+ * grammar: reads a document's declarations, builds the contract they state
+ * and checks that its names and protocol predicates refer to declared things.
+ */
 
-import { Effect, Schema } from "effect";
+import { Data, Effect, Either, Schema } from "effect";
 import { createHash } from "node:crypto";
-import type { SExpression } from "../encoding.js";
 import { RequestedSchema } from "../communication/index.js";
+import { readSExpressions, type SExpression } from "../encoding.js";
 import {
   type CompiledContract,
   compiledContractSchema,
   type MessageForm,
 } from "../firewall/index.js";
-import {
-  atom,
-  booleanAttribute,
-  checkAttributes,
-  type Declaration,
-  names,
-  NormDocumentError,
-  numberAttribute,
-  readDeclaration,
-  readDocument,
-} from "./document.js";
-import { validateReferences } from "./validation.js";
+
+/** Source diagnostics identify a declaration without echoing private document text. */
+class NormDocumentError extends Data.TaggedError("NormDocumentError")<{
+  readonly detail: string;
+  readonly declaration?: string;
+}> {}
+
+/** A declaration separates named attributes from its child forms and text. */
+interface Declaration {
+  readonly kind: string;
+  readonly name?: string;
+  readonly attributes: ReadonlyMap<string, SExpression>;
+  readonly children: readonly SExpression[];
+}
 
 const attributes: Readonly<Record<string, readonly string[]>> = {
   string: [":min-length", ":max-length"],
@@ -459,4 +465,445 @@ function readBounds(form: Declaration) {
     }
     return bounds;
   });
+}
+
+/** All declarations are data; a document has one leading norm header. */
+function readDocument(source: string) {
+  return Effect.gen(function* () {
+    const parsed = yield* readSExpressions(source).pipe(
+      Either.mapLeft(
+        (error) =>
+          new NormDocumentError({
+            detail: `${error.detail} Offset ${error.offset}.`,
+          }),
+      ),
+    );
+    const declarations = yield* Effect.forEach(
+      parsed,
+      (node) => readDeclaration(node),
+      { concurrency: 1 },
+    );
+    const [header, ...body] = declarations;
+    if (
+      header?.kind !== "norm" ||
+      body.some((item) => item.kind !== "content" && item.kind !== "rule")
+    ) {
+      return yield* new NormDocumentError({
+        detail:
+          "A document starts with one norm declaration followed by content and rule declarations.",
+      });
+    }
+    return { header, body };
+  }).pipe(Effect.withSpan("readDocument"));
+}
+
+/** Attribute names are checked by the declaration that consumes them. */
+function readDeclaration(node: SExpression) {
+  return Effect.gen(function* () {
+    if (node.kind !== "list") {
+      return yield* new NormDocumentError({
+        detail: "Expected a parenthesized declaration.",
+      });
+    }
+    const [head, ...tail] = node.values;
+    if (head?.kind !== "symbol") {
+      return yield* new NormDocumentError({
+        detail: "A declaration starts with a symbol.",
+      });
+    }
+    const named = ["norm", "content", "field", "relation"].includes(head.value);
+    const first = tail[0];
+    if (named && (first?.kind !== "symbol" || first.value.startsWith(":"))) {
+      return yield* new NormDocumentError({
+        detail: "The declaration needs a name.",
+        declaration: head.value,
+      });
+    }
+    const fields = yield* declarationFields(
+      named ? tail.slice(1) : tail,
+      head.value,
+    );
+    return {
+      kind: head.value,
+      ...(named && first?.kind === "symbol" ? { name: first.value } : {}),
+      ...fields,
+    } satisfies Declaration;
+  }).pipe(Effect.withSpan("readDeclaration"));
+}
+
+function declarationFields(items: readonly SExpression[], declaration: string) {
+  return Effect.gen(function* () {
+    const attributes = new Map<string, SExpression>();
+    const children: SExpression[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item?.kind === "symbol" && item.value.startsWith(":")) {
+        const value = items[index + 1];
+        if (
+          value === undefined ||
+          attributes.has(item.value) ||
+          (value.kind === "symbol" && value.value.startsWith(":"))
+        ) {
+          return yield* new NormDocumentError({
+            detail: "Each attribute needs one value and must appear once.",
+            declaration,
+          });
+        }
+        attributes.set(item.value, value);
+        index += 1;
+      } else if (item !== undefined) {
+        children.push(item);
+      }
+    }
+    return { attributes, children };
+  });
+}
+
+/** Reject typos where their declaration owns the accepted vocabulary. */
+function checkAttributes(form: Declaration, allowed: readonly string[]) {
+  const unknown = [...form.attributes.keys()].find(
+    (key) => !allowed.includes(key),
+  );
+  return unknown === undefined
+    ? Effect.void
+    : Effect.fail(
+        new NormDocumentError({
+          detail: `Unknown attribute ${unknown}.`,
+          declaration: form.kind,
+        }),
+      );
+}
+
+/** A scalar or list supplies names without comma or whitespace guessing. */
+function names(
+  node?: SExpression,
+): Effect.Effect<readonly string[], NormDocumentError> {
+  if (node === undefined) {
+    return Effect.succeed([]);
+  }
+  const values = node.kind === "list" ? node.values : [node];
+  return Effect.forEach(
+    values,
+    (value) => {
+      const name = atom(value);
+      return name === undefined
+        ? Effect.fail(
+            new NormDocumentError({
+              detail: "Expected a name or a list of names.",
+            }),
+          )
+        : Effect.succeed(name);
+    },
+    { concurrency: 1 },
+  );
+}
+
+/** Missing booleans default to false; other values are rejected. */
+function booleanAttribute(form: Declaration, key: string) {
+  const node = form.attributes.get(key);
+  const value = atom(node);
+  if (node === undefined || value === "false") {
+    return Effect.succeed(false);
+  }
+  return value === "true"
+    ? Effect.succeed(true)
+    : Effect.fail(
+        new NormDocumentError({ detail: `${key} takes true or false.` }),
+      );
+}
+
+/** Numeric constraints cannot carry nonfinite values. */
+function numberAttribute(form: Declaration, key: string) {
+  const node = form.attributes.get(key);
+  if (node === undefined) {
+    return Effect.succeed(undefined);
+  }
+  const text = atom(node);
+  const value =
+    text === undefined || text.trim() === "" ? Number.NaN : Number(text);
+  return Number.isFinite(value)
+    ? Effect.succeed(value)
+    : Effect.fail(
+        new NormDocumentError({ detail: `${key} takes a finite number.` }),
+      );
+}
+
+/** Symbols and strings both name configuration values; quoted prose stays unchanged. */
+function atom(node?: SExpression): string | undefined {
+  return node?.kind === "symbol" || node?.kind === "string"
+    ? node.value
+    : undefined;
+}
+
+/** Invalid references fail installation instead of becoming unreachable runtime forms. */
+function validateReferences(contract: CompiledContract) {
+  return Effect.gen(function* () {
+    const forms = new Map(contract.forms.map((form) => [form.act, form]));
+    if (forms.size !== contract.forms.length) {
+      return yield* new NormDocumentError({
+        detail: "An act has exactly one declared form.",
+      });
+    }
+    if (!contract.forms.some((form) => form.starts)) {
+      return yield* new NormDocumentError({
+        detail: "Declare at least one opening act with :starts true.",
+      });
+    }
+    if (
+      contract.textRules.some(
+        (rule) => rule.act !== undefined && !forms.has(rule.act),
+      )
+    ) {
+      return yield* new NormDocumentError({
+        detail: "An English rule names an undeclared act.",
+      });
+    }
+    for (const form of contract.forms) {
+      yield* validateForm(contract, form, forms);
+    }
+    yield* validateRefusal(contract, forms);
+  }).pipe(Effect.withSpan("validateReferences"));
+}
+
+function validateForm(
+  contract: CompiledContract,
+  form: MessageForm,
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  return Effect.gen(function* () {
+    const roles = Object.values(contract.roles);
+    const facts = new Set(contract.forms.flatMap((item) => item.initiates));
+    if (
+      !("recipient" in form.by) &&
+      (form.by.length === 0 || form.by.some((role) => !roles.includes(role)))
+    ) {
+      return yield* new NormDocumentError({
+        detail: "Every sender role must be declared.",
+        declaration: form.act,
+      });
+    }
+    if ("recipient" in form.by && !facts.has(form.by.recipient.fact)) {
+      return yield* new NormDocumentError({
+        detail: "A recipient sender selector names an undeclared fact.",
+        declaration: form.act,
+      });
+    }
+    if (
+      !/^[a-z][a-z0-9-]{0,63}$/u.test(form.act) ||
+      [...form.when, ...form.unless, ...form.terminates].some(
+        (fact) => !facts.has(fact),
+      )
+    ) {
+      return yield* new NormDocumentError({
+        detail: "Act names are lowercase; fact guards refer to declared facts.",
+        declaration: form.act,
+      });
+    }
+    if (form.starts) {
+      yield* validateOpening(contract, form);
+    }
+    if (form.delay !== undefined) {
+      yield* validateDelay(contract, form.delay);
+    }
+    for (const relation of form.relations) {
+      yield* validateRelation(form, relation, forms);
+    }
+  });
+}
+
+function validateRefusal(
+  contract: CompiledContract,
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  if (contract.onRefusal === undefined) {
+    return Effect.void;
+  }
+  const form = forms.get(contract.onRefusal);
+  if (form === undefined) {
+    return Effect.fail(
+      new NormDocumentError({
+        detail: "The refusal act must have a declared form.",
+      }),
+    );
+  }
+  return form.fields.properties.reason?.type !== "string" ||
+    form.fields.required?.some((field) => field !== "reason")
+    ? Effect.fail(
+        new NormDocumentError({
+          detail:
+            "Automatic refusal supplies a reason string and no other required fields.",
+        }),
+      )
+    : Effect.void;
+}
+
+function validateOpening(contract: CompiledContract, form: MessageForm) {
+  const needsHistory =
+    form.when.length !== 0 ||
+    form.delay !== undefined ||
+    form.relations.length !== 0;
+  return "recipient" in form.by ||
+    !form.by.includes(contract.roles.initiator) ||
+    needsHistory
+    ? Effect.fail(
+        new NormDocumentError({
+          detail:
+            "An opening act permits the initiator and cannot depend on an earlier interaction.",
+          declaration: form.act,
+        }),
+      )
+    : Effect.void;
+}
+
+function validateDelay(
+  contract: CompiledContract,
+  delay: NonNullable<MessageForm["delay"]>,
+) {
+  const anchors = contract.forms.filter((item) =>
+    item.initiates.includes(delay.fact),
+  );
+  const valid =
+    anchors.length !== 0 &&
+    anchors.every((anchor) => {
+      const field = anchor.fields.properties[delay.field];
+      if (
+        field === undefined ||
+        (field.type !== "number" && field.type !== "integer")
+      ) {
+        return false;
+      }
+      return (
+        anchor.fields.required?.includes(delay.field) &&
+        field.minimum !== undefined &&
+        field.minimum >= 0
+      );
+    });
+  return valid
+    ? Effect.void
+    : Effect.fail(
+        new NormDocumentError({
+          detail:
+            "A delay references a required nonnegative numeric field on every act that initiates its fact.",
+        }),
+      );
+}
+
+function validateRelation(
+  form: MessageForm,
+  relation: MessageForm["relations"][number],
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  return Effect.gen(function* () {
+    const candidate = form.fields.properties[relation.field];
+    if (candidate === undefined) {
+      return yield* new NormDocumentError({
+        detail: "A relation refers to undeclared acts or fields.",
+        declaration: form.act,
+      });
+    }
+    if (relation.operator === "subset" && candidate.type !== "array") {
+      return yield* new NormDocumentError({
+        detail: "A subset relation requires a list field.",
+        declaration: form.act,
+      });
+    }
+    const targets = referenceNames(relation.source.act, forms);
+    if (targets.length === 0) {
+      return yield* new NormDocumentError({
+        detail: "A relation refers to an undeclared source.",
+      });
+    }
+    for (const act of targets) {
+      const target = forms.get(act);
+      if (target === undefined) {
+        return yield* new NormDocumentError({
+          detail: "A relation refers to undeclared acts or fields.",
+          declaration: form.act,
+        });
+      }
+      yield* validateSource(form, relation.source, target, forms);
+    }
+  });
+}
+
+function validateSource(
+  form: MessageForm,
+  source: MessageForm["relations"][number]["source"],
+  target: MessageForm,
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  return Effect.gen(function* () {
+    if (source.kind === "values") {
+      return yield* validateSelectedValues(source.keys, target, forms);
+    }
+    const fields = source.kind === "field" ? [source.field] : source.fields;
+    if (
+      fields.some((field) => !Object.hasOwn(target.fields.properties, field))
+    ) {
+      return yield* new NormDocumentError({
+        detail: "A relation names an undeclared source field.",
+        declaration: form.act,
+      });
+    }
+    if (
+      source.kind === "field-values" &&
+      fields.some((field) => target.fields.properties[field]?.type !== "string")
+    ) {
+      return yield* new NormDocumentError({
+        detail: "Direct values require declared string fields.",
+        declaration: form.act,
+      });
+    }
+  });
+}
+
+function validateSelectedValues(
+  keys: Extract<
+    MessageForm["relations"][number]["source"],
+    { readonly kind: "field" }
+  >,
+  target: MessageForm,
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  return Effect.gen(function* () {
+    const targets = referenceNames(keys.act, forms);
+    if (targets.length === 0) {
+      return yield* new NormDocumentError({
+        detail: "A relation refers to an undeclared source.",
+      });
+    }
+    for (const act of targets) {
+      const field = forms.get(act)?.fields.properties[keys.field];
+      if (field?.type !== "array" || !("enum" in field.items)) {
+        return yield* new NormDocumentError({
+          detail:
+            "Selected values require a choice list of declared string field names.",
+        });
+      }
+      if (
+        field.items.enum.some(
+          (key) => target.fields.properties[key]?.type !== "string",
+        )
+      ) {
+        return yield* new NormDocumentError({
+          detail: "Selected values name an undeclared string field.",
+        });
+      }
+    }
+  });
+}
+
+function referenceNames(
+  reference: MessageForm["relations"][number]["source"]["act"],
+  forms: ReadonlyMap<string, MessageForm>,
+) {
+  if (typeof reference === "string") {
+    return [reference];
+  }
+  if ("fact" in reference) {
+    return [...forms.values()]
+      .filter((form) => form.initiates.includes(reference.fact))
+      .map((form) => form.act);
+  }
+  return reference;
 }
