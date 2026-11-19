@@ -2,13 +2,7 @@
 
 import { Effect, Schema } from "effect";
 import {
-  AGENT_ADDRESS_PREFIX,
-  AgentAddress,
-  GroupAddress,
-  groupAddressOf,
-  groupMembers,
   Message,
-  MessageAddressInput,
   MsgId,
   Page,
   PaginatedRequest,
@@ -31,7 +25,63 @@ import {
   policyRevisionSchema,
   policyUpdateSchema,
 } from "../firewall/index.js";
-import { type AgentCard, AgentId, AgentName } from "../identity.js";
+import {
+  AGENT_NAME_RULE,
+  type AgentCard,
+  AgentId,
+  AgentName,
+} from "../identity.js";
+import {
+  GroupAddress,
+  groupAddressOf,
+  groupMemberNames,
+  groupMembers,
+} from "./groups.js";
+
+/** The scheme of an address naming one agent. */
+const AGENT_ADDRESS_PREFIX = "agent:";
+
+const isAgentName = Schema.is(AgentName);
+
+/** The agent name an `agent:` address names, or undefined when the value is not an agent address. */
+const parseAgentAddress = (value: string): AgentName | undefined => {
+  if (!value.startsWith(AGENT_ADDRESS_PREFIX)) {
+    return undefined;
+  }
+  const name = value.slice(AGENT_ADDRESS_PREFIX.length);
+  return isAgentName(name) ? name : undefined;
+};
+
+/** Either address as a host may write it, with a group's names in any order. */
+export const MessageAddressInput = Schema.String.pipe(
+  Schema.filter(
+    (value) =>
+      parseAgentAddress(value) !== undefined ||
+      groupMemberNames(value) !== undefined,
+    {
+      identifier: "MessageAddressInput",
+      description: `agent:<name>, or group: then agent names separated by commas, with no spaces and no agent: prefix; a name is ${AGENT_NAME_RULE}`,
+    },
+  ),
+  Schema.brand("MessageAddressInput"),
+);
+/**
+ * A validated address as a host wrote it.
+ * @useDeclaredType
+ */
+export type MessageAddressInput = typeof MessageAddressInput.Type;
+
+/** The address of one agent. */
+export const AgentAddress = MessageAddressInput.pipe(
+  Schema.filter((value) => parseAgentAddress(value) !== undefined),
+  Schema.brand("AgentAddress"),
+  Schema.annotations({ identifier: "AgentAddress" }),
+);
+/**
+ * A validated agent address.
+ * @useDeclaredType
+ */
+export type AgentAddress = typeof AgentAddress.Type;
 
 /** Canonical host address of a direct or group conversation. */
 // eslint-disable-next-line agent-code-guard/no-exported-brand-constructor -- The inbox owns this grammar shared by persistence and MCP schema composition.
@@ -66,8 +116,9 @@ export function canonicalMessageAddress(
           address: AgentAddress.make(`${AGENT_ADDRESS_PREFIX}${other}`),
           others: [other],
         });
-  if (to.startsWith(AGENT_ADDRESS_PREFIX)) {
-    return direct(AgentName.make(to.slice(AGENT_ADDRESS_PREFIX.length)));
+  const named = parseAgentAddress(to);
+  if (named !== undefined) {
+    return direct(named);
   }
   return Effect.flatMap(groupMembers(to, localAgentName), (members) => {
     const others = members.filter((name) => name !== localAgentName);

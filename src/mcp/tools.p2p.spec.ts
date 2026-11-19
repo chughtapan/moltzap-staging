@@ -1,4 +1,4 @@
-/** @file A peer's address names one agent or a group. */
+/** @file A peer's address names one agent or a group, and a group address lists its members in name order. */
 
 import {
   Array as Arr,
@@ -10,8 +10,9 @@ import {
 } from "effect";
 import { expect, it } from "vitest";
 import { testAgentCard } from "../__tests__/agents.js";
-import { maximumMembers, MessageAddressInput } from "../communication/index.js";
-import { canonicalMessageAddress } from "./tools.js";
+import { maximumMembers } from "../communication/index.js";
+import { GroupAddress } from "./groups.js";
+import { canonicalMessageAddress, MessageAddressInput } from "./tools.js";
 
 const localAgentName = testAgentCard("agent:agent-1").agentName;
 
@@ -62,6 +63,33 @@ it("addresses one peer directly, 3 to 32 members as a group in name order, and r
             },
           ),
         ).toBe(others.length === 0 ? "membership-invalid" : expected);
+      },
+    ),
+  );
+});
+
+const decodingFails = (
+  schema: Schema.Schema.AnyNoContext,
+  value: unknown,
+): boolean => !Schema.is(schema)(value);
+
+it("accepts a group address of 3 to 32 members only in name order", () => {
+  fc.assert(
+    fc.property(
+      fc.uniqueArray(fc.stringMatching(/^[a-z0-9]{3,8}$/), {
+        minLength: 2,
+        maxLength: 34,
+      }),
+      (names) => {
+        const ordered = Arr.sort(names, Order.string);
+        const sized = names.length >= 3 && names.length <= 32;
+        const reversed = `group:${ordered.toReversed().join(",")}`;
+
+        expect(decodingFails(GroupAddress, `group:${ordered.join(",")}`)).toBe(
+          !sized,
+        );
+        expect(decodingFails(GroupAddress, reversed)).toBe(true);
+        expect(decodingFails(MessageAddressInput, reversed)).toBe(false);
       },
     ),
   );

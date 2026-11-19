@@ -26,14 +26,11 @@ import {
 import { createServer } from "node:http";
 import { describe, expect } from "vitest";
 import { digest, testAgentCard } from "../__tests__/agents.js";
-import {
-  MessageAddressInput,
-  SendError,
-  sendFailureReasons,
-} from "../communication/index.js";
+import { SendError, sendFailureReasons } from "../communication/index.js";
 import {
   HistoryError,
   MAXIMUM_WAIT_SECONDS,
+  MessageAddressInput,
   toolDefinitions,
 } from "../mcp/tools.js";
 import {

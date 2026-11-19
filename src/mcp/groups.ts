@@ -1,15 +1,12 @@
 /** @file Group addresses: an address that lists the members of a conversation of three or more agents. Everything that knows the `group:` grammar is here. */
 
 import { Effect, Schema } from "effect";
+import { maximumMembers, SendError } from "../communication/index.js";
 import { compareAscii, isStrictlyAscending } from "../encoding.js";
 import { AgentName } from "../identity.js";
-import { SendError } from "./errors.js";
 
 /** The scheme of an address listing a group's members. */
 const GROUP_ADDRESS_PREFIX = "group:";
-
-/** The largest membership of one conversation. */
-export const maximumMembers = 32;
 
 const isAgentName = Schema.is(AgentName);
 

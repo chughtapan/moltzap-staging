@@ -19,14 +19,12 @@ export {
   type ToolRequest,
   type ToolResult,
 } from "./mcp/index.js";
-/** Messages, their identifiers and addresses. */
-export {
-  AgentAddress,
-  GroupAddress,
-  Message,
-  MessageAddressInput,
-  MsgId,
-} from "./communication/index.js";
+/** Messages and their identifiers. */
+export { Message, MsgId } from "./communication/index.js";
+/** The addresses a host names an agent or a group by. */
+export { AgentAddress, MessageAddressInput } from "./mcp/tools.js";
+/** The address of a group, which only P2P mode offers. */
+export { GroupAddress } from "./mcp/groups.js";
 /** The identifiers and name an agent is known by. */
 export { AgentCard, AgentId, AgentName } from "./identity.js";
 /** Installed package version. */

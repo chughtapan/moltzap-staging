@@ -14,7 +14,6 @@ import {
   Ref,
   ScopedCache,
 } from "effect";
-import { MessageAddressInput } from "../communication/index.js";
 import { Communication } from "../communication/service.js";
 import {
   checkDatabase,
@@ -27,6 +26,7 @@ import { type AgentName, Identity } from "../identity.js";
 import {
   clientToolDefinitions,
   directToolDefinitions,
+  MessageAddressInput,
   toolDefinitions,
 } from "../mcp/tools.js";
 import { compiledPolicyEdit, HeldNorms } from "../norms/index.js";

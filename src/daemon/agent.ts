@@ -18,7 +18,6 @@ import type { FirewallEvidence, FirewallRefusal } from "../firewall/index.js";
 import {
   type CommunicationError,
   Message,
-  type MessageAddressInput,
   messageWithId,
   MsgId,
   type Page,
@@ -43,6 +42,7 @@ import {
   type InboxError,
   type InboxPage,
   MessageAddress,
+  type MessageAddressInput,
   PAGE_SIZE,
   type SendRequest,
   type SendResult,

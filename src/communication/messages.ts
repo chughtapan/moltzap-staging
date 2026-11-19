@@ -1,4 +1,4 @@
-/** @file Messages and their addresses as validated values, with their content grammar and constructors, and the form a filled set of fields is checked against. */
+/** @file Messages as validated values, with their content grammar and constructors, and the form a filled set of fields is checked against. */
 
 import type { ParseOptions } from "effect/SchemaAST";
 import { Ajv } from "ajv";
@@ -25,9 +25,11 @@ import {
   type JsonRepresentationError,
   representationFailure,
 } from "../encoding.js";
-import { AGENT_NAME_RULE, AgentCard, AgentId, AgentName } from "../identity.js";
+import { AgentCard, AgentId } from "../identity.js";
 import { CommunicationError, issuesText } from "./errors.js";
-import { groupMemberNames, maximumMembers } from "./groups.js";
+
+/** The largest membership of one conversation. */
+export const maximumMembers = 32;
 
 /** The byte limit of one message's content as JSON text. */
 const maximumContentBytes = 32_768;
@@ -144,57 +146,6 @@ export const deriveConversationId = (
         Effect.mapError(representationFailure),
       )
     : Effect.fail(representationFailure());
-
-/** The scheme of an address naming one agent. */
-export const AGENT_ADDRESS_PREFIX = "agent:";
-
-const isAgentName = Schema.is(AgentName);
-
-/**
- * The agent name an `agent:` address names.
- * @param value A candidate address.
- * @returns The name, or undefined when the value is not an agent address.
- */
-const parseAgentAddress = (value: string): string | undefined => {
-  if (!value.startsWith(AGENT_ADDRESS_PREFIX)) {
-    return undefined;
-  }
-  const name = value.slice(AGENT_ADDRESS_PREFIX.length);
-  return isAgentName(name) ? name : undefined;
-};
-
-const addressInput = Schema.String.pipe(
-  Schema.filter(
-    (value) =>
-      parseAgentAddress(value) !== undefined ||
-      groupMemberNames(value) !== undefined,
-    {
-      identifier: "MessageAddressInput",
-      description: `agent:<name>, or group: then agent names separated by commas, with no spaces and no agent: prefix; a name is ${AGENT_NAME_RULE}`,
-    },
-  ),
-  Schema.brand("MessageAddressInput"),
-);
-
-/** The address of one agent. */
-export const AgentAddress = addressInput.pipe(
-  Schema.filter((value) => parseAgentAddress(value) !== undefined),
-  Schema.brand("AgentAddress"),
-  Schema.annotations({ identifier: "AgentAddress" }),
-);
-/**
- * A validated agent address.
- * @useDeclaredType
- */
-export type AgentAddress = typeof AgentAddress.Type;
-
-/** Either address as a host may write it, with a group's names in any order. */
-export const MessageAddressInput = addressInput;
-/**
- * A validated address as a host wrote it.
- * @useDeclaredType
- */
-export type MessageAddressInput = typeof MessageAddressInput.Type;
 
 /** A fresh author-scoped id uses 32 random bytes before any assessment or send. */
 const mintMsgId = (): Effect.Effect<MsgId, JsonRepresentationError> =>

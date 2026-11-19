@@ -1,11 +1,9 @@
 /** @file Messages as values, and their failures. The service that carries them between agents is `service.ts`. */
 
-/** Messages and addresses as validated values, and the form a filled set of fields is checked against. */
+/** Messages as validated values, the largest membership of a conversation, and the form a filled set of fields is checked against. */
 export {
-  AGENT_ADDRESS_PREFIX,
-  AgentAddress,
+  maximumMembers,
   Message,
-  MessageAddressInput,
   MessageReference,
   messageWithId,
   MsgId,
@@ -15,13 +13,6 @@ export {
   validateResponseContent,
   wellFormedString,
 } from "./messages.js";
-/** Group addresses, which only P2P mode offers. */
-export {
-  GroupAddress,
-  groupAddressOf,
-  groupMembers,
-  maximumMembers,
-} from "./groups.js";
 /** Why a send or a read was refused. */
 export {
   CommunicationError,

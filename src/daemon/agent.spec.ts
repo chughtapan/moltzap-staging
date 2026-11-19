@@ -16,10 +16,9 @@ import {
 } from "effect";
 import { expect } from "vitest";
 import type { AgentCard } from "../identity.js";
-import type { InboxEntry } from "../mcp/tools.js";
 import type { HistoryPage } from "./agent.js";
 import { digest } from "../__tests__/agents.js";
-import { Message, MessageAddressInput, MsgId } from "../communication/index.js";
+import { Message, MsgId } from "../communication/index.js";
 import { compareAscii } from "../encoding.js";
 import {
   contractOf,
@@ -31,6 +30,7 @@ import {
   type DecisionRequest,
   FirewallPolicyError,
 } from "../firewall/index.js";
+import { type InboxEntry, MessageAddressInput } from "../mcp/tools.js";
 import {
   composedPolicy,
   decisionResponse,
