@@ -688,17 +688,6 @@ export function messageMembers(
   );
 }
 
-/** A key that orders a conversation by its members' names, direct conversations before groups. */
-export function conversationNameKey(
-  names: readonly AgentName[],
-  localName?: AgentName,
-) {
-  const ordered = [...names].sort(compareAscii);
-  return ordered.length === 2
-    ? "0:" + ordered.filter((name) => name !== localName).join(",")
-    : "1:" + ordered.join(",");
-}
-
 function hasWellFormedUnicode(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
